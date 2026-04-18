@@ -79,6 +79,36 @@
   .poi-result .dist { font-size: 12px; color: #666; white-space: nowrap; flex-shrink: 0; }
   .poi-spacer { position: relative; width: 100%; }
   .poi-count { padding: 6px 12px; font-size: 11px; color: #888; background: #f5f5f5; position: sticky; top: 0; z-index: 2; }
+  .selected-marker {
+    width: 22px; height: 22px;
+    background: #fff; border-radius: 50%;
+    box-shadow: 0 0 0 2px rgba(0,0,0,0.35), 0 2px 4px rgba(0,0,0,0.3);
+    pointer-events: none; box-sizing: border-box;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .selected-marker .icon { width: 14px; height: 14px; display: block; }
+  #poiCard {
+    position: absolute; left: 8px; right: 68px; z-index: 12;
+    top: calc(100px + env(safe-area-inset-top));
+    background: rgba(255,255,255,0.98); border-radius: 8px;
+    padding: 12px 40px 12px 14px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.22);
+    max-height: 42vh; overflow-y: auto; display: none;
+  }
+  #poiCard.show { display: block; }
+  #poiCardClose {
+    position: absolute; top: 2px; right: 6px;
+    background: none; border: none; font-size: 26px;
+    line-height: 1; cursor: pointer; color: #666; padding: 4px 8px;
+  }
+  #poiCardName { font-size: 15px; font-weight: 600; }
+  #poiCardMeta { font-size: 12px; color: #666; margin-top: 2px; }
+  #poiCardBody { margin-top: 8px; font-size: 13px; line-height: 1.5; }
+  #poiCardBody .row { display: flex; gap: 8px; margin: 3px 0; align-items: baseline; }
+  #poiCardBody .row .lbl { flex-shrink: 0; font-size: 14px; width: 18px; text-align: center; }
+  #poiCardBody .row .val { flex: 1; min-width: 0; word-break: break-word; }
+  #poiCardBody a { color: #4a90e2; text-decoration: none; }
+  #poiCardBody a:active { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -88,6 +118,12 @@
          autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
   <select id="searchFilter"><option value="">all types</option></select>
   <div id="searchResults"></div>
+</div>
+<div id="poiCard">
+  <button id="poiCardClose" aria-label="close">×</button>
+  <div id="poiCardName"></div>
+  <div id="poiCardMeta"></div>
+  <div id="poiCardBody"></div>
 </div>
 <div id="install">
   <div class="msg">Tap <b>Share</b> → <b>Add to Home Screen</b> so offline tiles aren't evicted.</div>
@@ -368,33 +404,63 @@ function fmtDate(ts) {
 
   const ICON_ALIAS_MAP = {
     "rail":              ["platform", "station"],
+    "rail-metro":        ["subway", "metro", "subway_entrance"],
     "bus":               ["bus_stop", "stop_position"],
+    "shelter":           ["bus_station"],
+    "ferry":             ["ferry_terminal"],
+    "aerialway":         ["cable_car", "gondola"],
     "clothing-store":    ["clothes"],
-    "grocery":           ["supermarket"],
-    "campsite":          ["camp_site"],
-    "art-gallery":       ["artwork"],
-    "bicycle-share":     ["bicycle_rental"],
-    "doctor":            ["clinic", "doctors"],
-    "post":              ["post_office", "post_box"],
-    "alcohol-shop":      ["alcohol"],
-    "shop":              ["variety_store", "department_store"],
-    "beer":              ["pub"],
-    "town-hall":         ["government", "townhall", "community_centre"],
-    "monument":          ["memorial"],
-    "lodging":           ["hotel", "motel", "guest_house", "chalet"],
-    "veterinary":        ["pet"],
     "shoe":              ["shoes"],
     "jewelry-store":     ["jewelry"],
+    "optician":          ["optometrist", "eyewear"],
+    "hardware":          ["doityourself"],
+    "grocery":           ["supermarket"],
+    "alcohol-shop":      ["alcohol"],
+    "shop":              ["variety_store", "department_store"],
+    "commercial":        ["company", "office"],
+    "campsite":          ["camp_site"],
+    "art-gallery":       ["artwork", "gallery"],
+    "bicycle-share":     ["bicycle_rental"],
+    "bicycle":           ["bicycle_parking"],
+    "doctor":            ["clinic", "doctors"],
+    "defibrillator":     ["aed"],
+    "post":              ["post_office", "post_box"],
+    "beer":              ["pub"],
+    "town-hall":         ["government", "townhall", "community_centre"],
+    "embassy":           ["consulate"],
+    "monument":          ["memorial", "wayside_cross", "wayside_shrine"],
+    "lodging":           ["hotel", "motel", "guest_house", "chalet"],
+    "veterinary":        ["pet"],
     "bank":              ["atm"],
     "library":           ["books"],
     "park":              ["nature_reserve"],
-    "stadium":           ["sports_centre"],
-    "religious-christian": ["place_of_worship"],
-    "marker":            ["boundary_stone"],
-    "bicycle":           ["bicycle_parking"],
+    "garden":            ["garden_centre"],
+    "playground":        ["play_area"],
+    "stadium":           ["sports_centre", "sports_hall"],
+    "pitch":             ["sports_pitch"],
+    "golf":              ["golf_course", "golf_pin"],
+    "religious-christian": ["place_of_worship", "chapel", "church"],
+    "cemetery":          ["grave_yard"],
+    "marker":            ["boundary_stone", "yes", "viewpoint"],
     "laundry":           ["dry_cleaning"],
     "swimming":          ["swimming_pool"],
     "hairdresser":       ["beauty"],
+    "college":           ["university", "kindergarten", "childcare"],
+    "music":             ["music_school", "musical_instrument", "driving_school"],
+    "parking":           ["parking_space", "parking_multistorey"],
+    "theatre":           ["theater", "performing_arts"],
+    "cinema":            ["movie_theater"],
+    "fuel":              ["gas_station"],
+    "drinking-water":    ["water_tap"],
+    "waste-basket":      ["recycling"],
+    "picnic-site":       ["picnic_table"],
+    "harbor":            ["harbour"],
+    "aquarium":          ["aquariums"],
+    "attraction":        ["theme_park", "amusement_arcade"],
+    "information":       ["tourist_info", "visitor_centre"],
+    "ice-cream":         ["ice_cream"],
+    "toilet":            ["toilets"],
+    "zoo":               ["wildlife_park"],
   };
 
   async function registerIconFromSvg(name, svgText) {
@@ -428,7 +494,7 @@ function fmtDate(ts) {
     } catch { return false; }
   }
 
-  const DEFAULT_MARKER_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6" fill="#d66" stroke="#fff" stroke-width="2"/></svg>`;
+  const DEFAULT_MARKER_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 15 15"><path d="M7.5 1C5.42 1 3 2.29 3 5.57C3 7.79 6.46 12.71 7.5 14C8.42 12.71 12 7.91 12 5.57C12 2.29 9.58 1 7.5 1Z" fill="#555" stroke="#fff" stroke-width="0.6" stroke-linejoin="round"/></svg>`;
 
   async function registerDefaultMarker() {
     await registerIconFromSvg('poi-default', DEFAULT_MARKER_SVG);
@@ -453,6 +519,18 @@ function fmtDate(ts) {
     await loadAllIcons();
   });
 
+  const iconFallbackTried = new Set();
+  map.on('styleimagemissing', async (e) => {
+    const id = e.id;
+    if (iconFallbackTried.has(id)) return;
+    iconFallbackTried.add(id);
+    const ok = await loadIcon(id);
+    if (!ok) {
+      await registerIconFromSvg(id, DEFAULT_MARKER_SVG);
+      map.triggerRepaint();
+    }
+  });
+
   function haversineKm(lat1, lon1, lat2, lon2) {
     const R = 6371;
     const toRad = (d) => d * Math.PI / 180;
@@ -472,25 +550,144 @@ function fmtDate(ts) {
     c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const humanize = (s) => String(s || '').replace(/_/g, ' ')
     .replace(/\b\w/g, c => c.toUpperCase());
+
+  const CATEGORY_TO_ICON_FILE = (() => {
+    const m = {};
+    for (const [file, aliases] of Object.entries(ICON_ALIAS_MAP)) {
+      for (const a of aliases) m[a] = file;
+    }
+    return m;
+  })();
+  function iconFileFor(cat) {
+    if (!cat) return 'marker';
+    if (CATEGORY_TO_ICON_FILE[cat]) return CATEGORY_TO_ICON_FILE[cat];
+    if (cat.includes('_')) return cat.replace(/_/g, '-');
+    return cat;
+  }
+
+  let selectedMarker = null;
+  const SELECTED_KEY = 'cc.selected.v1';
+
+  function findFullPoi(lng, lat, name) {
+    for (const p of allPois) {
+      if (p.name === name
+          && Math.abs(p.lng - lng) < 1e-4
+          && Math.abs(p.lat - lat) < 1e-4) {
+        return p;
+      }
+    }
+    return null;
+  }
+
+  function renderPoiCard(poi) {
+    const card = document.getElementById('poiCard');
+    if (!poi) { card.classList.remove('show'); return; }
+    document.getElementById('poiCardName').textContent = poi.name || '(unnamed)';
+    const ref = lastKnownPos;
+    const dist = ref ? fmtDist(haversineKm(ref.lat, ref.lng, poi.lat, poi.lng)) : '';
+    const cat = poi.category ? humanize(poi.category) : '';
+    document.getElementById('poiCardMeta').textContent =
+      [cat, dist].filter(Boolean).join(' · ');
+
+    const p = poi.props || {};
+    const rows = [];
+    const telHref = (s) => 'tel:' + s.replace(/[^\d+]/g, '');
+    const webHref = (s) => s.startsWith('http') ? s : 'https://' + s;
+
+    const street = [p['addr:housenumber'], p['addr:street']].filter(Boolean).join(' ');
+    const city = [p['addr:city'], p['addr:postcode']].filter(Boolean).join(' ');
+    const addr = [street, city].filter(Boolean).join(', ');
+    if (addr) rows.push(`<div class="row"><span class="lbl">📍</span><span class="val">${esc(addr)}</span></div>`);
+
+    if (p.opening_hours) rows.push(`<div class="row"><span class="lbl">🕐</span><span class="val">${esc(p.opening_hours)}</span></div>`);
+
+    const phone = p.phone || p['contact:phone'];
+    if (phone) rows.push(`<div class="row"><span class="lbl">📞</span><span class="val"><a href="${esc(telHref(phone))}">${esc(phone)}</a></span></div>`);
+
+    const website = p.website || p['contact:website'];
+    if (website) rows.push(`<div class="row"><span class="lbl">🌐</span><span class="val"><a href="${esc(webHref(website))}" target="_blank" rel="noopener">${esc(website)}</a></span></div>`);
+
+    if (p.wheelchair) {
+      const mark = p.wheelchair === 'yes' ? '♿' : p.wheelchair === 'limited' ? '◐' : '✕';
+      rows.push(`<div class="row"><span class="lbl">${mark}</span><span class="val">wheelchair: ${esc(humanize(p.wheelchair))}</span></div>`);
+    }
+
+    if (p.internet_access && p.internet_access !== 'no') {
+      rows.push(`<div class="row"><span class="lbl">📶</span><span class="val">wifi: ${esc(humanize(p.internet_access))}</span></div>`);
+    }
+
+    const brandOp = [p.brand, p.operator && p.operator !== p.brand ? p.operator : null].filter(Boolean).join(' · ');
+    if (brandOp) rows.push(`<div class="row"><span class="lbl">🏢</span><span class="val">${esc(brandOp)}</span></div>`);
+
+    if (p.cuisine) {
+      const cuisines = p.cuisine.split(';').map(c => humanize(c.trim())).join(', ');
+      rows.push(`<div class="row"><span class="lbl">🍽️</span><span class="val">${esc(cuisines)}</span></div>`);
+    }
+
+    if (p.description) rows.push(`<div class="row"><span class="lbl">💬</span><span class="val">${esc(p.description)}</span></div>`);
+
+    if (p.wikipedia) {
+      const parts = p.wikipedia.split(':');
+      if (parts.length >= 2) {
+        const lang = parts[0];
+        const article = parts.slice(1).join(':');
+        const url = `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(article.replace(/ /g, '_'))}`;
+        rows.push(`<div class="row"><span class="lbl">📚</span><span class="val"><a href="${esc(url)}" target="_blank" rel="noopener">Wikipedia: ${esc(article)}</a></span></div>`);
+      }
+    } else if (p.wikidata) {
+      const url = `https://www.wikidata.org/wiki/${encodeURIComponent(p.wikidata)}`;
+      rows.push(`<div class="row"><span class="lbl">📚</span><span class="val"><a href="${esc(url)}" target="_blank" rel="noopener">Wikidata: ${esc(p.wikidata)}</a></span></div>`);
+    }
+
+    document.getElementById('poiCardBody').innerHTML = rows.join('');
+    card.classList.add('show');
+  }
+
+  function setSelected(poi, opts = {}) {
+    if (selectedMarker) { selectedMarker.remove(); selectedMarker = null; }
+    if (!poi) {
+      localStorage.removeItem(SELECTED_KEY);
+      renderPoiCard(null);
+      return;
+    }
+    const el = document.createElement('div');
+    el.className = 'selected-marker';
+    const iconFile = iconFileFor(poi.category);
+    el.innerHTML = `<img class="icon" src="/icons/${encodeURIComponent(iconFile)}.svg"
+      onerror="this.style.display='none'">`;
+    selectedMarker = new maplibregl.Marker({ element: el, anchor: 'center' })
+      .setLngLat([poi.lng, poi.lat])
+      .addTo(map);
+    localStorage.setItem(SELECTED_KEY, JSON.stringify(poi));
+    renderPoiCard(poi);
+    if (opts.flyTo) {
+      map.flyTo({ center: [poi.lng, poi.lat], zoom: Math.max(map.getZoom(), 16) });
+    }
+  }
+
+  document.getElementById('poiCardClose').onclick = () => setSelected(null);
+
   map.on('click', (e) => {
     const bbox = [[e.point.x - 8, e.point.y - 8], [e.point.x + 8, e.point.y + 8]];
-    const hits = map.queryRenderedFeatures(bbox, { layers: ['poi-icons', 'poi-labels'] });
-    if (!hits.length) return;
-    const p = hits[0].properties;
-    const realName = p['name:latin'] || p.name || p.name_int;
-    const name = realName
-      || humanize(p.subclass)
-      || humanize(p.class)
-      || '(unnamed)';
-    const subParts = realName
-      ? [p.class, p.subclass && p.subclass !== p.class ? p.subclass : null]
-      : (p.subclass && p.class !== p.subclass ? [p.class] : []);
-    const sub = subParts.filter(Boolean).map(humanize).join(' · ');
-    new maplibregl.Popup({ closeButton: true, maxWidth: '240px' })
-      .setLngLat(e.lngLat)
-      .setHTML(`<strong>${esc(name)}</strong>${sub ? '<br><small>' + esc(sub) + '</small>' : ''}`)
-      .addTo(map);
+    const hits = map.queryRenderedFeatures(bbox, { layers: ['poi-icons'] });
+    if (!hits.length) { setSelected(null); return; }
+    const f = hits[0];
+    const pr = f.properties;
+    const name = pr['name:latin'] || pr.name || pr.name_int || '(unnamed)';
+    const [lng, lat] = f.geometry.coordinates;
+    const full = findFullPoi(lng, lat, name);
+    const poi = full || {
+      lng, lat, name,
+      category: pr.subclass || pr.class || '',
+      props: {}
+    };
+    setSelected(poi);
   });
+
+  try {
+    const stored = JSON.parse(localStorage.getItem(SELECTED_KEY) || 'null');
+    if (stored && typeof stored.lng === 'number') setSelected(stored);
+  } catch {}
 
   let allPois = await loadAllPois();
 
@@ -554,7 +751,6 @@ function fmtDate(ts) {
     const q = searchInput.value.trim();
     const filter = searchFilter.value;
     const qLower = q.toLowerCase();
-    if (!q && !filter) { searchResults.classList.remove('show'); searchResults.innerHTML = ''; spacerEl = null; countEl = null; return; }
     const ref = lastKnownPos || (() => { const c = map.getCenter(); return { lng: c.lng, lat: c.lat }; })();
     const matches = [];
     for (const p of allPois) {
@@ -592,7 +788,7 @@ function fmtDate(ts) {
     if (!row) return;
     const p = searchMatches[+row.dataset.idx];
     if (!p) return;
-    map.flyTo({ center: [p.lng, p.lat], zoom: Math.max(map.getZoom(), 16) });
+    setSelected(p, { flyTo: true });
     searchInput.value = '';
     searchResults.classList.remove('show');
     searchInput.blur();
@@ -601,9 +797,7 @@ function fmtDate(ts) {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(renderSearch, 120);
   });
-  searchInput.addEventListener('focus', () => {
-    if (searchInput.value.trim() || searchFilter.value) renderSearch();
-  });
+  searchInput.addEventListener('focus', renderSearch);
   searchFilter.addEventListener('change', renderSearch);
   document.addEventListener('click', (e) => {
     if (!document.getElementById('search').contains(e.target)) {
@@ -745,18 +939,13 @@ function fmtDate(ts) {
   const POI_MB_PER_REGION = 1.0;
   function updateAppDataLabel() {
     const btn = document.getElementById('appDataBtn');
-    const regionsWithPois = new Set(allPois.map(p => p.regionId));
-    const missing = loadRegions().filter(r => !regionsWithPois.has(r.id)).length;
+    const regionCount = loadRegions().length;
     const fontsCached = localStorage.getItem('cc.fontsDownloaded') === '1';
     const iconsCached = localStorage.getItem('cc.iconsDownloaded') === '1';
     const total = (fontsCached ? 0 : FONTS_MB)
       + (iconsCached ? 0 : ICONS_MB)
-      + missing * POI_MB_PER_REGION;
-    if (total === 0) {
-      btn.textContent = '↓ app data (up to date)';
-    } else {
-      btn.textContent = `↓ app data (~${total.toFixed(1)} MB)`;
-    }
+      + regionCount * POI_MB_PER_REGION;
+    btn.textContent = `↓ app data (~${total.toFixed(1)} MB)`;
   }
   updateAppDataLabel();
 
@@ -789,11 +978,12 @@ function fmtDate(ts) {
     status.textContent = `icons: ${iconCount}`;
     if (iconCount > 0) localStorage.setItem('cc.iconsDownloaded', '1');
 
-    const withPois = new Set(allPois.map(p => p.regionId));
-    const missing = loadRegions().filter(r => !withPois.has(r.id));
-    for (let i = 0; i < missing.length; i++) {
-      const r = missing[i];
-      status.textContent = `POIs ${i + 1}/${missing.length}`;
+    const all = loadRegions();
+    for (let i = 0; i < all.length; i++) {
+      const r = all[i];
+      status.textContent = `POIs ${i + 1}/${all.length}`;
+      await deletePoisByRegion(r.id);
+      allPois = allPois.filter(p => p.regionId !== r.id);
       const n = await fetchAndSavePois(r.id, r.bbox);
       const list = loadRegions();
       const hit = list.find(x => x.id === r.id);

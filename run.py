@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import pathlib
 from flask import Flask, send_from_directory, Response, abort, request, jsonify
@@ -72,12 +73,21 @@ def poi():
     for path in sorted(DATA_DIR.glob("*.pois.sqlite")) if DATA_DIR.exists() else []:
         with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
             rows = conn.execute(
-                "SELECT lng, lat, name, category FROM poi "
+                "SELECT lng, lat, name, category, props FROM poi "
                 "WHERE lng BETWEEN ? AND ? AND lat BETWEEN ? AND ?",
                 (w, e, s, n),
             ).fetchall()
-            for lng, lat, name, category in rows:
-                results.append({"lng": lng, "lat": lat, "name": name, "category": category})
+            for lng, lat, name, category, props_json in rows:
+                props = {}
+                if props_json:
+                    try:
+                        props = json.loads(props_json)
+                    except json.JSONDecodeError:
+                        pass
+                results.append({
+                    "lng": lng, "lat": lat, "name": name,
+                    "category": category, "props": props,
+                })
     return jsonify({"pois": results})
 
 
