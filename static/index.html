@@ -71,12 +71,14 @@
   .poi-result { padding: 8px 12px; border-bottom: 1px solid #eee; cursor: pointer; }
   .poi-result:last-child { border-bottom: none; }
   .poi-result:active { background: #eef; }
-  .poi-result { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .poi-result { display: flex; justify-content: space-between; align-items: center; gap: 10px; height: 52px; box-sizing: border-box; }
   .poi-result .info { flex: 1; min-width: 0; }
   .poi-result .info > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .poi-result .name { font-size: 14px; }
-  .poi-result .cat { font-size: 11px; color: #888; }
+  .poi-result .name { font-size: 14px; line-height: 1.2; }
+  .poi-result .cat { font-size: 11px; color: #888; line-height: 1.2; }
   .poi-result .dist { font-size: 12px; color: #666; white-space: nowrap; flex-shrink: 0; }
+  .poi-spacer { position: relative; width: 100%; }
+  .poi-count { padding: 6px 12px; font-size: 11px; color: #888; background: #f5f5f5; position: sticky; top: 0; z-index: 2; }
 </style>
 </head>
 <body>
@@ -364,11 +366,52 @@ function fmtDate(ts) {
     }
   }
 
+  const ICON_ALIAS_MAP = {
+    "rail":              ["platform", "station"],
+    "bus":               ["bus_stop", "stop_position"],
+    "clothing-store":    ["clothes"],
+    "grocery":           ["supermarket"],
+    "campsite":          ["camp_site"],
+    "art-gallery":       ["artwork"],
+    "bicycle-share":     ["bicycle_rental"],
+    "doctor":            ["clinic", "doctors"],
+    "post":              ["post_office", "post_box"],
+    "alcohol-shop":      ["alcohol"],
+    "shop":              ["variety_store", "department_store"],
+    "beer":              ["pub"],
+    "town-hall":         ["government", "townhall", "community_centre"],
+    "monument":          ["memorial"],
+    "lodging":           ["hotel", "motel", "guest_house", "chalet"],
+    "veterinary":        ["pet"],
+    "shoe":              ["shoes"],
+    "jewelry-store":     ["jewelry"],
+    "bank":              ["atm"],
+    "library":           ["books"],
+    "park":              ["nature_reserve"],
+    "stadium":           ["sports_centre"],
+    "religious-christian": ["place_of_worship"],
+    "marker":            ["boundary_stone"],
+    "bicycle":           ["bicycle_parking"],
+    "laundry":           ["dry_cleaning"],
+    "swimming":          ["swimming_pool"],
+    "hairdresser":       ["beauty"],
+  };
+
   async function registerIconFromSvg(name, svgText) {
     if (map.hasImage(name)) return true;
     try {
       const { data, pixelRatio } = await svgToImageData(svgText);
       map.addImage(name, data, { pixelRatio });
+      if (name.includes('-')) {
+        const us = name.replace(/-/g, '_');
+        if (!map.hasImage(us)) map.addImage(us, data, { pixelRatio });
+      }
+      const aliases = ICON_ALIAS_MAP[name];
+      if (aliases) {
+        for (const a of aliases) {
+          if (!map.hasImage(a)) map.addImage(a, data, { pixelRatio });
+        }
+      }
       return true;
     } catch { return false; }
   }
@@ -469,11 +512,49 @@ function fmtDate(ts) {
     if (counts.has(prev)) searchFilter.value = prev;
   }
 
+  const ROW_HEIGHT = 52;
+  const OVERSCAN = 3;
+  let searchMatches = [];
+  let rafScheduled = false;
+  let spacerEl = null;
+  let countEl = null;
+
+  function buildSearchFrame() {
+    searchResults.innerHTML = '';
+    countEl = document.createElement('div');
+    countEl.className = 'poi-count';
+    spacerEl = document.createElement('div');
+    spacerEl.className = 'poi-spacer';
+    searchResults.appendChild(countEl);
+    searchResults.appendChild(spacerEl);
+  }
+
+  function renderVisibleRows() {
+    if (!spacerEl) return;
+    const scrollTop = searchResults.scrollTop - (countEl ? countEl.offsetHeight : 0);
+    const viewportHeight = searchResults.clientHeight;
+    const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+    const end = Math.min(searchMatches.length - 1,
+      Math.ceil((scrollTop + viewportHeight) / ROW_HEIGHT) + OVERSCAN);
+    const parts = [];
+    for (let i = start; i <= end; i++) {
+      const p = searchMatches[i];
+      parts.push(`<div class="poi-result" data-idx="${i}" style="position:absolute;top:${i * ROW_HEIGHT}px;left:0;right:0">
+        <div class="info">
+          <div class="name">${esc(p.name)}</div>
+          ${p.category ? `<div class="cat">${esc(humanize(p.category))}</div>` : ''}
+        </div>
+        <div class="dist">${fmtDist(p.dist)}</div>
+      </div>`);
+    }
+    spacerEl.innerHTML = parts.join('');
+  }
+
   function renderSearch() {
     const q = searchInput.value.trim();
     const filter = searchFilter.value;
     const qLower = q.toLowerCase();
-    if (!q && !filter) { searchResults.classList.remove('show'); searchResults.innerHTML = ''; return; }
+    if (!q && !filter) { searchResults.classList.remove('show'); searchResults.innerHTML = ''; spacerEl = null; countEl = null; return; }
     const ref = lastKnownPos || (() => { const c = map.getCenter(); return { lng: c.lng, lat: c.lat }; })();
     const matches = [];
     for (const p of allPois) {
@@ -482,30 +563,40 @@ function fmtDate(ts) {
       matches.push({ ...p, dist: haversineKm(ref.lat, ref.lng, p.lat, p.lng) });
     }
     matches.sort((a, b) => a.dist - b.dist);
-    const out = matches.slice(0, 20);
-    if (!out.length) {
+    searchMatches = matches;
+
+    if (!matches.length) {
       searchResults.innerHTML = '<div class="poi-result"><div class="info"><div class="name" style="color:#999">no matches in downloaded regions</div></div></div>';
+      spacerEl = null; countEl = null;
     } else {
-      searchResults.innerHTML = out.map((p, i) =>
-        `<div class="poi-result" data-idx="${i}">
-          <div class="info">
-            <div class="name">${esc(p.name)}</div>
-            ${p.category ? `<div class="cat">${esc(humanize(p.category))}</div>` : ''}
-          </div>
-          <div class="dist">${fmtDist(p.dist)}</div>
-        </div>`).join('');
-      searchResults.querySelectorAll('.poi-result').forEach((el, i) => {
-        el.onclick = () => {
-          const p = out[i];
-          map.flyTo({ center: [p.lng, p.lat], zoom: Math.max(map.getZoom(), 16) });
-          searchInput.value = '';
-          searchResults.classList.remove('show');
-          searchInput.blur();
-        };
-      });
+      buildSearchFrame();
+      countEl.textContent = `${matches.length.toLocaleString()} match${matches.length === 1 ? '' : 'es'}`;
+      spacerEl.style.height = (matches.length * ROW_HEIGHT) + 'px';
+      searchResults.scrollTop = 0;
+      renderVisibleRows();
     }
     searchResults.classList.add('show');
   }
+
+  searchResults.addEventListener('scroll', () => {
+    if (rafScheduled) return;
+    rafScheduled = true;
+    requestAnimationFrame(() => {
+      rafScheduled = false;
+      renderVisibleRows();
+    });
+  }, { passive: true });
+
+  searchResults.addEventListener('click', (e) => {
+    const row = e.target.closest('.poi-result[data-idx]');
+    if (!row) return;
+    const p = searchMatches[+row.dataset.idx];
+    if (!p) return;
+    map.flyTo({ center: [p.lng, p.lat], zoom: Math.max(map.getZoom(), 16) });
+    searchInput.value = '';
+    searchResults.classList.remove('show');
+    searchInput.blur();
+  });
   searchInput.addEventListener('input', () => {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(renderSearch, 120);
