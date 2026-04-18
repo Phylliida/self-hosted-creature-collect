@@ -1,0 +1,10 @@
+{ pkgs ? import <nixpkgs> {} }:
+pkgs.mkShell {
+  packages = [
+    pkgs.python3
+    pkgs.python3Packages.flask
+    pkgs.tilemaker
+    pkgs.cloudflared
+    pkgs.git
+  ];
+}

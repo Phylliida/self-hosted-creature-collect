@@ -1,0 +1,350 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>creature collect</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/svg+xml" href="/static/icon.svg">
+<link rel="apple-touch-icon" href="/static/icon.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="collect">
+<meta name="theme-color" content="#a0c8f0">
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<style>
+  html, body {
+    margin: 0; width: 100%; font-family: system-ui, sans-serif;
+    height: 100vh; height: -webkit-fill-available; height: 100dvh;
+    overscroll-behavior: none;
+  }
+  #map { position: absolute; inset: 0; background: #f5f5dc; }
+  #install {
+    position: absolute; left: 0; right: 0; top: 0; z-index: 20;
+    padding: 10px 14px;
+    padding-top: calc(10px + env(safe-area-inset-top));
+    padding-left: calc(14px + env(safe-area-inset-left));
+    padding-right: calc(14px + env(safe-area-inset-right));
+    background: #2d2d2d; color: #fff; font-size: 13px; display: none;
+  }
+  #install.show { display: flex; gap: 10px; align-items: center; }
+  #install .msg { flex: 1; }
+  #install button { background: transparent; color: #fff; border: 1px solid #fff;
+                    border-radius: 4px; padding: 4px 8px; cursor: pointer; }
+  #panel {
+    position: absolute; left: 8px; right: 8px; z-index: 10;
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    background: rgba(255,255,255,0.95); border-radius: 8px; padding: 10px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2); max-height: 45vh; overflow: auto;
+  }
+  #panel button { padding: 8px 12px; font-size: 14px; margin: 2px; cursor: pointer; }
+  #panel input { padding: 6px; font-size: 14px; margin: 2px; }
+  #status { font-size: 12px; color: #555; margin-top: 4px; }
+  .region { display: flex; justify-content: space-between; align-items: center;
+            padding: 4px 0; border-top: 1px solid #eee; }
+  .region .label { font-size: 13px; }
+  .region .meta { font-size: 11px; color: #888; }
+  details summary { cursor: pointer; user-select: none; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="install">
+  <div class="msg">Tap <b>Share</b> → <b>Add to Home Screen</b> so offline tiles aren't evicted.</div>
+  <button id="installDismiss">ok</button>
+</div>
+<div id="panel">
+  <details>
+    <summary><b>offline maps</b> <span id="offlineBadge"></span></summary>
+    <div style="margin-top: 8px;">
+      <label>z<input id="zMin" type="number" min="0" max="14" value="10" style="width: 40px;">–<input id="zMax" type="number" min="0" max="14" value="14" style="width: 40px;"></label>
+      <button id="downloadBtn">↓ save current view</button>
+      <div id="status"></div>
+      <div id="storage" style="font-size: 11px; color: #888; margin-top: 2px;"></div>
+      <div id="regions"></div>
+    </div>
+  </details>
+</div>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandalone = window.navigator.standalone
+  || window.matchMedia('(display-mode: standalone)').matches;
+if (isIOS && !isStandalone && localStorage.getItem('cc.installDismissed') !== '1') {
+  document.getElementById('install').classList.add('show');
+}
+document.getElementById('installDismiss').onclick = () => {
+  localStorage.setItem('cc.installDismissed', '1');
+  document.getElementById('install').classList.remove('show');
+};
+
+async function updateStorageInfo() {
+  const el = document.getElementById('storage');
+  if (!el || !navigator.storage) return;
+  const parts = [];
+  if (navigator.storage.persisted) {
+    parts.push((await navigator.storage.persisted()) ? 'persistent ✓' : 'not persistent');
+  }
+  if (navigator.storage.estimate) {
+    const { usage = 0, quota = 0 } = await navigator.storage.estimate();
+    const mb = (n) => (n / 1048576).toFixed(1) + 'MB';
+    parts.push(`${mb(usage)} / ${mb(quota)}`);
+  }
+  el.textContent = parts.join(' · ');
+}
+
+async function requestPersistent() {
+  if (navigator.storage && navigator.storage.persist) {
+    try { await navigator.storage.persist(); } catch {}
+  }
+  updateStorageInfo();
+}
+requestPersistent();
+
+function lonLatToTile(lon, lat, z) {
+  const n = 2 ** z;
+  const x = Math.floor((lon + 180) / 360 * n);
+  const latRad = lat * Math.PI / 180;
+  const y = Math.floor((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n);
+  return [Math.max(0, Math.min(n - 1, x)), Math.max(0, Math.min(n - 1, y))];
+}
+
+function estimateTiles(bbox, minZoom, maxZoom) {
+  const [w, s, e, n] = bbox;
+  let count = 0;
+  for (let z = minZoom; z <= maxZoom; z++) {
+    const [xMin, yMin] = lonLatToTile(w, n, z);
+    const [xMax, yMax] = lonLatToTile(e, s, z);
+    count += (Math.abs(xMax - xMin) + 1) * (Math.abs(yMax - yMin) + 1);
+  }
+  return count;
+}
+
+const AVG_TILE_BYTES = 15 * 1024;
+const regionsKey = 'cc.regions.v1';
+function loadRegions() { return JSON.parse(localStorage.getItem(regionsKey) || '[]'); }
+function saveRegions(r) { localStorage.setItem(regionsKey, JSON.stringify(r)); }
+function bboxCenter(b) { return [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2]; }
+function fmtCoord(lon, lat) {
+  const ns = lat >= 0 ? 'N' : 'S', ew = lon >= 0 ? 'E' : 'W';
+  return `${Math.abs(lat).toFixed(2)}°${ns}, ${Math.abs(lon).toFixed(2)}°${ew}`;
+}
+function fmtDate(ts) {
+  const d = new Date(ts);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
+(async () => {
+  if (!('serviceWorker' in navigator)) {
+    document.getElementById('status').textContent =
+      'ServiceWorker unavailable — cannot run in offline-only mode on this browser.';
+    return;
+  }
+
+  await navigator.serviceWorker.register('/sw.js');
+  await navigator.serviceWorker.ready;
+
+  const viewKey = 'cc.view.v1';
+  const savedView = (() => {
+    try { return JSON.parse(localStorage.getItem(viewKey) || 'null'); } catch { return null; }
+  })();
+
+  const map = new maplibregl.Map({
+    container: 'map',
+    center: savedView?.center || [0, 0],
+    zoom: savedView?.zoom ?? 2,
+    bearing: savedView?.bearing || 0,
+    pitch: savedView?.pitch || 0,
+    style: {
+      version: 8,
+      glyphs: location.origin + '/fonts/{fontstack}/{range}.pbf',
+      sources: {
+        local: { type: 'vector', tiles: [location.origin + '/tiles/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 14 }
+      },
+      layers: [
+        { id: 'bg', type: 'background', paint: { 'background-color': '#f5f5dc' } },
+        { id: 'landcover', type: 'fill', source: 'local', 'source-layer': 'landcover', paint: { 'fill-color': '#e6e6d6' } },
+        { id: 'landuse', type: 'fill', source: 'local', 'source-layer': 'landuse', paint: { 'fill-color': '#e0e0d0' } },
+        { id: 'water', type: 'fill', source: 'local', 'source-layer': 'water', paint: { 'fill-color': '#a0c8f0' } },
+        { id: 'buildings', type: 'fill', source: 'local', 'source-layer': 'building', minzoom: 13, paint: { 'fill-color': '#d9d0c9' } },
+        { id: 'roads', type: 'line', source: 'local', 'source-layer': 'transportation', paint: { 'line-color': '#ffffff', 'line-width': 1 } },
+        { id: 'road-labels', type: 'symbol', source: 'local', 'source-layer': 'transportation_name',
+          minzoom: 13,
+          layout: { 'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name'], ['get', 'name_int']], 'text-font': ['KlokanTech Noto Sans Regular'],
+                    'text-size': 11, 'symbol-placement': 'line' },
+          paint: { 'text-color': '#555', 'text-halo-color': '#fff', 'text-halo-width': 1 } },
+        { id: 'poi-dots', type: 'circle', source: 'local', 'source-layer': 'poi',
+          minzoom: 14,
+          paint: { 'circle-radius': 3, 'circle-color': '#d66',
+                   'circle-stroke-color': '#fff', 'circle-stroke-width': 1 } },
+        { id: 'poi-labels', type: 'symbol', source: 'local', 'source-layer': 'poi',
+          minzoom: 15,
+          layout: { 'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name'], ['get', 'name_int']], 'text-font': ['KlokanTech Noto Sans Regular'],
+                    'text-size': 11, 'text-offset': [0, 0.9], 'text-anchor': 'top',
+                    'text-optional': true },
+          paint: { 'text-color': '#333', 'text-halo-color': '#fff', 'text-halo-width': 1.5 } },
+        { id: 'places', type: 'symbol', source: 'local', 'source-layer': 'place',
+          layout: { 'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name'], ['get', 'name_int']], 'text-font': ['KlokanTech Noto Sans Regular'],
+                    'text-size': ['match', ['get', 'class'], 'city', 14, 'town', 12, 10] },
+          paint: { 'text-color': '#333', 'text-halo-color': '#fff', 'text-halo-width': 1 } }
+      ]
+    },
+  });
+  map.addControl(new maplibregl.NavigationControl());
+
+  map.on('moveend', () => {
+    const c = map.getCenter();
+    localStorage.setItem(viewKey, JSON.stringify({
+      center: [c.lng, c.lat], zoom: map.getZoom(),
+      bearing: map.getBearing(), pitch: map.getPitch()
+    }));
+  });
+  map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: 'metric' }));
+
+  const geolocate = new maplibregl.GeolocateControl({
+    positionOptions: { enableHighAccuracy: true },
+    trackUserLocation: true,
+    showUserHeading: true,
+    fitBoundsOptions: { maxZoom: 15 }
+  });
+  map.addControl(geolocate);
+
+  map.on('load', () => {
+    if (!savedView && localStorage.getItem('cc.geoPromptDone') !== '1') {
+      geolocate.trigger();
+      localStorage.setItem('cc.geoPromptDone', '1');
+    }
+  });
+
+  geolocate.on('error', (e) => {
+    const status = document.getElementById('status');
+    if (status) status.textContent = 'location: ' + (e && e.message ? e.message : 'unavailable');
+  });
+
+  const esc = (s) => String(s).replace(/[&<>"']/g,
+    c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const humanize = (s) => String(s || '').replace(/_/g, ' ')
+    .replace(/\b\w/g, c => c.toUpperCase());
+  map.on('click', (e) => {
+    const bbox = [[e.point.x - 8, e.point.y - 8], [e.point.x + 8, e.point.y + 8]];
+    const hits = map.queryRenderedFeatures(bbox, { layers: ['poi-dots', 'poi-labels'] });
+    if (!hits.length) return;
+    const p = hits[0].properties;
+    const realName = p['name:latin'] || p.name || p.name_int;
+    const name = realName
+      || humanize(p.subclass)
+      || humanize(p.class)
+      || '(unnamed)';
+    const subParts = realName
+      ? [p.class, p.subclass && p.subclass !== p.class ? p.subclass : null]
+      : (p.subclass && p.class !== p.subclass ? [p.class] : []);
+    const sub = subParts.filter(Boolean).map(humanize).join(' · ');
+    new maplibregl.Popup({ closeButton: true, maxWidth: '240px' })
+      .setLngLat(e.lngLat)
+      .setHTML(`<strong>${esc(name)}</strong>${sub ? '<br><small>' + esc(sub) + '</small>' : ''}`)
+      .addTo(map);
+  });
+
+  const currentBbox = () => {
+    const b = map.getBounds();
+    return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+  };
+
+  function updateDownloadLabel() {
+    const btn = document.getElementById('downloadBtn');
+    const minZoom = +document.getElementById('zMin').value;
+    const maxZoom = +document.getElementById('zMax').value;
+    if (!(minZoom <= maxZoom)) { btn.textContent = '↓ zmin must be ≤ zmax'; return; }
+    const count = estimateTiles(currentBbox(), minZoom, maxZoom);
+    const mb = (count * AVG_TILE_BYTES / 1048576).toFixed(1);
+    btn.textContent = `↓ save current view (${count.toLocaleString()} tiles, ~${mb} MB)`;
+  }
+  map.on('moveend', updateDownloadLabel);
+  map.on('zoomend', updateDownloadLabel);
+  document.getElementById('zMin').addEventListener('input', updateDownloadLabel);
+  document.getElementById('zMax').addEventListener('input', updateDownloadLabel);
+  map.on('load', updateDownloadLabel);
+
+  function renderRegions() {
+    const list = loadRegions();
+    document.getElementById('offlineBadge').textContent = list.length ? `(${list.length})` : '';
+    const el = document.getElementById('regions');
+    el.innerHTML = '';
+    for (const r of list) {
+      const [clon, clat] = bboxCenter(r.bbox);
+      const when = r.createdAt ? fmtDate(r.createdAt) : '';
+      const row = document.createElement('div');
+      row.className = 'region';
+      row.innerHTML = `<div><div class="label">${fmtCoord(clon, clat)}</div>
+        <div class="meta">${when} · z${r.minZoom}–${r.maxZoom} · ${r.tileCount} tiles</div></div>
+        <div><button data-goto="${r.id}">go</button>
+        <button data-del="${r.id}">×</button></div>`;
+      el.appendChild(row);
+    }
+    el.querySelectorAll('[data-goto]').forEach(b => b.onclick = () => {
+      const r = loadRegions().find(x => x.id === b.dataset.goto);
+      if (r) map.fitBounds([[r.bbox[0], r.bbox[1]], [r.bbox[2], r.bbox[3]]]);
+    });
+    el.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+      const id = b.dataset.del;
+      const list = loadRegions();
+      const r = list.find(x => x.id === id);
+      if (!r) return;
+      if (!confirm('delete this map?')) return;
+      const reg = await navigator.serviceWorker.ready;
+      reg.active.postMessage({ type: 'deleteTiles', urls: r.urls });
+      saveRegions(list.filter(x => x.id !== id));
+      renderRegions();
+      updateStorageInfo();
+    });
+  }
+  renderRegions();
+
+  async function getFontUrls() {
+    const fontstack = 'KlokanTech Noto Sans Regular';
+    try {
+      const res = await fetch(`/fontslist/${encodeURIComponent(fontstack)}`);
+      if (!res.ok) return [];
+      const { files } = await res.json();
+      return files.map(f => `/fonts/${encodeURIComponent(fontstack)}/${f}`);
+    } catch { return []; }
+  }
+
+  document.getElementById('downloadBtn').onclick = async () => {
+    const minZoom = +document.getElementById('zMin').value;
+    const maxZoom = +document.getElementById('zMax').value;
+    if (!(minZoom <= maxZoom)) return;
+    const bbox = currentBbox();
+    const id = crypto.randomUUID();
+    const status = document.getElementById('status');
+    status.textContent = 'preparing…';
+    const extraUrls = await getFontUrls();
+    const reg = await navigator.serviceWorker.ready;
+    const onMsg = (e) => {
+      if (e.data.id !== id) return;
+      if (e.data.type === 'progress') {
+        status.textContent = `downloading ${e.data.done}/${e.data.total}${e.data.failed ? ` (${e.data.failed} failed)` : ''}`;
+      } else if (e.data.type === 'done') {
+        status.textContent = `saved ${e.data.done - e.data.failed} tiles (${e.data.failed} failed)`;
+        const list = loadRegions();
+        list.push({
+          id, createdAt: Date.now(), bbox, minZoom, maxZoom,
+          tileCount: e.data.done - e.data.failed, urls: e.data.urls
+        });
+        saveRegions(list);
+        renderRegions();
+        requestPersistent();
+        const src = map.getSource('local');
+        if (src && src.setTiles) src.setTiles([location.origin + '/tiles/{z}/{x}/{y}.pbf']);
+        navigator.serviceWorker.removeEventListener('message', onMsg);
+      }
+    };
+    navigator.serviceWorker.addEventListener('message', onMsg);
+    reg.active.postMessage({ type: 'download', bbox, minZoom, maxZoom, id, extraUrls });
+  };
+})();
+</script>
+</body>
+</html>
