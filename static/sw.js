@@ -36,7 +36,8 @@ self.addEventListener('fetch', (e) => {
     }));
     return;
   }
-  if (url.origin === location.origin && url.pathname.startsWith('/fonts')) {
+  if (url.origin === location.origin &&
+      (url.pathname.startsWith('/fonts') || url.pathname.startsWith('/icons'))) {
     if (e.request.headers.get('X-Download') === '1') {
       e.respondWith(
         caches.open(APP_CACHE).then(async (c) => {
@@ -65,6 +66,8 @@ self.addEventListener('message', (e) => {
     e.waitUntil(downloadRegion(msg, e.source));
   } else if (msg.type === 'deleteTiles') {
     e.waitUntil(deleteTiles(msg.urls));
+  } else if (msg.type === 'refreshAppShell') {
+    e.waitUntil(refreshAppShell(e.source));
   }
 });
 
@@ -99,6 +102,18 @@ async function downloadRegion({ bbox, minZoom, maxZoom, extraUrls = [], id }, cl
 async function deleteTiles(urls) {
   const cache = await caches.open(TILES_CACHE);
   for (const u of urls) await cache.delete(u);
+}
+
+async function refreshAppShell(client) {
+  const cache = await caches.open(APP_CACHE);
+  for (const url of APP_SHELL) {
+    await cache.delete(url);
+    try {
+      const res = await fetch(url, { cache: 'reload' });
+      if (res.ok) await cache.put(url, res);
+    } catch {}
+  }
+  if (client) client.postMessage({ type: 'appShellRefreshed' });
 }
 
 function tileUrls(bbox, minZoom, maxZoom) {

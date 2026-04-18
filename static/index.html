@@ -32,10 +32,14 @@
   #install button { background: transparent; color: #fff; border: 1px solid #fff;
                     border-radius: 4px; padding: 4px 8px; cursor: pointer; }
   #panel {
-    position: absolute; left: 8px; right: 8px; z-index: 10;
+    position: absolute; left: 8px; right: 68px; z-index: 10;
     bottom: calc(8px + env(safe-area-inset-bottom));
     background: rgba(255,255,255,0.95); border-radius: 8px; padding: 10px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.2); max-height: 45vh; overflow: auto;
+  }
+  .maplibregl-ctrl-bottom-right {
+    bottom: env(safe-area-inset-bottom) !important;
+    right: env(safe-area-inset-right) !important;
   }
   #panel button { padding: 8px 12px; font-size: 14px; margin: 2px; cursor: pointer; }
   #panel input { padding: 6px; font-size: 14px; margin: 2px; }
@@ -53,6 +57,11 @@
     width: 100%; padding: 10px 12px; font-size: 14px; border: none; border-radius: 6px;
     box-shadow: 0 2px 6px rgba(0,0,0,0.2); box-sizing: border-box; background: #fff;
   }
+  #searchFilter {
+    width: 100%; padding: 8px 10px; font-size: 13px; margin-top: 4px;
+    border: none; border-radius: 6px; box-sizing: border-box; background: #fff;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  }
   #searchResults {
     background: #fff; margin-top: 4px; border-radius: 6px;
     max-height: 40vh; overflow-y: auto;
@@ -62,8 +71,12 @@
   .poi-result { padding: 8px 12px; border-bottom: 1px solid #eee; cursor: pointer; }
   .poi-result:last-child { border-bottom: none; }
   .poi-result:active { background: #eef; }
+  .poi-result { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .poi-result .info { flex: 1; min-width: 0; }
+  .poi-result .info > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .poi-result .name { font-size: 14px; }
   .poi-result .cat { font-size: 11px; color: #888; }
+  .poi-result .dist { font-size: 12px; color: #666; white-space: nowrap; flex-shrink: 0; }
 </style>
 </head>
 <body>
@@ -71,6 +84,7 @@
 <div id="search">
   <input id="searchInput" type="search" placeholder="search (downloaded regions)"
          autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+  <select id="searchFilter"><option value="">all types</option></select>
   <div id="searchResults"></div>
 </div>
 <div id="install">
@@ -245,10 +259,17 @@ function fmtDate(ts) {
           layout: { 'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name'], ['get', 'name_int']], 'text-font': ['KlokanTech Noto Sans Regular'],
                     'text-size': 11, 'symbol-placement': 'line' },
           paint: { 'text-color': '#555', 'text-halo-color': '#fff', 'text-halo-width': 1 } },
-        { id: 'poi-dots', type: 'circle', source: 'local', 'source-layer': 'poi',
-          minzoom: 14,
-          paint: { 'circle-radius': 3, 'circle-color': '#d66',
-                   'circle-stroke-color': '#fff', 'circle-stroke-width': 1 } },
+        { id: 'poi-icons', type: 'symbol', source: 'local', 'source-layer': 'poi',
+          layout: {
+            'icon-image': ['coalesce',
+              ['image', ['get', 'subclass']],
+              ['image', ['get', 'class']],
+              ['image', 'poi-default']],
+            'icon-size': ['interpolate', ['exponential', 1.5], ['zoom'],
+              11, 0.08, 14, 0.2, 16, 0.4, 18, 0.75, 20, 1.0],
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true
+          } },
         { id: 'poi-labels', type: 'symbol', source: 'local', 'source-layer': 'poi',
           minzoom: 15,
           layout: { 'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name'], ['get', 'name_int']], 'text-font': ['KlokanTech Noto Sans Regular'],
@@ -262,7 +283,34 @@ function fmtDate(ts) {
       ]
     },
   });
-  map.addControl(new maplibregl.NavigationControl());
+  class RefreshControl {
+    onAdd() {
+      const c = document.createElement('div');
+      c.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.title = 'refresh app (keeps saved maps)';
+      b.setAttribute('aria-label', 'refresh app');
+      b.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style="display:block;margin:auto"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10H17.6A5.99 5.99 0 0 1 12 18a6 6 0 1 1 4.22-10.22L13 11h7V4z"/></svg>`;
+      b.onclick = async () => {
+        b.disabled = true;
+        const reg = await navigator.serviceWorker.ready;
+        const onMsg = (e) => {
+          if (e.data && e.data.type === 'appShellRefreshed') {
+            navigator.serviceWorker.removeEventListener('message', onMsg);
+            location.reload();
+          }
+        };
+        navigator.serviceWorker.addEventListener('message', onMsg);
+        reg.active.postMessage({ type: 'refreshAppShell' });
+      };
+      c.appendChild(b);
+      return c;
+    }
+    onRemove() {}
+  }
+  map.addControl(new RefreshControl(), 'bottom-right');
+  map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
 
   map.on('moveend', () => {
     const c = map.getCenter();
@@ -271,7 +319,7 @@ function fmtDate(ts) {
       bearing: map.getBearing(), pitch: map.getPitch()
     }));
   });
-  map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: 'metric' }));
+  map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: 'metric' }), 'bottom-left');
 
   const geolocate = new maplibregl.GeolocateControl({
     positionOptions: { enableHighAccuracy: true },
@@ -279,7 +327,7 @@ function fmtDate(ts) {
     showUserHeading: true,
     fitBoundsOptions: { maxZoom: 15 }
   });
-  map.addControl(geolocate);
+  map.addControl(geolocate, 'bottom-right');
 
   map.on('load', () => {
     if (!savedView && localStorage.getItem('cc.geoPromptDone') !== '1') {
@@ -293,13 +341,97 @@ function fmtDate(ts) {
     if (status) status.textContent = 'location: ' + (e && e.message ? e.message : 'unavailable');
   });
 
+  let lastKnownPos = null;
+  geolocate.on('geolocate', (e) => {
+    lastKnownPos = { lng: e.coords.longitude, lat: e.coords.latitude };
+  });
+
+  async function svgToImageData(svgText, size = 24, dpr = 2) {
+    const blob = new Blob([svgText], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    try {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = size * dpr;
+      canvas.height = size * dpr;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, size * dpr, size * dpr);
+      return { data: ctx.getImageData(0, 0, size * dpr, size * dpr), pixelRatio: dpr };
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  async function registerIconFromSvg(name, svgText) {
+    if (map.hasImage(name)) return true;
+    try {
+      const { data, pixelRatio } = await svgToImageData(svgText);
+      map.addImage(name, data, { pixelRatio });
+      return true;
+    } catch { return false; }
+  }
+
+  async function loadIcon(name, opts = {}) {
+    if (map.hasImage(name)) return true;
+    try {
+      const headers = opts.download ? { 'X-Download': '1' } : {};
+      const res = await fetch(`/icons/${encodeURIComponent(name)}.svg`, { headers });
+      if (!res.ok || res.status === 204) return false;
+      const svg = await res.text();
+      if (!svg) return false;
+      return registerIconFromSvg(name, svg);
+    } catch { return false; }
+  }
+
+  const DEFAULT_MARKER_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6" fill="#d66" stroke="#fff" stroke-width="2"/></svg>`;
+
+  async function registerDefaultMarker() {
+    await registerIconFromSvg('poi-default', DEFAULT_MARKER_SVG);
+  }
+
+  async function loadAllIcons(opts = {}) {
+    try {
+      const res = await fetch('/iconslist', opts.download ? { headers: { 'X-Download': '1' } } : undefined);
+      if (!res.ok) return 0;
+      const { files = [] } = await res.json();
+      if (!files.length) return 0;
+      const names = files.map(f => f.replace(/\.svg$/, ''));
+      let loaded = 0;
+      await Promise.all(names.map(async (n) => { if (await loadIcon(n, opts)) loaded++; }));
+      if (loaded) map.triggerRepaint();
+      return loaded;
+    } catch { return 0; }
+  }
+
+  map.on('load', async () => {
+    await registerDefaultMarker();
+    await loadAllIcons();
+  });
+
+  function haversineKm(lat1, lon1, lat2, lon2) {
+    const R = 6371;
+    const toRad = (d) => d * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat / 2) ** 2
+      + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+  }
+  function fmtDist(km) {
+    if (km < 1) return `${Math.round(km * 1000)} m`;
+    if (km < 10) return `${km.toFixed(1)} km`;
+    return `${Math.round(km)} km`;
+  }
+
   const esc = (s) => String(s).replace(/[&<>"']/g,
     c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const humanize = (s) => String(s || '').replace(/_/g, ' ')
     .replace(/\b\w/g, c => c.toUpperCase());
   map.on('click', (e) => {
     const bbox = [[e.point.x - 8, e.point.y - 8], [e.point.x + 8, e.point.y + 8]];
-    const hits = map.queryRenderedFeatures(bbox, { layers: ['poi-dots', 'poi-labels'] });
+    const hits = map.queryRenderedFeatures(bbox, { layers: ['poi-icons', 'poi-labels'] });
     if (!hits.length) return;
     const p = hits[0].properties;
     const realName = p['name:latin'] || p.name || p.name_int;
@@ -320,26 +452,47 @@ function fmtDate(ts) {
   let allPois = await loadAllPois();
 
   const searchInput = document.getElementById('searchInput');
+  const searchFilter = document.getElementById('searchFilter');
   const searchResults = document.getElementById('searchResults');
   let searchTimer = null;
 
-  function renderSearch(q) {
-    if (!q) { searchResults.classList.remove('show'); searchResults.innerHTML = ''; return; }
-    const qLower = q.toLowerCase();
-    const out = [];
+  function populateFilter() {
+    const counts = new Map();
     for (const p of allPois) {
-      if (p.name && p.name.toLowerCase().includes(qLower)) {
-        out.push(p);
-        if (out.length >= 20) break;
-      }
+      if (p.category) counts.set(p.category, (counts.get(p.category) || 0) + 1);
     }
+    const prev = searchFilter.value;
+    const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+    searchFilter.innerHTML = '<option value="">all types</option>' +
+      sorted.map(([c, n]) =>
+        `<option value="${esc(c)}">${esc(humanize(c))} (${n.toLocaleString()})</option>`).join('');
+    if (counts.has(prev)) searchFilter.value = prev;
+  }
+
+  function renderSearch() {
+    const q = searchInput.value.trim();
+    const filter = searchFilter.value;
+    const qLower = q.toLowerCase();
+    if (!q && !filter) { searchResults.classList.remove('show'); searchResults.innerHTML = ''; return; }
+    const ref = lastKnownPos || (() => { const c = map.getCenter(); return { lng: c.lng, lat: c.lat }; })();
+    const matches = [];
+    for (const p of allPois) {
+      if (filter && p.category !== filter) continue;
+      if (qLower && !(p.name && p.name.toLowerCase().includes(qLower))) continue;
+      matches.push({ ...p, dist: haversineKm(ref.lat, ref.lng, p.lat, p.lng) });
+    }
+    matches.sort((a, b) => a.dist - b.dist);
+    const out = matches.slice(0, 20);
     if (!out.length) {
-      searchResults.innerHTML = '<div class="poi-result"><div class="name" style="color:#999">no matches in downloaded regions</div></div>';
+      searchResults.innerHTML = '<div class="poi-result"><div class="info"><div class="name" style="color:#999">no matches in downloaded regions</div></div></div>';
     } else {
       searchResults.innerHTML = out.map((p, i) =>
         `<div class="poi-result" data-idx="${i}">
-          <div class="name">${esc(p.name)}</div>
-          ${p.category ? `<div class="cat">${esc(humanize(p.category))}</div>` : ''}
+          <div class="info">
+            <div class="name">${esc(p.name)}</div>
+            ${p.category ? `<div class="cat">${esc(humanize(p.category))}</div>` : ''}
+          </div>
+          <div class="dist">${fmtDist(p.dist)}</div>
         </div>`).join('');
       searchResults.querySelectorAll('.poi-result').forEach((el, i) => {
         el.onclick = () => {
@@ -355,12 +508,12 @@ function fmtDate(ts) {
   }
   searchInput.addEventListener('input', () => {
     clearTimeout(searchTimer);
-    const v = searchInput.value.trim();
-    searchTimer = setTimeout(() => renderSearch(v), 120);
+    searchTimer = setTimeout(renderSearch, 120);
   });
   searchInput.addEventListener('focus', () => {
-    if (searchInput.value.trim()) renderSearch(searchInput.value.trim());
+    if (searchInput.value.trim() || searchFilter.value) renderSearch();
   });
+  searchFilter.addEventListener('change', renderSearch);
   document.addEventListener('click', (e) => {
     if (!document.getElementById('search').contains(e.target)) {
       searchResults.classList.remove('show');
@@ -424,12 +577,14 @@ function fmtDate(ts) {
       saveRegions(list.filter(x => x.id !== id));
       renderRegions();
       renderPoiStat();
+      populateFilter();
       updateAppDataLabel();
       updateStorageInfo();
     });
   }
   renderRegions();
   renderPoiStat();
+      populateFilter();
 
   async function getFontUrls() {
     const fontstack = 'KlokanTech Noto Sans Regular';
@@ -452,6 +607,7 @@ function fmtDate(ts) {
       await savePois(regionId, pois);
       allPois = allPois.concat(pois.map(p => ({ ...p, regionId })));
       renderPoiStat();
+      populateFilter();
       return pois.length;
     } catch (err) {
       console.error('POI fetch failed:', err);
@@ -494,13 +650,17 @@ function fmtDate(ts) {
   };
 
   const FONTS_MB = 3.7;
+  const ICONS_MB = 0.9;
   const POI_MB_PER_REGION = 1.0;
   function updateAppDataLabel() {
     const btn = document.getElementById('appDataBtn');
     const regionsWithPois = new Set(allPois.map(p => p.regionId));
     const missing = loadRegions().filter(r => !regionsWithPois.has(r.id)).length;
     const fontsCached = localStorage.getItem('cc.fontsDownloaded') === '1';
-    const total = (fontsCached ? 0 : FONTS_MB) + missing * POI_MB_PER_REGION;
+    const iconsCached = localStorage.getItem('cc.iconsDownloaded') === '1';
+    const total = (fontsCached ? 0 : FONTS_MB)
+      + (iconsCached ? 0 : ICONS_MB)
+      + missing * POI_MB_PER_REGION;
     if (total === 0) {
       btn.textContent = '↓ app data (up to date)';
     } else {
@@ -533,6 +693,11 @@ function fmtDate(ts) {
       localStorage.setItem('cc.fontsDownloaded', '1');
     }
 
+    status.textContent = 'downloading icons…';
+    const iconCount = await loadAllIcons({ download: true });
+    status.textContent = `icons: ${iconCount}`;
+    if (iconCount > 0) localStorage.setItem('cc.iconsDownloaded', '1');
+
     const withPois = new Set(allPois.map(p => p.regionId));
     const missing = loadRegions().filter(r => !withPois.has(r.id));
     for (let i = 0; i < missing.length; i++) {
@@ -545,6 +710,7 @@ function fmtDate(ts) {
     }
     renderRegions();
     renderPoiStat();
+      populateFilter();
     updateAppDataLabel();
     requestPersistent();
     status.textContent = 'app data ready';
