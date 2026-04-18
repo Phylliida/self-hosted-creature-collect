@@ -8,13 +8,26 @@ PRIORITY = [
     "craft", "office", "public_transport", "railway", "highway",
 ]
 
+EXTRA_FIELDS = [
+    "addr:housenumber", "addr:street", "addr:city", "addr:postcode",
+    "opening_hours",
+    "phone", "contact:phone",
+    "website", "contact:website",
+    "wheelchair",
+    "brand", "operator",
+    "cuisine",
+    "description",
+    "wikipedia", "wikidata",
+    "internet_access",
+]
+
 def main(src, dst):
     db = sqlite3.connect(dst)
-    db.execute("""CREATE TABLE IF NOT EXISTS poi(
-        lng REAL, lat REAL, name TEXT, category TEXT
+    db.execute("DROP TABLE IF EXISTS poi")
+    db.execute("""CREATE TABLE poi(
+        lng REAL, lat REAL, name TEXT, category TEXT, props TEXT
     )""")
-    db.execute("CREATE INDEX IF NOT EXISTS idx_lnglat ON poi(lng, lat)")
-    db.execute("DELETE FROM poi")
+    db.execute("CREATE INDEX idx_lnglat ON poi(lng, lat)")
 
     count = 0
     with open(src, "r", encoding="utf-8") as f:
@@ -42,9 +55,11 @@ def main(src, dst):
                 if k in props:
                     category = props[k]
                     break
+            extra = {k: props[k] for k in EXTRA_FIELDS if k in props and props[k]}
+            extra_json = json.dumps(extra, ensure_ascii=False) if extra else ""
             db.execute(
-                "INSERT INTO poi(lng, lat, name, category) VALUES (?, ?, ?, ?)",
-                (lng, lat, name, category),
+                "INSERT INTO poi(lng, lat, name, category, props) VALUES (?, ?, ?, ?, ?)",
+                (lng, lat, name, category, extra_json),
             )
             count += 1
     db.commit()
