@@ -45,10 +45,34 @@
   .region .label { font-size: 13px; }
   .region .meta { font-size: 11px; color: #888; }
   details summary { cursor: pointer; user-select: none; }
+  #search {
+    position: absolute; top: 0; left: 8px; right: 8px; z-index: 15;
+    padding-top: calc(8px + env(safe-area-inset-top));
+  }
+  #searchInput {
+    width: 100%; padding: 10px 12px; font-size: 14px; border: none; border-radius: 6px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.2); box-sizing: border-box; background: #fff;
+  }
+  #searchResults {
+    background: #fff; margin-top: 4px; border-radius: 6px;
+    max-height: 40vh; overflow-y: auto;
+    display: none; box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  }
+  #searchResults.show { display: block; }
+  .poi-result { padding: 8px 12px; border-bottom: 1px solid #eee; cursor: pointer; }
+  .poi-result:last-child { border-bottom: none; }
+  .poi-result:active { background: #eef; }
+  .poi-result .name { font-size: 14px; }
+  .poi-result .cat { font-size: 11px; color: #888; }
 </style>
 </head>
 <body>
 <div id="map"></div>
+<div id="search">
+  <input id="searchInput" type="search" placeholder="search (downloaded regions)"
+         autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+  <div id="searchResults"></div>
+</div>
 <div id="install">
   <div class="msg">Tap <b>Share</b> → <b>Add to Home Screen</b> so offline tiles aren't evicted.</div>
   <button id="installDismiss">ok</button>
@@ -101,6 +125,50 @@ async function requestPersistent() {
   updateStorageInfo();
 }
 requestPersistent();
+
+const POI_DB_NAME = 'cc.pois.v1';
+function openPoiDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(POI_DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('pois')) {
+        const store = db.createObjectStore('pois', { autoIncrement: true });
+        store.createIndex('regionId', 'regionId');
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function savePois(regionId, pois) {
+  if (!pois.length) return;
+  const db = await openPoiDB();
+  const tx = db.transaction('pois', 'readwrite');
+  const store = tx.objectStore('pois');
+  for (const p of pois) store.put({ ...p, regionId });
+  await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
+  db.close();
+}
+async function loadAllPois() {
+  const db = await openPoiDB();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction('pois', 'readonly').objectStore('pois').getAll();
+    req.onsuccess = () => { resolve(req.result); db.close(); };
+    req.onerror = () => reject(req.error);
+  });
+}
+async function deletePoisByRegion(regionId) {
+  const db = await openPoiDB();
+  const tx = db.transaction('pois', 'readwrite');
+  const idx = tx.objectStore('pois').index('regionId');
+  const req = idx.openCursor(IDBKeyRange.only(regionId));
+  await new Promise((res, rej) => {
+    req.onsuccess = (e) => { const c = e.target.result; if (c) { c.delete(); c.continue(); } else res(); };
+    req.onerror = () => rej(req.error);
+  });
+  db.close();
+}
 
 function lonLatToTile(lon, lat, z) {
   const n = 2 ** z;
@@ -247,6 +315,56 @@ function fmtDate(ts) {
       .addTo(map);
   });
 
+  let allPois = await loadAllPois();
+
+  const searchInput = document.getElementById('searchInput');
+  const searchResults = document.getElementById('searchResults');
+  let searchTimer = null;
+
+  function renderSearch(q) {
+    if (!q) { searchResults.classList.remove('show'); searchResults.innerHTML = ''; return; }
+    const qLower = q.toLowerCase();
+    const out = [];
+    for (const p of allPois) {
+      if (p.name && p.name.toLowerCase().includes(qLower)) {
+        out.push(p);
+        if (out.length >= 20) break;
+      }
+    }
+    if (!out.length) {
+      searchResults.innerHTML = '<div class="poi-result"><div class="name" style="color:#999">no matches in downloaded regions</div></div>';
+    } else {
+      searchResults.innerHTML = out.map((p, i) =>
+        `<div class="poi-result" data-idx="${i}">
+          <div class="name">${esc(p.name)}</div>
+          ${p.category ? `<div class="cat">${esc(humanize(p.category))}</div>` : ''}
+        </div>`).join('');
+      searchResults.querySelectorAll('.poi-result').forEach((el, i) => {
+        el.onclick = () => {
+          const p = out[i];
+          map.flyTo({ center: [p.lng, p.lat], zoom: Math.max(map.getZoom(), 16) });
+          searchInput.value = '';
+          searchResults.classList.remove('show');
+          searchInput.blur();
+        };
+      });
+    }
+    searchResults.classList.add('show');
+  }
+  searchInput.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    const v = searchInput.value.trim();
+    searchTimer = setTimeout(() => renderSearch(v), 120);
+  });
+  searchInput.addEventListener('focus', () => {
+    if (searchInput.value.trim()) renderSearch(searchInput.value.trim());
+  });
+  document.addEventListener('click', (e) => {
+    if (!document.getElementById('search').contains(e.target)) {
+      searchResults.classList.remove('show');
+    }
+  });
+
   const currentBbox = () => {
     const b = map.getBounds();
     return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
@@ -295,6 +413,8 @@ function fmtDate(ts) {
       if (!confirm('delete this map?')) return;
       const reg = await navigator.serviceWorker.ready;
       reg.active.postMessage({ type: 'deleteTiles', urls: r.urls });
+      await deletePoisByRegion(id);
+      allPois = allPois.filter(p => p.regionId !== id);
       saveRegions(list.filter(x => x.id !== id));
       renderRegions();
       updateStorageInfo();
@@ -321,17 +441,29 @@ function fmtDate(ts) {
     const status = document.getElementById('status');
     status.textContent = 'preparing…';
     const extraUrls = await getFontUrls();
+    let poiCount = 0;
+    try {
+      const pres = await fetch(`/poi?bbox=${bbox.join(',')}`,
+        { headers: { 'X-Download': '1' } });
+      if (pres.ok) {
+        const { pois = [] } = await pres.json();
+        await savePois(id, pois);
+        allPois = allPois.concat(pois.map(p => ({ ...p, regionId: id })));
+        poiCount = pois.length;
+      }
+    } catch {}
     const reg = await navigator.serviceWorker.ready;
     const onMsg = (e) => {
       if (e.data.id !== id) return;
       if (e.data.type === 'progress') {
         status.textContent = `downloading ${e.data.done}/${e.data.total}${e.data.failed ? ` (${e.data.failed} failed)` : ''}`;
       } else if (e.data.type === 'done') {
-        status.textContent = `saved ${e.data.done - e.data.failed} tiles (${e.data.failed} failed)`;
+        status.textContent = `saved ${e.data.done - e.data.failed} tiles, ${poiCount} POIs (${e.data.failed} failed)`;
         const list = loadRegions();
         list.push({
           id, createdAt: Date.now(), bbox, minZoom, maxZoom,
-          tileCount: e.data.done - e.data.failed, urls: e.data.urls
+          tileCount: e.data.done - e.data.failed, urls: e.data.urls,
+          poiCount
         });
         saveRegions(list);
         renderRegions();

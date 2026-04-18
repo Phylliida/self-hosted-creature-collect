@@ -1,6 +1,6 @@
 import sqlite3
 import pathlib
-from flask import Flask, send_from_directory, Response, abort
+from flask import Flask, send_from_directory, Response, abort, request, jsonify
 
 ROOT = pathlib.Path(__file__).parent
 DATA_DIR = ROOT / "data"
@@ -39,6 +39,28 @@ def fonts_list(fontstack):
     if not d.is_dir():
         abort(404)
     return {"files": sorted(f.name for f in d.iterdir() if f.name.endswith(".pbf"))}
+
+
+@app.route("/poi")
+def poi():
+    try:
+        parts = [float(x) for x in request.args.get("bbox", "").split(",")]
+    except ValueError:
+        abort(400)
+    if len(parts) != 4:
+        abort(400)
+    w, s, e, n = parts
+    results = []
+    for path in sorted(DATA_DIR.glob("*.pois.sqlite")) if DATA_DIR.exists() else []:
+        with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+            rows = conn.execute(
+                "SELECT lng, lat, name, category FROM poi "
+                "WHERE lng BETWEEN ? AND ? AND lat BETWEEN ? AND ?",
+                (w, e, s, n),
+            ).fetchall()
+            for lng, lat, name, category in rows:
+                results.append({"lng": lng, "lat": lat, "name": name, "category": category})
+    return jsonify({"pois": results})
 
 
 @app.route("/tiles/<int:z>/<int:x>/<int:y>.pbf")

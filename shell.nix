@@ -6,5 +6,6 @@ pkgs.mkShell {
     pkgs.tilemaker
     pkgs.cloudflared
     pkgs.git
+    pkgs.osmium-tool
   ];
 }
