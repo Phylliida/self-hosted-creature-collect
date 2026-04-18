@@ -36,15 +36,23 @@ self.addEventListener('fetch', (e) => {
     }));
     return;
   }
-  if (url.origin === location.origin && url.pathname.startsWith('/fonts/')) {
+  if (url.origin === location.origin && url.pathname.startsWith('/fonts')) {
+    if (e.request.headers.get('X-Download') === '1') {
+      e.respondWith(
+        caches.open(APP_CACHE).then(async (c) => {
+          const hit = await c.match(e.request);
+          if (hit) return hit;
+          const res = await fetch(e.request);
+          if (res.ok) c.put(e.request, res.clone());
+          return res;
+        })
+      );
+      return;
+    }
     e.respondWith(
-      caches.open(APP_CACHE).then(async (c) => {
-        const hit = await c.match(e.request);
-        if (hit) return hit;
-        const res = await fetch(e.request);
-        if (res.ok) c.put(e.request, res.clone());
-        return res;
-      })
+      caches.open(APP_CACHE)
+        .then(c => c.match(e.request))
+        .then(hit => hit || new Response(null, { status: 204 }))
     );
     return;
   }

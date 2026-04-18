@@ -83,6 +83,7 @@
     <div style="margin-top: 8px;">
       <label>max zoom <input id="zMax" type="number" min="1" max="14" value="14" style="width: 40px;"></label>
       <button id="downloadBtn">↓ save current view</button>
+      <button id="appDataBtn">↓ app data</button>
       <div id="status"></div>
       <div id="storage" style="font-size: 11px; color: #888; margin-top: 2px;"></div>
       <div id="poiStat" style="font-size: 11px; color: #888;"></div>
@@ -318,21 +319,6 @@ function fmtDate(ts) {
 
   let allPois = await loadAllPois();
 
-  async function backfillMissingPois() {
-    const withPois = new Set(allPois.map(p => p.regionId));
-    const missing = loadRegions().filter(r => !withPois.has(r.id));
-    if (!missing.length) return;
-    const status = document.getElementById('status');
-    status.textContent = `indexing ${missing.length} region(s)…`;
-    for (const r of missing) {
-      const n = await fetchAndSavePois(r.id, r.bbox);
-      const list = loadRegions();
-      const hit = list.find(x => x.id === r.id);
-      if (hit) { hit.poiCount = n; saveRegions(list); }
-    }
-    status.textContent = '';
-    renderRegions();
-  }
   const searchInput = document.getElementById('searchInput');
   const searchResults = document.getElementById('searchResults');
   let searchTimer = null;
@@ -438,17 +424,18 @@ function fmtDate(ts) {
       saveRegions(list.filter(x => x.id !== id));
       renderRegions();
       renderPoiStat();
+      updateAppDataLabel();
       updateStorageInfo();
     });
   }
   renderRegions();
   renderPoiStat();
-  backfillMissingPois();
 
   async function getFontUrls() {
     const fontstack = 'KlokanTech Noto Sans Regular';
     try {
-      const res = await fetch(`/fontslist/${encodeURIComponent(fontstack)}`);
+      const res = await fetch(`/fontslist/${encodeURIComponent(fontstack)}`,
+        { headers: { 'X-Download': '1' } });
       if (!res.ok) return [];
       const { files } = await res.json();
       return files.map(f => `/fonts/${encodeURIComponent(fontstack)}/${f}`);
@@ -480,23 +467,22 @@ function fmtDate(ts) {
     const id = crypto.randomUUID();
     const status = document.getElementById('status');
     status.textContent = 'preparing…';
-    const extraUrls = await getFontUrls();
-    const poiCount = await fetchAndSavePois(id, bbox);
+    const extraUrls = [];
     const reg = await navigator.serviceWorker.ready;
     const onMsg = (e) => {
       if (e.data.id !== id) return;
       if (e.data.type === 'progress') {
         status.textContent = `downloading ${e.data.done}/${e.data.total}${e.data.failed ? ` (${e.data.failed} failed)` : ''}`;
       } else if (e.data.type === 'done') {
-        status.textContent = `saved ${e.data.done - e.data.failed} tiles, ${poiCount} POIs (${e.data.failed} failed)`;
+        status.textContent = `saved ${e.data.done - e.data.failed} tiles (${e.data.failed} failed)`;
         const list = loadRegions();
         list.push({
           id, createdAt: Date.now(), bbox, minZoom, maxZoom,
-          tileCount: e.data.done - e.data.failed, urls: e.data.urls,
-          poiCount
+          tileCount: e.data.done - e.data.failed, urls: e.data.urls
         });
         saveRegions(list);
         renderRegions();
+        updateAppDataLabel();
         requestPersistent();
         const src = map.getSource('local');
         if (src && src.setTiles) src.setTiles([location.origin + '/tiles/{z}/{x}/{y}.pbf']);
@@ -505,6 +491,65 @@ function fmtDate(ts) {
     };
     navigator.serviceWorker.addEventListener('message', onMsg);
     reg.active.postMessage({ type: 'download', bbox, minZoom, maxZoom, id, extraUrls });
+  };
+
+  const FONTS_MB = 3.7;
+  const POI_MB_PER_REGION = 1.0;
+  function updateAppDataLabel() {
+    const btn = document.getElementById('appDataBtn');
+    const regionsWithPois = new Set(allPois.map(p => p.regionId));
+    const missing = loadRegions().filter(r => !regionsWithPois.has(r.id)).length;
+    const fontsCached = localStorage.getItem('cc.fontsDownloaded') === '1';
+    const total = (fontsCached ? 0 : FONTS_MB) + missing * POI_MB_PER_REGION;
+    if (total === 0) {
+      btn.textContent = '↓ app data (up to date)';
+    } else {
+      btn.textContent = `↓ app data (~${total.toFixed(1)} MB)`;
+    }
+  }
+  updateAppDataLabel();
+
+  document.getElementById('appDataBtn').onclick = async () => {
+    const btn = document.getElementById('appDataBtn');
+    const status = document.getElementById('status');
+    btn.disabled = true;
+    status.textContent = 'fetching font list…';
+    const fontUrls = await getFontUrls();
+    let fontDone = 0;
+    const fontQueue = fontUrls.slice();
+    const fontWorkers = Array(6).fill(0).map(async () => {
+      while (fontQueue.length) {
+        const url = fontQueue.pop();
+        try { await fetch(url, { headers: { 'X-Download': '1' } }); } catch {}
+        fontDone++;
+        if (fontDone % 10 === 0) {
+          status.textContent = `fonts ${fontDone}/${fontUrls.length}`;
+        }
+      }
+    });
+    await Promise.all(fontWorkers);
+    status.textContent = `fonts: ${fontDone}/${fontUrls.length}`;
+    if (fontDone === fontUrls.length && fontUrls.length > 0) {
+      localStorage.setItem('cc.fontsDownloaded', '1');
+    }
+
+    const withPois = new Set(allPois.map(p => p.regionId));
+    const missing = loadRegions().filter(r => !withPois.has(r.id));
+    for (let i = 0; i < missing.length; i++) {
+      const r = missing[i];
+      status.textContent = `POIs ${i + 1}/${missing.length}`;
+      const n = await fetchAndSavePois(r.id, r.bbox);
+      const list = loadRegions();
+      const hit = list.find(x => x.id === r.id);
+      if (hit) { hit.poiCount = n; saveRegions(list); }
+    }
+    renderRegions();
+    renderPoiStat();
+    updateAppDataLabel();
+    requestPersistent();
+    status.textContent = 'app data ready';
+    btn.disabled = false;
+    map.setStyle(map.getStyle());
   };
 })();
 </script>
