@@ -81,10 +81,11 @@
   <details>
     <summary><b>offline maps</b> <span id="offlineBadge"></span></summary>
     <div style="margin-top: 8px;">
-      <label>z<input id="zMin" type="number" min="0" max="14" value="10" style="width: 40px;">–<input id="zMax" type="number" min="0" max="14" value="14" style="width: 40px;"></label>
+      <label>max zoom <input id="zMax" type="number" min="1" max="14" value="14" style="width: 40px;"></label>
       <button id="downloadBtn">↓ save current view</button>
       <div id="status"></div>
       <div id="storage" style="font-size: 11px; color: #888; margin-top: 2px;"></div>
+      <div id="poiStat" style="font-size: 11px; color: #888;"></div>
       <div id="regions"></div>
     </div>
   </details>
@@ -317,6 +318,21 @@ function fmtDate(ts) {
 
   let allPois = await loadAllPois();
 
+  async function backfillMissingPois() {
+    const withPois = new Set(allPois.map(p => p.regionId));
+    const missing = loadRegions().filter(r => !withPois.has(r.id));
+    if (!missing.length) return;
+    const status = document.getElementById('status');
+    status.textContent = `indexing ${missing.length} region(s)…`;
+    for (const r of missing) {
+      const n = await fetchAndSavePois(r.id, r.bbox);
+      const list = loadRegions();
+      const hit = list.find(x => x.id === r.id);
+      if (hit) { hit.poiCount = n; saveRegions(list); }
+    }
+    status.textContent = '';
+    renderRegions();
+  }
   const searchInput = document.getElementById('searchInput');
   const searchResults = document.getElementById('searchResults');
   let searchTimer = null;
@@ -370,20 +386,24 @@ function fmtDate(ts) {
     return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
   };
 
+  const MIN_ZOOM = 1;
   function updateDownloadLabel() {
     const btn = document.getElementById('downloadBtn');
-    const minZoom = +document.getElementById('zMin').value;
     const maxZoom = +document.getElementById('zMax').value;
-    if (!(minZoom <= maxZoom)) { btn.textContent = '↓ zmin must be ≤ zmax'; return; }
-    const count = estimateTiles(currentBbox(), minZoom, maxZoom);
+    if (maxZoom < MIN_ZOOM) { btn.textContent = '↓ max zoom too low'; return; }
+    const count = estimateTiles(currentBbox(), MIN_ZOOM, maxZoom);
     const mb = (count * AVG_TILE_BYTES / 1048576).toFixed(1);
     btn.textContent = `↓ save current view (${count.toLocaleString()} tiles, ~${mb} MB)`;
   }
   map.on('moveend', updateDownloadLabel);
   map.on('zoomend', updateDownloadLabel);
-  document.getElementById('zMin').addEventListener('input', updateDownloadLabel);
   document.getElementById('zMax').addEventListener('input', updateDownloadLabel);
   map.on('load', updateDownloadLabel);
+
+  function renderPoiStat() {
+    document.getElementById('poiStat').textContent =
+      `${allPois.length.toLocaleString()} POIs indexed`;
+  }
 
   function renderRegions() {
     const list = loadRegions();
@@ -417,10 +437,13 @@ function fmtDate(ts) {
       allPois = allPois.filter(p => p.regionId !== id);
       saveRegions(list.filter(x => x.id !== id));
       renderRegions();
+      renderPoiStat();
       updateStorageInfo();
     });
   }
   renderRegions();
+  renderPoiStat();
+  backfillMissingPois();
 
   async function getFontUrls() {
     const fontstack = 'KlokanTech Noto Sans Regular';
@@ -432,26 +455,33 @@ function fmtDate(ts) {
     } catch { return []; }
   }
 
+  async function fetchAndSavePois(regionId, bbox) {
+    try {
+      const pres = await fetch(`/poi?bbox=${bbox.join(',')}`,
+        { headers: { 'X-Download': '1' } });
+      if (!pres.ok) return 0;
+      const { pois = [] } = await pres.json();
+      if (!pois.length) return 0;
+      await savePois(regionId, pois);
+      allPois = allPois.concat(pois.map(p => ({ ...p, regionId })));
+      renderPoiStat();
+      return pois.length;
+    } catch (err) {
+      console.error('POI fetch failed:', err);
+      return 0;
+    }
+  }
+
   document.getElementById('downloadBtn').onclick = async () => {
-    const minZoom = +document.getElementById('zMin').value;
     const maxZoom = +document.getElementById('zMax').value;
-    if (!(minZoom <= maxZoom)) return;
+    if (maxZoom < MIN_ZOOM) return;
+    const minZoom = MIN_ZOOM;
     const bbox = currentBbox();
     const id = crypto.randomUUID();
     const status = document.getElementById('status');
     status.textContent = 'preparing…';
     const extraUrls = await getFontUrls();
-    let poiCount = 0;
-    try {
-      const pres = await fetch(`/poi?bbox=${bbox.join(',')}`,
-        { headers: { 'X-Download': '1' } });
-      if (pres.ok) {
-        const { pois = [] } = await pres.json();
-        await savePois(id, pois);
-        allPois = allPois.concat(pois.map(p => ({ ...p, regionId: id })));
-        poiCount = pois.length;
-      }
-    } catch {}
+    const poiCount = await fetchAndSavePois(id, bbox);
     const reg = await navigator.serviceWorker.ready;
     const onMsg = (e) => {
       if (e.data.id !== id) return;
