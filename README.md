@@ -44,6 +44,19 @@ transparently.
 
 Shallow-clones `klokantech/klokantech-gl-fonts` (which ships pre-built glyph
 PBFs) and copies **KlokanTech Noto Sans Regular** into `fonts/` (~3.7 MB).
+
+## Download POI icons
+
+```
+./get-icons.sh
+```
+
+Shallow-clones `mapbox/maki` and copies ~215 SVG icons into `icons/` (~900 KB).
+MapLibre registers them as style images; the `poi-icons` layer draws the
+matching icon per feature (by `subclass`, falling back to `class`, then to a
+red dot default marker).
+
+
 That one fontstack is enough for road names, place names, and POI labels
 (shops, cafés, schools, etc.). Without it, the map renders with no text.
 

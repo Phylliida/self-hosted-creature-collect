@@ -41,6 +41,24 @@ def fonts_list(fontstack):
     return {"files": sorted(f.name for f in d.iterdir() if f.name.endswith(".pbf"))}
 
 
+@app.route("/icons/<name>")
+def icons(name):
+    path = ROOT / "icons" / name
+    if not path.is_file():
+        abort(404)
+    resp = send_from_directory(path.parent, path.name, mimetype="image/svg+xml")
+    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return resp
+
+
+@app.route("/iconslist")
+def icons_list():
+    d = ROOT / "icons"
+    if not d.is_dir():
+        abort(404)
+    return {"files": sorted(f.name for f in d.iterdir() if f.name.endswith(".svg"))}
+
+
 @app.route("/poi")
 def poi():
     try:
