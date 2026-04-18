@@ -19,16 +19,22 @@ Tip: you can narrow a large extract before conversion with
 `tilemaker --bbox minlon,minlat,maxlon,maxlat ...` to avoid baking 8 GB of tiles
 you'll never pan to.
 
-## Convert `.osm.pbf` to tiles
+## Convert `.osm.pbf` to tiles + POI index
 
 ```
 ./make-tiles.sh
 ```
 
-Produces `data/<name>.mbtiles` for each `osmpbf/<name>.osm.pbf`. Already-converted
-files are skipped, so re-run freely as more PBFs download. The server serves
-tiles from **any** `.mbtiles` file in `data/` — drop in as many regions as you
-want and they all work transparently (first match wins on overlap).
+For each `osmpbf/<name>.osm.pbf` this produces:
+- `data/<name>.mbtiles` — vector tiles (via tilemaker)
+- `data/<name>.pois.sqlite` — searchable POI index (via osmium + `build-poi-db.py`),
+  containing every node with a `name` tag and its primary category
+  (amenity/shop/tourism/etc.)
+
+Already-built files are skipped, so re-run freely as more PBFs download. The
+server serves tiles from **any** `.mbtiles` and POIs from **any** `.pois.sqlite`
+in `data/` — drop in as many regions as you want and they all work
+transparently.
 
 ## Download fonts (one-time, for labels/landmarks)
 

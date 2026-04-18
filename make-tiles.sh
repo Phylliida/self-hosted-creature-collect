@@ -10,15 +10,28 @@ found=0
 for pbf in osmpbf/*.osm.pbf; do
   found=1
   name="$(basename "$pbf" .osm.pbf)"
-  out="data/${name}.mbtiles"
-  if [ -e "$out" ]; then
-    echo "skip: $out already exists"
-    continue
+  mbtiles="data/${name}.mbtiles"
+  pois_db="data/${name}.pois.sqlite"
+
+  if [ ! -e "$mbtiles" ]; then
+    echo "==> tiles: $pbf -> $mbtiles"
+    tilemaker --input "$pbf" --output "$mbtiles" \
+      --config "$RESOURCES/config-openmaptiles.json" \
+      --process "$RESOURCES/process-openmaptiles.lua"
+  else
+    echo "skip tiles: $mbtiles already exists"
   fi
-  echo "==> $pbf -> $out"
-  tilemaker --input "$pbf" --output "$out" \
-    --config "$RESOURCES/config-openmaptiles.json" \
-    --process "$RESOURCES/process-openmaptiles.lua"
+
+  if [ ! -e "$pois_db" ]; then
+    echo "==> POIs: $pbf -> $pois_db"
+    TMP=$(mktemp -d)
+    osmium tags-filter "$pbf" n/name -o "$TMP/named.osm.pbf" --overwrite
+    osmium export "$TMP/named.osm.pbf" -f geojsonseq -o "$TMP/pois.geojsonseq" --overwrite
+    python3 build-poi-db.py "$TMP/pois.geojsonseq" "$pois_db"
+    rm -rf "$TMP"
+  else
+    echo "skip POIs: $pois_db already exists"
+  fi
 done
 
 if [ "$found" = 0 ]; then

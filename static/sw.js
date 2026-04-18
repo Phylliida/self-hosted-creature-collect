@@ -29,6 +29,13 @@ self.addEventListener('fetch', (e) => {
     );
     return;
   }
+  if (url.origin === location.origin && url.pathname.startsWith('/poi')) {
+    if (e.request.headers.get('X-Download') === '1') return;
+    e.respondWith(new Response(JSON.stringify({ pois: [] }), {
+      status: 200, headers: { 'Content-Type': 'application/json' }
+    }));
+    return;
+  }
   if (url.origin === location.origin && url.pathname.startsWith('/fonts/')) {
     e.respondWith(
       caches.open(APP_CACHE).then(async (c) => {
