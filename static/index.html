@@ -324,9 +324,12 @@
     <div class="section-label" style="margin-top: 10px;">By mode</div>
     <div id="transitModes"></div>
     <input id="transitSearch" type="search" placeholder="search routes" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" style="width:100%; padding:8px 10px; font-size:13px; margin-top:10px; border:1px solid #ccc; border-radius:6px; box-sizing:border-box;">
-    <div style="display:flex; gap:8px; margin-top:6px;">
+    <div style="display:flex; gap:8px; margin-top:6px; align-items:center;">
       <button id="transitAll" type="button" style="padding:5px 10px; font-size:12px;">All on</button>
       <button id="transitNone" type="button" style="padding:5px 10px; font-size:12px;">All off</button>
+      <label style="font-size:12px; color:#555; display:flex; align-items:center; gap:4px; cursor:pointer;">
+        <input id="transitActiveOnly" type="checkbox"> active only
+      </label>
       <span id="transitCount" style="font-size:11px; color:#888; margin-left:auto; align-self:center;"></span>
     </div>
     <div id="transitRoutes" style="max-height:45vh; overflow-y:auto; overflow-x:hidden; margin-top:6px;"></div>
@@ -788,7 +791,8 @@ function fmtDate(ts) {
               11, 0.08, 14, 0.2, 16, 0.4, 18, 0.75, 20, 1.0],
             'icon-allow-overlap': true,
             'icon-ignore-placement': true
-          } },
+          },
+          paint: { 'icon-color': '#333' } },
         { id: 'poi-labels', type: 'symbol', source: 'local', 'source-layer': 'poi',
           minzoom: 15,
           layout: { 'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name'], ['get', 'name_int']], 'text-font': ['KlokanTech Noto Sans Regular'],
@@ -1009,7 +1013,11 @@ function fmtDate(ts) {
     el.querySelectorAll('[data-mode]').forEach(chip => {
       chip.onclick = async () => {
         const m = chip.dataset.mode;
-        transitState.modes[m] = !modeOn(m);
+        const nowOn = !modeOn(m);
+        transitState.modes[m] = nowOn;
+        for (const [rid, meta] of Object.entries(routeMetaIndex)) {
+          if (meta.mode === m) transitState.routes[rid] = nowOn;
+        }
         saveTransitState(transitState);
         renderTransitModes();
         renderTransitRoutes();
@@ -1020,8 +1028,10 @@ function fmtDate(ts) {
   function renderTransitRoutes() {
     const el = document.getElementById('transitRoutes');
     const q = (document.getElementById('transitSearch').value || '').trim().toLowerCase();
+    const activeOnly = document.getElementById('transitActiveOnly').checked;
     const rows = Object.entries(routeMetaIndex)
       .filter(([rid, m]) => {
+        if (activeOnly && !routeOn(rid)) return false;
         if (!q) return true;
         return (m.ref || '').toLowerCase().includes(q)
           || (m.name || '').toLowerCase().includes(q);
@@ -1079,6 +1089,7 @@ function fmtDate(ts) {
     }
   });
   document.getElementById('transitSearch').addEventListener('input', renderTransitRoutes);
+  document.getElementById('transitActiveOnly').addEventListener('change', renderTransitRoutes);
   document.getElementById('transitAll').onclick = async () => {
     for (const m of TRANSIT_MODES) transitState.modes[m] = true;
     for (const rid of Object.keys(routeMetaIndex)) transitState.routes[rid] = true;
@@ -1154,16 +1165,12 @@ function fmtDate(ts) {
       map.setPaintProperty('places', 'text-halo-color', t.placeHalo);
       map.setPaintProperty('poi-labels', 'text-color', t.poiLabel);
       map.setPaintProperty('poi-labels', 'text-halo-color', t.poiHalo);
+      map.setPaintProperty('poi-icons', 'icon-color', t.poiIcon);
     } catch {}
-    const prevTint = applyTheme._lastTint;
     localStorage.setItem('cc.theme', name);
     document.getElementById('map').style.background = t.bg;
     document.documentElement.style.setProperty('--cc-label-color', t.poiLabel);
     document.documentElement.style.setProperty('--cc-label-halo', t.poiHalo);
-    if (prevTint !== undefined && prevTint !== t.poiIcon) {
-      reloadPoiIcons();
-    }
-    applyTheme._lastTint = t.poiIcon;
   }
 
   class SettingsControl {
@@ -1220,13 +1227,8 @@ function fmtDate(ts) {
     lastKnownPos = { lng: e.coords.longitude, lat: e.coords.latitude };
   });
 
-  function currentPoiTint() {
-    const name = localStorage.getItem('cc.theme') || 'default';
-    if (name === 'custom') return (loadCustomTheme().poiIcon) || '#333333';
-    return (THEMES[name] || THEMES.default).poiIcon;
-  }
 
-  async function svgToImageData(svgText, size = 24, dpr = 2, tint = null) {
+  async function svgToImageData(svgText, size = 24, dpr = 2) {
     const blob = new Blob([svgText], { type: 'image/svg+xml' });
     const url = URL.createObjectURL(blob);
     try {
@@ -1238,11 +1240,6 @@ function fmtDate(ts) {
       canvas.height = size * dpr;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, size * dpr, size * dpr);
-      if (tint) {
-        ctx.globalCompositeOperation = 'source-in';
-        ctx.fillStyle = tint;
-        ctx.fillRect(0, 0, size * dpr, size * dpr);
-      }
       return { data: ctx.getImageData(0, 0, size * dpr, size * dpr), pixelRatio: dpr };
     } finally {
       URL.revokeObjectURL(url);
@@ -1314,32 +1311,21 @@ function fmtDate(ts) {
   async function registerIconFromSvg(name, svgText) {
     if (map.hasImage(name)) return true;
     try {
-      const { data, pixelRatio } = await svgToImageData(svgText, 24, 2, currentPoiTint());
-      map.addImage(name, data, { pixelRatio });
+      const { data, pixelRatio } = await svgToImageData(svgText, 24, 2);
+      map.addImage(name, data, { pixelRatio, sdf: true });
       registeredIconNames.add(name);
       if (name.includes('-')) {
         const us = name.replace(/-/g, '_');
-        if (!map.hasImage(us)) { map.addImage(us, data, { pixelRatio }); registeredIconNames.add(us); }
+        if (!map.hasImage(us)) { map.addImage(us, data, { pixelRatio, sdf: true }); registeredIconNames.add(us); }
       }
       const aliases = ICON_ALIAS_MAP[name];
       if (aliases) {
         for (const a of aliases) {
-          if (!map.hasImage(a)) { map.addImage(a, data, { pixelRatio }); registeredIconNames.add(a); }
+          if (!map.hasImage(a)) { map.addImage(a, data, { pixelRatio, sdf: true }); registeredIconNames.add(a); }
         }
       }
       return true;
     } catch { return false; }
-  }
-
-  async function reloadPoiIcons() {
-    for (const n of [...registeredIconNames]) {
-      try { map.removeImage(n); } catch {}
-    }
-    registeredIconNames.clear();
-    iconFallbackTried.clear();
-    await registerDefaultMarker();
-    await loadAllIcons();
-    map.triggerRepaint();
   }
 
   async function loadIcon(name, opts = {}) {
@@ -2015,13 +2001,19 @@ function fmtDate(ts) {
     return true;
   }
 
+  const TRANSIT_INFRA_CATS = new Set(['stop_position', 'platform', 'station']);
+  function isRealPoi(f) {
+    const pr = f.properties || {};
+    const cat = pr.subclass || pr.class || '';
+    return !TRANSIT_INFRA_CATS.has(cat);
+  }
   map.on('click', (e) => {
     const poiPad = 8;
     const routePad = 20;
     const poiBbox = [[e.point.x - poiPad, e.point.y - poiPad], [e.point.x + poiPad, e.point.y + poiPad]];
     const routeBbox = [[e.point.x - routePad, e.point.y - routePad], [e.point.x + routePad, e.point.y + routePad]];
 
-    const poiHits = map.queryRenderedFeatures(poiBbox, { layers: ['poi-icons'] });
+    const poiHits = map.queryRenderedFeatures(poiBbox, { layers: ['poi-icons'] }).filter(isRealPoi);
     if (poiHits.length) {
       const f = poiHits[0];
       const pr = f.properties;
@@ -2224,6 +2216,7 @@ function fmtDate(ts) {
       await deletePoisByRegion(id);
       await deleteRoutesByRegion(id);
       await deleteWalkGraphByRegion(id);
+      invalidateRoutesCache();
       await refreshRoutesSource();
       await rebuildWalkGraph();
       allPois = allPois.filter(p => p.regionId !== id);
@@ -2520,25 +2513,43 @@ function fmtDate(ts) {
     routeMetaIndex = {};
     for (const r of rows) routeMetaIndex[r.rid] = r;
   }
+  let cachedRouteFeatures = null;
+  function invalidateRoutesCache() { cachedRouteFeatures = null; }
+  async function ensureRouteFeatureCache() {
+    if (cachedRouteFeatures) return;
+    await reloadRouteMetaIndex();
+    const groups = await loadAllRoutes();
+    const out = [];
+    for (const g of groups) {
+      for (const f of (g.features || [])) {
+        const rids = (f.properties && f.properties.route_ids) || [];
+        let colour = '#e89035';
+        for (const rid of rids) {
+          const meta = routeMetaIndex[rid];
+          if (meta && /^#[0-9a-f]{3,8}$/i.test(meta.colour || '')) { colour = meta.colour; break; }
+        }
+        out.push({
+          type: 'Feature',
+          geometry: f.geometry,
+          properties: { route_ids: rids, colour }
+        });
+      }
+    }
+    cachedRouteFeatures = out;
+  }
   async function refreshRoutesSource() {
     const src = map.getSource('bus-routes');
     if (!src) return;
-    await reloadRouteMetaIndex();
-    const groups = await loadAllRoutes();
-    const all = [];
-    for (const g of groups) all.push(...(g.features || []));
+    await ensureRouteFeatureCache();
     const filtered = [];
-    for (const f of all) {
-      const rids = (f.properties && f.properties.route_ids) || [];
-      let colour = null;
+    for (const f of cachedRouteFeatures) {
+      const rids = f.properties.route_ids;
       for (const rid of rids) {
         const meta = routeMetaIndex[rid];
         if (!meta) continue;
         if (!modeOn(meta.mode)) continue;
         if (!routeOn(rid)) continue;
-        if (!colour && /^#[0-9a-f]{3,8}$/i.test(meta.colour || '')) colour = meta.colour;
-        if (!colour) colour = '#e89035';
-        filtered.push({ ...f, properties: { ...f.properties, colour } });
+        filtered.push(f);
         break;
       }
     }
@@ -2557,6 +2568,7 @@ function fmtDate(ts) {
     const poiCount = await fetchAndSavePois(id, bbox);
     status.textContent = 'downloading bus routes…';
     const routeCount = await fetchAndSaveRoutes(id, bbox);
+    invalidateRoutesCache();
     await refreshRoutesSource();
     await fetchAndSaveWalkGraph(id, bbox, status);
     status.textContent = 'rebuilding walk graph in memory…';
