@@ -224,6 +224,43 @@ async function deletePoisByRegion(regionId) {
   db.close();
 }
 
+const ROUTES_DB_NAME = 'cc.routes.v1';
+function openRoutesDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(ROUTES_DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('routes')) {
+        db.createObjectStore('routes', { keyPath: 'regionId' });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function saveRoutes(regionId, features) {
+  const db = await openRoutesDB();
+  const tx = db.transaction('routes', 'readwrite');
+  tx.objectStore('routes').put({ regionId, features });
+  await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
+  db.close();
+}
+async function loadAllRoutes() {
+  const db = await openRoutesDB();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction('routes', 'readonly').objectStore('routes').getAll();
+    req.onsuccess = () => { resolve(req.result); db.close(); };
+    req.onerror = () => reject(req.error);
+  });
+}
+async function deleteRoutesByRegion(regionId) {
+  const db = await openRoutesDB();
+  const tx = db.transaction('routes', 'readwrite');
+  tx.objectStore('routes').delete(regionId);
+  await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
+  db.close();
+}
+
 function lonLatToTile(lon, lat, z) {
   const n = 2 ** z;
   const x = Math.floor((lon + 180) / 360 * n);
@@ -283,7 +320,8 @@ function fmtDate(ts) {
       version: 8,
       glyphs: location.origin + '/fonts/{fontstack}/{range}.pbf',
       sources: {
-        local: { type: 'vector', tiles: [location.origin + '/tiles/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 14 }
+        local: { type: 'vector', tiles: [location.origin + '/tiles/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 14 },
+        'bus-routes': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } }
       },
       layers: [
         { id: 'bg', type: 'background', paint: { 'background-color': '#f5f5dc' } },
@@ -320,6 +358,16 @@ function fmtDate(ts) {
           paint: {
             'line-color': '#2e8fbf',
             'line-width': ['interpolate', ['linear'], ['zoom'], 10, 0.5, 14, 1.5, 18, 3]
+          } },
+        { id: 'bus-routes', type: 'line', source: 'bus-routes',
+          layout: {
+            visibility: localStorage.getItem('cc.transitOn') === '0' ? 'none' : 'visible',
+            'line-cap': 'round', 'line-join': 'round'
+          },
+          paint: {
+            'line-color': '#e89035',
+            'line-opacity': 0.55,
+            'line-width': ['interpolate', ['linear'], ['zoom'], 10, 1, 14, 2, 18, 4]
           } },
         { id: 'road-labels', type: 'symbol', source: 'local', 'source-layer': 'transportation_name',
           minzoom: 13,
@@ -378,7 +426,7 @@ function fmtDate(ts) {
   }
   map.addControl(new RefreshControl(), 'bottom-right');
 
-  const TRANSIT_LAYERS = ['rail-mainline', 'subway', 'tram', 'light-rail'];
+  const TRANSIT_LAYERS = ['rail-mainline', 'subway', 'tram', 'light-rail', 'bus-routes'];
   class TransitToggleControl {
     onAdd() {
       const c = document.createElement('div');
@@ -582,6 +630,7 @@ function fmtDate(ts) {
   map.on('load', async () => {
     await registerDefaultMarker();
     await loadAllIcons();
+    await refreshRoutesSource();
   });
 
   const iconFallbackTried = new Set();
@@ -919,6 +968,8 @@ function fmtDate(ts) {
       const reg = await navigator.serviceWorker.ready;
       reg.active.postMessage({ type: 'deleteTiles', urls: r.urls });
       await deletePoisByRegion(id);
+      await deleteRoutesByRegion(id);
+      await refreshRoutesSource();
       allPois = allPois.filter(p => p.regionId !== id);
       saveRegions(list.filter(x => x.id !== id));
       renderRegions();
@@ -961,6 +1012,30 @@ function fmtDate(ts) {
     }
   }
 
+  async function fetchAndSaveRoutes(regionId, bbox) {
+    try {
+      const res = await fetch(`/routes?bbox=${bbox.join(',')}`,
+        { headers: { 'X-Download': '1' } });
+      if (!res.ok) return 0;
+      const geo = await res.json();
+      const features = geo.features || [];
+      await saveRoutes(regionId, features);
+      return features.length;
+    } catch (err) {
+      console.error('routes fetch failed:', err);
+      return 0;
+    }
+  }
+
+  async function refreshRoutesSource() {
+    const src = map.getSource('bus-routes');
+    if (!src) return;
+    const groups = await loadAllRoutes();
+    const features = [];
+    for (const g of groups) features.push(...(g.features || []));
+    src.setData({ type: 'FeatureCollection', features });
+  }
+
   document.getElementById('downloadBtn').onclick = async () => {
     const maxZoom = +document.getElementById('zMax').value;
     if (maxZoom < MIN_ZOOM) return;
@@ -970,6 +1045,9 @@ function fmtDate(ts) {
     const status = document.getElementById('status');
     status.textContent = 'downloading POIs…';
     const poiCount = await fetchAndSavePois(id, bbox);
+    status.textContent = 'downloading bus routes…';
+    const routeCount = await fetchAndSaveRoutes(id, bbox);
+    await refreshRoutesSource();
     const extraUrls = [];
     const reg = await navigator.serviceWorker.ready;
     const onMsg = (e) => {

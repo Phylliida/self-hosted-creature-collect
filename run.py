@@ -91,6 +91,37 @@ def poi():
     return jsonify({"pois": results})
 
 
+@app.route("/routes")
+def routes():
+    try:
+        parts = [float(x) for x in request.args.get("bbox", "").split(",")]
+    except ValueError:
+        abort(400)
+    if len(parts) != 4:
+        abort(400)
+    w, s, e, n = parts
+    features = []
+    for path in sorted(DATA_DIR.glob("*.routes.sqlite")) if DATA_DIR.exists() else []:
+        with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+            rows = conn.execute(
+                "SELECT d.coords FROM route_data d "
+                "JOIN route_rtree r ON d.id = r.id "
+                "WHERE r.minX <= ? AND r.maxX >= ? AND r.minY <= ? AND r.maxY >= ?",
+                (e, w, n, s),
+            ).fetchall()
+            for (coords_json,) in rows:
+                try:
+                    coords = json.loads(coords_json)
+                except json.JSONDecodeError:
+                    continue
+                features.append({
+                    "type": "Feature",
+                    "geometry": {"type": "LineString", "coordinates": coords},
+                    "properties": {},
+                })
+    return jsonify({"type": "FeatureCollection", "features": features})
+
+
 @app.route("/tiles/<int:z>/<int:x>/<int:y>.pbf")
 def tile(z, x, y):
     paths = sorted(DATA_DIR.glob("*.mbtiles")) if DATA_DIR.exists() else []

@@ -35,6 +35,21 @@ for pbf in osmpbf/*.osm.pbf; do
   else
     echo "skip POIs: $pois_db already exists"
   fi
+
+  routes_db="data/${name}.routes.sqlite"
+  if [ ! -e "$routes_db" ]; then
+    echo "==> routes: $pbf -> $routes_db"
+    TMP=$(mktemp -d)
+    osmium tags-filter "$pbf" \
+      r/route=bus,trolleybus,share_taxi \
+      -o "$TMP/routes.osm.pbf" --overwrite
+    osmium export "$TMP/routes.osm.pbf" -f geojsonseq \
+      -o "$TMP/routes.geojsonseq" --overwrite
+    python3 build-routes-db.py "$TMP/routes.geojsonseq" "$routes_db"
+    rm -rf "$TMP"
+  else
+    echo "skip routes: $routes_db already exists"
+  fi
 done
 
 if [ "$found" = 0 ]; then
