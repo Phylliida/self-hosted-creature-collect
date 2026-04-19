@@ -265,6 +265,22 @@
   }
   .route-row .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .route-row .mode-tag { font-size: 10px; color: #888; flex-shrink: 0; }
+  .route-popup .title { font-size: 11px; color: #888; margin-bottom: 6px; }
+  .route-popup .route-item {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 0; cursor: pointer; border-radius: 4px;
+    border-top: 1px solid #eee;
+  }
+  .route-popup .route-item:first-of-type { border-top: none; }
+  .route-popup .route-item:active { background: #eef; }
+  .route-popup .ref {
+    padding: 1px 6px; border-radius: 3px;
+    font-size: 11px; font-weight: 600; color: #fff;
+    min-width: 22px; text-align: center; flex-shrink: 0;
+  }
+  .route-popup .name { font-size: 13px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .route-popup .mode { font-size: 10px; color: #999; flex-shrink: 0; }
+  .route-popup .check { width: 14px; flex-shrink: 0; text-align: center; font-weight: 600; color: #3b7fdf; }
   #pinBar {
     position: absolute; top: 0; left: 0; right: 0; z-index: 25;
     padding: 12px 16px;
@@ -1946,27 +1962,96 @@ function fmtDate(ts) {
     location.reload();
   };
 
+  function showRoutePopupFor(features, lngLat) {
+    const allRids = [];
+    for (const feature of features) {
+      let rids = feature.properties && feature.properties.route_ids;
+      if (typeof rids === 'string') {
+        try { rids = JSON.parse(rids); } catch { rids = null; }
+      }
+      if (Array.isArray(rids)) allRids.push(...rids);
+    }
+    if (!allRids.length) return false;
+    const unique = [...new Set(allRids)];
+    const items = unique.map(rid => {
+      const m = routeMetaIndex[rid];
+      if (!m) return '';
+      const colour = /^#[0-9a-f]{3,8}$/i.test(m.colour || '') ? m.colour : '#888';
+      const on = routeOn(rid);
+      return `<div class="route-item" data-rid="${esc(rid)}">
+        <span class="check">${on ? '✓' : ''}</span>
+        <span class="ref" style="background:${esc(colour)}">${esc(m.ref || '?')}</span>
+        <span class="name">${esc(m.name || '(unnamed)')}</span>
+        <span class="mode">${esc(m.mode)}</span>
+      </div>`;
+    }).filter(Boolean).join('');
+    if (!items) return false;
+    const html = `<div class="route-popup">
+      <div class="title">${unique.length} route${unique.length === 1 ? '' : 's'} — tap to toggle</div>
+      ${items}
+    </div>`;
+    const popup = new maplibregl.Popup({ closeButton: true, maxWidth: '320px' })
+      .setLngLat(lngLat)
+      .setHTML(html)
+      .addTo(map);
+    popup.getElement().querySelectorAll('[data-rid]').forEach(el => {
+      el.onclick = async () => {
+        const rid = el.dataset.rid;
+        const nowOn = !routeOn(rid);
+        transitState.routes[rid] = nowOn;
+        if (nowOn) {
+          const meta = routeMetaIndex[rid];
+          if (meta && !modeOn(meta.mode)) {
+            transitState.modes[meta.mode] = true;
+            applyTransitTileVisibility();
+          }
+        }
+        saveTransitState(transitState);
+        await refreshRoutesSource();
+        const check = el.querySelector('.check');
+        if (check) check.textContent = nowOn ? '✓' : '';
+      };
+    });
+    return true;
+  }
+
   map.on('click', (e) => {
-    const bbox = [[e.point.x - 8, e.point.y - 8], [e.point.x + 8, e.point.y + 8]];
-    const hits = map.queryRenderedFeatures(bbox, { layers: ['poi-icons'] });
-    if (!hits.length) { setSelected(null); return; }
-    const f = hits[0];
-    const pr = f.properties;
-    const name = pr['name:latin'] || pr.name || pr.name_int || '(unnamed)';
-    const [lng, lat] = f.geometry.coordinates;
-    const full = findFullPoi(lng, lat, name);
-    const poi = full || {
-      lng, lat, name,
-      category: pr.subclass || pr.class || '',
-      props: {}
-    };
-    setSelected(poi);
+    const poiPad = 8;
+    const routePad = 20;
+    const poiBbox = [[e.point.x - poiPad, e.point.y - poiPad], [e.point.x + poiPad, e.point.y + poiPad]];
+    const routeBbox = [[e.point.x - routePad, e.point.y - routePad], [e.point.x + routePad, e.point.y + routePad]];
+
+    const poiHits = map.queryRenderedFeatures(poiBbox, { layers: ['poi-icons'] });
+    if (poiHits.length) {
+      const f = poiHits[0];
+      const pr = f.properties;
+      const name = pr['name:latin'] || pr.name || pr.name_int || '(unnamed)';
+      const [lng, lat] = f.geometry.coordinates;
+      const full = findFullPoi(lng, lat, name);
+      const poi = full || {
+        lng, lat, name,
+        category: pr.subclass || pr.class || '',
+        props: {}
+      };
+      setSelected(poi);
+      return;
+    }
+
+    const routeHits = map.getLayer('bus-routes')
+      ? map.queryRenderedFeatures(routeBbox, { layers: ['bus-routes'] })
+      : [];
+    if (routeHits.length && showRoutePopupFor(routeHits, e.lngLat)) return;
+
+    setSelected(null);
   });
 
   try {
     const stored = JSON.parse(localStorage.getItem(SELECTED_KEY) || 'null');
     if (stored && typeof stored.lng === 'number') setSelected(stored);
   } catch {}
+
+  map.on('mouseenter', 'bus-routes', () => { map.getCanvas().style.cursor = 'pointer'; });
+  map.on('mouseleave', 'bus-routes', () => { map.getCanvas().style.cursor = ''; });
 
   let allPois = await loadAllPois();
 
