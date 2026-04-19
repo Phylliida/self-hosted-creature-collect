@@ -11,12 +11,18 @@ TRANSIT_MODES = {
     "train", "monorail",
 }
 
+STOP_ROLES = {
+    "stop", "stop_entry_only", "stop_exit_only",
+    "platform", "platform_entry_only", "platform_exit_only",
+}
+
 
 class RelationReader(osmium.SimpleHandler):
     def __init__(self):
         super().__init__()
         self.routes = []             # [{ref, name, network, operator, colour, mode}, ...]
         self.way_to_routes = {}      # way_id -> [route_idx]
+        self.stop_members = []       # [(rid, node_id, order, role)]
 
     def relation(self, r):
         tags = {t.k: t.v for t in r.tags}
@@ -34,18 +40,29 @@ class RelationReader(osmium.SimpleHandler):
             "colour":   tags.get("colour", "") or tags.get("color", ""),
             "mode":     mode,
         })
+        stop_order = 0
         for m in r.members:
             if m.type == "w":
                 self.way_to_routes.setdefault(m.ref, []).append(rid)
+            elif m.type == "n":
+                role = m.role or ""
+                if role in STOP_ROLES:
+                    self.stop_members.append((rid, m.ref, stop_order, role))
+                    stop_order += 1
 
 
-class WayWriter(osmium.SimpleHandler):
-    def __init__(self, way_to_routes, db):
+class WayNodeWriter(osmium.SimpleHandler):
+    def __init__(self, way_to_routes, stop_members, db):
         super().__init__()
         self.way_to_routes = way_to_routes
         self.db = db
         self.counter = 0
+        self.stops_written = 0
         self.last_tick = time.time()
+        # group stop_members by node_id for fast node-time lookup
+        self.node_to_stops = {}
+        for rid, nid, order, role in stop_members:
+            self.node_to_stops.setdefault(nid, []).append((rid, order, role))
 
     def way(self, w):
         rel_ids = self.way_to_routes.get(w.id)
@@ -72,9 +89,28 @@ class WayWriter(osmium.SimpleHandler):
         )
         self.counter += 1
         if time.time() - self.last_tick > 1.0:
-            sys.stderr.write(f"\r\033[K  segments: {self.counter:,}")
+            sys.stderr.write(
+                f"\r\033[K  segments: {self.counter:,}  stops: {self.stops_written:,}"
+            )
             sys.stderr.flush()
             self.last_tick = time.time()
+
+    def node(self, n):
+        entries = self.node_to_stops.get(n.id)
+        if not entries:
+            return
+        if not n.location.valid():
+            return
+        tags = {t.k: t.v for t in n.tags}
+        name = tags.get("name", "")
+        lng, lat = n.location.lon, n.location.lat
+        for rid, order, role in entries:
+            self.db.execute(
+                "INSERT INTO route_stop(route_id, node_id, ord, lng, lat, name, role) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (rid, n.id, order, lng, lat, name, role),
+            )
+            self.stops_written += 1
 
 
 def main(pbf, dst):
@@ -82,6 +118,7 @@ def main(pbf, dst):
     db.execute("DROP TABLE IF EXISTS route_rtree")
     db.execute("DROP TABLE IF EXISTS route_data")
     db.execute("DROP TABLE IF EXISTS route_meta")
+    db.execute("DROP TABLE IF EXISTS route_stop")
     db.execute(
         "CREATE VIRTUAL TABLE route_rtree USING rtree(id, minX, maxX, minY, maxY)"
     )
@@ -92,6 +129,11 @@ def main(pbf, dst):
         "CREATE TABLE route_meta(id INTEGER PRIMARY KEY, ref TEXT, name TEXT, "
         "network TEXT, operator TEXT, colour TEXT, mode TEXT)"
     )
+    db.execute(
+        "CREATE TABLE route_stop(route_id INTEGER, node_id INTEGER, ord INTEGER, "
+        "lng REAL, lat REAL, name TEXT, role TEXT)"
+    )
+    db.execute("CREATE INDEX idx_route_stop_rid ON route_stop(route_id)")
 
     t = time.time()
     sys.stderr.write("  pass 1: reading relations…\n"); sys.stderr.flush()
@@ -99,7 +141,8 @@ def main(pbf, dst):
     rh.apply_file(pbf)
     sys.stderr.write(
         f"    {len(rh.routes)} routes, "
-        f"{len(rh.way_to_routes)} unique member ways "
+        f"{len(rh.way_to_routes)} unique member ways, "
+        f"{len(rh.stop_members)} stop memberships "
         f"({time.time() - t:.1f}s)\n"
     )
 
@@ -110,10 +153,13 @@ def main(pbf, dst):
         )
 
     t = time.time()
-    sys.stderr.write("  pass 2: reading ways with node locations…\n"); sys.stderr.flush()
-    ww = WayWriter(rh.way_to_routes, db)
+    sys.stderr.write("  pass 2: reading ways + stop nodes…\n"); sys.stderr.flush()
+    ww = WayNodeWriter(rh.way_to_routes, rh.stop_members, db)
     ww.apply_file(pbf, locations=True)
-    sys.stderr.write(f"\r\033[K    {ww.counter} segments ({time.time() - t:.1f}s)\n")
+    sys.stderr.write(
+        f"\r\033[K    {ww.counter} segments, {ww.stops_written} stops "
+        f"({time.time() - t:.1f}s)\n"
+    )
     sys.stderr.flush()
 
     db.commit()

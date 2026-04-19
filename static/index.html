@@ -268,11 +268,10 @@
   .route-popup .title { font-size: 11px; color: #888; margin-bottom: 6px; }
   .route-popup .route-item {
     display: flex; align-items: center; gap: 6px;
-    padding: 5px 0; cursor: pointer; border-radius: 4px;
+    padding: 5px 0; border-radius: 4px;
     border-top: 1px solid #eee;
   }
   .route-popup .route-item:first-of-type { border-top: none; }
-  .route-popup .route-item:active { background: #eef; }
   .route-popup .ref {
     padding: 1px 6px; border-radius: 3px;
     font-size: 11px; font-weight: 600; color: #fff;
@@ -280,7 +279,20 @@
   }
   .route-popup .name { font-size: 13px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .route-popup .mode { font-size: 10px; color: #999; flex-shrink: 0; }
-  .route-popup .check { width: 14px; flex-shrink: 0; text-align: center; font-weight: 600; color: #3b7fdf; }
+  .route-popup .toggle-vis {
+    width: 18px; height: 18px; flex-shrink: 0;
+    border: 1px solid #bbb; border-radius: 3px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 600; color: #fff; background: #fff;
+    cursor: pointer; user-select: none;
+  }
+  .route-popup .toggle-vis.on { background: #3b7fdf; border-color: #3b7fdf; }
+  .route-popup .view-btn {
+    flex-shrink: 0; padding: 2px 6px; font-size: 13px;
+    border: 1px solid #bbb; border-radius: 4px; background: #fff;
+    cursor: pointer; line-height: 1;
+  }
+  .route-popup .view-btn.on { background: #3b7fdf; border-color: #3b7fdf; }
   #pinBar {
     position: absolute; top: 0; left: 0; right: 0; z-index: 25;
     padding: 12px 16px;
@@ -527,14 +539,15 @@ function openRoutesDB() {
     req.onerror = () => reject(req.error);
   });
 }
-async function saveRoutes(regionId, features, metaMap) {
+async function saveRoutes(regionId, features, metaMap, stopsMap) {
   const db = await openRoutesDB();
   const tx = db.transaction(['routes', 'meta'], 'readwrite');
   tx.objectStore('routes').put({ regionId, features });
   const metaStore = tx.objectStore('meta');
   if (metaMap) {
     for (const [rid, meta] of Object.entries(metaMap)) {
-      metaStore.put({ rid, ...meta });
+      const stops = (stopsMap && stopsMap[rid]) || [];
+      metaStore.put({ rid, ...meta, stops });
     }
   }
   await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
@@ -711,6 +724,7 @@ function fmtDate(ts) {
         base: { type: 'vector', tiles: [location.origin + '/tiles/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 5 },
         local: { type: 'vector', tiles: [location.origin + '/tiles/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 14 },
         'bus-routes': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
+        'route-stops': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
         'walk-route': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } }
       },
       layers: [
@@ -775,6 +789,14 @@ function fmtDate(ts) {
             'line-color': ['coalesce', ['get', 'colour'], '#e89035'],
             'line-opacity': 0.65,
             'line-width': ['interpolate', ['linear'], ['zoom'], 10, 1, 14, 2, 18, 4]
+          } },
+        { id: 'route-stop-bubbles', type: 'circle', source: 'route-stops',
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 3, 14, 5, 18, 9],
+            'circle-color': '#ffffff',
+            'circle-stroke-color': ['coalesce', ['get', 'colour'], '#888'],
+            'circle-stroke-width': 2,
+            'circle-pitch-alignment': 'map'
           } },
         { id: 'road-labels', type: 'symbol', source: 'local', 'source-layer': 'transportation_name',
           minzoom: 13,
@@ -1948,54 +1970,54 @@ function fmtDate(ts) {
     location.reload();
   };
 
-  function showRoutePopupFor(features, lngLat) {
-    const allRids = [];
-    for (const feature of features) {
-      let rids = feature.properties && feature.properties.route_ids;
-      if (typeof rids === 'string') {
-        try { rids = JSON.parse(rids); } catch { rids = null; }
-      }
-      if (Array.isArray(rids)) allRids.push(...rids);
-    }
-    if (!allRids.length) return false;
-    const unique = [...new Set(allRids)];
+  function showTransitPopup(stopName, rids, lngLat) {
+    const unique = [...new Set(rids)].filter(rid => routeMetaIndex[rid]);
+    if (!unique.length) return false;
     const items = unique.map(rid => {
       const m = routeMetaIndex[rid];
-      if (!m) return '';
       const colour = /^#[0-9a-f]{3,8}$/i.test(m.colour || '') ? m.colour : '#888';
       const on = routeOn(rid);
-      return `<div class="route-item" data-rid="${esc(rid)}">
-        <span class="check">${on ? '✓' : ''}</span>
+      const viewing = viewedRoutes.has(rid);
+      return `<div class="route-item">
+        <span class="toggle-vis ${on ? 'on' : ''}" data-action="toggle" data-rid="${esc(rid)}" title="toggle line">${on ? '✓' : ''}</span>
         <span class="ref" style="background:${esc(colour)}">${esc(m.ref || '?')}</span>
         <span class="name">${esc(m.name || '(unnamed)')}</span>
+        <button type="button" class="view-btn ${viewing ? 'on' : ''}" data-action="view" data-rid="${esc(rid)}" title="view stops">👁</button>
         <span class="mode">${esc(m.mode)}</span>
       </div>`;
-    }).filter(Boolean).join('');
-    if (!items) return false;
-    const html = `<div class="route-popup">
-      <div class="title">${unique.length} route${unique.length === 1 ? '' : 's'} — tap to toggle</div>
-      ${items}
-    </div>`;
-    const popup = new maplibregl.Popup({ closeButton: true, maxWidth: '320px' })
+    }).join('');
+    const title = stopName
+      ? `<div class="title">${esc(stopName)} — ${unique.length} route${unique.length === 1 ? '' : 's'}</div>`
+      : `<div class="title">${unique.length} route${unique.length === 1 ? '' : 's'} — ✓ toggles line, 👁 shows stops</div>`;
+    const html = `<div class="route-popup">${title}${items}</div>`;
+    const popup = new maplibregl.Popup({ closeButton: true, maxWidth: '360px' })
       .setLngLat(lngLat)
       .setHTML(html)
       .addTo(map);
-    popup.getElement().querySelectorAll('[data-rid]').forEach(el => {
-      el.onclick = async () => {
+    popup.getElement().querySelectorAll('[data-action]').forEach(el => {
+      el.onclick = async (ev) => {
+        ev.stopPropagation();
         const rid = el.dataset.rid;
-        const nowOn = !routeOn(rid);
-        transitState.routes[rid] = nowOn;
-        if (nowOn) {
-          const meta = routeMetaIndex[rid];
-          if (meta && !modeOn(meta.mode)) {
-            transitState.modes[meta.mode] = true;
-            applyTransitTileVisibility();
+        if (el.dataset.action === 'toggle') {
+          const nowOn = !routeOn(rid);
+          transitState.routes[rid] = nowOn;
+          if (nowOn) {
+            const meta = routeMetaIndex[rid];
+            if (meta && !modeOn(meta.mode)) {
+              transitState.modes[meta.mode] = true;
+              applyTransitTileVisibility();
+            }
           }
+          saveTransitState(transitState);
+          el.classList.toggle('on', nowOn);
+          el.textContent = nowOn ? '✓' : '';
+          await refreshRoutesSource();
+        } else if (el.dataset.action === 'view') {
+          if (viewedRoutes.has(rid)) viewedRoutes.delete(rid);
+          else viewedRoutes.add(rid);
+          el.classList.toggle('on', viewedRoutes.has(rid));
+          refreshStopsSource();
         }
-        saveTransitState(transitState);
-        await refreshRoutesSource();
-        const check = el.querySelector('.check');
-        if (check) check.textContent = nowOn ? '✓' : '';
       };
     });
     return true;
@@ -2007,18 +2029,62 @@ function fmtDate(ts) {
     const cat = pr.subclass || pr.class || '';
     return !TRANSIT_INFRA_CATS.has(cat);
   }
+  function extractRouteIds(f) {
+    let rids = f.properties && f.properties.route_ids;
+    if (typeof rids === 'string') {
+      try { rids = JSON.parse(rids); } catch { rids = null; }
+    }
+    return Array.isArray(rids) ? rids : [];
+  }
   map.on('click', (e) => {
     const poiPad = 8;
     const routePad = 20;
     const poiBbox = [[e.point.x - poiPad, e.point.y - poiPad], [e.point.x + poiPad, e.point.y + poiPad]];
     const routeBbox = [[e.point.x - routePad, e.point.y - routePad], [e.point.x + routePad, e.point.y + routePad]];
 
-    const poiHits = map.queryRenderedFeatures(poiBbox, { layers: ['poi-icons'] }).filter(isRealPoi);
-    if (poiHits.length) {
-      const f = poiHits[0];
-      const pr = f.properties;
+    const bubbleHits = map.getLayer('route-stop-bubbles')
+      ? map.queryRenderedFeatures(poiBbox, { layers: ['route-stop-bubbles'] })
+      : [];
+    const allPoiHits = map.queryRenderedFeatures(poiBbox, { layers: ['poi-icons'] });
+    const realPoiHits = allPoiHits.filter(isRealPoi);
+    const stopPoiHits = allPoiHits.filter(f => !isRealPoi(f));
+    const routeHits = map.getLayer('bus-routes')
+      ? map.queryRenderedFeatures(routeBbox, { layers: ['bus-routes'] })
+      : [];
+
+    const rids = new Set();
+    let stopName = '';
+    for (const f of bubbleHits) {
+      if (f.properties.rid) rids.add(f.properties.rid);
+      if (!stopName && f.properties.name) stopName = f.properties.name;
+    }
+    if (stopPoiHits.length || bubbleHits.length) {
+      const nearby = findStopsNear(e.lngLat.lng, e.lngLat.lat, 30);
+      for (const s of nearby) {
+        rids.add(s.rid);
+        if (!stopName && s.name) stopName = s.name;
+      }
+      if (!stopName) {
+        for (const f of stopPoiHits) {
+          const pr = f.properties || {};
+          const nm = pr['name:latin'] || pr.name || pr.name_int;
+          if (nm) { stopName = nm; break; }
+        }
+      }
+    }
+    for (const f of routeHits) {
+      for (const rid of extractRouteIds(f)) rids.add(rid);
+    }
+
+    if (rids.size && !realPoiHits.length) {
+      if (showTransitPopup(stopName, [...rids], e.lngLat)) return;
+    }
+
+    const poiFallback = realPoiHits[0] || stopPoiHits[0] || null;
+    if (poiFallback) {
+      const pr = poiFallback.properties;
       const name = pr['name:latin'] || pr.name || pr.name_int || '(unnamed)';
-      const [lng, lat] = f.geometry.coordinates;
+      const [lng, lat] = poiFallback.geometry.coordinates;
       const full = findFullPoi(lng, lat, name);
       const poi = full || {
         lng, lat, name,
@@ -2028,11 +2094,6 @@ function fmtDate(ts) {
       setSelected(poi);
       return;
     }
-
-    const routeHits = map.getLayer('bus-routes')
-      ? map.queryRenderedFeatures(routeBbox, { layers: ['bus-routes'] })
-      : [];
-    if (routeHits.length && showRoutePopupFor(routeHits, e.lngLat)) return;
 
     setSelected(null);
   });
@@ -2044,6 +2105,8 @@ function fmtDate(ts) {
 
   map.on('mouseenter', 'bus-routes', () => { map.getCanvas().style.cursor = 'pointer'; });
   map.on('mouseleave', 'bus-routes', () => { map.getCanvas().style.cursor = ''; });
+  map.on('mouseenter', 'route-stop-bubbles', () => { map.getCanvas().style.cursor = 'pointer'; });
+  map.on('mouseleave', 'route-stop-bubbles', () => { map.getCanvas().style.cursor = ''; });
 
   let allPois = await loadAllPois();
 
@@ -2473,7 +2536,8 @@ function fmtDate(ts) {
       const geo = await res.json();
       const features = geo.features || [];
       const routesMeta = geo.routes || {};
-      await saveRoutes(regionId, features, routesMeta);
+      const stopsMap = geo.stops || {};
+      await saveRoutes(regionId, features, routesMeta, stopsMap);
       return features.length;
     } catch (err) {
       console.error('routes fetch failed:', err);
@@ -2508,10 +2572,75 @@ function fmtDate(ts) {
     });
   }
 
+  const STOP_GRID = 1000;
+  let stopGrid = new Map();
+  function stopGridKey(lng, lat) {
+    return Math.round(lng * STOP_GRID) + ',' + Math.round(lat * STOP_GRID);
+  }
+  function haversineMeters(lng1, lat1, lng2, lat2) {
+    const R = 6371000;
+    const toRad = (d) => d * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1);
+    const a = Math.sin(dLat / 2) ** 2
+      + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+  }
+  function rebuildStopGrid() {
+    stopGrid = new Map();
+    for (const [rid, m] of Object.entries(routeMetaIndex)) {
+      const stops = m.stops || [];
+      for (const s of stops) {
+        const k = stopGridKey(s.lng, s.lat);
+        if (!stopGrid.has(k)) stopGrid.set(k, []);
+        stopGrid.get(k).push({ rid, ...s });
+      }
+    }
+  }
+  function findStopsNear(lng, lat, maxMeters) {
+    const out = [];
+    const cx = Math.round(lng * STOP_GRID);
+    const cy = Math.round(lat * STOP_GRID);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const cell = stopGrid.get((cx + dx) + ',' + (cy + dy));
+        if (!cell) continue;
+        for (const s of cell) {
+          const d = haversineMeters(lng, lat, s.lng, s.lat);
+          if (d <= maxMeters) out.push({ ...s, distance: d });
+        }
+      }
+    }
+    return out;
+  }
+
+  let viewedRoutes = new Set();
+  function refreshStopsSource() {
+    const src = map.getSource('route-stops');
+    if (!src) return;
+    const features = [];
+    for (const rid of viewedRoutes) {
+      const m = routeMetaIndex[rid];
+      if (!m) continue;
+      const colour = /^#[0-9a-f]{3,8}$/i.test(m.colour || '') ? m.colour : '#888';
+      for (const s of (m.stops || [])) {
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [s.lng, s.lat] },
+          properties: {
+            rid, name: s.name || '', role: s.role || '',
+            ord: s.ord, colour
+          }
+        });
+      }
+    }
+    src.setData({ type: 'FeatureCollection', features });
+  }
+
   async function reloadRouteMetaIndex() {
     const rows = await loadAllRouteMeta();
     routeMetaIndex = {};
     for (const r of rows) routeMetaIndex[r.rid] = r;
+    rebuildStopGrid();
   }
   let cachedRouteFeatures = null;
   function invalidateRoutesCache() { cachedRouteFeatures = null; }
