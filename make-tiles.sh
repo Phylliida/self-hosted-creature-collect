@@ -46,11 +46,9 @@ for pbf in osmpbf/*.osm.pbf; do
     echo "==> routes: $pbf -> $routes_db"
     TMP=$(mktemp -d)
     osmium tags-filter "$pbf" \
-      r/route=bus,trolleybus,share_taxi \
+      r/route=bus,trolleybus,share_taxi,subway,tram,light_rail,train,monorail \
       -o "$TMP/routes.osm.pbf" --overwrite
-    osmium export "$TMP/routes.osm.pbf" -f geojsonseq \
-      -o "$TMP/routes.geojsonseq" --overwrite
-    python3 build-routes-db.py "$TMP/routes.geojsonseq" "$routes_db"
+    python3 build-routes-db.py "$TMP/routes.osm.pbf" "$routes_db"
     rm -rf "$TMP"
   else
     echo "skip routes: $routes_db already exists"

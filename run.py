@@ -105,25 +105,49 @@ def routes():
         abort(400)
     w, s, e, n = parts
     features = []
+    routes_map = {}
     for path in sorted(DATA_DIR.glob("*.routes.sqlite")) if DATA_DIR.exists() else []:
+        file_key = path.name[:-len(".routes.sqlite")]
         with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
             rows = conn.execute(
-                "SELECT d.coords FROM route_data d "
+                "SELECT d.coords, d.route_ids FROM route_data d "
                 "JOIN route_rtree r ON d.id = r.id "
                 "WHERE r.minX <= ? AND r.maxX >= ? AND r.minY <= ? AND r.maxY >= ?",
                 (e, w, n, s),
             ).fetchall()
-            for (coords_json,) in rows:
+            needed_rids = set()
+            for coords_json, rids_json in rows:
                 try:
                     coords = json.loads(coords_json)
+                    local_rids = json.loads(rids_json) if rids_json else []
                 except json.JSONDecodeError:
                     continue
+                compound_rids = [f"{file_key}:{r}" for r in local_rids]
                 features.append({
                     "type": "Feature",
                     "geometry": {"type": "LineString", "coordinates": coords},
-                    "properties": {},
+                    "properties": {"route_ids": compound_rids},
                 })
-    return jsonify({"type": "FeatureCollection", "features": features})
+                for r in local_rids:
+                    needed_rids.add(r)
+            if needed_rids:
+                placeholder = ",".join("?" * len(needed_rids))
+                meta_rows = conn.execute(
+                    f"SELECT id, ref, name, network, operator, colour, mode "
+                    f"FROM route_meta WHERE id IN ({placeholder})",
+                    tuple(needed_rids),
+                ).fetchall()
+                for row in meta_rows:
+                    rid, ref, name, network, operator, colour, mode = row
+                    routes_map[f"{file_key}:{rid}"] = {
+                        "ref": ref, "name": name, "network": network,
+                        "operator": operator, "colour": colour, "mode": mode,
+                    }
+    return jsonify({
+        "type": "FeatureCollection",
+        "features": features,
+        "routes": routes_map,
+    })
 
 
 @app.route("/tiles/<int:z>/<int:x>/<int:y>.pbf")

@@ -208,6 +208,40 @@
   #favPanel .actions button { padding: 8px 14px; font-size: 14px; border-radius: 6px; cursor: pointer; border: 1px solid #ccc; background: #eee; }
   #favPanel .actions button.primary { background: #1e88e5; color: #fff; border-color: #1e88e5; }
   #favPanel .actions button.danger { background: #fee; color: #a33; border-color: #c88; }
+  #transitPanel {
+    position: fixed; inset: 0; z-index: 30;
+    background: rgba(0,0,0,0.45);
+    display: none; align-items: center; justify-content: center;
+  }
+  #transitPanel.show { display: flex; }
+  #transitPanel .sheet {
+    background: #fff; border-radius: 10px;
+    width: calc(100% - 40px); max-width: 380px;
+    padding: 16px 18px 14px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    max-height: 88vh; overflow-y: auto;
+  }
+  #transitModes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .mode-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 5px 10px; border-radius: 14px;
+    border: 1px solid #bbb; background: #f5f5f5;
+    font-size: 12px; cursor: pointer; user-select: none;
+  }
+  .mode-chip.on { background: #4a90e2; border-color: #4a90e2; color: #fff; }
+  .route-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 4px; border-bottom: 1px solid #eee;
+    font-size: 13px; cursor: pointer;
+  }
+  .route-row input { cursor: pointer; }
+  .route-row .ref {
+    background: #888; color: #fff; font-weight: 600;
+    padding: 1px 6px; border-radius: 4px; font-size: 11px;
+    min-width: 30px; text-align: center; flex-shrink: 0;
+  }
+  .route-row .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .route-row .mode-tag { font-size: 10px; color: #888; flex-shrink: 0; }
   #pinBar {
     position: absolute; top: 0; left: 0; right: 0; z-index: 25;
     padding: 12px 16px;
@@ -241,6 +275,23 @@
          autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
   <select id="searchFilter"><option value="">all types</option></select>
   <div id="searchResults"></div>
+</div>
+<div id="transitPanel">
+  <div class="sheet">
+    <div style="display:flex; align-items:center; gap:8px;">
+      <h3 style="flex:1; margin:0;">Transit layers</h3>
+      <button class="close" id="transitClose" style="padding: 6px 10px; font-size: 13px; background: #eee; border: 1px solid #ccc; border-radius: 6px; cursor: pointer;">Done</button>
+    </div>
+    <div class="section-label" style="margin-top: 10px;">By mode</div>
+    <div id="transitModes"></div>
+    <input id="transitSearch" type="search" placeholder="search routes" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" style="width:100%; padding:8px 10px; font-size:13px; margin-top:10px; border:1px solid #ccc; border-radius:6px; box-sizing:border-box;">
+    <div style="display:flex; gap:8px; margin-top:6px;">
+      <button id="transitAll" type="button" style="padding:5px 10px; font-size:12px;">All on</button>
+      <button id="transitNone" type="button" style="padding:5px 10px; font-size:12px;">All off</button>
+      <span id="transitCount" style="font-size:11px; color:#888; margin-left:auto; align-self:center;"></span>
+    </div>
+    <div id="transitRoutes" style="max-height:45vh; overflow-y:auto; overflow-x:hidden; margin-top:6px;"></div>
+  </div>
 </div>
 <div id="pinBar">
   <span class="hint">Drag the pin, then confirm</span>
@@ -411,7 +462,7 @@ async function deletePoisByRegion(regionId) {
   db.close();
 }
 
-const ROUTES_DB_NAME = 'cc.routes.v1';
+const ROUTES_DB_NAME = 'cc.routes.v2';
 function openRoutesDB() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(ROUTES_DB_NAME, 1);
@@ -420,15 +471,24 @@ function openRoutesDB() {
       if (!db.objectStoreNames.contains('routes')) {
         db.createObjectStore('routes', { keyPath: 'regionId' });
       }
+      if (!db.objectStoreNames.contains('meta')) {
+        db.createObjectStore('meta', { keyPath: 'rid' });
+      }
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
 }
-async function saveRoutes(regionId, features) {
+async function saveRoutes(regionId, features, metaMap) {
   const db = await openRoutesDB();
-  const tx = db.transaction('routes', 'readwrite');
+  const tx = db.transaction(['routes', 'meta'], 'readwrite');
   tx.objectStore('routes').put({ regionId, features });
+  const metaStore = tx.objectStore('meta');
+  if (metaMap) {
+    for (const [rid, meta] of Object.entries(metaMap)) {
+      metaStore.put({ rid, ...meta });
+    }
+  }
   await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
   db.close();
 }
@@ -436,6 +496,14 @@ async function loadAllRoutes() {
   const db = await openRoutesDB();
   return new Promise((resolve, reject) => {
     const req = db.transaction('routes', 'readonly').objectStore('routes').getAll();
+    req.onsuccess = () => { resolve(req.result); db.close(); };
+    req.onerror = () => reject(req.error);
+  });
+}
+async function loadAllRouteMeta() {
+  const db = await openRoutesDB();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction('meta', 'readonly').objectStore('meta').getAll();
     req.onsuccess = () => { resolve(req.result); db.close(); };
     req.onerror = () => reject(req.error);
   });
@@ -604,13 +672,10 @@ function fmtDate(ts) {
             'line-width': ['interpolate', ['linear'], ['zoom'], 10, 0.5, 14, 1.5, 18, 3]
           } },
         { id: 'bus-routes', type: 'line', source: 'bus-routes',
-          layout: {
-            visibility: localStorage.getItem('cc.transitOn') === '0' ? 'none' : 'visible',
-            'line-cap': 'round', 'line-join': 'round'
-          },
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
           paint: {
-            'line-color': '#e89035',
-            'line-opacity': 0.55,
+            'line-color': ['coalesce', ['get', 'colour'], '#e89035'],
+            'line-opacity': 0.65,
             'line-width': ['interpolate', ['linear'], ['zoom'], 10, 1, 14, 2, 18, 4]
           } },
         { id: 'road-labels', type: 'symbol', source: 'local', 'source-layer': 'transportation_name',
@@ -777,40 +842,154 @@ function fmtDate(ts) {
   map.addControl(new PinControl(), 'bottom-right');
   map.addControl(new RefreshControl(), 'bottom-right');
 
-  const TRANSIT_LAYERS = ['rail-mainline', 'subway', 'tram', 'light-rail', 'bus-routes'];
-  class TransitToggleControl {
+  const TRANSIT_TILE_LAYERS = {
+    rail: 'rail-mainline',
+    subway: 'subway',
+    tram: 'tram',
+    light_rail: 'light-rail',
+  };
+  const TRANSIT_MODES = ['bus', 'subway', 'tram', 'light_rail', 'rail', 'trolleybus'];
+  const TRANSIT_MODE_LABELS = {
+    bus: 'Bus',
+    subway: 'Subway',
+    tram: 'Tram',
+    light_rail: 'Light rail',
+    rail: 'Rail',
+    trolleybus: 'Trolleybus',
+  };
+  let routeMetaIndex = {};  // rid -> meta
+
+  function loadTransitState() {
+    try {
+      const s = JSON.parse(localStorage.getItem('cc.transit.v2') || 'null');
+      if (s && s.modes) return s;
+    } catch {}
+    return { modes: {}, routes: {} };
+  }
+  function saveTransitState(s) {
+    localStorage.setItem('cc.transit.v2', JSON.stringify(s));
+  }
+  let transitState = loadTransitState();
+  function modeOn(m) { return transitState.modes[m] !== false; }
+  function routeOn(rid) { return transitState.routes[rid] !== false; }
+
+  function applyTransitTileVisibility() {
+    for (const [mode, layerId] of Object.entries(TRANSIT_TILE_LAYERS)) {
+      if (!map.getLayer(layerId)) continue;
+      map.setLayoutProperty(layerId, 'visibility', modeOn(mode) ? 'visible' : 'none');
+    }
+    if (map.getLayer('bus-routes')) {
+      const anyOn = modeOn('bus') || modeOn('trolleybus');
+      map.setLayoutProperty('bus-routes', 'visibility', anyOn ? 'visible' : 'none');
+    }
+  }
+
+  class TransitMenuControl {
     onAdd() {
       const c = document.createElement('div');
       c.className = 'maplibregl-ctrl maplibregl-ctrl-group';
       const b = document.createElement('button');
       b.type = 'button';
-      b.title = 'toggle transit lines';
-      b.setAttribute('aria-label', 'toggle transit lines');
+      b.title = 'transit layers';
+      b.setAttribute('aria-label', 'transit layers');
       b.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style="display:block;margin:auto"><path d="M4 15.5C4 17.43 5.57 19 7.5 19L6 20.5V21h12v-.5L16.5 19c1.93 0 3.5-1.57 3.5-3.5V5c0-3.5-3.58-4-8-4s-8 .5-8 4v10.5zM7.5 17c-.83 0-1.5-.67-1.5-1.5S6.67 14 7.5 14s1.5.67 1.5 1.5S8.33 17 7.5 17zm9 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM18 11H6V6h12v5z"/></svg>`;
-      const applyState = () => {
-        const on = localStorage.getItem('cc.transitOn') !== '0';
-        b.style.opacity = on ? '1' : '0.4';
-        b.setAttribute('aria-pressed', String(on));
-        for (const id of TRANSIT_LAYERS) {
-          if (map.getLayer(id)) {
-            map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
-          }
-        }
-      };
-      b.onclick = () => {
-        const on = localStorage.getItem('cc.transitOn') !== '0';
-        localStorage.setItem('cc.transitOn', on ? '0' : '1');
-        applyState();
-      };
-      this._apply = applyState;
+      b.onclick = () => document.getElementById('transitPanel').classList.add('show');
       c.appendChild(b);
       return c;
     }
     onRemove() {}
   }
-  const transitCtrl = new TransitToggleControl();
-  map.addControl(transitCtrl, 'bottom-right');
-  map.on('styledata', () => { if (transitCtrl._apply) transitCtrl._apply(); });
+  map.addControl(new TransitMenuControl(), 'bottom-right');
+  map.on('styledata', applyTransitTileVisibility);
+
+  function renderTransitModes() {
+    const el = document.getElementById('transitModes');
+    el.innerHTML = TRANSIT_MODES.map(m =>
+      `<span class="mode-chip${modeOn(m) ? ' on' : ''}" data-mode="${m}">${TRANSIT_MODE_LABELS[m] || m}</span>`
+    ).join('');
+    el.querySelectorAll('[data-mode]').forEach(chip => {
+      chip.onclick = async () => {
+        const m = chip.dataset.mode;
+        transitState.modes[m] = !modeOn(m);
+        saveTransitState(transitState);
+        renderTransitModes();
+        renderTransitRoutes();
+        await refreshRoutesSource();
+      };
+    });
+  }
+  function renderTransitRoutes() {
+    const el = document.getElementById('transitRoutes');
+    const q = (document.getElementById('transitSearch').value || '').trim().toLowerCase();
+    const rows = Object.entries(routeMetaIndex)
+      .filter(([rid, m]) => modeOn(m.mode))
+      .filter(([rid, m]) => {
+        if (!q) return true;
+        return (m.ref || '').toLowerCase().includes(q)
+          || (m.name || '').toLowerCase().includes(q);
+      })
+      .sort(([_, a], [__, b]) => {
+        if (a.mode !== b.mode) return a.mode.localeCompare(b.mode);
+        const ra = parseInt(a.ref) || 99999, rb = parseInt(b.ref) || 99999;
+        if (ra !== rb) return ra - rb;
+        return (a.ref || '').localeCompare(b.ref || '');
+      });
+    document.getElementById('transitCount').textContent = `${rows.length} route${rows.length === 1 ? '' : 's'}`;
+    if (!rows.length) {
+      el.innerHTML = '<div style="font-size:12px; color:#888; padding:8px;">No routes — save a region first to download them.</div>';
+      return;
+    }
+    el.innerHTML = rows.map(([rid, m]) => {
+      const colour = /^#[0-9a-f]{3,8}$/i.test(m.colour || '') ? m.colour : '#888';
+      const on = routeOn(rid);
+      return `<label class="route-row">
+        <input type="checkbox" data-rid="${esc(rid)}" ${on ? 'checked' : ''}>
+        <span class="ref" style="background:${esc(colour)}">${esc(m.ref || '?')}</span>
+        <span class="name">${esc(m.name || '(unnamed)')}</span>
+        <span class="mode-tag">${esc(m.mode)}</span>
+      </label>`;
+    }).join('');
+    el.querySelectorAll('[data-rid]').forEach(cb => {
+      cb.onchange = async () => {
+        transitState.routes[cb.dataset.rid] = cb.checked;
+        saveTransitState(transitState);
+        await refreshRoutesSource();
+      };
+    });
+  }
+  async function openTransitPanel() {
+    await reloadRouteMetaIndex();
+    renderTransitModes();
+    renderTransitRoutes();
+  }
+  // Hook menu control open to render
+  const origBtnOpen = document.querySelector('.maplibregl-ctrl-bottom-right');
+  document.getElementById('transitClose').onclick = () =>
+    document.getElementById('transitPanel').classList.remove('show');
+  document.getElementById('transitPanel').addEventListener('click', (e) => {
+    if (e.target.id === 'transitPanel') {
+      document.getElementById('transitPanel').classList.remove('show');
+    }
+  });
+  document.getElementById('transitSearch').addEventListener('input', renderTransitRoutes);
+  document.getElementById('transitAll').onclick = async () => {
+    for (const rid of Object.keys(routeMetaIndex)) transitState.routes[rid] = true;
+    saveTransitState(transitState);
+    renderTransitRoutes();
+    await refreshRoutesSource();
+  };
+  document.getElementById('transitNone').onclick = async () => {
+    for (const rid of Object.keys(routeMetaIndex)) transitState.routes[rid] = false;
+    saveTransitState(transitState);
+    renderTransitRoutes();
+    await refreshRoutesSource();
+  };
+  // Observe open of the transit panel to populate fresh each time
+  new MutationObserver(() => {
+    if (document.getElementById('transitPanel').classList.contains('show')) {
+      openTransitPanel();
+    }
+  }).observe(document.getElementById('transitPanel'), { attributes: true, attributeFilter: ['class'] });
 
   const THEMES = {
     default: { bg: '#f5f5dc', landcover: '#e6e6d6', landuse: '#e0e0d0', water: '#a0c8f0', building: '#d9d0c9', road: '#ffffff', roadLabel: '#555', roadHalo: '#fff', placeLabel: '#333', placeHalo: '#fff', poiLabel: '#333', poiHalo: '#fff', poiIcon: '#333333' },
@@ -1575,7 +1754,7 @@ function fmtDate(ts) {
     if (!confirm('Delete ALL local data? (saved regions, POIs, routes, tiles, fonts, icons, app shell, service worker) This cannot be undone.')) return;
     try {
       localStorage.clear();
-      await Promise.all(['cc.pois.v1', 'cc.routes.v1', 'cc.favorites.v1'].map(n => new Promise(res => {
+      await Promise.all(['cc.pois.v1', 'cc.routes.v1', 'cc.routes.v2', 'cc.favorites.v1'].map(n => new Promise(res => {
         const req = indexedDB.deleteDatabase(n);
         req.onsuccess = req.onerror = req.onblocked = () => res();
       })));
@@ -1829,7 +2008,8 @@ function fmtDate(ts) {
       if (!res.ok) return 0;
       const geo = await res.json();
       const features = geo.features || [];
-      await saveRoutes(regionId, features);
+      const routesMeta = geo.routes || {};
+      await saveRoutes(regionId, features, routesMeta);
       return features.length;
     } catch (err) {
       console.error('routes fetch failed:', err);
@@ -1864,13 +2044,35 @@ function fmtDate(ts) {
     });
   }
 
+  async function reloadRouteMetaIndex() {
+    const rows = await loadAllRouteMeta();
+    routeMetaIndex = {};
+    for (const r of rows) routeMetaIndex[r.rid] = r;
+  }
   async function refreshRoutesSource() {
     const src = map.getSource('bus-routes');
     if (!src) return;
+    await reloadRouteMetaIndex();
     const groups = await loadAllRoutes();
-    const features = [];
-    for (const g of groups) features.push(...(g.features || []));
-    src.setData({ type: 'FeatureCollection', features });
+    const all = [];
+    for (const g of groups) all.push(...(g.features || []));
+    const filtered = [];
+    for (const f of all) {
+      const rids = (f.properties && f.properties.route_ids) || [];
+      let colour = null;
+      for (const rid of rids) {
+        const meta = routeMetaIndex[rid];
+        if (!meta) continue;
+        if (!modeOn(meta.mode)) continue;
+        if (!routeOn(rid)) continue;
+        if (!colour && /^#[0-9a-f]{3,8}$/i.test(meta.colour || '')) colour = meta.colour;
+        if (!colour) colour = '#e89035';
+        filtered.push({ ...f, properties: { ...f.properties, colour } });
+        break;
+      }
+    }
+    src.setData({ type: 'FeatureCollection', features: filtered });
+    applyTransitTileVisibility();
   }
 
   document.getElementById('downloadBtn').onclick = async () => {
