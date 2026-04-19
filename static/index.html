@@ -1316,8 +1316,8 @@ function fmtDate(ts) {
     const webHref = (s) => s.startsWith('http') ? s : 'https://' + s;
 
     const street = [p['addr:housenumber'], p['addr:street']].filter(Boolean).join(' ');
-    const city = [p['addr:city'], p['addr:postcode']].filter(Boolean).join(' ');
-    const addr = [street, city].filter(Boolean).join(', ');
+    const cityState = [p['addr:city'], p['addr:state']].filter(Boolean).join(', ');
+    const addr = [street, cityState, p['addr:postcode'], p['addr:country']].filter(Boolean).join(', ');
     if (addr) rows.push(`<div class="row"><span class="lbl">📍</span><span class="val">${esc(addr)}</span></div>`);
 
     if (p.opening_hours) rows.push(`<div class="row"><span class="lbl">🕐</span><span class="val">${esc(p.opening_hours)}</span></div>`);

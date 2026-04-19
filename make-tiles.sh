@@ -27,6 +27,11 @@ for pbf in osmpbf/*.osm.pbf; do
     TMP=$(mktemp -d)
     osmium tags-filter "$pbf" n/name w/name \
       n/addr:housenumber w/addr:housenumber \
+      n/addr:street w/addr:street \
+      n/place=city,town,village,suburb,hamlet \
+      w/place=city,town,village,suburb,hamlet \
+      w/addr:interpolation \
+      r/boundary=administrative \
       -o "$TMP/named.osm.pbf" --overwrite
     osmium export "$TMP/named.osm.pbf" -f geojsonseq \
       -o "$TMP/pois.geojsonseq" --overwrite

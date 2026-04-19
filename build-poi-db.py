@@ -1,10 +1,41 @@
 #!/usr/bin/env python3
 import json
-import os
-import shutil
 import sqlite3
 import sys
-import tempfile
+import time
+from shapely.geometry import Point, LineString, shape
+from shapely.strtree import STRtree
+
+
+def count_lines(path):
+    with open(path, "rb") as f:
+        n = sum(1 for _ in f)
+    return n
+
+
+def progress(it, label, total=None, every=20000):
+    start = time.time()
+    n = 0
+    for item in it:
+        yield item
+        n += 1
+        if n % every == 0:
+            elapsed = time.time() - start
+            rate = n / elapsed if elapsed > 0 else 0
+            bar = ""
+            if total:
+                pct = n / total * 100
+                width = 24
+                filled = int(width * n / total)
+                bar = "[" + "#" * filled + "-" * (width - filled) + f"] {pct:5.1f}%"
+                msg = f"  {label} {bar} {n:>10,}/{total:<10,} {rate:>7,.0f}/s  {elapsed:>5.1f}s"
+            else:
+                msg = f"  {label} {n:>10,} {rate:>7,.0f}/s  {elapsed:>5.1f}s"
+            sys.stderr.write("\r\033[K" + msg)
+            sys.stderr.flush()
+    elapsed = time.time() - start
+    sys.stderr.write(f"\r\033[K  {label} done — {n:,} features in {elapsed:.1f}s\n")
+    sys.stderr.flush()
 
 PRIORITY = [
     "amenity", "shop", "tourism", "leisure", "historic",
@@ -12,7 +43,8 @@ PRIORITY = [
 ]
 
 EXTRA_FIELDS = [
-    "addr:housenumber", "addr:street", "addr:city", "addr:postcode",
+    "addr:housenumber", "addr:street", "addr:city",
+    "addr:county", "addr:state", "addr:country", "addr:postcode",
     "opening_hours",
     "phone", "contact:phone",
     "website", "contact:website",
@@ -24,7 +56,19 @@ EXTRA_FIELDS = [
     "internet_access",
 ]
 
-ADDR_MATCH_EPS = 0.0005  # ~55 m at mid latitudes
+ADDR_MATCH_EPS = 0.0015     # ~160 m
+INTERP_MATCH_EPS = 0.00045  # ~50 m
+CITY_MATCH_EPS = 0.3        # ~30 km
+
+PLACE_CLASSES = {"city", "town", "village", "suburb", "hamlet"}
+
+# OSM admin_level -> POI address field. Common global conventions.
+ADMIN_LEVEL_TO_FIELD = {
+    "2": "addr:country",
+    "4": "addr:state",
+    "6": "addr:county",
+    "8": "addr:city",
+}
 
 
 def center(feat):
@@ -62,99 +106,234 @@ def iter_features(src):
                 continue
 
 
-def main(src, dst):
-    tmp_dir = tempfile.mkdtemp()
-    addr_db_path = os.path.join(tmp_dir, "addr.sqlite")
-
+def interpolate_number(start, end, fraction, interp_type):
     try:
-        addr_db = sqlite3.connect(addr_db_path)
-        addr_db.execute(
-            "CREATE VIRTUAL TABLE addr USING rtree(id, minX, maxX, minY, maxY)"
-        )
-        addr_db.execute(
-            "CREATE TABLE addr_data(id INTEGER PRIMARY KEY, props TEXT)"
-        )
+        s, e = int(start), int(end)
+    except (ValueError, TypeError):
+        return None
+    raw = s + fraction * (e - s)
+    if interp_type == "even":
+        return str(round(raw / 2) * 2)
+    if interp_type == "odd":
+        return str(round((raw - 1) / 2) * 2 + 1)
+    return str(round(raw))
 
-        # Pass 1: load every feature with any addr:* tag into an R-tree.
-        addr_count = 0
-        for feat in iter_features(src):
-            props = feat.get("properties") or {}
-            addr = {k: v for k, v in props.items() if k.startswith("addr:") and v}
-            if not addr:
-                continue
+
+def main(src, dst):
+    sys.stderr.write(f"  counting features…"); sys.stderr.flush()
+    total = count_lines(src)
+    sys.stderr.write(f"\r\033[K  source has {total:,} features\n"); sys.stderr.flush()
+
+    # Pass 1: collect sources for enrichment.
+    addr_pts = []        # shapely Points for STRtree
+    addr_props = []      # [{k: v, ...}]  parallel to addr_pts
+
+    place_pts = []       # shapely Points
+    place_names = []     # parallel
+
+    interp_ways = []     # [{'coords': [...], 'street': str, 'type': str}]
+
+    housenum_nodes = {}  # (round(lng,6), round(lat,6)) -> housenumber string
+
+    boundary_geoms = []  # shapely Polygon/MultiPolygon
+    boundary_meta = []   # [(admin_level, name)] parallel
+
+    for feat in progress(iter_features(src), "pass 1 (collect sources)", total=total):
+        props = feat.get("properties") or {}
+        geom = feat.get("geometry") or {}
+        gtype = geom.get("type")
+
+        addr = {k: v for k, v in props.items() if k.startswith("addr:") and v}
+        if addr:
             lng, lat = center(feat)
-            if lng is None:
-                continue
-            addr_db.execute(
-                "INSERT INTO addr VALUES (?, ?, ?, ?, ?)",
-                (addr_count, lng, lng, lat, lat),
-            )
-            addr_db.execute(
-                "INSERT INTO addr_data VALUES (?, ?)",
-                (addr_count, json.dumps(addr, ensure_ascii=False)),
-            )
-            addr_count += 1
-        addr_db.commit()
+            if lng is not None:
+                addr_pts.append(Point(lng, lat))
+                addr_props.append(addr)
 
-        # Pass 2: build POI DB, merging nearest-addr fallback for ones without.
-        db = sqlite3.connect(dst)
-        db.execute("DROP TABLE IF EXISTS poi")
-        db.execute("""CREATE TABLE poi(
-            lng REAL, lat REAL, name TEXT, category TEXT, props TEXT
-        )""")
-        db.execute("CREATE INDEX idx_lng ON poi(lng)")
-        db.execute("CREATE INDEX idx_lat ON poi(lat)")
-
-        poi_count = 0
-        enriched = 0
-        for feat in iter_features(src):
-            props = feat.get("properties") or {}
+        if props.get("place") in PLACE_CLASSES:
             name = (props.get("name:latin") or props.get("name") or "").strip()
-            if not name:
+            if name:
+                lng, lat = center(feat)
+                if lng is not None:
+                    place_pts.append(Point(lng, lat))
+                    place_names.append(name)
+
+        if (props.get("addr:interpolation")
+                and gtype == "LineString"
+                and len(geom.get("coordinates") or []) >= 2):
+            coords = geom["coordinates"]
+            interp_ways.append({
+                "coords": coords,
+                "street": props.get("addr:street", ""),
+                "type": props["addr:interpolation"],
+            })
+
+        if (props.get("addr:housenumber")
+                and gtype == "Point"
+                and len(geom.get("coordinates") or []) >= 2):
+            lng, lat = geom["coordinates"]
+            housenum_nodes[(round(lng, 6), round(lat, 6))] = props["addr:housenumber"]
+
+        if (props.get("boundary") == "administrative"
+                and gtype in ("Polygon", "MultiPolygon")):
+            al = str(props.get("admin_level", ""))
+            if al in ADMIN_LEVEL_TO_FIELD:
+                name = (props.get("name:latin") or props.get("name") or "").strip()
+                if name:
+                    try:
+                        g = shape(geom)
+                        if g.is_valid:
+                            boundary_geoms.append(g)
+                            boundary_meta.append((al, name))
+                    except Exception:
+                        pass
+
+    # Resolve interpolation-way endpoints to house numbers via node lookup.
+    resolved_interp = []
+    interp_lines = []
+    for w in interp_ways:
+        s_key = (round(w["coords"][0][0], 6), round(w["coords"][0][1], 6))
+        e_key = (round(w["coords"][-1][0], 6), round(w["coords"][-1][1], 6))
+        s_num = housenum_nodes.get(s_key)
+        e_num = housenum_nodes.get(e_key)
+        if s_num is None or e_num is None:
+            continue
+        try:
+            line = LineString(w["coords"])
+            if not line.is_valid or line.length == 0:
                 continue
-            lng, lat = center(feat)
-            if lng is None:
-                continue
+        except Exception:
+            continue
+        resolved_interp.append({
+            "start": s_num,
+            "end": e_num,
+            "street": w["street"],
+            "type": w["type"],
+            "line": line,
+        })
+        interp_lines.append(line)
 
-            category = ""
-            for k in PRIORITY:
-                if k in props:
-                    category = props[k]
-                    break
+    # Build spatial indexes.
+    sys.stderr.write(
+        f"  collected: addresses={len(addr_pts):,}  places={len(place_pts):,}  "
+        f"interp_ways={len(interp_lines):,}  boundaries={len(boundary_geoms):,}\n"
+    )
+    sys.stderr.flush()
+    t0 = time.time()
+    sys.stderr.write("  building spatial indexes…"); sys.stderr.flush()
+    addr_tree = STRtree(addr_pts) if addr_pts else None
+    place_tree = STRtree(place_pts) if place_pts else None
+    interp_tree = STRtree(interp_lines) if interp_lines else None
+    boundary_tree = STRtree(boundary_geoms) if boundary_geoms else None
+    sys.stderr.write(f"\r\033[K  spatial indexes built in {time.time() - t0:.1f}s\n")
+    sys.stderr.flush()
 
-            extra = {k: props[k] for k in EXTRA_FIELDS if k in props and props[k]}
-            has_addr = any(k.startswith("addr:") for k in extra)
-            if not has_addr:
-                row = addr_db.execute(
-                    "SELECT a.props FROM addr_data a JOIN addr r ON a.id = r.id "
-                    "WHERE r.minX BETWEEN ? AND ? AND r.minY BETWEEN ? AND ? "
-                    "ORDER BY (r.minX - ?) * (r.minX - ?) "
-                    "       + (r.minY - ?) * (r.minY - ?) "
-                    "LIMIT 1",
-                    (lng - ADDR_MATCH_EPS, lng + ADDR_MATCH_EPS,
-                     lat - ADDR_MATCH_EPS, lat + ADDR_MATCH_EPS,
-                     lng, lng, lat, lat),
-                ).fetchone()
-                if row:
-                    nearby = json.loads(row[0])
-                    for k, v in nearby.items():
-                        if k in EXTRA_FIELDS and k not in extra:
-                            extra[k] = v
-                    if any(k.startswith("addr:") for k in nearby):
-                        enriched += 1
+    # Pass 2: write POIs, enriching each.
+    db = sqlite3.connect(dst)
+    db.execute("DROP TABLE IF EXISTS poi")
+    db.execute("""CREATE TABLE poi(
+        lng REAL, lat REAL, name TEXT, category TEXT, props TEXT
+    )""")
+    db.execute("CREATE INDEX idx_lng ON poi(lng)")
+    db.execute("CREATE INDEX idx_lat ON poi(lat)")
 
-            db.execute(
-                "INSERT INTO poi(lng, lat, name, category, props) VALUES (?, ?, ?, ?, ?)",
-                (lng, lat, name, category,
-                 json.dumps(extra, ensure_ascii=False) if extra else ""),
-            )
-            poi_count += 1
-        db.commit()
-        db.close()
-        addr_db.close()
-        print(f"  indexed {poi_count} POIs ({enriched} got nearby address) → {dst}")
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+    counts = {
+        "total": 0, "own_addr": 0,
+        "nearby_addr": 0, "interp": 0,
+        "pip": 0, "city_fallback": 0,
+    }
+
+    for feat in progress(iter_features(src), "pass 2 (enrich + write)", total=total):
+        props = feat.get("properties") or {}
+        name = (props.get("name:latin") or props.get("name") or "").strip()
+        if not name:
+            continue
+        lng, lat = center(feat)
+        if lng is None:
+            continue
+
+        category = ""
+        for k in PRIORITY:
+            if k in props:
+                category = props[k]
+                break
+
+        extra = {k: props[k] for k in EXTRA_FIELDS if k in props and props[k]}
+        has_own_addr = any(k.startswith("addr:") for k in extra)
+        if has_own_addr:
+            counts["own_addr"] += 1
+
+        pt = Point(lng, lat)
+
+        # 1. Nearby addressed feature — copy missing address fields.
+        if addr_tree is not None:
+            idx = addr_tree.nearest(pt)
+            if addr_pts[idx].distance(pt) < ADDR_MATCH_EPS:
+                nearby = addr_props[idx]
+                for k, v in nearby.items():
+                    if k in EXTRA_FIELDS and k not in extra:
+                        extra[k] = v
+                if any(k.startswith("addr:") for k in nearby):
+                    counts["nearby_addr"] += 1
+
+        # 2. Street interpolation — fill housenumber + street.
+        if "addr:housenumber" not in extra and interp_tree is not None:
+            best_idx, best_dist = None, INTERP_MATCH_EPS
+            for idx in interp_tree.query(pt.buffer(INTERP_MATCH_EPS)):
+                d = interp_lines[idx].distance(pt)
+                if d < best_dist:
+                    best_dist = d
+                    best_idx = idx
+            if best_idx is not None:
+                w = resolved_interp[best_idx]
+                fraction = w["line"].project(pt, normalized=True)
+                num = interpolate_number(w["start"], w["end"], fraction, w["type"])
+                if num:
+                    extra["addr:housenumber"] = num
+                    if w["street"] and "addr:street" not in extra:
+                        extra["addr:street"] = w["street"]
+                    counts["interp"] += 1
+
+        # 3. Point-in-polygon boundaries — fill country/state/county/city.
+        if boundary_tree is not None:
+            added_city = False
+            for idx in boundary_tree.query(pt):
+                if boundary_geoms[idx].contains(pt):
+                    al, bname = boundary_meta[idx]
+                    field = ADMIN_LEVEL_TO_FIELD[al]
+                    if field not in extra:
+                        extra[field] = bname
+                        if field == "addr:city":
+                            added_city = True
+            if added_city:
+                counts["pip"] += 1
+
+        # 4. Nearest-city fallback — last resort for addr:city.
+        if "addr:city" not in extra and place_tree is not None:
+            idx = place_tree.nearest(pt)
+            if place_pts[idx].distance(pt) < CITY_MATCH_EPS:
+                extra["addr:city"] = place_names[idx]
+                counts["city_fallback"] += 1
+
+        counts["total"] += 1
+        db.execute(
+            "INSERT INTO poi(lng, lat, name, category, props) VALUES (?, ?, ?, ?, ?)",
+            (lng, lat, name, category,
+             json.dumps(extra, ensure_ascii=False) if extra else ""),
+        )
+
+    db.commit()
+    db.close()
+
+    print(
+        f"  indexed {counts['total']} POIs — "
+        f"own_addr:{counts['own_addr']} "
+        f"nearby:{counts['nearby_addr']} "
+        f"interp:{counts['interp']} "
+        f"pip_city:{counts['pip']} "
+        f"city_fallback:{counts['city_fallback']} "
+        f"→ {dst}"
+    )
 
 
 if __name__ == "__main__":
