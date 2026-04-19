@@ -25,8 +25,11 @@ for pbf in osmpbf/*.osm.pbf; do
   if [ ! -e "$pois_db" ]; then
     echo "==> POIs: $pbf -> $pois_db"
     TMP=$(mktemp -d)
-    osmium tags-filter "$pbf" n/name w/name -o "$TMP/named.osm.pbf" --overwrite
-    osmium export "$TMP/named.osm.pbf" -f geojsonseq -o "$TMP/pois.geojsonseq" --overwrite
+    osmium tags-filter "$pbf" n/name w/name \
+      n/addr:housenumber w/addr:housenumber \
+      -o "$TMP/named.osm.pbf" --overwrite
+    osmium export "$TMP/named.osm.pbf" -f geojsonseq \
+      -o "$TMP/pois.geojsonseq" --overwrite
     python3 build-poi-db.py "$TMP/pois.geojsonseq" "$pois_db"
     rm -rf "$TMP"
   else
