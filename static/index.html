@@ -555,15 +555,24 @@ function fmtDate(ts) {
       version: 8,
       glyphs: location.origin + '/fonts/{fontstack}/{range}.pbf',
       sources: {
+        base: { type: 'vector', tiles: [location.origin + '/tiles/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 5 },
         local: { type: 'vector', tiles: [location.origin + '/tiles/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 14 },
         'bus-routes': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } }
       },
       layers: [
         { id: 'bg', type: 'background', paint: { 'background-color': '#f5f5dc' } },
+        { id: 'water-base', type: 'fill', source: 'base', 'source-layer': 'water',
+          paint: { 'fill-color': '#a0c8f0' } },
         { id: 'landcover', type: 'fill', source: 'local', 'source-layer': 'landcover', paint: { 'fill-color': '#e6e6d6' } },
         { id: 'landuse', type: 'fill', source: 'local', 'source-layer': 'landuse', paint: { 'fill-color': '#e0e0d0' } },
         { id: 'water', type: 'fill', source: 'local', 'source-layer': 'water', paint: { 'fill-color': '#a0c8f0' } },
         { id: 'buildings', type: 'fill', source: 'local', 'source-layer': 'building', minzoom: 13, paint: { 'fill-color': '#d9d0c9' } },
+        { id: 'roads-base', type: 'line', source: 'base', 'source-layer': 'transportation',
+          filter: ['in', ['get', 'class'], ['literal', ['motorway', 'trunk', 'primary']]],
+          paint: {
+            'line-color': '#ffffff',
+            'line-width': ['interpolate', ['linear'], ['zoom'], 5, 0.5, 10, 1.2, 14, 1.8, 18, 2.6]
+          } },
         { id: 'roads', type: 'line', source: 'local', 'source-layer': 'transportation', paint: { 'line-color': '#ffffff', 'line-width': 1 } },
         { id: 'rail-mainline', type: 'line', source: 'local', 'source-layer': 'transportation',
           filter: ['==', ['get', 'class'], 'rail'],
@@ -626,12 +635,32 @@ function fmtDate(ts) {
                     'text-size': 11, 'text-offset': [0, 0.9], 'text-anchor': 'top',
                     'text-optional': true },
           paint: { 'text-color': '#333', 'text-halo-color': '#fff', 'text-halo-width': 1.5 } },
+        { id: 'boundary-country-base', type: 'line', source: 'base', 'source-layer': 'boundary',
+          filter: ['all', ['==', ['get', 'admin_level'], 2], ['!=', ['get', 'maritime'], 1]],
+          paint: { 'line-color': '#888', 'line-width': ['interpolate', ['linear'], ['zoom'], 0, 0.5, 6, 1, 12, 1.4] } },
+        { id: 'boundary-state-base', type: 'line', source: 'base', 'source-layer': 'boundary',
+          filter: ['all', ['==', ['get', 'admin_level'], 4], ['!=', ['get', 'maritime'], 1]],
+          paint: { 'line-color': '#aaa', 'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.3, 8, 0.6, 14, 1], 'line-dasharray': [3, 2] } },
         { id: 'boundary-country', type: 'line', source: 'local', 'source-layer': 'boundary',
           filter: ['all', ['==', ['get', 'admin_level'], 2], ['!=', ['get', 'maritime'], 1]],
           paint: { 'line-color': '#888', 'line-width': ['interpolate', ['linear'], ['zoom'], 0, 0.5, 6, 1, 12, 1.4] } },
         { id: 'boundary-state', type: 'line', source: 'local', 'source-layer': 'boundary',
           filter: ['all', ['==', ['get', 'admin_level'], 4], ['!=', ['get', 'maritime'], 1]],
           paint: { 'line-color': '#aaa', 'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.3, 8, 0.6, 14, 1], 'line-dasharray': [3, 2] } },
+        { id: 'places-base', type: 'symbol', source: 'base', 'source-layer': 'place',
+          filter: ['in', ['get', 'class'], ['literal', ['country', 'state', 'continent', 'city', 'town']]],
+          layout: {
+            'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name'], ['get', 'name_int']],
+            'text-font': ['KlokanTech Noto Sans Regular'],
+            'text-size': [
+              'interpolate', ['linear'], ['zoom'],
+              1, ['match', ['get', 'class'], 'continent', 14, 'country', 12, 'state', 9, 'city', 8, 'town', 7, 8],
+              4, ['match', ['get', 'class'], 'country', 14, 'state', 12, 'city', 11, 'town', 9, 10],
+              8, ['match', ['get', 'class'], 'country', 14, 'state', 13, 'city', 13, 'town', 10, 11],
+              14, ['match', ['get', 'class'], 'city', 14, 'town', 11, 10]
+            ]
+          },
+          paint: { 'text-color': '#333', 'text-halo-color': '#fff', 'text-halo-width': 1.2 } },
         { id: 'places', type: 'symbol', source: 'local', 'source-layer': 'place',
           layout: {
             'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name'], ['get', 'name_int']],
