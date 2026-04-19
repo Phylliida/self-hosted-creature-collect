@@ -11,12 +11,16 @@ app = Flask(__name__, static_folder="static")
 
 @app.route("/")
 def index():
-    return send_from_directory("static", "index.html")
+    resp = send_from_directory("static", "index.html")
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return resp
 
 
 @app.route("/sw.js")
 def sw():
-    return send_from_directory("static", "sw.js", mimetype="application/javascript")
+    resp = send_from_directory("static", "sw.js", mimetype="application/javascript")
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return resp
 
 
 @app.route("/manifest.webmanifest")
@@ -128,6 +132,7 @@ def tile(z, x, y):
     if not paths:
         abort(404)
     y_tms = (1 << z) - 1 - y
+    best = None
     for path in paths:
         with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
             row = conn.execute(
@@ -135,12 +140,14 @@ def tile(z, x, y):
                 "WHERE zoom_level=? AND tile_column=? AND tile_row=?",
                 (z, x, y_tms),
             ).fetchone()
-        if row is not None:
-            resp = Response(row[0], mimetype="application/x-protobuf")
-            resp.headers["Content-Encoding"] = "gzip"
-            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
-            return resp
-    return Response(status=204)
+        if row is not None and (best is None or len(row[0]) > len(best)):
+            best = row[0]
+    if best is None:
+        return Response(status=204)
+    resp = Response(best, mimetype="application/x-protobuf")
+    resp.headers["Content-Encoding"] = "gzip"
+    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return resp
 
 
 if __name__ == "__main__":
