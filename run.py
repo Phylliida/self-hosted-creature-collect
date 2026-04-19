@@ -166,6 +166,7 @@ def routes():
     w, s, e, n = parts
     features = []
     routes_map = {}
+    stops_map = {}
     for path in _relevant_files("*.routes.sqlite",
                                  lambda p: _rtree_bounds(p, "route_rtree"),
                                  w, s, e, n):
@@ -205,10 +206,24 @@ def routes():
                         "ref": ref, "name": name, "network": network,
                         "operator": operator, "colour": colour, "mode": mode,
                     }
-    return jsonify({
+                stop_rows = conn.execute(
+                    f"SELECT route_id, node_id, ord, lng, lat, name, role "
+                    f"FROM route_stop WHERE route_id IN ({placeholder}) "
+                    f"ORDER BY route_id, ord",
+                    tuple(needed_rids),
+                ).fetchall()
+                for rid, node_id, ord_, lng, lat, name, role in stop_rows:
+                    stops_map.setdefault(f"{file_key}:{rid}", []).append({
+                        "node_id": node_id,
+                        "ord": ord_,
+                        "lng": lng, "lat": lat,
+                        "name": name, "role": role,
+                    })
+    return gzip_json({
         "type": "FeatureCollection",
         "features": features,
         "routes": routes_map,
+        "stops": stops_map,
     })
 
 
