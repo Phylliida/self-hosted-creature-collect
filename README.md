@@ -27,14 +27,17 @@ you'll never pan to.
 
 For each `osmpbf/<name>.osm.pbf` this produces:
 - `data/<name>.mbtiles` — vector tiles (via tilemaker)
-- `data/<name>.pois.sqlite` — searchable POI index (via osmium + `build-poi-db.py`),
-  containing every node with a `name` tag and its primary category
-  (amenity/shop/tourism/etc.)
+- `data/<name>.pois.sqlite` — big server-side POI index via
+  `osmium tags-filter n/name w/name` (covers nodes AND named ways like
+  buildings), then `osmium export` → `build-poi-db.py`. Polygon features get a
+  centroid. Stores lng, lat, name, category, and a JSON `props` blob (address,
+  opening_hours, phone, website, wheelchair, brand, cuisine, description,
+  wikipedia/wikidata, internet_access).
 
-Already-built files are skipped, so re-run freely as more PBFs download. The
-server serves tiles from **any** `.mbtiles` and POIs from **any** `.pois.sqlite`
-in `data/` — drop in as many regions as you want and they all work
-transparently.
+Already-built files are skipped. On `/poi?bbox=`, the server does a fast
+indexed SQL query (`WHERE lng BETWEEN … AND lat BETWEEN …`) and returns JSON.
+The client stores the subset in IndexedDB so further POI search is fully
+offline.
 
 ## Download fonts (one-time, for labels/landmarks)
 

@@ -1,6 +1,6 @@
 import json
-import sqlite3
 import pathlib
+import sqlite3
 from flask import Flask, send_from_directory, Response, abort, request, jsonify
 
 ROOT = pathlib.Path(__file__).parent
