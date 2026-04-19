@@ -41,6 +41,18 @@ for pbf in osmpbf/*.osm.pbf; do
     echo "skip POIs: $pois_db already exists"
   fi
 
+  walk_db="data/${name}.walk.sqlite"
+  if [ ! -e "$walk_db" ]; then
+    echo "==> walk graph: $pbf -> $walk_db"
+    TMP=$(mktemp -d)
+    osmium tags-filter "$pbf" w/highway \
+      -o "$TMP/walk.osm.pbf" --overwrite
+    python3 build-walk-graph.py "$TMP/walk.osm.pbf" "$walk_db"
+    rm -rf "$TMP"
+  else
+    echo "skip walk graph: $walk_db already exists"
+  fi
+
   routes_db="data/${name}.routes.sqlite"
   if [ ! -e "$routes_db" ]; then
     echo "==> routes: $pbf -> $routes_db"

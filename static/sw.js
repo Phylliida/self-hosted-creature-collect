@@ -50,6 +50,13 @@ self.addEventListener('fetch', (e) => {
     }));
     return;
   }
+  if (url.origin === location.origin && url.pathname.startsWith('/walk-graph')) {
+    if (e.request.headers.get('X-Download') === '1') return;
+    e.respondWith(new Response(JSON.stringify({ nodes: [], edges: [] }), {
+      status: 200, headers: { 'Content-Type': 'application/json' }
+    }));
+    return;
+  }
   if (url.origin === location.origin &&
       (url.pathname.startsWith('/fonts') || url.pathname.startsWith('/icons'))) {
     if (e.request.headers.get('X-Download') === '1') {
