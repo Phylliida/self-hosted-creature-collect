@@ -87,6 +87,11 @@
     display: flex; align-items: center; justify-content: center;
   }
   .selected-marker .icon { width: 14px; height: 14px; display: block; }
+  .selected-marker.favorited {
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 3px rgba(0,0,0,0.55), 0 2px 6px rgba(0,0,0,0.45);
+  }
+  .selected-marker.favorited .icon { filter: brightness(0) invert(1); }
   #poiCard {
     position: absolute; left: 8px; right: 68px; z-index: 12;
     top: calc(100px + env(safe-area-inset-top));
@@ -109,6 +114,86 @@
   #poiCardBody .row .val { flex: 1; min-width: 0; word-break: break-word; }
   #poiCardBody a { color: #4a90e2; text-decoration: none; }
   #poiCardBody a:active { text-decoration: underline; }
+  #settingsPanel {
+    position: fixed; inset: 0; z-index: 30;
+    background: rgba(0,0,0,0.45);
+    display: none; align-items: center; justify-content: center;
+  }
+  #settingsPanel.show { display: flex; }
+  #settingsPanel .sheet {
+    background: #fff; border-radius: 10px;
+    width: calc(100% - 40px); max-width: 360px;
+    padding: 18px 20px 14px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    max-height: 85vh; overflow-y: auto;
+  }
+  #customThemeControls { margin: 8px 0; padding: 8px 10px; border-left: 3px solid #eee; }
+  #customThemeControls .row { margin: 6px 0; }
+  #customThemeControls input[type="color"] { width: 36px; height: 26px; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; padding: 0; background: none; }
+  #settingsPanel h3 { margin: 0 0 14px; font-size: 16px; }
+  #settingsPanel .row { display: flex; align-items: center; gap: 10px; margin: 10px 0; }
+  #settingsPanel .row label { flex: 1; font-size: 14px; }
+  #settingsPanel select { padding: 6px 8px; font-size: 14px; }
+  #settingsPanel .actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+  #settingsPanel button.close { padding: 8px 14px; font-size: 14px; background: #eee; border: 1px solid #ccc; border-radius: 6px; cursor: pointer; }
+  .favorite-marker {
+    width: 28px; height: 28px; border-radius: 50%;
+    border: 2px solid #fff;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.35);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+  }
+  .favorite-marker img {
+    width: 18px; height: 18px;
+    filter: brightness(0) invert(1);
+    pointer-events: none;
+  }
+  .selected-marker { z-index: 3; }
+  #poiCardFav {
+    position: absolute; top: 6px; right: 38px;
+    background: none; border: none; cursor: pointer;
+    font-size: 22px; line-height: 1;
+    color: #bbb; padding: 4px 6px;
+  }
+  #poiCardFav.favorited { color: #e53935; }
+  #favPanel {
+    position: fixed; inset: 0; z-index: 32;
+    background: rgba(0,0,0,0.5);
+    display: none; align-items: center; justify-content: center;
+  }
+  #favPanel.show { display: flex; }
+  #favPanel .sheet {
+    background: #fff; border-radius: 10px;
+    width: calc(100% - 40px); max-width: 360px;
+    padding: 18px 20px 14px; max-height: 85vh; overflow-y: auto;
+  }
+  #favPanel h3 { margin: 0 0 10px; font-size: 16px; }
+  #favPanel .subtitle { font-size: 13px; color: #666; margin-bottom: 10px; }
+  #favPanel .section-label { font-size: 12px; color: #888; margin-top: 10px; }
+  .fav-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(36px, 1fr));
+    gap: 6px; margin-top: 6px;
+    max-height: 45vh; overflow-y: auto; overflow-x: hidden;
+  }
+  .fav-icon-option {
+    width: 100%; aspect-ratio: 1;
+    border-radius: 50%; background: #f2f2f2;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; border: 2px solid transparent; box-sizing: border-box;
+  }
+  .fav-icon-option.selected { border-color: #1e88e5; }
+  .fav-icon-option img { width: 55%; height: 55%; }
+  .fav-colors { display: flex; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
+  .fav-color-option {
+    width: 32px; height: 32px; border-radius: 50%;
+    cursor: pointer; border: 3px solid transparent;
+  }
+  .fav-color-option.selected { border-color: #000; }
+  #favPanel .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+  #favPanel .actions button { padding: 8px 14px; font-size: 14px; border-radius: 6px; cursor: pointer; border: 1px solid #ccc; background: #eee; }
+  #favPanel .actions button.primary { background: #1e88e5; color: #fff; border-color: #1e88e5; }
+  #favPanel .actions button.danger { background: #fee; color: #a33; border-color: #c88; }
 </style>
 </head>
 <body>
@@ -121,9 +206,59 @@
 </div>
 <div id="poiCard">
   <button id="poiCardClose" aria-label="close">×</button>
+  <button id="poiCardFav" aria-label="favorite">☆</button>
   <div id="poiCardName"></div>
   <div id="poiCardMeta"></div>
   <div id="poiCardBody"></div>
+</div>
+<div id="favPanel">
+  <div class="sheet">
+    <h3>Favorite</h3>
+    <div class="subtitle" id="favPoiName"></div>
+    <div class="section-label">Icon</div>
+    <div class="fav-grid" id="favIconGrid"></div>
+    <div class="section-label">Color</div>
+    <div class="fav-colors" id="favColorRow"></div>
+    <div class="actions">
+      <button class="danger" id="favRemove" style="display:none;">Remove</button>
+      <button id="favCancel">Cancel</button>
+      <button class="primary" id="favSave">Save</button>
+    </div>
+  </div>
+</div>
+<div id="settingsPanel">
+  <div class="sheet">
+    <h3>Settings</h3>
+    <div class="row">
+      <label for="themeSelect">Theme</label>
+      <select id="themeSelect">
+        <option value="default">Default (beige)</option>
+        <option value="dark">Dark</option>
+        <option value="night">Night</option>
+        <option value="sepia">Sepia</option>
+        <option value="mono">Monochrome</option>
+        <option value="custom">Custom…</option>
+      </select>
+    </div>
+    <div id="customThemeControls">
+      <div class="row"><label for="cBg">Background</label><input type="color" id="cBg"></div>
+      <div class="row"><label for="cLand">Land</label><input type="color" id="cLand"></div>
+      <div class="row"><label for="cWater">Water</label><input type="color" id="cWater"></div>
+      <div class="row"><label for="cBuilding">Building</label><input type="color" id="cBuilding"></div>
+      <div class="row"><label for="cRoad">Road</label><input type="color" id="cRoad"></div>
+      <div class="row"><label for="cLabel">Label text</label><input type="color" id="cLabel"></div>
+      <div class="row"><label for="cHalo">Label halo</label><input type="color" id="cHalo"></div>
+      <div class="row"><label for="cPoiIcon">POI icons</label><input type="color" id="cPoiIcon"></div>
+    </div>
+    <div class="row">
+      <label for="unitsSelect">Units</label>
+      <select id="unitsSelect">
+        <option value="m">Metric (km, m)</option>
+        <option value="mi">Imperial (mi, ft)</option>
+      </select>
+    </div>
+    <div class="actions"><button class="close" id="settingsClose">Done</button></div>
+  </div>
 </div>
 <div id="install">
   <div class="msg">Tap <b>Share</b> → <b>Add to Home Screen</b> so offline tiles aren't evicted.</div>
@@ -140,6 +275,7 @@
       <div id="storage" style="font-size: 11px; color: #888; margin-top: 2px;"></div>
       <div id="poiStat" style="font-size: 11px; color: #888;"></div>
       <div id="regions"></div>
+      <button id="wipeBtn" style="margin-top: 12px; font-size: 11px; background: #fee; border: 1px solid #c88; color: #a33;">⚠ delete all data (debug)</button>
     </div>
   </details>
 </div>
@@ -261,6 +397,43 @@ async function deleteRoutesByRegion(regionId) {
   db.close();
 }
 
+const FAV_DB_NAME = 'cc.favorites.v1';
+function openFavoritesDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(FAV_DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('favorites')) {
+        db.createObjectStore('favorites', { keyPath: 'id' });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function saveFavorite(fav) {
+  const db = await openFavoritesDB();
+  const tx = db.transaction('favorites', 'readwrite');
+  tx.objectStore('favorites').put(fav);
+  await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
+  db.close();
+}
+async function deleteFavoriteById(id) {
+  const db = await openFavoritesDB();
+  const tx = db.transaction('favorites', 'readwrite');
+  tx.objectStore('favorites').delete(id);
+  await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
+  db.close();
+}
+async function loadAllFavorites() {
+  const db = await openFavoritesDB();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction('favorites', 'readonly').objectStore('favorites').getAll();
+    req.onsuccess = () => { resolve(req.result); db.close(); };
+    req.onerror = () => reject(req.error);
+  });
+}
+
 function lonLatToTile(lon, lat, z) {
   const n = 2 ** z;
   const x = Math.floor((lon + 180) / 360 * n);
@@ -302,8 +475,18 @@ function fmtDate(ts) {
     return;
   }
 
-  await navigator.serviceWorker.register('/sw.js');
+  let reg = await navigator.serviceWorker.getRegistration('/');
+  if (!reg) reg = await navigator.serviceWorker.register('/sw.js');
   await navigator.serviceWorker.ready;
+  const hadController = !!navigator.serviceWorker.controller;
+  if (!hadController) {
+    await new Promise(resolve => {
+      navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true });
+    });
+  }
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController) location.reload();
+  });
 
   const viewKey = 'cc.view.v1';
   const savedView = (() => {
@@ -312,6 +495,7 @@ function fmtDate(ts) {
 
   const map = new maplibregl.Map({
     container: 'map',
+    hash: true,
     center: savedView?.center || [0, 0],
     zoom: savedView?.zoom ?? 2,
     bearing: savedView?.bearing || 0,
@@ -410,6 +594,7 @@ function fmtDate(ts) {
       b.onclick = async () => {
         b.disabled = true;
         const reg = await navigator.serviceWorker.ready;
+        try { await reg.update(); } catch {}
         const onMsg = (e) => {
           if (e.data && e.data.type === 'appShellRefreshed') {
             navigator.serviceWorker.removeEventListener('message', onMsg);
@@ -461,6 +646,82 @@ function fmtDate(ts) {
   map.addControl(transitCtrl, 'bottom-right');
   map.on('styledata', () => { if (transitCtrl._apply) transitCtrl._apply(); });
 
+  const THEMES = {
+    default: { bg: '#f5f5dc', landcover: '#e6e6d6', landuse: '#e0e0d0', water: '#a0c8f0', building: '#d9d0c9', road: '#ffffff', roadLabel: '#555', roadHalo: '#fff', placeLabel: '#333', placeHalo: '#fff', poiLabel: '#333', poiHalo: '#fff', poiIcon: '#333333' },
+    dark:    { bg: '#1e1e24', landcover: '#2a2a30', landuse: '#252530', water: '#162740', building: '#3a3a45', road: '#52525e', roadLabel: '#cdcdd4', roadHalo: '#1e1e24', placeLabel: '#eaeaea', placeHalo: '#1e1e24', poiLabel: '#dcdce2', poiHalo: '#1e1e24', poiIcon: '#dcdce2' },
+    night:   { bg: '#05070f', landcover: '#0a0f1a', landuse: '#080d17', water: '#0d1a30', building: '#151c2a', road: '#293247', roadLabel: '#7a8aa8', roadHalo: '#05070f', placeLabel: '#a0b0cc', placeHalo: '#05070f', poiLabel: '#8ea0b8', poiHalo: '#05070f', poiIcon: '#8ea0b8' },
+    sepia:   { bg: '#efe1c8', landcover: '#e5d3b3', landuse: '#dec8a0', water: '#b5b99a', building: '#c9b28a', road: '#fbf2dd', roadLabel: '#6a563a', roadHalo: '#fbf2dd', placeLabel: '#3a2e1a', placeHalo: '#fbf2dd', poiLabel: '#3a2e1a', poiHalo: '#fbf2dd', poiIcon: '#3a2e1a' },
+    mono:    { bg: '#f2f2f2', landcover: '#e8e8e8', landuse: '#e0e0e0', water: '#c0c0c0', building: '#d4d4d4', road: '#ffffff', roadLabel: '#555', roadHalo: '#fff', placeLabel: '#222', placeHalo: '#fff', poiLabel: '#333', poiHalo: '#fff', poiIcon: '#333333' }
+  };
+  function customToTheme(c) {
+    return {
+      bg: c.bg, landcover: c.land, landuse: c.land,
+      water: c.water, building: c.building, road: c.road,
+      roadLabel: c.labelText, placeLabel: c.labelText, poiLabel: c.labelText,
+      roadHalo: c.labelHalo, placeHalo: c.labelHalo, poiHalo: c.labelHalo,
+      poiIcon: c.poiIcon
+    };
+  }
+  function themeToCustom(t) {
+    return {
+      bg: t.bg, land: t.landcover, water: t.water, building: t.building,
+      road: t.road, labelText: t.roadLabel, labelHalo: t.roadHalo,
+      poiIcon: t.poiIcon
+    };
+  }
+  function loadCustomTheme() {
+    try {
+      const c = JSON.parse(localStorage.getItem('cc.themeCustom') || 'null');
+      if (c && c.bg) return c;
+    } catch {}
+    return themeToCustom(THEMES.default);
+  }
+  function applyTheme(name) {
+    let t;
+    if (name === 'custom') {
+      t = customToTheme(loadCustomTheme());
+    } else {
+      t = THEMES[name] || THEMES.default;
+    }
+    try {
+      map.setPaintProperty('bg', 'background-color', t.bg);
+      map.setPaintProperty('landcover', 'fill-color', t.landcover);
+      map.setPaintProperty('landuse', 'fill-color', t.landuse);
+      map.setPaintProperty('water', 'fill-color', t.water);
+      map.setPaintProperty('buildings', 'fill-color', t.building);
+      map.setPaintProperty('roads', 'line-color', t.road);
+      map.setPaintProperty('road-labels', 'text-color', t.roadLabel);
+      map.setPaintProperty('road-labels', 'text-halo-color', t.roadHalo);
+      map.setPaintProperty('places', 'text-color', t.placeLabel);
+      map.setPaintProperty('places', 'text-halo-color', t.placeHalo);
+      map.setPaintProperty('poi-labels', 'text-color', t.poiLabel);
+      map.setPaintProperty('poi-labels', 'text-halo-color', t.poiHalo);
+    } catch {}
+    const prevTint = applyTheme._lastTint;
+    localStorage.setItem('cc.theme', name);
+    document.getElementById('map').style.background = t.bg;
+    if (prevTint !== undefined && prevTint !== t.poiIcon) {
+      reloadPoiIcons();
+    }
+    applyTheme._lastTint = t.poiIcon;
+  }
+
+  class SettingsControl {
+    onAdd() {
+      const c = document.createElement('div');
+      c.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.title = 'settings';
+      b.setAttribute('aria-label', 'settings');
+      b.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style="display:block;margin:auto"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94 0 .31.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>`;
+      b.onclick = () => document.getElementById('settingsPanel').classList.add('show');
+      c.appendChild(b);
+      return c;
+    }
+    onRemove() {}
+  }
+  map.addControl(new SettingsControl(), 'bottom-right');
   map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
 
   map.on('moveend', () => {
@@ -470,7 +731,9 @@ function fmtDate(ts) {
       bearing: map.getBearing(), pitch: map.getPitch()
     }));
   });
-  map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: 'metric' }), 'bottom-left');
+  const scaleCtrl = new maplibregl.ScaleControl({ maxWidth: 120,
+    unit: localStorage.getItem('cc.units') === 'mi' ? 'imperial' : 'metric' });
+  map.addControl(scaleCtrl, 'bottom-left');
 
   const geolocate = new maplibregl.GeolocateControl({
     positionOptions: { enableHighAccuracy: true },
@@ -497,7 +760,13 @@ function fmtDate(ts) {
     lastKnownPos = { lng: e.coords.longitude, lat: e.coords.latitude };
   });
 
-  async function svgToImageData(svgText, size = 24, dpr = 2) {
+  function currentPoiTint() {
+    const name = localStorage.getItem('cc.theme') || 'default';
+    if (name === 'custom') return (loadCustomTheme().poiIcon) || '#333333';
+    return (THEMES[name] || THEMES.default).poiIcon;
+  }
+
+  async function svgToImageData(svgText, size = 24, dpr = 2, tint = null) {
     const blob = new Blob([svgText], { type: 'image/svg+xml' });
     const url = URL.createObjectURL(blob);
     try {
@@ -509,6 +778,11 @@ function fmtDate(ts) {
       canvas.height = size * dpr;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, size * dpr, size * dpr);
+      if (tint) {
+        ctx.globalCompositeOperation = 'source-in';
+        ctx.fillStyle = tint;
+        ctx.fillRect(0, 0, size * dpr, size * dpr);
+      }
       return { data: ctx.getImageData(0, 0, size * dpr, size * dpr), pixelRatio: dpr };
     } finally {
       URL.revokeObjectURL(url);
@@ -576,23 +850,36 @@ function fmtDate(ts) {
     "zoo":               ["wildlife_park"],
   };
 
+  const registeredIconNames = new Set();
   async function registerIconFromSvg(name, svgText) {
     if (map.hasImage(name)) return true;
     try {
-      const { data, pixelRatio } = await svgToImageData(svgText);
+      const { data, pixelRatio } = await svgToImageData(svgText, 24, 2, currentPoiTint());
       map.addImage(name, data, { pixelRatio });
+      registeredIconNames.add(name);
       if (name.includes('-')) {
         const us = name.replace(/-/g, '_');
-        if (!map.hasImage(us)) map.addImage(us, data, { pixelRatio });
+        if (!map.hasImage(us)) { map.addImage(us, data, { pixelRatio }); registeredIconNames.add(us); }
       }
       const aliases = ICON_ALIAS_MAP[name];
       if (aliases) {
         for (const a of aliases) {
-          if (!map.hasImage(a)) map.addImage(a, data, { pixelRatio });
+          if (!map.hasImage(a)) { map.addImage(a, data, { pixelRatio }); registeredIconNames.add(a); }
         }
       }
       return true;
     } catch { return false; }
+  }
+
+  async function reloadPoiIcons() {
+    for (const n of [...registeredIconNames]) {
+      try { map.removeImage(n); } catch {}
+    }
+    registeredIconNames.clear();
+    iconFallbackTried.clear();
+    await registerDefaultMarker();
+    await loadAllIcons();
+    map.triggerRepaint();
   }
 
   async function loadIcon(name, opts = {}) {
@@ -613,13 +900,15 @@ function fmtDate(ts) {
     await registerIconFromSvg('poi-default', DEFAULT_MARKER_SVG);
   }
 
+  let availableIconNames = [];
   async function loadAllIcons(opts = {}) {
     try {
       const res = await fetch('/iconslist', opts.download ? { headers: { 'X-Download': '1' } } : undefined);
       if (!res.ok) return 0;
       const { files = [] } = await res.json();
       if (!files.length) return 0;
-      const names = files.map(f => f.replace(/\.svg$/, ''));
+      const names = files.map(f => f.replace(/\.svg$/, '')).sort();
+      availableIconNames = names;
       let loaded = 0;
       await Promise.all(names.map(async (n) => { if (await loadIcon(n, opts)) loaded++; }));
       if (loaded) map.triggerRepaint();
@@ -631,6 +920,68 @@ function fmtDate(ts) {
     await registerDefaultMarker();
     await loadAllIcons();
     await refreshRoutesSource();
+    applyTheme(localStorage.getItem('cc.theme') || 'default');
+  });
+  map.on('styledata', () => {
+    applyTheme(localStorage.getItem('cc.theme') || 'default');
+  });
+
+  const themeSelect = document.getElementById('themeSelect');
+  const customControls = document.getElementById('customThemeControls');
+  const colorInputs = {
+    bg: document.getElementById('cBg'),
+    land: document.getElementById('cLand'),
+    water: document.getElementById('cWater'),
+    building: document.getElementById('cBuilding'),
+    road: document.getElementById('cRoad'),
+    labelText: document.getElementById('cLabel'),
+    labelHalo: document.getElementById('cHalo'),
+    poiIcon: document.getElementById('cPoiIcon'),
+  };
+  function syncCustomInputs(c) {
+    for (const k in colorInputs) colorInputs[k].value = c[k] || '#000000';
+  }
+  function updateCustomVisibility() {
+    customControls.style.display = themeSelect.value === 'custom' ? '' : 'none';
+  }
+  themeSelect.value = localStorage.getItem('cc.theme') || 'default';
+  syncCustomInputs(loadCustomTheme());
+  updateCustomVisibility();
+  themeSelect.addEventListener('change', () => {
+    if (themeSelect.value === 'custom'
+        && !localStorage.getItem('cc.themeCustom')) {
+      const seed = themeToCustom(THEMES[localStorage.getItem('cc.theme')] || THEMES.default);
+      localStorage.setItem('cc.themeCustom', JSON.stringify(seed));
+      syncCustomInputs(seed);
+    }
+    updateCustomVisibility();
+    applyTheme(themeSelect.value);
+  });
+  for (const k in colorInputs) {
+    colorInputs[k].addEventListener('input', () => {
+      const c = loadCustomTheme();
+      c[k] = colorInputs[k].value;
+      localStorage.setItem('cc.themeCustom', JSON.stringify(c));
+      if (themeSelect.value === 'custom') applyTheme('custom');
+    });
+  }
+
+  const unitsSelect = document.getElementById('unitsSelect');
+  unitsSelect.value = localStorage.getItem('cc.units') || 'm';
+  unitsSelect.addEventListener('change', () => {
+    localStorage.setItem('cc.units', unitsSelect.value);
+    scaleCtrl.setUnit(unitsSelect.value === 'mi' ? 'imperial' : 'metric');
+    if (document.getElementById('searchResults').classList.contains('show')) renderSearch();
+    const stored = JSON.parse(localStorage.getItem(SELECTED_KEY) || 'null');
+    if (stored) renderPoiCard(stored);
+  });
+
+  document.getElementById('settingsClose').onclick = () =>
+    document.getElementById('settingsPanel').classList.remove('show');
+  document.getElementById('settingsPanel').addEventListener('click', (e) => {
+    if (e.target.id === 'settingsPanel') {
+      document.getElementById('settingsPanel').classList.remove('show');
+    }
   });
 
   const iconFallbackTried = new Set();
@@ -651,6 +1002,12 @@ function fmtDate(ts) {
     return 2 * R * Math.asin(Math.sqrt(a));
   }
   function fmtDist(km) {
+    if (localStorage.getItem('cc.units') === 'mi') {
+      const mi = km * 0.621371;
+      if (mi < 0.1) return `${Math.round(mi * 5280)} ft`;
+      if (mi < 10) return `${mi.toFixed(1)} mi`;
+      return `${Math.round(mi)} mi`;
+    }
     if (km < 1) return `${Math.round(km * 1000)} m`;
     if (km < 10) return `${km.toFixed(1)} km`;
     return `${Math.round(km)} km`;
@@ -693,6 +1050,17 @@ function fmtDate(ts) {
     const card = document.getElementById('poiCard');
     if (!poi) { card.classList.remove('show'); return; }
     document.getElementById('poiCardName').textContent = poi.name || '(unnamed)';
+    const favBtn = document.getElementById('poiCardFav');
+    const fav = findFavorite(poi.lng, poi.lat);
+    if (fav) {
+      favBtn.textContent = '★';
+      favBtn.classList.add('favorited');
+      favBtn.style.color = fav.color;
+    } else {
+      favBtn.textContent = '☆';
+      favBtn.classList.remove('favorited');
+      favBtn.style.color = '';
+    }
     const ref = lastKnownPos;
     const dist = ref ? fmtDist(haversineKm(ref.lat, ref.lng, poi.lat, poi.lng)) : '';
     const cat = poi.category ? humanize(poi.category) : '';
@@ -762,9 +1130,15 @@ function fmtDate(ts) {
     }
     const el = document.createElement('div');
     el.className = 'selected-marker';
-    const iconFile = iconFileFor(poi.category);
+    const fav = findFavorite(poi.lng, poi.lat);
+    const iconFile = fav ? fav.icon : iconFileFor(poi.category);
+    if (fav) {
+      el.classList.add('favorited');
+      el.style.background = fav.color;
+    }
     el.innerHTML = `<img class="icon" src="/icons/${encodeURIComponent(iconFile)}.svg"
       onerror="this.style.display='none'">`;
+    if (fav) applyFavSize(el, favBubbleSize(map.getZoom()));
     selectedMarker = new maplibregl.Marker({ element: el, anchor: 'center' })
       .setLngLat([poi.lng, poi.lat])
       .addTo(map);
@@ -776,6 +1150,187 @@ function fmtDate(ts) {
   }
 
   document.getElementById('poiCardClose').onclick = () => setSelected(null);
+
+  const FAV_ICON_FALLBACK = ['star', 'heart', 'marker', 'camera', 'restaurant',
+                             'cafe', 'park', 'lodging', 'music', 'shop',
+                             'attraction', 'monument'];
+  function favIconSet() {
+    return availableIconNames.length ? availableIconNames : FAV_ICON_FALLBACK;
+  }
+  const FAV_COLORS = ['#e53935', '#fb8c00', '#fdd835', '#43a047',
+                      '#1e88e5', '#8e24aa', '#e91e63', '#546e7a'];
+
+  function favIdFor(lng, lat) { return `${lng.toFixed(6)}|${lat.toFixed(6)}`; }
+  let favorites = [];
+  let favMarkers = {};
+
+  function findFavorite(lng, lat) {
+    const id = favIdFor(lng, lat);
+    return favorites.find(f => f.id === id);
+  }
+
+  const POI_SIZE_STOPS = [[11, 0.08], [14, 0.2], [16, 0.4], [18, 0.75], [20, 1.0]];
+  const POI_BASE_PX = 24;
+  const FAV_SCALE = 1.0;
+
+  function interpExp(zoom, stops, base) {
+    if (zoom <= stops[0][0]) return stops[0][1];
+    if (zoom >= stops[stops.length - 1][0]) return stops[stops.length - 1][1];
+    for (let i = 0; i < stops.length - 1; i++) {
+      if (zoom >= stops[i][0] && zoom <= stops[i + 1][0]) {
+        const [z1, s1] = stops[i], [z2, s2] = stops[i + 1];
+        const factor = (Math.pow(base, zoom - z1) - 1) / (Math.pow(base, z2 - z1) - 1);
+        return s1 + (s2 - s1) * factor;
+      }
+    }
+    return stops[0][1];
+  }
+  function favBubbleSize(zoom) {
+    return POI_BASE_PX * interpExp(zoom, POI_SIZE_STOPS, 1.5) * FAV_SCALE;
+  }
+
+  function applyFavSize(el, size) {
+    el.style.width = `${size}px`;
+    el.style.height = `${size}px`;
+    const border = Math.max(1, Math.round(size * 0.07));
+    el.style.borderWidth = `${border}px`;
+    const img = el.querySelector('img');
+    if (img) {
+      const iconSize = size * 0.64;
+      img.style.width = `${iconSize}px`;
+      img.style.height = `${iconSize}px`;
+    }
+  }
+
+  function makeFavoriteMarker(fav) {
+    const el = document.createElement('div');
+    el.className = 'favorite-marker';
+    el.style.background = fav.color;
+    el.innerHTML = `<img src="/icons/${encodeURIComponent(fav.icon)}.svg">`;
+    applyFavSize(el, favBubbleSize(map.getZoom()));
+    el.onclick = (e) => {
+      e.stopPropagation();
+      const full = findFullPoi(fav.lng, fav.lat, fav.name);
+      const poi = full || { lng: fav.lng, lat: fav.lat, name: fav.name, category: fav.category, props: {} };
+      setSelected(poi);
+    };
+    return new maplibregl.Marker({ element: el, anchor: 'center' })
+      .setLngLat([fav.lng, fav.lat])
+      .addTo(map);
+  }
+
+  function renderAllFavorites() {
+    for (const id in favMarkers) favMarkers[id].remove();
+    favMarkers = {};
+    for (const fav of favorites) favMarkers[fav.id] = makeFavoriteMarker(fav);
+  }
+
+  function rescaleFavorites() {
+    const size = favBubbleSize(map.getZoom());
+    for (const id in favMarkers) {
+      applyFavSize(favMarkers[id].getElement(), size);
+    }
+    if (selectedMarker) {
+      const el = selectedMarker.getElement();
+      if (el.classList.contains('favorited')) applyFavSize(el, size);
+    }
+  }
+  map.on('zoom', rescaleFavorites);
+
+  let favCtx = null;
+  function openFavModal(poi) {
+    const existing = findFavorite(poi.lng, poi.lat);
+    const icons = favIconSet();
+    favCtx = {
+      poi,
+      icon: existing ? existing.icon : (icons.includes('star') ? 'star' : icons[0]),
+      color: existing ? existing.color : FAV_COLORS[0],
+      existing
+    };
+    document.getElementById('favPoiName').textContent = poi.name || '(unnamed)';
+    document.getElementById('favRemove').style.display = existing ? '' : 'none';
+    renderFavIconGrid();
+    renderFavColorRow();
+    document.getElementById('favPanel').classList.add('show');
+  }
+  function closeFavModal() {
+    document.getElementById('favPanel').classList.remove('show');
+    favCtx = null;
+  }
+  function renderFavIconGrid() {
+    const el = document.getElementById('favIconGrid');
+    const icons = favIconSet();
+    el.innerHTML = icons.map(n =>
+      `<div class="fav-icon-option${n === favCtx.icon ? ' selected' : ''}" data-icon="${n}" title="${n}" style="background:${n === favCtx.icon ? favCtx.color : '#f2f2f2'}">
+        <img src="/icons/${encodeURIComponent(n)}.svg" style="filter:${n === favCtx.icon ? 'brightness(0) invert(1)' : 'none'}">
+      </div>`).join('');
+    el.querySelectorAll('[data-icon]').forEach(d => d.onclick = () => {
+      favCtx.icon = d.dataset.icon; renderFavIconGrid();
+    });
+    const selEl = el.querySelector('.fav-icon-option.selected');
+    if (selEl) selEl.scrollIntoView({ block: 'nearest' });
+  }
+  function renderFavColorRow() {
+    const el = document.getElementById('favColorRow');
+    el.innerHTML = FAV_COLORS.map(c =>
+      `<div class="fav-color-option${c === favCtx.color ? ' selected' : ''}" style="background:${c}" data-color="${c}"></div>`).join('');
+    el.querySelectorAll('[data-color]').forEach(d => d.onclick = () => {
+      favCtx.color = d.dataset.color; renderFavIconGrid(); renderFavColorRow();
+    });
+  }
+  document.getElementById('favSave').onclick = async () => {
+    if (!favCtx) return;
+    const p = favCtx.poi;
+    const fav = {
+      id: favIdFor(p.lng, p.lat),
+      lng: p.lng, lat: p.lat,
+      name: p.name, category: p.category || '',
+      icon: favCtx.icon, color: favCtx.color,
+      createdAt: favCtx.existing ? favCtx.existing.createdAt : Date.now()
+    };
+    await saveFavorite(fav);
+    favorites = favorites.filter(f => f.id !== fav.id).concat([fav]);
+    renderAllFavorites();
+    closeFavModal();
+    setSelected(p);
+  };
+  document.getElementById('favRemove').onclick = async () => {
+    if (!favCtx || !favCtx.existing) return;
+    await deleteFavoriteById(favCtx.existing.id);
+    favorites = favorites.filter(f => f.id !== favCtx.existing.id);
+    renderAllFavorites();
+    const poi = favCtx.poi;
+    closeFavModal();
+    setSelected(poi);
+  };
+  document.getElementById('favCancel').onclick = closeFavModal;
+  document.getElementById('favPanel').addEventListener('click', (e) => {
+    if (e.target.id === 'favPanel') closeFavModal();
+  });
+
+  document.getElementById('poiCardFav').onclick = () => {
+    const stored = JSON.parse(localStorage.getItem(SELECTED_KEY) || 'null');
+    if (stored) openFavModal(stored);
+  };
+
+  favorites = await loadAllFavorites();
+  renderAllFavorites();
+
+  document.getElementById('wipeBtn').onclick = async () => {
+    if (!confirm('Delete ALL local data? (saved regions, POIs, routes, tiles, fonts, icons, app shell, service worker) This cannot be undone.')) return;
+    try {
+      localStorage.clear();
+      await Promise.all(['cc.pois.v1', 'cc.routes.v1', 'cc.favorites.v1'].map(n => new Promise(res => {
+        const req = indexedDB.deleteDatabase(n);
+        req.onsuccess = req.onerror = req.onblocked = () => res();
+      })));
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    } catch (e) { console.error('wipe failed:', e); }
+    location.reload();
+  };
 
   map.on('click', (e) => {
     const bbox = [[e.point.x - 8, e.point.y - 8], [e.point.x + 8, e.point.y + 8]];
@@ -1027,6 +1582,33 @@ function fmtDate(ts) {
     }
   }
 
+  async function prefetchBaseMap(statusEl) {
+    const id = crypto.randomUUID();
+    const reg = await navigator.serviceWorker.ready;
+    await new Promise((resolve) => {
+      const onMsg = (e) => {
+        if (!e.data || e.data.id !== id) return;
+        if (e.data.type === 'progress') {
+          if (statusEl) statusEl.textContent =
+            `base map ${e.data.done}/${e.data.total}`;
+        } else if (e.data.type === 'done') {
+          navigator.serviceWorker.removeEventListener('message', onMsg);
+          if (statusEl) statusEl.textContent =
+            `base map: ${e.data.done - e.data.failed}/${e.data.total}`;
+          localStorage.setItem('cc.baseMapDownloaded', '1');
+          resolve();
+        }
+      };
+      navigator.serviceWorker.addEventListener('message', onMsg);
+      reg.active.postMessage({
+        type: 'download',
+        bbox: [-180, -85, 180, 85],
+        minZoom: 0, maxZoom: BASE_MAP_MAX_ZOOM,
+        id, extraUrls: []
+      });
+    });
+  }
+
   async function refreshRoutesSource() {
     const src = map.getSource('bus-routes');
     if (!src) return;
@@ -1078,11 +1660,16 @@ function fmtDate(ts) {
   const FONTS_MB = 3.7;
   const ICONS_MB = 0.9;
   const POI_MB_PER_REGION = 1.0;
+  const BASE_MAP_MAX_ZOOM = 5;
+  const BASE_MAP_MB = 3;
   function updateAppDataLabel() {
     const btn = document.getElementById('appDataBtn');
     const fontsCached = localStorage.getItem('cc.fontsDownloaded') === '1';
     const iconsCached = localStorage.getItem('cc.iconsDownloaded') === '1';
-    const total = (fontsCached ? 0 : FONTS_MB) + (iconsCached ? 0 : ICONS_MB);
+    const baseCached = localStorage.getItem('cc.baseMapDownloaded') === '1';
+    const total = (fontsCached ? 0 : FONTS_MB)
+      + (iconsCached ? 0 : ICONS_MB)
+      + (baseCached ? 0 : BASE_MAP_MB);
     btn.textContent = total === 0
       ? '↓ app data (up to date)'
       : `↓ app data (~${total.toFixed(1)} MB)`;
@@ -1117,6 +1704,8 @@ function fmtDate(ts) {
     const iconCount = await loadAllIcons({ download: true });
     status.textContent = `icons: ${iconCount}`;
     if (iconCount > 0) localStorage.setItem('cc.iconsDownloaded', '1');
+
+    await prefetchBaseMap(status);
 
     updateAppDataLabel();
     requestPersistent();

@@ -10,7 +10,14 @@ const APP_SHELL = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(APP_CACHE).then(c => c.addAll(APP_SHELL)));
+  e.waitUntil(caches.open(APP_CACHE).then(async (c) => {
+    await Promise.all(APP_SHELL.map(async (url) => {
+      try {
+        const res = await fetch(url, { cache: 'reload' });
+        if (res.ok) await c.put(url, res);
+      } catch {}
+    }));
+  }));
   self.skipWaiting();
 });
 
@@ -91,10 +98,12 @@ async function downloadRegion({ bbox, minZoom, maxZoom, extraUrls = [], id }, cl
       const item = queue.pop();
       try {
         const res = await fetch(item.url, { headers: { 'X-Download': '1' } });
-        if (res.ok || res.status === 204) {
+        if (res.ok && res.status !== 204) {
           const cache = await caches.open(item.cacheName);
           await cache.put(item.url, res.clone());
-        } else failed++;
+        } else if (res.status !== 204 && !res.ok) {
+          failed++;
+        }
       } catch { failed++; }
       done++;
       if (client && done % 5 === 0) {
