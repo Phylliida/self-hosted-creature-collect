@@ -148,6 +148,20 @@
     filter: brightness(0) invert(1);
     pointer-events: none;
   }
+  .fav-label {
+    position: absolute; left: 50%; top: calc(100% + 3px);
+    transform: translateX(-50%);
+    white-space: nowrap;
+    font-size: 11px; line-height: 1.2;
+    color: var(--cc-label-color, #333);
+    text-shadow:
+      -1px 0 var(--cc-label-halo, #fff), 1px 0 var(--cc-label-halo, #fff),
+      0 -1px var(--cc-label-halo, #fff), 0 1px var(--cc-label-halo, #fff),
+      -1px -1px var(--cc-label-halo, #fff), 1px 1px var(--cc-label-halo, #fff),
+      -1px 1px var(--cc-label-halo, #fff), 1px -1px var(--cc-label-halo, #fff);
+    pointer-events: none;
+    font-family: system-ui, sans-serif;
+  }
   .selected-marker { z-index: 3; }
   #poiCardFav {
     position: absolute; top: 6px; right: 38px;
@@ -194,6 +208,30 @@
   #favPanel .actions button { padding: 8px 14px; font-size: 14px; border-radius: 6px; cursor: pointer; border: 1px solid #ccc; background: #eee; }
   #favPanel .actions button.primary { background: #1e88e5; color: #fff; border-color: #1e88e5; }
   #favPanel .actions button.danger { background: #fee; color: #a33; border-color: #c88; }
+  #pinBar {
+    position: absolute; top: 0; left: 0; right: 0; z-index: 25;
+    padding: 12px 16px;
+    padding-top: calc(12px + env(safe-area-inset-top));
+    background: rgba(30,30,40,0.9); color: #fff;
+    display: none; gap: 10px; align-items: center;
+    font-size: 13px;
+  }
+  #pinBar.show { display: flex; }
+  #pinBar .hint { flex: 1; }
+  #pinBar button { padding: 6px 12px; border-radius: 6px; border: 1px solid #aaa; background: transparent; color: #fff; cursor: pointer; font-size: 13px; }
+  #pinBar button.primary { background: #4a90e2; border-color: #4a90e2; }
+  .temp-pin {
+    border-radius: 50%; background: #4a90e2;
+    border: 2px solid #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+    display: flex; align-items: center; justify-content: center;
+    cursor: grab;
+    z-index: 100;
+  }
+  .temp-pin:active { cursor: grabbing; }
+  .temp-pin img {
+    filter: brightness(0) invert(1);
+    pointer-events: none;
+  }
 </style>
 </head>
 <body>
@@ -203,6 +241,11 @@
          autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
   <select id="searchFilter"><option value="">all types</option></select>
   <div id="searchResults"></div>
+</div>
+<div id="pinBar">
+  <span class="hint">Drag the pin, then confirm</span>
+  <button id="pinCancelBtn">Cancel</button>
+  <button id="pinConfirmBtn" class="primary">Confirm</button>
 </div>
 <div id="poiCard">
   <button id="poiCardClose" aria-label="close">×</button>
@@ -256,6 +299,14 @@
         <option value="m">Metric (km, m)</option>
         <option value="mi">Imperial (mi, ft)</option>
       </select>
+    </div>
+    <div class="row">
+      <label>Backup</label>
+      <span>
+        <button id="exportBtn" type="button" style="padding: 6px 10px; font-size: 13px; margin-right: 4px;">Export</button>
+        <button id="importBtn" type="button" style="padding: 6px 10px; font-size: 13px;">Import</button>
+        <input type="file" id="importFile" accept=".json,application/json" style="display:none">
+      </span>
     </div>
     <div class="actions"><button class="close" id="settingsClose">Done</button></div>
   </div>
@@ -575,10 +626,27 @@ function fmtDate(ts) {
                     'text-size': 11, 'text-offset': [0, 0.9], 'text-anchor': 'top',
                     'text-optional': true },
           paint: { 'text-color': '#333', 'text-halo-color': '#fff', 'text-halo-width': 1.5 } },
+        { id: 'boundary-country', type: 'line', source: 'local', 'source-layer': 'boundary',
+          filter: ['all', ['==', ['get', 'admin_level'], 2], ['!=', ['get', 'maritime'], 1]],
+          paint: { 'line-color': '#888', 'line-width': ['interpolate', ['linear'], ['zoom'], 0, 0.5, 6, 1, 12, 1.4] } },
+        { id: 'boundary-state', type: 'line', source: 'local', 'source-layer': 'boundary',
+          filter: ['all', ['==', ['get', 'admin_level'], 4], ['!=', ['get', 'maritime'], 1]],
+          paint: { 'line-color': '#aaa', 'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.3, 8, 0.6, 14, 1], 'line-dasharray': [3, 2] } },
         { id: 'places', type: 'symbol', source: 'local', 'source-layer': 'place',
-          layout: { 'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name'], ['get', 'name_int']], 'text-font': ['KlokanTech Noto Sans Regular'],
-                    'text-size': ['match', ['get', 'class'], 'city', 14, 'town', 12, 10] },
-          paint: { 'text-color': '#333', 'text-halo-color': '#fff', 'text-halo-width': 1 } }
+          layout: {
+            'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name'], ['get', 'name_int']],
+            'text-font': ['KlokanTech Noto Sans Regular'],
+            'text-size': [
+              'interpolate', ['linear'], ['zoom'],
+              1, ['match', ['get', 'class'], 'continent', 14, 'country', 12, 'state', 9, 8],
+              4, ['match', ['get', 'class'], 'country', 14, 'state', 12, 'city', 11, 9],
+              6, ['match', ['get', 'class'], 'country', 15, 'state', 13, 'city', 13, 'town', 10, 10],
+              10, ['match', ['get', 'class'], 'country', 14, 'state', 13, 'city', 16, 'town', 12, 10],
+              14, ['match', ['get', 'class'], 'city', 18, 'town', 14, 'village', 11, 10]
+            ],
+            'text-padding': 1
+          },
+          paint: { 'text-color': '#333', 'text-halo-color': '#fff', 'text-halo-width': 1.2 } }
       ]
     },
   });
@@ -609,6 +677,75 @@ function fmtDate(ts) {
     }
     onRemove() {}
   }
+  let tempPin = null;
+  function isLngLatInView(lng, lat) {
+    const p = map.project([lng, lat]);
+    const c = map.getContainer();
+    const margin = 20;
+    return p.x >= margin && p.x <= c.clientWidth - margin
+      && p.y >= margin && p.y <= c.clientHeight - margin;
+  }
+  function startAddPin() {
+    if (tempPin) { tempPin.remove(); tempPin = null; }
+    try { map.dragPan.enable(); } catch {}
+    const center = (lastKnownPos && isLngLatInView(lastKnownPos.lng, lastKnownPos.lat))
+      ? [lastKnownPos.lng, lastKnownPos.lat]
+      : (() => { const c = map.getCenter(); return [c.lng, c.lat]; })();
+    const el = document.createElement('div');
+    el.className = 'temp-pin';
+    const size = Math.max(28, favBubbleSize(map.getZoom()));
+    el.style.width = `${size}px`;
+    el.style.height = `${size}px`;
+    el.innerHTML = `<img src="/icons/marker.svg" style="width:${size * 0.6}px;height:${size * 0.6}px">`;
+    tempPin = new maplibregl.Marker({ element: el, anchor: 'center', draggable: true })
+      .setLngLat(center).addTo(map);
+    document.getElementById('pinBar').classList.add('show');
+  }
+  function cancelAddPin() {
+    if (tempPin) { tempPin.remove(); tempPin = null; }
+    try { map.dragPan.enable(); } catch {}
+    document.getElementById('pinBar').classList.remove('show');
+  }
+  async function confirmAddPin() {
+    if (!tempPin) return;
+    const name = (prompt('Name for this pin?', '') || '').trim() || 'Untitled pin';
+    const ll = tempPin.getLngLat();
+    const poi = {
+      lng: ll.lng, lat: ll.lat, name, category: '', props: {}
+    };
+    const fav = {
+      id: favIdFor(ll.lng, ll.lat),
+      lng: ll.lng, lat: ll.lat,
+      name, category: '',
+      icon: 'marker', color: FAV_COLORS[0],
+      createdAt: Date.now()
+    };
+    await saveFavorite(fav);
+    favorites = favorites.filter(f => f.id !== fav.id).concat([fav]);
+    cancelAddPin();
+    renderAllFavorites();
+    setSelected(poi);
+    openFavModal(poi);
+  }
+  document.getElementById('pinCancelBtn').onclick = cancelAddPin;
+  document.getElementById('pinConfirmBtn').onclick = confirmAddPin;
+
+  class PinControl {
+    onAdd() {
+      const c = document.createElement('div');
+      c.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.title = 'add pin';
+      b.setAttribute('aria-label', 'add pin');
+      b.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style="display:block;margin:auto"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>`;
+      b.onclick = startAddPin;
+      c.appendChild(b);
+      return c;
+    }
+    onRemove() {}
+  }
+  map.addControl(new PinControl(), 'bottom-right');
   map.addControl(new RefreshControl(), 'bottom-right');
 
   const TRANSIT_LAYERS = ['rail-mainline', 'subway', 'tram', 'light-rail', 'bus-routes'];
@@ -700,6 +837,8 @@ function fmtDate(ts) {
     const prevTint = applyTheme._lastTint;
     localStorage.setItem('cc.theme', name);
     document.getElementById('map').style.background = t.bg;
+    document.documentElement.style.setProperty('--cc-label-color', t.poiLabel);
+    document.documentElement.style.setProperty('--cc-label-halo', t.poiHalo);
     if (prevTint !== undefined && prevTint !== t.poiIcon) {
       reloadPoiIcons();
     }
@@ -976,6 +1115,81 @@ function fmtDate(ts) {
     if (stored) renderPoiCard(stored);
   });
 
+  async function exportData() {
+    const data = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      favorites: await loadAllFavorites(),
+      regions: JSON.parse(localStorage.getItem('cc.regions.v1') || '[]'),
+      theme: localStorage.getItem('cc.theme'),
+      themeCustom: JSON.parse(localStorage.getItem('cc.themeCustom') || 'null'),
+      units: localStorage.getItem('cc.units'),
+      view: JSON.parse(localStorage.getItem('cc.view.v1') || 'null'),
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    a.href = url;
+    a.download = `creature-collect-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  async function importData(file) {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    let favAdded = 0, favSkipped = 0, regAdded = 0;
+    if (Array.isArray(data.favorites)) {
+      const existing = new Set(favorites.map(f => f.id));
+      for (const fav of data.favorites) {
+        if (!fav || !fav.id) continue;
+        if (existing.has(fav.id)) { favSkipped++; continue; }
+        await saveFavorite(fav);
+        favAdded++;
+      }
+      favorites = await loadAllFavorites();
+      renderAllFavorites();
+    }
+    if (Array.isArray(data.regions)) {
+      const existing = JSON.parse(localStorage.getItem('cc.regions.v1') || '[]');
+      const existingIds = new Set(existing.map(r => r.id));
+      const toAdd = data.regions.filter(r => r && r.id && !existingIds.has(r.id));
+      if (toAdd.length) {
+        localStorage.setItem('cc.regions.v1', JSON.stringify(existing.concat(toAdd)));
+        regAdded = toAdd.length;
+        renderRegions();
+        updateAppDataLabel();
+      }
+    }
+    if (data.themeCustom && !localStorage.getItem('cc.themeCustom')) {
+      localStorage.setItem('cc.themeCustom', JSON.stringify(data.themeCustom));
+      syncCustomInputs(loadCustomTheme());
+    }
+    if (data.theme && !localStorage.getItem('cc.theme')) {
+      localStorage.setItem('cc.theme', data.theme);
+      themeSelect.value = data.theme;
+      updateCustomVisibility();
+      applyTheme(data.theme);
+    }
+    if (data.units && !localStorage.getItem('cc.units')) {
+      localStorage.setItem('cc.units', data.units);
+      unitsSelect.value = data.units;
+      scaleCtrl.setUnit(data.units === 'mi' ? 'imperial' : 'metric');
+    }
+    alert(`Imported: ${favAdded} favorite(s) (${favSkipped} skipped as duplicate), ${regAdded} region(s)`);
+  }
+  document.getElementById('exportBtn').onclick = () => exportData();
+  document.getElementById('importBtn').onclick = () => document.getElementById('importFile').click();
+  document.getElementById('importFile').addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    try { await importData(file); }
+    catch (err) { alert('Import failed: ' + err.message); }
+    e.target.value = '';
+  });
+
   document.getElementById('settingsClose').onclick = () =>
     document.getElementById('settingsPanel').classList.remove('show');
   document.getElementById('settingsPanel').addEventListener('click', (e) => {
@@ -1137,7 +1351,8 @@ function fmtDate(ts) {
       el.style.background = fav.color;
     }
     el.innerHTML = `<img class="icon" src="/icons/${encodeURIComponent(iconFile)}.svg"
-      onerror="this.style.display='none'">`;
+      onerror="this.style.display='none'">`
+      + (fav && fav.name ? `<div class="fav-label">${esc(fav.name)}</div>` : '');
     if (fav) applyFavSize(el, favBubbleSize(map.getZoom()));
     selectedMarker = new maplibregl.Marker({ element: el, anchor: 'center' })
       .setLngLat([poi.lng, poi.lat])
@@ -1206,7 +1421,8 @@ function fmtDate(ts) {
     const el = document.createElement('div');
     el.className = 'favorite-marker';
     el.style.background = fav.color;
-    el.innerHTML = `<img src="/icons/${encodeURIComponent(fav.icon)}.svg">`;
+    el.innerHTML = `<img src="/icons/${encodeURIComponent(fav.icon)}.svg">`
+      + (fav.name ? `<div class="fav-label">${esc(fav.name)}</div>` : '');
     applyFavSize(el, favBubbleSize(map.getZoom()));
     el.onclick = (e) => {
       e.stopPropagation();
@@ -1219,10 +1435,20 @@ function fmtDate(ts) {
       .addTo(map);
   }
 
+  function updateFavPoiFilter() {
+    const names = favorites.map(f => f.name).filter(Boolean);
+    const filter = names.length
+      ? ['!', ['in', ['coalesce', ['get', 'name:latin'], ['get', 'name'], ''], ['literal', names]]]
+      : null;
+    try { map.setFilter('poi-icons', filter); } catch {}
+    try { map.setFilter('poi-labels', filter); } catch {}
+  }
+
   function renderAllFavorites() {
     for (const id in favMarkers) favMarkers[id].remove();
     favMarkers = {};
     for (const fav of favorites) favMarkers[fav.id] = makeFavoriteMarker(fav);
+    updateFavPoiFilter();
   }
 
   function rescaleFavorites() {
