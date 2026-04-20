@@ -5,6 +5,7 @@ const APP_SHELL = [
   '/',
   '/manifest.webmanifest',
   '/static/icon.svg',
+  '/static/trip-planner.js',
   'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css',
   'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js',
 ];
