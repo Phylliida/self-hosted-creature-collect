@@ -1354,7 +1354,6 @@ function fmtDate(ts) {
     tram: 'tram',
     light_rail: 'light-rail',
   };
-  const TRANSIT_MODES = ['bus', 'subway', 'tram', 'light_rail', 'rail', 'trolleybus'];
   const TRANSIT_MODE_LABELS = {
     bus: 'Bus',
     subway: 'Subway',
@@ -1362,18 +1361,31 @@ function fmtDate(ts) {
     light_rail: 'Light rail',
     rail: 'Rail',
     trolleybus: 'Trolleybus',
+    ferry: 'Ferry',
+    monorail: 'Monorail',
   };
+  // Display order. Includes every mode we know how to label; the chip
+  // renderer filters down to ones that are actually useful (a tile layer
+  // exists, OR at least one GTFS route has that mode).
+  const TRANSIT_MODE_ORDER = ['bus', 'tram', 'subway', 'light_rail', 'rail', 'trolleybus', 'monorail', 'ferry'];
+  function currentTransitModes() {
+    const inUse = new Set(Object.keys(TRANSIT_TILE_LAYERS));
+    for (const m of Object.values(routeMetaIndex)) if (m?.mode) inUse.add(m.mode);
+    return TRANSIT_MODE_ORDER.filter(m => inUse.has(m));
+  }
   let routeMetaIndex = {};  // rid -> meta
 
   function loadTransitState() {
+    // Bumped from v2 → v3 when route keys switched from OSM rids to GTFS
+    // route_ids. Old state is safely discarded.
     try {
-      const s = JSON.parse(localStorage.getItem('cc.transit.v2') || 'null');
+      const s = JSON.parse(localStorage.getItem('cc.transit.v3') || 'null');
       if (s && s.modes) return s;
     } catch {}
     return { modes: {}, routes: {} };
   }
   function saveTransitState(s) {
-    localStorage.setItem('cc.transit.v2', JSON.stringify(s));
+    localStorage.setItem('cc.transit.v3', JSON.stringify(s));
   }
   let transitState = loadTransitState();
   function modeOn(m) { return transitState.modes[m] !== false; }
@@ -1414,7 +1426,7 @@ function fmtDate(ts) {
 
   function renderTransitModes() {
     const el = document.getElementById('transitModes');
-    el.innerHTML = TRANSIT_MODES.map(m =>
+    el.innerHTML = currentTransitModes().map(m =>
       `<span class="mode-chip${modeOn(m) ? ' on' : ''}" data-mode="${m}">${TRANSIT_MODE_LABELS[m] || m}</span>`
     ).join('');
     el.querySelectorAll('[data-mode]').forEach(chip => {
@@ -1482,7 +1494,7 @@ function fmtDate(ts) {
     });
   }
   async function openTransitPanel() {
-    await reloadRouteMetaIndex();
+    // routeMetaIndex is kept fresh by rebuildScheduleIndex; nothing async here.
     renderTransitModes();
     renderTransitRoutes();
   }
@@ -1498,7 +1510,7 @@ function fmtDate(ts) {
   document.getElementById('transitSearch').addEventListener('input', renderTransitRoutes);
   document.getElementById('transitActiveOnly').addEventListener('change', renderTransitRoutes);
   document.getElementById('transitAll').onclick = async () => {
-    for (const m of TRANSIT_MODES) transitState.modes[m] = true;
+    for (const m of currentTransitModes()) transitState.modes[m] = true;
     for (const rid of Object.keys(routeMetaIndex)) transitState.routes[rid] = true;
     saveTransitState(transitState);
     renderTransitModes();
@@ -1507,7 +1519,7 @@ function fmtDate(ts) {
     await refreshRoutesSource();
   };
   document.getElementById('transitNone').onclick = async () => {
-    for (const m of TRANSIT_MODES) transitState.modes[m] = false;
+    for (const m of currentTransitModes()) transitState.modes[m] = false;
     for (const rid of Object.keys(routeMetaIndex)) transitState.routes[rid] = false;
     saveTransitState(transitState);
     renderTransitModes();
@@ -1788,7 +1800,7 @@ function fmtDate(ts) {
   map.on('load', async () => {
     await registerDefaultMarker();
     await loadAllIcons();
-    await refreshRoutesSource();
+    // rebuildScheduleIndex populates transit data and kicks off refreshRoutesSource.
     await rebuildScheduleIndex();
     await rebuildWalkGraph();
     applyTheme(localStorage.getItem('cc.theme') || 'default');
@@ -2104,7 +2116,7 @@ function fmtDate(ts) {
       'stop_position', 'platform', 'station', 'bus_stop',
       'tram_stop', 'halt', 'subway_entrance', 'ferry_terminal',
     ]);
-    if (TRANSIT_POI_CATS.has(poi.category) && scheduleIdx.osmToGtfs?.size) {
+    if (TRANSIT_POI_CATS.has(poi.category) && scheduleIdx.stops?.size) {
       const nearby = findStopsNear(poi.lng, poi.lat, 40);
       const nodeIds = [...new Set(nearby.map(s => s.node_id).filter(x => x != null))];
       const groups = nodeIds.length ? nextDeparturesForOsmNodes(nodeIds, new Date()) : [];
@@ -3402,8 +3414,9 @@ function fmtDate(ts) {
       for (const rid of extractRouteIds(f)) rids.add(rid);
     }
 
-    const hasSchedule = osmNodeIds.size
-      && [...osmNodeIds].some(nid => scheduleIdx.osmToGtfs.has(nid));
+    // After the OSM→GTFS switch, findStopsNear returns GTFS stops directly,
+    // so having any osmNodeIds at all means we can pop a schedule.
+    const hasSchedule = osmNodeIds.size > 0;
 
     if ((rids.size || hasSchedule) && !realPoiHits.length) {
       if (showTransitPopup(stopName, [...rids], e.lngLat, [...osmNodeIds])) return;
@@ -3606,11 +3619,8 @@ function fmtDate(ts) {
       const reg = await navigator.serviceWorker.ready;
       reg.active.postMessage({ type: 'deleteTiles', urls: r.urls });
       await deletePoisByRegion(id);
-      await deleteRoutesByRegion(id);
       await deleteScheduleByRegion(id);
       await deleteWalkGraphByRegion(id);
-      invalidateRoutesCache();
-      await refreshRoutesSource();
       await rebuildScheduleIndex();
       await rebuildWalkGraph();
       allPois = allPois.filter(p => p.regionId !== id);
@@ -4433,6 +4443,10 @@ function fmtDate(ts) {
 
     scheduleIdx = idx;
     buildMultimodalBridges();
+    rebuildTransitFromSchedule();
+    await refreshRoutesSource();
+    if (typeof renderTransitModes  === 'function') renderTransitModes();
+    if (typeof renderTransitRoutes === 'function') renderTransitRoutes();
   }
 
   function buildMultimodalBridges() {
@@ -4533,16 +4547,13 @@ function fmtDate(ts) {
     if (sets.tomorrow.has(trip.s)) return 86400;
     return null;
   }
-  // Group every pattern serving any of the given OSM stop-nodes into one
+  // Group every pattern serving any of the given GTFS stop IDs into one
   // row apiece. Each row carries the upcoming few departures (if any), a
   // representative headsign, and the (patternId, stopId, seq) needed to
-  // pop open the full schedule modal.
-  function nextDeparturesForOsmNodes(osmNodeIds, now, limitPerPattern = 3) {
-    const gtfsStopIds = new Set();
-    for (const nid of osmNodeIds) {
-      const gids = scheduleIdx.osmToGtfs.get(nid);
-      if (gids) for (const g of gids) gtfsStopIds.add(g);
-    }
+  // pop open the full schedule modal. Name kept for call-site stability;
+  // the inputs are now GTFS stop_ids (what findStopsNear returns).
+  function nextDeparturesForOsmNodes(stopIds, now, limitPerPattern = 3) {
+    const gtfsStopIds = new Set(stopIds);
     if (!gtfsStopIds.size) return [];
     const info = todayInfo(now);
     const svcSets = expandedServiceSets(now);
@@ -4621,92 +4632,101 @@ function fmtDate(ts) {
     src.setData({ type: 'FeatureCollection', features });
   }
 
-  async function reloadRouteMetaIndex() {
-    const rows = await loadAllRouteMeta();
+  let cachedRouteFeatures = [];
+  // Rebuild routeMetaIndex, cachedRouteFeatures, and the stop grid from the
+  // current scheduleIdx. `rid` in these structures is now a GTFS route_id.
+  // Called whenever rebuildScheduleIndex finishes.
+  function rebuildTransitFromSchedule() {
+    const gtfsModeToOsm = (m) => (
+      m === 0 || m === 5 ? 'tram' :
+      m === 1 ? 'subway' :
+      m === 2 ? 'rail' :
+      m === 3 ? 'bus' :
+      m === 4 ? 'ferry' :
+      m === 11 ? 'trolleybus' :
+      m === 12 ? 'monorail' :
+      'bus'
+    );
     routeMetaIndex = {};
-    for (const r of rows) routeMetaIndex[r.rid] = r;
-    rebuildStopGrid();
-  }
-  let cachedRouteFeatures = null;
-  function invalidateRoutesCache() { cachedRouteFeatures = null; }
-  async function ensureRouteFeatureCache() {
-    if (cachedRouteFeatures) return;
-    await reloadRouteMetaIndex();
-    const groups = await loadAllRoutes();
-    const out = [];
-    for (const g of groups) {
-      for (const f of (g.features || [])) {
-        const rids = (f.properties && f.properties.route_ids) || [];
-        let colour = '#e89035';
-        for (const rid of rids) {
-          const meta = routeMetaIndex[rid];
-          if (meta && /^#[0-9a-f]{3,8}$/i.test(meta.colour || '')) { colour = meta.colour; break; }
+    cachedRouteFeatures = [];
+    if (!scheduleIdx.routesById || !scheduleIdx.routesById.size) {
+      rebuildStopGrid();
+      return;
+    }
+    // Group patterns by GTFS route_id.
+    const patternsByRoute = new Map();
+    for (const [patId, pat] of scheduleIdx.patterns) {
+      let arr = patternsByRoute.get(pat.route_id);
+      if (!arr) { arr = []; patternsByRoute.set(pat.route_id, arr); }
+      arr.push(patId);
+    }
+    for (const [rid, info] of scheduleIdx.routesById) {
+      const rawColour = info.colour || '';
+      const colour = rawColour
+        ? (rawColour.startsWith('#') ? rawColour : '#' + rawColour)
+        : '';
+      const patternIds = patternsByRoute.get(rid) || [];
+      // Union of stops across every pattern of this route.
+      const stopsMap = new Map();
+      for (const patId of patternIds) {
+        const bboxStops = scheduleIdx.patternBboxStops.get(patId) || [];
+        for (const [seq, stopId] of bboxStops) {
+          if (stopsMap.has(stopId)) continue;
+          const stop = scheduleIdx.stops.get(stopId);
+          if (!stop) continue;
+          stopsMap.set(stopId, {
+            node_id: stopId, lng: stop.lng, lat: stop.lat,
+            name: stop.name || '', ord: seq, role: '',
+          });
         }
-        out.push({
+      }
+      routeMetaIndex[rid] = {
+        rid,
+        ref: info.short || '',
+        name: info.long || info.short || '',
+        mode: gtfsModeToOsm(info.mode),
+        colour,
+        patterns: patternIds,
+        stops: [...stopsMap.values()],
+      };
+      // One map feature per pattern: prefer shape, fall back to straight
+      // lines through this pattern's stops.
+      for (const patId of patternIds) {
+        const shape = scheduleIdx.shapeByPattern.get(patId);
+        let coords = null;
+        if (shape && shape.length >= 2) {
+          coords = shape;
+        } else {
+          const pts = (scheduleIdx.patternBboxStops.get(patId) || [])
+            .map(([seq, sid]) => scheduleIdx.stops.get(sid))
+            .filter(Boolean)
+            .map(s => [s.lng, s.lat]);
+          if (pts.length >= 2) coords = pts;
+        }
+        if (!coords) continue;
+        cachedRouteFeatures.push({
           type: 'Feature',
-          geometry: f.geometry,
-          properties: { route_ids: rids, colour }
+          geometry: { type: 'LineString', coordinates: coords },
+          properties: { route_ids: [rid], colour: colour || '#e89035', pattern_id: patId },
         });
       }
     }
-    cachedRouteFeatures = out;
+    rebuildStopGrid();
   }
+  // Kept as a no-op for callers; the cache now rebuilds with the schedule.
+  function invalidateRoutesCache() {}
   async function refreshRoutesSource() {
     const src = map.getSource('bus-routes');
     if (!src) return;
-    await ensureRouteFeatureCache();
     const features = [];
-    // Figure out which OSM rids (and their metadata) are currently turned on.
-    const visibleOsmRids = new Set();
-    for (const [rid, meta] of Object.entries(routeMetaIndex)) {
-      if (!meta) continue;
-      if (!modeOn(meta.mode)) continue;
-      if (!routeOn(rid)) continue;
-      visibleOsmRids.add(rid);
-    }
-    // For each visible OSM rid, try to emit GTFS-shape features (authoritative).
-    // Remember which visible rids we've already covered via GTFS; the rest fall
-    // back to the existing OSM geometry.
-    const osmRidsCoveredByGtfs = new Set();
-    const emittedPatterns = new Set();
-    if (scheduleIdx.gtfsRouteByRefMode && scheduleIdx.gtfsRouteByRefMode.size) {
-      for (const rid of visibleOsmRids) {
-        const meta = routeMetaIndex[rid];
-        const refNorm = String(meta.ref || '').trim().toLowerCase();
-        if (!refNorm) continue;
-        const key = `${meta.mode}:${refNorm}`;
-        const gtfsRids = scheduleIdx.gtfsRouteByRefMode.get(key);
-        if (!gtfsRids || !gtfsRids.size) continue;
-        osmRidsCoveredByGtfs.add(rid);
-        const colour = /^#[0-9a-f]{3,8}$/i.test(meta.colour || '') ? meta.colour : '#e89035';
-        for (const gtfsRid of gtfsRids) {
-          for (const [patId, pat] of scheduleIdx.patterns) {
-            if (pat.route_id !== gtfsRid) continue;
-            if (emittedPatterns.has(patId)) continue;
-            const shape = scheduleIdx.shapeByPattern.get(patId);
-            if (!shape || shape.length < 2) continue;
-            emittedPatterns.add(patId);
-            features.push({
-              type: 'Feature',
-              geometry: { type: 'LineString', coordinates: shape },
-              properties: { route_ids: [rid], colour },
-            });
-          }
-        }
-      }
-    }
-    // Fallback: for visible OSM rids NOT covered by GTFS, keep the old OSM-sourced
-    // geometry. A cachedRouteFeature can carry multiple rids; include it if at
-    // least one of its rids is visible-and-unmatched.
     for (const f of cachedRouteFeatures) {
       const rids = f.properties.route_ids;
-      let include = false;
+      let visible = false;
       for (const rid of rids) {
-        if (visibleOsmRids.has(rid) && !osmRidsCoveredByGtfs.has(rid)) {
-          include = true; break;
-        }
+        const meta = routeMetaIndex[rid];
+        if (meta && modeOn(meta.mode) && routeOn(rid)) { visible = true; break; }
       }
-      if (include) features.push(f);
+      if (visible) features.push(f);
     }
     src.setData({ type: 'FeatureCollection', features });
     applyTransitTileVisibility();
@@ -4721,10 +4741,6 @@ function fmtDate(ts) {
     const status = document.getElementById('status');
     status.textContent = 'downloading POIs…';
     const poiCount = await fetchAndSavePois(id, bbox);
-    status.textContent = 'downloading bus routes…';
-    const routeCount = await fetchAndSaveRoutes(id, bbox);
-    invalidateRoutesCache();
-    await refreshRoutesSource();
     status.textContent = 'downloading schedules…';
     await fetchAndSaveSchedule(id, bbox);
     await rebuildScheduleIndex();
