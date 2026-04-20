@@ -39,6 +39,91 @@ indexed SQL query (`WHERE lng BETWEEN … AND lat BETWEEN …`) and returns JSON
 The client stores the subset in IndexedDB so further POI search is fully
 offline.
 
+## Transit schedules (GTFS)
+
+For the in-app trip planner to do walk + transit routing, `data/schedule.sqlite`
+needs to exist. It holds every agency's routes, trips, stop_times, calendars,
+and authoritative route shapes (for drawing the actual bus path on the map).
+
+### Just one agency (quick test)
+
+```
+./get-gtfs-stm.sh
+python3 build-schedule-db.py stm gtfs/stm.zip data/schedule.sqlite
+python3 link-gtfs-to-osm.py data/schedule.sqlite data/canada-260417.routes.sqlite
+```
+
+This gets you ~11 MB of DB covering STM (Montreal).
+
+### All schedules (Canada + US, or any country)
+
+Uses the [Mobility Database](https://mobilitydatabase.org) catalog of
+~2,000 GTFS feeds worldwide. Pick a country code and the catalog filter script
+emits a `feeds-<cc>.tsv` with slug / URL / name per feed.
+
+```
+# 1. Wipe the old schedule (the schema may have changed; incremental rebuild
+#    of old feeds doesn't backfill new fields like GTFS shapes).
+rm -f data/schedule.sqlite data/schedule.sqlite-shm data/schedule.sqlite-wal
+
+# 2. Fetch a fresh Mobility Database catalog (updated ~monthly)
+curl -sSL --max-time 120 https://files.mobilitydatabase.org/feeds_v2.csv \
+  -o data/mdb-catalog.csv
+
+# 3. Generate per-country feed lists
+python3 get-gtfs-catalog.py --country CA --catalog data/mdb-catalog.csv \
+  --output feeds-ca.tsv
+python3 get-gtfs-catalog.py --country US --catalog data/mdb-catalog.csv \
+  --output feeds-us.tsv
+
+# 4. STM isn't registered in Mobility Database — append it manually if wanted
+printf 'stm\thttps://www.stm.info/sites/default/files/gtfs/gtfs_stm.zip\tSTM\n' \
+  >> feeds-ca.tsv
+
+# 5. Ingest. Canada is ~100 feeds (~30 min); US is ~900 feeds (~2–3 hours).
+#    Both stream: download one zip → validate → ingest → delete → next.
+#    Peak disk = one zip at a time (~100-200 MB).
+mkdir -p logs
+python3 ingest-gtfs.py data/schedule.sqlite --feeds feeds-ca.tsv --tmp /tmp \
+  2>&1 | tee logs/ingest-ca.log
+python3 ingest-gtfs.py data/schedule.sqlite --feeds feeds-us.tsv --tmp /tmp \
+  2>&1 | tee logs/ingest-us.log
+
+# 6. Link GTFS stops to the OSM route_stop nodes (needed for "click stop → see
+#    which bus is coming"). Pass every per-country routes.sqlite you have.
+python3 link-gtfs-to-osm.py data/schedule.sqlite \
+  data/canada-260417.routes.sqlite data/us-260417.routes.sqlite
+```
+
+**Validator**: `ingest-gtfs.py` runs `validate-gtfs.py` on each zip before
+touching the DB. Feeds that fail validation get logged and skipped — nothing
+corrupts the existing DB. Expect ~10% of feeds to be flagged (stale calendars,
+missing `stop_times.txt`, broken references). You can inspect them with
+`grep '^\[fail\]' logs/ingest-*.log`.
+
+**Resumable**: `feed_meta` tracks each ingested slug. Re-running the same
+`ingest-gtfs.py` command skips anything already done, so crashes or pauses
+are harmless.
+
+**Final sizes** (rough):
+- ~100 Canadian feeds → ~80 MB schedule.sqlite (without shapes: ~30 MB;
+  shapes add ~50 MB)
+- ~900 US feeds on top → ~400 MB schedule.sqlite
+- Peak during ingest: one GTFS zip in `/tmp` (~50-300 MB for big agencies)
+
+### Other countries
+
+Same pattern:
+
+```
+python3 get-gtfs-catalog.py --country GB --catalog data/mdb-catalog.csv \
+  --output feeds-gb.tsv
+python3 ingest-gtfs.py data/schedule.sqlite --feeds feeds-gb.tsv --tmp /tmp
+```
+
+Use ISO 3166-1 alpha-2 codes. Add `--include-auth` to include feeds that
+require API keys (you'll need to handle those URLs separately).
+
 ## Download fonts (one-time, for labels/landmarks)
 
 ```

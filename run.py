@@ -431,18 +431,29 @@ def schedule():
         needed_timing_ids = set()
         needed_service_nums = set()
         needed_headsign_ids = set()
+        needed_shape_nums = set()
+        # shape_num may be absent on older DBs; query it via COALESCE / feature-detect.
+        has_shape_col = any(
+            r[1] == "shape_num"
+            for r in conn.execute("PRAGMA table_info(trip)")
+        )
+        trip_sel = (
+            "pattern_id, timing_id, service_num, headsign_id, "
+            "direction, first_departure_sec"
+            + (", shape_num" if has_shape_col else ", NULL")
+        )
         for chunk in _in_chunks(needed_pattern_ids):
             ph = ",".join("?" * len(chunk))
             for row in conn.execute(
-                f"SELECT pattern_id, timing_id, service_num, headsign_id, "
-                f"direction, first_departure_sec FROM trip "
-                f"WHERE pattern_id IN ({ph})",
+                f"SELECT {trip_sel} FROM trip WHERE pattern_id IN ({ph})",
                 tuple(chunk),
             ):
                 trip_rows.append(list(row))
                 needed_timing_ids.add(row[1])
                 needed_service_nums.add(row[2])
                 needed_headsign_ids.add(row[3])
+                if row[6] is not None:
+                    needed_shape_nums.add(row[6])
 
         # Interned lookups (dense local remap so client can use flat arrays)
         timing_map = {}
@@ -497,15 +508,30 @@ def schedule():
                 if local is None: continue
                 service_exceptions.append([local, date, et])
 
+        shape_map = {}
+        shapes = []
+        if has_shape_col and needed_shape_nums:
+            for chunk in _in_chunks(needed_shape_nums):
+                ph = ",".join("?" * len(chunk))
+                for sid_num, blob in conn.execute(
+                    f"SELECT id, points_blob FROM shape WHERE id IN ({ph})",
+                    tuple(chunk),
+                ):
+                    shape_map[sid_num] = len(shapes)
+                    shapes.append(base64.b64encode(blob).decode("ascii"))
+
         # Remap trip_rows using local indices
         trips = []
-        for pat_id, timing_id, svc_num, hs_id, direction, first_dep in trip_rows:
+        for row in trip_rows:
+            pat_id, timing_id, svc_num, hs_id, direction, first_dep, shape_num = row
+            local_shape = shape_map.get(shape_num) if shape_num is not None else None
             trips.append([
                 pat_id,
                 timing_map[timing_id],
                 service_map[svc_num],
                 headsign_map[hs_id],
                 direction, first_dep,
+                local_shape if local_shape is not None else -1,
             ])
 
         routes = {}
@@ -529,6 +555,7 @@ def schedule():
         "headsigns": headsigns,
         "services": services,
         "trips": trips,
+        "shapes": shapes,
         "routes": routes,
         "service_exceptions": service_exceptions,
     })

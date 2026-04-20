@@ -2537,7 +2537,16 @@ function fmtDate(ts) {
   function renderRouteChoices(options, selectedIdx, fromLngLat, toPoi) {
     if (!options.length) return;
     const sel = options[Math.max(0, Math.min(selectedIdx, options.length - 1))];
-    const styled = buildMultimodalCoords(sel);
+    // Cache per-option so re-selecting a previously-shown alternative is instant.
+    if (!sel._cache) {
+      sel._cache = {
+        styled: buildMultimodalCoords(sel),
+        tripStops: collectTripStops(sel),
+        steps: multimodalInstructions(sel),
+      };
+    }
+    const styled = sel._cache.styled;
+    const tripStops = sel._cache.tripStops;
     const src = map.getSource('walk-route');
     const features = [];
     for (const seg of styled) {
@@ -2553,7 +2562,6 @@ function fmtDate(ts) {
     if (src) src.setData({ type: 'FeatureCollection', features });
 
     // Paint per-leg intermediate/boarding/alighting stops for transit legs.
-    const tripStops = collectTripStops(sel);
     const tripStopsSrc = map.getSource('route-trip-stops');
     if (tripStopsSrc) {
       tripStopsSrc.setData({
@@ -2591,7 +2599,7 @@ function fmtDate(ts) {
     const optionStrip = options.length > 1
       ? `<div class="opt-strip">${pills}</div>` : '';
 
-    const steps = multimodalInstructions(sel);
+    const steps = sel._cache.steps;
     const stepsHtml = steps.map(s => {
       if (s.kind === 'transit') return renderTransitStepHtml(s);
       return `<div class="step"><span class="icon">🚶</span><span class="text">${esc(s.text)}</span></div>`;
@@ -3401,6 +3409,47 @@ function fmtDate(ts) {
     }
     return pts;
   }
+  // GTFS shape blob: first pair is absolute lat/lng in microdegrees, subsequent
+  // pairs are deltas. Returns array of [lng, lat].
+  function decodeGtfsShapeBlob(b64) {
+    if (!b64) return [];
+    const bytes = base64ToBytes(b64);
+    const vals = decodeZigzagVarints(bytes);
+    if (vals.length < 2) return [];
+    const pts = [];
+    let latU = vals[0], lngU = vals[1];
+    pts.push([lngU / 1e6, latU / 1e6]);
+    for (let i = 2; i + 1 < vals.length; i += 2) {
+      latU += vals[i];
+      lngU += vals[i + 1];
+      pts.push([lngU / 1e6, latU / 1e6]);
+    }
+    return pts;
+  }
+  // Find the nearest shape vertex to a target lng/lat.
+  function nearestShapeIdx(shape, lng, lat) {
+    let best = 0, bestD = Infinity;
+    for (let i = 0; i < shape.length; i++) {
+      const dLng = shape[i][0] - lng;
+      const dLat = shape[i][1] - lat;
+      const d = dLng * dLng + dLat * dLat;
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+  }
+  // Slice a GTFS shape polyline between two stop coords. The returned polyline
+  // starts exactly at stopA, passes through all shape vertices between the two
+  // projections, and ends exactly at stopB. Auto-reverses if the alighting
+  // stop's projection is upstream of the boarding stop's (rare but possible).
+  function clipShapeBetweenStops(shape, stopA, stopB) {
+    if (!shape || shape.length < 2) return null;
+    const iA = nearestShapeIdx(shape, stopA.lng, stopA.lat);
+    const iB = nearestShapeIdx(shape, stopB.lng, stopB.lat);
+    const lo = Math.min(iA, iB), hi = Math.max(iA, iB);
+    const middle = shape.slice(lo + 1, hi);  // vertices strictly between
+    if (iA > iB) middle.reverse();
+    return [[stopA.lng, stopA.lat], ...middle, [stopB.lng, stopB.lat]];
+  }
 
   async function rebuildWalkGraph() {
     const groups = await loadAllWalkGraphs();
@@ -3917,7 +3966,30 @@ function fmtDate(ts) {
         const to = scheduleIdx.stops.get(leg.toStopId);
         if (from && to) {
           const colour = /^#[0-9a-f]{3,8}$/i.test(leg.route?.colour || '') ? leg.route.colour : '#e89035';
-          styled.push({ kind: 'transit', coords: [[from.lng, from.lat], [to.lng, to.lat]], colour });
+          let coords = null;
+          // Prefer the GTFS shape — the authoritative vehicle polyline.
+          const shape = (leg.trip && typeof leg.trip._getShape === 'function')
+            ? leg.trip._getShape() : null;
+          if (shape && shape.length >= 2) {
+            coords = clipShapeBetweenStops(shape, from, to);
+          }
+          if (!coords || coords.length < 2) {
+            // Fallback (trips without a GTFS shape, e.g. older IDB data):
+            // draw straight lines through each in-bbox stop on the pattern.
+            // Much faster than per-pair A* and still much better than a
+            // single straight line from boarding to alighting.
+            const bboxStops = scheduleIdx.patternBboxStops.get(leg.patternId) || [];
+            coords = [];
+            for (const [seq, stopId] of bboxStops) {
+              if (seq < leg.fromSeq || seq > leg.toSeq) continue;
+              const stop = scheduleIdx.stops.get(stopId);
+              if (stop) coords.push([stop.lng, stop.lat]);
+            }
+            if (coords.length < 2) {
+              coords = [[from.lng, from.lat], [to.lng, to.lat]];
+            }
+          }
+          styled.push({ kind: 'transit', coords, colour });
         }
       }
     }
@@ -4243,6 +4315,9 @@ function fmtDate(ts) {
       const timings = region.timings || [];
       const headsigns = region.headsigns || [];
       const services = region.services || [];
+      const shapeBlobs = region.shapes || [];
+      // Lazy-decoded per-index cache.
+      const decodedShapes = new Array(shapeBlobs.length);
       for (const svc of services) {
         if (svc && svc.id) idx.services.set(svc.id, svc);
       }
@@ -4250,8 +4325,15 @@ function fmtDate(ts) {
         const svc = services[svcIdx];
         if (svc) idx.serviceExceptions.push([svc.id, date, et]);
       }
+      const getShape = (idx_) => {
+        if (idx_ == null || idx_ < 0 || idx_ >= shapeBlobs.length) return null;
+        if (decodedShapes[idx_] === undefined) {
+          decodedShapes[idx_] = decodeGtfsShapeBlob(shapeBlobs[idx_]);
+        }
+        return decodedShapes[idx_];
+      };
       for (const row of (region.trips || [])) {
-        const [pat_id, timing_id, svc_idx, hs_idx, dir, first_dep] = row;
+        const [pat_id, timing_id, svc_idx, hs_idx, dir, first_dep, shape_idx] = row;
         const svc = services[svc_idx];
         if (!svc) continue;
         const trip = {
@@ -4261,6 +4343,10 @@ function fmtDate(ts) {
           h: headsigns[hs_idx] || '',
           d: dir,
           f: first_dep,
+          shapeIdx: (shape_idx != null && shape_idx >= 0) ? shape_idx : null,
+          _getShape: shape_idx != null && shape_idx >= 0
+            ? () => getShape(shape_idx)
+            : () => null,
         };
         let arr = idx.tripsByPattern.get(pat_id);
         if (!arr) { arr = []; idx.tripsByPattern.set(pat_id, arr); }
@@ -4275,6 +4361,40 @@ function fmtDate(ts) {
       }
     }
     for (const arr of idx.patternBboxStops.values()) arr.sort((a, b) => a[0] - b[0]);
+
+    // GTFS-shape lookups for drawing bus-routes polylines from the authoritative source.
+    // shapeByPattern: pattern_id -> decoded [lng,lat][] (taken from any trip on the pattern)
+    // gtfsRouteByRefMode: "<mode>:<normRef>" -> Set<gtfs_route_id>
+    idx.shapeByPattern = new Map();
+    idx.gtfsRouteByRefMode = new Map();
+    for (const [patId, trips] of idx.tripsByPattern) {
+      for (const trip of trips) {
+        if (typeof trip._getShape === 'function') {
+          const s = trip._getShape();
+          if (s && s.length >= 2) { idx.shapeByPattern.set(patId, s); break; }
+        }
+      }
+    }
+    const gtfsModeToOsm = (m) => (
+      m === 0 || m === 5 ? 'tram' :
+      m === 1 ? 'subway' :
+      m === 2 ? 'rail' :
+      m === 3 ? 'bus' :
+      m === 4 ? 'ferry' :
+      m === 11 ? 'trolleybus' :
+      m === 12 ? 'monorail' :
+      ''
+    );
+    for (const [gtfsRid, info] of idx.routesById) {
+      const refNorm = String(info.short || info.long || '').trim().toLowerCase();
+      if (!refNorm) continue;
+      const osmMode = gtfsModeToOsm(info.mode);
+      if (!osmMode) continue;
+      const k = `${osmMode}:${refNorm}`;
+      if (!idx.gtfsRouteByRefMode.has(k)) idx.gtfsRouteByRefMode.set(k, new Set());
+      idx.gtfsRouteByRefMode.get(k).add(gtfsRid);
+    }
+
     scheduleIdx = idx;
     buildMultimodalBridges();
   }
@@ -4488,19 +4608,60 @@ function fmtDate(ts) {
     const src = map.getSource('bus-routes');
     if (!src) return;
     await ensureRouteFeatureCache();
-    const filtered = [];
-    for (const f of cachedRouteFeatures) {
-      const rids = f.properties.route_ids;
-      for (const rid of rids) {
+    const features = [];
+    // Figure out which OSM rids (and their metadata) are currently turned on.
+    const visibleOsmRids = new Set();
+    for (const [rid, meta] of Object.entries(routeMetaIndex)) {
+      if (!meta) continue;
+      if (!modeOn(meta.mode)) continue;
+      if (!routeOn(rid)) continue;
+      visibleOsmRids.add(rid);
+    }
+    // For each visible OSM rid, try to emit GTFS-shape features (authoritative).
+    // Remember which visible rids we've already covered via GTFS; the rest fall
+    // back to the existing OSM geometry.
+    const osmRidsCoveredByGtfs = new Set();
+    const emittedPatterns = new Set();
+    if (scheduleIdx.gtfsRouteByRefMode && scheduleIdx.gtfsRouteByRefMode.size) {
+      for (const rid of visibleOsmRids) {
         const meta = routeMetaIndex[rid];
-        if (!meta) continue;
-        if (!modeOn(meta.mode)) continue;
-        if (!routeOn(rid)) continue;
-        filtered.push(f);
-        break;
+        const refNorm = String(meta.ref || '').trim().toLowerCase();
+        if (!refNorm) continue;
+        const key = `${meta.mode}:${refNorm}`;
+        const gtfsRids = scheduleIdx.gtfsRouteByRefMode.get(key);
+        if (!gtfsRids || !gtfsRids.size) continue;
+        osmRidsCoveredByGtfs.add(rid);
+        const colour = /^#[0-9a-f]{3,8}$/i.test(meta.colour || '') ? meta.colour : '#e89035';
+        for (const gtfsRid of gtfsRids) {
+          for (const [patId, pat] of scheduleIdx.patterns) {
+            if (pat.route_id !== gtfsRid) continue;
+            if (emittedPatterns.has(patId)) continue;
+            const shape = scheduleIdx.shapeByPattern.get(patId);
+            if (!shape || shape.length < 2) continue;
+            emittedPatterns.add(patId);
+            features.push({
+              type: 'Feature',
+              geometry: { type: 'LineString', coordinates: shape },
+              properties: { route_ids: [rid], colour },
+            });
+          }
+        }
       }
     }
-    src.setData({ type: 'FeatureCollection', features: filtered });
+    // Fallback: for visible OSM rids NOT covered by GTFS, keep the old OSM-sourced
+    // geometry. A cachedRouteFeature can carry multiple rids; include it if at
+    // least one of its rids is visible-and-unmatched.
+    for (const f of cachedRouteFeatures) {
+      const rids = f.properties.route_ids;
+      let include = false;
+      for (const rid of rids) {
+        if (visibleOsmRids.has(rid) && !osmRidsCoveredByGtfs.has(rid)) {
+          include = true; break;
+        }
+      }
+      if (include) features.push(f);
+    }
+    src.setData({ type: 'FeatureCollection', features });
     applyTransitTileVisibility();
   }
 
