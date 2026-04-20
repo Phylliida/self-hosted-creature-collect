@@ -246,9 +246,51 @@
   .ep-suggest .icon { width: 22px; text-align: center; flex-shrink: 0; }
   .ep-suggest .meta { color: #888; font-size: 11px; margin-left: 4px; }
   .ep-suggest.poi .icon { color: #555; }
-  #directionsPanel .summary { font-size: 13px; color: #333; margin-bottom: 8px; display: flex; gap: 8px; align-items: baseline; }
+  #directionsPanel .summary { font-size: 13px; color: #333; margin-bottom: 8px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; padding-right: 100px; min-height: 24px; }
+  #directionsPanel.viewing-saved #directionsSave { display: none; }
   #directionsPanel .summary strong { font-size: 15px; color: #3b7fdf; }
   #directionsPanel button.close { position: absolute; top: 4px; right: 6px; background: none; border: none; font-size: 22px; cursor: pointer; color: #666; padding: 4px 6px; line-height: 1; }
+  #directionsPanel .top-ctrls {
+    position: absolute; top: 4px; right: 38px;
+    display: flex; gap: 2px;
+  }
+  #directionsPanel .top-ctrls button {
+    background: none; border: none; cursor: pointer;
+    padding: 4px 6px; line-height: 1; color: #666; font-size: 16px;
+  }
+  #directionsPanel.minimized { max-height: none; padding-bottom: 6px; }
+  #directionsPanel.minimized #directionsSteps { display: none; }
+  #savedRoutesPanel {
+    position: absolute; inset: 0; z-index: 22;
+    display: none; align-items: flex-end; justify-content: center;
+    background: rgba(0,0,0,0.3);
+  }
+  #savedRoutesPanel.show { display: flex; }
+  #savedRoutesPanel .sheet {
+    background: #fff; width: 100%; max-width: 480px;
+    max-height: 80vh; overflow-y: auto;
+    border-radius: 12px 12px 0 0;
+    padding: 14px 16px;
+    padding-bottom: calc(14px + env(safe-area-inset-bottom));
+  }
+  #savedRoutesPanel .sheet .header {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+  }
+  #savedRoutesPanel h3 { flex: 1; margin: 0; font-size: 15px; }
+  .saved-item {
+    display: flex; gap: 6px; align-items: center;
+    padding: 10px 8px; border-top: 1px solid #eee;
+    cursor: pointer;
+  }
+  .saved-item:hover { background: #f5f5ff; }
+  .saved-item .info { flex: 1; min-width: 0; }
+  .saved-item .name { font-size: 14px; font-weight: 500; }
+  .saved-item .meta { font-size: 11px; color: #888; margin-top: 2px; }
+  .saved-item .del { background: none; border: none; color: #c44; cursor: pointer; padding: 4px 8px; font-size: 18px; }
+  #routingPanel .header .saved-btn {
+    background: #eef; border: 1px solid #bcd; border-radius: 4px;
+    font-size: 12px; padding: 4px 8px; cursor: pointer;
+  }
   .step { display: flex; gap: 8px; padding: 4px 0; font-size: 13px; border-top: 1px solid #eee; }
   .step:first-child { border-top: none; }
   .step .icon { font-size: 16px; flex-shrink: 0; width: 20px; text-align: center; }
@@ -266,6 +308,12 @@
   .opt-pill.selected { background: #3b7fdf; border-color: #3b7fdf; color: #fff; }
   .opt-pill .opt-times { font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 600; }
   .opt-pill .opt-meta { font-size: 10px; opacity: 0.75; margin-top: 1px; }
+  .step.transit { flex-wrap: wrap; }
+  .step .stops-line {
+    flex-basis: 100%; margin-left: 28px;
+    font-size: 11px; color: #777; margin-top: 2px;
+  }
+  .step .stops-line .count { font-weight: 500; color: #555; }
   #favPanel {
     position: fixed; inset: 0; z-index: 32;
     background: rgba(0,0,0,0.5);
@@ -460,6 +508,7 @@
 <div id="routingPanel">
   <div class="header">
     <h3>Route</h3>
+    <button type="button" class="saved-btn" id="routingViewSaved" title="view saved routes">Saved</button>
     <button class="close" id="routingClose" aria-label="close">×</button>
   </div>
   <div class="endpoints">
@@ -494,9 +543,22 @@
   <button class="go" id="routingGo" type="button" disabled>Plan route</button>
 </div>
 <div id="directionsPanel">
+  <div class="top-ctrls">
+    <button type="button" id="directionsSave" title="save this route" aria-label="save">💾</button>
+    <button type="button" id="directionsMinimize" title="minimize" aria-label="minimize">▼</button>
+  </div>
   <button class="close" id="directionsClose" aria-label="close">×</button>
   <div class="summary" id="directionsSummary"></div>
   <div id="directionsSteps"></div>
+</div>
+<div id="savedRoutesPanel">
+  <div class="sheet">
+    <div class="header">
+      <h3>Saved routes</h3>
+      <button type="button" class="saved-btn" id="savedRoutesClose">Done</button>
+    </div>
+    <div id="savedRoutesList"></div>
+  </div>
 </div>
 <div id="favPanel">
   <div class="sheet">
@@ -906,7 +968,8 @@ function fmtDate(ts) {
         local: { type: 'vector', tiles: [location.origin + '/tiles/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 14 },
         'bus-routes': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
         'route-stops': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
-        'walk-route': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } }
+        'walk-route': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
+        'route-trip-stops': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } }
       },
       layers: [
         { id: 'bg', type: 'background', paint: { 'background-color': '#f5f5dc' } },
@@ -972,6 +1035,29 @@ function fmtDate(ts) {
           paint: {
             'line-color': ['coalesce', ['get', 'colour'], '#e89035'],
             'line-width': ['interpolate', ['linear'], ['zoom'], 10, 3, 16, 6, 20, 11]
+          } },
+        { id: 'route-trip-stop-dots', type: 'circle', source: 'route-trip-stops',
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 2, 14, 4, 18, 7],
+            'circle-color': '#ffffff',
+            'circle-stroke-color': ['coalesce', ['get', 'colour'], '#e89035'],
+            'circle-stroke-width': 2
+          } },
+        { id: 'route-trip-stop-labels', type: 'symbol', source: 'route-trip-stops',
+          minzoom: 15,
+          layout: {
+            'text-field': ['get', 'name'],
+            'text-font': ['KlokanTech Noto Sans Regular'],
+            'text-size': 10,
+            'text-offset': [0, 0.9],
+            'text-anchor': 'top',
+            'text-optional': true,
+            'text-allow-overlap': false
+          },
+          paint: {
+            'text-color': '#333',
+            'text-halo-color': '#fff',
+            'text-halo-width': 1.5
           } },
         { id: 'bus-routes', type: 'line', source: 'bus-routes',
           layout: { 'line-cap': 'round', 'line-join': 'round' },
@@ -2113,7 +2199,14 @@ function fmtDate(ts) {
   function clearWalkRoute() {
     const src = map.getSource('walk-route');
     if (src) src.setData({ type: 'FeatureCollection', features: [] });
-    document.getElementById('directionsPanel').classList.remove('show');
+    const tripStopsSrc = map.getSource('route-trip-stops');
+    if (tripStopsSrc) tripStopsSrc.setData({ type: 'FeatureCollection', features: [] });
+    const panel = document.getElementById('directionsPanel');
+    panel.classList.remove('show');
+    panel.classList.remove('minimized');
+    const minBtn = document.getElementById('directionsMinimize');
+    if (minBtn) minBtn.textContent = '▼';
+    currentRouteSnapshot = null;
   }
 
   function renderDirections(route, fromLngLat, toPoi) {
@@ -2151,6 +2244,7 @@ function fmtDate(ts) {
       return `<div class="step"><span class="icon">${iconFor(s.action)}</span><span class="text">${text}</span><span class="dist">${esc(distStr)}</span></div>`;
     }).join('');
     panel.classList.add('show');
+    panel.classList.remove('viewing-saved');
     if (coords.length) {
       const lngs = coords.map(c => c[0]), lats = coords.map(c => c[1]);
       map.fitBounds(
@@ -2158,9 +2252,198 @@ function fmtDate(ts) {
         { padding: { top: 80, bottom: 200, left: 40, right: 40 }, duration: 600 }
       );
     }
+    // Walk-only snapshot: coords list, no transit legs, instructions stored as-is.
+    currentRouteSnapshot = {
+      kind: 'walk',
+      coords: coords.slice(),
+      walkSteps: steps.slice(),
+      fromName: (fromLngLat && fromLngLat.name) || 'from',
+      toName: (toPoi && toPoi.name) || 'to',
+      distanceMeters: route.distance || 0,
+    };
   }
 
   document.getElementById('directionsClose').onclick = clearWalkRoute;
+
+  // ---------------- Saved routes ----------------
+  const SAVED_ROUTES_KEY = 'cc.savedRoutes.v1';
+  function loadSavedRoutes() {
+    try { return JSON.parse(localStorage.getItem(SAVED_ROUTES_KEY) || '[]'); }
+    catch { return []; }
+  }
+  function persistSavedRoutes(list) {
+    localStorage.setItem(SAVED_ROUTES_KEY, JSON.stringify(list));
+  }
+
+  const directionsPanelEl = document.getElementById('directionsPanel');
+  document.getElementById('directionsMinimize').onclick = () => {
+    const minimized = directionsPanelEl.classList.toggle('minimized');
+    document.getElementById('directionsMinimize').textContent = minimized ? '▲' : '▼';
+  };
+  document.getElementById('directionsSave').onclick = () => {
+    if (!currentRouteSnapshot) {
+      alert('No route to save yet.');
+      return;
+    }
+    const defaultName = `${currentRouteSnapshot.fromName} → ${currentRouteSnapshot.toName}`;
+    const name = prompt('Name this route:', defaultName);
+    if (name === null) return;  // cancelled
+    const list = loadSavedRoutes();
+    list.push({
+      id: Date.now(),
+      savedAt: new Date().toISOString(),
+      name: name.trim() || defaultName,
+      ...currentRouteSnapshot,
+    });
+    persistSavedRoutes(list);
+  };
+
+  function renderSavedRoute(item) {
+    // Paint geometry on the map source
+    const src = map.getSource('walk-route');
+    const features = [];
+    if (item.kind === 'multimodal' && Array.isArray(item.styled)) {
+      for (const seg of item.styled) {
+        if (!seg.coords || !seg.coords.length) continue;
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: seg.coords },
+          properties: seg.kind === 'transit'
+            ? { kind: 'transit', colour: seg.colour || '#e89035' }
+            : { kind: 'walk' },
+        });
+      }
+    } else if (item.kind === 'walk' && Array.isArray(item.coords) && item.coords.length) {
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: item.coords },
+        properties: { kind: 'walk' },
+      });
+    }
+    if (src) src.setData({ type: 'FeatureCollection', features });
+
+    // Trip-stop dots for saved routes
+    const tripStopsSrc = map.getSource('route-trip-stops');
+    if (tripStopsSrc) {
+      const ts = (item.kind === 'multimodal' && Array.isArray(item.tripStops)) ? item.tripStops : [];
+      tripStopsSrc.setData({
+        type: 'FeatureCollection',
+        features: ts.map(s => ({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [s.lng, s.lat] },
+          properties: { name: s.name, colour: s.colour, role: s.role },
+        })),
+      });
+    }
+
+    // Summary + steps
+    const panel = document.getElementById('directionsPanel');
+    const summary = document.getElementById('directionsSummary');
+    const stepsEl = document.getElementById('directionsSteps');
+    if (item.kind === 'multimodal') {
+      const parts = [
+        `<strong>${fmtDuration(item.totalSec)}</strong>`,
+        `<span>· ${fmtClockTime(item.startSec)} → ${fmtClockTime(item.endSec)}</span>`,
+      ];
+      if (item.transitCount) parts.push(`<span>· ${item.transitCount} ride${item.transitCount === 1 ? '' : 's'}</span>`);
+      parts.push(`<span style="margin-left:auto;color:#888">${esc(item.fromName)} → ${esc(item.toName)}</span>`);
+      summary.innerHTML = parts.join('');
+      stepsEl.innerHTML = (item.steps || []).map(s => {
+        if (s.kind === 'transit') return renderTransitStepHtml(s);
+        return `<div class="step"><span class="icon">🚶</span><span class="text">${esc(s.text)}</span></div>`;
+      }).join('');
+    } else {
+      const distStr = fmtDist((item.distanceMeters || 0) / 1000);
+      const minutes = Math.round((item.distanceMeters || 0) / 80);
+      summary.innerHTML = `<strong>${esc(distStr)}</strong>` +
+        `<span>· ~${minutes} min walking</span>` +
+        `<span style="margin-left:auto;color:#888">${esc(item.fromName)} → ${esc(item.toName)}</span>`;
+      const iconFor = (a) => ({
+        'start': '🚶', 'continue': '⬆', 'turn left': '↰', 'turn right': '↱', 'arrive': '📍'
+      }[a] || '·');
+      stepsEl.innerHTML = (item.walkSteps || []).map(s => {
+        const distStr = s.distance > 0 ? fmtDist(s.distance / 1000) : '';
+        const text = s.action === 'start'
+          ? `Head along ${esc(s.name || 'the path')}`
+          : s.action === 'arrive'
+            ? 'Arrive at destination'
+            : s.action === 'continue'
+              ? `Continue on ${esc(s.name || 'the path')}`
+              : `${s.action[0].toUpperCase() + s.action.slice(1)} onto ${esc(s.name || 'the path')}`;
+        return `<div class="step"><span class="icon">${iconFor(s.action)}</span><span class="text">${text}</span><span class="dist">${esc(distStr)}</span></div>`;
+      }).join('');
+    }
+    panel.classList.add('show');
+    panel.classList.add('viewing-saved');
+
+    // Fit bounds
+    let allCoords = [];
+    if (item.kind === 'multimodal') allCoords = (item.styled || []).flatMap(s => s.coords || []);
+    else allCoords = item.coords || [];
+    if (allCoords.length) {
+      const lngs = allCoords.map(c => c[0]), lats = allCoords.map(c => c[1]);
+      map.fitBounds(
+        [[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]],
+        { padding: { top: 80, bottom: 200, left: 40, right: 40 }, duration: 600 }
+      );
+    }
+    currentRouteSnapshot = { ...item };
+  }
+
+  const savedRoutesPanel = document.getElementById('savedRoutesPanel');
+  function renderSavedRoutesList() {
+    const list = loadSavedRoutes().slice().reverse();  // newest first
+    const el = document.getElementById('savedRoutesList');
+    if (!list.length) {
+      el.innerHTML = '<div style="color:#888; font-size:13px; padding:12px 4px;">No saved routes yet. Plan a route and tap 💾 to save it.</div>';
+      return;
+    }
+    el.innerHTML = list.map(item => {
+      const when = item.kind === 'multimodal'
+        ? `${fmtClockTime(item.startSec)} → ${fmtClockTime(item.endSec)} · ${fmtDuration(item.totalSec)}`
+        : `${fmtDist((item.distanceMeters || 0) / 1000)} walk`;
+      return `<div class="saved-item" data-id="${item.id}">
+        <div class="info">
+          <div class="name">${esc(item.name || '(unnamed)')}</div>
+          <div class="meta">${esc(when)}</div>
+        </div>
+        <button type="button" class="del" data-del-id="${item.id}" title="delete" aria-label="delete">×</button>
+      </div>`;
+    }).join('');
+    el.querySelectorAll('[data-id]').forEach(row => {
+      row.onclick = (e) => {
+        if (e.target.closest('[data-del-id]')) return;
+        const id = +row.dataset.id;
+        const found = loadSavedRoutes().find(r => r.id === id);
+        if (!found) return;
+        savedRoutesPanel.classList.remove('show');
+        closeRoutingPanel();
+        renderSavedRoute(found);
+      };
+    });
+    el.querySelectorAll('[data-del-id]').forEach(btn => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        const id = +btn.dataset.delId;
+        const found = loadSavedRoutes().find(r => r.id === id);
+        const label = found ? (found.name || 'this route') : 'this route';
+        if (!confirm(`Delete "${label}"?`)) return;
+        const list2 = loadSavedRoutes().filter(r => r.id !== id);
+        persistSavedRoutes(list2);
+        renderSavedRoutesList();
+      };
+    });
+  }
+  document.getElementById('routingViewSaved').onclick = () => {
+    renderSavedRoutesList();
+    savedRoutesPanel.classList.add('show');
+  };
+  document.getElementById('savedRoutesClose').onclick = () => {
+    savedRoutesPanel.classList.remove('show');
+  };
+  savedRoutesPanel.addEventListener('click', (e) => {
+    if (e.target === savedRoutesPanel) savedRoutesPanel.classList.remove('show');
+  });
 
   const MAX_ALTERNATIVES = 5;
   const ALT_SHIFT_SEC = 60;  // min time-pivot shift between alternatives
@@ -2223,6 +2506,32 @@ function fmtDate(ts) {
     return results;
   }
 
+  // Currently-shown route context (for saving). Set by renderRouteChoices /
+  // renderDirections / renderSavedRoute. Cleared by clearWalkRoute.
+  let currentRouteSnapshot = null;
+  // Render a transit step row, with a stops-line underneath if we know counts.
+  function renderTransitStepHtml(s) {
+    const colour = /^#[0-9a-f]{3,8}$/i.test(s.colour || '') ? s.colour : '#888';
+    const hops = s.totalStops || 0;
+    let stopsLine = '';
+    if (hops > 0) {
+      const countLabel = hops === 1
+        ? '1 stop'
+        : `${hops} stops`;
+      const intermediates = Array.isArray(s.intermediateStops) ? s.intermediateStops : [];
+      const preview = intermediates.length
+        ? intermediates.filter(Boolean).join(' · ')
+        : '';
+      stopsLine = `<div class="stops-line"><span class="count">${countLabel}</span>${preview ? ' · ' + esc(preview) : ''}</div>`;
+    }
+    return `<div class="step transit">
+      <span class="ref" style="background:${esc(colour)};color:#fff;padding:1px 6px;border-radius:3px;font-weight:600;margin-right:6px;">${esc(s.ref)}</span>
+      <span class="text">${esc(s.fromName)} → ${esc(s.toName)}</span>
+      <span class="dist">${fmtClockTime(s.dep)}–${fmtClockTime(s.arr)}</span>
+      ${stopsLine}
+    </div>`;
+  }
+
   // Render one of the alternatives as the active route. `options` is the full list;
   // `selectedIdx` which one is currently highlighted. Tapping another promotes it.
   function renderRouteChoices(options, selectedIdx, fromLngLat, toPoi) {
@@ -2242,6 +2551,20 @@ function fmtDate(ts) {
       });
     }
     if (src) src.setData({ type: 'FeatureCollection', features });
+
+    // Paint per-leg intermediate/boarding/alighting stops for transit legs.
+    const tripStops = collectTripStops(sel);
+    const tripStopsSrc = map.getSource('route-trip-stops');
+    if (tripStopsSrc) {
+      tripStopsSrc.setData({
+        type: 'FeatureCollection',
+        features: tripStops.map(s => ({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [s.lng, s.lat] },
+          properties: { name: s.name, colour: s.colour, role: s.role },
+        })),
+      });
+    }
 
     const panel = document.getElementById('directionsPanel');
     const summary = document.getElementById('directionsSummary');
@@ -2270,14 +2593,7 @@ function fmtDate(ts) {
 
     const steps = multimodalInstructions(sel);
     const stepsHtml = steps.map(s => {
-      if (s.kind === 'transit') {
-        const colour = /^#[0-9a-f]{3,8}$/i.test(s.colour || '') ? s.colour : '#888';
-        return `<div class="step transit">
-          <span class="ref" style="background:${esc(colour)};color:#fff;padding:1px 6px;border-radius:3px;font-weight:600;margin-right:6px;">${esc(s.ref)}</span>
-          <span class="text">${esc(s.fromName)} → ${esc(s.toName)}</span>
-          <span class="dist">${fmtClockTime(s.dep)}–${fmtClockTime(s.arr)}</span>
-        </div>`;
-      }
+      if (s.kind === 'transit') return renderTransitStepHtml(s);
       return `<div class="step"><span class="icon">🚶</span><span class="text">${esc(s.text)}</span></div>`;
     }).join('');
     stepsEl.innerHTML = optionStrip + stepsHtml;
@@ -2288,16 +2604,24 @@ function fmtDate(ts) {
       };
     });
     panel.classList.add('show');
+    panel.classList.remove('viewing-saved');
 
     const allCoords = styled.flatMap(s => s.coords);
     if (allCoords.length && selectedIdx === 0) {
-      // Only auto-fit on the initial render, so clicking an alt doesn't re-zoom.
       const lngs = allCoords.map(c => c[0]), lats = allCoords.map(c => c[1]);
       map.fitBounds(
         [[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]],
         { padding: { top: 80, bottom: 200, left: 40, right: 40 }, duration: 600 }
       );
     }
+    currentRouteSnapshot = {
+      kind: 'multimodal',
+      styled, steps, tripStops,
+      fromName: (fromLngLat && fromLngLat.name) || 'from',
+      toName: toPoi && toPoi.name || 'to',
+      startSec: sel.startSec, endSec: sel.endSec, totalSec: sel.totalSec,
+      transitCount,
+    };
   }
 
   function renderMultimodalDirections(mmRoute, fromLngLat, toPoi) {
@@ -2315,6 +2639,18 @@ function fmtDate(ts) {
       });
     }
     if (src) src.setData({ type: 'FeatureCollection', features });
+    const tripStops = collectTripStops(mmRoute);
+    const tripStopsSrc = map.getSource('route-trip-stops');
+    if (tripStopsSrc) {
+      tripStopsSrc.setData({
+        type: 'FeatureCollection',
+        features: tripStops.map(s => ({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [s.lng, s.lat] },
+          properties: { name: s.name, colour: s.colour, role: s.role },
+        })),
+      });
+    }
     const panel = document.getElementById('directionsPanel');
     const summary = document.getElementById('directionsSummary');
     const stepsEl = document.getElementById('directionsSteps');
@@ -2329,17 +2665,11 @@ function fmtDate(ts) {
 
     const steps = multimodalInstructions(mmRoute);
     stepsEl.innerHTML = steps.map(s => {
-      if (s.kind === 'transit') {
-        const colour = /^#[0-9a-f]{3,8}$/i.test(s.colour || '') ? s.colour : '#888';
-        return `<div class="step transit">
-          <span class="ref" style="background:${esc(colour)};color:#fff;padding:1px 6px;border-radius:3px;font-weight:600;margin-right:6px;">${esc(s.ref)}</span>
-          <span class="text">${esc(s.fromName)} → ${esc(s.toName)}</span>
-          <span class="dist">${fmtClockTime(s.dep)}–${fmtClockTime(s.arr)}</span>
-        </div>`;
-      }
+      if (s.kind === 'transit') return renderTransitStepHtml(s);
       return `<div class="step"><span class="icon">🚶</span><span class="text">${esc(s.text)}</span></div>`;
     }).join('');
     panel.classList.add('show');
+    panel.classList.remove('viewing-saved');
 
     // Fit to bounds
     const allCoords = styled.flatMap(s => s.coords);
@@ -3611,9 +3941,49 @@ function fmtDate(ts) {
     return `${Math.floor(m / 60)}h ${m % 60}m`;
   }
 
+  // Extract every in-bbox stop on each transit leg (inclusive of boarding + alighting).
+  // Returns array of { lng, lat, name, colour, role, legIdx } for map rendering.
+  function collectTripStops(route) {
+    const out = [];
+    route.legs.forEach((leg, legIdx) => {
+      if (leg.type !== 'transit') return;
+      const bboxStops = scheduleIdx.patternBboxStops.get(leg.patternId) || [];
+      const colour = /^#[0-9a-f]{3,8}$/i.test(leg.route?.colour || '') ? leg.route.colour : '#e89035';
+      for (const [seq, stopId] of bboxStops) {
+        if (seq < leg.fromSeq || seq > leg.toSeq) continue;
+        const stop = scheduleIdx.stops.get(stopId);
+        if (!stop) continue;
+        const role = seq === leg.fromSeq ? 'board'
+          : seq === leg.toSeq ? 'alight' : 'pass';
+        out.push({
+          lng: stop.lng, lat: stop.lat, name: stop.name || '',
+          colour, role, legIdx,
+        });
+      }
+    });
+    return out;
+  }
+
+  // For each transit leg, compute per-leg intermediate stop counts/names for step display.
+  function legStopCounts(route) {
+    return route.legs.map((leg) => {
+      if (leg.type !== 'transit') return null;
+      const bboxStops = scheduleIdx.patternBboxStops.get(leg.patternId) || [];
+      const names = [];
+      for (const [seq, stopId] of bboxStops) {
+        if (seq <= leg.fromSeq || seq >= leg.toSeq) continue;
+        const stop = scheduleIdx.stops.get(stopId);
+        names.push(stop?.name || '');
+      }
+      const totalStops = leg.toSeq - leg.fromSeq;  // hops ridden
+      return { intermediate: names, totalStops };
+    });
+  }
+
   function multimodalInstructions(route) {
+    const stopCounts = legStopCounts(route);
     const steps = [];
-    for (const leg of route.legs) {
+    route.legs.forEach((leg, legIdx) => {
       if (leg.type === 'walk') {
         let meters = 0;
         for (const { edge } of leg.edges) meters += edge.weight;
@@ -3629,16 +3999,19 @@ function fmtDate(ts) {
         const long = leg.route?.long || '';
         const from = scheduleIdx.stops.get(leg.fromStopId)?.name || '';
         const to = scheduleIdx.stops.get(leg.toStopId)?.name || '';
+        const counts = stopCounts[legIdx];
         steps.push({
           kind: 'transit',
           ref, long,
           colour: leg.route?.colour || '',
           fromName: from, toName: to,
           dep: leg.tDep, arr: leg.tArr,
+          totalStops: counts?.totalStops || 0,
+          intermediateStops: counts?.intermediate || [],
           text: `${ref} ${leg.trip.h || long} — board ${from} ${fmtClockTime(leg.tDep)}, alight ${to} ${fmtClockTime(leg.tArr)} (${fmtDuration(leg.tArr - leg.tDep)})`,
         });
       }
-    }
+    });
     return steps;
   }
 
