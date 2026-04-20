@@ -48,6 +48,9 @@
             padding: 4px 0; border-top: 1px solid #eee; }
   .region .label { font-size: 13px; }
   .region .meta { font-size: 11px; color: #888; }
+  .region .sizes { font-size: 11px; color: #666; margin-top: 2px;
+                   font-variant-numeric: tabular-nums; }
+  .region .sizes .bucket { margin-right: 8px; white-space: nowrap; }
   details summary { cursor: pointer; user-select: none; }
   #search {
     position: absolute; top: 0; left: 8px; right: 8px; z-index: 15;
@@ -1086,6 +1089,8 @@ function fmtDate(ts) {
           paint: { 'fill-color': '#a0c8f0' } },
         { id: 'landcover', type: 'fill', source: 'local', 'source-layer': 'landcover', paint: { 'fill-color': '#e6e6d6' } },
         { id: 'landuse', type: 'fill', source: 'local', 'source-layer': 'landuse', paint: { 'fill-color': '#e0e0d0' } },
+        { id: 'park', type: 'fill', source: 'local', 'source-layer': 'park', minzoom: 11,
+          paint: { 'fill-color': '#c6e2c0', 'fill-opacity': 0.65 } },
         { id: 'water', type: 'fill', source: 'local', 'source-layer': 'water', paint: { 'fill-color': '#a0c8f0' } },
         { id: 'buildings', type: 'fill', source: 'local', 'source-layer': 'building', minzoom: 13, paint: { 'fill-color': '#d9d0c9' } },
         { id: 'roads-base', type: 'line', source: 'base', 'source-layer': 'transportation',
@@ -1188,6 +1193,15 @@ function fmtDate(ts) {
           layout: { 'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name'], ['get', 'name_int']], 'text-font': ['KlokanTech Noto Sans Regular'],
                     'text-size': 11, 'symbol-placement': 'line' },
           paint: { 'text-color': '#555', 'text-halo-color': '#fff', 'text-halo-width': 1 } },
+        { id: 'housenumbers', type: 'symbol', source: 'local', 'source-layer': 'housenumber',
+          minzoom: 17,
+          layout: {
+            'text-field': ['get', 'housenumber'],
+            'text-font': ['KlokanTech Noto Sans Regular'],
+            'text-size': 10,
+            'text-anchor': 'center',
+          },
+          paint: { 'text-color': '#7a6f65', 'text-halo-color': '#fff', 'text-halo-width': 1 } },
         { id: 'poi-icons', type: 'symbol', source: 'local', 'source-layer': 'poi',
           layout: {
             'icon-image': ['coalesce',
@@ -3590,6 +3604,83 @@ function fmtDate(ts) {
       `${allPois.length.toLocaleString()} POIs indexed`;
   }
 
+  // Per-region storage measurement. Expensive (especially tiles) so it runs
+  // asynchronously and fills in the size line after the panel renders.
+  async function measureRegionTileBytes(urls) {
+    try {
+      const cache = await caches.open('tiles-v1');
+      let total = 0;
+      for (let i = 0; i < urls.length; i += 64) {
+        const chunk = urls.slice(i, i + 64);
+        const sizes = await Promise.all(chunk.map(async u => {
+          const res = await cache.match(u);
+          if (!res) return 0;
+          const buf = await res.clone().arrayBuffer();
+          return buf.byteLength;
+        }));
+        for (const s of sizes) total += s;
+      }
+      return total;
+    } catch { return 0; }
+  }
+  async function measureIdbRecordBytes(dbName, storeName, key) {
+    return new Promise((resolve) => {
+      let db;
+      const req = indexedDB.open(dbName);
+      req.onerror = () => resolve(0);
+      req.onsuccess = () => {
+        db = req.result;
+        if (!db.objectStoreNames.contains(storeName)) { db.close(); resolve(0); return; }
+        try {
+          const getReq = db.transaction(storeName, 'readonly').objectStore(storeName).get(key);
+          getReq.onsuccess = () => {
+            const rec = getReq.result;
+            const bytes = rec ? new Blob([JSON.stringify(rec)]).size : 0;
+            db.close();
+            resolve(bytes);
+          };
+          getReq.onerror = () => { db.close(); resolve(0); };
+        } catch { db.close(); resolve(0); }
+      };
+    });
+  }
+  async function measurePoiBytes(regionId) {
+    return new Promise((resolve) => {
+      const req = indexedDB.open(POI_DB_NAME);
+      req.onerror = () => resolve(0);
+      req.onsuccess = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains('pois')) { db.close(); resolve(0); return; }
+        try {
+          const idx = db.transaction('pois', 'readonly').objectStore('pois').index('regionId');
+          const rq = idx.getAll(IDBKeyRange.only(regionId));
+          rq.onsuccess = () => {
+            let total = 0;
+            for (const rec of rq.result) total += new Blob([JSON.stringify(rec)]).size;
+            db.close();
+            resolve(total);
+          };
+          rq.onerror = () => { db.close(); resolve(0); };
+        } catch { db.close(); resolve(0); }
+      };
+    });
+  }
+  async function measureRegionBytes(region) {
+    const [tiles, pois, schedule, walk] = await Promise.all([
+      measureRegionTileBytes(region.urls || []),
+      measurePoiBytes(region.id),
+      measureIdbRecordBytes(SCHEDULE_DB_NAME, 'regions', region.id),
+      measureIdbRecordBytes(WALK_DB_NAME,     'regions', region.id),
+    ]);
+    return { tiles, pois, schedule, walk, total: tiles + pois + schedule + walk };
+  }
+  function fmtBytes(n) {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+    if (n < 1024 * 1024 * 10) return `${(n / 1048576).toFixed(1)} MB`;
+    return `${Math.round(n / 1048576)} MB`;
+  }
+
   function renderRegions() {
     const list = loadRegions();
     document.getElementById('offlineBadge').textContent = list.length ? `(${list.length})` : '';
@@ -3600,11 +3691,27 @@ function fmtDate(ts) {
       const when = r.createdAt ? fmtDate(r.createdAt) : '';
       const row = document.createElement('div');
       row.className = 'region';
-      row.innerHTML = `<div><div class="label">${fmtCoord(clon, clat)}</div>
-        <div class="meta">${when} · z${r.minZoom}–${r.maxZoom} · ${r.tileCount} tiles</div></div>
-        <div><button data-goto="${r.id}">go</button>
-        <button data-del="${r.id}">×</button></div>`;
+      row.innerHTML = `<div>
+        <div class="label">${fmtCoord(clon, clat)}</div>
+        <div class="meta">${when} · z${r.minZoom}–${r.maxZoom} · ${r.tileCount} tiles</div>
+        <div class="sizes" data-sizes="${r.id}">measuring…</div>
+      </div>
+      <div><button data-goto="${r.id}">go</button>
+      <button data-del="${r.id}">×</button></div>`;
       el.appendChild(row);
+    }
+    // Kick off per-region measurement (async, fills in as each finishes).
+    for (const r of list) {
+      measureRegionBytes(r).then(s => {
+        const target = el.querySelector(`[data-sizes="${r.id}"]`);
+        if (!target) return;
+        target.innerHTML =
+          `<span class="bucket"><strong>${fmtBytes(s.total)}</strong> total</span>` +
+          `<span class="bucket">tiles ${fmtBytes(s.tiles)}</span>` +
+          `<span class="bucket">POIs ${fmtBytes(s.pois)}</span>` +
+          `<span class="bucket">schedule ${fmtBytes(s.schedule)}</span>` +
+          `<span class="bucket">walk ${fmtBytes(s.walk)}</span>`;
+      });
     }
     el.querySelectorAll('[data-goto]').forEach(b => b.onclick = () => {
       const r = loadRegions().find(x => x.id === b.dataset.goto);
