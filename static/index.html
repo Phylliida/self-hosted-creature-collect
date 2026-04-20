@@ -249,6 +249,14 @@
   #directionsPanel .summary { font-size: 13px; color: #333; margin-bottom: 8px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; padding-right: 100px; min-height: 24px; }
   #directionsPanel.viewing-saved #directionsSave { display: none; }
   #directionsPanel .summary strong { font-size: 15px; color: #3b7fdf; }
+  #directionsPanel .summary-breakdown {
+    font-size: 12px; color: #666;
+    padding: 2px 2px 8px;
+    border-bottom: 1px solid #eee;
+    margin-bottom: 6px;
+    display: flex; flex-wrap: wrap; gap: 10px;
+  }
+  #directionsPanel .summary-breakdown .part { white-space: nowrap; }
   #directionsPanel button.close { position: absolute; top: 4px; right: 6px; background: none; border: none; font-size: 22px; cursor: pointer; color: #666; padding: 4px 6px; line-height: 1; }
   #directionsPanel .top-ctrls {
     position: absolute; top: 4px; right: 38px;
@@ -308,7 +316,62 @@
   .opt-pill.selected { background: #3b7fdf; border-color: #3b7fdf; color: #fff; }
   .opt-pill .opt-times { font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 600; }
   .opt-pill .opt-meta { font-size: 10px; opacity: 0.75; margin-top: 1px; }
-  .step.transit { flex-wrap: wrap; }
+  .step.transit { flex-wrap: wrap; padding: 0; }
+  .step.transit .step-header {
+    flex-basis: 100%; display: flex; align-items: baseline;
+    gap: 4px; cursor: pointer; padding: 4px 2px;
+    border-radius: 3px;
+  }
+  .step.transit .step-header:hover { background: #f2f6ff; }
+  .step.transit .step-header .text { flex: 1; min-width: 0; }
+  .step.transit .step-header .dist { color: #666; font-size: 12px; font-variant-numeric: tabular-nums; }
+  #scheduleModal {
+    position: absolute; inset: 0; z-index: 23;
+    display: none; align-items: flex-end; justify-content: center;
+    background: rgba(0,0,0,0.3);
+  }
+  #scheduleModal.show { display: flex; }
+  #scheduleModal .sheet {
+    background: #fff; width: 100%; max-width: 480px;
+    max-height: 80vh; display: flex; flex-direction: column;
+    border-radius: 12px 12px 0 0;
+    padding: 14px 16px;
+    padding-bottom: calc(14px + env(safe-area-inset-bottom));
+  }
+  #scheduleModal .sheet .header {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
+  }
+  #scheduleModal h3 { flex: 1; margin: 0; font-size: 15px; }
+  #scheduleModal .subtitle { font-size: 12px; color: #666; margin-bottom: 8px; }
+  #scheduleModal .tabs {
+    display: flex; gap: 4px; margin-bottom: 8px;
+  }
+  #scheduleModal .tabs button {
+    flex: 1; min-width: 38px;
+    border: 1px solid #ccc; background: #fff;
+    border-radius: 4px; padding: 6px 0;
+    font-size: 12px; cursor: pointer; font-weight: 500;
+  }
+  #scheduleModal .tabs button.active {
+    background: #3b7fdf; border-color: #3b7fdf; color: #fff;
+  }
+  #scheduleModal .tabs button.empty { color: #bbb; }
+  #scheduleModal .times {
+    overflow-y: auto; flex: 1;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+    gap: 4px; padding: 4px 2px;
+    font-variant-numeric: tabular-nums;
+  }
+  #scheduleModal .times .t {
+    text-align: center; padding: 4px 2px;
+    border-radius: 3px; font-size: 13px; color: #333;
+  }
+  #scheduleModal .times .t.match {
+    background: #e0ecff; color: #3b7fdf; font-weight: 600;
+  }
+  #scheduleModal .empty-msg {
+    color: #888; font-size: 12px; padding: 8px; text-align: center;
+  }
   .step .stops-details {
     flex-basis: 100%; margin-left: 28px; margin-top: 2px;
     font-size: 11px; color: #777;
@@ -579,6 +642,17 @@
       <button type="button" class="saved-btn" id="savedRoutesClose">Done</button>
     </div>
     <div id="savedRoutesList"></div>
+  </div>
+</div>
+<div id="scheduleModal">
+  <div class="sheet">
+    <div class="header">
+      <h3 id="scheduleTitle">Schedule</h3>
+      <button type="button" class="saved-btn" id="scheduleClose">Done</button>
+    </div>
+    <div class="subtitle" id="scheduleSubtitle"></div>
+    <div class="tabs" id="scheduleTabs"></div>
+    <div class="times" id="scheduleTimes"></div>
   </div>
 </div>
 <div id="favPanel">
@@ -2372,7 +2446,7 @@ function fmtDate(ts) {
       summary.innerHTML = parts.join('');
       stepsEl.innerHTML = (item.steps || []).map(s => {
         if (s.kind === 'transit') return renderTransitStepHtml(s);
-        return `<div class="step"><span class="icon">🚶</span><span class="text">${esc(s.text)}</span></div>`;
+        return `<div class="step"><span class="icon">🚶</span><span class="text">${esc(s.text)}</span>${s.dep != null ? `<span class="dist">${fmtClockTime(s.dep)}–${fmtClockTime(s.arr)} (${fmtDuration(s.arr - s.dep)})</span>` : ''}</div>`;
       }).join('');
     } else {
       const distStr = fmtDist((item.distanceMeters || 0) / 1000);
@@ -2465,6 +2539,90 @@ function fmtDate(ts) {
   };
   savedRoutesPanel.addEventListener('click', (e) => {
     if (e.target === savedRoutesPanel) savedRoutesPanel.classList.remove('show');
+  });
+
+  // --- Schedule modal: full weekday schedule for a pattern at a stop ---
+  const scheduleModal    = document.getElementById('scheduleModal');
+  const scheduleTabsEl   = document.getElementById('scheduleTabs');
+  const scheduleTimesEl  = document.getElementById('scheduleTimes');
+  const scheduleTitleEl  = document.getElementById('scheduleTitle');
+  const scheduleSubEl    = document.getElementById('scheduleSubtitle');
+
+  // `defaultGtfsIdx` is Mon=0..Sun=6 (matching scheduleIdx.services[..].dow).
+  function openScheduleModal(patternId, stopId, seq, highlightDep, defaultGtfsIdx) {
+    // scheduleIdx.patterns and .tripsByPattern use numeric keys; stopId is
+    // a GTFS string. Coerce here because data-* attrs always arrive as strings.
+    patternId = Number(patternId);
+    const pattern = scheduleIdx.patterns.get(patternId);
+    const route   = pattern && scheduleIdx.routesById.get(pattern.route_id);
+    const stop    = scheduleIdx.stops.get(stopId);
+    scheduleTitleEl.textContent = route?.short
+      ? `Route ${route.short}${route.long ? ' — ' + route.long : ''}`
+      : 'Schedule';
+    scheduleSubEl.textContent = stop?.name ? `Times departing at ${stop.name}` : '';
+
+    // Collect dep times at `seq` grouped by weekday (Mon..Sun). Use Sets so
+    // overlapping services (e.g. a base "weekday" plus a seasonal
+    // "winter-weekday" service both active on Tue) don't produce duplicate
+    // times.
+    const perDaySet = Array.from({ length: 7 }, () => new Set());
+    for (const trip of (scheduleIdx.tripsByPattern.get(patternId) || [])) {
+      const svc = scheduleIdx.services.get(trip.s);
+      if (!svc?.dow) continue;
+      const cum = tripCumulative(trip);
+      const dep = trip.f + (cum[seq] || 0);
+      for (let gi = 0; gi < 7; gi++) if (svc.dow[gi] === 1) perDaySet[gi].add(dep);
+    }
+    const perDay = perDaySet.map(s => Array.from(s).sort((a, b) => a - b));
+
+    const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    let activeIdx = Math.max(0, Math.min(6, defaultGtfsIdx ?? 0));
+    if (!perDay[activeIdx].length) {
+      const first = perDay.findIndex(a => a.length);
+      if (first >= 0) activeIdx = first;
+    }
+    scheduleTabsEl.innerHTML = '';
+    labels.forEach((lab, gi) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = lab;
+      if (!perDay[gi].length) btn.classList.add('empty');
+      if (gi === activeIdx) btn.classList.add('active');
+      btn.addEventListener('click', () => {
+        for (const b of scheduleTabsEl.children) b.classList.remove('active');
+        btn.classList.add('active');
+        renderTimes(perDay[gi], gi === activeIdx ? highlightDep : null);
+      });
+      scheduleTabsEl.appendChild(btn);
+    });
+    function renderTimes(times, highlight) {
+      if (!times.length) {
+        scheduleTimesEl.innerHTML = `<div class="empty-msg">No service on this day.</div>`;
+        return;
+      }
+      scheduleTimesEl.innerHTML = times.map(t => {
+        const match = highlight != null && Math.abs(t - highlight) < 1;
+        return `<div class="t${match ? ' match' : ''}">${fmtClockTime(t)}</div>`;
+      }).join('');
+    }
+    renderTimes(perDay[activeIdx], highlightDep);
+    scheduleModal.classList.add('show');
+  }
+  document.getElementById('scheduleClose').onclick = () => scheduleModal.classList.remove('show');
+  scheduleModal.addEventListener('click', (e) => {
+    if (e.target === scheduleModal) scheduleModal.classList.remove('show');
+  });
+  // Delegated: tap the main row of a transit step to open its schedule.
+  document.getElementById('directionsPanel').addEventListener('click', (e) => {
+    const hdr = e.target.closest('.step.transit .step-header');
+    if (!hdr || !hdr.dataset.pattern) return;
+    openScheduleModal(
+      hdr.dataset.pattern,
+      hdr.dataset.stop,
+      +hdr.dataset.seq,
+      +hdr.dataset.dep,
+      +hdr.dataset.gtfs,
+    );
   });
 
   // Trip planner lives in static/trip-planner.js — the factory is bound
@@ -2584,10 +2742,15 @@ function fmtDate(ts) {
       ].join('');
       stopsBlock = `<details class="stops-details"><summary><span class="count">${countLabel}</span>${summary ? ' · ' + summary : ''}</summary><ol class="stops-timeline">${rows}</ol></details>`;
     }
+    const hdrAttrs = s.patternId
+      ? ` data-pattern="${esc(String(s.patternId))}" data-stop="${esc(String(s.fromStopId || ''))}" data-seq="${esc(String(s.fromSeq ?? 0))}" data-dep="${esc(String(s.dep ?? 0))}" data-gtfs="${esc(String(s.userGtfsIdx ?? 0))}"`
+      : '';
     return `<div class="step transit">
-      <span class="ref" style="background:${esc(colour)};color:#fff;padding:1px 6px;border-radius:3px;font-weight:600;margin-right:6px;">${esc(s.ref)}</span>
-      <span class="text">${esc(s.fromName)} → ${esc(s.toName)}</span>
-      <span class="dist">${fmtClockTime(s.dep)}–${fmtClockTime(s.arr)} (${fmtDuration(s.durationSec || (s.arr - s.dep))})</span>
+      <div class="step-header"${hdrAttrs}>
+        <span class="ref" style="background:${esc(colour)};color:#fff;padding:1px 6px;border-radius:3px;font-weight:600;margin-right:6px;">${esc(s.ref)}</span>
+        <span class="text">${esc(s.fromName)} → ${esc(s.toName)}</span>
+        <span class="dist">${fmtClockTime(s.dep)}–${fmtClockTime(s.arr)} (${fmtDuration(s.durationSec || (s.arr - s.dep))})</span>
+      </div>
       ${stopsBlock}
     </div>`;
   }
@@ -2662,9 +2825,9 @@ function fmtDate(ts) {
     const steps = sel._cache.steps;
     const stepsHtml = steps.map(s => {
       if (s.kind === 'transit') return renderTransitStepHtml(s);
-      return `<div class="step"><span class="icon">🚶</span><span class="text">${esc(s.text)}</span></div>`;
+      return `<div class="step"><span class="icon">🚶</span><span class="text">${esc(s.text)}</span>${s.dep != null ? `<span class="dist">${fmtClockTime(s.dep)}–${fmtClockTime(s.arr)} (${fmtDuration(s.arr - s.dep)})</span>` : ''}</div>`;
     }).join('');
-    stepsEl.innerHTML = optionStrip + stepsHtml;
+    stepsEl.innerHTML = optionStrip + tripTotalsHtml(sel) + stepsHtml;
     stepsEl.querySelectorAll('.opt-pill').forEach(el => {
       el.onclick = () => {
         const idx = +el.dataset.idx;
@@ -2732,9 +2895,9 @@ function fmtDate(ts) {
     summary.innerHTML = summaryParts.join('');
 
     const steps = multimodalInstructions(mmRoute);
-    stepsEl.innerHTML = steps.map(s => {
+    stepsEl.innerHTML = tripTotalsHtml(mmRoute) + steps.map(s => {
       if (s.kind === 'transit') return renderTransitStepHtml(s);
-      return `<div class="step"><span class="icon">🚶</span><span class="text">${esc(s.text)}</span></div>`;
+      return `<div class="step"><span class="icon">🚶</span><span class="text">${esc(s.text)}</span>${s.dep != null ? `<span class="dist">${fmtClockTime(s.dep)}–${fmtClockTime(s.arr)} (${fmtDuration(s.arr - s.dep)})</span>` : ''}</div>`;
     }).join('');
     panel.classList.add('show');
     panel.classList.remove('viewing-saved');
@@ -2976,11 +3139,13 @@ function fmtDate(ts) {
     if (canTransit) {
       const raws = planAlternatives(start.id, end.id, mode, pivotDate, walkWeight, transferSec);
       if (raws.length) {
+        const pivotIso = pivotDate.toISOString();
         const plans = raws.map(raw => ({
           legs:     stepsToLegs(raw.steps),
           startSec: raw.startSec,
           endSec:   raw.endSec,
           totalSec: raw.endSec - raw.startSec,
+          pivotDate: pivotIso,
         }));
         renderRouteChoices(plans, 0, from, toPoi);
         return;
@@ -3803,20 +3968,50 @@ function fmtDate(ts) {
     });
   }
 
+  // Totals for the top-of-step-list breakdown row.
+  function tripTotalsHtml(route) {
+    let walkSec = 0, walkMeters = 0, transitSec = 0;
+    for (const leg of route.legs) {
+      const dur = leg.tArr - leg.tDep;
+      if (leg.type === 'transit') {
+        transitSec += dur;
+      } else if (leg.type === 'walk') {
+        walkSec += dur;
+        for (const { edge } of leg.edges) walkMeters += edge.weight;
+      } else {  // access / egress
+        walkSec += dur;
+        walkMeters += leg.distance || 0;
+      }
+    }
+    const waitSec = Math.max(0, (route.endSec - route.startSec) - walkSec - transitSec);
+    const parts = [];
+    if (walkSec > 0 || walkMeters > 0) {
+      parts.push(`<span class="part">🚶 ${fmtDuration(walkSec)} · ${Math.round(walkMeters)} m</span>`);
+    }
+    if (transitSec > 0) parts.push(`<span class="part">🚌 ${fmtDuration(transitSec)}</span>`);
+    if (waitSec > 0)    parts.push(`<span class="part">⏱ ${fmtDuration(waitSec)} waiting</span>`);
+    return parts.length ? `<div class="summary-breakdown">${parts.join('')}</div>` : '';
+  }
+
   function multimodalInstructions(route) {
     const stopCounts = legStopCounts(route);
+    const pivot = route.pivotDate ? new Date(route.pivotDate) : new Date();
+    const userGtfsIdx = todayInfo(pivot).gtfsIdx;
     const steps = [];
     route.legs.forEach((leg, legIdx) => {
       if (leg.type === 'walk') {
         let meters = 0;
         for (const { edge } of leg.edges) meters += edge.weight;
-        steps.push({ kind: 'walk', text: `Walk ${Math.round(meters)} m (${fmtDuration(leg.tArr - leg.tDep)})` });
+        steps.push({ kind: 'walk', text: `Walk ${Math.round(meters)} m`,
+                     dep: leg.tDep, arr: leg.tArr });
       } else if (leg.type === 'access') {
         const stop = scheduleIdx.stops.get(leg.stopId);
-        steps.push({ kind: 'walk', text: `Walk ${Math.round(leg.distance)} m to ${stop?.name || 'stop'}` });
+        steps.push({ kind: 'walk', text: `Walk ${Math.round(leg.distance)} m to ${stop?.name || 'stop'}`,
+                     dep: leg.tDep, arr: leg.tArr });
       } else if (leg.type === 'egress') {
         const stop = scheduleIdx.stops.get(leg.stopId);
-        steps.push({ kind: 'walk', text: `Walk ${Math.round(leg.distance)} m from ${stop?.name || 'stop'}` });
+        steps.push({ kind: 'walk', text: `Walk ${Math.round(leg.distance)} m from ${stop?.name || 'stop'}`,
+                     dep: leg.tDep, arr: leg.tArr });
       } else if (leg.type === 'transit') {
         const ref = leg.route?.short || '?';
         const long = leg.route?.long || '';
@@ -3832,6 +4027,10 @@ function fmtDate(ts) {
           durationSec: leg.tArr - leg.tDep,
           totalStops: counts?.totalStops || 0,
           intermediateStops: counts?.intermediate || [],  // [{name, arr}]
+          patternId: leg.patternId,
+          fromStopId: leg.fromStopId,
+          fromSeq: leg.fromSeq,
+          userGtfsIdx,
           text: `${ref} ${leg.trip.h || long} — board ${from} ${fmtClockTime(leg.tDep)}, alight ${to} ${fmtClockTime(leg.tArr)} (${fmtDuration(leg.tArr - leg.tDep)})`,
         });
       }
