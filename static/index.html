@@ -230,6 +230,16 @@
     font-size: 14px; font-weight: 600; cursor: pointer;
   }
   #routingPanel .go:disabled { background: #bbb; cursor: not-allowed; }
+  #routingPanel .go.loading { background: #6a99e0; cursor: progress; }
+  #routingPanel .go .spinner {
+    display: inline-block; width: 12px; height: 12px;
+    border: 2px solid rgba(255,255,255,0.45);
+    border-top-color: #fff;
+    border-radius: 50%;
+    vertical-align: -2px; margin-right: 8px;
+    animation: routing-spin 0.7s linear infinite;
+  }
+  @keyframes routing-spin { to { transform: rotate(360deg); } }
   .ep-dropdown {
     position: absolute; left: 0; right: 0; top: 100%;
     background: #fff; border: 1px solid #ddd; border-radius: 6px; margin-top: 4px;
@@ -507,9 +517,12 @@
   }
   .route-popup .dep-row {
     display: flex; align-items: center; gap: 6px;
-    padding: 4px 0; border-top: 1px solid #f2f2f2;
+    padding: 4px 4px; border-top: 1px solid #f2f2f2;
+    cursor: pointer; border-radius: 3px;
   }
+  .route-popup .dep-row:hover { background: #f2f6ff; }
   .route-popup .dep-row:first-of-type { border-top: none; }
+  .route-popup .dep-empty { font-size: 11px; color: #aaa; font-style: italic; }
   .route-popup .dep-times {
     display: flex; gap: 4px; flex-wrap: wrap; flex: 1;
   }
@@ -2084,7 +2097,48 @@ function fmtDate(ts) {
       rows.push(`<div class="row"><span class="lbl">📚</span><span class="val"><a href="${esc(url)}" target="_blank" rel="noopener">Wikidata: ${esc(p.wikidata)}</a></span></div>`);
     }
 
-    document.getElementById('poiCardBody').innerHTML = rows.join('');
+    // If this POI is a transit stop/station/platform and we know its schedule,
+    // append a "lines at this stop" list. Each row opens the full schedule
+    // modal for that (pattern, stop).
+    const TRANSIT_POI_CATS = new Set([
+      'stop_position', 'platform', 'station', 'bus_stop',
+      'tram_stop', 'halt', 'subway_entrance', 'ferry_terminal',
+    ]);
+    if (TRANSIT_POI_CATS.has(poi.category) && scheduleIdx.osmToGtfs?.size) {
+      const nearby = findStopsNear(poi.lng, poi.lat, 40);
+      const nodeIds = [...new Set(nearby.map(s => s.node_id).filter(x => x != null))];
+      const groups = nodeIds.length ? nextDeparturesForOsmNodes(nodeIds, new Date()) : [];
+      if (groups.length) {
+        const rowsHtml = groups.map(g => {
+          const colour = /^#[0-9a-f]{3,8}$/i.test(g.route?.colour || '') ? g.route.colour : '#888';
+          const short = g.route?.short || '?';
+          const label = g.headsign || g.route?.long || '';
+          const times = g.departures.map(d => `<span class="dep-time">${formatDepartureTime(d.dep)}</span>`).join('');
+          const timesOrHint = times || `<span class="dep-empty">no upcoming — tap for full schedule</span>`;
+          return `<div class="dep-row" data-pattern="${esc(String(g.patternId))}" data-stop="${esc(String(g.gtfsStopId))}" data-seq="${esc(String(g.seq))}" title="Tap to see all times">
+            <span class="ref" style="background:${esc(colour)}">${esc(short)}</span>
+            <span class="dep-times">${timesOrHint}</span>
+            <span class="dep-name">${esc(label)}</span>
+          </div>`;
+        }).join('');
+        rows.push(`<div class="route-popup"><div class="dep-section">
+          <div class="dep-label">lines at this stop · tap for full schedule</div>
+          ${rowsHtml}
+        </div></div>`);
+      }
+    }
+
+    const body = document.getElementById('poiCardBody');
+    body.innerHTML = rows.join('');
+    body.querySelectorAll('.dep-row').forEach(el => {
+      if (!el.dataset.pattern) return;
+      el.onclick = () => {
+        openScheduleModal(
+          el.dataset.pattern, el.dataset.stop, +el.dataset.seq,
+          null, todayInfo(new Date()).gtfsIdx,
+        );
+      };
+    });
     card.classList.add('show');
   }
 
@@ -3136,24 +3190,39 @@ function fmtDate(ts) {
     const walkWeight = currentWalkWeight();
     const transferSec = currentTransferSec();
     const canTransit = scheduleIdx.stops.size > 0 && scheduleIdx.stopToWalkNode.size > 0;
-    if (canTransit) {
-      const raws = planAlternatives(start.id, end.id, mode, pivotDate, walkWeight, transferSec);
-      if (raws.length) {
-        const pivotIso = pivotDate.toISOString();
-        const plans = raws.map(raw => ({
-          legs:     stepsToLegs(raw.steps),
-          startSec: raw.startSec,
-          endSec:   raw.endSec,
-          totalSec: raw.endSec - raw.startSec,
-          pivotDate: pivotIso,
-        }));
-        renderRouteChoices(plans, 0, from, toPoi);
-        return;
+
+    // Show a loading spinner while the (synchronous) Dijkstra search runs.
+    // Double-rAF lets the browser paint the spinner BEFORE the main thread
+    // blocks on the search, so the button visibly changes state.
+    const origLabel = routingGo.innerHTML;
+    routingGo.classList.add('loading');
+    routingGo.disabled = true;
+    routingGo.innerHTML = '<span class="spinner"></span>Planning…';
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    try {
+      if (canTransit) {
+        const raws = planAlternatives(start.id, end.id, mode, pivotDate, walkWeight, transferSec);
+        if (raws.length) {
+          const pivotIso = pivotDate.toISOString();
+          const plans = raws.map(raw => ({
+            legs:     stepsToLegs(raw.steps),
+            startSec: raw.startSec,
+            endSec:   raw.endSec,
+            totalSec: raw.endSec - raw.startSec,
+            pivotDate: pivotIso,
+          }));
+          renderRouteChoices(plans, 0, from, toPoi);
+          return;
+        }
       }
+      const route = astar(start.id, end.id);
+      if (!route) { alert('No route found between those points.'); return; }
+      renderDirections(route, from, toPoi);
+    } finally {
+      routingGo.classList.remove('loading');
+      routingGo.disabled = false;
+      routingGo.innerHTML = origLabel;
     }
-    const route = astar(start.id, end.id);
-    if (!route) { alert('No route found between those points.'); return; }
-    renderDirections(route, from, toPoi);
   }
   routingGo.onclick = runRoutingPlan;
 
@@ -3218,15 +3287,16 @@ function fmtDate(ts) {
           .map(d => `<span class="dep-time" title="${esc(d.headsign)}">${formatDepartureTime(d.dep)}</span>`)
           .join('');
         const short = g.route?.short || '?';
-        const long = g.route?.long || '';
-        return `<div class="dep-row">
+        const label = g.headsign || g.route?.long || '';
+        const timesOrHint = times || `<span class="dep-empty">no upcoming — tap for full schedule</span>`;
+        return `<div class="dep-row" data-pattern="${esc(String(g.patternId))}" data-stop="${esc(String(g.gtfsStopId))}" data-seq="${esc(String(g.seq))}" title="Tap to see all times">
           <span class="ref" style="background:${esc(colour)}">${esc(short)}</span>
-          <span class="dep-times">${times}</span>
-          <span class="dep-name">${esc(long)}</span>
+          <span class="dep-times">${timesOrHint}</span>
+          <span class="dep-name">${esc(label)}</span>
         </div>`;
       }).join('');
       schedHtml = `<div class="dep-section">
-        <div class="dep-label">next departures</div>
+        <div class="dep-label">lines at this stop · tap for full schedule</div>
         ${rows}
       </div>`;
     }
@@ -3235,6 +3305,18 @@ function fmtDate(ts) {
       .setLngLat(lngLat)
       .setHTML(html)
       .addTo(map);
+    popup.getElement().querySelectorAll('.dep-row').forEach(el => {
+      if (!el.dataset.pattern) return;
+      el.onclick = () => {
+        openScheduleModal(
+          el.dataset.pattern,
+          el.dataset.stop,
+          +el.dataset.seq,
+          null,
+          todayInfo(new Date()).gtfsIdx,
+        );
+      };
+    });
     popup.getElement().querySelectorAll('[data-action]').forEach(el => {
       el.onclick = async (ev) => {
         ev.stopPropagation();
@@ -3881,8 +3963,11 @@ function fmtDate(ts) {
           const colour = /^#[0-9a-f]{3,8}$/i.test(leg.route?.colour || '') ? leg.route.colour : '#e89035';
           let coords = null;
           // Prefer the GTFS shape — the authoritative vehicle polyline.
-          const shape = (leg.trip && typeof leg.trip._getShape === 'function')
-            ? leg.trip._getShape() : null;
+          // scheduleIdx.shapeByPattern is rebuilt on load and works even for
+          // saved-route plans whose trip lost its `_getShape` after JSON.
+          const shape = scheduleIdx.shapeByPattern?.get(leg.patternId)
+            || (leg.trip && typeof leg.trip._getShape === 'function'
+                  ? leg.trip._getShape() : null);
           if (shape && shape.length >= 2) {
             coords = clipShapeBetweenStops(shape, from, to);
           }
@@ -4448,7 +4533,11 @@ function fmtDate(ts) {
     if (sets.tomorrow.has(trip.s)) return 86400;
     return null;
   }
-  function nextDeparturesForOsmNodes(osmNodeIds, now, limitPerRoute = 3) {
+  // Group every pattern serving any of the given OSM stop-nodes into one
+  // row apiece. Each row carries the upcoming few departures (if any), a
+  // representative headsign, and the (patternId, stopId, seq) needed to
+  // pop open the full schedule modal.
+  function nextDeparturesForOsmNodes(osmNodeIds, now, limitPerPattern = 3) {
     const gtfsStopIds = new Set();
     for (const nid of osmNodeIds) {
       const gids = scheduleIdx.osmToGtfs.get(nid);
@@ -4458,42 +4547,48 @@ function fmtDate(ts) {
     const info = todayInfo(now);
     const svcSets = expandedServiceSets(now);
     const windowSec = 6 * 3600;
-    const byRoute = new Map();
+    const groups = new Map();   // key = `${patternId}|${gid}`
     for (const gid of gtfsStopIds) {
       const patternSeqs = scheduleIdx.stopPatterns.get(gid);
       if (!patternSeqs) continue;
       for (const [patternId, seq] of patternSeqs) {
         const pattern = scheduleIdx.patterns.get(patternId);
         if (!pattern) continue;
-        const trips = scheduleIdx.tripsByPattern.get(patternId);
-        if (!trips) continue;
+        const key = `${patternId}|${gid}`;
+        if (!groups.has(key)) {
+          groups.set(key, {
+            patternId, gtfsStopId: gid, seq,
+            route: scheduleIdx.routesById.get(pattern.route_id),
+            headsign: '',
+            departures: [],
+          });
+        }
+        const g = groups.get(key);
+        const trips = scheduleIdx.tripsByPattern.get(patternId) || [];
         for (const trip of trips) {
+          if (!g.headsign && trip.h) g.headsign = trip.h;
           const off = tripDayOffset(trip, svcSets);
           if (off === null) continue;
           const cum = tripCumulative(trip);
           const dep = trip.f + (cum[seq] || 0) + off;
           if (dep < info.nowSec) continue;
           if (dep - info.nowSec > windowSec) continue;
-          const rid = pattern.route_id;
-          if (!byRoute.has(rid)) byRoute.set(rid, []);
-          byRoute.get(rid).push({ dep, headsign: trip.h || '' });
+          g.departures.push({ dep, headsign: trip.h || '' });
         }
       }
     }
-    const result = [];
-    for (const [rid, deps] of byRoute) {
-      deps.sort((a, b) => a.dep - b.dep);
-      result.push({
-        routeId: rid,
-        route: scheduleIdx.routesById.get(rid),
-        departures: deps.slice(0, limitPerRoute),
-      });
-    }
+    const result = [...groups.values()].map(g => {
+      g.departures.sort((a, b) => a.dep - b.dep);
+      g.departures = g.departures.slice(0, limitPerPattern);
+      return g;
+    });
     result.sort((a, b) => {
       const as = parseInt(a.route?.short || '') || 9999;
       const bs = parseInt(b.route?.short || '') || 9999;
       if (as !== bs) return as - bs;
-      return (a.route?.short || '').localeCompare(b.route?.short || '');
+      const ref = (a.route?.short || '').localeCompare(b.route?.short || '');
+      if (ref) return ref;
+      return a.headsign.localeCompare(b.headsign);
     });
     return result;
   }
