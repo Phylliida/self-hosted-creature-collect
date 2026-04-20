@@ -1202,6 +1202,23 @@ function fmtDate(ts) {
             'text-anchor': 'center',
           },
           paint: { 'text-color': '#7a6f65', 'text-halo-color': '#fff', 'text-halo-width': 1 } },
+        { id: 'water-labels', type: 'symbol', source: 'local', 'source-layer': 'water_name',
+          minzoom: 10,
+          layout: {
+            'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name'], ['get', 'name_int']],
+            'text-font': ['KlokanTech Noto Sans Regular'],
+            'text-size': 11,
+            'text-letter-spacing': 0.08,
+          },
+          paint: { 'text-color': '#4a6a8a', 'text-halo-color': '#bcdcf2', 'text-halo-width': 1 } },
+        { id: 'airport-labels', type: 'symbol', source: 'local', 'source-layer': 'aerodrome_label',
+          minzoom: 10,
+          layout: {
+            'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name'], ['get', 'name_int']],
+            'text-font': ['KlokanTech Noto Sans Regular'],
+            'text-size': 11,
+          },
+          paint: { 'text-color': '#555', 'text-halo-color': '#fff', 'text-halo-width': 1 } },
         { id: 'poi-icons', type: 'symbol', source: 'local', 'source-layer': 'poi',
           layout: {
             'icon-image': ['coalesce',
