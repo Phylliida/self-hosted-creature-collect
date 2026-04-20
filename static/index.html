@@ -185,6 +185,67 @@
     max-height: 45vh; overflow-y: auto; display: none;
   }
   #directionsPanel.show { display: block; }
+  body.routing-open #search,
+  body.routing-open #panel,
+  body.routing-open #poiCard { display: none !important; }
+  #routingPanel {
+    position: absolute; top: 0; left: 0; right: 0; z-index: 18;
+    padding: 10px 12px;
+    padding-top: calc(10px + env(safe-area-inset-top));
+    padding-left: calc(12px + env(safe-area-inset-left));
+    padding-right: calc(12px + env(safe-area-inset-right));
+    background: rgba(255,255,255,0.98);
+    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    display: none;
+  }
+  #routingPanel.show { display: block; }
+  #routingPanel .header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  #routingPanel .header h3 { flex: 1; margin: 0; font-size: 15px; }
+  #routingPanel .close { background: none; border: none; font-size: 22px; line-height: 1; cursor: pointer; color: #666; padding: 0 4px; }
+  #routingPanel .endpoints { display: flex; gap: 6px; align-items: center; }
+  #routingPanel .endpoints .stack { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+  #routingPanel .endpoint {
+    display: flex; align-items: center; gap: 6px;
+    background: #fff; border: 1px solid #ddd; border-radius: 6px;
+    padding: 2px 6px; position: relative;
+  }
+  #routingPanel .endpoint .ep-icon { flex-shrink: 0; font-size: 14px; width: 18px; text-align: center; }
+  #routingPanel .endpoint input {
+    flex: 1; border: none; outline: none; padding: 6px 4px; font-size: 14px; background: transparent;
+  }
+  #routingPanel .endpoint .clear { background: none; border: none; font-size: 16px; color: #999; cursor: pointer; padding: 2px 6px; }
+  #routingPanel .swap {
+    background: #eef; border: 1px solid #bcd; border-radius: 6px;
+    width: 34px; height: 34px; font-size: 18px; cursor: pointer;
+    flex-shrink: 0; align-self: center;
+  }
+  #routingPanel .when {
+    display: flex; gap: 6px; align-items: center; margin-top: 8px; font-size: 13px;
+  }
+  #routingPanel .when select,
+  #routingPanel .when input { padding: 5px 6px; font-size: 13px; border: 1px solid #ccc; border-radius: 5px; }
+  #routingPanel .go {
+    margin-top: 8px; padding: 10px 12px; width: 100%;
+    background: #3b7fdf; color: #fff; border: none; border-radius: 6px;
+    font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  #routingPanel .go:disabled { background: #bbb; cursor: not-allowed; }
+  .ep-dropdown {
+    position: absolute; left: 0; right: 0; top: 100%;
+    background: #fff; border: 1px solid #ddd; border-radius: 6px; margin-top: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    max-height: 45vh; overflow-y: auto; z-index: 1;
+  }
+  .ep-suggest {
+    padding: 8px 10px; cursor: pointer;
+    display: flex; gap: 8px; align-items: center; font-size: 13px;
+    border-top: 1px solid #f0f0f0;
+  }
+  .ep-suggest:first-child { border-top: none; }
+  .ep-suggest:hover, .ep-suggest:active { background: #eef; }
+  .ep-suggest .icon { width: 22px; text-align: center; flex-shrink: 0; }
+  .ep-suggest .meta { color: #888; font-size: 11px; margin-left: 4px; }
+  .ep-suggest.poi .icon { color: #555; }
   #directionsPanel .summary { font-size: 13px; color: #333; margin-bottom: 8px; display: flex; gap: 8px; align-items: baseline; }
   #directionsPanel .summary strong { font-size: 15px; color: #3b7fdf; }
   #directionsPanel button.close { position: absolute; top: 4px; right: 6px; background: none; border: none; font-size: 22px; cursor: pointer; color: #666; padding: 4px 6px; line-height: 1; }
@@ -382,7 +443,37 @@
   <div id="poiCardName"></div>
   <div id="poiCardMeta"></div>
   <div id="poiCardBody"></div>
-  <button id="poiCardDirections" type="button">🚶 Walking directions from my location</button>
+  <button id="poiCardDirections" type="button">🧭 Directions</button>
+</div>
+<div id="routingPanel">
+  <div class="header">
+    <h3>Route</h3>
+    <button class="close" id="routingClose" aria-label="close">×</button>
+  </div>
+  <div class="endpoints">
+    <div class="stack">
+      <div class="endpoint" id="routingFromEp">
+        <span class="ep-icon" id="routingFromIcon">●</span>
+        <input id="routingFromInput" type="search" placeholder="From…" autocomplete="off">
+        <button class="clear" id="routingFromClear" title="clear">×</button>
+      </div>
+      <div class="endpoint" id="routingToEp">
+        <span class="ep-icon" id="routingToIcon">📍</span>
+        <input id="routingToInput" type="search" placeholder="To…" autocomplete="off">
+        <button class="clear" id="routingToClear" title="clear">×</button>
+      </div>
+    </div>
+    <button class="swap" id="routingSwap" title="swap from/to" aria-label="swap">⇅</button>
+  </div>
+  <div class="when">
+    <select id="routingWhenMode">
+      <option value="now">Leave now</option>
+      <option value="depart">Depart at</option>
+      <option value="arrive">Arrive by</option>
+    </select>
+    <input id="routingWhenDt" type="datetime-local">
+  </div>
+  <button class="go" id="routingGo" type="button" disabled>Plan route</button>
 </div>
 <div id="directionsPanel">
   <button class="close" id="directionsClose" aria-label="close">×</button>
@@ -434,6 +525,17 @@
         <option value="m">Metric (km, m)</option>
         <option value="mi">Imperial (mi, ft)</option>
       </select>
+    </div>
+    <div class="row">
+      <label for="clockFormatSelect">Clock</label>
+      <select id="clockFormatSelect">
+        <option value="24h">24-hour (14:37)</option>
+        <option value="12h">12-hour (2:37 PM)</option>
+      </select>
+    </div>
+    <div class="row">
+      <label for="timezoneSelect">Time zone</label>
+      <select id="timezoneSelect" style="max-width: 240px;"></select>
     </div>
     <div class="row">
       <label>Backup</label>
@@ -839,10 +941,19 @@ function fmtDate(ts) {
             'line-width': ['interpolate', ['linear'], ['zoom'], 10, 4, 16, 8, 20, 14]
           } },
         { id: 'walk-route', type: 'line', source: 'walk-route',
+          filter: ['!=', ['get', 'kind'], 'transit'],
           layout: { 'line-cap': 'round', 'line-join': 'round' },
           paint: {
             'line-color': '#3b7fdf',
+            'line-dasharray': [1.5, 1.5],
             'line-width': ['interpolate', ['linear'], ['zoom'], 10, 2.5, 16, 5, 20, 9]
+          } },
+        { id: 'walk-route-transit', type: 'line', source: 'walk-route',
+          filter: ['==', ['get', 'kind'], 'transit'],
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: {
+            'line-color': ['coalesce', ['get', 'colour'], '#e89035'],
+            'line-width': ['interpolate', ['linear'], ['zoom'], 10, 3, 16, 6, 20, 11]
           } },
         { id: 'bus-routes', type: 'line', source: 'bus-routes',
           layout: { 'line-cap': 'round', 'line-join': 'round' },
@@ -1271,6 +1382,22 @@ function fmtDate(ts) {
     }
     onRemove() {}
   }
+  class RoutingControl {
+    onAdd() {
+      const c = document.createElement('div');
+      c.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.title = 'route';
+      b.setAttribute('aria-label', 'route');
+      b.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style="display:block;margin:auto"><path d="M19 15l-6 6-1.4-1.4 3.6-3.6H4V6h2v8h9.2l-3.6-3.6L13 9l6 6z"/></svg>`;
+      b.onclick = () => openRoutingPanel();
+      c.appendChild(b);
+      return c;
+    }
+    onRemove() {}
+  }
+  map.addControl(new RoutingControl(), 'bottom-right');
   map.addControl(new SettingsControl(), 'bottom-right');
   map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
 
@@ -1506,6 +1633,40 @@ function fmtDate(ts) {
     const stored = JSON.parse(localStorage.getItem(SELECTED_KEY) || 'null');
     if (stored) renderPoiCard(stored);
   });
+
+  // Clock format (24h vs 12h AM/PM)
+  const clockFormatSelect = document.getElementById('clockFormatSelect');
+  clockFormatSelect.value = localStorage.getItem('cc.clockFormat') || '24h';
+  clockFormatSelect.addEventListener('change', () => {
+    localStorage.setItem('cc.clockFormat', clockFormatSelect.value);
+  });
+  function useClockFormat() {
+    return localStorage.getItem('cc.clockFormat') || '24h';
+  }
+
+  // Time zone (IANA name, e.g. "America/Montreal"). Defaults to browser tz.
+  const timezoneSelect = document.getElementById('timezoneSelect');
+  const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const tzList = (typeof Intl.supportedValuesOf === 'function'
+    ? Intl.supportedValuesOf('timeZone')
+    : [browserTz, 'UTC', 'America/Montreal', 'America/Toronto', 'America/Vancouver',
+       'America/New_York', 'America/Chicago', 'America/Los_Angeles',
+       'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Asia/Tokyo']);
+  // Put browser tz first so it's the default; always include a UTC option.
+  const uniqueTzs = [browserTz, ...tzList.filter(z => z !== browserTz)];
+  for (const z of uniqueTzs) {
+    const opt = document.createElement('option');
+    opt.value = z;
+    opt.textContent = z === browserTz ? `${z} (device)` : z;
+    timezoneSelect.appendChild(opt);
+  }
+  timezoneSelect.value = localStorage.getItem('cc.timezone') || browserTz;
+  timezoneSelect.addEventListener('change', () => {
+    localStorage.setItem('cc.timezone', timezoneSelect.value);
+  });
+  function useTz() {
+    return localStorage.getItem('cc.timezone') || browserTz;
+  }
 
   async function exportData() {
     const data = {
@@ -1983,34 +2144,293 @@ function fmtDate(ts) {
 
   document.getElementById('directionsClose').onclick = clearWalkRoute;
 
-  document.getElementById('poiCardDirections').onclick = async () => {
-    const stored = JSON.parse(localStorage.getItem(SELECTED_KEY) || 'null');
-    if (!stored) return;
-    const statusEl = document.getElementById('directionsSummary');
-    if (!lastKnownPos) {
-      alert('Tap the location button first so we know where you are.');
+  function renderMultimodalDirections(mmRoute, fromLngLat, toPoi) {
+    const styled = buildMultimodalCoords(mmRoute);
+    const src = map.getSource('walk-route');
+    const features = [];
+    for (const seg of styled) {
+      if (!seg.coords.length) continue;
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: seg.coords },
+        properties: seg.kind === 'transit'
+          ? { kind: 'transit', colour: seg.colour || '#e89035' }
+          : { kind: 'walk' }
+      });
+    }
+    if (src) src.setData({ type: 'FeatureCollection', features });
+    const panel = document.getElementById('directionsPanel');
+    const summary = document.getElementById('directionsSummary');
+    const stepsEl = document.getElementById('directionsSteps');
+    const transitCount = mmRoute.legs.filter(l => l.type === 'transit').length;
+    const summaryParts = [
+      `<strong>${fmtDuration(mmRoute.totalSec)}</strong>`,
+      `<span>· arriving ${fmtClockTime(mmRoute.endSec)}</span>`,
+    ];
+    if (transitCount > 0) summaryParts.push(`<span>· ${transitCount} ride${transitCount === 1 ? '' : 's'}</span>`);
+    summaryParts.push(`<span style="margin-left:auto;color:#888">to ${esc(toPoi.name || '?')}</span>`);
+    summary.innerHTML = summaryParts.join('');
+
+    const steps = multimodalInstructions(mmRoute);
+    stepsEl.innerHTML = steps.map(s => {
+      if (s.kind === 'transit') {
+        const colour = /^#[0-9a-f]{3,8}$/i.test(s.colour || '') ? s.colour : '#888';
+        return `<div class="step transit">
+          <span class="ref" style="background:${esc(colour)};color:#fff;padding:1px 6px;border-radius:3px;font-weight:600;margin-right:6px;">${esc(s.ref)}</span>
+          <span class="text">${esc(s.fromName)} → ${esc(s.toName)}</span>
+          <span class="dist">${fmtClockTime(s.dep)}–${fmtClockTime(s.arr)}</span>
+        </div>`;
+      }
+      return `<div class="step"><span class="icon">🚶</span><span class="text">${esc(s.text)}</span></div>`;
+    }).join('');
+    panel.classList.add('show');
+
+    // Fit to bounds
+    const allCoords = styled.flatMap(s => s.coords);
+    if (allCoords.length) {
+      const lngs = allCoords.map(c => c[0]), lats = allCoords.map(c => c[1]);
+      map.fitBounds(
+        [[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]],
+        { padding: { top: 80, bottom: 200, left: 40, right: 40 }, duration: 600 }
+      );
+    }
+  }
+
+  // ---------------- Routing panel ----------------
+  let routingFrom = null;   // null | {kind:'my-location'} | {kind:'fav',id,name,lng,lat,icon,color} | {kind:'poi',name,lng,lat,category,props}
+  let routingTo = null;
+  const routingPanel = document.getElementById('routingPanel');
+  const routingFromInput = document.getElementById('routingFromInput');
+  const routingToInput = document.getElementById('routingToInput');
+  const routingFromIcon = document.getElementById('routingFromIcon');
+  const routingToIcon = document.getElementById('routingToIcon');
+  const routingWhenMode = document.getElementById('routingWhenMode');
+  const routingWhenDt = document.getElementById('routingWhenDt');
+  const routingGo = document.getElementById('routingGo');
+
+  function endpointIcon(ep) {
+    if (!ep) return '○';
+    if (ep.kind === 'my-location') return '📍';
+    if (ep.kind === 'fav') return '★';
+    return '📌';
+  }
+  function endpointLabel(ep) {
+    if (!ep) return '';
+    if (ep.kind === 'my-location') return 'My location';
+    return ep.name || '(unnamed)';
+  }
+  function resolveEndpoint(ep) {
+    if (!ep) return null;
+    if (ep.kind === 'my-location') {
+      if (!lastKnownPos) return null;
+      return { lng: lastKnownPos.lng, lat: lastKnownPos.lat, name: 'My location' };
+    }
+    return { lng: ep.lng, lat: ep.lat, name: ep.name || '' };
+  }
+  function updateRoutingGoState() {
+    const valid = routingFrom && routingTo
+      && (routingFrom.kind !== 'my-location' || lastKnownPos)
+      && (routingTo.kind !== 'my-location' || lastKnownPos);
+    routingGo.disabled = !valid;
+  }
+  function setRoutingEndpoint(which, ep) {
+    if (which === 'from') {
+      routingFrom = ep;
+      routingFromInput.value = endpointLabel(ep);
+      routingFromIcon.textContent = endpointIcon(ep);
+    } else {
+      routingTo = ep;
+      routingToInput.value = endpointLabel(ep);
+      routingToIcon.textContent = endpointIcon(ep);
+    }
+    updateRoutingGoState();
+  }
+
+  function searchEndpoints(q) {
+    const out = [];
+    if (!q || 'my location'.includes(q.toLowerCase()) || q.toLowerCase().includes('my')) {
+      if (lastKnownPos) out.push({ kind: 'my-location' });
+    }
+    const ql = (q || '').trim().toLowerCase();
+    if (ql) {
+      for (const f of favorites) {
+        const n = (f.name || '').toLowerCase();
+        if (n.includes(ql)) out.push({ kind: 'fav', ...f });
+      }
+    } else {
+      for (const f of favorites.slice(0, 10)) out.push({ kind: 'fav', ...f });
+    }
+    const ref = lastKnownPos || (() => { const c = map.getCenter(); return { lng: c.lng, lat: c.lat }; })();
+    const poiHits = [];
+    for (const p of allPois) {
+      if (ql && !(p.name && p.name.toLowerCase().includes(ql))) continue;
+      if (!ql && p.name === undefined) continue;
+      poiHits.push({ p, d: haversineKm(ref.lat, ref.lng, p.lat, p.lng) });
+    }
+    poiHits.sort((a, b) => a.d - b.d);
+    const limit = ql ? 40 : 15;
+    for (const { p } of poiHits.slice(0, limit)) {
+      out.push({ kind: 'poi', name: p.name, lng: p.lng, lat: p.lat,
+                 category: p.category, props: p.props });
+    }
+    return out.slice(0, 60);
+  }
+
+  function attachEndpointSearch(input, iconEl, which) {
+    let dropdown = null;
+    let suppressOpen = false;
+    const render = () => {
+      const items = searchEndpoints(input.value);
+      if (!items.length) { closeDropdown(); return; }
+      if (!dropdown) {
+        dropdown = document.createElement('div');
+        dropdown.className = 'ep-dropdown';
+        input.parentElement.appendChild(dropdown);
+      }
+      dropdown.innerHTML = items.map((it, i) => {
+        const icon = endpointIcon(it);
+        const label = endpointLabel(it);
+        const meta = it.kind === 'poi' && it.category
+          ? `<span class="meta">${esc(humanize(it.category))}</span>` : '';
+        return `<div class="ep-suggest ${it.kind}" data-idx="${i}">
+          <span class="icon">${icon}</span>
+          <span>${esc(label)}</span>${meta}
+        </div>`;
+      }).join('');
+      dropdown.onclick = (e) => {
+        const row = e.target.closest('[data-idx]');
+        if (!row) return;
+        const it = items[+row.dataset.idx];
+        setRoutingEndpoint(which, it);
+        suppressOpen = true;
+        input.blur();
+        closeDropdown();
+      };
+    };
+    const closeDropdown = () => {
+      if (dropdown) { dropdown.remove(); dropdown = null; }
+    };
+    input.addEventListener('focus', () => { if (!suppressOpen) render(); suppressOpen = false; });
+    input.addEventListener('input', () => {
+      // Clear the stored endpoint as soon as the user types: they are picking a new one.
+      if (which === 'from') routingFrom = null; else routingTo = null;
+      iconEl.textContent = '○';
+      updateRoutingGoState();
+      render();
+    });
+    input.addEventListener('blur', () => { setTimeout(closeDropdown, 150); });
+  }
+  attachEndpointSearch(routingFromInput, routingFromIcon, 'from');
+  attachEndpointSearch(routingToInput, routingToIcon, 'to');
+
+  document.getElementById('routingFromClear').onclick = () => { setRoutingEndpoint('from', null); routingFromInput.focus(); };
+  document.getElementById('routingToClear').onclick = () => { setRoutingEndpoint('to', null); routingToInput.focus(); };
+  document.getElementById('routingSwap').onclick = () => {
+    const a = routingFrom, b = routingTo;
+    setRoutingEndpoint('from', b);
+    setRoutingEndpoint('to', a);
+  };
+
+  function nowLocalDatetimeValue() {
+    const w = walltimeInTz(new Date(), useTz());
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${w.year}-${pad(w.month)}-${pad(w.day)}T${pad(w.hour)}:${pad(w.minute)}`;
+  }
+  // Parse a <input type="datetime-local"> value as wall-clock in the configured tz
+  // and return the corresponding absolute Date.
+  function parseDatetimeLocalInTz(s, tz) {
+    const [datePart, timePart] = s.split('T');
+    const [yy, mm, dd] = datePart.split('-').map(Number);
+    const [hh, mi] = timePart.split(':').map(Number);
+    const asIfUtc = new Date(Date.UTC(yy, mm - 1, dd, hh, mi, 0));
+    const shown = walltimeInTz(asIfUtc, tz);
+    const shownUtc = Date.UTC(shown.year, shown.month - 1, shown.day, shown.hour, shown.minute);
+    const targetUtc = Date.UTC(yy, mm - 1, dd, hh, mi);
+    return new Date(asIfUtc.getTime() + (targetUtc - shownUtc));
+  }
+  routingWhenMode.addEventListener('change', () => {
+    const show = routingWhenMode.value !== 'now';
+    routingWhenDt.style.display = show ? '' : 'none';
+    if (show && !routingWhenDt.value) routingWhenDt.value = nowLocalDatetimeValue();
+  });
+  routingWhenDt.style.display = 'none';
+
+  function openRoutingPanel(opts = {}) {
+    document.body.classList.add('routing-open');
+    document.getElementById('searchResults').classList.remove('show');
+    if (opts.from !== undefined) setRoutingEndpoint('from', opts.from);
+    if (opts.to !== undefined) setRoutingEndpoint('to', opts.to);
+    if (!routingFrom && lastKnownPos) setRoutingEndpoint('from', { kind: 'my-location' });
+    routingPanel.classList.add('show');
+    updateRoutingGoState();
+  }
+  function closeRoutingPanel() {
+    document.body.classList.remove('routing-open');
+    routingPanel.classList.remove('show');
+  }
+  document.getElementById('routingClose').onclick = closeRoutingPanel;
+
+  function routingStartDate() {
+    if (routingWhenMode.value === 'now') return new Date();
+    if (!routingWhenDt.value) return new Date();
+    return parseDatetimeLocalInTz(routingWhenDt.value, useTz());
+  }
+
+  async function runRoutingPlan() {
+    const from = resolveEndpoint(routingFrom);
+    const to = resolveEndpoint(routingTo);
+    if (!from || !to) {
+      alert('Pick both a From and a To first.');
       return;
     }
     if (walkGraph.nodes.size === 0) {
       alert('No walking graph for this region yet — save the area first.');
       return;
     }
-    const start = findNearestWalkNode(lastKnownPos.lng, lastKnownPos.lat);
-    const end = findNearestWalkNode(stored.lng, stored.lat);
-    if (!start.id || !end.id) {
-      alert('Could not find walkable path endpoints.');
+    const start = findNearestWalkNode(from.lng, from.lat);
+    const end = findNearestWalkNode(to.lng, to.lat);
+    if (!start.id || !end.id) { alert('Could not find walkable path endpoints.'); return; }
+    if (start.distance > 500 || end.distance > 500) {
+      alert('One of the endpoints is too far from any walking path.');
       return;
     }
-    if (start.distance > 500 || end.distance > 500) {
-      alert('You or the destination is too far from any walking path.');
-      return;
+    const pivotDate = routingStartDate();
+    const mode = routingWhenMode.value;  // 'now' | 'depart' | 'arrive'
+
+    const toPoi = { name: to.name || '?', lng: to.lng, lat: to.lat };
+    const canTransit = scheduleIdx.stops.size > 0 && scheduleIdx.stopToWalkNode.size > 0;
+    if (canTransit) {
+      const mm = mode === 'arrive'
+        ? planTransitTripArriveBy(start.id, end.id, pivotDate)
+        : planTransitTrip(start.id, end.id, pivotDate);
+      if (mm) {
+        const hasTransit = mm.legs.some(l => l.type === 'transit');
+        if (hasTransit) {
+          const walkOnly = astar(start.id, end.id);
+          const walkOnlySec = walkOnly ? (walkOnly.distance / WALK_SPEED_MPS) : Infinity;
+          if (mm.totalSec < walkOnlySec - 60) {
+            renderMultimodalDirections(mm, from, toPoi);
+            return;
+          }
+        }
+      }
     }
     const route = astar(start.id, end.id);
-    if (!route) {
-      alert('No walking route found between those points.');
-      return;
-    }
-    renderDirections(route, lastKnownPos, stored);
+    if (!route) { alert('No route found between those points.'); return; }
+    renderDirections(route, from, toPoi);
+  }
+  routingGo.onclick = runRoutingPlan;
+
+  document.getElementById('poiCardDirections').onclick = () => {
+    const stored = JSON.parse(localStorage.getItem(SELECTED_KEY) || 'null');
+    if (!stored) return;
+    const toEp = { kind: 'poi', name: stored.name, lng: stored.lng, lat: stored.lat,
+                   category: stored.category, props: stored.props };
+    openRoutingPanel({
+      to: toEp,
+      from: lastKnownPos ? { kind: 'my-location' } : null,
+    });
+    document.getElementById('poiCard').classList.remove('show');
   };
 
   favorites = await loadAllFavorites();
@@ -2510,6 +2930,8 @@ function fmtDate(ts) {
         walkGraph.adj.get(to).push({ to: from, weight, name, shape: shape_b64 || null, reverse: true });
       }
     }
+    // Bridges depend on both walk graph AND schedule; rebuild whenever walk changes.
+    if (typeof buildMultimodalBridges === 'function') buildMultimodalBridges();
   }
 
   function haversineM(lng1, lat1, lng2, lat2) {
@@ -2631,6 +3053,416 @@ function fmtDate(ts) {
       coords.push([toN.lng, toN.lat]);
     }
     return coords;
+  }
+
+  // Multi-modal trip planner: time-dependent Dijkstra over walk+transit.
+  const WALK_SPEED_MPS = 1.3;            // ~4.7 km/h
+  const TRANSFER_BUFFER_SECS = 30;        // slack needed to board after arrival
+  const MAX_SEARCH_SECS = 3 * 3600;       // stop exploring paths longer than 3h
+  const MAX_MULTIMODAL_ITERS = 200000;
+
+  function planTransitTrip(originNodeId, destNodeId, startDate) {
+    if (!walkGraph.nodes.has(originNodeId) || !walkGraph.nodes.has(destNodeId)) return null;
+    const info = todayInfo(startDate);
+    const svcSets = expandedServiceSets(startDate);
+    const t0 = info.nowSec;
+    const destKey = 'w:' + destNodeId;
+
+    // For each pattern, pre-compute the list of (trip, offset) pairs whose
+    // service runs on the relevant day-offset (-1, 0, +1).
+    const activeTripsCache = new Map();
+    const getActiveTrips = (patternId) => {
+      let filtered = activeTripsCache.get(patternId);
+      if (filtered) return filtered;
+      const raw = scheduleIdx.tripsByPattern.get(patternId) || [];
+      filtered = [];
+      for (const t of raw) {
+        const off = tripDayOffset(t, svcSets);
+        if (off !== null) filtered.push({ trip: t, offset: off });
+      }
+      activeTripsCache.set(patternId, filtered);
+      return filtered;
+    };
+
+    const best = new Map();
+    const came = new Map();
+    const pq = new MinHeap();
+    best.set('w:' + originNodeId, t0);
+    pq.push([t0, 'w:' + originNodeId]);
+    let destArrival = null;
+    let iter = 0;
+
+    while (pq.size) {
+      if (++iter > MAX_MULTIMODAL_ITERS) break;
+      const [t, key] = pq.pop();
+      if (t > (best.get(key) ?? Infinity)) continue;
+      if (key === destKey) { destArrival = t; break; }
+      if (destArrival !== null && t > destArrival) break;
+      if (t - t0 > MAX_SEARCH_SECS) break;
+
+      if (key.startsWith('w:')) {
+        const nid = +key.slice(2);
+        const neighbors = walkGraph.adj.get(nid) || [];
+        for (const e of neighbors) {
+          const newT = t + e.weight / WALK_SPEED_MPS;
+          const nk = 'w:' + e.to;
+          if (newT < (best.get(nk) ?? Infinity)) {
+            best.set(nk, newT);
+            came.set(nk, { prev: key, type: 'walk', edge: e,
+                           fromNode: nid, toNode: e.to, tDep: t, tArr: newT });
+            pq.push([newT, nk]);
+          }
+        }
+        // Access any transit stops linked to this walk node
+        const linkedStops = scheduleIdx.walkNodeToStops.get(nid);
+        if (linkedStops) {
+          for (const [stopId, distance] of linkedStops) {
+            const newT = t + distance / WALK_SPEED_MPS;
+            const nk = 's:' + stopId;
+            if (newT < (best.get(nk) ?? Infinity)) {
+              best.set(nk, newT);
+              came.set(nk, { prev: key, type: 'access', stopId, distance, fromNode: nid, tDep: t, tArr: newT });
+              pq.push([newT, nk]);
+            }
+          }
+        }
+      } else if (key.startsWith('s:')) {
+        const stopId = key.slice(2);
+        // Egress from this stop to its linked walk node
+        const link = scheduleIdx.stopToWalkNode.get(stopId);
+        if (link) {
+          const newT = t + link.distance / WALK_SPEED_MPS;
+          const nk = 'w:' + link.node;
+          if (newT < (best.get(nk) ?? Infinity)) {
+            best.set(nk, newT);
+            came.set(nk, { prev: key, type: 'egress', stopId, distance: link.distance, toNode: link.node, tDep: t, tArr: newT });
+            pq.push([newT, nk]);
+          }
+        }
+        // Board transit on every pattern visiting this stop
+        const patternSeqs = scheduleIdx.stopPatterns.get(stopId);
+        if (!patternSeqs) continue;
+        const boardAfter = t + TRANSFER_BUFFER_SECS;
+        for (const [patternId, seq] of patternSeqs) {
+          const bboxStops = scheduleIdx.patternBboxStops.get(patternId);
+          if (!bboxStops || bboxStops.length <= 1) continue;
+          const trips = getActiveTrips(patternId);
+          if (!trips.length) continue;
+          // Find trip with earliest effective dep at this stop ≥ boardAfter.
+          // Effective dep = raw dep + day-offset (handles cross-midnight).
+          let bestTrip = null, bestDep = Infinity, bestCum = null, bestOff = 0;
+          for (const { trip, offset } of trips) {
+            const cum = tripCumulative(trip);
+            const depHere = trip.f + (cum[seq] || 0) + offset;
+            if (depHere < boardAfter) continue;
+            if (depHere < bestDep) {
+              bestDep = depHere; bestTrip = trip; bestCum = cum; bestOff = offset;
+            }
+          }
+          if (!bestTrip) continue;
+          for (const [seqJ, stopJ] of bboxStops) {
+            if (seqJ <= seq) continue;
+            const arr = bestTrip.f + (bestCum[seqJ] || 0) + bestOff;
+            if (arr <= bestDep) continue;
+            const nk = 's:' + stopJ;
+            if (arr < (best.get(nk) ?? Infinity)) {
+              best.set(nk, arr);
+              came.set(nk, {
+                prev: key, type: 'transit',
+                trip: bestTrip, patternId, route: scheduleIdx.routesById.get(scheduleIdx.patterns.get(patternId)?.route_id),
+                fromStopId: stopId, toStopId: stopJ,
+                fromSeq: seq, toSeq: seqJ,
+                tDep: bestDep, tArr: arr,
+              });
+              pq.push([arr, nk]);
+            }
+          }
+        }
+      }
+    }
+
+    if (destArrival === null) return null;
+    // Reconstruct legs (reverse-iterating came chain, then merging runs of same type/route)
+    const raw = [];
+    let cursor = destKey;
+    while (came.has(cursor)) {
+      const step = came.get(cursor);
+      raw.unshift({ key: cursor, ...step });
+      cursor = step.prev;
+    }
+    const legs = groupLegs(raw, originNodeId);
+    return { legs, startSec: t0, endSec: destArrival, totalSec: destArrival - t0 };
+  }
+
+  // Arrive-by planner: reverse-time Dijkstra from destination.
+  // Finds the latest-possible departure from origin such that we still reach
+  // destination by `arriveByDate`. Builds a forward-ordered leg list.
+  function planTransitTripArriveBy(originNodeId, destNodeId, arriveByDate) {
+    if (!walkGraph.nodes.has(originNodeId) || !walkGraph.nodes.has(destNodeId)) return null;
+    const info = todayInfo(arriveByDate);
+    const svcSets = expandedServiceSets(arriveByDate);
+    const tArr = info.nowSec;
+    const destKey = 'w:' + destNodeId;
+    const origKey = 'w:' + originNodeId;
+
+    const activeTripsCache = new Map();
+    const getActiveTrips = (patternId) => {
+      let f = activeTripsCache.get(patternId);
+      if (f) return f;
+      const raw = scheduleIdx.tripsByPattern.get(patternId) || [];
+      f = [];
+      for (const t of raw) {
+        const off = tripDayOffset(t, svcSets);
+        if (off !== null) f.push({ trip: t, offset: off });
+      }
+      activeTripsCache.set(patternId, f);
+      return f;
+    };
+
+    // best[key] = latest time this node can be (arrived-at or departed-from) so we still make dest by tArr.
+    // MinHeap keyed on -t gives us max-pop.
+    const best = new Map();
+    const came = new Map();  // key -> {next_forward_key, ...forward-ordered leg info}
+    best.set(destKey, tArr);
+    const pq = new MinHeap();
+    pq.push([-tArr, destKey]);
+    let origLatest = null;
+    let iter = 0;
+
+    while (pq.size) {
+      if (++iter > MAX_MULTIMODAL_ITERS) break;
+      const [negT, key] = pq.pop();
+      const t = -negT;
+      if (t < (best.get(key) ?? -Infinity)) continue;
+      if (key === origKey) { origLatest = t; break; }
+      if (origLatest !== null && t < origLatest) break;
+      if (tArr - t > MAX_SEARCH_SECS) break;
+
+      if (key.startsWith('w:')) {
+        const nid = +key.slice(2);
+        const neighbors = walkGraph.adj.get(nid) || [];
+        for (const e of neighbors) {
+          const newT = t - e.weight / WALK_SPEED_MPS;
+          const nk = 'w:' + e.to;
+          if (newT > (best.get(nk) ?? -Infinity)) {
+            best.set(nk, newT);
+            // Forward direction is e.to → nid, so shape encoding is reversed relative to our forward step.
+            const forwardEdge = { shape: e.shape, reverse: !e.reverse,
+                                   weight: e.weight, name: e.name };
+            came.set(nk, { next: key, type: 'walk', edge: forwardEdge,
+                           fromNode: e.to, toNode: nid,
+                           tDep: newT, tArr: t });
+            pq.push([-newT, nk]);
+          }
+        }
+        // Accessing a linked stop walking into this walk node ← i.e. forward: stop → walk node (egress)
+        const linkedStops = scheduleIdx.walkNodeToStops.get(nid);
+        if (linkedStops) {
+          for (const [stopId, distance] of linkedStops) {
+            const newT = t - distance / WALK_SPEED_MPS;
+            const nk = 's:' + stopId;
+            if (newT > (best.get(nk) ?? -Infinity)) {
+              best.set(nk, newT);
+              came.set(nk, { next: key, type: 'egress',
+                             stopId, distance, toNode: nid,
+                             tDep: newT, tArr: t });
+              pq.push([-newT, nk]);
+            }
+          }
+        }
+      } else if (key.startsWith('s:')) {
+        const stopId = key.slice(2);
+        // Forward: walk from linked walk node INTO this stop (access)
+        const link = scheduleIdx.stopToWalkNode.get(stopId);
+        if (link) {
+          const newT = t - link.distance / WALK_SPEED_MPS;
+          const nk = 'w:' + link.node;
+          if (newT > (best.get(nk) ?? -Infinity)) {
+            best.set(nk, newT);
+            came.set(nk, { next: key, type: 'access',
+                           stopId, distance: link.distance, fromNode: link.node,
+                           tDep: newT, tArr: t });
+            pq.push([-newT, nk]);
+          }
+        }
+        // Transit: alight here by time t; find the LATEST trip arriving at seq ≤ t,
+        // then relax upstream in-bbox stops to the trip's departure there.
+        const patternSeqs = scheduleIdx.stopPatterns.get(stopId);
+        if (!patternSeqs) continue;
+        for (const [patternId, seq] of patternSeqs) {
+          const bboxStops = scheduleIdx.patternBboxStops.get(patternId);
+          if (!bboxStops || bboxStops.length <= 1) continue;
+          const trips = getActiveTrips(patternId);
+          if (!trips.length) continue;
+          let bestTrip = null, bestAr = -Infinity, bestCum = null, bestOff = 0;
+          for (const { trip, offset } of trips) {
+            const cum = tripCumulative(trip);
+            const arrHere = trip.f + (cum[seq] || 0) + offset;
+            if (arrHere > t) continue;
+            if (arrHere > bestAr) {
+              bestAr = arrHere; bestTrip = trip; bestCum = cum; bestOff = offset;
+            }
+          }
+          if (!bestTrip) continue;
+          for (const [seqJ, stopJ] of bboxStops) {
+            if (seqJ >= seq) continue;
+            const dep = bestTrip.f + (bestCum[seqJ] || 0) + bestOff;
+            if (dep >= bestAr) continue;
+            const arrAtJ = dep - TRANSFER_BUFFER_SECS;
+            const nk = 's:' + stopJ;
+            if (arrAtJ > (best.get(nk) ?? -Infinity)) {
+              best.set(nk, arrAtJ);
+              came.set(nk, {
+                next: key, type: 'transit',
+                trip: bestTrip, patternId,
+                route: scheduleIdx.routesById.get(scheduleIdx.patterns.get(patternId)?.route_id),
+                fromStopId: stopJ, toStopId: stopId,
+                fromSeq: seqJ, toSeq: seq,
+                tDep: dep, tArr: bestAr,
+              });
+              pq.push([-arrAtJ, nk]);
+            }
+          }
+        }
+      }
+    }
+
+    if (origLatest === null) return null;
+    // Chain from origin forward (came.next walks origin→dest).
+    const raw = [];
+    let cursor = origKey;
+    while (came.has(cursor)) {
+      const step = came.get(cursor);
+      raw.push({ key: cursor, ...step });
+      cursor = step.next;
+    }
+    const legs = groupLegs(raw, originNodeId);
+    return { legs, startSec: origLatest, endSec: tArr, totalSec: tArr - origLatest };
+  }
+
+  function groupLegs(steps, originNodeId) {
+    // Merge consecutive walk edges into a single walk leg; transit steps are one leg each.
+    const legs = [];
+    let walkBuf = null;
+    const flushWalk = () => {
+      if (walkBuf && walkBuf.edges.length) legs.push(walkBuf);
+      walkBuf = null;
+    };
+    for (const s of steps) {
+      if (s.type === 'walk') {
+        if (!walkBuf) walkBuf = { type: 'walk', from: s.fromNode, to: s.toNode,
+                                   edges: [], tDep: s.tDep, tArr: s.tArr };
+        walkBuf.edges.push({ edge: s.edge, fromNode: s.fromNode, toNode: s.toNode });
+        walkBuf.to = s.toNode;
+        walkBuf.tArr = s.tArr;
+      } else if (s.type === 'access') {
+        flushWalk();
+        legs.push({ type: 'access', fromNode: s.fromNode, stopId: s.stopId,
+                    distance: s.distance, tDep: s.tDep, tArr: s.tArr });
+      } else if (s.type === 'egress') {
+        flushWalk();
+        legs.push({ type: 'egress', stopId: s.stopId, toNode: s.toNode,
+                    distance: s.distance, tDep: s.tDep, tArr: s.tArr });
+      } else if (s.type === 'transit') {
+        flushWalk();
+        legs.push({ type: 'transit', trip: s.trip, route: s.route, patternId: s.patternId,
+                    fromStopId: s.fromStopId, toStopId: s.toStopId,
+                    fromSeq: s.fromSeq, toSeq: s.toSeq,
+                    tDep: s.tDep, tArr: s.tArr });
+      }
+    }
+    flushWalk();
+    return legs;
+  }
+
+  function buildMultimodalCoords(route) {
+    // For each leg, emit a pair {coords, style} so the renderer can draw them distinctly.
+    const styled = [];
+    for (const leg of route.legs) {
+      if (leg.type === 'walk') {
+        const coords = [];
+        for (let i = 0; i < leg.edges.length; i++) {
+          const { edge, fromNode, toNode } = leg.edges[i];
+          const fromN = walkGraph.nodes.get(fromNode);
+          const toN = walkGraph.nodes.get(toNode);
+          if (!fromN || !toN) continue;
+          if (i === 0) coords.push([fromN.lng, fromN.lat]);
+          if (edge.shape) {
+            const origin = edge.reverse ? toN : fromN;
+            let pts = decodeShapeBlob(origin.lng, origin.lat, edge.shape);
+            if (edge.reverse) pts = pts.reverse();
+            for (const p of pts) coords.push(p);
+          }
+          coords.push([toN.lng, toN.lat]);
+        }
+        styled.push({ kind: 'walk', coords });
+      } else if (leg.type === 'access' || leg.type === 'egress') {
+        const stop = scheduleIdx.stops.get(leg.stopId);
+        const nid = leg.type === 'access' ? leg.fromNode : leg.toNode;
+        const n = walkGraph.nodes.get(nid);
+        if (stop && n) {
+          styled.push({ kind: 'walk', coords: leg.type === 'access'
+            ? [[n.lng, n.lat], [stop.lng, stop.lat]]
+            : [[stop.lng, stop.lat], [n.lng, n.lat]] });
+        }
+      } else if (leg.type === 'transit') {
+        const from = scheduleIdx.stops.get(leg.fromStopId);
+        const to = scheduleIdx.stops.get(leg.toStopId);
+        if (from && to) {
+          const colour = /^#[0-9a-f]{3,8}$/i.test(leg.route?.colour || '') ? leg.route.colour : '#e89035';
+          styled.push({ kind: 'transit', coords: [[from.lng, from.lat], [to.lng, to.lat]], colour });
+        }
+      }
+    }
+    return styled;
+  }
+
+  function fmtClockTime(sec) {
+    sec = ((sec % 86400) + 86400) % 86400;
+    const h = Math.floor(sec / 3600) % 24;
+    const m = Math.floor((sec % 3600) / 60);
+    if (useClockFormat() === '12h') {
+      const ampm = h < 12 ? 'AM' : 'PM';
+      const h12 = h % 12 === 0 ? 12 : h % 12;
+      return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
+    }
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  }
+  function fmtDuration(sec) {
+    const m = Math.round(sec / 60);
+    if (m < 60) return `${m} min`;
+    return `${Math.floor(m / 60)}h ${m % 60}m`;
+  }
+
+  function multimodalInstructions(route) {
+    const steps = [];
+    for (const leg of route.legs) {
+      if (leg.type === 'walk') {
+        let meters = 0;
+        for (const { edge } of leg.edges) meters += edge.weight;
+        steps.push({ kind: 'walk', text: `Walk ${Math.round(meters)} m (${fmtDuration(leg.tArr - leg.tDep)})` });
+      } else if (leg.type === 'access') {
+        const stop = scheduleIdx.stops.get(leg.stopId);
+        steps.push({ kind: 'walk', text: `Walk ${Math.round(leg.distance)} m to ${stop?.name || 'stop'}` });
+      } else if (leg.type === 'egress') {
+        const stop = scheduleIdx.stops.get(leg.stopId);
+        steps.push({ kind: 'walk', text: `Walk ${Math.round(leg.distance)} m from ${stop?.name || 'stop'}` });
+      } else if (leg.type === 'transit') {
+        const ref = leg.route?.short || '?';
+        const long = leg.route?.long || '';
+        const from = scheduleIdx.stops.get(leg.fromStopId)?.name || '';
+        const to = scheduleIdx.stops.get(leg.toStopId)?.name || '';
+        steps.push({
+          kind: 'transit',
+          ref, long,
+          colour: leg.route?.colour || '',
+          fromName: from, toName: to,
+          dep: leg.tDep, arr: leg.tArr,
+          text: `${ref} ${leg.trip.h || long} — board ${from} ${fmtClockTime(leg.tDep)}, alight ${to} ${fmtClockTime(leg.tArr)} (${fmtDuration(leg.tArr - leg.tDep)})`,
+        });
+      }
+    }
+    return steps;
   }
 
   function bearingDeg(a, b) {
@@ -2818,19 +3650,28 @@ function fmtDate(ts) {
     patterns: new Map(),
     tripsByPattern: new Map(),
     routesById: new Map(),
-    services: new Map(),        // service_id TEXT -> {dow, start, end}
-    serviceExceptions: [],      // [[service_id, date, exception_type], ...]
+    services: new Map(),
+    serviceExceptions: [],
+    stops: new Map(),              // gtfs_stop_id -> {lng, lat, name}
+    patternBboxStops: new Map(),   // pattern_id -> [[seq, stop_id], ...] sorted by seq
+    stopToWalkNode: new Map(),     // gtfs_stop_id -> {nodeId, distance}
+    walkNodeToStops: new Map(),    // walk_node_id -> [[stop_id, distance], ...]
   };
   async function rebuildScheduleIndex() {
     const idx = {
       osmToGtfs: new Map(), stopPatterns: new Map(),
       patterns: new Map(), tripsByPattern: new Map(),
       routesById: new Map(), services: new Map(), serviceExceptions: [],
+      stops: new Map(), patternBboxStops: new Map(),
+      stopToWalkNode: new Map(), walkNodeToStops: new Map(),
     };
     timingCumCache.clear();
     const all = await loadAllSchedules();
     for (const region of all) {
       for (const [gid, stop] of Object.entries(region.stops || {})) {
+        if (!idx.stops.has(gid)) {
+          idx.stops.set(gid, { lng: stop.lng, lat: stop.lat, name: stop.name || '' });
+        }
         for (const onid of (stop.osm_nodes || [])) {
           if (!idx.osmToGtfs.has(onid)) idx.osmToGtfs.set(onid, new Set());
           idx.osmToGtfs.get(onid).add(gid);
@@ -2876,17 +3717,77 @@ function fmtDate(ts) {
         arr.push(trip);
       }
     }
+    // Build pattern -> [seq, stop_id] sorted list (only in-bbox stops)
+    for (const [stopId, pairs] of idx.stopPatterns) {
+      for (const [patId, seq] of pairs) {
+        if (!idx.patternBboxStops.has(patId)) idx.patternBboxStops.set(patId, []);
+        idx.patternBboxStops.get(patId).push([seq, stopId]);
+      }
+    }
+    for (const arr of idx.patternBboxStops.values()) arr.sort((a, b) => a[0] - b[0]);
     scheduleIdx = idx;
+    buildMultimodalBridges();
+  }
+
+  function buildMultimodalBridges() {
+    scheduleIdx.stopToWalkNode = new Map();
+    scheduleIdx.walkNodeToStops = new Map();
+    if (!walkGraph || !walkGraph.nodes.size || !scheduleIdx.stops.size) return;
+    const GRID = 1000;  // ~100m buckets at equator
+    const walkGrid = new Map();
+    for (const [id, n] of walkGraph.nodes) {
+      const k = Math.round(n.lng * GRID) + ',' + Math.round(n.lat * GRID);
+      if (!walkGrid.has(k)) walkGrid.set(k, []);
+      walkGrid.get(k).push([id, n.lng, n.lat]);
+    }
+    const MAX_LINK_M = 500;
+    for (const [stopId, stop] of scheduleIdx.stops) {
+      const cx = Math.round(stop.lng * GRID);
+      const cy = Math.round(stop.lat * GRID);
+      let best = null, bestD = Infinity;
+      for (let dx = -2; dx <= 2; dx++) {
+        for (let dy = -2; dy <= 2; dy++) {
+          const cell = walkGrid.get((cx + dx) + ',' + (cy + dy));
+          if (!cell) continue;
+          for (const [id, nlng, nlat] of cell) {
+            const d = haversineM(nlng, nlat, stop.lng, stop.lat);
+            if (d < bestD) { bestD = d; best = id; }
+          }
+        }
+      }
+      if (best !== null && bestD <= MAX_LINK_M) {
+        scheduleIdx.stopToWalkNode.set(stopId, { node: best, distance: bestD });
+        if (!scheduleIdx.walkNodeToStops.has(best)) {
+          scheduleIdx.walkNodeToStops.set(best, []);
+        }
+        scheduleIdx.walkNodeToStops.get(best).push([stopId, bestD]);
+      }
+    }
+  }
+  // Extract wall-clock components of an instant as seen in a given IANA time zone.
+  function walltimeInTz(d, tz) {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hourCycle: 'h23', weekday: 'short',
+    }).formatToParts(d);
+    const p = {};
+    for (const x of parts) p[x.type] = x.value;
+    const wdays = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+    return {
+      year: +p.year, month: +p.month, day: +p.day,
+      hour: +p.hour, minute: +p.minute, second: +p.second,
+      jsDay: wdays[p.weekday.slice(0, 3)] ?? 0,
+    };
   }
   function todayInfo(now) {
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, '0');
-    const d = String(now.getDate()).padStart(2, '0');
-    const jsDay = now.getDay();
+    const w = walltimeInTz(now, useTz());
+    const pad = (n) => String(n).padStart(2, '0');
     return {
-      dateStr: `${y}${m}${d}`,
-      gtfsIdx: jsDay === 0 ? 6 : jsDay - 1,  // GTFS: Mon=0..Sun=6
-      nowSec: now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds(),
+      dateStr: `${w.year}${pad(w.month)}${pad(w.day)}`,
+      gtfsIdx: w.jsDay === 0 ? 6 : w.jsDay - 1,  // GTFS: Mon=0..Sun=6
+      nowSec: w.hour * 3600 + w.minute * 60 + w.second,
     };
   }
   function activeServicesForDate(info) {
@@ -2903,6 +3804,28 @@ function fmtDate(ts) {
     }
     return active;
   }
+  // For a reference date, return service sets for yesterday / today / tomorrow
+  // so cross-midnight trips (GTFS times ≥ 24:00 in yesterday's service, or
+  // tomorrow's service showing after we span midnight forward) are reachable.
+  function expandedServiceSets(refDate) {
+    const today = activeServicesForDate(todayInfo(refDate));
+    const yd = new Date(refDate); yd.setDate(yd.getDate() - 1);
+    const td = new Date(refDate); td.setDate(td.getDate() + 1);
+    return {
+      today,
+      yesterday: activeServicesForDate(todayInfo(yd)),
+      tomorrow: activeServicesForDate(todayInfo(td)),
+    };
+  }
+  // Pick the offset (seconds) that turns a trip's raw seconds-since-start-of-service
+  // into effective seconds relative to `refDate` midnight. Returns null if the trip
+  // doesn't operate on any of the three adjacent days.
+  function tripDayOffset(trip, sets) {
+    if (sets.today.has(trip.s)) return 0;
+    if (sets.yesterday.has(trip.s)) return -86400;
+    if (sets.tomorrow.has(trip.s)) return 86400;
+    return null;
+  }
   function nextDeparturesForOsmNodes(osmNodeIds, now, limitPerRoute = 3) {
     const gtfsStopIds = new Set();
     for (const nid of osmNodeIds) {
@@ -2911,7 +3834,7 @@ function fmtDate(ts) {
     }
     if (!gtfsStopIds.size) return [];
     const info = todayInfo(now);
-    const activeSvc = activeServicesForDate(info);
+    const svcSets = expandedServiceSets(now);
     const windowSec = 6 * 3600;
     const byRoute = new Map();
     for (const gid of gtfsStopIds) {
@@ -2923,10 +3846,10 @@ function fmtDate(ts) {
         const trips = scheduleIdx.tripsByPattern.get(patternId);
         if (!trips) continue;
         for (const trip of trips) {
-          if (!activeSvc.has(trip.s)) continue;
+          const off = tripDayOffset(trip, svcSets);
+          if (off === null) continue;
           const cum = tripCumulative(trip);
-          const offset = cum[seq] || 0;
-          const dep = trip.f + offset;
+          const dep = trip.f + (cum[seq] || 0) + off;
           if (dep < info.nowSec) continue;
           if (dep - info.nowSec > windowSec) continue;
           const rid = pattern.route_id;
