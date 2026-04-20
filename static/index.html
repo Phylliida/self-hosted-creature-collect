@@ -254,6 +254,18 @@
   .step .icon { font-size: 16px; flex-shrink: 0; width: 20px; text-align: center; }
   .step .text { flex: 1; }
   .step .dist { color: #888; font-size: 11px; flex-shrink: 0; }
+  .opt-strip {
+    display: flex; gap: 6px; overflow-x: auto;
+    margin: 0 -4px 8px; padding: 4px; scrollbar-width: thin;
+  }
+  .opt-pill {
+    flex-shrink: 0; padding: 6px 10px; background: #f5f5f5;
+    border: 1px solid #ddd; border-radius: 6px; cursor: pointer;
+    text-align: left; font-family: inherit;
+  }
+  .opt-pill.selected { background: #3b7fdf; border-color: #3b7fdf; color: #fff; }
+  .opt-pill .opt-times { font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .opt-pill .opt-meta { font-size: 10px; opacity: 0.75; margin-top: 1px; }
   #favPanel {
     position: fixed; inset: 0; z-index: 32;
     background: rgba(0,0,0,0.5);
@@ -2144,6 +2156,129 @@ function fmtDate(ts) {
 
   document.getElementById('directionsClose').onclick = clearWalkRoute;
 
+  const MAX_ALTERNATIVES = 5;
+  const ALT_SHIFT_SEC = 60;  // min time-pivot shift between alternatives
+  // Iterate the planner, nudging the time pivot after each result so subsequent
+  // runs return later-departing (or earlier-arriving) backup options.
+  function planTripAlternatives(originId, destId, whenMode, pivotDate) {
+    const results = [];
+    let current = pivotDate;
+    for (let i = 0; i < MAX_ALTERNATIVES; i++) {
+      const mm = whenMode === 'arrive'
+        ? planTransitTripArriveBy(originId, destId, current)
+        : planTransitTrip(originId, destId, current);
+      if (!mm) break;
+      const hasTransit = mm.legs.some(l => l.type === 'transit');
+      if (results.length) {
+        const prev = results[results.length - 1];
+        if (prev.startSec === mm.startSec && prev.endSec === mm.endSec) break;
+      }
+      results.push(mm);
+      if (!hasTransit) break;  // pure walking has no alternatives
+      // Compute shift
+      const currentNowSec = todayInfo(current).nowSec;
+      let nextSec;
+      if (whenMode === 'arrive') {
+        const lastTransit = [...mm.legs].reverse().find(l => l.type === 'transit');
+        if (!lastTransit) break;
+        nextSec = lastTransit.tArr - 1;
+      } else {
+        const firstTransit = mm.legs.find(l => l.type === 'transit');
+        if (!firstTransit) break;
+        nextSec = firstTransit.tDep + ALT_SHIFT_SEC;
+      }
+      const deltaSec = nextSec - currentNowSec;
+      if (Math.abs(deltaSec) < 1) break;
+      current = new Date(current.getTime() + deltaSec * 1000);
+    }
+    // Canonical display order: earliest departure first.
+    results.sort((a, b) => a.startSec - b.startSec);
+    // Dedupe any near-identical trips (same start and end sec).
+    const dedup = [];
+    for (const r of results) {
+      if (dedup.some(d => d.startSec === r.startSec && d.endSec === r.endSec)) continue;
+      dedup.push(r);
+    }
+    return dedup;
+  }
+
+  // Render one of the alternatives as the active route. `options` is the full list;
+  // `selectedIdx` which one is currently highlighted. Tapping another promotes it.
+  function renderRouteChoices(options, selectedIdx, fromLngLat, toPoi) {
+    if (!options.length) return;
+    const sel = options[Math.max(0, Math.min(selectedIdx, options.length - 1))];
+    const styled = buildMultimodalCoords(sel);
+    const src = map.getSource('walk-route');
+    const features = [];
+    for (const seg of styled) {
+      if (!seg.coords.length) continue;
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: seg.coords },
+        properties: seg.kind === 'transit'
+          ? { kind: 'transit', colour: seg.colour || '#e89035' }
+          : { kind: 'walk' }
+      });
+    }
+    if (src) src.setData({ type: 'FeatureCollection', features });
+
+    const panel = document.getElementById('directionsPanel');
+    const summary = document.getElementById('directionsSummary');
+    const stepsEl = document.getElementById('directionsSteps');
+
+    const transitCount = sel.legs.filter(l => l.type === 'transit').length;
+    const summaryParts = [
+      `<strong>${fmtDuration(sel.totalSec)}</strong>`,
+      `<span>· ${fmtClockTime(sel.startSec)} → ${fmtClockTime(sel.endSec)}</span>`,
+    ];
+    if (transitCount > 0) summaryParts.push(`<span>· ${transitCount} ride${transitCount === 1 ? '' : 's'}</span>`);
+    summaryParts.push(`<span style="margin-left:auto;color:#888">to ${esc(toPoi.name || '?')}</span>`);
+    summary.innerHTML = summaryParts.join('');
+
+    // Option strip: one pill per alternative, selected one highlighted
+    const pills = options.map((opt, i) => {
+      const isSel = i === selectedIdx;
+      const rides = opt.legs.filter(l => l.type === 'transit').length;
+      return `<button class="opt-pill ${isSel ? 'selected' : ''}" data-idx="${i}" type="button">
+        <div class="opt-times">${fmtClockTime(opt.startSec)} → ${fmtClockTime(opt.endSec)}</div>
+        <div class="opt-meta">${fmtDuration(opt.totalSec)}${rides ? ' · ' + rides + '×' : ''}</div>
+      </button>`;
+    }).join('');
+    const optionStrip = options.length > 1
+      ? `<div class="opt-strip">${pills}</div>` : '';
+
+    const steps = multimodalInstructions(sel);
+    const stepsHtml = steps.map(s => {
+      if (s.kind === 'transit') {
+        const colour = /^#[0-9a-f]{3,8}$/i.test(s.colour || '') ? s.colour : '#888';
+        return `<div class="step transit">
+          <span class="ref" style="background:${esc(colour)};color:#fff;padding:1px 6px;border-radius:3px;font-weight:600;margin-right:6px;">${esc(s.ref)}</span>
+          <span class="text">${esc(s.fromName)} → ${esc(s.toName)}</span>
+          <span class="dist">${fmtClockTime(s.dep)}–${fmtClockTime(s.arr)}</span>
+        </div>`;
+      }
+      return `<div class="step"><span class="icon">🚶</span><span class="text">${esc(s.text)}</span></div>`;
+    }).join('');
+    stepsEl.innerHTML = optionStrip + stepsHtml;
+    stepsEl.querySelectorAll('.opt-pill').forEach(el => {
+      el.onclick = () => {
+        const idx = +el.dataset.idx;
+        renderRouteChoices(options, idx, fromLngLat, toPoi);
+      };
+    });
+    panel.classList.add('show');
+
+    const allCoords = styled.flatMap(s => s.coords);
+    if (allCoords.length && selectedIdx === 0) {
+      // Only auto-fit on the initial render, so clicking an alt doesn't re-zoom.
+      const lngs = allCoords.map(c => c[0]), lats = allCoords.map(c => c[1]);
+      map.fitBounds(
+        [[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]],
+        { padding: { top: 80, bottom: 200, left: 40, right: 40 }, duration: 600 }
+      );
+    }
+  }
+
   function renderMultimodalDirections(mmRoute, fromLngLat, toPoi) {
     const styled = buildMultimodalCoords(mmRoute);
     const src = map.getSource('walk-route');
@@ -2400,16 +2535,15 @@ function fmtDate(ts) {
     const toPoi = { name: to.name || '?', lng: to.lng, lat: to.lat };
     const canTransit = scheduleIdx.stops.size > 0 && scheduleIdx.stopToWalkNode.size > 0;
     if (canTransit) {
-      const mm = mode === 'arrive'
-        ? planTransitTripArriveBy(start.id, end.id, pivotDate)
-        : planTransitTrip(start.id, end.id, pivotDate);
-      if (mm) {
-        const hasTransit = mm.legs.some(l => l.type === 'transit');
+      const alts = planTripAlternatives(start.id, end.id, mode, pivotDate);
+      if (alts.length) {
+        const primary = alts[0];
+        const hasTransit = primary.legs.some(l => l.type === 'transit');
         if (hasTransit) {
           const walkOnly = astar(start.id, end.id);
           const walkOnlySec = walkOnly ? (walkOnly.distance / WALK_SPEED_MPS) : Infinity;
-          if (mm.totalSec < walkOnlySec - 60) {
-            renderMultimodalDirections(mm, from, toPoi);
+          if (primary.totalSec < walkOnlySec - 60) {
+            renderRouteChoices(alts, 0, from, toPoi);
             return;
           }
         }
