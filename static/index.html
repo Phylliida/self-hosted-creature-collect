@@ -488,6 +488,8 @@
   <div class="when">
     <label for="routingWalkWeight" title="higher = prefer transit even if a bit slower">walk cost ×</label>
     <input id="routingWalkWeight" type="number" min="0.5" max="10" step="0.1" value="1" style="width: 60px;">
+    <label for="routingTransferMin" title="minimum time between arriving at a stop and boarding">transfer min</label>
+    <input id="routingTransferMin" type="number" min="0" max="60" step="1" value="3" style="width: 50px;">
   </div>
   <button class="go" id="routingGo" type="button" disabled>Plan route</button>
 </div>
@@ -2164,13 +2166,13 @@ function fmtDate(ts) {
   const ALT_SHIFT_SEC = 60;  // min time-pivot shift between alternatives
   const FORCE_TRANSIT_WEIGHT = 99;  // internal "make walking hurt" weight to surface transit options
 
-  function runIterativePlanner(originId, destId, whenMode, pivotDate, walkWeight) {
+  function runIterativePlanner(originId, destId, whenMode, pivotDate, walkWeight, transferSec) {
     const results = [];
     let current = pivotDate;
     for (let i = 0; i < MAX_ALTERNATIVES; i++) {
       const mm = whenMode === 'arrive'
-        ? planTransitTripArriveBy(originId, destId, current, walkWeight)
-        : planTransitTrip(originId, destId, current, walkWeight);
+        ? planTransitTripArriveBy(originId, destId, current, walkWeight, transferSec)
+        : planTransitTrip(originId, destId, current, walkWeight, transferSec);
       if (!mm) break;
       if (results.some(r => r.startSec === mm.startSec && r.endSec === mm.endSec)) break;
       results.push(mm);
@@ -2194,14 +2196,14 @@ function fmtDate(ts) {
     return results;
   }
 
-  function planTripAlternatives(originId, destId, whenMode, pivotDate, walkWeight = 1) {
+  function planTripAlternatives(originId, destId, whenMode, pivotDate, walkWeight = 1, transferSec = 30) {
     // Primary iteration at the user's weight.
-    let results = runIterativePlanner(originId, destId, whenMode, pivotDate, walkWeight);
+    let results = runIterativePlanner(originId, destId, whenMode, pivotDate, walkWeight, transferSec);
     // If no transit is represented (short trip where walking wins cost-wise),
     // re-run at a huge weight to surface the best transit alternative(s) anyway.
     const anyTransit = results.some(r => r.legs.some(l => l.type === 'transit'));
     if (!anyTransit && walkWeight < FORCE_TRANSIT_WEIGHT) {
-      const forced = runIterativePlanner(originId, destId, whenMode, pivotDate, FORCE_TRANSIT_WEIGHT);
+      const forced = runIterativePlanner(originId, destId, whenMode, pivotDate, FORCE_TRANSIT_WEIGHT, transferSec);
       for (const f of forced) {
         if (!results.some(r => r.startSec === f.startSec && r.endSec === f.endSec)) {
           results.push(f);
@@ -2369,6 +2371,15 @@ function fmtDate(ts) {
   function currentWalkWeight() {
     const v = parseFloat(routingWalkWeight.value);
     return Number.isFinite(v) && v > 0 ? v : 1;
+  }
+  const routingTransferMin = document.getElementById('routingTransferMin');
+  routingTransferMin.value = localStorage.getItem('cc.transferMin') || '3';
+  routingTransferMin.addEventListener('change', () => {
+    localStorage.setItem('cc.transferMin', routingTransferMin.value);
+  });
+  function currentTransferSec() {
+    const v = parseFloat(routingTransferMin.value);
+    return Number.isFinite(v) && v >= 0 ? v * 60 : 180;
   }
 
   function endpointIcon(ep) {
@@ -2562,9 +2573,10 @@ function fmtDate(ts) {
 
     const toPoi = { name: to.name || '?', lng: to.lng, lat: to.lat };
     const walkWeight = currentWalkWeight();
+    const transferSec = currentTransferSec();
     const canTransit = scheduleIdx.stops.size > 0 && scheduleIdx.stopToWalkNode.size > 0;
     if (canTransit) {
-      const alts = planTripAlternatives(start.id, end.id, mode, pivotDate, walkWeight);
+      const alts = planTripAlternatives(start.id, end.id, mode, pivotDate, walkWeight, transferSec);
       if (alts.length) {
         renderRouteChoices(alts, 0, from, toPoi);
         return;
@@ -3216,7 +3228,7 @@ function fmtDate(ts) {
   const MAX_SEARCH_SECS = 3 * 3600;       // stop exploring paths longer than 3h
   const MAX_MULTIMODAL_ITERS = 200000;
 
-  function planTransitTrip(originNodeId, destNodeId, startDate, walkWeight = 1) {
+  function planTransitTrip(originNodeId, destNodeId, startDate, walkWeight = 1, transferSec = 30) {
     if (!walkGraph.nodes.has(originNodeId) || !walkGraph.nodes.has(destNodeId)) return null;
     const info = todayInfo(startDate);
     const svcSets = expandedServiceSets(startDate);
@@ -3302,7 +3314,7 @@ function fmtDate(ts) {
         }
         const patternSeqs = scheduleIdx.stopPatterns.get(stopId);
         if (!patternSeqs) continue;
-        const boardAfter = t + TRANSFER_BUFFER_SECS;
+        const boardAfter = t + transferSec;
         for (const [patternId, seq] of patternSeqs) {
           const bboxStops = scheduleIdx.patternBboxStops.get(patternId);
           if (!bboxStops || bboxStops.length <= 1) continue;
@@ -3322,9 +3334,10 @@ function fmtDate(ts) {
             if (seqJ <= seq) continue;
             const arr = bestTrip.f + (bestCum[seqJ] || 0) + bestOff;
             if (arr <= bestDep) continue;
-            // Transit ride cost = pure travel time (waiting is free).
-            const rideSec = arr - bestDep;
-            const newCost = cost + rideSec;
+            // Transit cost now includes wait time at this stop + ride time.
+            // Both count at 1× (not multiplied by walkWeight).
+            const legSec = arr - t;
+            const newCost = cost + legSec;
             const nk = 's:' + stopJ;
             if (newCost < (bestCost.get(nk) ?? Infinity)) {
               bestCost.set(nk, newCost);
@@ -3357,7 +3370,7 @@ function fmtDate(ts) {
   // Arrive-by planner: reverse-time Dijkstra from destination.
   // Finds the latest-possible departure from origin such that we still reach
   // destination by `arriveByDate`. Builds a forward-ordered leg list.
-  function planTransitTripArriveBy(originNodeId, destNodeId, arriveByDate, walkWeight = 1) {
+  function planTransitTripArriveBy(originNodeId, destNodeId, arriveByDate, walkWeight = 1, transferSec = 30) {
     if (!walkGraph.nodes.has(originNodeId) || !walkGraph.nodes.has(destNodeId)) return null;
     const info = todayInfo(arriveByDate);
     const svcSets = expandedServiceSets(arriveByDate);
@@ -3467,9 +3480,11 @@ function fmtDate(ts) {
             if (seqJ >= seq) continue;
             const dep = bestTrip.f + (bestCum[seqJ] || 0) + bestOff;
             if (dep >= bestAr) continue;
-            const rideSec = bestAr - dep;
-            const newCost = cost + rideSec;
-            const arrAtJ = dep - TRANSFER_BUFFER_SECS;
+            const arrAtJ = dep - transferSec;
+            // Forward-time spent on this leg = (wait = buffer) + (ride = bestAr - dep).
+            // We approximate the forward wait as the required buffer.
+            const legSec = bestAr - arrAtJ;
+            const newCost = cost + legSec;
             const nk = 's:' + stopJ;
             if (newCost < (bestCost.get(nk) ?? Infinity)) {
               bestCost.set(nk, newCost);
