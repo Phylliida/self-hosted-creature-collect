@@ -15,9 +15,12 @@ for pbf in osmpbf/*.osm.pbf; do
 
   if [ ! -e "$mbtiles" ]; then
     echo "==> tiles: $pbf -> $mbtiles"
-    tilemaker --input "$pbf" --output "$mbtiles" \
-      --config "$RESOURCES/config-openmaptiles.json" \
-      --process "$RESOURCES/process-openmaptiles.lua"
+    # Slim config/lua strip layers and fields the client never reads. The
+    # lua dofile's the upstream process-openmaptiles.lua (via $TILEMAKER_SHARE)
+    # so all upstream logic is reused.
+    TILEMAKER_SHARE="$RESOURCES" tilemaker --input "$pbf" --output "$mbtiles" \
+      --config tilemaker-slim.json \
+      --process tilemaker-slim.lua
   else
     echo "skip tiles: $mbtiles already exists"
   fi
