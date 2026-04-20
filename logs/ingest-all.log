@@ -1,0 +1,171 @@
+starting at Mon Apr 20 12:22:34 PM PDT 2026
+--- feeds-ca ---
+
+=== [1/132] mdb-2 ===
+[fetch] mdb-2 (London Transit Commission / London / Ontario)
+[validate] mdb-2 (London Transit Commission / London / Ontario)  (2.7 MB, 0.5s download)
+[OK   ] required-files
+[OK   ] stop-coordinates
+         info:  1,945 stops total
+[OK   ] route-types
+         info:  38 routes total
+[OK   ] stop-times-sorted-by-trip
+         info:  362,707 stop_time rows across 8,665 trips
+[OK   ] stop-time-fields
+[OK   ] referential-integrity
+[OK   ] calendar-fields
+         info:  8 calendar rows, 137 calendar_dates rows
+[OK   ] direction-ids
+[OK   ] feed-freshness
+         info:  calendar covers 20260201..20260502
+
+RESULT: all checks passed
+[ingest] mdb-2 (London Transit Commission / London / Ontario)
+  [mdb-2] opening /tmp/tmpo5us10_v.zip
+    agency: 1
+    routes: 38
+    stops: 1,945
+    services: 8
+    calendar_dates: 137
+[K    shapes: 198 (35,801 points, 0.2s)
+    trips: 8,665
+[K    stop_times: 146,715  patterns: 180  trips: 3,836  blobs: 1,114[K    stop_times: 314,281  patterns: 190  trips: 7,654  blobs: 1,915[K    stop_times: 362,707  patterns: 190  trips: 8,665  blobs: 1,915  headsigns: 144  dropped: 0  (2.3s)
+  VACUUM…
+  ANALYZE…
+  → data/schedule.sqlite
+
+=== [2/132] mdb-3 ===
+[fetch] mdb-3 (Barrie Transit / Barrie / Ontario)
+[validate] mdb-3 (Barrie Transit / Barrie / Ontario)  (1.1 MB, 0.3s download)
+[OK   ] required-files
+[OK   ] stop-coordinates
+         info:  559 stops total
+[OK   ] route-types
+         info:  13 routes total
+[OK   ] stop-times-sorted-by-trip
+         info:  66,277 stop_time rows across 1,555 trips
+[OK   ] stop-time-fields
+[OK   ] referential-integrity
+[OK   ] calendar-fields
+         info:  3 calendar rows, 2 calendar_dates rows
+[OK   ] direction-ids
+[OK   ] feed-freshness
+         info:  calendar covers 20260214..20260530
+
+RESULT: all checks passed
+[ingest] mdb-3 (Barrie Transit / Barrie / Ontario)
+  [mdb-3] opening /tmp/tmp9j93i1sc.zip
+    agency: 1
+    routes: 13
+    stops: 559
+    services: 3
+    calendar_dates: 2
+[K    shapes: 189 (6,025 points, 0.0s)
+    trips: 1,555
+[K    stop_times: 66,277  patterns: 37  trips: 1,555  blobs: 185  headsigns: 15  dropped: 0  (0.5s)
+  VACUUM…
+  ANALYZE…
+  → data/schedule.sqlite
+
+=== [3/132] mdb-286 ===
+[fetch] mdb-286 (Black Ball Ferry Line / Victoria / British Columbia)
+[validate] mdb-286 (Black Ball Ferry Line / Victoria / British Columbia)  (0.0 MB, 0.7s download)
+[OK   ] required-files
+[OK   ] stop-coordinates
+         info:  2 stops total
+[OK   ] route-types
+         info:  1 routes total
+[OK   ] stop-times-sorted-by-trip
+         info:  66 stop_time rows across 33 trips
+[OK   ] stop-time-fields
+[OK   ] referential-integrity
+[OK   ] calendar-fields
+         info:  9 calendar rows, 2 calendar_dates rows
+[OK   ] direction-ids
+[OK   ] feed-freshness
+         info:  calendar covers 20260303..20270104
+
+RESULT: all checks passed
+[ingest] mdb-286 (Black Ball Ferry Line / Victoria / British Columbia)
+  [mdb-286] opening /tmp/tmp7ebfsxb2.zip
+    agency: 1
+    routes: 1
+    stops: 2
+    services: 9
+    calendar_dates: 2
+[K    shapes: 2 (106 points, 0.0s)
+    trips: 33
+[K    stop_times: 66  patterns: 2  trips: 33  blobs: 2  headsigns: 2  dropped: 0  (0.0s)
+  VACUUM…
+  ANALYZE…
+  → data/schedule.sqlite
+
+=== [4/132] mdb-689 ===
+[fetch] mdb-689 (Whitehorse Transit / Whitehorse / Yukon)
+[validate] mdb-689 (Whitehorse Transit / Whitehorse / Yukon)  (0.1 MB, 0.9s download)
+[OK   ] required-files
+[OK   ] stop-coordinates
+         info:  168 stops total
+[OK   ] route-types
+         info:  8 routes total
+[OK   ] stop-times-sorted-by-trip
+         info:  11,168 stop_time rows across 262 trips
+[OK   ] stop-time-fields
+[OK   ] referential-integrity
+[OK   ] calendar-fields
+         info:  2 calendar rows, 26 calendar_dates rows
+[OK   ] direction-ids
+[OK   ] feed-freshness
+         info:  calendar covers 20230818..20501230
+
+RESULT: all checks passed
+[ingest] mdb-689 (Whitehorse Transit / Whitehorse / Yukon)
+  [mdb-689] opening /tmp/tmptc_z8svj.zip
+    agency: 1
+    routes: 8
+    stops: 168
+    services: 2
+    calendar_dates: 26
+[K    shapes: 8 (12,267 points, 0.1s)
+    trips: 262
+[K    stop_times: 11,168  patterns: 0  trips: 0  blobs: 0  headsigns: 0  dropped: 262  (0.0s)
+  VACUUM…
+  ANALYZE…
+  → data/schedule.sqlite
+
+=== [5/132] mdb-690 ===
+[fetch] mdb-690 (BC Ferries / Southern Gulf Islands Electoral Area / British Columbia)
+[validate] mdb-690 (BC Ferries / Southern Gulf Islands Electoral Area / British Columbia)  (0.1 MB, 0.5s download)
+[OK   ] required-files
+[OK   ] stop-coordinates
+         info:  96 stops total
+[OK   ] route-types
+         info:  23 routes total
+[OK   ] stop-times-sorted-by-trip
+         info:  2,376 stop_time rows across 1,179 trips
+[OK   ] stop-time-fields
+[OK   ] referential-integrity
+[OK   ] calendar-fields
+         info:  430 calendar rows, 793 calendar_dates rows
+[OK   ] direction-ids
+[OK   ] feed-freshness
+         info:  calendar covers 20000101..20500101
+
+RESULT: all checks passed
+[ingest] mdb-690 (BC Ferries / Southern Gulf Islands Electoral Area / British Columbia)
+  [mdb-690] opening /tmp/tmpwqoo7noj.zip
+    agency: 1
+    routes: 23
+    stops: 96
+    services: 430
+    calendar_dates: 793
+[K    shapes: 90 (2,481 points, 0.0s)
+    trips: 1,179
+[K    stop_times: 2,376  patterns: 90  trips: 1,179  blobs: 76  headsigns: 34  dropped: 0  (0.0s)
+  VACUUM…
+  ANALYZE…
+  → data/schedule.sqlite
+
+=== [6/132] mdb-696 ===
+[fetch] mdb-696 (TransLink Vancouver / Anmore / British Columbia)
+[validate] mdb-696 (TransLink Vancouver / Anmore / British Columbia)  (37.6 MB, 1.8s download)

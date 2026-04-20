@@ -44,6 +44,35 @@ def varint_pack(values):
     return bytes(out)
 
 
+def zigzag_varint_pack_signed(values):
+    """LEB128-pack signed ints via zigzag."""
+    out = bytearray()
+    for v in values:
+        if v >= 0:
+            z = v << 1
+        else:
+            z = ((-v) << 1) - 1
+        while z >= 0x80:
+            out.append((z & 0x7F) | 0x80)
+            z >>= 7
+        out.append(z & 0x7F)
+    return bytes(out)
+
+
+def pack_shape_points(points):
+    """Pack [(lng, lat), ...] as zigzag-varint delta microdegrees.
+    Layout: lat0, lng0 (absolute), then (d_lat, d_lng) per subsequent point."""
+    if not points:
+        return b""
+    lats_u = [round(p[1] * 1_000_000) for p in points]
+    lngs_u = [round(p[0] * 1_000_000) for p in points]
+    vals = [lats_u[0], lngs_u[0]]
+    for i in range(1, len(points)):
+        vals.append(lats_u[i] - lats_u[i - 1])
+        vals.append(lngs_u[i] - lngs_u[i - 1])
+    return zigzag_varint_pack_signed(vals)
+
+
 def ensure_schema(db):
     db.executescript("""
     CREATE TABLE IF NOT EXISTS agency(
@@ -104,10 +133,16 @@ def ensure_schema(db):
         service_num INTEGER NOT NULL,
         headsign_id INTEGER NOT NULL,
         direction INTEGER NOT NULL,
-        first_departure_sec INTEGER NOT NULL
+        first_departure_sec INTEGER NOT NULL,
+        shape_num INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_trip_pattern ON trip(pattern_id);
     CREATE INDEX IF NOT EXISTS idx_trip_service ON trip(service_num);
+    CREATE TABLE IF NOT EXISTS shape(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        shape_id TEXT UNIQUE NOT NULL,
+        points_blob BLOB NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS feed_meta(
         slug TEXT PRIMARY KEY,
         url TEXT,
@@ -115,6 +150,10 @@ def ensure_schema(db):
         n_trips INTEGER, n_patterns INTEGER, n_stops INTEGER
     );
     """)
+    # Migrate pre-shape DBs: add shape_num column if missing (NULL for existing rows).
+    cols = {r[1] for r in db.execute("PRAGMA table_info(trip)")}
+    if "shape_num" not in cols:
+        db.execute("ALTER TABLE trip ADD COLUMN shape_num INTEGER")
 
 
 def already_ingested(db, slug):
@@ -260,7 +299,62 @@ def ingest(db, slug, zip_path, url=""):
                 "INSERT OR IGNORE INTO service_exception VALUES (?, ?, ?)", batch)
         sys.stderr.write(f"    calendar_dates: {n:,}\n")
 
-        # trips → preload route/service/headsign/direction
+        # shapes: stream shape points, dedupe via namespaced shape_id, pack each
+        # as varint-delta-zigzag blob. Returns shape_id_str -> shape_num map.
+        shape_num_map = {}
+        t_s = time.time()
+        last_shape_tick = t_s
+        shape_count = 0
+        shape_pt_count = 0
+        prev_shape_id = None
+        current_points = []
+        def flush_shape(sid, points):
+            nonlocal shape_count
+            if not sid or len(points) < 2:
+                return
+            # Sort by sequence in case the file isn't already ordered.
+            points.sort(key=lambda p: p[0])
+            coords = [(p[2], p[1]) for p in points]  # (lng, lat)
+            blob = pack_shape_points(coords)
+            cur = db.execute(
+                "INSERT INTO shape(shape_id, points_blob) VALUES (?, ?) "
+                "ON CONFLICT(shape_id) DO NOTHING RETURNING id",
+                (sid, blob),
+            )
+            row = cur.fetchone()
+            if row is None:
+                row = db.execute(
+                    "SELECT id FROM shape WHERE shape_id=?", (sid,)
+                ).fetchone()
+            if row:
+                shape_num_map[sid] = row[0]
+                shape_count += 1
+        for sh in read_csv(z, "shapes.txt"):
+            sid_raw = sh.get("shape_id", "")
+            try:
+                seq = int(sh.get("shape_pt_sequence") or 0)
+                lat = float(sh["shape_pt_lat"])
+                lng = float(sh["shape_pt_lon"])
+            except (KeyError, ValueError, TypeError):
+                continue
+            if sid_raw != prev_shape_id:
+                if prev_shape_id:
+                    flush_shape(namespace(slug, prev_shape_id), current_points)
+                prev_shape_id = sid_raw
+                current_points = []
+            current_points.append((seq, lat, lng))
+            shape_pt_count += 1
+            if time.time() - last_shape_tick > 1.0:
+                sys.stderr.write(f"\r\033[K    shapes: {shape_count:,} ({shape_pt_count:,} points)")
+                sys.stderr.flush()
+                last_shape_tick = time.time()
+        if prev_shape_id:
+            flush_shape(namespace(slug, prev_shape_id), current_points)
+        sys.stderr.write(
+            f"\r\033[K    shapes: {shape_count:,} ({shape_pt_count:,} points, {time.time()-t_s:.1f}s)\n"
+        )
+
+        # trips → preload route/service/headsign/direction/shape
         trip_info = {}
         for t in read_csv(z, "trips.txt"):
             try:
@@ -269,11 +363,13 @@ def ingest(db, slug, zip_path, url=""):
                 direction = 0
             tid = namespace(slug, t.get("trip_id", ""))
             svc_id = namespace(slug, t.get("service_id", ""))
+            shape_id_raw = t.get("shape_id", "") or ""
             trip_info[tid] = {
                 "route_id": namespace(slug, t.get("route_id", "")),
                 "service_num": service_num_map.get(svc_id),
                 "headsign": t.get("trip_headsign", "") or "",
                 "direction": direction,
+                "shape_num": shape_num_map.get(namespace(slug, shape_id_raw)) if shape_id_raw else None,
             }
         sys.stderr.write(f"    trips: {len(trip_info):,}\n")
 
@@ -355,12 +451,12 @@ def ingest(db, slug, zip_path, url=""):
             headsign_id = intern_headsign(info["headsign"])
             trip_batch.append((
                 pid, timing_id, info["service_num"], headsign_id,
-                info["direction"], first_dep,
+                info["direction"], first_dep, info.get("shape_num"),
             ))
             trip_count += 1
             if len(trip_batch) >= 2000:
                 db.executemany(
-                    "INSERT INTO trip VALUES (?, ?, ?, ?, ?, ?)", trip_batch)
+                    "INSERT INTO trip VALUES (?, ?, ?, ?, ?, ?, ?)", trip_batch)
                 trip_batch.clear()
 
         prev_trip = None
@@ -396,7 +492,7 @@ def ingest(db, slug, zip_path, url=""):
         if buffer:
             flush_trip(prev_trip, buffer)
         if trip_batch:
-            db.executemany("INSERT INTO trip VALUES (?, ?, ?, ?, ?, ?)", trip_batch)
+            db.executemany("INSERT INTO trip VALUES (?, ?, ?, ?, ?, ?, ?)", trip_batch)
         if pattern_stop_batch:
             db.executemany(
                 "INSERT OR IGNORE INTO pattern_stop VALUES (?, ?, ?)",
