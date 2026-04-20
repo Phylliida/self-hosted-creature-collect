@@ -2162,9 +2162,9 @@ function fmtDate(ts) {
 
   const MAX_ALTERNATIVES = 5;
   const ALT_SHIFT_SEC = 60;  // min time-pivot shift between alternatives
-  // Iterate the planner, nudging the time pivot after each result so subsequent
-  // runs return later-departing (or earlier-arriving) backup options.
-  function planTripAlternatives(originId, destId, whenMode, pivotDate, walkWeight = 1) {
+  const FORCE_TRANSIT_WEIGHT = 99;  // internal "make walking hurt" weight to surface transit options
+
+  function runIterativePlanner(originId, destId, whenMode, pivotDate, walkWeight) {
     const results = [];
     let current = pivotDate;
     for (let i = 0; i < MAX_ALTERNATIVES; i++) {
@@ -2172,14 +2172,10 @@ function fmtDate(ts) {
         ? planTransitTripArriveBy(originId, destId, current, walkWeight)
         : planTransitTrip(originId, destId, current, walkWeight);
       if (!mm) break;
-      const hasTransit = mm.legs.some(l => l.type === 'transit');
-      if (results.length) {
-        const prev = results[results.length - 1];
-        if (prev.startSec === mm.startSec && prev.endSec === mm.endSec) break;
-      }
+      if (results.some(r => r.startSec === mm.startSec && r.endSec === mm.endSec)) break;
       results.push(mm);
-      if (!hasTransit) break;  // pure walking has no alternatives
-      // Compute shift
+      const hasTransit = mm.legs.some(l => l.type === 'transit');
+      if (!hasTransit) break;
       const currentNowSec = todayInfo(current).nowSec;
       let nextSec;
       if (whenMode === 'arrive') {
@@ -2195,15 +2191,34 @@ function fmtDate(ts) {
       if (Math.abs(deltaSec) < 1) break;
       current = new Date(current.getTime() + deltaSec * 1000);
     }
-    // Canonical display order: earliest departure first.
-    results.sort((a, b) => a.startSec - b.startSec);
-    // Dedupe any near-identical trips (same start and end sec).
-    const dedup = [];
-    for (const r of results) {
-      if (dedup.some(d => d.startSec === r.startSec && d.endSec === r.endSec)) continue;
-      dedup.push(r);
+    return results;
+  }
+
+  function planTripAlternatives(originId, destId, whenMode, pivotDate, walkWeight = 1) {
+    // Primary iteration at the user's weight.
+    let results = runIterativePlanner(originId, destId, whenMode, pivotDate, walkWeight);
+    // If no transit is represented (short trip where walking wins cost-wise),
+    // re-run at a huge weight to surface the best transit alternative(s) anyway.
+    const anyTransit = results.some(r => r.legs.some(l => l.type === 'transit'));
+    if (!anyTransit && walkWeight < FORCE_TRANSIT_WEIGHT) {
+      const forced = runIterativePlanner(originId, destId, whenMode, pivotDate, FORCE_TRANSIT_WEIGHT);
+      for (const f of forced) {
+        if (!results.some(r => r.startSec === f.startSec && r.endSec === f.endSec)) {
+          results.push(f);
+        }
+      }
     }
-    return dedup;
+    // Sort by this user's weighted cost (so their preferred option comes first).
+    const costOf = (plan) => {
+      let c = 0;
+      for (const leg of plan.legs) {
+        const dur = leg.tArr - leg.tDep;
+        c += leg.type === 'transit' ? dur : dur * walkWeight;
+      }
+      return c;
+    };
+    results.sort((a, b) => costOf(a) - costOf(b));
+    return results;
   }
 
   // Render one of the alternatives as the active route. `options` is the full list;
@@ -2551,26 +2566,8 @@ function fmtDate(ts) {
     if (canTransit) {
       const alts = planTripAlternatives(start.id, end.id, mode, pivotDate, walkWeight);
       if (alts.length) {
-        const primary = alts[0];
-        const hasTransit = primary.legs.some(l => l.type === 'transit');
-        if (hasTransit) {
-          // Compare to walk-only: transit wins if its *weighted* cost beats walk-only's weighted cost.
-          // (Walk-only cost = distance / speed * weight.)
-          const walkOnly = astar(start.id, end.id);
-          const walkOnlyCost = walkOnly
-            ? (walkOnly.distance / WALK_SPEED_MPS) * walkWeight
-            : Infinity;
-          // Primary's cost is already weighted; approximate from leg contents.
-          let primaryCost = 0;
-          for (const leg of primary.legs) {
-            if (leg.type === 'transit') primaryCost += (leg.tArr - leg.tDep);
-            else primaryCost += (leg.tArr - leg.tDep) * walkWeight;
-          }
-          if (primaryCost < walkOnlyCost - 60 * walkWeight) {
-            renderRouteChoices(alts, 0, from, toPoi);
-            return;
-          }
-        }
+        renderRouteChoices(alts, 0, from, toPoi);
+        return;
       }
     }
     const route = astar(start.id, end.id);
@@ -3255,8 +3252,10 @@ function fmtDate(ts) {
       const [cost, key, t] = pq.pop();
       if (cost > (bestCost.get(key) ?? Infinity)) continue;
       if (key === destKey) { destResult = { cost, t }; break; }
-      if (destResult && cost > destResult.cost) break;
-      if (t - t0 > MAX_SEARCH_SECS) break;
+      // NOTE: `continue` (not `break`) — cost-order pops may surface a
+      // low-cost path with a huge wall-clock time. Skip it individually so
+      // other cheaper, faster paths still get a chance to be explored.
+      if (t - t0 > MAX_SEARCH_SECS) continue;
 
       if (key.startsWith('w:')) {
         const nid = +key.slice(2);
@@ -3395,8 +3394,7 @@ function fmtDate(ts) {
       const [cost, key, t] = pq.pop();
       if (cost > (bestCost.get(key) ?? Infinity)) continue;
       if (key === origKey) { origResult = { cost, t }; break; }
-      if (origResult && cost > origResult.cost) break;
-      if (tArr - t > MAX_SEARCH_SECS) break;
+      if (tArr - t > MAX_SEARCH_SECS) continue;
 
       if (key.startsWith('w:')) {
         const nid = +key.slice(2);
