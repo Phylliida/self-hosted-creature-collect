@@ -485,6 +485,10 @@
     </select>
     <input id="routingWhenDt" type="datetime-local">
   </div>
+  <div class="when">
+    <label for="routingWalkWeight" title="higher = prefer transit even if a bit slower">walk cost ×</label>
+    <input id="routingWalkWeight" type="number" min="0.5" max="10" step="0.1" value="1" style="width: 60px;">
+  </div>
   <button class="go" id="routingGo" type="button" disabled>Plan route</button>
 </div>
 <div id="directionsPanel">
@@ -2160,13 +2164,13 @@ function fmtDate(ts) {
   const ALT_SHIFT_SEC = 60;  // min time-pivot shift between alternatives
   // Iterate the planner, nudging the time pivot after each result so subsequent
   // runs return later-departing (or earlier-arriving) backup options.
-  function planTripAlternatives(originId, destId, whenMode, pivotDate) {
+  function planTripAlternatives(originId, destId, whenMode, pivotDate, walkWeight = 1) {
     const results = [];
     let current = pivotDate;
     for (let i = 0; i < MAX_ALTERNATIVES; i++) {
       const mm = whenMode === 'arrive'
-        ? planTransitTripArriveBy(originId, destId, current)
-        : planTransitTrip(originId, destId, current);
+        ? planTransitTripArriveBy(originId, destId, current, walkWeight)
+        : planTransitTrip(originId, destId, current, walkWeight);
       if (!mm) break;
       const hasTransit = mm.legs.some(l => l.type === 'transit');
       if (results.length) {
@@ -2341,7 +2345,16 @@ function fmtDate(ts) {
   const routingToIcon = document.getElementById('routingToIcon');
   const routingWhenMode = document.getElementById('routingWhenMode');
   const routingWhenDt = document.getElementById('routingWhenDt');
+  const routingWalkWeight = document.getElementById('routingWalkWeight');
   const routingGo = document.getElementById('routingGo');
+  routingWalkWeight.value = localStorage.getItem('cc.walkWeight') || '1';
+  routingWalkWeight.addEventListener('change', () => {
+    localStorage.setItem('cc.walkWeight', routingWalkWeight.value);
+  });
+  function currentWalkWeight() {
+    const v = parseFloat(routingWalkWeight.value);
+    return Number.isFinite(v) && v > 0 ? v : 1;
+  }
 
   function endpointIcon(ep) {
     if (!ep) return '○';
@@ -2533,16 +2546,27 @@ function fmtDate(ts) {
     const mode = routingWhenMode.value;  // 'now' | 'depart' | 'arrive'
 
     const toPoi = { name: to.name || '?', lng: to.lng, lat: to.lat };
+    const walkWeight = currentWalkWeight();
     const canTransit = scheduleIdx.stops.size > 0 && scheduleIdx.stopToWalkNode.size > 0;
     if (canTransit) {
-      const alts = planTripAlternatives(start.id, end.id, mode, pivotDate);
+      const alts = planTripAlternatives(start.id, end.id, mode, pivotDate, walkWeight);
       if (alts.length) {
         const primary = alts[0];
         const hasTransit = primary.legs.some(l => l.type === 'transit');
         if (hasTransit) {
+          // Compare to walk-only: transit wins if its *weighted* cost beats walk-only's weighted cost.
+          // (Walk-only cost = distance / speed * weight.)
           const walkOnly = astar(start.id, end.id);
-          const walkOnlySec = walkOnly ? (walkOnly.distance / WALK_SPEED_MPS) : Infinity;
-          if (primary.totalSec < walkOnlySec - 60) {
+          const walkOnlyCost = walkOnly
+            ? (walkOnly.distance / WALK_SPEED_MPS) * walkWeight
+            : Infinity;
+          // Primary's cost is already weighted; approximate from leg contents.
+          let primaryCost = 0;
+          for (const leg of primary.legs) {
+            if (leg.type === 'transit') primaryCost += (leg.tArr - leg.tDep);
+            else primaryCost += (leg.tArr - leg.tDep) * walkWeight;
+          }
+          if (primaryCost < walkOnlyCost - 60 * walkWeight) {
             renderRouteChoices(alts, 0, from, toPoi);
             return;
           }
@@ -3195,15 +3219,13 @@ function fmtDate(ts) {
   const MAX_SEARCH_SECS = 3 * 3600;       // stop exploring paths longer than 3h
   const MAX_MULTIMODAL_ITERS = 200000;
 
-  function planTransitTrip(originNodeId, destNodeId, startDate) {
+  function planTransitTrip(originNodeId, destNodeId, startDate, walkWeight = 1) {
     if (!walkGraph.nodes.has(originNodeId) || !walkGraph.nodes.has(destNodeId)) return null;
     const info = todayInfo(startDate);
     const svcSets = expandedServiceSets(startDate);
     const t0 = info.nowSec;
     const destKey = 'w:' + destNodeId;
 
-    // For each pattern, pre-compute the list of (trip, offset) pairs whose
-    // service runs on the relevant day-offset (-1, 0, +1).
     const activeTripsCache = new Map();
     const getActiveTrips = (patternId) => {
       let filtered = activeTripsCache.get(patternId);
@@ -3218,62 +3240,67 @@ function fmtDate(ts) {
       return filtered;
     };
 
-    const best = new Map();
+    // Cost-based Dijkstra. Cost = walking-time * walkWeight + transit-ride-time.
+    // Wall-clock time tracked alongside for schedule lookups. PQ entries carry both.
+    const bestCost = new Map();
     const came = new Map();
     const pq = new MinHeap();
-    best.set('w:' + originNodeId, t0);
-    pq.push([t0, 'w:' + originNodeId]);
-    let destArrival = null;
+    bestCost.set('w:' + originNodeId, 0);
+    pq.push([0, 'w:' + originNodeId, t0]);
+    let destResult = null;
     let iter = 0;
 
     while (pq.size) {
       if (++iter > MAX_MULTIMODAL_ITERS) break;
-      const [t, key] = pq.pop();
-      if (t > (best.get(key) ?? Infinity)) continue;
-      if (key === destKey) { destArrival = t; break; }
-      if (destArrival !== null && t > destArrival) break;
+      const [cost, key, t] = pq.pop();
+      if (cost > (bestCost.get(key) ?? Infinity)) continue;
+      if (key === destKey) { destResult = { cost, t }; break; }
+      if (destResult && cost > destResult.cost) break;
       if (t - t0 > MAX_SEARCH_SECS) break;
 
       if (key.startsWith('w:')) {
         const nid = +key.slice(2);
         const neighbors = walkGraph.adj.get(nid) || [];
         for (const e of neighbors) {
-          const newT = t + e.weight / WALK_SPEED_MPS;
+          const walkSec = e.weight / WALK_SPEED_MPS;
+          const newT = t + walkSec;
+          const newCost = cost + walkSec * walkWeight;
           const nk = 'w:' + e.to;
-          if (newT < (best.get(nk) ?? Infinity)) {
-            best.set(nk, newT);
+          if (newCost < (bestCost.get(nk) ?? Infinity)) {
+            bestCost.set(nk, newCost);
             came.set(nk, { prev: key, type: 'walk', edge: e,
                            fromNode: nid, toNode: e.to, tDep: t, tArr: newT });
-            pq.push([newT, nk]);
+            pq.push([newCost, nk, newT]);
           }
         }
-        // Access any transit stops linked to this walk node
         const linkedStops = scheduleIdx.walkNodeToStops.get(nid);
         if (linkedStops) {
           for (const [stopId, distance] of linkedStops) {
-            const newT = t + distance / WALK_SPEED_MPS;
+            const walkSec = distance / WALK_SPEED_MPS;
+            const newT = t + walkSec;
+            const newCost = cost + walkSec * walkWeight;
             const nk = 's:' + stopId;
-            if (newT < (best.get(nk) ?? Infinity)) {
-              best.set(nk, newT);
+            if (newCost < (bestCost.get(nk) ?? Infinity)) {
+              bestCost.set(nk, newCost);
               came.set(nk, { prev: key, type: 'access', stopId, distance, fromNode: nid, tDep: t, tArr: newT });
-              pq.push([newT, nk]);
+              pq.push([newCost, nk, newT]);
             }
           }
         }
       } else if (key.startsWith('s:')) {
         const stopId = key.slice(2);
-        // Egress from this stop to its linked walk node
         const link = scheduleIdx.stopToWalkNode.get(stopId);
         if (link) {
-          const newT = t + link.distance / WALK_SPEED_MPS;
+          const walkSec = link.distance / WALK_SPEED_MPS;
+          const newT = t + walkSec;
+          const newCost = cost + walkSec * walkWeight;
           const nk = 'w:' + link.node;
-          if (newT < (best.get(nk) ?? Infinity)) {
-            best.set(nk, newT);
+          if (newCost < (bestCost.get(nk) ?? Infinity)) {
+            bestCost.set(nk, newCost);
             came.set(nk, { prev: key, type: 'egress', stopId, distance: link.distance, toNode: link.node, tDep: t, tArr: newT });
-            pq.push([newT, nk]);
+            pq.push([newCost, nk, newT]);
           }
         }
-        // Board transit on every pattern visiting this stop
         const patternSeqs = scheduleIdx.stopPatterns.get(stopId);
         if (!patternSeqs) continue;
         const boardAfter = t + TRANSFER_BUFFER_SECS;
@@ -3282,8 +3309,6 @@ function fmtDate(ts) {
           if (!bboxStops || bboxStops.length <= 1) continue;
           const trips = getActiveTrips(patternId);
           if (!trips.length) continue;
-          // Find trip with earliest effective dep at this stop ≥ boardAfter.
-          // Effective dep = raw dep + day-offset (handles cross-midnight).
           let bestTrip = null, bestDep = Infinity, bestCum = null, bestOff = 0;
           for (const { trip, offset } of trips) {
             const cum = tripCumulative(trip);
@@ -3298,9 +3323,12 @@ function fmtDate(ts) {
             if (seqJ <= seq) continue;
             const arr = bestTrip.f + (bestCum[seqJ] || 0) + bestOff;
             if (arr <= bestDep) continue;
+            // Transit ride cost = pure travel time (waiting is free).
+            const rideSec = arr - bestDep;
+            const newCost = cost + rideSec;
             const nk = 's:' + stopJ;
-            if (arr < (best.get(nk) ?? Infinity)) {
-              best.set(nk, arr);
+            if (newCost < (bestCost.get(nk) ?? Infinity)) {
+              bestCost.set(nk, newCost);
               came.set(nk, {
                 prev: key, type: 'transit',
                 trip: bestTrip, patternId, route: scheduleIdx.routesById.get(scheduleIdx.patterns.get(patternId)?.route_id),
@@ -3308,15 +3336,14 @@ function fmtDate(ts) {
                 fromSeq: seq, toSeq: seqJ,
                 tDep: bestDep, tArr: arr,
               });
-              pq.push([arr, nk]);
+              pq.push([newCost, nk, arr]);
             }
           }
         }
       }
     }
 
-    if (destArrival === null) return null;
-    // Reconstruct legs (reverse-iterating came chain, then merging runs of same type/route)
+    if (!destResult) return null;
     const raw = [];
     let cursor = destKey;
     while (came.has(cursor)) {
@@ -3325,13 +3352,13 @@ function fmtDate(ts) {
       cursor = step.prev;
     }
     const legs = groupLegs(raw, originNodeId);
-    return { legs, startSec: t0, endSec: destArrival, totalSec: destArrival - t0 };
+    return { legs, startSec: t0, endSec: destResult.t, totalSec: destResult.t - t0 };
   }
 
   // Arrive-by planner: reverse-time Dijkstra from destination.
   // Finds the latest-possible departure from origin such that we still reach
   // destination by `arriveByDate`. Builds a forward-ordered leg list.
-  function planTransitTripArriveBy(originNodeId, destNodeId, arriveByDate) {
+  function planTransitTripArriveBy(originNodeId, destNodeId, arriveByDate, walkWeight = 1) {
     if (!walkGraph.nodes.has(originNodeId) || !walkGraph.nodes.has(destNodeId)) return null;
     const info = todayInfo(arriveByDate);
     const svcSets = expandedServiceSets(arriveByDate);
@@ -3353,74 +3380,74 @@ function fmtDate(ts) {
       return f;
     };
 
-    // best[key] = latest time this node can be (arrived-at or departed-from) so we still make dest by tArr.
-    // MinHeap keyed on -t gives us max-pop.
-    const best = new Map();
-    const came = new Map();  // key -> {next_forward_key, ...forward-ordered leg info}
-    best.set(destKey, tArr);
+    // Cost-based reverse Dijkstra. bestCost[key] = min cost from dest backwards to key.
+    // Real (wall-clock) time tracked in PQ tuple so schedule lookups stay correct.
+    const bestCost = new Map();
+    const came = new Map();
     const pq = new MinHeap();
-    pq.push([-tArr, destKey]);
-    let origLatest = null;
+    bestCost.set(destKey, 0);
+    pq.push([0, destKey, tArr]);
+    let origResult = null;
     let iter = 0;
 
     while (pq.size) {
       if (++iter > MAX_MULTIMODAL_ITERS) break;
-      const [negT, key] = pq.pop();
-      const t = -negT;
-      if (t < (best.get(key) ?? -Infinity)) continue;
-      if (key === origKey) { origLatest = t; break; }
-      if (origLatest !== null && t < origLatest) break;
+      const [cost, key, t] = pq.pop();
+      if (cost > (bestCost.get(key) ?? Infinity)) continue;
+      if (key === origKey) { origResult = { cost, t }; break; }
+      if (origResult && cost > origResult.cost) break;
       if (tArr - t > MAX_SEARCH_SECS) break;
 
       if (key.startsWith('w:')) {
         const nid = +key.slice(2);
         const neighbors = walkGraph.adj.get(nid) || [];
         for (const e of neighbors) {
-          const newT = t - e.weight / WALK_SPEED_MPS;
+          const walkSec = e.weight / WALK_SPEED_MPS;
+          const newT = t - walkSec;
+          const newCost = cost + walkSec * walkWeight;
           const nk = 'w:' + e.to;
-          if (newT > (best.get(nk) ?? -Infinity)) {
-            best.set(nk, newT);
-            // Forward direction is e.to → nid, so shape encoding is reversed relative to our forward step.
+          if (newCost < (bestCost.get(nk) ?? Infinity)) {
+            bestCost.set(nk, newCost);
             const forwardEdge = { shape: e.shape, reverse: !e.reverse,
                                    weight: e.weight, name: e.name };
             came.set(nk, { next: key, type: 'walk', edge: forwardEdge,
                            fromNode: e.to, toNode: nid,
                            tDep: newT, tArr: t });
-            pq.push([-newT, nk]);
+            pq.push([newCost, nk, newT]);
           }
         }
-        // Accessing a linked stop walking into this walk node ← i.e. forward: stop → walk node (egress)
         const linkedStops = scheduleIdx.walkNodeToStops.get(nid);
         if (linkedStops) {
           for (const [stopId, distance] of linkedStops) {
-            const newT = t - distance / WALK_SPEED_MPS;
+            const walkSec = distance / WALK_SPEED_MPS;
+            const newT = t - walkSec;
+            const newCost = cost + walkSec * walkWeight;
             const nk = 's:' + stopId;
-            if (newT > (best.get(nk) ?? -Infinity)) {
-              best.set(nk, newT);
+            if (newCost < (bestCost.get(nk) ?? Infinity)) {
+              bestCost.set(nk, newCost);
               came.set(nk, { next: key, type: 'egress',
                              stopId, distance, toNode: nid,
                              tDep: newT, tArr: t });
-              pq.push([-newT, nk]);
+              pq.push([newCost, nk, newT]);
             }
           }
         }
       } else if (key.startsWith('s:')) {
         const stopId = key.slice(2);
-        // Forward: walk from linked walk node INTO this stop (access)
         const link = scheduleIdx.stopToWalkNode.get(stopId);
         if (link) {
-          const newT = t - link.distance / WALK_SPEED_MPS;
+          const walkSec = link.distance / WALK_SPEED_MPS;
+          const newT = t - walkSec;
+          const newCost = cost + walkSec * walkWeight;
           const nk = 'w:' + link.node;
-          if (newT > (best.get(nk) ?? -Infinity)) {
-            best.set(nk, newT);
+          if (newCost < (bestCost.get(nk) ?? Infinity)) {
+            bestCost.set(nk, newCost);
             came.set(nk, { next: key, type: 'access',
                            stopId, distance: link.distance, fromNode: link.node,
                            tDep: newT, tArr: t });
-            pq.push([-newT, nk]);
+            pq.push([newCost, nk, newT]);
           }
         }
-        // Transit: alight here by time t; find the LATEST trip arriving at seq ≤ t,
-        // then relax upstream in-bbox stops to the trip's departure there.
         const patternSeqs = scheduleIdx.stopPatterns.get(stopId);
         if (!patternSeqs) continue;
         for (const [patternId, seq] of patternSeqs) {
@@ -3442,10 +3469,12 @@ function fmtDate(ts) {
             if (seqJ >= seq) continue;
             const dep = bestTrip.f + (bestCum[seqJ] || 0) + bestOff;
             if (dep >= bestAr) continue;
+            const rideSec = bestAr - dep;
+            const newCost = cost + rideSec;
             const arrAtJ = dep - TRANSFER_BUFFER_SECS;
             const nk = 's:' + stopJ;
-            if (arrAtJ > (best.get(nk) ?? -Infinity)) {
-              best.set(nk, arrAtJ);
+            if (newCost < (bestCost.get(nk) ?? Infinity)) {
+              bestCost.set(nk, newCost);
               came.set(nk, {
                 next: key, type: 'transit',
                 trip: bestTrip, patternId,
@@ -3454,14 +3483,15 @@ function fmtDate(ts) {
                 fromSeq: seqJ, toSeq: seq,
                 tDep: dep, tArr: bestAr,
               });
-              pq.push([-arrAtJ, nk]);
+              pq.push([newCost, nk, arrAtJ]);
             }
           }
         }
       }
     }
 
-    if (origLatest === null) return null;
+    if (!origResult) return null;
+    const origLatest = origResult.t;
     // Chain from origin forward (came.next walks origin→dest).
     const raw = [];
     let cursor = origKey;
