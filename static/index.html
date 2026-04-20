@@ -309,11 +309,32 @@
   .opt-pill .opt-times { font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 600; }
   .opt-pill .opt-meta { font-size: 10px; opacity: 0.75; margin-top: 1px; }
   .step.transit { flex-wrap: wrap; }
-  .step .stops-line {
-    flex-basis: 100%; margin-left: 28px;
-    font-size: 11px; color: #777; margin-top: 2px;
+  .step .stops-details {
+    flex-basis: 100%; margin-left: 28px; margin-top: 2px;
+    font-size: 11px; color: #777;
   }
-  .step .stops-line .count { font-weight: 500; color: #555; }
+  .step .stops-details > summary {
+    cursor: pointer; list-style: none; user-select: none;
+    padding: 2px 0;
+  }
+  .step .stops-details > summary::-webkit-details-marker { display: none; }
+  .step .stops-details > summary::before {
+    content: '▸'; display: inline-block; width: 12px;
+    color: #aaa; transition: transform 0.1s;
+  }
+  .step .stops-details[open] > summary::before { transform: rotate(90deg); }
+  .step .stops-details .count { font-weight: 500; color: #555; }
+  .step .stops-timeline {
+    list-style: none; padding: 4px 0 4px 14px; margin: 0;
+    border-left: 1px dashed #ccc; margin-left: 4px;
+  }
+  .step .stops-timeline li {
+    display: flex; gap: 8px; padding: 1px 0;
+  }
+  .step .stops-timeline .stop-time {
+    font-variant-numeric: tabular-nums; color: #888; min-width: 52px;
+  }
+  .step .stops-timeline .stop-name { color: #444; }
   #favPanel {
     position: fixed; inset: 0; z-index: 32;
     background: rgba(0,0,0,0.5);
@@ -2540,26 +2561,34 @@ function fmtDate(ts) {
   // Currently-shown route context (for saving). Set by renderRouteChoices /
   // renderDirections / renderSavedRoute. Cleared by clearWalkRoute.
   let currentRouteSnapshot = null;
-  // Render a transit step row, with a stops-line underneath if we know counts.
+  // Render a transit step row. The "N stops · first … last" line is a
+  // <details> that expands to the full per-stop schedule on tap.
   function renderTransitStepHtml(s) {
     const colour = /^#[0-9a-f]{3,8}$/i.test(s.colour || '') ? s.colour : '#888';
     const hops = s.totalStops || 0;
-    let stopsLine = '';
+    const intermediates = Array.isArray(s.intermediateStops) ? s.intermediateStops : [];
+    let stopsBlock = '';
     if (hops > 0) {
-      const countLabel = hops === 1
-        ? '1 stop'
-        : `${hops} stops`;
-      const intermediates = Array.isArray(s.intermediateStops) ? s.intermediateStops : [];
-      const preview = intermediates.length
-        ? intermediates.filter(Boolean).join(' · ')
-        : '';
-      stopsLine = `<div class="stops-line"><span class="count">${countLabel}</span>${preview ? ' · ' + esc(preview) : ''}</div>`;
+      const countLabel = hops === 1 ? '1 stop' : `${hops} stops`;
+      const firstName = intermediates[0]?.name || '';
+      const lastName  = intermediates[intermediates.length - 1]?.name || '';
+      const summary = intermediates.length >= 2
+        ? `${esc(firstName)} … ${esc(lastName)}`
+        : (intermediates.length === 1 ? esc(firstName) : '');
+      // Full timeline: boarding → each intermediate → alighting.
+      const rows = [
+        `<li><span class="stop-time">${fmtClockTime(s.dep)}</span> <span class="stop-name">${esc(s.fromName)}</span></li>`,
+        ...intermediates.map(st =>
+          `<li><span class="stop-time">${fmtClockTime(st.arr)}</span> <span class="stop-name">${esc(st.name)}</span></li>`),
+        `<li><span class="stop-time">${fmtClockTime(s.arr)}</span> <span class="stop-name">${esc(s.toName)}</span></li>`,
+      ].join('');
+      stopsBlock = `<details class="stops-details"><summary><span class="count">${countLabel}</span>${summary ? ' · ' + summary : ''}</summary><ol class="stops-timeline">${rows}</ol></details>`;
     }
     return `<div class="step transit">
       <span class="ref" style="background:${esc(colour)};color:#fff;padding:1px 6px;border-radius:3px;font-weight:600;margin-right:6px;">${esc(s.ref)}</span>
       <span class="text">${esc(s.fromName)} → ${esc(s.toName)}</span>
-      <span class="dist">${fmtClockTime(s.dep)}–${fmtClockTime(s.arr)}</span>
-      ${stopsLine}
+      <span class="dist">${fmtClockTime(s.dep)}–${fmtClockTime(s.arr)} (${fmtDuration(s.durationSec || (s.arr - s.dep))})</span>
+      ${stopsBlock}
     </div>`;
   }
 
@@ -2945,19 +2974,15 @@ function fmtDate(ts) {
     const transferSec = currentTransferSec();
     const canTransit = scheduleIdx.stops.size > 0 && scheduleIdx.stopToWalkNode.size > 0;
     if (canTransit) {
-      const t = todayInfo(pivotDate).nowSec;
-      const activeTrips = makeActiveTrips(pivotDate);
-      const raw = mode === 'arrive'
-        ? tripPlanner.planReverse(start.id, end.id, t, walkWeight, transferSec, activeTrips)
-        : tripPlanner.planForward(start.id, end.id, t, walkWeight, transferSec, activeTrips);
-      if (raw) {
-        const plan = {
+      const raws = planAlternatives(start.id, end.id, mode, pivotDate, walkWeight, transferSec);
+      if (raws.length) {
+        const plans = raws.map(raw => ({
           legs:     stepsToLegs(raw.steps),
           startSec: raw.startSec,
           endSec:   raw.endSec,
           totalSec: raw.endSec - raw.startSec,
-        };
-        renderRouteChoices([plan], 0, from, toPoi);
+        }));
+        renderRouteChoices(plans, 0, from, toPoi);
         return;
       }
     }
@@ -3759,19 +3784,22 @@ function fmtDate(ts) {
     return out;
   }
 
-  // For each transit leg, compute per-leg intermediate stop counts/names for step display.
+  // For each transit leg, compute per-intermediate-stop name + arrival time.
+  // `arr_seq = leg.tDep + (cum[seq] - cum[fromSeq])` — same offset folds out.
   function legStopCounts(route) {
     return route.legs.map((leg) => {
       if (leg.type !== 'transit') return null;
+      const cum = tripCumulative(leg.trip);
+      const fromCum = cum[leg.fromSeq] || 0;
       const bboxStops = scheduleIdx.patternBboxStops.get(leg.patternId) || [];
-      const names = [];
+      const intermediate = [];
       for (const [seq, stopId] of bboxStops) {
         if (seq <= leg.fromSeq || seq >= leg.toSeq) continue;
         const stop = scheduleIdx.stops.get(stopId);
-        names.push(stop?.name || '');
+        intermediate.push({ name: stop?.name || '', arr: leg.tDep + ((cum[seq] || 0) - fromCum) });
       }
-      const totalStops = leg.toSeq - leg.fromSeq;  // hops ridden
-      return { intermediate: names, totalStops };
+      const totalStops = leg.toSeq - leg.fromSeq;
+      return { intermediate, totalStops };
     });
   }
 
@@ -3801,8 +3829,9 @@ function fmtDate(ts) {
           colour: leg.route?.colour || '',
           fromName: from, toName: to,
           dep: leg.tDep, arr: leg.tArr,
+          durationSec: leg.tArr - leg.tDep,
           totalStops: counts?.totalStops || 0,
-          intermediateStops: counts?.intermediate || [],
+          intermediateStops: counts?.intermediate || [],  // [{name, arr}]
           text: `${ref} ${leg.trip.h || long} — board ${from} ${fmtClockTime(leg.tDep)}, alight ${to} ${fmtClockTime(leg.tArr)} (${fmtDuration(leg.tArr - leg.tDep)})`,
         });
       }
