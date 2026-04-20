@@ -70,3 +70,28 @@ done
 if [ "$found" = 0 ]; then
   echo "no .osm.pbf files found in osmpbf/"
 fi
+
+# Transit schedules (GTFS). Independent of per-PBF loop — one aggregated db.
+schedule_db="data/schedule.sqlite"
+shopt -s nullglob
+gtfs_zips=(gtfs/*.zip)
+if [ ${#gtfs_zips[@]} -gt 0 ]; then
+  if [ ! -e "$schedule_db" ]; then
+    echo "==> building schedule db from ${#gtfs_zips[@]} GTFS zip(s)"
+    args=()
+    for z in "${gtfs_zips[@]}"; do
+      slug="$(basename "$z" .zip)"
+      args+=("$slug" "$z")
+    done
+    python3 build-schedule-db.py "${args[@]}" "$schedule_db"
+
+    # Link GTFS stops to OSM nodes for every routes.sqlite we built
+    route_dbs=(data/*.routes.sqlite)
+    if [ ${#route_dbs[@]} -gt 0 ]; then
+      echo "==> linking GTFS stops to OSM nodes"
+      python3 link-gtfs-to-osm.py "$schedule_db" "${route_dbs[@]}"
+    fi
+  else
+    echo "skip schedule: $schedule_db already exists"
+  fi
+fi

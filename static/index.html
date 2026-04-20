@@ -293,6 +293,30 @@
     cursor: pointer; line-height: 1;
   }
   .route-popup .view-btn.on { background: #3b7fdf; border-color: #3b7fdf; }
+  .route-popup .dep-section {
+    margin-top: 8px; padding-top: 8px; border-top: 1px solid #ddd;
+  }
+  .route-popup .dep-label {
+    font-size: 10px; color: #888; margin-bottom: 4px; text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .route-popup .dep-row {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 0; border-top: 1px solid #f2f2f2;
+  }
+  .route-popup .dep-row:first-of-type { border-top: none; }
+  .route-popup .dep-times {
+    display: flex; gap: 4px; flex-wrap: wrap; flex: 1;
+  }
+  .route-popup .dep-time {
+    font-size: 12px; font-variant-numeric: tabular-nums;
+    color: #333; padding: 1px 4px; background: #f5f5f5; border-radius: 3px;
+  }
+  .route-popup .dep-name {
+    font-size: 10px; color: #999;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: 90px; flex-shrink: 0;
+  }
   #pinBar {
     position: absolute; top: 0; left: 0; right: 0; z-index: 25;
     padding: 12px 16px;
@@ -577,6 +601,43 @@ async function deleteRoutesByRegion(regionId) {
   db.close();
 }
 
+const SCHEDULE_DB_NAME = 'cc.schedule.v1';
+function openScheduleDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(SCHEDULE_DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('regions')) {
+        db.createObjectStore('regions', { keyPath: 'regionId' });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function saveSchedule(regionId, payload) {
+  const db = await openScheduleDB();
+  const tx = db.transaction('regions', 'readwrite');
+  tx.objectStore('regions').put({ regionId, ...payload });
+  await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
+  db.close();
+}
+async function loadAllSchedules() {
+  const db = await openScheduleDB();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction('regions', 'readonly').objectStore('regions').getAll();
+    req.onsuccess = () => { resolve(req.result); db.close(); };
+    req.onerror = () => reject(req.error);
+  });
+}
+async function deleteScheduleByRegion(regionId) {
+  const db = await openScheduleDB();
+  const tx = db.transaction('regions', 'readwrite');
+  tx.objectStore('regions').delete(regionId);
+  await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
+  db.close();
+}
+
 const WALK_DB_NAME = 'cc.walk.v1';
 function openWalkDB() {
   return new Promise((resolve, reject) => {
@@ -591,10 +652,10 @@ function openWalkDB() {
     req.onerror = () => reject(req.error);
   });
 }
-async function saveWalkGraph(regionId, nodes, edges) {
+async function saveWalkGraph(regionId, nodes, edges, names) {
   const db = await openWalkDB();
   const tx = db.transaction('regions', 'readwrite');
-  tx.objectStore('regions').put({ regionId, nodes, edges });
+  tx.objectStore('regions').put({ regionId, nodes, edges, names: names || [] });
   await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
   db.close();
 }
@@ -1388,6 +1449,7 @@ function fmtDate(ts) {
     await registerDefaultMarker();
     await loadAllIcons();
     await refreshRoutesSource();
+    await rebuildScheduleIndex();
     await rebuildWalkGraph();
     applyTheme(localStorage.getItem('cc.theme') || 'default');
   });
@@ -1958,7 +2020,7 @@ function fmtDate(ts) {
     if (!confirm('Delete ALL local data? (saved regions, POIs, routes, tiles, fonts, icons, app shell, service worker) This cannot be undone.')) return;
     try {
       localStorage.clear();
-      await Promise.all(['cc.pois.v1', 'cc.routes.v1', 'cc.routes.v2', 'cc.favorites.v1', 'cc.walk.v1'].map(n => new Promise(res => {
+      await Promise.all(['cc.pois.v1', 'cc.routes.v1', 'cc.routes.v2', 'cc.favorites.v1', 'cc.walk.v1', 'cc.schedule.v1'].map(n => new Promise(res => {
         const req = indexedDB.deleteDatabase(n);
         req.onsuccess = req.onerror = req.onblocked = () => res();
       })));
@@ -1970,9 +2032,12 @@ function fmtDate(ts) {
     location.reload();
   };
 
-  function showTransitPopup(stopName, rids, lngLat) {
+  function showTransitPopup(stopName, rids, lngLat, osmNodeIds = []) {
     const unique = [...new Set(rids)].filter(rid => routeMetaIndex[rid]);
-    if (!unique.length) return false;
+    const departures = osmNodeIds.length
+      ? nextDeparturesForOsmNodes(osmNodeIds, new Date(), 3)
+      : [];
+    if (!unique.length && !departures.length) return false;
     const items = unique.map(rid => {
       const m = routeMetaIndex[rid];
       const colour = /^#[0-9a-f]{3,8}$/i.test(m.colour || '') ? m.colour : '#888';
@@ -1987,9 +2052,29 @@ function fmtDate(ts) {
       </div>`;
     }).join('');
     const title = stopName
-      ? `<div class="title">${esc(stopName)} — ${unique.length} route${unique.length === 1 ? '' : 's'}</div>`
+      ? `<div class="title">${esc(stopName)}${unique.length ? ' — ' + unique.length + ' route' + (unique.length === 1 ? '' : 's') : ''}</div>`
       : `<div class="title">${unique.length} route${unique.length === 1 ? '' : 's'} — ✓ toggles line, 👁 shows stops</div>`;
-    const html = `<div class="route-popup">${title}${items}</div>`;
+    let schedHtml = '';
+    if (departures.length) {
+      const rows = departures.map(g => {
+        const colour = /^#[0-9a-f]{3,8}$/i.test(g.route?.colour || '') ? g.route.colour : '#888';
+        const times = g.departures
+          .map(d => `<span class="dep-time" title="${esc(d.headsign)}">${formatDepartureTime(d.dep)}</span>`)
+          .join('');
+        const short = g.route?.short || '?';
+        const long = g.route?.long || '';
+        return `<div class="dep-row">
+          <span class="ref" style="background:${esc(colour)}">${esc(short)}</span>
+          <span class="dep-times">${times}</span>
+          <span class="dep-name">${esc(long)}</span>
+        </div>`;
+      }).join('');
+      schedHtml = `<div class="dep-section">
+        <div class="dep-label">next departures</div>
+        ${rows}
+      </div>`;
+    }
+    const html = `<div class="route-popup">${title}${items}${schedHtml}</div>`;
     const popup = new maplibregl.Popup({ closeButton: true, maxWidth: '360px' })
       .setLngLat(lngLat)
       .setHTML(html)
@@ -2053,15 +2138,18 @@ function fmtDate(ts) {
       : [];
 
     const rids = new Set();
+    const osmNodeIds = new Set();
     let stopName = '';
     for (const f of bubbleHits) {
       if (f.properties.rid) rids.add(f.properties.rid);
+      if (f.properties.node_id != null) osmNodeIds.add(f.properties.node_id);
       if (!stopName && f.properties.name) stopName = f.properties.name;
     }
     if (stopPoiHits.length || bubbleHits.length) {
       const nearby = findStopsNear(e.lngLat.lng, e.lngLat.lat, 30);
       for (const s of nearby) {
         rids.add(s.rid);
+        if (s.node_id != null) osmNodeIds.add(s.node_id);
         if (!stopName && s.name) stopName = s.name;
       }
       if (!stopName) {
@@ -2076,8 +2164,11 @@ function fmtDate(ts) {
       for (const rid of extractRouteIds(f)) rids.add(rid);
     }
 
-    if (rids.size && !realPoiHits.length) {
-      if (showTransitPopup(stopName, [...rids], e.lngLat)) return;
+    const hasSchedule = osmNodeIds.size
+      && [...osmNodeIds].some(nid => scheduleIdx.osmToGtfs.has(nid));
+
+    if ((rids.size || hasSchedule) && !realPoiHits.length) {
+      if (showTransitPopup(stopName, [...rids], e.lngLat, [...osmNodeIds])) return;
     }
 
     const poiFallback = realPoiHits[0] || stopPoiHits[0] || null;
@@ -2278,9 +2369,11 @@ function fmtDate(ts) {
       reg.active.postMessage({ type: 'deleteTiles', urls: r.urls });
       await deletePoisByRegion(id);
       await deleteRoutesByRegion(id);
+      await deleteScheduleByRegion(id);
       await deleteWalkGraphByRegion(id);
       invalidateRoutesCache();
       await refreshRoutesSource();
+      await rebuildScheduleIndex();
       await rebuildWalkGraph();
       allPois = allPois.filter(p => p.regionId !== id);
       saveRegions(list.filter(x => x.id !== id));
@@ -2351,9 +2444,9 @@ function fmtDate(ts) {
       if (statusEl) statusEl.textContent = 'walk graph: parsing…';
       const blob = new Blob(chunks);
       const text = await blob.text();
-      const { nodes = [], edges = [] } = JSON.parse(text);
+      const { nodes = [], edges = [], names = [] } = JSON.parse(text);
       if (statusEl) statusEl.textContent = `walk graph: saving (${nodes.length.toLocaleString()} nodes)…`;
-      await saveWalkGraph(regionId, nodes, edges);
+      await saveWalkGraph(regionId, nodes, edges, names);
       return nodes.length;
     } catch (err) {
       console.error('walk-graph fetch failed:', err);
@@ -2361,16 +2454,60 @@ function fmtDate(ts) {
     }
   }
 
+  function decodeZigzagVarints(bytes) {
+    const out = [];
+    let i = 0;
+    while (i < bytes.length) {
+      let val = 0, shift = 0;
+      while (true) {
+        const b = bytes[i++];
+        val |= (b & 0x7F) << shift;
+        if ((b & 0x80) === 0) break;
+        shift += 7;
+      }
+      // zigzag decode: (val >>> 1) ^ -(val & 1)
+      out.push((val >>> 1) ^ -(val & 1));
+    }
+    return out;
+  }
+  function decodeShapeBlob(fromLng, fromLat, b64) {
+    if (!b64) return [];
+    const bytes = base64ToBytes(b64);
+    const deltas = decodeZigzagVarints(bytes);
+    const pts = [];
+    let lngU = Math.round(fromLng * 1e6);
+    let latU = Math.round(fromLat * 1e6);
+    for (let i = 0; i + 1 < deltas.length; i += 2) {
+      lngU += deltas[i];
+      latU += deltas[i + 1];
+      pts.push([lngU / 1e6, latU / 1e6]);
+    }
+    return pts;
+  }
+
   async function rebuildWalkGraph() {
     const groups = await loadAllWalkGraphs();
     walkGraph = { nodes: new Map(), adj: new Map() };
     for (const g of groups) {
+      const names = g.names || [];
       for (const [id, lng, lat] of (g.nodes || [])) {
         if (!walkGraph.nodes.has(id)) walkGraph.nodes.set(id, { lng, lat });
       }
-      for (const [from, to, weight, name] of (g.edges || [])) {
+      for (const e of (g.edges || [])) {
+        let from, to, weight, name, shape_b64;
+        if (e.length === 5) {
+          [from, to, weight, name, shape_b64] = e;
+          // name is either a string (legacy) or an int index
+          if (typeof name === 'number') name = names[name] || '';
+        } else {
+          // Legacy 4-tuple
+          [from, to, weight, name] = e;
+          shape_b64 = null;
+        }
         if (!walkGraph.adj.has(from)) walkGraph.adj.set(from, []);
-        walkGraph.adj.get(from).push({ to, weight, name });
+        walkGraph.adj.get(from).push({ to, weight, name, shape: shape_b64 || null, reverse: false });
+        if (!walkGraph.adj.has(to)) walkGraph.adj.set(to, []);
+        walkGraph.adj.get(to).push({ to: from, weight, name, shape: shape_b64 || null, reverse: true });
       }
     }
   }
@@ -2475,9 +2612,23 @@ function fmtDate(ts) {
   function buildRouteCoords(route) {
     const coords = [];
     if (!route || !route.path.length) return coords;
-    for (const id of route.path) {
-      const n = walkGraph.nodes.get(id);
-      if (n) coords.push([n.lng, n.lat]);
+    const first = walkGraph.nodes.get(route.path[0]);
+    if (first) coords.push([first.lng, first.lat]);
+    for (let i = 0; i < route.edges.length; i++) {
+      const e = route.edges[i];
+      const fromN = walkGraph.nodes.get(route.path[i]);
+      const toN = walkGraph.nodes.get(route.path[i + 1]);
+      if (!fromN || !toN) continue;
+      if (e.shape) {
+        // Shape encoded from the "physical" edge direction (from lower-node to higher-node
+        // based on how it was stored). `reverse` tells us whether our traversal is
+        // opposite to that stored direction.
+        const origin = e.reverse ? toN : fromN;
+        let pts = decodeShapeBlob(origin.lng, origin.lat, e.shape);
+        if (e.reverse) pts = pts.reverse();
+        for (const p of pts) coords.push(p);
+      }
+      coords.push([toN.lng, toN.lat]);
     }
     return coords;
   }
@@ -2541,6 +2692,19 @@ function fmtDate(ts) {
       return features.length;
     } catch (err) {
       console.error('routes fetch failed:', err);
+      return 0;
+    }
+  }
+  async function fetchAndSaveSchedule(regionId, bbox) {
+    try {
+      const res = await fetch(`/schedule?bbox=${bbox.join(',')}`,
+        { headers: { 'X-Download': '1' } });
+      if (!res.ok) return 0;
+      const payload = await res.json();
+      await saveSchedule(regionId, payload);
+      return Object.keys(payload.stops || {}).length;
+    } catch (err) {
+      console.error('schedule fetch failed:', err);
       return 0;
     }
   }
@@ -2613,6 +2777,187 @@ function fmtDate(ts) {
     return out;
   }
 
+  function base64ToBytes(b64) {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+  function unpackVarints(bytes) {
+    const out = [];
+    let i = 0;
+    while (i < bytes.length) {
+      let v = 0, shift = 0;
+      while (true) {
+        const b = bytes[i++];
+        v |= (b & 0x7F) << shift;
+        if ((b & 0x80) === 0) break;
+        shift += 7;
+      }
+      out.push(v);
+    }
+    return out;
+  }
+  const timingCumCache = new Map();  // base64 blob -> cumulative offsets
+  function tripCumulative(trip) {
+    const key = trip.t;
+    let cum = timingCumCache.get(key);
+    if (cum) return cum;
+    const bytes = base64ToBytes(key || '');
+    const deltas = unpackVarints(bytes);
+    cum = new Array(deltas.length + 1);
+    cum[0] = 0;
+    for (let i = 0; i < deltas.length; i++) cum[i + 1] = cum[i] + deltas[i];
+    timingCumCache.set(key, cum);
+    return cum;
+  }
+
+  let scheduleIdx = {
+    osmToGtfs: new Map(),
+    stopPatterns: new Map(),
+    patterns: new Map(),
+    tripsByPattern: new Map(),
+    routesById: new Map(),
+    services: new Map(),        // service_id TEXT -> {dow, start, end}
+    serviceExceptions: [],      // [[service_id, date, exception_type], ...]
+  };
+  async function rebuildScheduleIndex() {
+    const idx = {
+      osmToGtfs: new Map(), stopPatterns: new Map(),
+      patterns: new Map(), tripsByPattern: new Map(),
+      routesById: new Map(), services: new Map(), serviceExceptions: [],
+    };
+    timingCumCache.clear();
+    const all = await loadAllSchedules();
+    for (const region of all) {
+      for (const [gid, stop] of Object.entries(region.stops || {})) {
+        for (const onid of (stop.osm_nodes || [])) {
+          if (!idx.osmToGtfs.has(onid)) idx.osmToGtfs.set(onid, new Set());
+          idx.osmToGtfs.get(onid).add(gid);
+        }
+      }
+      for (const [gid, pairs] of Object.entries(region.stop_patterns || {})) {
+        let arr = idx.stopPatterns.get(gid);
+        if (!arr) { arr = []; idx.stopPatterns.set(gid, arr); }
+        for (const p of pairs) arr.push(p);
+      }
+      for (const [pidStr, pat] of Object.entries(region.patterns || {})) {
+        idx.patterns.set(Number(pidStr), {
+          route_id: pat.route_id, stop_count: pat.stop_count,
+        });
+      }
+      for (const [rid, r] of Object.entries(region.routes || {})) {
+        idx.routesById.set(rid, r);
+      }
+      const timings = region.timings || [];
+      const headsigns = region.headsigns || [];
+      const services = region.services || [];
+      for (const svc of services) {
+        if (svc && svc.id) idx.services.set(svc.id, svc);
+      }
+      for (const [svcIdx, date, et] of (region.service_exceptions || [])) {
+        const svc = services[svcIdx];
+        if (svc) idx.serviceExceptions.push([svc.id, date, et]);
+      }
+      for (const row of (region.trips || [])) {
+        const [pat_id, timing_id, svc_idx, hs_idx, dir, first_dep] = row;
+        const svc = services[svc_idx];
+        if (!svc) continue;
+        const trip = {
+          p: pat_id,
+          t: timings[timing_id] || '',
+          s: svc.id,
+          h: headsigns[hs_idx] || '',
+          d: dir,
+          f: first_dep,
+        };
+        let arr = idx.tripsByPattern.get(pat_id);
+        if (!arr) { arr = []; idx.tripsByPattern.set(pat_id, arr); }
+        arr.push(trip);
+      }
+    }
+    scheduleIdx = idx;
+  }
+  function todayInfo(now) {
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    const jsDay = now.getDay();
+    return {
+      dateStr: `${y}${m}${d}`,
+      gtfsIdx: jsDay === 0 ? 6 : jsDay - 1,  // GTFS: Mon=0..Sun=6
+      nowSec: now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds(),
+    };
+  }
+  function activeServicesForDate(info) {
+    const active = new Set();
+    for (const [sid, svc] of scheduleIdx.services) {
+      if (svc.start && info.dateStr < svc.start) continue;
+      if (svc.end && info.dateStr > svc.end) continue;
+      if (svc.dow && svc.dow[info.gtfsIdx] === 1) active.add(sid);
+    }
+    for (const [sid, date, et] of scheduleIdx.serviceExceptions) {
+      if (date !== info.dateStr) continue;
+      if (et === 1) active.add(sid);
+      else if (et === 2) active.delete(sid);
+    }
+    return active;
+  }
+  function nextDeparturesForOsmNodes(osmNodeIds, now, limitPerRoute = 3) {
+    const gtfsStopIds = new Set();
+    for (const nid of osmNodeIds) {
+      const gids = scheduleIdx.osmToGtfs.get(nid);
+      if (gids) for (const g of gids) gtfsStopIds.add(g);
+    }
+    if (!gtfsStopIds.size) return [];
+    const info = todayInfo(now);
+    const activeSvc = activeServicesForDate(info);
+    const windowSec = 6 * 3600;
+    const byRoute = new Map();
+    for (const gid of gtfsStopIds) {
+      const patternSeqs = scheduleIdx.stopPatterns.get(gid);
+      if (!patternSeqs) continue;
+      for (const [patternId, seq] of patternSeqs) {
+        const pattern = scheduleIdx.patterns.get(patternId);
+        if (!pattern) continue;
+        const trips = scheduleIdx.tripsByPattern.get(patternId);
+        if (!trips) continue;
+        for (const trip of trips) {
+          if (!activeSvc.has(trip.s)) continue;
+          const cum = tripCumulative(trip);
+          const offset = cum[seq] || 0;
+          const dep = trip.f + offset;
+          if (dep < info.nowSec) continue;
+          if (dep - info.nowSec > windowSec) continue;
+          const rid = pattern.route_id;
+          if (!byRoute.has(rid)) byRoute.set(rid, []);
+          byRoute.get(rid).push({ dep, headsign: trip.h || '' });
+        }
+      }
+    }
+    const result = [];
+    for (const [rid, deps] of byRoute) {
+      deps.sort((a, b) => a.dep - b.dep);
+      result.push({
+        routeId: rid,
+        route: scheduleIdx.routesById.get(rid),
+        departures: deps.slice(0, limitPerRoute),
+      });
+    }
+    result.sort((a, b) => {
+      const as = parseInt(a.route?.short || '') || 9999;
+      const bs = parseInt(b.route?.short || '') || 9999;
+      if (as !== bs) return as - bs;
+      return (a.route?.short || '').localeCompare(b.route?.short || '');
+    });
+    return result;
+  }
+  function formatDepartureTime(sec) {
+    let h = Math.floor(sec / 3600) % 24;
+    const m = Math.floor((sec % 3600) / 60);
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  }
+
   let viewedRoutes = new Set();
   function refreshStopsSource() {
     const src = map.getSource('route-stops');
@@ -2627,7 +2972,7 @@ function fmtDate(ts) {
           type: 'Feature',
           geometry: { type: 'Point', coordinates: [s.lng, s.lat] },
           properties: {
-            rid, name: s.name || '', role: s.role || '',
+            rid, node_id: s.node_id, name: s.name || '', role: s.role || '',
             ord: s.ord, colour
           }
         });
@@ -2699,6 +3044,9 @@ function fmtDate(ts) {
     const routeCount = await fetchAndSaveRoutes(id, bbox);
     invalidateRoutesCache();
     await refreshRoutesSource();
+    status.textContent = 'downloading schedules…';
+    await fetchAndSaveSchedule(id, bbox);
+    await rebuildScheduleIndex();
     await fetchAndSaveWalkGraph(id, bbox, status);
     status.textContent = 'rebuilding walk graph in memory…';
     await rebuildWalkGraph();
