@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="collect">
 <meta name="theme-color" content="#a0c8f0">
-<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<link href="/static/vendor/maplibre-gl.css" rel="stylesheet">
 <style>
   html, body {
     margin: 0; width: 100%; font-family: system-ui, sans-serif;
@@ -758,7 +758,7 @@
     </div>
   </details>
 </div>
-<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="/static/vendor/maplibre-gl.js"></script>
 <script src="/static/trip-planner.js"></script>
 <script>
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
@@ -773,19 +773,16 @@ document.getElementById('installDismiss').onclick = () => {
   document.getElementById('install').classList.remove('show');
 };
 
+// Top-level line shows only the persistence state. The actual byte total is
+// written by renderRegions() once it's summed up the per-region bytes
+// (navigator.storage.estimate() on iOS is unreliable — see earlier sessions).
 async function updateStorageInfo() {
   const el = document.getElementById('storage');
-  if (!el || !navigator.storage) return;
-  const parts = [];
-  if (navigator.storage.persisted) {
-    parts.push((await navigator.storage.persisted()) ? 'persistent ✓' : 'not persistent');
-  }
-  if (navigator.storage.estimate) {
-    const { usage = 0, quota = 0 } = await navigator.storage.estimate();
-    const mb = (n) => (n / 1048576).toFixed(1) + 'MB';
-    parts.push(`${mb(usage)} / ${mb(quota)}`);
-  }
-  el.textContent = parts.join(' · ');
+  if (!el || !navigator.storage || !navigator.storage.persisted) return;
+  const persisted = await navigator.storage.persisted();
+  const existing = el.dataset.sizes || '';
+  el.textContent = (persisted ? 'persistent ✓' : 'not persistent')
+    + (existing ? ' · ' + existing : '');
 }
 
 async function requestPersistent() {
@@ -796,48 +793,123 @@ async function requestPersistent() {
 }
 requestPersistent();
 
-const POI_DB_NAME = 'cc.pois.v1';
+// Mirrors POI_FIELDS in run.py. Order is baked into the binary; never
+// reorder or remove entries — append only, and bump POI_DB_NAME if it changes.
+const POI_FIELDS = [
+  'addr:housenumber', 'addr:street', 'addr:city', 'addr:county',
+  'addr:state', 'addr:country', 'addr:postcode', 'opening_hours',
+  'phone', 'contact:phone', 'website', 'contact:website',
+  'wheelchair', 'brand', 'operator', 'cuisine', 'description',
+  'wikipedia', 'wikidata', 'internet_access',
+];
+
+const POI_DB_NAME = 'cc.pois.v2';
 function openPoiDB() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(POI_DB_NAME, 1);
     req.onupgradeneeded = () => {
       const db = req.result;
-      if (!db.objectStoreNames.contains('pois')) {
-        const store = db.createObjectStore('pois', { autoIncrement: true });
-        store.createIndex('regionId', 'regionId');
+      if (!db.objectStoreNames.contains('regions')) {
+        db.createObjectStore('regions', { keyPath: 'regionId' });
       }
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
 }
-async function savePois(regionId, pois) {
-  if (!pois.length) return;
+async function savePoiRegion(regionId, buffer) {
   const db = await openPoiDB();
-  const tx = db.transaction('pois', 'readwrite');
-  const store = tx.objectStore('pois');
-  for (const p of pois) store.put({ ...p, regionId });
+  const tx = db.transaction('regions', 'readwrite');
+  tx.objectStore('regions').put({ regionId, buffer });
   await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
   db.close();
 }
-async function loadAllPois() {
+async function loadAllPoiBuffers() {
   const db = await openPoiDB();
   return new Promise((resolve, reject) => {
-    const req = db.transaction('pois', 'readonly').objectStore('pois').getAll();
+    const req = db.transaction('regions', 'readonly').objectStore('regions').getAll();
     req.onsuccess = () => { resolve(req.result); db.close(); };
     req.onerror = () => reject(req.error);
   });
 }
 async function deletePoisByRegion(regionId) {
   const db = await openPoiDB();
-  const tx = db.transaction('pois', 'readwrite');
-  const idx = tx.objectStore('pois').index('regionId');
-  const req = idx.openCursor(IDBKeyRange.only(regionId));
-  await new Promise((res, rej) => {
-    req.onsuccess = (e) => { const c = e.target.result; if (c) { c.delete(); c.continue(); } else res(); };
-    req.onerror = () => rej(req.error);
-  });
+  const tx = db.transaction('regions', 'readwrite');
+  tx.objectStore('regions').delete(regionId);
+  await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
   db.close();
+}
+
+// Hydrate a POI binary buffer into plain POI objects. Name / category /
+// every props value is backed by the per-region string pool, so duplicate
+// strings (street names, brands, categories) share one JS string instance —
+// which is the whole point of doing this rather than JSON.parse.
+function hydratePoiRegion(regionId, buffer) {
+  const view = new DataView(buffer);
+  const magic = String.fromCharCode(
+    view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+  if (magic !== 'POIB') throw new Error('POI: bad magic ' + magic);
+  const version = view.getUint32(4, true);
+  if (version !== 1) throw new Error('POI: bad version ' + version);
+  const N = view.getUint32(8, true);
+  const S = view.getUint32(12, true);
+  const stringsByteLen = view.getUint32(16, true);
+
+  const colStart = 32;
+  const lng         = new Float32Array(buffer, colStart,         N);
+  const lat         = new Float32Array(buffer, colStart +  4 * N, N);
+  const nameIdx     = new Int32Array(  buffer, colStart +  8 * N, N);
+  const categoryIdx = new Int32Array(  buffer, colStart + 12 * N, N);
+  const propsOff    = new Uint32Array( buffer, colStart + 16 * N, N);
+
+  const stringsStart = colStart + 20 * N;
+  const stringPool = new Array(S);
+  const dec = new TextDecoder();
+  let p = stringsStart;
+  for (let i = 0; i < S; i++) {
+    const len = view.getUint16(p, true);
+    p += 2;
+    stringPool[i] = dec.decode(new Uint8Array(buffer, p, len));
+    p += len;
+  }
+
+  const propsStart = stringsStart + stringsByteLen;
+  const out = new Array(N);
+  for (let i = 0; i < N; i++) {
+    const ni = nameIdx[i];
+    const ci = categoryIdx[i];
+    const po = propsOff[i];
+    let props = null;
+    if (po !== 0xFFFFFFFF) {
+      props = {};
+      let q = propsStart + po;
+      const count = view.getUint8(q); q += 1;
+      for (let k = 0; k < count; k++) {
+        const code = view.getUint8(q); q += 1;
+        const sidx = view.getUint32(q, true); q += 4;
+        props[POI_FIELDS[code]] = stringPool[sidx];
+      }
+    }
+    out[i] = {
+      lng: lng[i],
+      lat: lat[i],
+      name: ni >= 0 ? stringPool[ni] : '',
+      category: ci >= 0 ? stringPool[ci] : '',
+      regionId,
+      props,
+    };
+  }
+  return out;
+}
+
+async function loadAllPois() {
+  const records = await loadAllPoiBuffers();
+  const all = [];
+  for (const rec of records) {
+    if (!rec.buffer) continue;
+    for (const poi of hydratePoiRegion(rec.regionId, rec.buffer)) all.push(poi);
+  }
+  return all;
 }
 
 const ROUTES_DB_NAME = 'cc.routes.v2';
@@ -932,7 +1004,7 @@ async function deleteScheduleByRegion(regionId) {
   db.close();
 }
 
-const WALK_DB_NAME = 'cc.walk.v3';
+const WALK_DB_NAME = 'cc.walk.v4';
 function openWalkDB() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(WALK_DB_NAME, 1);
@@ -3306,18 +3378,58 @@ function fmtDate(ts) {
 
   document.getElementById('wipeBtn').onclick = async () => {
     if (!confirm('Delete ALL local data? (saved regions, POIs, routes, tiles, fonts, icons, app shell, service worker) This cannot be undone.')) return;
+    const statusEl = document.getElementById('status');
+    const log = (msg) => {
+      console.log('[wipe]', msg);
+      if (statusEl) statusEl.textContent = 'wipe: ' + msg;
+    };
+    const report = [];
     try {
-      localStorage.clear();
-      await Promise.all(['cc.pois.v1', 'cc.routes.v1', 'cc.routes.v2', 'cc.favorites.v1', 'cc.walk.v1', 'cc.walk.v2', 'cc.walk.v3', 'cc.schedule.v1'].map(n => new Promise(res => {
-        const req = indexedDB.deleteDatabase(n);
-        req.onsuccess = req.onerror = req.onblocked = () => res();
-      })));
-      const keys = await caches.keys();
-      await Promise.all(keys.map(k => caches.delete(k)));
-      const regs = await navigator.serviceWorker.getRegistrations();
+      // Unregister SW first so it can't re-populate caches mid-wipe.
+      log('unregistering service workers…');
+      const regs = (await navigator.serviceWorker.getRegistrations()) || [];
       await Promise.all(regs.map(r => r.unregister()));
-    } catch (e) { console.error('wipe failed:', e); }
-    location.reload();
+      report.push('SW: ' + regs.length + ' unregistered');
+
+      log('clearing caches…');
+      const cacheKeys = await caches.keys();
+      await Promise.all(cacheKeys.map(k => caches.delete(k)));
+      report.push('caches: ' + cacheKeys.length + ' deleted [' + cacheKeys.join(', ') + ']');
+
+      log('enumerating IDB…');
+      let names = [];
+      if (indexedDB.databases) {
+        try {
+          names = (await indexedDB.databases()).map(d => d.name).filter(Boolean);
+        } catch { names = []; }
+      }
+      // Fallback list for browsers without indexedDB.databases() (Firefox),
+      // and to catch any legacy DBs the enumerator happens to miss.
+      for (const n of ['cc.pois.v1', 'cc.pois.v2', 'cc.routes.v1', 'cc.routes.v2',
+                       'cc.favorites.v1', 'cc.walk.v1', 'cc.walk.v2', 'cc.walk.v3',
+                       'cc.walk.v4', 'cc.schedule.v1']) {
+        if (!names.includes(n)) names.push(n);
+      }
+      log('deleting ' + names.length + ' IDB(s)…');
+      const results = await Promise.all(names.map(n => new Promise(res => {
+        const req = indexedDB.deleteDatabase(n);
+        req.onsuccess = () => res({ name: n, status: 'ok' });
+        req.onerror   = () => res({ name: n, status: 'error' });
+        req.onblocked = () => res({ name: n, status: 'blocked' });
+      })));
+      const blocked = results.filter(r => r.status === 'blocked').map(r => r.name);
+      report.push('IDB: ' + results.filter(r => r.status === 'ok').length + ' ok');
+      if (blocked.length) report.push('IDB blocked: ' + blocked.join(', '));
+
+      localStorage.clear();
+      sessionStorage.clear();
+    } catch (e) {
+      console.error('wipe failed:', e);
+      report.push('error: ' + e.message);
+    }
+    console.log('[wipe] summary:\n' + report.join('\n'));
+    if (statusEl) statusEl.textContent = 'wipe done — ' + report.join(' · ');
+    setTimeout(() => location.reload(), 800);
   };
 
   function showTransitPopup(stopName, rids, lngLat, osmNodeIds = []) {
@@ -3704,25 +3816,7 @@ function fmtDate(ts) {
     });
   }
   async function measurePoiBytes(regionId) {
-    return new Promise((resolve) => {
-      const req = indexedDB.open(POI_DB_NAME);
-      req.onerror = () => resolve(0);
-      req.onsuccess = () => {
-        const db = req.result;
-        if (!db.objectStoreNames.contains('pois')) { db.close(); resolve(0); return; }
-        try {
-          const idx = db.transaction('pois', 'readonly').objectStore('pois').index('regionId');
-          const rq = idx.getAll(IDBKeyRange.only(regionId));
-          rq.onsuccess = () => {
-            let total = 0;
-            for (const rec of rq.result) total += estimateRecordBytes(rec);
-            db.close();
-            resolve(total);
-          };
-          rq.onerror = () => { db.close(); resolve(0); };
-        } catch { db.close(); resolve(0); }
-      };
-    });
+    return measureIdbRecordBytes(POI_DB_NAME, 'regions', regionId);
   }
   async function measureRegionBytes(region) {
     const [tiles, pois, schedule, walk] = await Promise.all([
@@ -3760,18 +3854,28 @@ function fmtDate(ts) {
       el.appendChild(row);
     }
     // Kick off per-region measurement (async, fills in as each finishes).
-    for (const r of list) {
-      measureRegionBytes(r).then(s => {
-        const target = el.querySelector(`[data-sizes="${r.id}"]`);
-        if (!target) return;
+    // Also track a running grand total for the top-level storage line.
+    const results = list.map(r => measureRegionBytes(r).then(s => {
+      const target = el.querySelector(`[data-sizes="${r.id}"]`);
+      if (target) {
         target.innerHTML =
           `<span class="bucket"><strong>${fmtBytes(s.total)}</strong> total</span>` +
           `<span class="bucket">tiles ${fmtBytes(s.tiles)}</span>` +
           `<span class="bucket">POIs ${fmtBytes(s.pois)}</span>` +
           `<span class="bucket">schedule ${fmtBytes(s.schedule)}</span>` +
           `<span class="bucket">walk ${fmtBytes(s.walk)}</span>`;
-      });
-    }
+      }
+      return s.total;
+    }));
+    Promise.all(results).then(totals => {
+      const storageEl = document.getElementById('storage');
+      if (!storageEl) return;
+      const grand = totals.reduce((a, b) => a + b, 0);
+      storageEl.dataset.sizes = list.length
+        ? `${fmtBytes(grand)} across ${list.length} region${list.length === 1 ? '' : 's'}`
+        : '';
+      updateStorageInfo();
+    });
     el.querySelectorAll('[data-goto]').forEach(b => b.onclick = () => {
       const r = loadRegions().find(x => x.id === b.dataset.goto);
       if (r) map.fitBounds([[r.bbox[0], r.bbox[1]], [r.bbox[2], r.bbox[3]]]);
@@ -3820,13 +3924,20 @@ function fmtDate(ts) {
       const pres = await fetch(`/poi?bbox=${bbox.join(',')}`,
         { headers: { 'X-Download': '1' } });
       if (!pres.ok) return 0;
-      const { pois = [] } = await pres.json();
-      if (!pois.length) return 0;
-      await savePois(regionId, pois);
-      allPois = allPois.concat(pois.map(p => ({ ...p, regionId })));
+      const buffer = await pres.arrayBuffer();
+      if (buffer.byteLength < 32) return 0;
+      const view = new DataView(buffer);
+      const magic = String.fromCharCode(
+        view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+      if (magic !== 'POIB') throw new Error('POI: bad magic ' + magic);
+      const N = view.getUint32(8, true);
+      if (!N) return 0;
+      await savePoiRegion(regionId, buffer);
+      const hydrated = hydratePoiRegion(regionId, buffer);
+      for (const poi of hydrated) allPois.push(poi);
       renderPoiStat();
       populateFilter();
-      return pois.length;
+      return N;
     } catch (err) {
       console.error('POI fetch failed:', err);
       return 0;

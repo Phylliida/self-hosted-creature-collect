@@ -104,6 +104,18 @@ def _download_timing_start():
 
 
 @app.after_request
+def _no_http_cache_for_js(resp):
+    # Tell Safari not to HTTP-cache our own JS. The service-worker Cache API
+    # already holds a canonical copy, so the browser HTTP cache is pure
+    # duplicate — and on iOS Safari each hard refresh retains the old entry
+    # alongside the new one, growing storage.estimate() ~1 MB per refresh.
+    if (request.path.startswith("/static/")
+        and (request.path.endswith(".js") or request.path.endswith(".css"))):
+        resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.after_request
 def _download_timing_log(resp):
     # Only log requests initiated by a download flow (client adds this header
     # for POI/schedule/walk/tile fetches triggered by "save current view").
@@ -179,8 +191,41 @@ def icons_list():
     return {"files": sorted(f.name for f in d.iterdir() if f.name.endswith(".svg"))}
 
 
+# Field codes for binary POI props. Keys must stay in lock-step with the
+# client's POI_FIELDS array — reordering here breaks existing IDB data.
+POI_FIELDS = [
+    "addr:housenumber", "addr:street", "addr:city", "addr:county",
+    "addr:state", "addr:country", "addr:postcode", "opening_hours",
+    "phone", "contact:phone", "website", "contact:website",
+    "wheelchair", "brand", "operator", "cuisine", "description",
+    "wikipedia", "wikidata", "internet_access",
+]
+POI_FIELD_CODE = {k: i for i, k in enumerate(POI_FIELDS)}
+
+
 @app.route("/poi")
 def poi():
+    """Binary POI bundle. Layout (little-endian, 4-byte aligned):
+        Header (32 bytes):
+            0:  'POIB' magic
+            4:  u32 version (=1)
+            8:  u32 N (poi count)
+            12: u32 S (string pool count)
+            16: u32 stringsByteLen
+            20: u32 propsByteLen
+            24: u32 reserved (0)
+            28: u32 reserved (0)
+        Columns (20N):
+            N × f32 lng
+            N × f32 lat
+            N × i32 name_idx      (-1 = none; else idx into string pool)
+            N × i32 category_idx  (-1 = none)
+            N × u32 props_off     (0xFFFFFFFF = none; else byte offset into props block)
+        Strings (stringsByteLen): S × (u16 utf8_len + utf8 bytes)
+        Props  (propsByteLen):    per-POI record at props_off:
+            u8 field_count
+            field_count × (u8 field_code, u32 string_idx)
+    """
     try:
         parts = [float(x) for x in request.args.get("bbox", "").split(",")]
     except ValueError:
@@ -188,7 +233,27 @@ def poi():
     if len(parts) != 4:
         abort(400)
     w, s, e, n = parts
-    results = []
+
+    string_pool = []
+    string_to_idx = {}
+
+    def intern(text):
+        if not text:
+            return -1
+        idx = string_to_idx.get(text)
+        if idx is None:
+            idx = len(string_pool)
+            string_to_idx[text] = idx
+            string_pool.append(text)
+        return idx
+
+    lngs = []
+    lats = []
+    name_idx = []
+    category_idx = []
+    props_offs = []
+    props_buf = BytesIO()
+
     for path in _relevant_files("*.pois.sqlite", _poi_overlaps, w, s, e, n):
         with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
             rows = conn.execute(
@@ -197,17 +262,67 @@ def poi():
                 (w, e, s, n),
             ).fetchall()
             for lng, lat, name, category, props_json in rows:
-                props = {}
+                lngs.append(lng)
+                lats.append(lat)
+                name_idx.append(intern(name) if name else -1)
+                category_idx.append(intern(category) if category else -1)
+
+                props = None
                 if props_json:
                     try:
                         props = json.loads(props_json)
                     except json.JSONDecodeError:
-                        pass
-                results.append({
-                    "lng": lng, "lat": lat, "name": name,
-                    "category": category, "props": props,
-                })
-    return jsonify({"pois": results})
+                        props = None
+
+                emitted = []
+                if props:
+                    for k, v in props.items():
+                        code = POI_FIELD_CODE.get(k)
+                        if code is None or not v:
+                            continue
+                        emitted.append((code, intern(str(v))))
+
+                if emitted:
+                    props_offs.append(props_buf.tell())
+                    props_buf.write(struct.pack("<B", min(len(emitted), 255)))
+                    for code, sidx in emitted[:255]:
+                        props_buf.write(struct.pack("<BI", code, sidx))
+                else:
+                    props_offs.append(0xFFFFFFFF)
+
+    N = len(lngs)
+    S = len(string_pool)
+
+    strings_buf = BytesIO()
+    for s_str in string_pool:
+        b = s_str.encode("utf-8")
+        if len(b) > 65535:
+            b = b[:65535]
+        strings_buf.write(struct.pack("<H", len(b)))
+        strings_buf.write(b)
+    strings_bytes = strings_buf.getvalue()
+    props_bytes = props_buf.getvalue()
+
+    body = b"".join([
+        struct.pack("<4sIIIIIII",
+                    b"POIB", 1, N, S,
+                    len(strings_bytes), len(props_bytes), 0, 0),
+        _le_bytes(lngs, "f"),
+        _le_bytes(lats, "f"),
+        _le_bytes(name_idx, "i"),
+        _le_bytes(category_idx, "i"),
+        _le_bytes(props_offs, "I"),
+        strings_bytes,
+        props_bytes,
+    ])
+
+    compressed = gzip.compress(body, compresslevel=1)
+    resp = Response(compressed, mimetype="application/octet-stream")
+    resp.headers["Content-Encoding"] = "gzip"
+    resp.headers["Vary"] = "Accept-Encoding"
+    g.meta["N"] = N
+    g.meta["S"] = S
+    return resp
 
 
 @app.route("/routes")
@@ -458,6 +573,49 @@ def walk_graph():
     M = len(names_list)
 
     with _phase("pack"):
+        # Sort edges by weight ascending so we can encode the first chunk as
+        # u8 (0..255 m), the next as u16 (256..65535 m), and the tail (very
+        # rare) as f32. Two split indices in the header describe the ranges.
+        # All edge-parallel arrays must be reordered together.
+        import bisect
+        order = sorted(range(E), key=lambda i: edges_weight[i])
+        edges_weight    = [edges_weight[i]    for i in order]
+        edges_from      = [edges_from[i]      for i in order]
+        edges_to        = [edges_to[i]        for i in order]
+        edges_name_idx  = [edges_name_idx[i]  for i in order]
+        edges_shape_off = [edges_shape_off[i] for i in order]
+        edges_shape_len = [edges_shape_len[i] for i in order]
+
+        u8_end  = bisect.bisect_right(edges_weight, 255)
+        u16_end = bisect.bisect_right(edges_weight, 65535)
+
+        # name_idx width. -1 ("no name") encodes as sentinel (max value of the
+        # chosen width) so we can still use unsigned arrays client-side.
+        if M < 0xFF:
+            name_idx_width = 1
+            name_sentinel = 0xFF
+            name_typecode = "B"
+        elif M < 0xFFFF:
+            name_idx_width = 2
+            name_sentinel = 0xFFFF
+            name_typecode = "H"
+        else:
+            name_idx_width = 4
+            name_sentinel = 0xFFFFFFFF
+            name_typecode = "I"
+        edges_name_idx_enc = [
+            (ni if ni >= 0 else name_sentinel) for ni in edges_name_idx
+        ]
+
+        def _align4(b):
+            pad = (-len(b)) & 3
+            return b + (b"\x00" * pad) if pad else b
+
+        weight_u8_bytes  = _align4(_le_bytes(edges_weight[:u8_end], "B"))
+        weight_u16_bytes = _align4(_le_bytes(edges_weight[u8_end:u16_end], "H"))
+        weight_f32_bytes = _le_bytes([float(v) for v in edges_weight[u16_end:]], "f")
+        name_idx_bytes   = _align4(_le_bytes(edges_name_idx_enc, name_typecode))
+
         names_buf = BytesIO()
         for name in names_list:
             b = name.encode("utf-8")
@@ -468,22 +626,34 @@ def walk_graph():
         names_bytes = names_buf.getvalue()
         shapes_bytes = b"".join(shape_chunks)
 
+        # v2 header (48 bytes). Keeps nodes 8-aligned for the f64 osm_id view.
+        header = struct.pack(
+            "<4sIIIIIIIIIII",
+            b"WALK", 2, N, E, M,
+            len(names_bytes), len(shapes_bytes),
+            u8_end, u16_end, name_idx_width,
+            0, 0,  # reserved
+        )
+
         body = b"".join([
-            struct.pack("<4sIIIIIII",
-                        b"WALK", 1, N, E, M,
-                        len(names_bytes), len(shapes_bytes), 0),
+            header,
             _le_bytes(nodes_osm, "d"),
             _le_bytes(nodes_lng, "f"),
             _le_bytes(nodes_lat, "f"),
             _le_bytes(edges_from, "I"),
             _le_bytes(edges_to, "I"),
-            _le_bytes(edges_weight, "f"),
-            _le_bytes(edges_name_idx, "i"),
             _le_bytes(edges_shape_off, "I"),
             _le_bytes(edges_shape_len, "I"),
+            weight_u8_bytes,
+            weight_u16_bytes,
+            weight_f32_bytes,
+            name_idx_bytes,
             names_bytes,
             shapes_bytes,
         ])
+        g.meta["u8end"] = u8_end
+        g.meta["u16end"] = u16_end
+        g.meta["niw"] = name_idx_width
 
     with _phase("gzip"):
         compressed = gzip.compress(body, compresslevel=1)
