@@ -50,7 +50,7 @@ unpavedValues = Set { "unpaved", "compacted", "dirt", "earth", "fine_gravel", "g
 
 -- Process node tags
 
-node_keys = { "addr:housenumber","aerialway","aeroway","amenity","barrier","highway","historic","leisure","natural","office","place","railway","shop","sport","tourism","waterway" }
+node_keys = { "aerialway","aeroway","amenity","barrier","highway","historic","leisure","natural","office","place","railway","shop","sport","tourism","waterway" }
 
 -- Get admin level which the place node is capital of.
 -- Returns nil in case of invalid capital and for places which are not capitals.
@@ -127,12 +127,9 @@ function node_function()
 		-- SLIM: stripped iata / icao / ele / ele_ft / class — client renders
 		--       only the aerodrome name.
 	end
-	-- Write 'housenumber'
-	local housenumber = Find("addr:housenumber")
-	if housenumber~="" then
-		Layer("housenumber", false)
-		WriteHousenumberAttribute(housenumber)
-	end
+	-- Housenumbers live in their own binary bundle served by /housenumbers,
+	-- not in the vector tiles — they were ~15-25% of z14 tile bytes for
+	-- features that only render at z17+.
 
 	-- Write 'place'
 	-- SLIM: client's `place` style filter keeps only
@@ -268,23 +265,6 @@ function relation_scan_function()
 	end
 end
 
--- Write the housenumber attribute, using a numeric Value when the input is
--- a clean positive integer and falling back to a string otherwise. Pure
--- integers ("127") become a 1-2 byte varint in the layer's Value pool;
--- strings with length + UTF-8 are several bytes each, and they stack up —
--- for a city-sized z14 extract, housenumber values alone are ~2 MB. The
--- round-trip string.format check preserves quirks like leading zeros
--- ("0007") or mixed forms ("45B", "12-14") as strings.
-function WriteHousenumberAttribute(hn)
-	local n = tonumber(hn)
-	if n and n >= 0 and n == math.floor(n) and string.format("%d", n) == hn then
-		AttributeNumeric("housenumber", n)
-	else
-		Attribute("housenumber", hn)
-	end
-end
-
-
 function write_to_transportation_layer(minzoom, highway_class)
 	Layer("transportation", false)
 	MinZoom(minzoom)
@@ -317,7 +297,6 @@ function way_function()
 	local man_made = Find("man_made")
 	local boundary = Find("boundary")
 	local isClosed = IsClosed()
-	local housenumber = Find("addr:housenumber")
 	local write_name = false
 	local construction = Find("construction")
 
@@ -507,11 +486,8 @@ function way_function()
 		SetMinZoomByArea()
 	end
 
-	-- Set 'housenumber'
-	if housenumber~="" then
-		LayerAsCentroid("housenumber")
-		WriteHousenumberAttribute(housenumber)
-	end
+	-- (Housenumbers on ways are no longer written to tiles; see
+	-- build-housenumbers.py which extracts them into a dedicated bundle.)
 
 	-- Set 'water'
 	if natural=="water" or leisure=="swimming_pool" or landuse=="reservoir" or landuse=="basin" or waterClasses[waterway] then
