@@ -15,7 +15,13 @@
 // No meter-to-second conversion inside this module.
 //
 // `deps`:
-//   walkGraph        { nodes: Map, adj: Map(id → [{to, walkSec, ...}]) }
+//   walkGraph        Typed-array graph exposing index-based accessors:
+//                      hasNode(idx), lng(idx), lat(idx),
+//                      neighborStart(idx), neighborEnd(idx),
+//                      neighborTo(ai), neighborEdge(ai), neighborReverse(ai),
+//                      edgeWeight(e), edgeWalkSec(e),
+//                      edgeName(e), edgeShape(e).
+//                    Node identifiers are internal uint32 indices (not OSM IDs).
 //   scheduleIdx      { stopPatterns, patternBboxStops, stopToWalkNode,
 //                      walkNodeToStops }
 //   MinHeap          class
@@ -46,7 +52,7 @@
 
     function planForward(originNodeId, destNodeId, t0, walkWeight, transferSec, activeTrips) {
       const wg = deps.walkGraph, si = deps.scheduleIdx;
-      if (!wg.nodes.has(originNodeId) || !wg.nodes.has(destNodeId)) return null;
+      if (!wg.hasNode(originNodeId) || !wg.hasNode(destNodeId)) return null;
       const destKey = 'w:' + destNodeId;
       const bestCost = new Map(), came = new Map(), pq = new MinHeap();
       bestCost.set('w:' + originNodeId, 0);
@@ -67,10 +73,15 @@
 
         if (key[0] === 'w') {
           const nid = +key.slice(2);
-          for (const e of (wg.adj.get(nid) || [])) {
-            relax('w:' + e.to, cost + e.walkSec * walkWeight, t + e.walkSec, {
-              prev: key, type: 'walk', edge: e,
-              fromNode: nid, toNode: e.to, tDep: t, tArr: t + e.walkSec,
+          const ns = wg.neighborStart(nid), ne = wg.neighborEnd(nid);
+          for (let i = ns; i < ne; i++) {
+            const to = wg.neighborTo(i);
+            const edgeIdx = wg.neighborEdge(i);
+            const reverse = wg.neighborReverse(i);
+            const walkSec = wg.edgeWalkSec(edgeIdx);
+            relax('w:' + to, cost + walkSec * walkWeight, t + walkSec, {
+              prev: key, type: 'walk', edge: { edgeIdx, reverse },
+              fromNode: nid, toNode: to, tDep: t, tArr: t + walkSec,
             });
           }
           for (const [stopId, walkSec] of (si.walkNodeToStops.get(nid) || [])) {
@@ -123,7 +134,7 @@
 
     function planReverse(originNodeId, destNodeId, tArr, walkWeight, transferSec, activeTrips) {
       const wg = deps.walkGraph, si = deps.scheduleIdx;
-      if (!wg.nodes.has(originNodeId) || !wg.nodes.has(destNodeId)) return null;
+      if (!wg.hasNode(originNodeId) || !wg.hasNode(destNodeId)) return null;
       const origKey = 'w:' + originNodeId;
       const destKey = 'w:' + destNodeId;
       const bestCost = new Map(), came = new Map(), pq = new MinHeap();
@@ -145,11 +156,19 @@
 
         if (key[0] === 'w') {
           const nid = +key.slice(2);
-          for (const e of (wg.adj.get(nid) || [])) {
-            relax('w:' + e.to, cost + e.walkSec * walkWeight, t - e.walkSec, {
-              next: key, type: 'walk', edge: e,
-              fromNode: e.to, toNode: nid,
-              tDep: t - e.walkSec, tArr: t,
+          const ns = wg.neighborStart(nid), ne = wg.neighborEnd(nid);
+          for (let i = ns; i < ne; i++) {
+            const to = wg.neighborTo(i);
+            const edgeIdx = wg.neighborEdge(i);
+            const rev = wg.neighborReverse(i);
+            const walkSec = wg.edgeWalkSec(edgeIdx);
+            // In reverse search we're traversing neighbour→nid backward in time;
+            // in forward order the leg runs to→nid, so the stored direction
+            // bit needs to be flipped.
+            relax('w:' + to, cost + walkSec * walkWeight, t - walkSec, {
+              next: key, type: 'walk', edge: { edgeIdx, reverse: !rev },
+              fromNode: to, toNode: nid,
+              tDep: t - walkSec, tArr: t,
             });
           }
           for (const [stopId, walkSec] of (si.walkNodeToStops.get(nid) || [])) {
