@@ -1208,6 +1208,14 @@ function fmtDate(ts) {
             'text-anchor': 'center',
           },
           paint: { 'text-color': '#7a6f65', 'text-halo-color': '#fff', 'text-halo-width': 1 } },
+        { id: 'park-labels', type: 'symbol', source: 'local', 'source-layer': 'park',
+          minzoom: 12,
+          layout: {
+            'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name'], ['get', 'name_int']],
+            'text-font': ['KlokanTech Noto Sans Regular'],
+            'text-size': 11,
+          },
+          paint: { 'text-color': '#4a7a3a', 'text-halo-color': '#fff', 'text-halo-width': 1 } },
         { id: 'water-labels', type: 'symbol', source: 'local', 'source-layer': 'water_name',
           minzoom: 10,
           layout: {
