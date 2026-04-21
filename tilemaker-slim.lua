@@ -135,38 +135,31 @@ function node_function()
 	end
 
 	-- Write 'place'
-	-- note that OpenMapTiles has a rank for countries (1-3), states (1-6) and cities (1-10+);
-	--   we could potentially approximate it for cities based on the population tag
+	-- SLIM: client's `place` style filter keeps only
+	--       {continent, country, state, city, town}; all other place classes
+	--       (village, hamlet, suburb, neighbourhood, locality, farm, ...)
+	--       are emitted but never rendered, so skip them entirely.
 	local place = Find("place")
 	if place ~= "" then
-		local mz = 13
-		local pop = tonumber(Find("population")) or 0
-		local capital = capitalLevel(Find("capital"))
-		local rank = calcRank(place, pop, capital)
-
-		if     place == "continent"     then mz=0
-		elseif place == "country"       then
-			if     pop>50000000 then rank=1; mz=1
-			elseif pop>20000000 then rank=2; mz=2
-			else                     rank=3; mz=3 end
-		elseif place == "state"         then mz=4
-		elseif place == "city"          then mz=5
-		elseif place == "town" and pop>8000 then mz=7
-		elseif place == "town"          then mz=8
-		elseif place == "village" and pop>2000 then mz=9
-		elseif place == "village"       then mz=10
-		elseif place == "suburb"        then mz=11
-		elseif place == "hamlet"        then mz=12
-		elseif place == "neighbourhood" then mz=13
-		elseif place == "locality"      then mz=13
+		if place == "continent" or place == "country" or place == "state"
+		   or place == "city" or place == "town" then
+			local mz = 13
+			local pop = tonumber(Find("population")) or 0
+			if     place == "continent"     then mz=0
+			elseif place == "country"       then
+				if     pop>50000000 then mz=1
+				elseif pop>20000000 then mz=2
+				else                     mz=3 end
+			elseif place == "state"         then mz=4
+			elseif place == "city"          then mz=5
+			elseif place == "town" and pop>8000 then mz=7
+			elseif place == "town"          then mz=8
+			end
+			Layer("place", false)
+			Attribute("class", place)
+			MinZoom(mz)
+			SetNameAttributes()
 		end
-
-		Layer("place", false)
-		Attribute("class", place)
-		MinZoom(mz)
-		-- SLIM: stripped rank / capital / iso_a2 — client style filters on
-		--       `class` only and labels via name:latin.
-		SetNameAttributes()
 		return
 	end
 
@@ -338,19 +331,13 @@ function way_function()
 	end
 
 	-- Administrative boundaries
-	-- https://openmaptiles.org/schema/#boundary
-	if isBoundary and not (Find("maritime")=="yes") then
-		local mz = 0
-		if     admin_level>=3 and admin_level<5 then mz=4
-		elseif admin_level>=5 and admin_level<7 then mz=8
-		elseif admin_level==7 then mz=10
-		elseif admin_level>=8 then mz=12
-		end
-
+	-- SLIM: client only renders admin_level 2 (country) and 4 (state); skip
+	--       all other levels (counties/cities/etc. are never shown).
+	if isBoundary and not (Find("maritime")=="yes")
+	   and (admin_level == 2 or admin_level == 4) then
 		Layer("boundary",false)
 		AttributeNumeric("admin_level", admin_level)
-		MinZoom(mz)
-		-- SLIM: stripped disputed attribute (client style doesn't filter on it).
+		MinZoom(admin_level == 2 and 0 or 4)
 	end
 
 	-- Roads ('transportation' and 'transportation_name', plus 'transportation_name_detail')
@@ -527,7 +514,7 @@ function way_function()
 			LayerAsCentroid("water_name_detail")
 			SetNameAttributes()
 			SetMinZoomByArea()
-			Attribute("class", class)
+			-- SLIM: stripped class — client labels every water_name the same.
 		end
 
 		return -- in case we get any landuse processing
@@ -558,7 +545,7 @@ function way_function()
 		end
 	end
 
-	-- Parks — still emit name for future label layer, but drop class.
+	-- Parks — labelled by the 'park-labels' client style layer.
 	if     boundary=="national_park" then Layer("park",true); SetNameAttributes()
 	elseif leisure=="nature_reserve" then Layer("park",true); SetNameAttributes() end
 
@@ -566,12 +553,10 @@ function way_function()
 	local rank, class, subclass = GetPOIRank()
 	if rank then WritePOI(class,subclass,rank); return end
 
-	-- Catch-all
+	-- Catch-all — SLIM: client doesn't filter POIs by rank; skip rank attr.
 	if (building~="" or write_name) and Holds("name") then
 		LayerAsCentroid("poi_detail")
 		SetNameAttributes()
-		if write_name then rank=6 else rank=25 end
-		AttributeNumeric("rank", rank)
 	end
 end
 
