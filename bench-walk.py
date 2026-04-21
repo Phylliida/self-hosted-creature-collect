@@ -64,7 +64,7 @@ def main():
         print("body smaller than header — nothing to parse")
         sys.exit(1)
 
-    magic, version, N, E, M, names_len, shapes_len, u8_end, u16_end, niw, _r1, _r2 = (
+    magic, version, N, E, M, names_len, shapes_len, u8_end, u16_end, niw, shape_ec, _r = (
         struct.unpack_from("<4sIIIIIIIIIII", body, 0)
     )
     if magic != b"WALK":
@@ -75,6 +75,8 @@ def main():
     print(f"N nodes : {N:,}")
     print(f"E edges : {E:,}")
     print(f"M names : {M:,}   (name_idx width: {niw} byte{'s' if niw > 1 else ''})")
+    print(f"shaped  : {shape_ec:,} / {E:,} "
+          f"({(shape_ec / E * 100) if E else 0:.1f}% of edges have shapes)")
     if E:
         print(
             f"weight  : u8={u8_end:,} ({u8_end / E:.1%})  "
@@ -83,20 +85,22 @@ def main():
         )
     print()
 
-    # Byte offsets match the layout produced by run.py /walk-graph v2.
+    # Byte offsets match the layout produced by run.py /walk-graph v3.
     h = 48
-    off_nodes_osm = h
-    off_nodes_lng = h + 8 * N
-    off_nodes_lat = h + 12 * N
-    off_edges4 = h + 16 * N                  # from, to, shape_off, shape_len
-    off_weights = off_edges4 + 16 * E
+    off_edges4 = h + 16 * N                  # from, to (no shape cols)
+    off_weights = off_edges4 + 8 * E
     off_name_idx = (
         off_weights
         + align4(u8_end)
         + align4(2 * (u16_end - u8_end))
         + 4 * (E - u16_end)
     )
-    off_names = off_name_idx + align4(niw * E)
+    off_bitmap = off_name_idx + align4(niw * E)
+    bitmap_bytes = align4((E + 7) // 8)
+    off_sparse_off = off_bitmap + bitmap_bytes
+    off_sparse_len = off_sparse_off + 4 * shape_ec
+    sparse_len_bytes = align4(2 * shape_ec)
+    off_names = off_sparse_len + sparse_len_bytes
     off_shapes = off_names + names_len
     end = off_shapes + shapes_len
 
@@ -110,12 +114,13 @@ def main():
         ("node lat (f32)",                       4 * N),
         ("edge from (u32)",                      4 * E),
         ("edge to (u32)",                        4 * E),
-        ("edge shape_off (u32)",                 4 * E),
-        ("edge shape_len (u32)",                 4 * E),
         ("edge weight u8",                       align4(u8_end)),
         ("edge weight u16",                      align4(2 * (u16_end - u8_end))),
         ("edge weight f32",                      4 * (E - u16_end)),
         (f"edge name_idx (u{niw * 8})",          align4(niw * E)),
+        ("has-shape bitmap",                     bitmap_bytes),
+        ("sparse shape_off (u32)",               4 * shape_ec),
+        ("sparse shape_len (u16)",               sparse_len_bytes),
         ("names pool",                           names_len),
         ("shape blob",                           shapes_len),
     ]
@@ -131,19 +136,16 @@ def main():
     print(f"{'sum':35s} {fmt(total):>12s}")
     print()
 
-    # Pull out shape_len column to see how many edges have no shape.
-    no_shape = 0
-    shape_len_off = h + 16 * N + 12 * E
-    if E:
-        lens = struct.unpack_from(f"<{E}I", body, shape_len_off)
-        no_shape = sum(1 for v in lens if v == 0)
-        longest_10pct = sum(sorted(lens, reverse=True)[: max(1, E // 10)])
+    # Shape length distribution (from the sparse u16 len column).
+    if shape_ec:
+        lens = struct.unpack_from(f"<{shape_ec}H", body, off_sparse_len)
         total_shape = sum(lens)
-        print(f"edges with no shape : {no_shape:,} / {E:,} ({no_shape / E:.1%})")
-        print(f"mean shape len      : {total_shape / E:.1f} B/edge")
+        longest_10pct = sum(sorted(lens, reverse=True)[: max(1, shape_ec // 10)])
+        print(f"mean len on shaped edges: {total_shape / shape_ec:.1f} B")
         if total_shape:
             print(
-                f"top 10% of edges carry {longest_10pct / total_shape:.0%} of shape bytes"
+                f"top 10% of shaped edges carry "
+                f"{longest_10pct / total_shape:.0%} of shape bytes"
             )
     print()
 
@@ -162,22 +164,14 @@ def main():
                 print(f"  {lo:3d}-{hi:3d}m: {c[bucket]:7,d}  {bar}")
     print()
 
-    # Hypothetical savings if we compact shape columns.
-    cur_shape_cols = 8 * E
-    u16_only = 2 * E              # replace off+len with u16 len only; off derived
-    bitmap_sparse = (
-        (E + 7) // 8              # one bit per edge
-        + 4 * (E - no_shape)      # u32 off for has-shape edges only
-        + 2 * (E - no_shape)      # u16 len for has-shape edges only
-    )
-    print("hypothetical IDB wins:")
-    print(
-        f"  shape cols: {fmt(cur_shape_cols)}  "
-        f"→ u16-len only: {fmt(u16_only)} "
-        f"(saves {fmt(cur_shape_cols - u16_only)})  "
-        f"→ bitmap+sparse: {fmt(bitmap_sparse)} "
-        f"(saves {fmt(cur_shape_cols - bitmap_sparse)})"
-    )
+    # Quick back-of-envelope for the next potential wins.
+    from_to_u24 = 6 * E            # pack u32 from/to into u24 if N < 16M
+    node_coord_u24 = 6 * N         # pack f32 lng + f32 lat into u24 in bbox-relative units
+    print("hypothetical further IDB wins:")
+    print(f"  from/to → u24: {fmt(8 * E)} → {fmt(from_to_u24)} "
+          f"(saves {fmt(8 * E - from_to_u24)})")
+    print(f"  lng+lat → u24 bbox-relative: {fmt(8 * N)} → {fmt(node_coord_u24)} "
+          f"(saves {fmt(8 * N - node_coord_u24)})")
 
 
 if __name__ == "__main__":
