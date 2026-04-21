@@ -3964,28 +3964,22 @@ function fmtDate(ts) {
     const groups = await loadAllWalkGraphs();
     const wg = emptyWalkGraph();
 
-    // Pass 1: assign sequential internal indices to every unique OSM node
-    // ID, count edges, sum shape bytes, intern names across regions.
+    // Pass 1: assign sequential internal indices, count edges and shape
+    // bytes, intern names across regions.
     const osmToIdx = new Map();
     const nameToGlobal = new Map();
     let nextIdx = 0;
     let totalEdges = 0;
     let totalShapeBytes = 0;
     for (const g of groups) {
-      for (const row of (g.nodes || [])) {
-        const id = row[0];
+      for (const [id] of g.nodes) {
         if (!osmToIdx.has(id)) osmToIdx.set(id, nextIdx++);
       }
-    }
-    for (const g of groups) {
-      const localNames = g.names || [];
-      for (const e of (g.edges || [])) {
-        if (!osmToIdx.has(e[0]) || !osmToIdx.has(e[1])) continue;
+      const localNames = g.names;
+      for (const [, , , nameLocal, shape] of g.edges) {
         totalEdges++;
-        const sh = e[4];
-        if (sh) totalShapeBytes += sh.byteLength;
-        const nl = e[3];
-        const s = (typeof nl === 'number') ? (localNames[nl] || '') : (nl || '');
+        if (shape) totalShapeBytes += shape.byteLength;
+        const s = localNames[nameLocal];
         if (s && !nameToGlobal.has(s)) nameToGlobal.set(s, nameToGlobal.size);
       }
     }
@@ -4009,7 +4003,7 @@ function fmtDate(ts) {
 
     // Pass 2: fill node coords (last region wins if duplicated).
     for (const g of groups) {
-      for (const [id, lng, lat] of (g.nodes || [])) {
+      for (const [id, lng, lat] of g.nodes) {
         const idx = osmToIdx.get(id);
         wg._nodeLng[idx] = lng;
         wg._nodeLat[idx] = lat;
@@ -4022,16 +4016,14 @@ function fmtDate(ts) {
     let eIdx = 0;
     let shapeOff = 0;
     for (const g of groups) {
-      const localNames = g.names || [];
-      for (const e of (g.edges || [])) {
-        const [from, to, weight, nameLocal, shape] = e;
+      const localNames = g.names;
+      for (const [from, to, weight, nameLocal, shape] of g.edges) {
         const fromIdx = osmToIdx.get(from);
         const toIdx   = osmToIdx.get(to);
-        if (fromIdx === undefined || toIdx === undefined) continue;
         adjCounts[fromIdx]++;
         adjCounts[toIdx]++;
         wg._edgeWeight[eIdx] = weight;
-        const nameStr = (typeof nameLocal === 'number') ? (localNames[nameLocal] || '') : (nameLocal || '');
+        const nameStr = localNames[nameLocal];
         wg._edgeNameIdx[eIdx] = nameStr ? nameToGlobal.get(nameStr) : -1;
         if (shape) {
           wg._shapeBuf.set(shape, shapeOff);
@@ -4059,10 +4051,9 @@ function fmtDate(ts) {
     const cursor = new Uint32Array(nodeCount);
     let eIdx2 = 0;
     for (const g of groups) {
-      for (const e of (g.edges || [])) {
-        const fromIdx = osmToIdx.get(e[0]);
-        const toIdx   = osmToIdx.get(e[1]);
-        if (fromIdx === undefined || toIdx === undefined) continue;
+      for (const [from, to] of g.edges) {
+        const fromIdx = osmToIdx.get(from);
+        const toIdx   = osmToIdx.get(to);
         const fromPos = wg._adjStart[fromIdx] + (cursor[fromIdx]++);
         const toPos   = wg._adjStart[toIdx]   + (cursor[toIdx]++);
         wg._adjTo[fromPos]   = toIdx;
@@ -4074,7 +4065,7 @@ function fmtDate(ts) {
     }
 
     walkGraph = wg;
-    if (typeof buildMultimodalBridges === 'function') buildMultimodalBridges();
+    buildMultimodalBridges();
     walkGraphLoaded = true;
   }
 
@@ -4094,7 +4085,7 @@ function fmtDate(ts) {
   function unloadWalkGraph() {
     walkGraph = emptyWalkGraph();
     walkGraphLoaded = false;
-    if (typeof buildMultimodalBridges === 'function') buildMultimodalBridges();
+    buildMultimodalBridges();
   }
 
   function haversineM(lng1, lat1, lng2, lat2) {
