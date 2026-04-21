@@ -6,15 +6,23 @@ const APP_SHELL = [
   '/manifest.webmanifest',
   '/static/icon.svg',
   '/static/trip-planner.js',
-  'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css',
-  'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js',
+  '/static/vendor/maplibre-gl.css',
+  '/static/vendor/maplibre-gl.js',
 ];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(APP_CACHE).then(async (c) => {
     await Promise.all(APP_SHELL.map(async (url) => {
       try {
-        const res = await fetch(url, { cache: 'reload' });
+        // Delete first so Safari reliably frees the old response body;
+        // cache.put alone sometimes leaves the old blob hanging around and
+        // each hard refresh grows navigator.storage.estimate() a bit.
+        await c.delete(url);
+        // `no-store` skips the HTTP cache entirely on both read and write.
+        // `reload` bypasses on read but still populates, which on Safari
+        // causes storage.estimate() to grow ~1-2 MB per hard refresh as
+        // old response blobs linger in the browser's HTTP cache.
+        const res = await fetch(url, { cache: 'no-store' });
         if (res.ok) await c.put(url, res);
       } catch {}
     }));
@@ -133,7 +141,7 @@ async function refreshAppShell(client) {
   for (const url of APP_SHELL) {
     await cache.delete(url);
     try {
-      const res = await fetch(url, { cache: 'reload' });
+      const res = await fetch(url, { cache: 'no-store' });
       if (res.ok) await cache.put(url, res);
     } catch {}
   }

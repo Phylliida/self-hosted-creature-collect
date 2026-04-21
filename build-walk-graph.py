@@ -295,7 +295,10 @@ class PolylineEmitter(osmium.SimpleHandler):
             # grid in microdegrees.
             shape_blob = None
             if len(seg_points) > 2:
-                simplified = dp_simplify(seg_points, 1.0)
+                # 3 m tolerance: imperceptible at pedestrian zoom, and most
+                # straight OSM segments collapse to just endpoints (which then
+                # hit the "no shape" fast path below).
+                simplified = dp_simplify(seg_points, 3.0)
                 if len(simplified) > 2:
                     shape_deltas = []
                     prev_lng_u = round(seg_points[0][0] * 1_000_000)
