@@ -4017,7 +4017,7 @@ function fmtDate(ts) {
         view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
       if (magic !== 'WALK') throw new Error('walk-graph: bad magic ' + magic);
       const version = view.getUint32(4, true);
-      if (version !== 1) throw new Error('walk-graph: bad version ' + version);
+      if (version !== 2) throw new Error('walk-graph: bad version ' + version);
       const nodeCount = view.getUint32(8, true);
       if (statusEl) statusEl.textContent = `walk graph: saving (${nodeCount.toLocaleString()} nodes)…`;
       await saveWalkGraph(regionId, buffer);
@@ -4028,8 +4028,13 @@ function fmtDate(ts) {
     }
   }
 
-  // Parse the binary walk-graph buffer into zero-copy typed-array views plus
-  // a decoded names table. Shape bytes stay as a Uint8Array subview.
+  // Parse the binary walk-graph buffer. Nodes and most edge columns are
+  // zero-copy typed-array views over the IDB-held ArrayBuffer. edgeWeight
+  // and edgeNameIdx are materialized (small RAM cost per region) because
+  // the on-disk form uses variable-width encodings:
+  //  - weights are sorted and packed as u8 / u16 / f32 cascade
+  //  - name_idx uses 1/2/4-byte fixed width (whichever is narrowest given
+  //    the region's unique-name count).
   function viewWalkRegion(buffer) {
     const view = new DataView(buffer);
     const N = view.getUint32(8, true);
@@ -4037,21 +4042,51 @@ function fmtDate(ts) {
     const M = view.getUint32(16, true);
     const namesByteLen = view.getUint32(20, true);
     const shapesByteLen = view.getUint32(24, true);
+    const u8End = view.getUint32(28, true);
+    const u16End = view.getUint32(32, true);
+    const nameIdxWidth = view.getUint32(36, true);
+    const align4 = (x) => (x + 3) & ~3;
 
-    const nodesStart = 32;
+    const nodesStart = 48;
     const nodeIds = new Float64Array(buffer, nodesStart, N);
     const nodeLng = new Float32Array(buffer, nodesStart + 8 * N, N);
     const nodeLat = new Float32Array(buffer, nodesStart + 12 * N, N);
 
     const edgesStart = nodesStart + 16 * N;
-    const edgeFrom     = new Uint32Array(buffer, edgesStart, E);
-    const edgeTo       = new Uint32Array(buffer, edgesStart + 4 * E, E);
-    const edgeWeight   = new Float32Array(buffer, edgesStart + 8 * E, E);
-    const edgeNameIdx  = new Int32Array(buffer, edgesStart + 12 * E, E);
-    const edgeShapeOff = new Uint32Array(buffer, edgesStart + 16 * E, E);
-    const edgeShapeLen = new Uint32Array(buffer, edgesStart + 20 * E, E);
+    const edgeFrom     = new Uint32Array(buffer, edgesStart,            E);
+    const edgeTo       = new Uint32Array(buffer, edgesStart + 4 * E,    E);
+    const edgeShapeOff = new Uint32Array(buffer, edgesStart + 8 * E,    E);
+    const edgeShapeLen = new Uint32Array(buffer, edgesStart + 12 * E,   E);
 
-    const namesStart = edgesStart + 24 * E;
+    const weightU8Offset  = edgesStart + 16 * E;
+    const weightU16Count  = u16End - u8End;
+    const weightF32Count  = E - u16End;
+    const weightU16Offset = weightU8Offset + align4(u8End);
+    const weightF32Offset = weightU16Offset + align4(2 * weightU16Count);
+    const weightU8  = new Uint8Array(buffer, weightU8Offset, u8End);
+    const weightU16 = new Uint16Array(buffer, weightU16Offset, weightU16Count);
+    const weightF32 = new Float32Array(buffer, weightF32Offset, weightF32Count);
+    const edgeWeight = new Float32Array(E);
+    for (let i = 0; i < u8End; i++) edgeWeight[i] = weightU8[i];
+    for (let i = 0; i < weightU16Count; i++) edgeWeight[u8End + i] = weightU16[i];
+    for (let i = 0; i < weightF32Count; i++) edgeWeight[u16End + i] = weightF32[i];
+
+    const nameIdxOffset = weightF32Offset + 4 * weightF32Count;
+    const sentinel = nameIdxWidth === 1 ? 0xFF
+                   : nameIdxWidth === 2 ? 0xFFFF : 0xFFFFFFFF;
+    const edgeNameIdx = new Int32Array(E);
+    if (nameIdxWidth === 1) {
+      const src = new Uint8Array(buffer, nameIdxOffset, E);
+      for (let i = 0; i < E; i++) edgeNameIdx[i] = src[i] === sentinel ? -1 : src[i];
+    } else if (nameIdxWidth === 2) {
+      const src = new Uint16Array(buffer, nameIdxOffset, E);
+      for (let i = 0; i < E; i++) edgeNameIdx[i] = src[i] === sentinel ? -1 : src[i];
+    } else {
+      const src = new Uint32Array(buffer, nameIdxOffset, E);
+      for (let i = 0; i < E; i++) edgeNameIdx[i] = src[i] === sentinel ? -1 : (src[i] | 0);
+    }
+
+    const namesStart = nameIdxOffset + align4(nameIdxWidth * E);
     const names = new Array(M);
     const dec = new TextDecoder();
     let off = namesStart;
