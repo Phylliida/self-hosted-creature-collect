@@ -932,7 +932,7 @@ async function deleteScheduleByRegion(regionId) {
   db.close();
 }
 
-const WALK_DB_NAME = 'cc.walk.v1';
+const WALK_DB_NAME = 'cc.walk.v2';
 function openWalkDB() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(WALK_DB_NAME, 1);
@@ -3298,7 +3298,7 @@ function fmtDate(ts) {
     if (!confirm('Delete ALL local data? (saved regions, POIs, routes, tiles, fonts, icons, app shell, service worker) This cannot be undone.')) return;
     try {
       localStorage.clear();
-      await Promise.all(['cc.pois.v1', 'cc.routes.v1', 'cc.routes.v2', 'cc.favorites.v1', 'cc.walk.v1', 'cc.schedule.v1'].map(n => new Promise(res => {
+      await Promise.all(['cc.pois.v1', 'cc.routes.v1', 'cc.routes.v2', 'cc.favorites.v1', 'cc.walk.v1', 'cc.walk.v2', 'cc.schedule.v1'].map(n => new Promise(res => {
         const req = indexedDB.deleteDatabase(n);
         req.onsuccess = req.onerror = req.onblocked = () => res();
       })));
@@ -3829,6 +3829,12 @@ function fmtDate(ts) {
       const blob = new Blob(chunks);
       const text = await blob.text();
       const { nodes = [], edges = [], names = [] } = JSON.parse(text);
+      // Decode each shape's base64 to Uint8Array now, once, before IDB put.
+      // IDB structured-clones typed arrays natively, and we keep them binary
+      // in RAM forever after — no UTF-16 tax on base64 strings.
+      for (const e of edges) {
+        if (e[4]) e[4] = base64ToBytes(e[4]);
+      }
       if (statusEl) statusEl.textContent = `walk graph: saving (${nodes.length.toLocaleString()} nodes)…`;
       await saveWalkGraph(regionId, nodes, edges, names);
       return nodes.length;
@@ -3854,9 +3860,8 @@ function fmtDate(ts) {
     }
     return out;
   }
-  function decodeShapeBlob(fromLng, fromLat, b64) {
-    if (!b64) return [];
-    const bytes = base64ToBytes(b64);
+  function decodeShapeBlob(fromLng, fromLat, bytes) {
+    if (!bytes) return [];
     const deltas = decodeZigzagVarints(bytes);
     const pts = [];
     let lngU = Math.round(fromLng * 1e6);
@@ -3921,21 +3926,14 @@ function fmtDate(ts) {
         if (!walkGraph.nodes.has(id)) walkGraph.nodes.set(id, { lng, lat });
       }
       for (const e of (g.edges || [])) {
-        let from, to, weight, name, shape_b64;
-        if (e.length === 5) {
-          [from, to, weight, name, shape_b64] = e;
-          // name is either a string (legacy) or an int index
-          if (typeof name === 'number') name = names[name] || '';
-        } else {
-          // Legacy 4-tuple
-          [from, to, weight, name] = e;
-          shape_b64 = null;
-        }
-        if (!walkGraph.adj.has(from)) walkGraph.adj.set(from, []);
+        const [from, to, weight, nameIdx, shape] = e;
+        // `shape` here is either a Uint8Array or null (or any falsy).
+        const name = (typeof nameIdx === 'number') ? (names[nameIdx] || '') : (nameIdx || '');
         const walkSec = weight / WALK_SPEED_MPS;
-        walkGraph.adj.get(from).push({ to, weight, walkSec, name, shape: shape_b64 || null, reverse: false });
+        if (!walkGraph.adj.has(from)) walkGraph.adj.set(from, []);
+        walkGraph.adj.get(from).push({ to, weight, walkSec, name, shape: shape || null, reverse: false });
         if (!walkGraph.adj.has(to)) walkGraph.adj.set(to, []);
-        walkGraph.adj.get(to).push({ to: from, weight, walkSec, name, shape: shape_b64 || null, reverse: true });
+        walkGraph.adj.get(to).push({ to: from, weight, walkSec, name, shape: shape || null, reverse: true });
       }
     }
     // Bridges depend on both walk graph AND schedule; rebuild whenever walk changes.

@@ -73,6 +73,59 @@ def zigzag_varint_pack(values):
     return bytes(out)
 
 
+# One degree of latitude ≈ 111320 m (equirectangular, good to ~0.5% globally).
+_M_PER_DEG_LAT = 111320.0
+
+
+def dp_simplify(points, tol_m):
+    """Douglas-Peucker simplification. Accepts list of (lng, lat) degree
+    pairs, returns a subset with endpoints preserved. Tolerance is in meters,
+    measured in a local equirectangular projection around the segment's
+    average latitude (so lng/lat aspect ratio is correct for short spans).
+    Iterative to avoid Python recursion limits on very long ways."""
+    n = len(points)
+    if n <= 2:
+        return list(points)
+    lat_ref = sum(p[1] for p in points) / n
+    cos_lat = math.cos(math.radians(lat_ref))
+    mx = _M_PER_DEG_LAT * cos_lat
+    my = _M_PER_DEG_LAT
+    pm = [(p[0] * mx, p[1] * my) for p in points]
+    keep = bytearray(n)
+    keep[0] = 1
+    keep[-1] = 1
+    tol2 = tol_m * tol_m
+    stack = [(0, n - 1)]
+    while stack:
+        a, b = stack.pop()
+        if b - a < 2:
+            continue
+        ax, ay = pm[a]
+        bx, by = pm[b]
+        dx, dy = bx - ax, by - ay
+        seg_len2 = dx * dx + dy * dy
+        max_d2 = 0.0
+        max_i = -1
+        for i in range(a + 1, b):
+            px, py = pm[i]
+            if seg_len2 > 0.0:
+                t = ((px - ax) * dx + (py - ay) * dy) / seg_len2
+                if t < 0.0: t = 0.0
+                elif t > 1.0: t = 1.0
+                projx, projy = ax + t * dx, ay + t * dy
+                d2 = (px - projx) ** 2 + (py - projy) ** 2
+            else:
+                d2 = (px - ax) ** 2 + (py - ay) ** 2
+            if d2 > max_d2:
+                max_d2 = d2
+                max_i = i
+        if max_d2 > tol2:
+            keep[max_i] = 1
+            stack.append((a, max_i))
+            stack.append((max_i, b))
+    return [points[i] for i in range(n) if keep[i]]
+
+
 class DegreeCounter(osmium.SimpleHandler):
     """Pass 1: identify intersection nodes.
 
@@ -218,27 +271,47 @@ class PolylineEmitter(osmium.SimpleHandler):
             if i != last_idx and osm_id_i not in intersections:
                 continue
             end_seq = self._ensure_node(osm_id_i, lng_i, lat_i)
-            prev_lng = valid[seg_start][1]
-            prev_lat = valid[seg_start][2]
-            weight_m = 0.0
-            shape_deltas = []
-            prev_lng_u = round(prev_lng * 1_000_000)
-            prev_lat_u = round(prev_lat * 1_000_000)
+
+            # Collect every point in this segment (endpoints + any shape
+            # points) and compute the honest walking distance over all of
+            # them — routing accuracy should not change with shape compression.
+            seg_points = [(valid[seg_start][1], valid[seg_start][2])]
             for j in range(seg_start + 1, i):
-                lng_j, lat_j = valid[j][1], valid[j][2]
-                weight_m += haversine_m(prev_lng, prev_lat, lng_j, lat_j)
-                lng_u_j = round(lng_j * 1_000_000)
-                lat_u_j = round(lat_j * 1_000_000)
-                shape_deltas.append(lng_u_j - prev_lng_u)
-                shape_deltas.append(lat_u_j - prev_lat_u)
-                prev_lng, prev_lat = lng_j, lat_j
-                prev_lng_u, prev_lat_u = lng_u_j, lat_u_j
-            weight_m += haversine_m(prev_lng, prev_lat, lng_i, lat_i)
+                seg_points.append((valid[j][1], valid[j][2]))
+            seg_points.append((lng_i, lat_i))
+            weight_m = 0.0
+            for k in range(1, len(seg_points)):
+                weight_m += haversine_m(
+                    seg_points[k - 1][0], seg_points[k - 1][1],
+                    seg_points[k][0],     seg_points[k][1],
+                )
             weight_m_int = max(1, round(weight_m))
-            shape_blob = zigzag_varint_pack(shape_deltas) if shape_deltas else None
+
+            # Shape: DP-simplify at 1m, drop entirely when only the endpoints
+            # remain, otherwise emit intermediate points snapped to 1m (5-
+            # decimal) precision. Encoding is still microdegree deltas from
+            # the full-precision start endpoint, to keep the wire format
+            # unchanged — quantized vertices just happen to fall on a 10-unit
+            # grid in microdegrees.
+            shape_blob = None
+            if len(seg_points) > 2:
+                simplified = dp_simplify(seg_points, 1.0)
+                if len(simplified) > 2:
+                    shape_deltas = []
+                    prev_lng_u = round(seg_points[0][0] * 1_000_000)
+                    prev_lat_u = round(seg_points[0][1] * 1_000_000)
+                    for p in simplified[1:-1]:
+                        lng_u = round(p[0] * 100_000) * 10
+                        lat_u = round(p[1] * 100_000) * 10
+                        shape_deltas.append(lng_u - prev_lng_u)
+                        shape_deltas.append(lat_u - prev_lat_u)
+                        prev_lng_u, prev_lat_u = lng_u, lat_u
+                    if shape_deltas:
+                        shape_blob = zigzag_varint_pack(shape_deltas)
+
             if shape_blob is not None:
                 self.shape_count += 1
-            if seg_start_seq != end_seq or shape_deltas:
+            if seg_start_seq != end_seq or shape_blob is not None:
                 self.edge_batch.append(
                     (seg_start_seq, end_seq, weight_m_int, name_id, shape_blob)
                 )
