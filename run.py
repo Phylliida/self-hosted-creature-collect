@@ -1,13 +1,15 @@
 import array
 import base64
+import contextlib
 import gzip
 import json
 import pathlib
 import sqlite3
 import struct
 import sys
+import time
 from io import BytesIO
-from flask import Flask, send_from_directory, Response, abort, request, jsonify
+from flask import Flask, g, send_from_directory, Response, abort, request, jsonify
 
 # array.array native int widths are platform-dependent in theory; all mainstream
 # server platforms have 4-byte int / unsigned int. Fail fast if ever not true.
@@ -33,50 +35,43 @@ def gzip_json(data):
     return resp
 
 
-_FILE_BOUNDS_CACHE = {}
-
-
-def _cached_bounds(path, key, sql):
-    ck = (str(path), key)
-    if ck in _FILE_BOUNDS_CACHE:
-        return _FILE_BOUNDS_CACHE[ck]
+# Overlap checks use the rtree's native spatial index (O(log n)) instead of
+# a MIN/MAX scan that would read the entire index on cold starts. Each file's
+# open() connection is cheap; the rtree lookup returns in ~ms even on huge
+# countries.
+def _rtree_overlaps(path, table, w, s, e, n):
     try:
         with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
-            row = conn.execute(sql).fetchone()
+            row = conn.execute(
+                f"SELECT 1 FROM {table} "
+                f"WHERE minX <= ? AND maxX >= ? AND minY <= ? AND maxY >= ? "
+                f"LIMIT 1",
+                (e, w, n, s),
+            ).fetchone()
+        return row is not None
     except sqlite3.DatabaseError:
-        row = None
-    out = row if row and row[0] is not None else None
-    _FILE_BOUNDS_CACHE[ck] = out
-    return out
-
-
-def _rtree_bounds(path, table):
-    return _cached_bounds(
-        path, f"rtree:{table}",
-        f"SELECT MIN(minX), MAX(maxX), MIN(minY), MAX(maxY) FROM {table}",
-    )
-
-
-def _poi_bounds(path):
-    return _cached_bounds(
-        path, "poi",
-        "SELECT MIN(lng), MAX(lng), MIN(lat), MAX(lat) FROM poi",
-    )
-
-
-def _overlaps(file_bounds, w, s, e, n):
-    if not file_bounds:
         return False
-    fw, fe, fs, fn = file_bounds
-    return fw <= e and fe >= w and fs <= n and fn >= s
 
 
-def _relevant_files(glob_pattern, bounds_fn, w, s, e, n):
+def _poi_overlaps(path, w, s, e, n):
+    try:
+        with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+            row = conn.execute(
+                "SELECT 1 FROM poi "
+                "WHERE lng BETWEEN ? AND ? AND lat BETWEEN ? AND ? LIMIT 1",
+                (w, e, s, n),
+            ).fetchone()
+        return row is not None
+    except sqlite3.DatabaseError:
+        return False
+
+
+def _relevant_files(glob_pattern, overlap_fn, w, s, e, n):
     if not DATA_DIR.exists():
         return []
     out = []
     for path in sorted(DATA_DIR.glob(glob_pattern)):
-        if _overlaps(bounds_fn(path), w, s, e, n):
+        if overlap_fn(path, w, s, e, n):
             out.append(path)
     return out
 
@@ -85,6 +80,48 @@ DATA_DIR = ROOT / "data"
 SCHEDULE_PATH = DATA_DIR / "schedule.sqlite"
 
 app = Flask(__name__, static_folder="static")
+
+
+@contextlib.contextmanager
+def _phase(name):
+    """Record wall-clock duration of a code block under `g.phases[name]`.
+    Works only during a Flask request (no-op if `g` has no phases dict)."""
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        try:
+            g.phases[name] = (time.perf_counter() - start) * 1000.0
+        except (AttributeError, RuntimeError):
+            pass
+
+
+@app.before_request
+def _download_timing_start():
+    g.t0 = time.perf_counter()
+    g.phases = {}  # name -> ms
+    g.meta = {}    # name -> scalar (counts, etc.)
+
+
+@app.after_request
+def _download_timing_log(resp):
+    # Only log requests initiated by a download flow (client adds this header
+    # for POI/schedule/walk/tile fetches triggered by "save current view").
+    if request.headers.get("X-Download") != "1":
+        return resp
+    elapsed_ms = (time.perf_counter() - g.t0) * 1000.0
+    size = resp.calculate_content_length()
+    size_str = f"{size / 1024:.1f}KB" if size is not None else "?KB"
+    phases = getattr(g, "phases", {})
+    meta = getattr(g, "meta", {})
+    phase_str = (" " + " ".join(f"{k}={v:.0f}ms" for k, v in phases.items())) if phases else ""
+    meta_str = (" " + " ".join(f"{k}={v}" for k, v in meta.items())) if meta else ""
+    qs = ("?" + request.query_string.decode("ascii", "replace")) if request.query_string else ""
+    if len(qs) > 80:
+        qs = qs[:77] + "..."
+    print(f"[dl] {request.method} {request.path}{qs} "
+          f"size={size_str} total={elapsed_ms:.0f}ms{phase_str}{meta_str}", flush=True)
+    return resp
 
 
 @app.route("/")
@@ -152,7 +189,7 @@ def poi():
         abort(400)
     w, s, e, n = parts
     results = []
-    for path in _relevant_files("*.pois.sqlite", _poi_bounds, w, s, e, n):
+    for path in _relevant_files("*.pois.sqlite", _poi_overlaps, w, s, e, n):
         with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
             rows = conn.execute(
                 "SELECT lng, lat, name, category, props FROM poi "
@@ -186,7 +223,7 @@ def routes():
     routes_map = {}
     stops_map = {}
     for path in _relevant_files("*.routes.sqlite",
-                                 lambda p: _rtree_bounds(p, "route_rtree"),
+                                 lambda p, *a: _rtree_overlaps(p, "route_rtree", *a),
                                  w, s, e, n):
         file_key = path.name[:-len(".routes.sqlite")]
         with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
@@ -288,16 +325,65 @@ def walk_graph():
     shape_chunks = []
     shapes_total = 0
 
-    for path in _relevant_files("*.walk.sqlite",
-                                 lambda p: _rtree_bounds(p, "walk_node_rtree"),
-                                 w, s, e, n):
+    sql_bbox_ms = 0.0
+    process_ms = 0.0
+    total_edges_fetched = 0
+
+    # Pre-bind hot dict/list methods so the per-row loop avoids attribute
+    # lookups on globals.
+    osm_get = osm_to_local.get
+    nodes_osm_append = nodes_osm.append
+    nodes_lng_append = nodes_lng.append
+    nodes_lat_append = nodes_lat.append
+    name_get = name_to_idx.get
+    names_list_append = names_list.append
+    edges_from_append = edges_from.append
+    edges_to_append = edges_to.append
+    edges_weight_append = edges_weight.append
+    edges_name_idx_append = edges_name_idx.append
+    edges_shape_off_append = edges_shape_off.append
+    edges_shape_len_append = edges_shape_len.append
+    shape_chunks_append = shape_chunks.append
+
+    t_setup = time.perf_counter()
+    walk_files = _relevant_files("*.walk.sqlite",
+                                  lambda p, *a: _rtree_overlaps(p, "walk_node_rtree", *a),
+                                  w, s, e, n)
+    g.phases["setup"] = (time.perf_counter() - t_setup) * 1000.0
+    g.meta["files"] = len(walk_files)
+
+    # A single query fetches edges + both endpoint nodes + name text, joined
+    # in sqlite. Split into two halves (from_id IN bbox / to_id IN bbox) so
+    # each half uses its own endpoint index; the second half filters out
+    # from_id-matches to keep them disjoint. UNION ALL is cheaper than UNION.
+    edge_sql = (
+        "SELECT e.weight_m, COALESCE(nm.text, ''), e.shape_blob, "
+        "       nf.osm_id, nf.lng_u, nf.lat_u, "
+        "       nt.osm_id, nt.lng_u, nt.lat_u "
+        "FROM walk_edge e "
+        "JOIN walk_node nf ON nf.id = e.from_id "
+        "JOIN walk_node nt ON nt.id = e.to_id "
+        "LEFT JOIN walk_name nm ON nm.id = e.name_id "
+        "WHERE e.from_id IN (SELECT id FROM bbox_ids) "
+        "UNION ALL "
+        "SELECT e.weight_m, COALESCE(nm.text, ''), e.shape_blob, "
+        "       nf.osm_id, nf.lng_u, nf.lat_u, "
+        "       nt.osm_id, nt.lng_u, nt.lat_u "
+        "FROM walk_edge e "
+        "JOIN walk_node nf ON nf.id = e.from_id "
+        "JOIN walk_node nt ON nt.id = e.to_id "
+        "LEFT JOIN walk_name nm ON nm.id = e.name_id "
+        "WHERE e.to_id IN (SELECT id FROM bbox_ids) "
+        "  AND e.from_id NOT IN (SELECT id FROM bbox_ids)"
+    )
+
+    for path in walk_files:
         with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
             cols = {r[1] for r in conn.execute("PRAGMA table_info(walk_node)")}
             if "osm_id" not in cols or "lng_u" not in cols:
-                # Old schema lacks the globally-unique osm_id needed for
-                # cross-response dedup; skip and let user rebuild.
                 continue
 
+            t_bbox = time.perf_counter()
             conn.execute("CREATE TEMP TABLE bbox_ids (id INTEGER PRIMARY KEY)")
             conn.execute(
                 "INSERT INTO bbox_ids(id) "
@@ -305,110 +391,103 @@ def walk_graph():
                 "WHERE minX <= ? AND maxX >= ? AND minY <= ? AND maxY >= ?",
                 (e, w, n, s),
             )
+            sql_bbox_ms += (time.perf_counter() - t_bbox) * 1000.0
 
-            edge_rows = conn.execute(
-                "SELECT e.from_id, e.to_id, e.weight_m, "
-                "       COALESCE(nm.text, ''), e.shape_blob "
-                "FROM walk_edge e "
-                "LEFT JOIN walk_name nm ON nm.id = e.name_id "
-                "WHERE e.from_id IN (SELECT id FROM bbox_ids) "
-                "   OR e.to_id IN (SELECT id FROM bbox_ids)"
-            ).fetchall()
-
-            need_ids = set()
-            for from_id, to_id, _, _, _ in edge_rows:
-                need_ids.add(from_id)
-                need_ids.add(to_id)
-
-            walk_id_info = {}
-            if need_ids:
-                ids_list = list(need_ids)
-                for chunk_start in range(0, len(ids_list), 900):
-                    chunk = ids_list[chunk_start:chunk_start + 900]
-                    placeholder = ",".join("?" * len(chunk))
-                    for nid, osm_id, lng_u, lat_u in conn.execute(
-                        f"SELECT id, osm_id, lng_u, lat_u FROM walk_node "
-                        f"WHERE id IN ({placeholder})",
-                        tuple(chunk),
-                    ):
-                        if osm_id is None:
-                            continue
-                        walk_id_info[nid] = (osm_id, lng_u / 1e6, lat_u / 1e6)
+            # Stream-iterate the cursor: rows are consumed as sqlite emits
+            # them, without materialising the full 800k-row tuple list first.
+            # Row tuple: (weight_m, name_text, shape_blob,
+            #             from_osm, from_lng_u, from_lat_u,
+            #             to_osm,   to_lng_u,   to_lat_u)
+            t_process = time.perf_counter()
+            row_count = 0
+            for row in conn.execute(edge_sql):
+                row_count += 1
+                from_osm = row[3]
+                to_osm = row[6]
+                if from_osm is None or to_osm is None:
+                    continue
+                f_loc = osm_get(from_osm)
+                if f_loc is None:
+                    f_loc = len(nodes_osm)
+                    osm_to_local[from_osm] = f_loc
+                    nodes_osm_append(from_osm)
+                    nodes_lng_append(row[4] / 1e6)
+                    nodes_lat_append(row[5] / 1e6)
+                t_loc = osm_get(to_osm)
+                if t_loc is None:
+                    t_loc = len(nodes_osm)
+                    osm_to_local[to_osm] = t_loc
+                    nodes_osm_append(to_osm)
+                    nodes_lng_append(row[7] / 1e6)
+                    nodes_lat_append(row[8] / 1e6)
+                name_text = row[1]
+                if name_text:
+                    ni = name_get(name_text)
+                    if ni is None:
+                        ni = len(names_list)
+                        names_list_append(name_text)
+                        name_to_idx[name_text] = ni
+                else:
+                    ni = -1
+                edges_from_append(f_loc)
+                edges_to_append(t_loc)
+                edges_weight_append(row[0])
+                edges_name_idx_append(ni)
+                shape_blob = row[2]
+                if shape_blob:
+                    edges_shape_off_append(shapes_total)
+                    edges_shape_len_append(len(shape_blob))
+                    shape_chunks_append(shape_blob)
+                    shapes_total += len(shape_blob)
+                else:
+                    edges_shape_off_append(0)
+                    edges_shape_len_append(0)
+            process_ms += (time.perf_counter() - t_process) * 1000.0
+            total_edges_fetched += row_count
 
             conn.execute("DROP TABLE bbox_ids")
 
-        def get_local(walk_id):
-            rec = walk_id_info.get(walk_id)
-            if rec is None:
-                return None
-            osm_id, lng, lat = rec
-            idx = osm_to_local.get(osm_id)
-            if idx is None:
-                idx = len(nodes_osm)
-                osm_to_local[osm_id] = idx
-                nodes_osm.append(osm_id)
-                nodes_lng.append(lng)
-                nodes_lat.append(lat)
-            return idx
-
-        for from_id, to_id, weight_m, name_text, shape_blob in edge_rows:
-            f_loc = get_local(from_id)
-            t_loc = get_local(to_id)
-            if f_loc is None or t_loc is None:
-                continue
-            if name_text:
-                ni = name_to_idx.get(name_text)
-                if ni is None:
-                    ni = len(names_list)
-                    names_list.append(name_text)
-                    name_to_idx[name_text] = ni
-            else:
-                ni = -1
-            edges_from.append(f_loc)
-            edges_to.append(t_loc)
-            edges_weight.append(float(weight_m))
-            edges_name_idx.append(ni)
-            if shape_blob:
-                edges_shape_off.append(shapes_total)
-                edges_shape_len.append(len(shape_blob))
-                shape_chunks.append(shape_blob)
-                shapes_total += len(shape_blob)
-            else:
-                edges_shape_off.append(0)
-                edges_shape_len.append(0)
+    g.phases["sql_bbox"] = sql_bbox_ms
+    g.phases["process"] = process_ms
+    g.meta["N"] = len(nodes_osm)
+    g.meta["E"] = len(edges_from)
+    g.meta["E_fetched"] = total_edges_fetched
 
     N = len(nodes_osm)
     E = len(edges_from)
     M = len(names_list)
 
-    names_buf = BytesIO()
-    for name in names_list:
-        b = name.encode("utf-8")
-        if len(b) > 65535:
-            b = b[:65535]
-        names_buf.write(struct.pack("<H", len(b)))
-        names_buf.write(b)
-    names_bytes = names_buf.getvalue()
-    shapes_bytes = b"".join(shape_chunks)
+    with _phase("pack"):
+        names_buf = BytesIO()
+        for name in names_list:
+            b = name.encode("utf-8")
+            if len(b) > 65535:
+                b = b[:65535]
+            names_buf.write(struct.pack("<H", len(b)))
+            names_buf.write(b)
+        names_bytes = names_buf.getvalue()
+        shapes_bytes = b"".join(shape_chunks)
 
-    body = b"".join([
-        struct.pack("<4sIIIIIII",
-                    b"WALK", 1, N, E, M,
-                    len(names_bytes), len(shapes_bytes), 0),
-        _le_bytes(nodes_osm, "d"),
-        _le_bytes(nodes_lng, "f"),
-        _le_bytes(nodes_lat, "f"),
-        _le_bytes(edges_from, "I"),
-        _le_bytes(edges_to, "I"),
-        _le_bytes(edges_weight, "f"),
-        _le_bytes(edges_name_idx, "i"),
-        _le_bytes(edges_shape_off, "I"),
-        _le_bytes(edges_shape_len, "I"),
-        names_bytes,
-        shapes_bytes,
-    ])
+        body = b"".join([
+            struct.pack("<4sIIIIIII",
+                        b"WALK", 1, N, E, M,
+                        len(names_bytes), len(shapes_bytes), 0),
+            _le_bytes(nodes_osm, "d"),
+            _le_bytes(nodes_lng, "f"),
+            _le_bytes(nodes_lat, "f"),
+            _le_bytes(edges_from, "I"),
+            _le_bytes(edges_to, "I"),
+            _le_bytes(edges_weight, "f"),
+            _le_bytes(edges_name_idx, "i"),
+            _le_bytes(edges_shape_off, "I"),
+            _le_bytes(edges_shape_len, "I"),
+            names_bytes,
+            shapes_bytes,
+        ])
 
-    compressed = gzip.compress(body, compresslevel=5)
+    with _phase("gzip"):
+        compressed = gzip.compress(body, compresslevel=1)
+
     resp = Response(compressed, mimetype="application/octet-stream")
     resp.headers["Content-Encoding"] = "gzip"
     resp.headers["Vary"] = "Accept-Encoding"
