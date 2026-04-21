@@ -1076,8 +1076,12 @@ function fmtDate(ts) {
       version: 8,
       glyphs: location.origin + '/fonts/{fontstack}/{range}.pbf',
       sources: {
-        base: { type: 'vector', tiles: [location.origin + '/tiles/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 5 },
-        local: { type: 'vector', tiles: [location.origin + '/tiles/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 14 },
+        // maxTileCacheSize caps how many PARSED tiles MapLibre keeps in RAM
+        // beyond the ones currently on screen. Without it the cache grows
+        // unbounded as you pan/zoom — aggressive on iOS. 32 is plenty for
+        // smooth panning; evicted tiles re-parse quickly from the SW cache.
+        base:  { type: 'vector', tiles: [location.origin + '/tiles/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 5,  maxTileCacheSize: 32 },
+        local: { type: 'vector', tiles: [location.origin + '/tiles/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 14, maxTileCacheSize: 64 },
         'bus-routes': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
         'route-stops': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
         'walk-route': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
