@@ -560,7 +560,7 @@ function way_function()
 	end
 end
 
--- Remap coastlines
+-- Remap shapefile feature attributes to vector-tile attributes.
 function attribute_function(attr,layer)
 	if attr["featurecla"]=="Glaciated areas" then
 		return { subclass="glacier" }
@@ -568,6 +568,11 @@ function attribute_function(attr,layer)
 		return { subclass="ice_shelf" }
 	elseif attr["featurecla"]=="Urban area" then
 		return { class="residential" }
+	elseif attr["featurecla"]=="Land" then
+		-- ne_10m_land: plain continent polygons, written to the landcover
+		-- layer so the client fills them with the standard land colour at
+		-- low zoom.
+		return { subclass="land" }
 	else
 		return { class="ocean" }
 	end
