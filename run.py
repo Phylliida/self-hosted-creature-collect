@@ -325,6 +325,108 @@ def poi():
     return resp
 
 
+@app.route("/housenumbers")
+def housenumbers():
+    """Binary housenumber bundle. Layout (little-endian):
+        Header (40 B):
+            0:  'HSNB' magic
+            4:  u32 version = 1
+            8:  u32 N (count)
+            12: u32 M (unique strings)
+            16: u32 stringsByteLen
+            20: u32 reserved (0)
+            24: f32 bbox west  (coords are quantised into bbox on server,
+            28: f32 bbox south  and reconstructed by the client — ~1 m
+            32: f32 bbox east   resolution over a city-sized bbox at u16)
+            36: f32 bbox north
+        Columns (6 * N):
+            N × u16 lng_q
+            N × u16 lat_q
+            N × u16 str_idx
+        Strings (stringsByteLen):
+            M × (u16 utf8_len + utf8 bytes)
+    """
+    try:
+        parts = [float(x) for x in request.args.get("bbox", "").split(",")]
+    except ValueError:
+        abort(400)
+    if len(parts) != 4:
+        abort(400)
+    w, s, e, n = parts
+
+    string_pool = []
+    str_to_idx = {}
+    lngs = []
+    lats = []
+    str_indices = []
+
+    for path in _relevant_files("*.housenumbers.sqlite",
+                                 lambda p, *a: _rtree_overlaps(p, "hn_rtree", *a),
+                                 w, s, e, n):
+        with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+            rows = conn.execute(
+                "SELECT h.lng_u, h.lat_u, h.text FROM hn h "
+                "JOIN hn_rtree r ON h.id = r.id "
+                "WHERE r.minX <= ? AND r.maxX >= ? AND r.minY <= ? AND r.maxY >= ?",
+                (e, w, n, s),
+            ).fetchall()
+            for lng_u, lat_u, text in rows:
+                if not text:
+                    continue
+                idx = str_to_idx.get(text)
+                if idx is None:
+                    idx = len(string_pool)
+                    str_to_idx[text] = idx
+                    string_pool.append(text)
+                lngs.append(lng_u / 1e6)
+                lats.append(lat_u / 1e6)
+                str_indices.append(idx)
+
+    N = len(lngs)
+    M = len(string_pool)
+
+    if N == 0:
+        bw, bs, be, bn = 0.0, 0.0, 0.0, 0.0
+    else:
+        bw, bs, be, bn = min(lngs), min(lats), max(lngs), max(lats)
+    lng_span = max(be - bw, 1e-9)
+    lat_span = max(bn - bs, 1e-9)
+
+    lngs_q = [max(0, min(65535, round((v - bw) / lng_span * 65535))) for v in lngs]
+    lats_q = [max(0, min(65535, round((v - bs) / lat_span * 65535))) for v in lats]
+
+    names_buf = BytesIO()
+    for text in string_pool:
+        b = text.encode("utf-8")
+        if len(b) > 65535:
+            b = b[:65535]
+        names_buf.write(struct.pack("<H", len(b)))
+        names_buf.write(b)
+    names_bytes = names_buf.getvalue()
+
+    header = struct.pack(
+        "<4sIIIIIffff",
+        b"HSNB", 1, N, M, len(names_bytes), 0,
+        float(bw), float(bs), float(be), float(bn),
+    )
+
+    body = b"".join([
+        header,
+        _le_bytes(lngs_q, "H"),
+        _le_bytes(lats_q, "H"),
+        _le_bytes(str_indices, "H"),
+        names_bytes,
+    ])
+
+    compressed = gzip.compress(body, compresslevel=1)
+    resp = Response(compressed, mimetype="application/octet-stream")
+    resp.headers["Content-Encoding"] = "gzip"
+    resp.headers["Vary"] = "Accept-Encoding"
+    g.meta["N"] = N
+    g.meta["M"] = M
+    return resp
+
+
 @app.route("/routes")
 def routes():
     try:

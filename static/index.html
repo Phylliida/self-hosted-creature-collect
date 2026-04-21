@@ -1043,6 +1043,55 @@ async function deleteWalkGraphByRegion(regionId) {
   db.close();
 }
 
+// Housenumbers: fetched lazily (only when the map first zooms past the
+// rendering threshold) and stored as the raw /housenumbers ArrayBuffer per
+// region. Schema is identical in spirit to the walk graph and POIs — one
+// binary blob per region, parsed into typed arrays + a string pool on load.
+const HN_DB_NAME = 'cc.housenumbers.v1';
+function openHousenumberDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(HN_DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('regions')) {
+        db.createObjectStore('regions', { keyPath: 'regionId' });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function saveHousenumberRegion(regionId, buffer) {
+  const db = await openHousenumberDB();
+  const tx = db.transaction('regions', 'readwrite');
+  tx.objectStore('regions').put({ regionId, buffer });
+  await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
+  db.close();
+}
+async function loadAllHousenumberBuffers() {
+  const db = await openHousenumberDB();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction('regions', 'readonly').objectStore('regions').getAll();
+    req.onsuccess = () => { resolve(req.result); db.close(); };
+    req.onerror = () => reject(req.error);
+  });
+}
+async function loadHousenumberBuffer(regionId) {
+  const db = await openHousenumberDB();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction('regions', 'readonly').objectStore('regions').get(regionId);
+    req.onsuccess = () => { resolve(req.result); db.close(); };
+    req.onerror = () => reject(req.error);
+  });
+}
+async function deleteHousenumbersByRegion(regionId) {
+  const db = await openHousenumberDB();
+  const tx = db.transaction('regions', 'readwrite');
+  tx.objectStore('regions').delete(regionId);
+  await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
+  db.close();
+}
+
 const FAV_DB_NAME = 'cc.favorites.v1';
 function openFavoritesDB() {
   return new Promise((resolve, reject) => {
@@ -1159,7 +1208,12 @@ function fmtDate(ts) {
         'bus-routes': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
         'route-stops': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
         'walk-route': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
-        'route-trip-stops': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } }
+        'route-trip-stops': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
+        // Housenumbers are stored as per-region binary blobs in IDB and
+        // pushed into this source only for the current viewport on each
+        // moveend — feeding MapLibre all ~600k points statically would
+        // balloon its tile cache.
+        'housenumbers': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } }
       },
       layers: [
         { id: 'bg', type: 'background', paint: { 'background-color': '#f5f5dc' } },
@@ -1271,7 +1325,7 @@ function fmtDate(ts) {
           layout: { 'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name'], ['get', 'name_int']], 'text-font': ['KlokanTech Noto Sans Regular'],
                     'text-size': 11, 'symbol-placement': 'line' },
           paint: { 'text-color': '#555', 'text-halo-color': '#fff', 'text-halo-width': 1 } },
-        { id: 'housenumbers', type: 'symbol', source: 'local', 'source-layer': 'housenumber',
+        { id: 'housenumbers', type: 'symbol', source: 'housenumbers',
           minzoom: 17,
           layout: {
             'text-field': ['get', 'housenumber'],
@@ -3407,7 +3461,8 @@ function fmtDate(ts) {
       // and to catch any legacy DBs the enumerator happens to miss.
       for (const n of ['cc.pois.v1', 'cc.pois.v2', 'cc.routes.v1', 'cc.routes.v2',
                        'cc.favorites.v1', 'cc.walk.v1', 'cc.walk.v2', 'cc.walk.v3',
-                       'cc.walk.v4', 'cc.walk.v5', 'cc.schedule.v1']) {
+                       'cc.walk.v4', 'cc.walk.v5', 'cc.schedule.v1',
+                       'cc.housenumbers.v1']) {
         if (!names.includes(n)) names.push(n);
       }
       log('deleting ' + names.length + ' IDB(s)…');
@@ -3819,13 +3874,15 @@ function fmtDate(ts) {
     return measureIdbRecordBytes(POI_DB_NAME, 'regions', regionId);
   }
   async function measureRegionBytes(region) {
-    const [tiles, pois, schedule, walk] = await Promise.all([
+    const [tiles, pois, schedule, walk, hn] = await Promise.all([
       measureRegionTileBytes(region.urls || []),
       measurePoiBytes(region.id),
       measureIdbRecordBytes(SCHEDULE_DB_NAME, 'regions', region.id),
       measureIdbRecordBytes(WALK_DB_NAME,     'regions', region.id),
+      measureIdbRecordBytes(HN_DB_NAME,       'regions', region.id),
     ]);
-    return { tiles, pois, schedule, walk, total: tiles + pois + schedule + walk };
+    return { tiles, pois, schedule, walk, hn,
+             total: tiles + pois + schedule + walk + hn };
   }
   function fmtBytes(n) {
     if (n < 1024) return `${n} B`;
@@ -3863,7 +3920,8 @@ function fmtDate(ts) {
           `<span class="bucket">tiles ${fmtBytes(s.tiles)}</span>` +
           `<span class="bucket">POIs ${fmtBytes(s.pois)}</span>` +
           `<span class="bucket">schedule ${fmtBytes(s.schedule)}</span>` +
-          `<span class="bucket">walk ${fmtBytes(s.walk)}</span>`;
+          `<span class="bucket">walk ${fmtBytes(s.walk)}</span>` +
+          `<span class="bucket">hn ${fmtBytes(s.hn)}</span>`;
       }
       return s.total;
     }));
@@ -3891,10 +3949,12 @@ function fmtDate(ts) {
       await deletePoisByRegion(id);
       await deleteScheduleByRegion(id);
       await deleteWalkGraphByRegion(id);
+      await deleteHousenumbersByRegion(id);
       await rebuildScheduleIndex();
       // Drop the now-stale in-memory walk graph; next routing call re-loads
       // via ensureWalkGraph().
       unloadWalkGraph();
+      hnRegions = [];  // force re-parse of remaining regions on next zoom-in
       allPois = allPois.filter(p => p.regionId !== id);
       saveRegions(list.filter(x => x.id !== id));
       renderRegions();
@@ -4027,6 +4087,162 @@ function fmtDate(ts) {
       return 0;
     }
   }
+
+  // ---------- housenumbers ----------------------------------------------
+  // `hnRegions` holds parsed per-region typed arrays (one entry per saved
+  // region). The array's built lazily — only when the map first approaches
+  // the rendering threshold, so regular navigation never pays to parse
+  // this data.
+  let hnRegions = [];
+  let hnLoadPromise = null;
+
+  async function fetchAndSaveHousenumbers(regionId, bbox) {
+    try {
+      const res = await fetch(`/housenumbers?bbox=${bbox.join(',')}`,
+        { headers: { 'X-Download': '1' } });
+      if (!res.ok) return 0;
+      const buffer = await res.arrayBuffer();
+      if (buffer.byteLength < 40) return 0;
+      const view = new DataView(buffer);
+      const magic = String.fromCharCode(
+        view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+      if (magic !== 'HSNB') throw new Error('housenumbers: bad magic ' + magic);
+      const N = view.getUint32(8, true);
+      await saveHousenumberRegion(regionId, buffer);
+      return N;
+    } catch (err) {
+      console.error('housenumbers fetch failed:', err);
+      return 0;
+    }
+  }
+
+  // Parse the binary bundle into typed arrays + a sort order we can binary
+  // search on lng (viewport queries restrict to a narrow lng band, so a
+  // sorted-by-lng index keeps per-moveend work to a few hundred points).
+  function parseHousenumberRegion(regionId, buffer) {
+    const view = new DataView(buffer);
+    const N = view.getUint32(8, true);
+    const M = view.getUint32(12, true);
+    const stringsByteLen = view.getUint32(16, true);
+    const bw = view.getFloat32(24, true);
+    const bs = view.getFloat32(28, true);
+    const be = view.getFloat32(32, true);
+    const bn = view.getFloat32(36, true);
+
+    const colStart = 40;
+    const lngQ = new Uint16Array(buffer, colStart,        N);
+    const latQ = new Uint16Array(buffer, colStart + 2 * N, N);
+    const strIdxRaw = new Uint16Array(buffer, colStart + 4 * N, N);
+
+    const stringsStart = colStart + 6 * N;
+    const strings = new Array(M);
+    const dec = new TextDecoder();
+    let off = stringsStart;
+    for (let i = 0; i < M; i++) {
+      const len = view.getUint16(off, true);
+      off += 2;
+      strings[i] = dec.decode(new Uint8Array(buffer, off, len));
+      off += len;
+    }
+
+    // Reconstruct f32 coords from the u16 quantisation, then sort by lng
+    // so the moveend handler can binary-search the narrow visible band.
+    const lngStep = (be - bw) / 65535;
+    const latStep = (bn - bs) / 65535;
+    const indices = new Uint32Array(N);
+    for (let i = 0; i < N; i++) indices[i] = i;
+    const lngRaw = new Float32Array(N);
+    const latRaw = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      lngRaw[i] = bw + lngQ[i] * lngStep;
+      latRaw[i] = bs + latQ[i] * latStep;
+    }
+    // Array.prototype.sort on typed arrays compares as numbers — faster
+    // than a .sort with a custom callback.
+    const order = Array.from(indices).sort((a, b) => lngRaw[a] - lngRaw[b]);
+    const lng = new Float32Array(N);
+    const lat = new Float32Array(N);
+    const strIdx = new Uint16Array(N);
+    for (let i = 0; i < N; i++) {
+      const src = order[i];
+      lng[i] = lngRaw[src];
+      lat[i] = latRaw[src];
+      strIdx[i] = strIdxRaw[src];
+    }
+    return { regionId, N, lng, lat, strIdx, strings };
+  }
+
+  function lngLowerBound(lng, target) {
+    // Returns the smallest index i such that lng[i] >= target.
+    let lo = 0, hi = lng.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (lng[mid] < target) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  }
+
+  function updateHousenumbers() {
+    const source = map.getSource('housenumbers');
+    if (!source || !hnRegions.length) return;
+    if (map.getZoom() < 16) {
+      source.setData({ type: 'FeatureCollection', features: [] });
+      return;
+    }
+    const bounds = map.getBounds();
+    const w = bounds.getWest(), e = bounds.getEast();
+    const s = bounds.getSouth(), n = bounds.getNorth();
+    const features = [];
+    for (const r of hnRegions) {
+      const lo = lngLowerBound(r.lng, w);
+      const hi = lngLowerBound(r.lng, e + 1e-9);
+      const lng = r.lng, lat = r.lat, strIdx = r.strIdx, strings = r.strings;
+      for (let i = lo; i < hi; i++) {
+        const la = lat[i];
+        if (la < s || la > n) continue;
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [lng[i], la] },
+          properties: { housenumber: strings[strIdx[i]] },
+        });
+      }
+    }
+    source.setData({ type: 'FeatureCollection', features });
+  }
+
+  async function ensureHousenumbersLoaded() {
+    if (hnRegions.length) return;
+    if (!hnLoadPromise) {
+      hnLoadPromise = (async () => {
+        const records = await loadAllHousenumberBuffers();
+        const parsed = [];
+        for (const rec of records) {
+          if (!rec.buffer) continue;
+          try {
+            parsed.push(parseHousenumberRegion(rec.regionId, rec.buffer));
+          } catch (err) {
+            console.warn('skip housenumber region', rec.regionId, err);
+          }
+        }
+        hnRegions = parsed;
+        updateHousenumbers();
+      })();
+    }
+    await hnLoadPromise;
+    hnLoadPromise = null;
+  }
+
+  // Trigger lazy load as soon as the user zooms close enough that the
+  // housenumber layer is about to become relevant. One zoom-ish below the
+  // style's `minzoom: 17` so the data is ready by the time it's rendered.
+  map.on('zoom', () => {
+    if (map.getZoom() >= 16 && !hnRegions.length && !hnLoadPromise) {
+      ensureHousenumbersLoaded();
+    }
+  });
+  map.on('moveend', updateHousenumbers);
+  map.on('zoomend', updateHousenumbers);
 
   // Parse the binary walk-graph buffer (v3). Nodes and from/to columns are
   // zero-copy typed-array views; everything else is materialised to match
@@ -5309,6 +5525,10 @@ function fmtDate(ts) {
     // Drop any in-memory walk graph so next routing call re-loads and picks
     // up the new region. Lazy — we don't rebuild here.
     unloadWalkGraph();
+    status.textContent = 'downloading housenumbers…';
+    await fetchAndSaveHousenumbers(id, bbox);
+    // Force re-parse on next z16+ zoom so the new region's data is picked up.
+    hnRegions = [];
     const extraUrls = [];
     const reg = await navigator.serviceWorker.ready;
     const onMsg = (e) => {
