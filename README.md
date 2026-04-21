@@ -19,6 +19,24 @@ Tip: you can narrow a large extract before conversion with
 `tilemaker --bbox minlon,minlat,maxlon,maxlat ...` to avoid baking 8 GB of tiles
 you'll never pan to.
 
+## Low-zoom land polygons (one-time, before first tile build)
+
+```
+./get-shapefiles.sh
+```
+
+Downloads `ne_10m_land` from Natural Earth (~1 MB) into `landcover/` so
+tilemaker has continent polygons to emit at z0–z8. Without this the base map
+looks mostly empty at zoomed-out views (OSM alone has almost no content at
+low zoom — no land/water fill, just sparse country labels).
+
+The script also has commented-out fetches for `ne_10m_urban_areas`,
+`ne_10m_glaciated_areas`, and `ne_10m_antarctic_ice_shelves_polys` if you
+ever want richer low-zoom rendering. Tilemaker silently skips any source
+whose `.shp` file is missing, so this step is optional but strongly
+recommended for the "save current view" flow (which pre-caches z0–z5 tiles
+for the whole world).
+
 ## Convert `.osm.pbf` to tiles + POI index
 
 ```
@@ -26,18 +44,40 @@ you'll never pan to.
 ```
 
 For each `osmpbf/<name>.osm.pbf` this produces:
-- `data/<name>.mbtiles` — vector tiles (via tilemaker)
+- `data/<name>.mbtiles` — vector tiles (via tilemaker). Uses
+  `tilemaker-slim.json` + `tilemaker-slim.lua` — a trimmed openmaptiles
+  schema that drops attributes/layers the client never reads (no
+  brunnel/ramp/service/oneway on roads, no building heights, no
+  mountain_peak/aeroway/waterway layers). If you changed anything in those
+  files you need to `rm data/*.mbtiles` first to force a rebuild (already-
+  built files are skipped).
 - `data/<name>.pois.sqlite` — big server-side POI index via
   `osmium tags-filter n/name w/name` (covers nodes AND named ways like
   buildings), then `osmium export` → `build-poi-db.py`. Polygon features get a
   centroid. Stores lng, lat, name, category, and a JSON `props` blob (address,
   opening_hours, phone, website, wheelchair, brand, cuisine, description,
   wikipedia/wikidata, internet_access).
+- `data/<name>.walk.sqlite` — pedestrian walk graph built from `w/highway`
+  features. Nodes are stored with their OSM ids (so multi-region downloads
+  can dedup at tile boundaries) plus rtree-indexed lng/lat; edges carry an
+  integer-meter weight, a 3-m Douglas-Peucker-simplified shape blob, and an
+  interned street-name id. Consumed by the offline walk+transit router.
+- `data/<name>.routes.sqlite` — transit route geometry (bus/tram/subway/
+  light_rail/monorail/train) for the map's route overlay.
 
 Already-built files are skipped. On `/poi?bbox=`, the server does a fast
-indexed SQL query (`WHERE lng BETWEEN … AND lat BETWEEN …`) and returns JSON.
-The client stores the subset in IndexedDB so further POI search is fully
-offline.
+indexed SQL query (`WHERE lng BETWEEN … AND lat BETWEEN …`) and returns a
+compact binary bundle (`POIB` header + columnar lng/lat/name_idx/category_idx
+typed arrays + a shared string pool + packed per-POI props). The client
+parses the buffer into POI objects with all strings pooled, so repeated
+values like `"Starbucks"` or `"restaurant"` share one JS string instance.
+`/walk-graph?bbox=` emits an equivalent `WALK` binary bundle — edges sorted
+by weight so most fit in a u8 column, name indices u8/u16/u32-packed based
+on the region's unique-name count, and shapes concatenated once into a
+single buffer referenced by offset/length.
+
+Both bundles are stored in IndexedDB as raw `ArrayBuffer` per region,
+bypassing JSON framing entirely.
 
 ## Transit schedules (GTFS)
 
