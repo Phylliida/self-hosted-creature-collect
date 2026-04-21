@@ -1,9 +1,25 @@
+import array
 import base64
 import gzip
 import json
 import pathlib
 import sqlite3
+import struct
+import sys
+from io import BytesIO
 from flask import Flask, send_from_directory, Response, abort, request, jsonify
+
+# array.array native int widths are platform-dependent in theory; all mainstream
+# server platforms have 4-byte int / unsigned int. Fail fast if ever not true.
+assert array.array('I').itemsize == 4, "unexpected native unsigned-int width"
+assert array.array('i').itemsize == 4, "unexpected native int width"
+
+
+def _le_bytes(values, typecode):
+    a = array.array(typecode, values)
+    if sys.byteorder == 'big':
+        a.byteswap()
+    return a.tobytes()
 
 
 def gzip_json(data):
@@ -231,6 +247,24 @@ def routes():
 
 @app.route("/walk-graph")
 def walk_graph():
+    """Binary walk-graph bundle.
+    Layout (little-endian, 4-byte aligned throughout):
+        Header (32 bytes):
+            0:  'WALK' magic
+            4:  u32 version (=1)
+            8:  u32 N (node count)
+            12: u32 E (edge count)
+            16: u32 M (name count)
+            20: u32 namesByteLen
+            24: u32 shapesByteLen
+            28: u32 reserved (0)
+        Nodes (16N): N × f64 osm_id, N × f32 lng, N × f32 lat
+        Edges (24E): E × u32 from_local, u32 to_local, f32 weight_m,
+                     i32 name_idx (-1 none), u32 shape_off, u32 shape_len
+        Names (namesByteLen): M × (u16 utf8_len + utf8 bytes)
+        Shapes (shapesByteLen): concatenated shape bytes
+    Nodes are keyed by OSM id (globally unique) for cross-response dedup.
+    """
     try:
         parts = [float(x) for x in request.args.get("bbox", "").split(",")]
     except ValueError:
@@ -238,23 +272,31 @@ def walk_graph():
     if len(parts) != 4:
         abort(400)
     w, s, e, n = parts
-    # Globally unique ids: prefix each walk sqlite's local ids with an offset
-    # so multiple files can contribute to the same response without collisions.
-    nodes_out = {}   # global_id -> [lng, lat]
-    edges_out = []   # [global_from, global_to, weight_m, name_idx, shape_b64]
-    names_out = []   # dense array of unique name strings
-    name_map = {}    # name text -> idx
-    offset = 0
+
+    osm_to_local = {}
+    nodes_osm = []
+    nodes_lng = []
+    nodes_lat = []
+    names_list = []
+    name_to_idx = {}
+    edges_from = []
+    edges_to = []
+    edges_weight = []
+    edges_name_idx = []
+    edges_shape_off = []
+    edges_shape_len = []
+    shape_chunks = []
+    shapes_total = 0
+
     for path in _relevant_files("*.walk.sqlite",
                                  lambda p: _rtree_bounds(p, "walk_node_rtree"),
                                  w, s, e, n):
         with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
-            # Detect new vs old schema
             cols = {r[1] for r in conn.execute("PRAGMA table_info(walk_node)")}
-            new_schema = "lng_u" in cols
-            max_local_id = conn.execute(
-                "SELECT COALESCE(MAX(id), 0) FROM walk_node"
-            ).fetchone()[0]
+            if "osm_id" not in cols or "lng_u" not in cols:
+                # Old schema lacks the globally-unique osm_id needed for
+                # cross-response dedup; skip and let user rebuild.
+                continue
 
             conn.execute("CREATE TEMP TABLE bbox_ids (id INTEGER PRIMARY KEY)")
             conn.execute(
@@ -264,63 +306,113 @@ def walk_graph():
                 (e, w, n, s),
             )
 
-            if new_schema:
-                edge_sql = (
-                    "SELECT e.from_id, e.to_id, e.weight_m, "
-                    "       COALESCE(nm.text, ''), e.shape_blob "
-                    "FROM walk_edge e "
-                    "LEFT JOIN walk_name nm ON nm.id = e.name_id "
-                    "WHERE e.from_id IN (SELECT id FROM bbox_ids) "
-                    "   OR e.to_id IN (SELECT id FROM bbox_ids)"
-                )
-                node_sql = "SELECT id, lng_u, lat_u FROM walk_node WHERE id = ?"
-            else:
-                edge_sql = (
-                    "SELECT e.from_id, e.to_id, e.weight, "
-                    "       COALESCE(e.name, ''), NULL "
-                    "FROM walk_edge e "
-                    "WHERE e.from_id IN (SELECT id FROM bbox_ids)"
-                )
-                node_sql = "SELECT id, lng, lat FROM walk_node WHERE id = ?"
+            edge_rows = conn.execute(
+                "SELECT e.from_id, e.to_id, e.weight_m, "
+                "       COALESCE(nm.text, ''), e.shape_blob "
+                "FROM walk_edge e "
+                "LEFT JOIN walk_name nm ON nm.id = e.name_id "
+                "WHERE e.from_id IN (SELECT id FROM bbox_ids) "
+                "   OR e.to_id IN (SELECT id FROM bbox_ids)"
+            ).fetchall()
 
-            need_nodes = set()
-            local_edges = []
-            for from_id, to_id, weight_m, name_text, shape_blob in conn.execute(edge_sql):
-                local_edges.append((from_id, to_id, weight_m, name_text, shape_blob))
-                need_nodes.add(from_id); need_nodes.add(to_id)
+            need_ids = set()
+            for from_id, to_id, _, _, _ in edge_rows:
+                need_ids.add(from_id)
+                need_ids.add(to_id)
 
-            node_rows = {}
-            for nid in need_nodes:
-                row = conn.execute(node_sql, (nid,)).fetchone()
-                if not row:
-                    continue
-                if new_schema:
-                    node_rows[nid] = (row[1] / 1e6, row[2] / 1e6)
-                else:
-                    node_rows[nid] = (row[1], row[2])
+            walk_id_info = {}
+            if need_ids:
+                ids_list = list(need_ids)
+                for chunk_start in range(0, len(ids_list), 900):
+                    chunk = ids_list[chunk_start:chunk_start + 900]
+                    placeholder = ",".join("?" * len(chunk))
+                    for nid, osm_id, lng_u, lat_u in conn.execute(
+                        f"SELECT id, osm_id, lng_u, lat_u FROM walk_node "
+                        f"WHERE id IN ({placeholder})",
+                        tuple(chunk),
+                    ):
+                        if osm_id is None:
+                            continue
+                        walk_id_info[nid] = (osm_id, lng_u / 1e6, lat_u / 1e6)
 
-            # Emit with global offset
-            for nid, (lng, lat) in node_rows.items():
-                nodes_out[nid + offset] = [lng, lat]
-            for from_id, to_id, weight_m, name_text, shape_blob in local_edges:
-                name_idx = name_map.get(name_text)
-                if name_idx is None:
-                    name_idx = len(names_out)
-                    names_out.append(name_text)
-                    name_map[name_text] = name_idx
-                edges_out.append([
-                    from_id + offset, to_id + offset,
-                    int(round(float(weight_m))),
-                    name_idx,
-                    base64.b64encode(shape_blob).decode("ascii") if shape_blob else None,
-                ])
             conn.execute("DROP TABLE bbox_ids")
-            offset += max_local_id + 1
-    return gzip_json({
-        "nodes": [[nid, lng, lat] for nid, (lng, lat) in nodes_out.items()],
-        "edges": edges_out,
-        "names": names_out,
-    })
+
+        def get_local(walk_id):
+            rec = walk_id_info.get(walk_id)
+            if rec is None:
+                return None
+            osm_id, lng, lat = rec
+            idx = osm_to_local.get(osm_id)
+            if idx is None:
+                idx = len(nodes_osm)
+                osm_to_local[osm_id] = idx
+                nodes_osm.append(osm_id)
+                nodes_lng.append(lng)
+                nodes_lat.append(lat)
+            return idx
+
+        for from_id, to_id, weight_m, name_text, shape_blob in edge_rows:
+            f_loc = get_local(from_id)
+            t_loc = get_local(to_id)
+            if f_loc is None or t_loc is None:
+                continue
+            if name_text:
+                ni = name_to_idx.get(name_text)
+                if ni is None:
+                    ni = len(names_list)
+                    names_list.append(name_text)
+                    name_to_idx[name_text] = ni
+            else:
+                ni = -1
+            edges_from.append(f_loc)
+            edges_to.append(t_loc)
+            edges_weight.append(float(weight_m))
+            edges_name_idx.append(ni)
+            if shape_blob:
+                edges_shape_off.append(shapes_total)
+                edges_shape_len.append(len(shape_blob))
+                shape_chunks.append(shape_blob)
+                shapes_total += len(shape_blob)
+            else:
+                edges_shape_off.append(0)
+                edges_shape_len.append(0)
+
+    N = len(nodes_osm)
+    E = len(edges_from)
+    M = len(names_list)
+
+    names_buf = BytesIO()
+    for name in names_list:
+        b = name.encode("utf-8")
+        if len(b) > 65535:
+            b = b[:65535]
+        names_buf.write(struct.pack("<H", len(b)))
+        names_buf.write(b)
+    names_bytes = names_buf.getvalue()
+    shapes_bytes = b"".join(shape_chunks)
+
+    body = b"".join([
+        struct.pack("<4sIIIIIII",
+                    b"WALK", 1, N, E, M,
+                    len(names_bytes), len(shapes_bytes), 0),
+        _le_bytes(nodes_osm, "d"),
+        _le_bytes(nodes_lng, "f"),
+        _le_bytes(nodes_lat, "f"),
+        _le_bytes(edges_from, "I"),
+        _le_bytes(edges_to, "I"),
+        _le_bytes(edges_weight, "f"),
+        _le_bytes(edges_name_idx, "i"),
+        _le_bytes(edges_shape_off, "I"),
+        _le_bytes(edges_shape_len, "I"),
+        names_bytes,
+        shapes_bytes,
+    ])
+
+    compressed = gzip.compress(body, compresslevel=5)
+    resp = Response(compressed, mimetype="application/octet-stream")
+    resp.headers["Content-Encoding"] = "gzip"
+    resp.headers["Vary"] = "Accept-Encoding"
+    return resp
 
 
 @app.route("/tiles/<int:z>/<int:x>/<int:y>.pbf")

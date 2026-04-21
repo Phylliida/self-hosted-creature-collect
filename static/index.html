@@ -932,7 +932,7 @@ async function deleteScheduleByRegion(regionId) {
   db.close();
 }
 
-const WALK_DB_NAME = 'cc.walk.v2';
+const WALK_DB_NAME = 'cc.walk.v3';
 function openWalkDB() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(WALK_DB_NAME, 1);
@@ -946,10 +946,12 @@ function openWalkDB() {
     req.onerror = () => reject(req.error);
   });
 }
-async function saveWalkGraph(regionId, nodes, edges, names) {
+// Each region is stored as the raw binary blob returned by /walk-graph,
+// structured-cloned into IDB with zero parsing overhead (see viewWalkRegion).
+async function saveWalkGraph(regionId, buffer) {
   const db = await openWalkDB();
   const tx = db.transaction('regions', 'readwrite');
-  tx.objectStore('regions').put({ regionId, nodes, edges, names: names || [] });
+  tx.objectStore('regions').put({ regionId, buffer });
   await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
   db.close();
 }
@@ -3298,7 +3300,7 @@ function fmtDate(ts) {
     if (!confirm('Delete ALL local data? (saved regions, POIs, routes, tiles, fonts, icons, app shell, service worker) This cannot be undone.')) return;
     try {
       localStorage.clear();
-      await Promise.all(['cc.pois.v1', 'cc.routes.v1', 'cc.routes.v2', 'cc.favorites.v1', 'cc.walk.v1', 'cc.walk.v2', 'cc.schedule.v1'].map(n => new Promise(res => {
+      await Promise.all(['cc.pois.v1', 'cc.routes.v1', 'cc.routes.v2', 'cc.favorites.v1', 'cc.walk.v1', 'cc.walk.v2', 'cc.walk.v3', 'cc.schedule.v1'].map(n => new Promise(res => {
         const req = indexedDB.deleteDatabase(n);
         req.onsuccess = req.onerror = req.onblocked = () => res();
       })));
@@ -3650,6 +3652,30 @@ function fmtDate(ts) {
       return total;
     } catch { return 0; }
   }
+  // Walks a record collecting Blob-compatible parts: typed arrays and
+  // ArrayBuffers go in as binary (their real byte cost); everything else is
+  // stringified. JSON.stringify alone would flatten ArrayBuffers to '{}'.
+  function collectRecordParts(v, parts) {
+    if (v == null) return;
+    if (v instanceof ArrayBuffer || ArrayBuffer.isView(v)) {
+      parts.push(v);
+    } else if (Array.isArray(v)) {
+      for (const x of v) collectRecordParts(x, parts);
+    } else if (typeof v === 'object') {
+      for (const k of Object.keys(v)) {
+        parts.push(k);
+        collectRecordParts(v[k], parts);
+      }
+    } else {
+      parts.push(String(v));
+    }
+  }
+  function estimateRecordBytes(rec) {
+    if (!rec) return 0;
+    const parts = [];
+    collectRecordParts(rec, parts);
+    return new Blob(parts).size;
+  }
   async function measureIdbRecordBytes(dbName, storeName, key) {
     return new Promise((resolve) => {
       let db;
@@ -3661,10 +3687,8 @@ function fmtDate(ts) {
         try {
           const getReq = db.transaction(storeName, 'readonly').objectStore(storeName).get(key);
           getReq.onsuccess = () => {
-            const rec = getReq.result;
-            const bytes = rec ? new Blob([JSON.stringify(rec)]).size : 0;
             db.close();
-            resolve(bytes);
+            resolve(estimateRecordBytes(getReq.result));
           };
           getReq.onerror = () => { db.close(); resolve(0); };
         } catch { db.close(); resolve(0); }
@@ -3683,7 +3707,7 @@ function fmtDate(ts) {
           const rq = idx.getAll(IDBKeyRange.only(regionId));
           rq.onsuccess = () => {
             let total = 0;
-            for (const rec of rq.result) total += new Blob([JSON.stringify(rec)]).size;
+            for (const rec of rq.result) total += estimateRecordBytes(rec);
             db.close();
             resolve(total);
           };
@@ -3868,23 +3892,65 @@ function fmtDate(ts) {
             : `walk graph: ${mb} MB`;
         }
       }
-      if (statusEl) statusEl.textContent = 'walk graph: parsing…';
-      const blob = new Blob(chunks);
-      const text = await blob.text();
-      const { nodes = [], edges = [], names = [] } = JSON.parse(text);
-      // Decode each shape's base64 to Uint8Array now, once, before IDB put.
-      // IDB structured-clones typed arrays natively, and we keep them binary
-      // in RAM forever after — no UTF-16 tax on base64 strings.
-      for (const e of edges) {
-        if (e[4]) e[4] = base64ToBytes(e[4]);
-      }
-      if (statusEl) statusEl.textContent = `walk graph: saving (${nodes.length.toLocaleString()} nodes)…`;
-      await saveWalkGraph(regionId, nodes, edges, names);
-      return nodes.length;
+      const buffer = await new Blob(chunks).arrayBuffer();
+      const view = new DataView(buffer);
+      const magic = String.fromCharCode(
+        view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+      if (magic !== 'WALK') throw new Error('walk-graph: bad magic ' + magic);
+      const version = view.getUint32(4, true);
+      if (version !== 1) throw new Error('walk-graph: bad version ' + version);
+      const nodeCount = view.getUint32(8, true);
+      if (statusEl) statusEl.textContent = `walk graph: saving (${nodeCount.toLocaleString()} nodes)…`;
+      await saveWalkGraph(regionId, buffer);
+      return nodeCount;
     } catch (err) {
       console.error('walk-graph fetch failed:', err);
       return 0;
     }
+  }
+
+  // Parse the binary walk-graph buffer into zero-copy typed-array views plus
+  // a decoded names table. Shape bytes stay as a Uint8Array subview.
+  function viewWalkRegion(buffer) {
+    const view = new DataView(buffer);
+    const N = view.getUint32(8, true);
+    const E = view.getUint32(12, true);
+    const M = view.getUint32(16, true);
+    const namesByteLen = view.getUint32(20, true);
+    const shapesByteLen = view.getUint32(24, true);
+
+    const nodesStart = 32;
+    const nodeIds = new Float64Array(buffer, nodesStart, N);
+    const nodeLng = new Float32Array(buffer, nodesStart + 8 * N, N);
+    const nodeLat = new Float32Array(buffer, nodesStart + 12 * N, N);
+
+    const edgesStart = nodesStart + 16 * N;
+    const edgeFrom     = new Uint32Array(buffer, edgesStart, E);
+    const edgeTo       = new Uint32Array(buffer, edgesStart + 4 * E, E);
+    const edgeWeight   = new Float32Array(buffer, edgesStart + 8 * E, E);
+    const edgeNameIdx  = new Int32Array(buffer, edgesStart + 12 * E, E);
+    const edgeShapeOff = new Uint32Array(buffer, edgesStart + 16 * E, E);
+    const edgeShapeLen = new Uint32Array(buffer, edgesStart + 20 * E, E);
+
+    const namesStart = edgesStart + 24 * E;
+    const names = new Array(M);
+    const dec = new TextDecoder();
+    let off = namesStart;
+    for (let i = 0; i < M; i++) {
+      const len = view.getUint16(off, true);
+      off += 2;
+      names[i] = dec.decode(new Uint8Array(buffer, off, len));
+      off += len;
+    }
+
+    const shapeBuf = new Uint8Array(buffer, namesStart + namesByteLen, shapesByteLen);
+
+    return {
+      nodeIds, nodeLng, nodeLat,
+      edgeFrom, edgeTo, edgeWeight, edgeNameIdx,
+      edgeShapeOff, edgeShapeLen,
+      names, shapeBuf,
+    };
   }
 
   function decodeZigzagVarints(bytes) {
@@ -3962,24 +4028,30 @@ function fmtDate(ts) {
 
   async function rebuildWalkGraph() {
     const groups = await loadAllWalkGraphs();
+    const regions = groups.map(g => viewWalkRegion(g.buffer));
     const wg = emptyWalkGraph();
 
-    // Pass 1: assign sequential internal indices, count edges and shape
-    // bytes, intern names across regions.
+    // Pass 1: assign sequential internal indices (keyed by OSM id), count
+    // edges and shape bytes, intern names across regions.
     const osmToIdx = new Map();
     const nameToGlobal = new Map();
     let nextIdx = 0;
     let totalEdges = 0;
     let totalShapeBytes = 0;
-    for (const g of groups) {
-      for (const [id] of g.nodes) {
+    for (const r of regions) {
+      const ids = r.nodeIds;
+      for (let i = 0; i < ids.length; i++) {
+        const id = ids[i];
         if (!osmToIdx.has(id)) osmToIdx.set(id, nextIdx++);
       }
-      const localNames = g.names;
-      for (const [, , , nameLocal, shape] of g.edges) {
-        totalEdges++;
-        if (shape) totalShapeBytes += shape.byteLength;
-        const s = localNames[nameLocal];
+      totalEdges += r.edgeFrom.length;
+      totalShapeBytes += r.shapeBuf.byteLength;
+      const names = r.names;
+      const nis = r.edgeNameIdx;
+      for (let i = 0; i < nis.length; i++) {
+        const ni = nis[i];
+        if (ni < 0) continue;
+        const s = names[ni];
         if (s && !nameToGlobal.has(s)) nameToGlobal.set(s, nameToGlobal.size);
       }
     }
@@ -4001,35 +4073,42 @@ function fmtDate(ts) {
     wg._shapeBuf     = new Uint8Array(totalShapeBytes);
     wg._names        = Array.from(nameToGlobal.keys());
 
-    // Pass 2: fill node coords (last region wins if duplicated).
-    for (const g of groups) {
-      for (const [id, lng, lat] of g.nodes) {
-        const idx = osmToIdx.get(id);
-        wg._nodeLng[idx] = lng;
-        wg._nodeLat[idx] = lat;
+    // Pass 2: fill node coords (last region wins on duplicate OSM id).
+    for (const r of regions) {
+      const ids = r.nodeIds, lngs = r.nodeLng, lats = r.nodeLat;
+      for (let i = 0; i < ids.length; i++) {
+        const idx = osmToIdx.get(ids[i]);
+        wg._nodeLng[idx] = lngs[i];
+        wg._nodeLat[idx] = lats[i];
       }
     }
 
     // Pass 3: fill per-edge attributes, append shape bytes, tally adjacency
-    // counts per node.
+    // counts per node. Each region has local-index edge endpoints, so we
+    // materialize a local->global map once per region.
     const adjCounts = new Uint32Array(nodeCount);
     let eIdx = 0;
     let shapeOff = 0;
-    for (const g of groups) {
-      const localNames = g.names;
-      for (const [from, to, weight, nameLocal, shape] of g.edges) {
-        const fromIdx = osmToIdx.get(from);
-        const toIdx   = osmToIdx.get(to);
+    for (const r of regions) {
+      const n = r.nodeIds.length;
+      const localToGlobal = new Uint32Array(n);
+      for (let i = 0; i < n; i++) localToGlobal[i] = osmToIdx.get(r.nodeIds[i]);
+      const E = r.edgeFrom.length;
+      for (let i = 0; i < E; i++) {
+        const fromIdx = localToGlobal[r.edgeFrom[i]];
+        const toIdx   = localToGlobal[r.edgeTo[i]];
         adjCounts[fromIdx]++;
         adjCounts[toIdx]++;
-        wg._edgeWeight[eIdx] = weight;
-        const nameStr = localNames[nameLocal];
-        wg._edgeNameIdx[eIdx] = nameStr ? nameToGlobal.get(nameStr) : -1;
-        if (shape) {
-          wg._shapeBuf.set(shape, shapeOff);
+        wg._edgeWeight[eIdx] = r.edgeWeight[i];
+        const ni = r.edgeNameIdx[i];
+        wg._edgeNameIdx[eIdx] = ni >= 0 ? nameToGlobal.get(r.names[ni]) : -1;
+        const sLen = r.edgeShapeLen[i];
+        if (sLen > 0) {
+          const sOff = r.edgeShapeOff[i];
+          wg._shapeBuf.set(r.shapeBuf.subarray(sOff, sOff + sLen), shapeOff);
           wg._edgeShapeOff[eIdx] = shapeOff;
-          wg._edgeShapeLen[eIdx] = shape.byteLength;
-          shapeOff += shape.byteLength;
+          wg._edgeShapeLen[eIdx] = sLen;
+          shapeOff += sLen;
         } else {
           wg._edgeShapeOff[eIdx] = -1;
           wg._edgeShapeLen[eIdx] = 0;
@@ -4046,14 +4125,18 @@ function fmtDate(ts) {
     }
     wg._adjStart[nodeCount] = cumSum;
 
-    // Pass 5: emit adjacency entries. Re-iterates groups so we match the
-    // edge-index order from pass 3 without keeping a temp edge-index array.
+    // Pass 5: emit adjacency entries (same region order as pass 3 so edge
+    // indices line up).
     const cursor = new Uint32Array(nodeCount);
     let eIdx2 = 0;
-    for (const g of groups) {
-      for (const [from, to] of g.edges) {
-        const fromIdx = osmToIdx.get(from);
-        const toIdx   = osmToIdx.get(to);
+    for (const r of regions) {
+      const n = r.nodeIds.length;
+      const localToGlobal = new Uint32Array(n);
+      for (let i = 0; i < n; i++) localToGlobal[i] = osmToIdx.get(r.nodeIds[i]);
+      const E = r.edgeFrom.length;
+      for (let i = 0; i < E; i++) {
+        const fromIdx = localToGlobal[r.edgeFrom[i]];
+        const toIdx   = localToGlobal[r.edgeTo[i]];
         const fromPos = wg._adjStart[fromIdx] + (cursor[fromIdx]++);
         const toPos   = wg._adjStart[toIdx]   + (cursor[toIdx]++);
         wg._adjTo[fromPos]   = toIdx;
