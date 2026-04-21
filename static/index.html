@@ -1833,7 +1833,8 @@ function fmtDate(ts) {
     await loadAllIcons();
     // rebuildScheduleIndex populates transit data and kicks off refreshRoutesSource.
     await rebuildScheduleIndex();
-    await rebuildWalkGraph();
+    // The walk graph is chunky (80-120 MB live for a country-sized region);
+    // defer it until the user actually asks to plan a route (see ensureWalkGraph).
     applyTheme(localStorage.getItem('cc.theme') || 'default');
   });
   map.on('styledata', () => {
@@ -2400,6 +2401,9 @@ function fmtDate(ts) {
     const minBtn = document.getElementById('directionsMinimize');
     if (minBtn) minBtn.textContent = '▼';
     currentRouteSnapshot = null;
+    // Free the ~100 MB walk graph now that the user isn't looking at a
+    // route. Next "Plan route" re-loads via ensureWalkGraph().
+    if (typeof unloadWalkGraph === 'function') unloadWalkGraph();
   }
 
   function renderDirections(route, fromLngLat, toPoi) {
@@ -3215,34 +3219,33 @@ function fmtDate(ts) {
       alert('Pick both a From and a To first.');
       return;
     }
-    if (walkGraph.nodes.size === 0) {
-      alert('No walking graph for this region yet — save the area first.');
-      return;
-    }
-    const start = findNearestWalkNode(from.lng, from.lat);
-    const end = findNearestWalkNode(to.lng, to.lat);
-    if (!start.id || !end.id) { alert('Could not find walkable path endpoints.'); return; }
-    if (start.distance > 500 || end.distance > 500) {
-      alert('One of the endpoints is too far from any walking path.');
-      return;
-    }
-    const pivotDate = routingStartDate();
-    const mode = routingWhenMode.value;  // 'now' | 'depart' | 'arrive'
-
-    const toPoi = { name: to.name || '?', lng: to.lng, lat: to.lat };
-    const walkWeight = currentWalkWeight();
-    const transferSec = currentTransferSec();
-    const canTransit = scheduleIdx.stops.size > 0 && scheduleIdx.stopToWalkNode.size > 0;
-
-    // Show a loading spinner while the (synchronous) Dijkstra search runs.
-    // Double-rAF lets the browser paint the spinner BEFORE the main thread
-    // blocks on the search, so the button visibly changes state.
+    // Single spinner covering both walk-graph hydration (first call can take
+    // a second or two) and the Dijkstra search. Double-rAF lets the browser
+    // paint the spinner before the main thread gets busy.
     const origLabel = routingGo.innerHTML;
     routingGo.classList.add('loading');
     routingGo.disabled = true;
     routingGo.innerHTML = '<span class="spinner"></span>Planning…';
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
     try {
+      await ensureWalkGraph();
+      if (walkGraph.nodes.size === 0) {
+        alert('No walking graph for this region yet — save the area first.');
+        return;
+      }
+      const start = findNearestWalkNode(from.lng, from.lat);
+      const end = findNearestWalkNode(to.lng, to.lat);
+      if (!start.id || !end.id) { alert('Could not find walkable path endpoints.'); return; }
+      if (start.distance > 500 || end.distance > 500) {
+        alert('One of the endpoints is too far from any walking path.');
+        return;
+      }
+      const pivotDate = routingStartDate();
+      const mode = routingWhenMode.value;  // 'now' | 'depart' | 'arrive'
+      const toPoi = { name: to.name || '?', lng: to.lng, lat: to.lat };
+      const walkWeight = currentWalkWeight();
+      const transferSec = currentTransferSec();
+      const canTransit = scheduleIdx.stops.size > 0 && scheduleIdx.stopToWalkNode.size > 0;
       if (canTransit) {
         const raws = planAlternatives(start.id, end.id, mode, pivotDate, walkWeight, transferSec);
         if (raws.length) {
@@ -3261,6 +3264,9 @@ function fmtDate(ts) {
       const route = astar(start.id, end.id);
       if (!route) { alert('No route found between those points.'); return; }
       renderDirections(route, from, toPoi);
+    } catch (e) {
+      console.error('routing failed:', e);
+      alert('Could not plan route.');
     } finally {
       routingGo.classList.remove('loading');
       routingGo.disabled = false;
@@ -3746,7 +3752,9 @@ function fmtDate(ts) {
       await deleteScheduleByRegion(id);
       await deleteWalkGraphByRegion(id);
       await rebuildScheduleIndex();
-      await rebuildWalkGraph();
+      // Drop the now-stale in-memory walk graph; next routing call re-loads
+      // via ensureWalkGraph().
+      unloadWalkGraph();
       allPois = allPois.filter(p => p.regionId !== id);
       saveRegions(list.filter(x => x.id !== id));
       renderRegions();
@@ -3927,6 +3935,26 @@ function fmtDate(ts) {
       }
     }
     // Bridges depend on both walk graph AND schedule; rebuild whenever walk changes.
+    if (typeof buildMultimodalBridges === 'function') buildMultimodalBridges();
+    walkGraphLoaded = true;
+  }
+
+  // Lazy load: the walk graph is memory-heavy (80-120 MB live for a country-
+  // sized region), and nothing on the map except routing / findNearestWalkNode
+  // actually reads it. First call triggers a load; subsequent calls are cheap.
+  let walkGraphLoaded = false;
+  let walkGraphLoadPromise = null;
+  async function ensureWalkGraph() {
+    if (walkGraphLoaded) return;
+    if (!walkGraphLoadPromise) walkGraphLoadPromise = rebuildWalkGraph();
+    await walkGraphLoadPromise;
+    walkGraphLoadPromise = null;
+  }
+  // Drop the in-memory graph so iOS can reclaim it during long idle periods.
+  // Next routing call will re-hydrate via ensureWalkGraph().
+  function unloadWalkGraph() {
+    walkGraph = { nodes: new Map(), adj: new Map() };
+    walkGraphLoaded = false;
     if (typeof buildMultimodalBridges === 'function') buildMultimodalBridges();
   }
 
@@ -4869,8 +4897,9 @@ function fmtDate(ts) {
     await fetchAndSaveSchedule(id, bbox);
     await rebuildScheduleIndex();
     await fetchAndSaveWalkGraph(id, bbox, status);
-    status.textContent = 'rebuilding walk graph in memory…';
-    await rebuildWalkGraph();
+    // Drop any in-memory walk graph so next routing call re-loads and picks
+    // up the new region. Lazy — we don't rebuild here.
+    unloadWalkGraph();
     const extraUrls = [];
     const reg = await navigator.serviceWorker.ready;
     const onMsg = (e) => {
