@@ -616,6 +616,28 @@ def walk_graph():
         weight_f32_bytes = _le_bytes([float(v) for v in edges_weight[u16_end:]], "f")
         name_idx_bytes   = _align4(_le_bytes(edges_name_idx_enc, name_typecode))
 
+        # Shape columns: replace the per-edge (u32 off, u32 len) pair (which
+        # spends 8 B/edge × E regardless of whether the edge has a shape —
+        # and on a typical city ~90% of edges have no shape) with:
+        #   - a 1-bit-per-edge "has shape" bitmap
+        #   - sparse (u32 off, u16 len) pairs, one per has-shape edge only
+        # For 850k edges × 10% has-shape, this drops from ~6.5 MB to ~600 KB.
+        bitmap_raw = bytearray((E + 7) // 8)
+        sparse_shape_off = []
+        sparse_shape_len = []
+        for i, slen in enumerate(edges_shape_len):
+            if slen > 0:
+                bitmap_raw[i >> 3] |= 1 << (i & 7)
+                sparse_shape_off.append(edges_shape_off[i])
+                # shape_len fits in u16: max single-edge shape blob is a
+                # short varint-encoded polyline, well under 64 KB.
+                sparse_shape_len.append(min(slen, 0xFFFF))
+        shape_edge_count = len(sparse_shape_off)
+
+        bitmap_bytes     = _align4(bytes(bitmap_raw))
+        sparse_off_bytes = _le_bytes(sparse_shape_off, "I")
+        sparse_len_bytes = _align4(_le_bytes(sparse_shape_len, "H"))
+
         names_buf = BytesIO()
         for name in names_list:
             b = name.encode("utf-8")
@@ -626,13 +648,13 @@ def walk_graph():
         names_bytes = names_buf.getvalue()
         shapes_bytes = b"".join(shape_chunks)
 
-        # v2 header (48 bytes). Keeps nodes 8-aligned for the f64 osm_id view.
+        # v3 header (48 bytes). Nodes stay 8-aligned for f64 osm_id view.
         header = struct.pack(
             "<4sIIIIIIIIIII",
-            b"WALK", 2, N, E, M,
+            b"WALK", 3, N, E, M,
             len(names_bytes), len(shapes_bytes),
             u8_end, u16_end, name_idx_width,
-            0, 0,  # reserved
+            shape_edge_count, 0,
         )
 
         body = b"".join([
@@ -642,18 +664,20 @@ def walk_graph():
             _le_bytes(nodes_lat, "f"),
             _le_bytes(edges_from, "I"),
             _le_bytes(edges_to, "I"),
-            _le_bytes(edges_shape_off, "I"),
-            _le_bytes(edges_shape_len, "I"),
             weight_u8_bytes,
             weight_u16_bytes,
             weight_f32_bytes,
             name_idx_bytes,
+            bitmap_bytes,
+            sparse_off_bytes,
+            sparse_len_bytes,
             names_bytes,
             shapes_bytes,
         ])
         g.meta["u8end"] = u8_end
         g.meta["u16end"] = u16_end
         g.meta["niw"] = name_idx_width
+        g.meta["sec"] = shape_edge_count
 
     with _phase("gzip"):
         compressed = gzip.compress(body, compresslevel=1)
