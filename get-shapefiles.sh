@@ -28,12 +28,11 @@ fetch_ne() {
   echo "==> extracted to $dest/"
 }
 
-fetch_ne ne_10m_land physical
-
-# Uncomment to also fetch the other sources referenced by tilemaker-slim.json:
-# fetch_ne ne_10m_urban_areas cultural
-# fetch_ne ne_10m_glaciated_areas physical
-# fetch_ne ne_10m_antarctic_ice_shelves_polys physical
+fetch_ne ne_10m_land                      physical
+fetch_ne ne_10m_ocean                     physical
+fetch_ne ne_10m_urban_areas               cultural
+fetch_ne ne_10m_glaciated_areas           physical
+fetch_ne ne_10m_antarctic_ice_shelves_polys physical
 
 echo
 echo "Done. Now run ./make-tiles.sh (delete data/*.mbtiles first to force a rebuild)."
