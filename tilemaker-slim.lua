@@ -131,7 +131,7 @@ function node_function()
 	local housenumber = Find("addr:housenumber")
 	if housenumber~="" then
 		Layer("housenumber", false)
-		Attribute("housenumber", housenumber)
+		WriteHousenumberAttribute(housenumber)
 	end
 
 	-- Write 'place'
@@ -267,6 +267,23 @@ function relation_scan_function()
 		Accept()
 	end
 end
+
+-- Write the housenumber attribute, using a numeric Value when the input is
+-- a clean positive integer and falling back to a string otherwise. Pure
+-- integers ("127") become a 1-2 byte varint in the layer's Value pool;
+-- strings with length + UTF-8 are several bytes each, and they stack up —
+-- for a city-sized z14 extract, housenumber values alone are ~2 MB. The
+-- round-trip string.format check preserves quirks like leading zeros
+-- ("0007") or mixed forms ("45B", "12-14") as strings.
+function WriteHousenumberAttribute(hn)
+	local n = tonumber(hn)
+	if n and n >= 0 and n == math.floor(n) and string.format("%d", n) == hn then
+		AttributeNumeric("housenumber", n)
+	else
+		Attribute("housenumber", hn)
+	end
+end
+
 
 function write_to_transportation_layer(minzoom, highway_class)
 	Layer("transportation", false)
@@ -493,7 +510,7 @@ function way_function()
 	-- Set 'housenumber'
 	if housenumber~="" then
 		LayerAsCentroid("housenumber")
-		Attribute("housenumber", housenumber)
+		WriteHousenumberAttribute(housenumber)
 	end
 
 	-- Set 'water'
@@ -573,6 +590,10 @@ function attribute_function(attr,layer)
 		-- layer so the client fills them with the standard land colour at
 		-- low zoom.
 		return { subclass="land" }
+	elseif attr["featurecla"]=="Ocean" then
+		-- ne_10m_ocean: world-wide ocean polygon, written to the water layer
+		-- so low-zoom views show blue behind the continents.
+		return { class="ocean" }
 	else
 		return { class="ocean" }
 	end
