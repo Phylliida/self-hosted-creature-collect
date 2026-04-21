@@ -3233,7 +3233,7 @@ function fmtDate(ts) {
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
     try {
       await ensureWalkGraph();
-      if (walkGraph.nodes.size === 0) {
+      if (walkGraph.nodeCount === 0) {
         alert('No walking graph for this region yet — save the area first.');
         return;
       }
@@ -3801,7 +3801,50 @@ function fmtDate(ts) {
     }
   }
 
-  let walkGraph = { nodes: new Map(), adj: new Map() };
+  // Typed-array walk graph. Internal uint32 node indices replace OSM node
+  // IDs (dropped at load time). CSR-style adjacency; a single direction bit
+  // packed in the high bit of _adjEdge marks reverse traversals. Shapes are
+  // concatenated into one Uint8Array — subarray views, never allocations.
+  function emptyWalkGraph() {
+    const wg = {
+      nodeCount: 0,
+      edgeCount: 0,
+      adjCount: 0,
+      _nodeLng:       new Float32Array(0),
+      _nodeLat:       new Float32Array(0),
+      _adjStart:      new Int32Array(1),    // length nodeCount+1
+      _adjTo:         new Uint32Array(0),
+      _adjEdge:       new Uint32Array(0),   // (reverse<<31) | edgeIdx
+      _edgeWeight:    new Float32Array(0),  // metres
+      _edgeNameIdx:   new Int32Array(0),    // -1 = no name
+      _edgeShapeOff:  new Int32Array(0),    // -1 = no shape
+      _edgeShapeLen:  new Uint32Array(0),
+      _names:         [],
+      _shapeBuf:      new Uint8Array(0),
+
+      hasNode(i)       { return i >= 0 && i < this.nodeCount; },
+      lng(i)           { return this._nodeLng[i]; },
+      lat(i)           { return this._nodeLat[i]; },
+      neighborStart(i) { return this._adjStart[i]; },
+      neighborEnd(i)   { return this._adjStart[i + 1]; },
+      neighborTo(ai)   { return this._adjTo[ai]; },
+      neighborEdge(ai) { return this._adjEdge[ai] & 0x7FFFFFFF; },
+      neighborReverse(ai) { return (this._adjEdge[ai] & 0x80000000) !== 0; },
+      edgeWeight(e)    { return this._edgeWeight[e]; },
+      edgeWalkSec(e)   { return this._edgeWeight[e] / WALK_SPEED_MPS; },
+      edgeName(e) {
+        const ni = this._edgeNameIdx[e];
+        return ni >= 0 ? this._names[ni] : '';
+      },
+      edgeShape(e) {
+        const off = this._edgeShapeOff[e];
+        if (off < 0) return null;
+        return this._shapeBuf.subarray(off, off + this._edgeShapeLen[e]);
+      },
+    };
+    return wg;
+  }
+  let walkGraph = emptyWalkGraph();
 
   async function fetchAndSaveWalkGraph(regionId, bbox, statusEl) {
     try {
@@ -3919,24 +3962,118 @@ function fmtDate(ts) {
 
   async function rebuildWalkGraph() {
     const groups = await loadAllWalkGraphs();
-    walkGraph = { nodes: new Map(), adj: new Map() };
+    const wg = emptyWalkGraph();
+
+    // Pass 1: assign sequential internal indices to every unique OSM node
+    // ID, count edges, sum shape bytes, intern names across regions.
+    const osmToIdx = new Map();
+    const nameToGlobal = new Map();
+    let nextIdx = 0;
+    let totalEdges = 0;
+    let totalShapeBytes = 0;
     for (const g of groups) {
-      const names = g.names || [];
-      for (const [id, lng, lat] of (g.nodes || [])) {
-        if (!walkGraph.nodes.has(id)) walkGraph.nodes.set(id, { lng, lat });
-      }
-      for (const e of (g.edges || [])) {
-        const [from, to, weight, nameIdx, shape] = e;
-        // `shape` here is either a Uint8Array or null (or any falsy).
-        const name = (typeof nameIdx === 'number') ? (names[nameIdx] || '') : (nameIdx || '');
-        const walkSec = weight / WALK_SPEED_MPS;
-        if (!walkGraph.adj.has(from)) walkGraph.adj.set(from, []);
-        walkGraph.adj.get(from).push({ to, weight, walkSec, name, shape: shape || null, reverse: false });
-        if (!walkGraph.adj.has(to)) walkGraph.adj.set(to, []);
-        walkGraph.adj.get(to).push({ to: from, weight, walkSec, name, shape: shape || null, reverse: true });
+      for (const row of (g.nodes || [])) {
+        const id = row[0];
+        if (!osmToIdx.has(id)) osmToIdx.set(id, nextIdx++);
       }
     }
-    // Bridges depend on both walk graph AND schedule; rebuild whenever walk changes.
+    for (const g of groups) {
+      const localNames = g.names || [];
+      for (const e of (g.edges || [])) {
+        if (!osmToIdx.has(e[0]) || !osmToIdx.has(e[1])) continue;
+        totalEdges++;
+        const sh = e[4];
+        if (sh) totalShapeBytes += sh.byteLength;
+        const nl = e[3];
+        const s = (typeof nl === 'number') ? (localNames[nl] || '') : (nl || '');
+        if (s && !nameToGlobal.has(s)) nameToGlobal.set(s, nameToGlobal.size);
+      }
+    }
+
+    const nodeCount = nextIdx;
+    const edgeCount = totalEdges;
+    wg.nodeCount = nodeCount;
+    wg.edgeCount = edgeCount;
+    wg.adjCount  = 2 * edgeCount;
+    wg._nodeLng      = new Float32Array(nodeCount);
+    wg._nodeLat      = new Float32Array(nodeCount);
+    wg._adjStart     = new Int32Array(nodeCount + 1);
+    wg._adjTo        = new Uint32Array(2 * edgeCount);
+    wg._adjEdge      = new Uint32Array(2 * edgeCount);
+    wg._edgeWeight   = new Float32Array(edgeCount);
+    wg._edgeNameIdx  = new Int32Array(edgeCount);
+    wg._edgeShapeOff = new Int32Array(edgeCount);
+    wg._edgeShapeLen = new Uint32Array(edgeCount);
+    wg._shapeBuf     = new Uint8Array(totalShapeBytes);
+    wg._names        = Array.from(nameToGlobal.keys());
+
+    // Pass 2: fill node coords (last region wins if duplicated).
+    for (const g of groups) {
+      for (const [id, lng, lat] of (g.nodes || [])) {
+        const idx = osmToIdx.get(id);
+        wg._nodeLng[idx] = lng;
+        wg._nodeLat[idx] = lat;
+      }
+    }
+
+    // Pass 3: fill per-edge attributes, append shape bytes, tally adjacency
+    // counts per node.
+    const adjCounts = new Uint32Array(nodeCount);
+    let eIdx = 0;
+    let shapeOff = 0;
+    for (const g of groups) {
+      const localNames = g.names || [];
+      for (const e of (g.edges || [])) {
+        const [from, to, weight, nameLocal, shape] = e;
+        const fromIdx = osmToIdx.get(from);
+        const toIdx   = osmToIdx.get(to);
+        if (fromIdx === undefined || toIdx === undefined) continue;
+        adjCounts[fromIdx]++;
+        adjCounts[toIdx]++;
+        wg._edgeWeight[eIdx] = weight;
+        const nameStr = (typeof nameLocal === 'number') ? (localNames[nameLocal] || '') : (nameLocal || '');
+        wg._edgeNameIdx[eIdx] = nameStr ? nameToGlobal.get(nameStr) : -1;
+        if (shape) {
+          wg._shapeBuf.set(shape, shapeOff);
+          wg._edgeShapeOff[eIdx] = shapeOff;
+          wg._edgeShapeLen[eIdx] = shape.byteLength;
+          shapeOff += shape.byteLength;
+        } else {
+          wg._edgeShapeOff[eIdx] = -1;
+          wg._edgeShapeLen[eIdx] = 0;
+        }
+        eIdx++;
+      }
+    }
+
+    // Pass 4: CSR offsets from adjacency counts.
+    let cumSum = 0;
+    for (let i = 0; i < nodeCount; i++) {
+      wg._adjStart[i] = cumSum;
+      cumSum += adjCounts[i];
+    }
+    wg._adjStart[nodeCount] = cumSum;
+
+    // Pass 5: emit adjacency entries. Re-iterates groups so we match the
+    // edge-index order from pass 3 without keeping a temp edge-index array.
+    const cursor = new Uint32Array(nodeCount);
+    let eIdx2 = 0;
+    for (const g of groups) {
+      for (const e of (g.edges || [])) {
+        const fromIdx = osmToIdx.get(e[0]);
+        const toIdx   = osmToIdx.get(e[1]);
+        if (fromIdx === undefined || toIdx === undefined) continue;
+        const fromPos = wg._adjStart[fromIdx] + (cursor[fromIdx]++);
+        const toPos   = wg._adjStart[toIdx]   + (cursor[toIdx]++);
+        wg._adjTo[fromPos]   = toIdx;
+        wg._adjEdge[fromPos] = eIdx2;                // forward, high bit = 0
+        wg._adjTo[toPos]     = fromIdx;
+        wg._adjEdge[toPos]   = eIdx2 | 0x80000000;   // reverse, high bit = 1
+        eIdx2++;
+      }
+    }
+
+    walkGraph = wg;
     if (typeof buildMultimodalBridges === 'function') buildMultimodalBridges();
     walkGraphLoaded = true;
   }
@@ -3955,7 +4092,7 @@ function fmtDate(ts) {
   // Drop the in-memory graph so iOS can reclaim it during long idle periods.
   // Next routing call will re-hydrate via ensureWalkGraph().
   function unloadWalkGraph() {
-    walkGraph = { nodes: new Map(), adj: new Map() };
+    walkGraph = emptyWalkGraph();
     walkGraphLoaded = false;
     if (typeof buildMultimodalBridges === 'function') buildMultimodalBridges();
   }
@@ -3971,12 +4108,16 @@ function fmtDate(ts) {
   }
 
   function findNearestWalkNode(lng, lat) {
-    let best = null, bestD = Infinity;
-    for (const [id, n] of walkGraph.nodes) {
-      const d = haversineM(n.lng, n.lat, lng, lat);
-      if (d < bestD) { bestD = d; best = id; }
+    let bestIdx = -1, bestD = Infinity;
+    const n = walkGraph.nodeCount;
+    const lngs = walkGraph._nodeLng, lats = walkGraph._nodeLat;
+    for (let i = 0; i < n; i++) {
+      const d = haversineM(lngs[i], lats[i], lng, lat);
+      if (d < bestD) { bestD = d; bestIdx = i; }
     }
-    return { id: best, distance: bestD };
+    // `id` retained as the caller-facing field name; value is now an internal
+    // uint32 index into walkGraph's typed arrays.
+    return { id: bestIdx >= 0 ? bestIdx : null, distance: bestD };
   }
 
   // Binary heap min-priority-queue for A*
@@ -4022,10 +4163,12 @@ function fmtDate(ts) {
   });
 
   function astar(startId, goalId) {
-    if (!walkGraph.nodes.has(startId) || !walkGraph.nodes.has(goalId)) return null;
-    const goal = walkGraph.nodes.get(goalId);
+    if (!walkGraph.hasNode(startId) || !walkGraph.hasNode(goalId)) return null;
+    const goalLng = walkGraph.lng(goalId);
+    const goalLat = walkGraph.lat(goalId);
     const gScore = new Map();
     const came = new Map();
+    // per-target → { edgeIdx, reverse } used to get there.
     const edgeUsed = new Map();
     gScore.set(startId, 0);
     const open = new MinHeap();
@@ -4045,20 +4188,23 @@ function fmtDate(ts) {
           c = prev;
           path.unshift(c);
         }
-        const total = gScore.get(goalId);
-        return { path, edges, distance: total };
+        return { path, edges, distance: gScore.get(goalId) };
       }
-      const neighbors = walkGraph.adj.get(current) || [];
-      const curG = gScore.get(current);
-      for (const e of neighbors) {
-        const tentative = curG + e.weight;
-        if (tentative < (gScore.get(e.to) ?? Infinity)) {
-          came.set(e.to, current);
-          edgeUsed.set(e.to, e);
-          gScore.set(e.to, tentative);
-          const nb = walkGraph.nodes.get(e.to);
-          const h = nb ? haversineM(nb.lng, nb.lat, goal.lng, goal.lat) : 0;
-          open.push([tentative + h, e.to]);
+      const nStart = walkGraph.neighborStart(current);
+      const nEnd   = walkGraph.neighborEnd(current);
+      const curG   = gScore.get(current);
+      for (let i = nStart; i < nEnd; i++) {
+        const to      = walkGraph.neighborTo(i);
+        const eIdx    = walkGraph.neighborEdge(i);
+        const reverse = walkGraph.neighborReverse(i);
+        const w       = walkGraph.edgeWeight(eIdx);
+        const tentative = curG + w;
+        if (tentative < (gScore.get(to) ?? Infinity)) {
+          came.set(to, current);
+          edgeUsed.set(to, { edgeIdx: eIdx, reverse });
+          gScore.set(to, tentative);
+          const h = haversineM(walkGraph.lng(to), walkGraph.lat(to), goalLng, goalLat);
+          open.push([tentative + h, to]);
         }
       }
     }
@@ -4068,23 +4214,23 @@ function fmtDate(ts) {
   function buildRouteCoords(route) {
     const coords = [];
     if (!route || !route.path.length) return coords;
-    const first = walkGraph.nodes.get(route.path[0]);
-    if (first) coords.push([first.lng, first.lat]);
+    const firstIdx = route.path[0];
+    coords.push([walkGraph.lng(firstIdx), walkGraph.lat(firstIdx)]);
     for (let i = 0; i < route.edges.length; i++) {
-      const e = route.edges[i];
-      const fromN = walkGraph.nodes.get(route.path[i]);
-      const toN = walkGraph.nodes.get(route.path[i + 1]);
-      if (!fromN || !toN) continue;
-      if (e.shape) {
-        // Shape encoded from the "physical" edge direction (from lower-node to higher-node
-        // based on how it was stored). `reverse` tells us whether our traversal is
-        // opposite to that stored direction.
-        const origin = e.reverse ? toN : fromN;
-        let pts = decodeShapeBlob(origin.lng, origin.lat, e.shape);
-        if (e.reverse) pts = pts.reverse();
+      const { edgeIdx, reverse } = route.edges[i];
+      const fromIdx = route.path[i];
+      const toIdx   = route.path[i + 1];
+      const fromLng = walkGraph.lng(fromIdx), fromLat = walkGraph.lat(fromIdx);
+      const toLng   = walkGraph.lng(toIdx),   toLat   = walkGraph.lat(toIdx);
+      const shape = walkGraph.edgeShape(edgeIdx);
+      if (shape) {
+        const origLng = reverse ? toLng : fromLng;
+        const origLat = reverse ? toLat : fromLat;
+        let pts = decodeShapeBlob(origLng, origLat, shape);
+        if (reverse) pts = pts.reverse();
         for (const p of pts) coords.push(p);
       }
-      coords.push([toN.lng, toN.lat]);
+      coords.push([toLng, toLat]);
     }
     return coords;
   }
@@ -4098,27 +4244,29 @@ function fmtDate(ts) {
         const coords = [];
         for (let i = 0; i < leg.edges.length; i++) {
           const { edge, fromNode, toNode } = leg.edges[i];
-          const fromN = walkGraph.nodes.get(fromNode);
-          const toN = walkGraph.nodes.get(toNode);
-          if (!fromN || !toN) continue;
-          if (i === 0) coords.push([fromN.lng, fromN.lat]);
-          if (edge.shape) {
-            const origin = edge.reverse ? toN : fromN;
-            let pts = decodeShapeBlob(origin.lng, origin.lat, edge.shape);
+          if (!walkGraph.hasNode(fromNode) || !walkGraph.hasNode(toNode)) continue;
+          const fromLng = walkGraph.lng(fromNode), fromLat = walkGraph.lat(fromNode);
+          const toLng   = walkGraph.lng(toNode),   toLat   = walkGraph.lat(toNode);
+          if (i === 0) coords.push([fromLng, fromLat]);
+          const shape = walkGraph.edgeShape(edge.edgeIdx);
+          if (shape) {
+            const origLng = edge.reverse ? toLng : fromLng;
+            const origLat = edge.reverse ? toLat : fromLat;
+            let pts = decodeShapeBlob(origLng, origLat, shape);
             if (edge.reverse) pts = pts.reverse();
             for (const p of pts) coords.push(p);
           }
-          coords.push([toN.lng, toN.lat]);
+          coords.push([toLng, toLat]);
         }
         styled.push({ kind: 'walk', coords });
       } else if (leg.type === 'access' || leg.type === 'egress') {
         const stop = scheduleIdx.stops.get(leg.stopId);
         const nid = leg.type === 'access' ? leg.fromNode : leg.toNode;
-        const n = walkGraph.nodes.get(nid);
-        if (stop && n) {
+        if (stop && walkGraph.hasNode(nid)) {
+          const nLng = walkGraph.lng(nid), nLat = walkGraph.lat(nid);
           styled.push({ kind: 'walk', coords: leg.type === 'access'
-            ? [[n.lng, n.lat], [stop.lng, stop.lat]]
-            : [[stop.lng, stop.lat], [n.lng, n.lat]] });
+            ? [[nLng, nLat], [stop.lng, stop.lat]]
+            : [[stop.lng, stop.lat], [nLng, nLat]] });
         }
       } else if (leg.type === 'transit') {
         const from = scheduleIdx.stops.get(leg.fromStopId);
@@ -4226,7 +4374,7 @@ function fmtDate(ts) {
         transitSec += dur;
       } else if (leg.type === 'walk') {
         walkSec += dur;
-        for (const { edge } of leg.edges) walkMeters += edge.weight;
+        for (const { edge } of leg.edges) walkMeters += walkGraph.edgeWeight(edge.edgeIdx);
       } else {  // access / egress
         walkSec += dur;
         walkMeters += leg.distance || 0;
@@ -4250,7 +4398,7 @@ function fmtDate(ts) {
     route.legs.forEach((leg, legIdx) => {
       if (leg.type === 'walk') {
         let meters = 0;
-        for (const { edge } of leg.edges) meters += edge.weight;
+        for (const { edge } of leg.edges) meters += walkGraph.edgeWeight(edge.edgeIdx);
         steps.push({ kind: 'walk', text: `Walk ${Math.round(meters)} m`,
                      dep: leg.tDep, arr: leg.tArr });
       } else if (leg.type === 'access') {
@@ -4298,19 +4446,20 @@ function fmtDate(ts) {
   function instructionsFor(route) {
     if (!route || route.path.length < 2) return [];
     const steps = [];
-    let curName = route.edges[0] ? route.edges[0].name : '';
+    let curName = route.edges[0] ? walkGraph.edgeName(route.edges[0].edgeIdx) : '';
     let curDist = 0;
     let lastBearing = null;
     for (let i = 0; i < route.edges.length; i++) {
       const e = route.edges[i];
-      const fromN = walkGraph.nodes.get(route.path[i]);
-      const toN = walkGraph.nodes.get(route.path[i + 1]);
+      const weight = walkGraph.edgeWeight(e.edgeIdx);
+      const fromN = { lng: walkGraph.lng(route.path[i]),     lat: walkGraph.lat(route.path[i]) };
+      const toN   = { lng: walkGraph.lng(route.path[i + 1]), lat: walkGraph.lat(route.path[i + 1]) };
       const bearing = bearingDeg(fromN, toN);
-      const name = e.name || '';
+      const name = walkGraph.edgeName(e.edgeIdx);
       if (i === 0) {
         steps.push({ action: 'start', name, distance: 0 });
         lastBearing = bearing;
-        curDist = e.weight;
+        curDist = weight;
         curName = name;
         continue;
       }
@@ -4321,10 +4470,10 @@ function fmtDate(ts) {
         steps[steps.length - 1].distance += curDist;
         const dir = turnDelta > 30 ? 'turn right' : turnDelta < -30 ? 'turn left' : 'continue';
         steps.push({ action: dir, name, distance: 0 });
-        curDist = e.weight;
+        curDist = weight;
         curName = name;
       } else {
-        curDist += e.weight;
+        curDist += weight;
       }
       lastBearing = bearing;
     }
@@ -4606,13 +4755,17 @@ function fmtDate(ts) {
   function buildMultimodalBridges() {
     scheduleIdx.stopToWalkNode = new Map();
     scheduleIdx.walkNodeToStops = new Map();
-    if (!walkGraph || !walkGraph.nodes.size || !scheduleIdx.stops.size) return;
+    if (!walkGraph.nodeCount || !scheduleIdx.stops.size) return;
     const GRID = 1000;  // ~100m buckets at equator
     const walkGrid = new Map();
-    for (const [id, n] of walkGraph.nodes) {
-      const k = Math.round(n.lng * GRID) + ',' + Math.round(n.lat * GRID);
+    const wcount = walkGraph.nodeCount;
+    const wlngs  = walkGraph._nodeLng;
+    const wlats  = walkGraph._nodeLat;
+    for (let idx = 0; idx < wcount; idx++) {
+      const lng = wlngs[idx], lat = wlats[idx];
+      const k = Math.round(lng * GRID) + ',' + Math.round(lat * GRID);
       if (!walkGrid.has(k)) walkGrid.set(k, []);
-      walkGrid.get(k).push([id, n.lng, n.lat]);
+      walkGrid.get(k).push([idx, lng, lat]);  // idx is internal node index
     }
     const MAX_LINK_M = 500;
     for (const [stopId, stop] of scheduleIdx.stops) {
