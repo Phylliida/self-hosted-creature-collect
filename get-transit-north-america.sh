@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end pipeline for Canada + US GTFS transit data.
+# End-to-end pipeline for Canada + US + Mexico GTFS transit data.
 #
 # Produces data/schedule.sqlite populated with every registered feed in the
 # Mobility Database plus Montreal's STM (which isn't in the catalog). Runs
@@ -49,7 +49,7 @@ else
 fi
 
 # --- 3. Generate per-country feed lists -----------------------------------
-for cc in CA US; do
+for cc in CA US MX; do
   tsv="feeds-$(echo "$cc" | tr '[:upper:]' '[:lower:]').tsv"
   if [ ! -e "$tsv" ] || [ "$refresh_catalog" = 1 ]; then
     echo "==> filtering $cc feeds -> $tsv"
@@ -71,12 +71,16 @@ fi
 # ingest-gtfs.py streams one feed at a time (download -> validate -> ingest
 # -> delete zip) and is resumable via the schedule db's feed_meta table, so
 # re-running is cheap.
-for cc in ca us; do
+for cc in ca us mx; do
   tsv="feeds-${cc}.tsv"
   log="logs/ingest-${cc}.log"
   echo "==> ingesting ${cc^^} feeds (logging to $log)"
+  # ingest-gtfs.py returns non-zero when ANY individual feed fails (download
+  # 404s, validation errors, etc). Per-feed failures are expected — agencies
+  # rotate URLs, temporarily take feeds offline, etc. — and shouldn't halt
+  # the pipeline. `|| true` prevents `set -e` from aborting on that.
   python3 ingest-gtfs.py data/schedule.sqlite --feeds "$tsv" --tmp /tmp \
-    2>&1 | tee "$log"
+    2>&1 | tee "$log" || true
 done
 
 # --- 6. Link GTFS stops to OSM route_stop nodes ---------------------------

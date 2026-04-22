@@ -56,7 +56,13 @@ For each `osmpbf/<name>.osm.pbf` this produces:
   buildings), then `osmium export` → `build-poi-db.py`. Polygon features get a
   centroid. Stores lng, lat, name, category, and a JSON `props` blob (address,
   opening_hours, phone, website, wheelchair, brand, cuisine, description,
-  wikipedia/wikidata, internet_access).
+  wikipedia/wikidata, internet_access). Viewport lookups go through a
+  `poi_rtree` spatial index (JOINed back to `poi` by rowid) — empty/sparse
+  regions resolve in ~1 ms, populated regions in ~60 ms. If you have an older
+  pre-rtree `.pois.sqlite`, run `python3 add-poi-rtree.py <file>` to migrate
+  in place (~80 s for the 6.5 M-row North America DB, adds ~0.4 GB). The
+  server auto-detects the rtree and falls back to flat lat/lng indexes for
+  un-migrated DBs.
 - `data/<name>.walk.sqlite` — pedestrian walk graph built from `w/highway`
   features. Nodes are stored with their OSM ids (so multi-region downloads
   can dedup at tile boundaries) plus rtree-indexed lng/lat; edges carry an
@@ -66,7 +72,7 @@ For each `osmpbf/<name>.osm.pbf` this produces:
   light_rail/monorail/train) for the map's route overlay.
 
 Already-built files are skipped. On `/poi?bbox=`, the server does a fast
-indexed SQL query (`WHERE lng BETWEEN … AND lat BETWEEN …`) and returns a
+rtree-indexed spatial query (`poi_rtree JOIN poi ON rowid`) and returns a
 compact binary bundle (`POIB` header + columnar lng/lat/name_idx/category_idx
 typed arrays + a shared string pool + packed per-POI props). The client
 parses the buffer into POI objects with all strings pooled, so repeated

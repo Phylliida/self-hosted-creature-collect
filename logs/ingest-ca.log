@@ -374,38 +374,7 @@
 [skip] tld-5630 already ingested
 
 === [124/132] tld-5721 ===
-[fetch] tld-5721 (Orléans Express / La Malbaie / Quebec)
-[validate] tld-5721 (Orléans Express / La Malbaie / Quebec)  (0.0 MB, 0.2s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  126 stops total
-[OK   ] route-types
-         info:  23 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  618 stop_time rows across 102 trips
-[OK   ] stop-time-fields
-[WARN ] referential-integrity
-         warn:  4 stop_times reference unknown stop_id (sample: ['743', '740', '740', '743']) — row dropped by build
-[OK   ] calendar-fields
-         info:  127 calendar rows, 0 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260416..20260601
-
-RESULT: warnings only — ingest should work but review output
-[ingest] tld-5721 (Orléans Express / La Malbaie / Quebec)
-  [tld-5721] opening /tmp/tmp9av4aim1.zip
-    agency: 2
-    routes: 23
-    stops: 126
-    services: 127
-    calendar_dates: 0
-[K    shapes: 0 (0 points, 0.0s)
-    trips: 102
-[K    stop_times: 614  patterns: 59  trips: 102  blobs: 66  headsigns: 21  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
+[skip] tld-5721 already ingested
 
 === [125/132] tld-5722 ===
 [skip] tld-5722 already ingested
@@ -433,4 +402,4 @@ RESULT: warnings only — ingest should work but review output
 === [132/132] stm ===
 [skip] stm already ingested
 
-=== done: ok=1, skipped=124, download_failed=7, validation_failed=0, ingest_failed=0 ===
+=== done: ok=0, skipped=125, download_failed=7, validation_failed=0, ingest_failed=0 ===

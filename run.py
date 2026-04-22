@@ -54,13 +54,26 @@ def _rtree_overlaps(path, table, w, s, e, n):
 
 
 def _poi_overlaps(path, w, s, e, n):
+    # Prefer the rtree if it's present (built via add-poi-rtree.py); fall
+    # back to the flat lat/lng indexes for DBs that haven't been migrated.
     try:
         with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
-            row = conn.execute(
-                "SELECT 1 FROM poi "
-                "WHERE lng BETWEEN ? AND ? AND lat BETWEEN ? AND ? LIMIT 1",
-                (w, e, s, n),
+            has_rtree = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='poi_rtree'"
             ).fetchone()
+            if has_rtree:
+                row = conn.execute(
+                    "SELECT 1 FROM poi_rtree "
+                    "WHERE minX <= ? AND maxX >= ? AND minY <= ? AND maxY >= ? "
+                    "LIMIT 1",
+                    (e, w, n, s),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT 1 FROM poi "
+                    "WHERE lng BETWEEN ? AND ? AND lat BETWEEN ? AND ? LIMIT 1",
+                    (w, e, s, n),
+                ).fetchone()
         return row is not None
     except sqlite3.DatabaseError:
         return False
@@ -256,11 +269,23 @@ def poi():
 
     for path in _relevant_files("*.pois.sqlite", _poi_overlaps, w, s, e, n):
         with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
-            rows = conn.execute(
-                "SELECT lng, lat, name, category, props FROM poi "
-                "WHERE lng BETWEEN ? AND ? AND lat BETWEEN ? AND ?",
-                (w, e, s, n),
-            ).fetchall()
+            has_rtree = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='poi_rtree'"
+            ).fetchone()
+            if has_rtree:
+                rows = conn.execute(
+                    "SELECT poi.lng, poi.lat, poi.name, poi.category, poi.props "
+                    "FROM poi_rtree JOIN poi ON poi.rowid = poi_rtree.id "
+                    "WHERE poi_rtree.minX <= ? AND poi_rtree.maxX >= ? "
+                    "  AND poi_rtree.minY <= ? AND poi_rtree.maxY >= ?",
+                    (e, w, n, s),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT lng, lat, name, category, props FROM poi "
+                    "WHERE lng BETWEEN ? AND ? AND lat BETWEEN ? AND ?",
+                    (w, e, s, n),
+                ).fetchall()
             for lng, lat, name, category, props_json in rows:
                 lngs.append(lng)
                 lats.append(lat)
