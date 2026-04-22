@@ -25,11 +25,11 @@
     padding-top: calc(10px + env(safe-area-inset-top));
     padding-left: calc(14px + env(safe-area-inset-left));
     padding-right: calc(14px + env(safe-area-inset-right));
-    background: #2d2d2d; color: #fff; font-size: 13px; display: none;
+    font-size: 13px; display: none;
   }
   #install.show { display: flex; gap: 10px; align-items: center; }
   #install .msg { flex: 1; }
-  #install button { background: transparent; color: #fff; border: 1px solid #fff;
+  #install button { background: transparent;
                     border-radius: 4px; padding: 4px 8px; cursor: pointer; }
   #welcome {
     position: fixed; inset: 0; z-index: 50; display: none;
@@ -40,20 +40,19 @@
   }
   #welcome.show { display: flex; }
   #welcome .card {
-    background: #fff; border-radius: 14px; padding: 24px;
+    background: var(--ui-bg); border-radius: var(--ui-radius); padding: 24px;
     max-width: 360px; width: 92%; box-sizing: border-box;
     box-shadow: 0 8px 40px rgba(0, 0, 0, 0.35);
-    text-align: center; color: #333; font-size: 14px; line-height: 1.45;
+    text-align: center; color: var(--ui-text); font-size: 14px; line-height: 1.45;
   }
   #welcome h2 { margin: 0 0 10px; font-size: 20px; }
-  #welcome p { margin: 0 0 18px; color: #555; }
+  #welcome p { margin: 0 0 18px; color: var(--ui-muted); }
   #welcomeStart {
-    background: #3b7fdf; color: #fff; border: none;
-    padding: 12px 24px; border-radius: 6px; font-size: 15px;
+    padding: 12px 24px; font-size: 15px;
     cursor: pointer; width: 100%;
   }
-  #welcomeStart:disabled { background: #88a; cursor: wait; }
-  #welcomeStatus { margin-top: 10px; font-size: 12px; color: #888;
+  #welcomeStart:disabled { cursor: wait; }
+  #welcomeStatus { margin-top: 10px; font-size: 12px; color: var(--ui-muted);
                    min-height: 14px; }
 
   /* ============================================================
@@ -109,6 +108,153 @@
     letter-spacing: 0.08em;
   }
 
+  /* Terminal + Blueprint: monospace body — every letter feels typed.
+     Blueprint also uppercases headings for that drafting-table feel. */
+  html[data-theme="terminal"] body,
+  html[data-theme="blueprint"] body {
+    font-family: "SF Mono", "Menlo", "Consolas", "Liberation Mono", monospace;
+  }
+  html[data-theme="blueprint"] #settingsPanel h3,
+  html[data-theme="blueprint"] #welcome h2,
+  html[data-theme="blueprint"] #poiCardName,
+  html[data-theme="blueprint"] #panel summary b {
+    text-transform: uppercase; letter-spacing: 0.12em; font-weight: 500;
+  }
+  html[data-theme="terminal"] #welcome h2::before,
+  html[data-theme="terminal"] #settingsPanel h3::before {
+    content: "> "; opacity: 0.8;
+  }
+  html[data-theme="terminal"] input::after,
+  html[data-theme="terminal"] #searchInput {
+    caret-color: var(--ui-accent);
+  }
+
+  /* Vaporwave + Neon: glowing accents — CTA buttons and active controls
+     pick up a soft neon halo via text-shadow + box-shadow. */
+  html[data-theme="vaporwave"] #welcomeStart,
+  html[data-theme="vaporwave"] #downloadBtn,
+  html[data-theme="vaporwave"] #appDataBtn,
+  html[data-theme="vaporwave"] #poiCardDirections,
+  html[data-theme="vaporwave"] #routingGo,
+  html[data-theme="vaporwave"] button.close,
+  html[data-theme="vaporwave"] #transitClose,
+  html[data-theme="vaporwave"] #savedRoutesClose,
+  html[data-theme="neon"] #welcomeStart,
+  html[data-theme="neon"] #downloadBtn,
+  html[data-theme="neon"] #appDataBtn,
+  html[data-theme="neon"] #poiCardDirections,
+  html[data-theme="neon"] #routingGo,
+  html[data-theme="neon"] button.close,
+  html[data-theme="neon"] #transitClose,
+  html[data-theme="neon"] #savedRoutesClose {
+    box-shadow: 0 0 10px var(--ui-accent), 0 0 20px rgba(255,113,206,0.3);
+    text-shadow: 0 0 6px rgba(255,255,255,0.5);
+  }
+  html[data-theme="vaporwave"] #settingsPanel h3,
+  html[data-theme="neon"] #settingsPanel h3 {
+    text-shadow: 0 0 8px var(--ui-accent);
+  }
+
+  /* Pastel: extra-soft edges, feels like a children's book. */
+  html[data-theme="pastel"] button {
+    transition: transform 0.1s ease;
+  }
+  html[data-theme="pastel"] button:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+
+  /* Forest: gentle serif headings like a nature-reserve map legend. */
+  html[data-theme="forest"] #settingsPanel h3,
+  html[data-theme="forest"] #welcome h2,
+  html[data-theme="forest"] #poiCardName,
+  html[data-theme="forest"] #panel summary b {
+    font-family: Georgia, "Hoefler Text", "Palatino Linotype", serif;
+  }
+
+  /* Autumn: warm italic headings — like a chalkboard at an apple orchard. */
+  html[data-theme="autumn"] #settingsPanel h3,
+  html[data-theme="autumn"] #welcome h2 {
+    font-style: italic; font-weight: 600;
+  }
+
+  /* Amber: same monospace + ">" prompt as terminal — it's the amber CRT. */
+  html[data-theme="amber"] body {
+    font-family: "SF Mono", "Menlo", "Consolas", "Liberation Mono", monospace;
+  }
+  html[data-theme="amber"] #welcome h2::before,
+  html[data-theme="amber"] #settingsPanel h3::before {
+    content: "> "; opacity: 0.8;
+  }
+
+  /* Nordic: clean light serif headings like a ski-lodge brochure. */
+  html[data-theme="nordic"] #settingsPanel h3,
+  html[data-theme="nordic"] #welcome h2,
+  html[data-theme="nordic"] #poiCardName {
+    font-family: "Helvetica Neue", "Inter", system-ui, sans-serif;
+    font-weight: 300; letter-spacing: 0.02em;
+  }
+
+  /* Ocean: flowing serif for headings — coastal almanac feel. */
+  html[data-theme="ocean"] #settingsPanel h3,
+  html[data-theme="ocean"] #welcome h2,
+  html[data-theme="ocean"] #poiCardName {
+    font-family: Georgia, "Hoefler Text", serif;
+  }
+
+  /* Galaxy: starlight glow behind headings, serif italic for cosmic flair. */
+  html[data-theme="galaxy"] #settingsPanel h3,
+  html[data-theme="galaxy"] #welcome h2,
+  html[data-theme="galaxy"] #poiCardName {
+    font-family: Georgia, "Hoefler Text", serif;
+    font-style: italic;
+    text-shadow: 0 0 12px rgba(160,128,255,0.5);
+  }
+
+  /* Noir: bold caps headings, high-contrast newsprint. */
+  html[data-theme="noir"] body {
+    font-family: "Helvetica Neue", "Impact", "Arial Black", sans-serif;
+  }
+  html[data-theme="noir"] #settingsPanel h3,
+  html[data-theme="noir"] #welcome h2,
+  html[data-theme="noir"] #poiCardName,
+  html[data-theme="noir"] #panel summary b {
+    text-transform: uppercase; letter-spacing: 0.1em; font-weight: 900;
+  }
+
+  /* GameBoy: pixel-hard edges, crisp rendering, monospace for that 1989
+     LCD feel. No border-radius, no anti-aliased shadows. */
+  html[data-theme="gameboy"] body {
+    font-family: "Press Start 2P", "Courier New", "SF Mono", monospace;
+    image-rendering: pixelated;
+  }
+  html[data-theme="gameboy"] #settingsPanel h3,
+  html[data-theme="gameboy"] #welcome h2,
+  html[data-theme="gameboy"] #poiCardName,
+  html[data-theme="gameboy"] #panel summary b {
+    text-transform: uppercase; letter-spacing: 0.05em;
+  }
+
+  /* Sakura: delicate serif headings with petal-pink shadow. */
+  html[data-theme="sakura"] #settingsPanel h3,
+  html[data-theme="sakura"] #welcome h2,
+  html[data-theme="sakura"] #poiCardName {
+    font-family: "Baskerville", Georgia, "Hoefler Text", serif;
+    font-weight: 500;
+  }
+
+  /* Coral reef: tropical bouncy buttons — press = tiny scale. */
+  html[data-theme="coral"] button:active:not(:disabled) {
+    transform: scale(0.96);
+  }
+
+  /* Desert: slight letter-spacing on headings for that old-Western-map look. */
+  html[data-theme="desert"] #settingsPanel h3,
+  html[data-theme="desert"] #welcome h2,
+  html[data-theme="desert"] #poiCardName {
+    font-family: Georgia, "Hoefler Text", serif;
+    letter-spacing: 0.06em;
+  }
+
   /* Buttons — secondary (neutral) and primary (accent CTA). */
   #welcomeStart,
   #downloadBtn,
@@ -116,7 +262,8 @@
   #poiCardDirections,
   #routingGo,
   button.close,
-  #transitClose {
+  #transitClose,
+  #savedRoutesClose {
     background: var(--ui-accent);
     color: var(--ui-accent-text);
     border: 1px solid var(--ui-accent-border);
@@ -128,7 +275,8 @@
   #poiCardDirections:hover,
   #routingGo:hover:not(:disabled),
   button.close:hover,
-  #transitClose:hover {
+  #transitClose:hover,
+  #savedRoutesClose:hover {
     background: var(--ui-accent-border);
   }
   #welcomeStart:disabled,
@@ -143,10 +291,22 @@
   html[data-theme="medieval"] #poiCardDirections,
   html[data-theme="medieval"] #routingGo,
   html[data-theme="medieval"] button.close,
-  html[data-theme="medieval"] #transitClose {
+  html[data-theme="medieval"] #transitClose,
+  html[data-theme="medieval"] #savedRoutesClose {
     font-variant: small-caps;
     letter-spacing: 0.08em;
   }
+  /* Secondary neutral buttons (Import / Export in settings and similar). */
+  #exportBtn,
+  #importBtn {
+    background: var(--ui-input-bg);
+    color: var(--ui-text);
+    border: 1px solid var(--ui-border);
+    border-radius: var(--ui-radius);
+    cursor: pointer;
+  }
+  #exportBtn:hover,
+  #importBtn:hover { background: var(--ui-hover); }
   /* "Done" buttons in transit + settings panels carry inline-style
      backgrounds from the markup — force the CTA look. */
   button.close,
@@ -154,6 +314,13 @@
     background: var(--ui-accent) !important;
     color: var(--ui-accent-text) !important;
     border-color: var(--ui-accent-border) !important;
+  }
+
+  /* Native checkboxes + radios tint with the theme accent (Safari/iOS
+     otherwise renders them blue regardless of theme). */
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: var(--ui-accent);
   }
 
   /* Inputs + selects follow the theme. */
@@ -392,6 +559,61 @@
     box-shadow: var(--ui-shadow);
   }
   .maplibregl-ctrl-group button + button { border-top: 1px solid var(--ui-hairline); }
+  /* Force the button's `color` so SVGs using fill="currentColor" (e.g. the
+     custom refresh arrow) inherit the theme text color — Safari/iOS
+     otherwise renders unstyled buttons blue. */
+  .maplibregl-ctrl-group button { color: var(--ui-text); }
+  /* Zoom +/-, compass, fullscreen: MapLibre bakes the fill colour into the
+     SVG data URI, so swap to a mask + background-color so they track the
+     theme like the custom refresh arrow does. */
+  .maplibregl-ctrl-zoom-in .maplibregl-ctrl-icon,
+  .maplibregl-ctrl-zoom-out .maplibregl-ctrl-icon {
+    background-image: none !important;
+    background-color: var(--ui-text);
+    -webkit-mask-position: center;
+            mask-position: center;
+    -webkit-mask-repeat: no-repeat;
+            mask-repeat: no-repeat;
+  }
+  .maplibregl-ctrl-zoom-in .maplibregl-ctrl-icon {
+    -webkit-mask-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='29' height='29' viewBox='0 0 29 29'%3E%3Cpath d='M14.5 8.5c-.75 0-1.5.75-1.5 1.5v3h-3c-.75 0-1.5.75-1.5 1.5S9.25 16 10 16h3v3c0 .75.75 1.5 1.5 1.5S16 19.75 16 19v-3h3c.75 0 1.5-.75 1.5-1.5S19.75 13 19 13h-3v-3c0-.75-.75-1.5-1.5-1.5'/%3E%3C/svg%3E");
+            mask-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='29' height='29' viewBox='0 0 29 29'%3E%3Cpath d='M14.5 8.5c-.75 0-1.5.75-1.5 1.5v3h-3c-.75 0-1.5.75-1.5 1.5S9.25 16 10 16h3v3c0 .75.75 1.5 1.5 1.5S16 19.75 16 19v-3h3c.75 0 1.5-.75 1.5-1.5S19.75 13 19 13h-3v-3c0-.75-.75-1.5-1.5-1.5'/%3E%3C/svg%3E");
+  }
+  .maplibregl-ctrl-zoom-out .maplibregl-ctrl-icon {
+    -webkit-mask-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='29' height='29' viewBox='0 0 29 29'%3E%3Cpath d='M10 13c-.75 0-1.5.75-1.5 1.5S9.25 16 10 16h9c.75 0 1.5-.75 1.5-1.5S19.75 13 19 13z'/%3E%3C/svg%3E");
+            mask-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='29' height='29' viewBox='0 0 29 29'%3E%3Cpath d='M10 13c-.75 0-1.5.75-1.5 1.5S9.25 16 10 16h9c.75 0 1.5-.75 1.5-1.5S19.75 13 19 13z'/%3E%3C/svg%3E");
+  }
+  /* Don't double-tint these on medieval — they're already accent-colored. */
+  html[data-theme="medieval"] .maplibregl-ctrl-zoom-in .maplibregl-ctrl-icon,
+  html[data-theme="medieval"] .maplibregl-ctrl-zoom-out .maplibregl-ctrl-icon {
+    filter: none;
+  }
+  /* Geolocate "you are here" dot — MapLibre default is Twitter blue.
+     Follow the theme accent so it matches the route line and CTAs. */
+  .maplibregl-user-location-dot,
+  .maplibregl-user-location-dot::before {
+    background-color: var(--ui-accent) !important;
+  }
+  .maplibregl-user-location-accuracy-circle {
+    background-color: var(--ui-accent) !important;
+    opacity: 0.2;
+  }
+  /* Geolocate control icon when active/tracking — MapLibre bakes the blue
+     (#33b5e5) into an SVG data URI, so we swap it for an accent-colored
+     silhouette using an SVG mask. */
+  .maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-active .maplibregl-ctrl-icon,
+  .maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-background .maplibregl-ctrl-icon {
+    background-image: none !important;
+    background-color: var(--ui-accent);
+    -webkit-mask: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='29' height='29' viewBox='0 0 20 20'%3E%3Cpath d='M10 4C9 4 9 5 9 5v.1A5 5 0 0 0 5.1 9H5s-1 0-1 1 1 1 1 1h.1A5 5 0 0 0 9 14.9v.1s0 1 1 1 1-1 1-1v-.1a5 5 0 0 0 3.9-3.9h.1s1 0 1-1-1-1-1-1h-.1A5 5 0 0 0 11 5.1V5s0-1-1-1m0 2.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 1 1 0-7'/%3E%3Ccircle cx='10' cy='10' r='2'/%3E%3C/svg%3E") center / contain no-repeat;
+            mask: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='29' height='29' viewBox='0 0 20 20'%3E%3Cpath d='M10 4C9 4 9 5 9 5v.1A5 5 0 0 0 5.1 9H5s-1 0-1 1 1 1 1 1h.1A5 5 0 0 0 9 14.9v.1s0 1 1 1 1-1 1-1v-.1a5 5 0 0 0 3.9-3.9h.1s1 0 1-1-1-1-1-1h-.1A5 5 0 0 0 11 5.1V5s0-1-1-1m0 2.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 1 1 0-7'/%3E%3Ccircle cx='10' cy='10' r='2'/%3E%3C/svg%3E") center / contain no-repeat;
+  }
+  /* The medieval filter is for recoloring the default dark SVG — it would
+     double-tint our already-accent-colored mask, so skip it on active. */
+  html[data-theme="medieval"] .maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-active .maplibregl-ctrl-icon,
+  html[data-theme="medieval"] .maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-background .maplibregl-ctrl-icon {
+    filter: none;
+  }
   .maplibregl-ctrl-attrib { color: var(--ui-text); }
   .maplibregl-ctrl-attrib a { color: var(--ui-accent); }
   .maplibregl-ctrl-scale {
@@ -438,12 +660,12 @@
   }
   #panel button { padding: 8px 12px; font-size: 14px; margin: 2px; cursor: pointer; }
   #panel input { padding: 6px; font-size: 14px; margin: 2px; }
-  #status { font-size: 12px; color: #555; margin-top: 4px; }
+  #status { font-size: 12px; color: var(--ui-muted); margin-top: 4px; }
   .region { display: flex; justify-content: space-between; align-items: center;
-            padding: 4px 0; border-top: 1px solid #eee; }
+            padding: 4px 0; border-top: 1px solid var(--ui-hairline); }
   .region .label { font-size: 13px; }
-  .region .meta { font-size: 11px; color: #888; }
-  .region .sizes { font-size: 11px; color: #666; margin-top: 2px;
+  .region .meta { font-size: 11px; color: var(--ui-muted); }
+  .region .sizes { font-size: 11px; color: var(--ui-muted); margin-top: 2px;
                    font-variant-numeric: tabular-nums; }
   .region .sizes .bucket { margin-right: 8px; white-space: nowrap; }
   details summary { cursor: pointer; user-select: none; }
@@ -496,7 +718,7 @@
   #poiCardClose {
     position: absolute; top: 2px; right: 6px;
     background: none; border: none; font-size: 26px;
-    line-height: 1; cursor: pointer; color: #666; padding: 4px 8px;
+    line-height: 1; cursor: pointer; color: var(--ui-muted); padding: 4px 8px;
   }
   #poiCardName { font-size: 15px; font-weight: 600; }
   #poiCardMeta { font-size: 12px; color: var(--ui-muted); margin-top: 2px; }
@@ -517,9 +739,9 @@
     padding: 18px 20px 14px;
     max-height: 85vh; overflow-y: auto;
   }
-  #customThemeControls { margin: 8px 0; padding: 8px 10px; border-left: 3px solid #eee; }
+  #customThemeControls { margin: 8px 0; padding: 8px 10px; border-left: 3px solid var(--ui-hairline); }
   #customThemeControls .row { margin: 6px 0; }
-  #customThemeControls input[type="color"] { width: 36px; height: 26px; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; padding: 0; background: none; }
+  #customThemeControls input[type="color"] { width: 36px; height: 26px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius); cursor: pointer; padding: 0; background: none; }
   #settingsPanel h3 { margin: 0 0 14px; font-size: 16px; }
   #settingsPanel .row { display: flex; align-items: center; gap: 10px; margin: 10px 0; }
   #settingsPanel .row label { flex: 1; font-size: 14px; }
@@ -557,9 +779,9 @@
     position: absolute; top: 6px; right: 38px;
     background: none; border: none; cursor: pointer;
     font-size: 22px; line-height: 1;
-    color: #bbb; padding: 4px 6px;
+    color: var(--ui-muted); padding: 4px 6px; opacity: 0.6;
   }
-  #poiCardFav.favorited { color: #e53935; }
+  #poiCardFav.favorited { color: #e53935; opacity: 1; }
   #poiCardDirections {
     margin-top: 10px; padding: 8px 14px;
     font-size: 13px; cursor: pointer;
@@ -586,7 +808,7 @@
   #routingPanel.show { display: block; }
   #routingPanel .header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   #routingPanel .header h3 { flex: 1; margin: 0; font-size: 15px; }
-  #routingPanel .close { background: none; border: none; font-size: 22px; line-height: 1; cursor: pointer; color: #666; padding: 0 4px; }
+  #routingPanel .close { background: none; border: none; font-size: 22px; line-height: 1; cursor: pointer; color: var(--ui-muted); padding: 0 4px; }
   #routingPanel .endpoints { display: flex; gap: 6px; align-items: center; }
   #routingPanel .endpoints .stack { flex: 1; display: flex; flex-direction: column; gap: 4px; }
   #routingPanel .endpoint {
@@ -615,8 +837,9 @@
   #routingPanel .go.loading { cursor: progress; opacity: 0.7; }
   #routingPanel .go .spinner {
     display: inline-block; width: 12px; height: 12px;
-    border: 2px solid rgba(255,255,255,0.45);
-    border-top-color: #fff;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    opacity: 0.7;
     border-radius: 50%;
     vertical-align: -2px; margin-right: 8px;
     animation: routing-spin 0.7s linear infinite;
@@ -706,7 +929,7 @@
   }
   .step.transit .step-header:hover { background: var(--ui-hover); }
   .step.transit .step-header .text { flex: 1; min-width: 0; }
-  .step.transit .step-header .dist { color: #666; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .step.transit .step-header .dist { color: var(--ui-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
   #scheduleModal {
     position: absolute; inset: 0; z-index: 23;
     display: none; align-items: flex-end; justify-content: center;
@@ -778,13 +1001,14 @@
   }
   #favPanel.show { display: flex; }
   #favPanel .sheet {
-    background: #fff; border-radius: 10px;
+    background: var(--ui-bg); color: var(--ui-text); border-radius: var(--ui-radius);
     width: calc(100% - 40px); max-width: 360px;
     padding: 18px 20px 14px; max-height: 85vh; overflow-y: auto;
+    box-shadow: var(--ui-shadow);
   }
   #favPanel h3 { margin: 0 0 10px; font-size: 16px; }
-  #favPanel .subtitle { font-size: 13px; color: #666; margin-bottom: 10px; }
-  #favPanel .section-label { font-size: 12px; color: #888; margin-top: 10px; }
+  #favPanel .subtitle { font-size: 13px; color: var(--ui-muted); margin-bottom: 10px; }
+  #favPanel .section-label { font-size: 12px; color: var(--ui-muted); margin-top: 10px; }
   .fav-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(36px, 1fr));
@@ -793,22 +1017,29 @@
   }
   .fav-icon-option {
     width: 100%; aspect-ratio: 1;
-    border-radius: 50%; background: #f2f2f2;
+    border-radius: 50%; background: var(--ui-hover);
     display: flex; align-items: center; justify-content: center;
     cursor: pointer; border: 2px solid transparent; box-sizing: border-box;
   }
-  .fav-icon-option.selected { border-color: #1e88e5; }
+  .fav-icon-option.selected { border-color: var(--ui-accent); }
   .fav-icon-option img { width: 55%; height: 55%; }
   .fav-colors { display: flex; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
   .fav-color-option {
     width: 32px; height: 32px; border-radius: 50%;
     cursor: pointer; border: 3px solid transparent;
   }
-  .fav-color-option.selected { border-color: #000; }
+  .fav-color-option.selected { border-color: var(--ui-text); }
   #favPanel .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
-  #favPanel .actions button { padding: 8px 14px; font-size: 14px; border-radius: 6px; cursor: pointer; border: 1px solid #ccc; background: #eee; }
-  #favPanel .actions button.primary { background: #1e88e5; color: #fff; border-color: #1e88e5; }
-  #favPanel .actions button.danger { background: #fee; color: #a33; border-color: #c88; }
+  #favPanel .actions button {
+    padding: 8px 14px; font-size: 14px; border-radius: var(--ui-radius); cursor: pointer;
+    border: 1px solid var(--ui-border); background: var(--ui-hover); color: var(--ui-text);
+  }
+  #favPanel .actions button.primary {
+    background: var(--ui-accent); color: var(--ui-accent-text); border-color: var(--ui-accent-border);
+  }
+  #favPanel .actions button.danger {
+    background: transparent; color: var(--ui-danger); border-color: var(--ui-danger);
+  }
   #transitPanel {
     position: fixed; inset: 0; z-index: 30;
     background: rgba(0,0,0,0.45);
@@ -829,84 +1060,109 @@
   .mode-chip.on { background: var(--ui-accent); border-color: var(--ui-accent-border); color: var(--ui-accent-text); }
   .route-row {
     display: flex; align-items: center; gap: 8px;
-    padding: 6px 4px; border-bottom: 1px solid #eee;
+    padding: 6px 4px; border-bottom: 1px solid var(--ui-hairline);
     font-size: 13px; cursor: pointer;
   }
   .route-row input { cursor: pointer; }
   .route-row .ref {
-    background: #888; color: #fff; font-weight: 600;
+    background: var(--ui-muted); color: var(--ui-accent-text); font-weight: 600;
     padding: 1px 6px; border-radius: 4px; font-size: 11px;
     min-width: 30px; text-align: center; flex-shrink: 0;
   }
   .route-row .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .route-row .mode-tag { font-size: 10px; color: #888; flex-shrink: 0; }
-  .route-popup .title { font-size: 11px; color: #888; margin-bottom: 6px; }
+  .route-row .mode-tag { font-size: 10px; color: var(--ui-muted); flex-shrink: 0; }
+  .route-popup .title { font-size: 11px; color: var(--ui-muted); margin-bottom: 6px; }
   .route-popup .route-item {
     display: flex; align-items: center; gap: 6px;
     padding: 5px 0; border-radius: 4px;
-    border-top: 1px solid #eee;
+    border-top: 1px solid var(--ui-hairline);
   }
   .route-popup .route-item:first-of-type { border-top: none; }
   .route-popup .ref {
     padding: 1px 6px; border-radius: 3px;
-    font-size: 11px; font-weight: 600; color: #fff;
+    font-size: 11px; font-weight: 600; color: var(--ui-accent-text);
     min-width: 22px; text-align: center; flex-shrink: 0;
   }
   .route-popup .name { font-size: 13px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .route-popup .mode { font-size: 10px; color: #999; flex-shrink: 0; }
+  .route-popup .mode { font-size: 10px; color: var(--ui-muted); flex-shrink: 0; }
   .route-popup .toggle-vis {
     width: 18px; height: 18px; flex-shrink: 0;
-    border: 1px solid #bbb; border-radius: 3px;
+    border: 1px solid var(--ui-border); border-radius: 3px;
     display: inline-flex; align-items: center; justify-content: center;
-    font-size: 12px; font-weight: 600; color: #fff; background: #fff;
+    font-size: 12px; font-weight: 600; color: var(--ui-accent-text); background: var(--ui-input-bg);
     cursor: pointer; user-select: none;
   }
   .route-popup .toggle-vis.on { background: var(--ui-accent); border-color: var(--ui-accent-border); }
   .route-popup .view-btn {
     flex-shrink: 0; padding: 2px 6px; font-size: 13px;
-    border: 1px solid #bbb; border-radius: 4px; background: #fff;
+    border: 1px solid var(--ui-border); border-radius: 4px; background: var(--ui-input-bg);
+    color: var(--ui-text);
     cursor: pointer; line-height: 1;
   }
-  .route-popup .view-btn.on { background: var(--ui-accent); border-color: var(--ui-accent-border); }
+  .route-popup .view-btn.on { background: var(--ui-accent); border-color: var(--ui-accent-border); color: var(--ui-accent-text); }
   .route-popup .dep-section {
-    margin-top: 8px; padding-top: 8px; border-top: 1px solid #ddd;
+    margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--ui-hairline);
   }
   .route-popup .dep-label {
-    font-size: 10px; color: #888; margin-bottom: 4px; text-transform: uppercase;
+    font-size: 10px; color: var(--ui-muted); margin-bottom: 4px; text-transform: uppercase;
     letter-spacing: 0.05em;
   }
   .route-popup .dep-row {
     display: flex; align-items: center; gap: 6px;
-    padding: 4px 4px; border-top: 1px solid #f2f2f2;
+    padding: 4px 4px; border-top: 1px solid var(--ui-hairline);
     cursor: pointer; border-radius: 3px;
   }
   .route-popup .dep-row:hover { background: var(--ui-hover); }
   .route-popup .dep-row:first-of-type { border-top: none; }
-  .route-popup .dep-empty { font-size: 11px; color: #aaa; font-style: italic; }
+  .route-popup .dep-empty { font-size: 11px; color: var(--ui-muted); font-style: italic; }
   .route-popup .dep-times {
     display: flex; gap: 4px; flex-wrap: wrap; flex: 1;
   }
   .route-popup .dep-time {
     font-size: 12px; font-variant-numeric: tabular-nums;
-    color: #333; padding: 1px 4px; background: #f5f5f5; border-radius: 3px;
+    color: var(--ui-text); padding: 1px 4px; background: var(--ui-hover); border-radius: 3px;
   }
   .route-popup .dep-name {
-    font-size: 10px; color: #999;
+    font-size: 10px; color: var(--ui-muted);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     max-width: 90px; flex-shrink: 0;
   }
+  /* MapLibre popup chrome — follows the current theme so route info
+     popups don't flash white on dark/medieval. */
+  .maplibregl-popup-content {
+    background: var(--ui-bg) !important;
+    color: var(--ui-text);
+    border-radius: var(--ui-radius);
+    box-shadow: var(--ui-shadow);
+  }
+  .maplibregl-popup-tip { border-top-color: var(--ui-bg) !important;
+                          border-bottom-color: var(--ui-bg) !important; }
+  .maplibregl-popup-close-button { color: var(--ui-muted); }
   #pinBar {
     position: absolute; top: 0; left: 0; right: 0; z-index: 25;
     padding: 12px 16px;
     padding-top: calc(12px + env(safe-area-inset-top));
-    background: rgba(30,30,40,0.9); color: #fff;
+    background: var(--ui-bg); color: var(--ui-text);
+    border-bottom: 1px solid var(--ui-border);
+    box-shadow: var(--ui-shadow);
     display: none; gap: 10px; align-items: center;
     font-size: 13px;
   }
   #pinBar.show { display: flex; }
   #pinBar .hint { flex: 1; }
-  #pinBar button { padding: 6px 12px; border-radius: 6px; border: 1px solid #aaa; background: transparent; color: #fff; cursor: pointer; font-size: 13px; }
-  #pinBar button.primary { background: var(--ui-accent); border-color: var(--ui-accent-border); }
+  #pinBar button {
+    padding: 6px 12px; border-radius: var(--ui-radius);
+    border: 1px solid var(--ui-border); background: var(--ui-input-bg);
+    color: var(--ui-text); cursor: pointer; font-size: 13px;
+  }
+  #pinBar button.primary {
+    background: var(--ui-accent); border-color: var(--ui-accent-border);
+    color: var(--ui-accent-text);
+  }
+  html[data-theme="medieval"] #pinBar .hint,
+  html[data-theme="medieval"] #pinBar button {
+    font-variant: small-caps; letter-spacing: 0.06em;
+  }
   .temp-pin {
     border-radius: 50%; background: var(--ui-accent);
     border: 2px solid #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.4);
@@ -933,18 +1189,18 @@
   <div class="sheet">
     <div style="display:flex; align-items:center; gap:8px;">
       <h3 style="flex:1; margin:0;">Transit layers</h3>
-      <button class="close" id="transitClose" style="padding: 6px 10px; font-size: 13px; background: #eee; border: 1px solid #ccc; border-radius: 6px; cursor: pointer;">Done</button>
+      <button class="close" id="transitClose" style="padding: 6px 10px; font-size: 13px; cursor: pointer;">Done</button>
     </div>
     <div class="section-label" style="margin-top: 10px;">By mode</div>
     <div id="transitModes"></div>
-    <input id="transitSearch" type="search" placeholder="search routes" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" style="width:100%; padding:8px 10px; font-size:13px; margin-top:10px; border:1px solid #ccc; border-radius:6px; box-sizing:border-box;">
+    <input id="transitSearch" type="search" placeholder="search routes" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" style="width:100%; padding:8px 10px; font-size:13px; margin-top:10px; box-sizing:border-box;">
     <div style="display:flex; gap:8px; margin-top:6px; align-items:center;">
       <button id="transitAll" type="button" style="padding:5px 10px; font-size:12px;">All on</button>
       <button id="transitNone" type="button" style="padding:5px 10px; font-size:12px;">All off</button>
-      <label style="font-size:12px; color:#555; display:flex; align-items:center; gap:4px; cursor:pointer;">
+      <label style="font-size:12px; color:var(--ui-text); display:flex; align-items:center; gap:4px; cursor:pointer;">
         <input id="transitActiveOnly" type="checkbox"> active only
       </label>
-      <span id="transitCount" style="font-size:11px; color:#888; margin-left:auto; align-self:center;"></span>
+      <span id="transitCount" style="font-size:11px; margin-left:auto; align-self:center;"></span>
     </div>
     <div id="transitRoutes" style="max-height:45vh; overflow-y:auto; overflow-x:hidden; margin-top:6px;"></div>
   </div>
@@ -1055,6 +1311,23 @@
         <option value="sepia">Sepia</option>
         <option value="mono">Monochrome</option>
         <option value="medieval">Medieval map</option>
+        <option value="vaporwave">Vaporwave 🌆</option>
+        <option value="blueprint">Blueprint 📐</option>
+        <option value="terminal">Terminal 🖥</option>
+        <option value="forest">Forest 🌲</option>
+        <option value="neon">Neon arcade ✨</option>
+        <option value="pastel">Pastel 🌸</option>
+        <option value="autumn">Autumn 🍂</option>
+        <option value="ocean">Ocean 🌊</option>
+        <option value="desert">Desert 🏜</option>
+        <option value="nordic">Nordic 🧊</option>
+        <option value="sakura">Sakura 🌸</option>
+        <option value="amber">Amber CRT 📺</option>
+        <option value="galaxy">Galaxy 🌌</option>
+        <option value="noir">Noir 🎬</option>
+        <option value="gameboy">GameBoy 🎮</option>
+        <option value="mint">Mint choc 🍫</option>
+        <option value="coral">Coral reef 🐠</option>
         <option value="custom">Custom…</option>
       </select>
     </div>
@@ -1099,7 +1372,7 @@
       </span>
     </div>
     <div class="attribution" style="margin-top: 14px; padding-top: 10px;
-         border-top: 1px solid #e0e0e0; font-size: 11px; color: #888;
+         border-top: 1px solid var(--ui-hairline); font-size: 11px; color: var(--ui-muted);
          line-height: 1.5;">
       Map data © <a href="https://www.openstreetmap.org/copyright"
          target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors ·
@@ -1133,10 +1406,10 @@
       <button id="downloadBtn">↓ save current view</button>
       <button id="appDataBtn">↓ app data</button>
       <div id="status"></div>
-      <div id="storage" style="font-size: 11px; color: #888; margin-top: 2px;"></div>
-      <div id="poiStat" style="font-size: 11px; color: #888;"></div>
+      <div id="storage" style="font-size: 11px; color: var(--ui-muted); margin-top: 2px;"></div>
+      <div id="poiStat" style="font-size: 11px; color: var(--ui-muted);"></div>
       <div id="regions"></div>
-      <button id="wipeBtn" style="margin-top: 12px; font-size: 11px; background: #fee; border: 1px solid #c88; color: #a33;">⚠ delete all data (debug)</button>
+      <button id="wipeBtn" style="margin-top: 12px; font-size: 11px; background: transparent; border: 1px solid var(--ui-danger); color: var(--ui-danger); border-radius: var(--ui-radius); padding: 6px 10px;">⚠ delete all data (debug)</button>
     </div>
   </details>
 </div>
@@ -2030,7 +2303,7 @@ function fmtDate(ts) {
       });
     document.getElementById('transitCount').textContent = `${rows.length} route${rows.length === 1 ? '' : 's'}`;
     if (!rows.length) {
-      el.innerHTML = '<div style="font-size:12px; color:#888; padding:8px;">No routes — save a region first to download them.</div>';
+      el.innerHTML = '<div style="font-size:12px; color:var(--ui-muted); padding:8px;">No routes — save a region first to download them.</div>';
       return;
     }
     el.innerHTML = rows.map(([rid, m]) => {
@@ -2117,7 +2390,58 @@ function fmtDate(ts) {
     // flat-shaded style so every line stays crisp. The UI palette uses
     // double-ruled borders (via box-shadow) for the period look.
     medieval: { bg: '#e6d3a3', landcover: '#e8d9b0', landuse: '#d9c390', water: '#7d98a6', building: '#a0603b', road: '#2e1e10', roadLabel: '#2e1810', roadHalo: '#f0e3bf', placeLabel: '#2e1810', placeHalo: '#f0e3bf', poiLabel: '#2e1810', poiHalo: '#f0e3bf', poiIcon: '#3a2416',
-                ui: { panelBg: '#f2e3b6', panelText: '#2e1d10', muted: '#6a4a2a', border: '#6a4a2a', hairline: '#6a4a2a', hover: '#e4cf9a', inputBg: '#f8ecc6', radius: '2px', shadow: '0 0 0 2px var(--ui-bg), 0 0 0 3px var(--ui-border), 0 4px 12px rgba(46, 29, 16, 0.25)', accent: '#9b4a2a', accentText: '#f8ecc6', accentBorder: '#7a3a20', danger: '#9b1c1c' } }
+                ui: { panelBg: '#f2e3b6', panelText: '#2e1d10', muted: '#6a4a2a', border: '#6a4a2a', hairline: '#6a4a2a', hover: '#e4cf9a', inputBg: '#f8ecc6', radius: '2px', shadow: '0 0 0 2px var(--ui-bg), 0 0 0 3px var(--ui-border), 0 4px 12px rgba(46, 29, 16, 0.25)', accent: '#9b4a2a', accentText: '#f8ecc6', accentBorder: '#7a3a20', danger: '#9b1c1c' } },
+    // Synthwave neon — 80s sunset, hot pink highways on deep purple land.
+    vaporwave: { bg: '#2d1b4e', landcover: '#3f2370', landuse: '#4a2a7e', water: '#ff71ce', building: '#7c4dff', road: '#01cdfe', roadLabel: '#ffffff', roadHalo: '#2d1b4e', placeLabel: '#05ffa1', placeHalo: '#2d1b4e', poiLabel: '#fffb96', poiHalo: '#2d1b4e', poiIcon: '#ff71ce',
+                ui: { panelBg: '#3a2560', panelText: '#ffffff', muted: '#b38cdb', border: '#ff71ce', hairline: '#4a2968', hover: '#3f2970', inputBg: '#2d1b4e', radius: '4px', shadow: '0 0 20px rgba(255,113,206,0.4), 0 2px 8px rgba(0,0,0,0.5)', accent: '#ff71ce', accentText: '#2d1b4e', accentBorder: '#b967ff', danger: '#ff6b6b' } },
+    // Blueprint — technical schematic, pale cyan lines on deep navy.
+    blueprint: { bg: '#0e3a5f', landcover: '#12456e', landuse: '#0e3a5f', water: '#082033', building: '#195580', road: '#a8d8f0', roadLabel: '#c8e8f8', roadHalo: '#0e3a5f', placeLabel: '#e0f4ff', placeHalo: '#0e3a5f', poiLabel: '#a8d8f0', poiHalo: '#0e3a5f', poiIcon: '#a8d8f0',
+                ui: { panelBg: '#12456e', panelText: '#e0f4ff', muted: '#7aa8c8', border: '#a8d8f0', hairline: '#1d5c8a', hover: '#1a5480', inputBg: '#0a2944', radius: '0px', shadow: '0 0 0 1px rgba(168,216,240,0.4), 0 4px 12px rgba(0,0,0,0.4)', accent: '#a8d8f0', accentText: '#0e3a5f', accentBorder: '#e0f4ff', danger: '#ff8080' } },
+    // Phosphor CRT — green-on-black terminal, every road a command-line trace.
+    terminal: { bg: '#050a05', landcover: '#0a1408', landuse: '#0c1a08', water: '#041f14', building: '#16281a', road: '#33ff66', roadLabel: '#66ff99', roadHalo: '#050a05', placeLabel: '#33ff66', placeHalo: '#050a05', poiLabel: '#99ff66', poiHalo: '#050a05', poiIcon: '#33ff66',
+                ui: { panelBg: '#050a05', panelText: '#33ff66', muted: '#1a8a2e', border: '#33ff66', hairline: '#1a3a20', hover: '#0a1a0d', inputBg: '#050a05', radius: '0px', shadow: '0 0 12px rgba(51,255,102,0.35)', accent: '#33ff66', accentText: '#050a05', accentBorder: '#66ff99', danger: '#ff4040' } },
+    // Forest — mossy greens and trail-parchment, Studio Ghibli woodland.
+    forest: { bg: '#e8dfc0', landcover: '#c4d4a0', landuse: '#b0c08e', water: '#7a9aa0', building: '#8a6d4a', road: '#f5ecd0', roadLabel: '#3d2f1f', roadHalo: '#f5ecd0', placeLabel: '#2a4028', placeHalo: '#f5ecd0', poiLabel: '#2a4028', poiHalo: '#f5ecd0', poiIcon: '#3a5a38',
+              ui: { panelBg: '#faf0d8', panelText: '#2a4028', muted: '#6a8a5a', border: '#8aa878', hairline: '#c4d4a0', hover: '#eee2c0', inputBg: '#faf4e0', radius: '12px', shadow: '0 4px 14px rgba(42,64,40,0.25)', accent: '#4a7a4a', accentText: '#faf0d8', accentBorder: '#2a4028', danger: '#a84020' } },
+    // Neon arcade — hot magenta roads, electric cyan water, pitch-black map.
+    neon: { bg: '#080016', landcover: '#10001e', landuse: '#0c0018', water: '#00f0ff', building: '#1a0032', road: '#ff00ff', roadLabel: '#ffffff', roadHalo: '#080016', placeLabel: '#ffff4a', placeHalo: '#080016', poiLabel: '#00ff88', poiHalo: '#080016', poiIcon: '#ff00ff',
+            ui: { panelBg: '#0f0028', panelText: '#ffffff', muted: '#8844aa', border: '#ff00ff', hairline: '#330055', hover: '#1a003a', inputBg: '#080016', radius: '2px', shadow: '0 0 14px rgba(255,0,255,0.5), 0 0 6px rgba(0,240,255,0.35)', accent: '#ff00ff', accentText: '#ffffff', accentBorder: '#00ffff', danger: '#ff3366' } },
+    // Pastel — soft blush pinks and pale mint water, rounded and gentle.
+    pastel: { bg: '#fef3f0', landcover: '#fae0dc', landuse: '#f4d0d8', water: '#b8e0e4', building: '#e8c8d4', road: '#ffffff', roadLabel: '#a87a8a', roadHalo: '#ffffff', placeLabel: '#7a4a5a', placeHalo: '#fef3f0', poiLabel: '#7a4a5a', poiHalo: '#fef3f0', poiIcon: '#d48aa0',
+              ui: { panelBg: '#fffafa', panelText: '#7a4a5a', muted: '#b89aa8', border: '#e8c8d4', hairline: '#f4e0e6', hover: '#f9e8ee', inputBg: '#fffafa', radius: '14px', shadow: '0 4px 16px rgba(232,168,200,0.45)', accent: '#e89ab0', accentText: '#ffffff', accentBorder: '#d48aa0', danger: '#cc6680' } },
+    // Autumn — warm pumpkin/maple land, cool blue water for contrast.
+    autumn: { bg: '#f5e6d3', landcover: '#f0d8b8', landuse: '#eccfa8', water: '#7aa8d8', building: '#c87a4a', road: '#fffbf0', roadLabel: '#6a3a10', roadHalo: '#fffbf0', placeLabel: '#5a2a08', placeHalo: '#fffbf0', poiLabel: '#5a2a08', poiHalo: '#fffbf0', poiIcon: '#a85028',
+              ui: { panelBg: '#fef5e6', panelText: '#5a2a08', muted: '#9a6a42', border: '#d4a878', hairline: '#f0d8b8', hover: '#f5e6c8', inputBg: '#fffbf0', radius: '8px', shadow: '0 3px 12px rgba(200,120,80,0.3)', accent: '#d4632a', accentText: '#fef5e6', accentBorder: '#a8431a', danger: '#b83020' } },
+    // Ocean — seafoam land, deep teal water. Coastal map vibes.
+    ocean: { bg: '#e4f1f0', landcover: '#c8e4e0', landuse: '#b4d4d0', water: '#0a4a6a', building: '#4a7888', road: '#ffffff', roadLabel: '#1a3848', roadHalo: '#ffffff', placeLabel: '#0a2838', placeHalo: '#ffffff', poiLabel: '#0a2838', poiHalo: '#ffffff', poiIcon: '#0a4a6a',
+             ui: { panelBg: '#f0faf9', panelText: '#0a2838', muted: '#5a8090', border: '#a0c8c4', hairline: '#c8e4e0', hover: '#e0efed', inputBg: '#f8fcfb', radius: '10px', shadow: '0 4px 14px rgba(10,74,106,0.25)', accent: '#0e8a9a', accentText: '#f0faf9', accentBorder: '#0a4a6a', danger: '#c44040' } },
+    // Desert — sandy tans and terracotta, cool mirage-blue water.
+    desert: { bg: '#f0d8a8', landcover: '#edc990', landuse: '#e8ba78', water: '#a8c8d8', building: '#c86a3a', road: '#fdf5e0', roadLabel: '#5a3010', roadHalo: '#fdf5e0', placeLabel: '#4a2808', placeHalo: '#fdf5e0', poiLabel: '#4a2808', poiHalo: '#fdf5e0', poiIcon: '#a84a18',
+              ui: { panelBg: '#fcedc8', panelText: '#4a2808', muted: '#8a6030', border: '#c89850', hairline: '#edc990', hover: '#f5deb0', inputBg: '#fdf5e0', radius: '6px', shadow: '0 3px 10px rgba(168,74,24,0.3)', accent: '#c86a3a', accentText: '#fdf5e0', accentBorder: '#a84a18', danger: '#b02020' } },
+    // Nordic — icy whites and glacial blues, soft Scandinavian palette.
+    nordic: { bg: '#f0f4f8', landcover: '#e0e8f0', landuse: '#d4dce6', water: '#8aa8c4', building: '#c4d0dc', road: '#ffffff', roadLabel: '#4a5868', roadHalo: '#ffffff', placeLabel: '#1a2a3a', placeHalo: '#ffffff', poiLabel: '#1a2a3a', poiHalo: '#ffffff', poiIcon: '#2a5078',
+              ui: { panelBg: '#fafcfe', panelText: '#1a2a3a', muted: '#6a7c8c', border: '#b8c8d8', hairline: '#e0e8f0', hover: '#e8eff5', inputBg: '#ffffff', radius: '6px', shadow: '0 2px 10px rgba(26,42,58,0.15)', accent: '#4a7aaa', accentText: '#ffffff', accentBorder: '#2a5078', danger: '#b03040' } },
+    // Sakura — cherry-blossom pinks, cool pale water. Hanami season.
+    sakura: { bg: '#faecef', landcover: '#fadee2', landuse: '#f5d0d8', water: '#c8d8e8', building: '#e8b8c4', road: '#ffffff', roadLabel: '#8a3a58', roadHalo: '#ffffff', placeLabel: '#5a1838', placeHalo: '#ffffff', poiLabel: '#5a1838', poiHalo: '#ffffff', poiIcon: '#c83878',
+              ui: { panelBg: '#fefafa', panelText: '#5a1838', muted: '#a8708a', border: '#e8b8c4', hairline: '#f5d0d8', hover: '#fae0e6', inputBg: '#fefafa', radius: '12px', shadow: '0 4px 16px rgba(200,56,120,0.25)', accent: '#d8548a', accentText: '#ffffff', accentBorder: '#a8305a', danger: '#a82040' } },
+    // Amber — vintage amber phosphor CRT, the warm cousin of terminal.
+    amber: { bg: '#0c0803', landcover: '#150e04', landuse: '#1a1105', water: '#1f1a0a', building: '#2a1d08', road: '#ffaa00', roadLabel: '#ffcc33', roadHalo: '#0c0803', placeLabel: '#ffaa00', placeHalo: '#0c0803', poiLabel: '#ffcc66', poiHalo: '#0c0803', poiIcon: '#ffaa00',
+             ui: { panelBg: '#0c0803', panelText: '#ffaa00', muted: '#8a5a0a', border: '#ffaa00', hairline: '#3a2408', hover: '#18110a', inputBg: '#0c0803', radius: '0px', shadow: '0 0 12px rgba(255,170,0,0.35)', accent: '#ffaa00', accentText: '#0c0803', accentBorder: '#ffcc33', danger: '#ff4040' } },
+    // Galaxy — deep space purple-black with starlight streets and nebula glow.
+    galaxy: { bg: '#0a0a24', landcover: '#141030', landuse: '#1a1440', water: '#050515', building: '#2a1e50', road: '#c0c8e0', roadLabel: '#ffffff', roadHalo: '#0a0a24', placeLabel: '#e0d0ff', placeHalo: '#0a0a24', poiLabel: '#ffee88', poiHalo: '#0a0a24', poiIcon: '#d0b0ff',
+              ui: { panelBg: '#14103a', panelText: '#e0d0ff', muted: '#7a68a8', border: '#5a4898', hairline: '#281e58', hover: '#1c1848', inputBg: '#0a0a24', radius: '8px', shadow: '0 0 20px rgba(180,130,255,0.35)', accent: '#a080ff', accentText: '#0a0a24', accentBorder: '#d0b0ff', danger: '#ff7070' } },
+    // Noir — film-noir black-and-white newsprint with a single red streak.
+    noir: { bg: '#f2f2f2', landcover: '#e8e8e8', landuse: '#d8d8d8', water: '#a8a8a8', building: '#585858', road: '#ffffff', roadLabel: '#202020', roadHalo: '#ffffff', placeLabel: '#000000', placeHalo: '#ffffff', poiLabel: '#000000', poiHalo: '#ffffff', poiIcon: '#202020',
+            ui: { panelBg: '#ffffff', panelText: '#101010', muted: '#707070', border: '#000000', hairline: '#d0d0d0', hover: '#f0f0f0', inputBg: '#ffffff', radius: '0px', shadow: '4px 4px 0 #000000', accent: '#c8101c', accentText: '#ffffff', accentBorder: '#880808', danger: '#c8101c' } },
+    // GameBoy DMG — the authentic 4-color pea-green palette of 1989.
+    gameboy: { bg: '#9bbc0f', landcover: '#8bac0f', landuse: '#8bac0f', water: '#306230', building: '#306230', road: '#e0f8d0', roadLabel: '#0f380f', roadHalo: '#9bbc0f', placeLabel: '#0f380f', placeHalo: '#9bbc0f', poiLabel: '#0f380f', poiHalo: '#9bbc0f', poiIcon: '#0f380f',
+               ui: { panelBg: '#9bbc0f', panelText: '#0f380f', muted: '#306230', border: '#0f380f', hairline: '#306230', hover: '#8bac0f', inputBg: '#e0f8d0', radius: '0px', shadow: '3px 3px 0 #0f380f', accent: '#0f380f', accentText: '#9bbc0f', accentBorder: '#0f380f', danger: '#b03030' } },
+    // Mint chocolate — cool mint land with rich chocolate brown ink.
+    mint: { bg: '#d8f0dc', landcover: '#c0e6c8', landuse: '#a8d8b2', water: '#6a9a7a', building: '#3a2418', road: '#f4fff5', roadLabel: '#3a2418', roadHalo: '#f4fff5', placeLabel: '#2a1a10', placeHalo: '#f4fff5', poiLabel: '#2a1a10', poiHalo: '#f4fff5', poiIcon: '#5a3820',
+            ui: { panelBg: '#f0faf2', panelText: '#2a1a10', muted: '#6a5a50', border: '#8a6a50', hairline: '#c0e6c8', hover: '#e0f0e4', inputBg: '#f8fcf8', radius: '8px', shadow: '0 3px 10px rgba(58,36,24,0.25)', accent: '#5a3820', accentText: '#d8f0dc', accentBorder: '#2a1a10', danger: '#a03030' } },
+    // Coral reef — tropical coral pinks and warm teal. Scuba vibes.
+    coral: { bg: '#ffeee0', landcover: '#ffe0d0', landuse: '#ffd0bc', water: '#2a9098', building: '#ff8080', road: '#ffffff', roadLabel: '#8a3020', roadHalo: '#ffffff', placeLabel: '#4a1810', placeHalo: '#ffffff', poiLabel: '#4a1810', poiHalo: '#ffffff', poiIcon: '#ff5a4a',
+             ui: { panelBg: '#fff8f4', panelText: '#4a1810', muted: '#a85a48', border: '#ff9a8a', hairline: '#ffd0bc', hover: '#ffe4d4', inputBg: '#fffcf8', radius: '12px', shadow: '0 4px 14px rgba(255,90,74,0.3)', accent: '#ff5a4a', accentText: '#ffffff', accentBorder: '#c83a2a', danger: '#c81c1c' } }
   };
   function customToTheme(c) {
     return {
@@ -2150,10 +2474,17 @@ function fmtDate(ts) {
       t = THEMES[name] || THEMES.default;
     }
     try {
-      map.setPaintProperty('bg', 'background-color', t.bg);
+      // Use the landcover color as the map's flat background so gaps in
+      // landcover coverage (residential areas, un-tagged terrain) don't
+      // flash a different shade through. Keeps land-looking-like-land at
+      // every zoom level. t.bg remains used for halos/CSS.
+      map.setPaintProperty('bg', 'background-color', t.landcover);
       map.setPaintProperty('landcover', 'fill-color', t.landcover);
       map.setPaintProperty('landuse', 'fill-color', t.landuse);
       map.setPaintProperty('water', 'fill-color', t.water);
+      // Low-zoom companion water layer (base source, z0-5) — keep in sync
+      // so oceans/seas don't flip color as the camera pulls back.
+      try { map.setPaintProperty('water-base', 'fill-color', t.water); } catch {}
       map.setPaintProperty('buildings', 'fill-color', t.building);
       map.setPaintProperty('roads', 'line-color', t.road);
       // The low-zoom companion layer renders the same features from the
@@ -2178,9 +2509,14 @@ function fmtDate(ts) {
           map.setPaintProperty(id, 'text-halo-color', t.placeHalo);
         } catch {}
       }
+      // Walking-route line follows the theme accent so the drawn path
+      // matches the CTA buttons (blue in default, rust in medieval, etc).
+      try {
+        map.setPaintProperty('walk-route', 'line-color', t.ui?.accent || '#3b7fdf');
+      } catch {}
     } catch {}
     localStorage.setItem('cc.theme', name);
-    document.getElementById('map').style.background = t.bg;
+    document.getElementById('map').style.background = t.landcover;
     document.documentElement.style.setProperty('--cc-label-color', t.poiLabel);
     document.documentElement.style.setProperty('--cc-label-halo', t.poiHalo);
     // Surface the current theme on the root element so the CSS can apply
@@ -2923,7 +3259,7 @@ function fmtDate(ts) {
     const el = document.getElementById('favIconGrid');
     const icons = favIconSet();
     el.innerHTML = icons.map(n =>
-      `<div class="fav-icon-option${n === favCtx.icon ? ' selected' : ''}" data-icon="${n}" title="${n}" style="background:${n === favCtx.icon ? favCtx.color : '#f2f2f2'}">
+      `<div class="fav-icon-option${n === favCtx.icon ? ' selected' : ''}" data-icon="${n}" title="${n}" style="${n === favCtx.icon ? `background:${favCtx.color}` : ''}">
         <img src="/icons/${encodeURIComponent(n)}.svg" style="filter:${n === favCtx.icon ? 'brightness(0) invert(1)' : 'none'}">
       </div>`).join('');
     el.querySelectorAll('[data-icon]').forEach(d => d.onclick = () => {
@@ -3009,7 +3345,7 @@ function fmtDate(ts) {
     const minutes = Math.round((route.distance || 0) / 80);  // ~5 km/h walking
     summary.innerHTML = `<strong>${esc(distStr)}</strong>` +
       `<span>· ~${minutes} min walking</span>` +
-      `<span style="margin-left:auto;color:#888">to ${esc(toPoi.name || '?')}</span>`;
+      `<span style="margin-left:auto;color:var(--ui-muted)">to ${esc(toPoi.name || '?')}</span>`;
     const steps = instructionsFor(route);
     const iconFor = (a) => ({
       'start': '🚶', 'continue': '⬆', 'turn left': '↰', 'turn right': '↱', 'arrive': '📍'
@@ -3128,7 +3464,7 @@ function fmtDate(ts) {
         `<span>· ${fmtClockTime(item.startSec)} → ${fmtClockTime(item.endSec)}</span>`,
       ];
       if (item.transitCount) parts.push(`<span>· ${item.transitCount} ride${item.transitCount === 1 ? '' : 's'}</span>`);
-      parts.push(`<span style="margin-left:auto;color:#888">${esc(item.fromName)} → ${esc(item.toName)}</span>`);
+      parts.push(`<span style="margin-left:auto;color:var(--ui-muted)">${esc(item.fromName)} → ${esc(item.toName)}</span>`);
       summary.innerHTML = parts.join('');
       stepsEl.innerHTML = (item.steps || []).map(s => {
         if (s.kind === 'transit') return renderTransitStepHtml(s);
@@ -3139,7 +3475,7 @@ function fmtDate(ts) {
       const minutes = Math.round((item.distanceMeters || 0) / 80);
       summary.innerHTML = `<strong>${esc(distStr)}</strong>` +
         `<span>· ~${minutes} min walking</span>` +
-        `<span style="margin-left:auto;color:#888">${esc(item.fromName)} → ${esc(item.toName)}</span>`;
+        `<span style="margin-left:auto;color:var(--ui-muted)">${esc(item.fromName)} → ${esc(item.toName)}</span>`;
       const iconFor = (a) => ({
         'start': '🚶', 'continue': '⬆', 'turn left': '↰', 'turn right': '↱', 'arrive': '📍'
       }[a] || '·');
@@ -3177,7 +3513,7 @@ function fmtDate(ts) {
     const list = loadSavedRoutes().slice().reverse();  // newest first
     const el = document.getElementById('savedRoutesList');
     if (!list.length) {
-      el.innerHTML = '<div style="color:#888; font-size:13px; padding:12px 4px;">No saved routes yet. Plan a route and tap 💾 to save it.</div>';
+      el.innerHTML = '<div style="color:var(--ui-muted); font-size:13px; padding:12px 4px;">No saved routes yet. Plan a route and tap 💾 to save it.</div>';
       return;
     }
     el.innerHTML = list.map(item => {
@@ -3493,7 +3829,7 @@ function fmtDate(ts) {
       `<span>· ${fmtClockTime(sel.startSec)} → ${fmtClockTime(sel.endSec)}</span>`,
     ];
     if (transitCount > 0) summaryParts.push(`<span>· ${transitCount} ride${transitCount === 1 ? '' : 's'}</span>`);
-    summaryParts.push(`<span style="margin-left:auto;color:#888">to ${esc(toPoi.name || '?')}</span>`);
+    summaryParts.push(`<span style="margin-left:auto;color:var(--ui-muted)">to ${esc(toPoi.name || '?')}</span>`);
     summary.innerHTML = summaryParts.join('');
 
     // Option strip: one pill per alternative, selected one highlighted
@@ -3577,7 +3913,7 @@ function fmtDate(ts) {
       `<span>· arriving ${fmtClockTime(mmRoute.endSec)}</span>`,
     ];
     if (transitCount > 0) summaryParts.push(`<span>· ${transitCount} ride${transitCount === 1 ? '' : 's'}</span>`);
-    summaryParts.push(`<span style="margin-left:auto;color:#888">to ${esc(toPoi.name || '?')}</span>`);
+    summaryParts.push(`<span style="margin-left:auto;color:var(--ui-muted)">to ${esc(toPoi.name || '?')}</span>`);
     summary.innerHTML = summaryParts.join('');
 
     const steps = multimodalInstructions(mmRoute);
@@ -4186,7 +4522,7 @@ function fmtDate(ts) {
     searchMatches = matches;
 
     if (!matches.length) {
-      searchResults.innerHTML = '<div class="poi-result"><div class="info"><div class="name" style="color:#999">no matches in downloaded regions</div></div></div>';
+      searchResults.innerHTML = '<div class="poi-result"><div class="info"><div class="name" style="color:var(--ui-muted)">no matches in downloaded regions</div></div></div>';
       spacerEl = null; countEl = null;
     } else {
       buildSearchFrame();
