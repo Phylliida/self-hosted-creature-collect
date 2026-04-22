@@ -2616,8 +2616,14 @@ function fmtDate(ts) {
     } catch {}
     localStorage.setItem('cc.theme', name);
     document.getElementById('map').style.background = t.landcover;
+    document.documentElement.style.setProperty('--ui-map-bg', t.landcover);
     document.documentElement.style.setProperty('--cc-label-color', t.poiLabel);
     document.documentElement.style.setProperty('--cc-label-halo', t.poiHalo);
+    // Browser chrome (iOS address-bar tint) tracks the panel color.
+    try {
+      const m = document.querySelector('meta[name="theme-color"]');
+      if (m && t.ui?.panelBg) m.setAttribute('content', t.ui.panelBg);
+    } catch {}
     // Surface the current theme on the root element so the CSS can apply
     // theme-specific chrome (e.g. the medieval parchment palette).
     document.documentElement.setAttribute('data-theme', name);
@@ -2898,8 +2904,9 @@ function fmtDate(ts) {
       c[k] = colorInputs[k].value;
       localStorage.setItem('cc.themeCustom', JSON.stringify(c));
       if (themeSelect.value === 'custom') applyTheme('custom');
-      // Live-update the Custom theme's preview tile as the user picks colors.
-      renderThemeGrid();
+      // Live-update just the Custom theme's preview tile — color pickers
+      // fire `input` many times per drag, so avoid re-rendering all 24 cards.
+      updateCustomCardPreview();
     });
   }
 
@@ -2959,6 +2966,13 @@ function fmtDate(ts) {
           c.classList.toggle('active', c.dataset.theme === k));
       };
     });
+  }
+  function updateCustomCardPreview() {
+    const grid = document.getElementById('themeGrid');
+    const card = grid && grid.querySelector('.theme-card[data-theme="custom"]');
+    if (!card) return;
+    const preview = card.querySelector('.preview');
+    if (preview) preview.innerHTML = themePreviewSVG(customToTheme(loadCustomTheme()));
   }
   renderThemeGrid();
   // Keep the grid's active highlight in sync if the select changes from
