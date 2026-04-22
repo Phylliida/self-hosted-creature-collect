@@ -43,19 +43,14 @@ for the whole world).
 ./make-tiles.sh
 ```
 
-Tiles come from a **single merged mbtiles**: all PBFs in `osmpbf/` are
-concatenated with `osmium merge` into `osmpbf/.merged.osm.pbf` first, and
-tilemaker runs once on that. This avoids the old footgun where a single
-low-zoom tile that spans two countries would only carry features from one
-(the /tiles handler picked whichever mbtiles had the bigger blob).
-
-Per-PBF this produces:
-- `data/merged.mbtiles` — one combined vector tileset (shared across all
-  input PBFs). Uses `tilemaker-slim.json` + `tilemaker-slim.lua` — a
-  trimmed openmaptiles schema that drops attributes/layers the client
-  never reads (no brunnel/ramp/service/oneway on roads, no building
-  heights, no mountain_peak/aeroway/waterway layers). If you changed any
-  of those files, `rm data/merged.mbtiles` to force a rebuild.
+For each `osmpbf/<name>.osm.pbf` this produces:
+- `data/<name>.mbtiles` — vector tiles (via tilemaker). Uses
+  `tilemaker-slim.json` + `tilemaker-slim.lua` — a trimmed openmaptiles
+  schema that drops attributes/layers the client never reads (no
+  brunnel/ramp/service/oneway on roads, no building heights, no
+  mountain_peak/aeroway/waterway layers). If you changed anything in those
+  files you need to `rm data/*.mbtiles` first to force a rebuild (already-
+  built files are skipped).
 - `data/<name>.pois.sqlite` — big server-side POI index via
   `osmium tags-filter n/name w/name` (covers nodes AND named ways like
   buildings), then `osmium export` → `build-poi-db.py`. Polygon features get a

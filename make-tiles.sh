@@ -6,78 +6,24 @@ RESOURCES="$(dirname "$(dirname "$(readlink -f "$(which tilemaker)")")")/share/t
 mkdir -p data
 
 shopt -s nullglob
-pbfs=()
-for p in osmpbf/*.osm.pbf; do
-  # Skip the merged helper file so we don't feed it back into itself.
-  case "$(basename "$p")" in
-    .merged.osm.pbf) ;;
-    *) pbfs+=("$p") ;;
-  esac
-done
-shopt -u nullglob
-
-if [ ${#pbfs[@]} -eq 0 ]; then
-  echo "no .osm.pbf files found in osmpbf/"
-  exit 0
-fi
-
-# ---- tiles: always a single merged mbtiles -------------------------------
-# With multiple per-country PBFs the old setup produced one mbtiles per
-# country and the /tiles handler picked whichever happened to be biggest
-# for each (z,x,y), silently dropping the other country's features on any
-# tile that straddled a border. Merging at the PBF level fixes that once
-# and for all: tilemaker sees every feature in one pass, emits one mbtiles
-# with all of them, and the server has a single source of truth.
-if [ ${#pbfs[@]} -eq 1 ]; then
-  tile_input="${pbfs[0]}"
-else
-  tile_input="osmpbf/.merged.osm.pbf"
-  needs_merge=0
-  if [ ! -e "$tile_input" ]; then
-    needs_merge=1
-  else
-    for p in "${pbfs[@]}"; do
-      if [ "$p" -nt "$tile_input" ]; then
-        needs_merge=1
-        break
-      fi
-    done
-  fi
-  if [ "$needs_merge" = 1 ]; then
-    echo "==> merging ${#pbfs[@]} PBF(s) -> $tile_input"
-    osmium merge "${pbfs[@]}" -o "$tile_input" --overwrite
-  else
-    echo "skip merge: $tile_input is up to date"
-  fi
-fi
-
-merged_mbtiles="data/merged.mbtiles"
-if [ ! -e "$merged_mbtiles" ] || [ "$tile_input" -nt "$merged_mbtiles" ]; then
-  echo "==> tiles: $tile_input -> $merged_mbtiles"
-  # Slim config/lua strip layers and fields the client never reads.
-  TILEMAKER_SHARE="$RESOURCES" tilemaker --input "$tile_input" --output "$merged_mbtiles" \
-    --config tilemaker-slim.json \
-    --process tilemaker-slim.lua
-  # Delete per-country mbtiles left over from the old build flow so the
-  # /tiles handler doesn't keep serving their stale content.
-  for p in "${pbfs[@]}"; do
-    stale="data/$(basename "$p" .osm.pbf).mbtiles"
-    if [ -e "$stale" ]; then
-      echo "   removing stale $stale"
-      rm -f "$stale"
-    fi
-  done
-else
-  echo "skip tiles: $merged_mbtiles is up to date"
-fi
-
-# ---- per-PBF data stays split -------------------------------------------
-# walk / POIs / routes / housenumbers are bbox-queried on the server, so
-# keeping them per-country is fine (and faster to rebuild when only one
-# country's PBF changes).
-for pbf in "${pbfs[@]}"; do
+found=0
+for pbf in osmpbf/*.osm.pbf; do
+  found=1
   name="$(basename "$pbf" .osm.pbf)"
+  mbtiles="data/${name}.mbtiles"
   pois_db="data/${name}.pois.sqlite"
+
+  if [ ! -e "$mbtiles" ]; then
+    echo "==> tiles: $pbf -> $mbtiles"
+    # Slim config/lua strip layers and fields the client never reads. The
+    # lua dofile's the upstream process-openmaptiles.lua (via $TILEMAKER_SHARE)
+    # so all upstream logic is reused.
+    TILEMAKER_SHARE="$RESOURCES" tilemaker --input "$pbf" --output "$mbtiles" \
+      --config tilemaker-slim.json \
+      --process tilemaker-slim.lua
+  else
+    echo "skip tiles: $mbtiles already exists"
+  fi
 
   if [ ! -e "$pois_db" ]; then
     echo "==> POIs: $pbf -> $pois_db"
@@ -135,6 +81,10 @@ for pbf in "${pbfs[@]}"; do
     echo "skip routes: $routes_db already exists"
   fi
 done
+
+if [ "$found" = 0 ]; then
+  echo "no .osm.pbf files found in osmpbf/"
+fi
 
 # Transit schedules (GTFS). Independent of per-PBF loop — one aggregated db.
 schedule_db="data/schedule.sqlite"

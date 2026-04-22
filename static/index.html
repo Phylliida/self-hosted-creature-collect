@@ -1370,7 +1370,17 @@ function fmtDate(ts) {
             'icon-allow-overlap': true,
             'icon-ignore-placement': true
           },
-          paint: { 'icon-color': '#333' } },
+          paint: {
+            'icon-color': '#333',
+            // Bus stops stay visible from the POI source's native z12;
+            // everything else waits until z13 so the low-zoom map stays
+            // legible and transit remains findable. `step` must be the
+            // top-level expression when using `['zoom']` — MapLibre
+            // rejects zoom expressions nested inside `case`.
+            'icon-opacity': ['step', ['zoom'],
+              ['case', ['==', ['get', 'class'], 'bus'], 1, 0],
+              13, 1]
+          } },
         { id: 'poi-labels', type: 'symbol', source: 'local', 'source-layer': 'poi',
           minzoom: 15,
           layout: { 'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name'], ['get', 'name_int']], 'text-font': ['KlokanTech Noto Sans Regular'],

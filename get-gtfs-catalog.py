@@ -51,8 +51,12 @@ def main():
         if row.get("redirect.id"): continue
         auth = row.get("urls.authentication_type") or "0"
         if auth != "0" and not args.include_auth: continue
-        url = (row["urls.latest"] if args.use_latest else "") \
-              or row.get("urls.direct_download") or row.get("urls.latest") or ""
+        direct = (row.get("urls.direct_download") or "").strip()
+        latest = (row.get("urls.latest") or "").strip()
+        if args.use_latest:
+            url, fallback = latest or direct, ""
+        else:
+            url, fallback = direct or latest, latest if direct and latest and latest != direct else ""
         if not url: continue
         slug = row.get("id", "").strip()
         if not slug: continue
@@ -61,12 +65,15 @@ def main():
         muni = (row.get("location.municipality") or "").strip()
         label_parts = [p for p in (provider, muni, subdiv) if p]
         name = " / ".join(label_parts) or slug
-        kept.append((slug, url, name))
+        kept.append((slug, url, name, fallback))
 
     out = sys.stdout if args.output == "-" else open(args.output, "w", encoding="utf-8")
     try:
-        for slug, url, name in kept:
-            out.write(f"{slug}\t{url}\t{name}\n")
+        for slug, url, name, fallback in kept:
+            # TSV: slug <TAB> url <TAB> name <TAB> fallback_url (MD mirror).
+            # ingest-gtfs.py retries with the fallback when the direct URL
+            # returns a non-zip body or an HTTP error.
+            out.write(f"{slug}\t{url}\t{name}\t{fallback}\n")
     finally:
         if out is not sys.stdout: out.close()
     sys.stderr.write(f"wrote {len(kept)} feeds for country={args.country}\n")

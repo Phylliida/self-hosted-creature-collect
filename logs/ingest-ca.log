@@ -1,3637 +1,381 @@
 
-=== [1/131] mdb-2 ===
-[fetch] mdb-2 (London Transit Commission / London / Ontario)
-[validate] mdb-2 (London Transit Commission / London / Ontario)  (2.7 MB, 2.1s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  1,945 stops total
-[OK   ] route-types
-         info:  38 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  362,707 stop_time rows across 8,665 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  8 calendar rows, 137 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260201..20260502
-
-RESULT: all checks passed
-[ingest] mdb-2 (London Transit Commission / London / Ontario)
-  [mdb-2] opening /tmp/tmpeokd5d0m.zip
-    agency: 1
-    routes: 38
-    stops: 1,945
-    services: 8
-    calendar_dates: 137
-    trips: 8,665
-[K    stop_times: 147,650  patterns: 180  trips: 3,858  blobs: 1,119[K    stop_times: 313,826  patterns: 190  trips: 7,641  blobs: 1,915[K    stop_times: 362,707  patterns: 190  trips: 8,665  blobs: 1,915  headsigns: 144  dropped: 0  (2.3s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [2/131] mdb-3 ===
-[fetch] mdb-3 (Barrie Transit / Barrie / Ontario)
-[validate] mdb-3 (Barrie Transit / Barrie / Ontario)  (1.1 MB, 0.7s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  559 stops total
-[OK   ] route-types
-         info:  13 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  66,277 stop_time rows across 1,555 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  3 calendar rows, 2 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260214..20260530
-
-RESULT: all checks passed
-[ingest] mdb-3 (Barrie Transit / Barrie / Ontario)
-  [mdb-3] opening /tmp/tmpdzewsoig.zip
-    agency: 1
-    routes: 13
-    stops: 559
-    services: 3
-    calendar_dates: 2
-    trips: 1,555
-[K    stop_times: 66,277  patterns: 37  trips: 1,555  blobs: 185  headsigns: 15  dropped: 0  (0.5s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [3/131] mdb-286 ===
-[fetch] mdb-286 (Black Ball Ferry Line / Victoria / British Columbia)
-[validate] mdb-286 (Black Ball Ferry Line / Victoria / British Columbia)  (0.0 MB, 0.6s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  2 stops total
-[OK   ] route-types
-         info:  1 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  66 stop_time rows across 33 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  9 calendar rows, 2 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260303..20270104
-
-RESULT: all checks passed
-[ingest] mdb-286 (Black Ball Ferry Line / Victoria / British Columbia)
-  [mdb-286] opening /tmp/tmp7q7uktr1.zip
-    agency: 1
-    routes: 1
-    stops: 2
-    services: 9
-    calendar_dates: 2
-    trips: 33
-[K    stop_times: 66  patterns: 2  trips: 33  blobs: 2  headsigns: 2  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [4/131] mdb-689 ===
-[fetch] mdb-689 (Whitehorse Transit / Whitehorse / Yukon)
-[validate] mdb-689 (Whitehorse Transit / Whitehorse / Yukon)  (0.1 MB, 1.3s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  168 stops total
-[OK   ] route-types
-         info:  8 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  11,168 stop_time rows across 262 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  2 calendar rows, 26 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20230818..20501230
-
-RESULT: all checks passed
-[ingest] mdb-689 (Whitehorse Transit / Whitehorse / Yukon)
-  [mdb-689] opening /tmp/tmpi6pcajcy.zip
-    agency: 1
-    routes: 8
-    stops: 168
-    services: 2
-    calendar_dates: 26
-    trips: 262
-[K    stop_times: 11,168  patterns: 0  trips: 0  blobs: 0  headsigns: 0  dropped: 262  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [5/131] mdb-690 ===
-[fetch] mdb-690 (BC Ferries / Southern Gulf Islands Electoral Area / British Columbia)
-[validate] mdb-690 (BC Ferries / Southern Gulf Islands Electoral Area / British Columbia)  (0.1 MB, 0.8s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  96 stops total
-[OK   ] route-types
-         info:  23 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  2,376 stop_time rows across 1,179 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  430 calendar rows, 793 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20000101..20500101
-
-RESULT: all checks passed
-[ingest] mdb-690 (BC Ferries / Southern Gulf Islands Electoral Area / British Columbia)
-  [mdb-690] opening /tmp/tmpyp9cxhhc.zip
-    agency: 1
-    routes: 23
-    stops: 96
-    services: 430
-    calendar_dates: 793
-    trips: 1,179
-[K    stop_times: 2,376  patterns: 90  trips: 1,179  blobs: 76  headsigns: 34  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [6/131] mdb-696 ===
-[fetch] mdb-696 (TransLink Vancouver / Anmore / British Columbia)
-[validate] mdb-696 (TransLink Vancouver / Anmore / British Columbia)  (37.6 MB, 2.3s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  8,956 stops total
-[OK   ] route-types
-         info:  242 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  3,687,690 stop_time rows across 125,863 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  53 calendar rows, 1,047 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260105..20260607
-
-RESULT: all checks passed
-[ingest] mdb-696 (TransLink Vancouver / Anmore / British Columbia)
-  [mdb-696] opening /tmp/tmpytdysaoi.zip
-    agency: 1
-    routes: 242
-    stops: 8,956
-    services: 53
-    calendar_dates: 1,047
-    trips: 125,865
-[K    stop_times: 1  patterns: 0  trips: 0  blobs: 0[K    stop_times: 150,454  patterns: 544  trips: 5,184  blobs: 2,366[K    stop_times: 304,144  patterns: 686  trips: 10,326  blobs: 4,323[K    stop_times: 460,644  patterns: 757  trips: 15,703  blobs: 5,957[K    stop_times: 616,159  patterns: 804  trips: 20,934  blobs: 7,317[K    stop_times: 771,427  patterns: 849  trips: 26,266  blobs: 8,384[K    stop_times: 929,194  patterns: 887  trips: 31,617  blobs: 9,389[K    stop_times: 1,087,112  patterns: 907  trips: 37,067  blobs: 10,305[K    stop_times: 1,243,813  patterns: 928  trips: 42,488  blobs: 11,099[K    stop_times: 1,403,448  patterns: 944  trips: 47,895  blobs: 11,793[K    stop_times: 1,557,899  patterns: 961  trips: 53,172  blobs: 12,484[K    stop_times: 1,716,091  patterns: 967  trips: 58,581  blobs: 13,123[K    stop_times: 1,874,405  patterns: 980  trips: 64,109  blobs: 13,676[K    stop_times: 2,033,992  patterns: 987  trips: 69,509  blobs: 14,288[K    stop_times: 2,191,413  patterns: 1,000  trips: 74,890  blobs: 14,804[K    stop_times: 2,348,524  patterns: 1,010  trips: 80,143  blobs: 15,306[K    stop_times: 2,504,022  patterns: 1,015  trips: 85,260  blobs: 15,792[K    stop_times: 2,663,400  patterns: 1,021  trips: 90,687  blobs: 16,221[K    stop_times: 2,821,862  patterns: 1,024  trips: 96,000  blobs: 16,607[K    stop_times: 2,977,829  patterns: 1,030  trips: 101,499  blobs: 16,983[K    stop_times: 3,128,359  patterns: 1,032  trips: 106,636  blobs: 17,286[K    stop_times: 3,285,408  patterns: 1,033  trips: 112,066  blobs: 17,604[K    stop_times: 3,437,470  patterns: 1,035  trips: 117,219  blobs: 17,859[K    stop_times: 3,592,560  patterns: 1,037  trips: 122,558  blobs: 18,111[K    stop_times: 3,687,690  patterns: 1,038  trips: 125,863  blobs: 18,237  headsigns: 723  dropped: 0  (25.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [7/131] mdb-710 ===
-[fetch] mdb-710 (BC Transit (Dawson Creek Transit System) / Dawson Creek / British Columbia)
-[validate] mdb-710 (BC Transit (Dawson Creek Transit System) / Dawson Creek / British Columbia)  (0.0 MB, 0.4s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  74 stops total
-[OK   ] route-types
-         info:  2 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  797 stop_time rows across 20 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-710 (BC Transit (Dawson Creek Transit System) / Dawson Creek / British Columbia)
-  [mdb-710] opening /tmp/tmp9ny16k_e.zip
-    agency: 1
-    routes: 2
-    stops: 74
-    services: 0
-    calendar_dates: 177
-    trips: 20
-[K    stop_times: 797  patterns: 4  trips: 20  blobs: 4  headsigns: 3  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [8/131] mdb-712 ===
-[fetch] mdb-712 (Calgary Transit / Calgary / Alberta)
-[validate] mdb-712 (Calgary Transit / Calgary / Alberta)  (14.4 MB, 1.7s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  6,168 stops total
-[OK   ] route-types
-         info:  264 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  1,634,389 stop_time rows across 48,700 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  17 calendar rows, 29 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260324..20260621
-
-RESULT: all checks passed
-[ingest] mdb-712 (Calgary Transit / Calgary / Alberta)
-  [mdb-712] opening /tmp/tmpnmm4i7va.zip
-    agency: 1
-    routes: 264
-    stops: 6,168
-    services: 17
-    calendar_dates: 29
-    trips: 48,700
-[K    stop_times: 82,354  patterns: 122  trips: 2,504  blobs: 269[K    stop_times: 246,519  patterns: 251  trips: 6,989  blobs: 773[K    stop_times: 414,591  patterns: 254  trips: 12,069  blobs: 832[K    stop_times: 579,192  patterns: 431  trips: 16,732  blobs: 1,495[K    stop_times: 742,299  patterns: 571  trips: 21,327  blobs: 2,523[K    stop_times: 906,934  patterns: 616  trips: 26,215  blobs: 3,059[K    stop_times: 1,074,324  patterns: 617  trips: 30,895  blobs: 3,066[K    stop_times: 1,240,082  patterns: 627  trips: 36,235  blobs: 3,115[K    stop_times: 1,407,677  patterns: 627  trips: 41,428  blobs: 3,117[K    stop_times: 1,576,075  patterns: 627  trips: 45,997  blobs: 3,117[K    stop_times: 1,634,389  patterns: 632  trips: 48,700  blobs: 3,122  headsigns: 328  dropped: 0  (10.4s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [9/131] mdb-714 ===
-[fetch] mdb-714 (Edmonton Transit System / Avenue District / Alberta)
-[validate] mdb-714 (Edmonton Transit System / Avenue District / Alberta)  (19.1 MB, 0.9s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  6,881 stops total
-[OK   ] route-types
-         info:  238 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  3,351,639 stop_time rows across 102,388 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-714 (Edmonton Transit System / Avenue District / Alberta)
-  [mdb-714] opening /tmp/tmpqt6nkbdy.zip
-    agency: 7
-    routes: 238
-    stops: 6,881
-    services: 0
-    calendar_dates: 8,954
-    trips: 102,388
-[K    stop_times: 1  patterns: 0  trips: 0  blobs: 0[K    stop_times: 165,220  patterns: 112  trips: 4,327  blobs: 836[K    stop_times: 321,323  patterns: 413  trips: 9,556  blobs: 1,813[K    stop_times: 486,022  patterns: 468  trips: 14,417  blobs: 2,136[K    stop_times: 648,798  patterns: 468  trips: 18,828  blobs: 2,136[K    stop_times: 815,540  patterns: 468  trips: 24,220  blobs: 2,137[K    stop_times: 983,709  patterns: 468  trips: 28,736  blobs: 2,138[K    stop_times: 1,147,757  patterns: 475  trips: 34,609  blobs: 2,157[K    stop_times: 1,317,069  patterns: 475  trips: 38,774  blobs: 2,157[K    stop_times: 1,484,220  patterns: 475  trips: 44,325  blobs: 2,157[K    stop_times: 1,654,201  patterns: 475  trips: 48,969  blobs: 2,157[K    stop_times: 1,819,712  patterns: 475  trips: 54,278  blobs: 2,157[K    stop_times: 1,985,129  patterns: 479  trips: 59,518  blobs: 2,183[K    stop_times: 2,149,683  patterns: 507  trips: 63,632  blobs: 2,347[K    stop_times: 2,313,213  patterns: 548  trips: 69,369  blobs: 2,597[K    stop_times: 2,479,684  patterns: 555  trips: 73,852  blobs: 2,936[K    stop_times: 2,646,586  patterns: 557  trips: 78,334  blobs: 3,028[K    stop_times: 2,809,424  patterns: 557  trips: 83,141  blobs: 3,100[K    stop_times: 2,976,234  patterns: 559  trips: 87,743  blobs: 3,332[K    stop_times: 3,144,421  patterns: 559  trips: 92,390  blobs: 3,371[K    stop_times: 3,305,026  patterns: 683  trips: 100,097  blobs: 3,788[K    stop_times: 3,351,639  patterns: 690  trips: 102,388  blobs: 3,924  headsigns: 476  dropped: 0  (21.7s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [10/131] mdb-715 ===
-[fetch] mdb-715 (City of Regina / Regina / Saskatchewan)
-[validate] mdb-715 (City of Regina / Regina / Saskatchewan)  (2.6 MB, 2.4s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  1,398 stops total
-[OK   ] route-types
-         info:  44 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  356,776 stop_time rows across 6,432 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  7 calendar rows, 19 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20250824..20260502
-
-RESULT: all checks passed
-[ingest] mdb-715 (City of Regina / Regina / Saskatchewan)
-  [mdb-715] opening /tmp/tmpyng3203j.zip
-    agency: 1
-    routes: 44
-    stops: 1,398
-    services: 7
-    calendar_dates: 19
-    trips: 6,432
-[K    stop_times: 137,156  patterns: 95  trips: 2,624  blobs: 182[K    stop_times: 298,025  patterns: 116  trips: 5,467  blobs: 292[K    stop_times: 356,776  patterns: 116  trips: 6,432  blobs: 303  headsigns: 36  dropped: 0  (2.4s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [11/131] mdb-717 ===
-[fetch] mdb-717 (Winnipeg Transit / Winnipeg / Manitoba)
-[validate] mdb-717 (Winnipeg Transit / Winnipeg / Manitoba)  (4.0 MB, 2.4s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  3,873 stops total
-[OK   ] route-types
-         info:  71 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  463,023 stop_time rows across 10,698 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  3 calendar rows, 2 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260412..20260620
-
-RESULT: all checks passed
-[ingest] mdb-717 (Winnipeg Transit / Winnipeg / Manitoba)
-  [mdb-717] opening /tmp/tmpix3wb875.zip
-    agency: 1
-    routes: 71
-    stops: 3,873
-    services: 3
-    calendar_dates: 2
-    trips: 10,698
-[K    stop_times: 162,225  patterns: 146  trips: 3,646  blobs: 1,373[K    stop_times: 345,346  patterns: 257  trips: 7,975  blobs: 2,442[K    stop_times: 463,023  patterns: 272  trips: 10,698  blobs: 2,537  headsigns: 89  dropped: 0  (2.7s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [12/131] mdb-718 ===
-[fetch] mdb-718 (Cornwall Transit / Cornwall / Ontario)
-[validate] mdb-718 (Cornwall Transit / Cornwall / Ontario)  (0.2 MB, 1.1s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  308 stops total
-[OK   ] route-types
-         info:  11 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  16,634 stop_time rows across 416 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-718 (Cornwall Transit / Cornwall / Ontario)
-  [mdb-718] opening /tmp/tmpkrbiz34h.zip
-    agency: 1
-    routes: 11
-    stops: 308
-    services: 0
-    calendar_dates: 214
-    trips: 416
-[K    stop_times: 16,634  patterns: 42  trips: 416  blobs: 41  headsigns: 10  dropped: 0  (0.1s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [13/131] mdb-720 ===
-[fetch] mdb-720 (Transit Windsor / Windsor / Ontario)
-[validate] mdb-720 (Transit Windsor / Windsor / Ontario)  (1.8 MB, 4.4s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  1,451 stops total
-[OK   ] route-types
-         info:  19 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  410,489 stop_time rows across 7,256 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  7 calendar rows, 0 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260405..20260711
-
-RESULT: all checks passed
-[ingest] mdb-720 (Transit Windsor / Windsor / Ontario)
-  [mdb-720] opening /tmp/tmp6deje_lz.zip
-    agency: 1
-    routes: 19
-    stops: 1,451
-    services: 7
-    calendar_dates: 0
-    trips: 7,256
-[K    stop_times: 159,309  patterns: 8  trips: 2,278  blobs: 25[K    stop_times: 329,123  patterns: 24  trips: 4,822  blobs: 61[K    stop_times: 410,489  patterns: 49  trips: 7,256  blobs: 90  headsigns: 28  dropped: 0  (2.5s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [14/131] mdb-721 ===
-[fetch] mdb-721 (Grand River Transit / Cambridge / Ontario)
-[validate] mdb-721 (Grand River Transit / Cambridge / Ontario)  (2.1 MB, 1.0s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  2,376 stops total
-[OK   ] route-types
-         info:  53 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  335,129 stop_time rows across 11,531 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-721 (Grand River Transit / Cambridge / Ontario)
-  [mdb-721] opening /tmp/tmptdeh08ms.zip
-    agency: 1
-    routes: 53
-    stops: 2,376
-    services: 0
-    calendar_dates: 3,565
-    trips: 11,531
-[K    stop_times: 158,846  patterns: 72  trips: 5,159  blobs: 583[K    stop_times: 326,952  patterns: 181  trips: 11,267  blobs: 1,184[K    stop_times: 335,129  patterns: 181  trips: 11,531  blobs: 1,204  headsigns: 51  dropped: 0  (2.1s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [15/131] mdb-724 ===
-[fetch] mdb-724 (Burlington Transit / Burlington / Ontario)
-[validate] mdb-724 (Burlington Transit / Burlington / Ontario)  (0.8 MB, 0.4s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  787 stops total
-[OK   ] route-types
-         info:  16 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  123,571 stop_time rows across 2,802 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  5 calendar rows, 1 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260308..20260502
-
-RESULT: all checks passed
-[ingest] mdb-724 (Burlington Transit / Burlington / Ontario)
-  [mdb-724] opening /tmp/tmp6ncx7bv7.zip
-    agency: 1
-    routes: 16
-    stops: 787
-    services: 5
-    calendar_dates: 1
-    trips: 2,802
-[K    stop_times: 123,571  patterns: 40  trips: 2,802  blobs: 243  headsigns: 18  dropped: 0  (0.8s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [16/131] mdb-725 ===
-[fetch] mdb-725 (Oakville Transit / Oakville / Ontario)
-[validate] mdb-725 (Oakville Transit / Oakville / Ontario)  (2.0 MB, 0.4s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  1,123 stops total
-[OK   ] route-types
-         info:  33 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  78,076 stop_time rows across 2,500 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  3 calendar rows, 2 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260301..20260502
-
-RESULT: all checks passed
-[ingest] mdb-725 (Oakville Transit / Oakville / Ontario)
-  [mdb-725] opening /tmp/tmp04mligdf.zip
-    agency: 1
-    routes: 33
-    stops: 1,123
-    services: 3
-    calendar_dates: 2
-    trips: 2,500
-[K    stop_times: 78,076  patterns: 98  trips: 2,500  blobs: 180  headsigns: 53  dropped: 0  (0.6s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [17/131] mdb-726 ===
-[fetch] mdb-726 (Durham Region Transit / Ajax / Ontario)
-[validate] mdb-726 (Durham Region Transit / Ajax / Ontario)  (6.5 MB, 5.1s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  1,969 stops total
-[OK   ] route-types
-         info:  39 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  308,096 stop_time rows across 7,755 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  6 calendar rows, 4 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260317..20260628
-
-RESULT: all checks passed
-[ingest] mdb-726 (Durham Region Transit / Ajax / Ontario)
-  [mdb-726] opening /tmp/tmpjdy6qk0u.zip
-    agency: 1
-    routes: 39
-    stops: 1,969
-    services: 6
-    calendar_dates: 4
-    trips: 7,755
-[K    stop_times: 141,108  patterns: 145  trips: 3,515  blobs: 392[K    stop_times: 302,587  patterns: 204  trips: 7,585  blobs: 506[K    stop_times: 308,096  patterns: 204  trips: 7,755  blobs: 506  headsigns: 72  dropped: 0  (2.1s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [18/131] mdb-728 ===
-[fetch] mdb-728 (York Region Transit / Aurora / Ontario)
-[validate] mdb-728 (York Region Transit / Aurora / Ontario)  (10.2 MB, 4.4s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  4,810 stops total
-[OK   ] route-types
-         info:  124 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  927,544 stop_time rows across 23,454 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  9 calendar rows, 368 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260104..20260627
-
-RESULT: all checks passed
-[ingest] mdb-728 (York Region Transit / Aurora / Ontario)
-  [mdb-728] opening /tmp/tmpdjufkop8.zip
-    agency: 1
-    routes: 124
-    stops: 4,810
-    services: 9
-    calendar_dates: 368
-    trips: 23,454
-[K    stop_times: 110,673  patterns: 204  trips: 2,698  blobs: 917[K    stop_times: 273,778  patterns: 286  trips: 6,991  blobs: 1,812[K    stop_times: 438,255  patterns: 309  trips: 11,057  blobs: 2,349[K    stop_times: 602,813  patterns: 341  trips: 15,254  blobs: 2,704[K    stop_times: 769,493  patterns: 364  trips: 19,389  blobs: 2,893[K    stop_times: 927,544  patterns: 381  trips: 23,454  blobs: 3,007  headsigns: 233  dropped: 0  (6.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [19/131] mdb-730 ===
-[fetch] mdb-730 (MiWay / Brampton / Ontario)
-[validate] mdb-730 (MiWay / Brampton / Ontario)  (7.6 MB, 1.0s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  4,082 stops total
-[OK   ] route-types
-         info:  69 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  1,085,987 stop_time rows across 27,936 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-730 (MiWay / Brampton / Ontario)
-  [mdb-730] opening /tmp/tmpurlu2g1g.zip
-    agency: 1
-    routes: 69
-    stops: 4,082
-    services: 0
-    calendar_dates: 194
-    trips: 27,936
-[K    stop_times: 103,014  patterns: 70  trips: 2,451  blobs: 1,284[K    stop_times: 256,039  patterns: 149  trips: 6,546  blobs: 2,934[K    stop_times: 413,479  patterns: 155  trips: 10,469  blobs: 3,706[K    stop_times: 569,855  patterns: 195  trips: 14,898  blobs: 4,794[K    stop_times: 728,007  patterns: 206  trips: 18,892  blobs: 5,179[K    stop_times: 886,828  patterns: 208  trips: 22,842  blobs: 5,299[K    stop_times: 1,044,689  patterns: 218  trips: 26,798  blobs: 5,667[K    stop_times: 1,085,987  patterns: 218  trips: 27,936  blobs: 5,718  headsigns: 142  dropped: 0  (7.3s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [20/131] mdb-732 ===
-[fetch] mdb-732 (Toronto Transit Commission (TTC) / North York / Ontario)
-[validate] mdb-732 (Toronto Transit Commission (TTC) / North York / Ontario)  (34.2 MB, 15.0s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  9,393 stops total
-[OK   ] route-types
-         info:  230 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  4,293,356 stop_time rows across 135,534 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  13 calendar rows, 160 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260315..20260502
-
-RESULT: all checks passed
-[ingest] mdb-732 (Toronto Transit Commission (TTC) / North York / Ontario)
-  [mdb-732] opening /tmp/tmp9n7j9hv0.zip
-    agency: 1
-    routes: 230
-    stops: 9,393
-    services: 13
-    calendar_dates: 160
-    trips: 135,534
-[K    stop_times: 1  patterns: 0  trips: 0  blobs: 0[K    stop_times: 138,940  patterns: 149  trips: 4,112  blobs: 605[K    stop_times: 247,696  patterns: 258  trips: 7,891  blobs: 1,110[K    stop_times: 342,014  patterns: 354  trips: 10,925  blobs: 1,539[K    stop_times: 465,060  patterns: 583  trips: 14,364  blobs: 2,207[K    stop_times: 625,013  patterns: 725  trips: 18,942  blobs: 2,806[K    stop_times: 785,027  patterns: 820  trips: 23,660  blobs: 3,443[K    stop_times: 944,160  patterns: 959  trips: 29,244  blobs: 4,141[K    stop_times: 1,100,783  patterns: 1,113  trips: 35,352  blobs: 5,040[K    stop_times: 1,263,041  patterns: 1,217  trips: 40,539  blobs: 5,559[K    stop_times: 1,425,688  patterns: 1,220  trips: 45,972  blobs: 6,024[K    stop_times: 1,589,745  patterns: 1,232  trips: 50,885  blobs: 6,448[K    stop_times: 1,754,512  patterns: 1,247  trips: 55,456  blobs: 6,919[K    stop_times: 1,919,246  patterns: 1,254  trips: 60,400  blobs: 7,341[K    stop_times: 2,085,027  patterns: 1,258  trips: 65,789  blobs: 7,802[K    stop_times: 2,248,264  patterns: 1,268  trips: 71,019  blobs: 8,321[K    stop_times: 2,412,717  patterns: 1,271  trips: 76,465  blobs: 8,639[K    stop_times: 2,576,708  patterns: 1,279  trips: 81,949  blobs: 8,956[K    stop_times: 2,740,401  patterns: 1,303  trips: 85,941  blobs: 9,379[K    stop_times: 2,904,781  patterns: 1,304  trips: 91,049  blobs: 9,657[K    stop_times: 3,068,193  patterns: 1,315  trips: 96,145  blobs: 10,015[K    stop_times: 3,229,435  patterns: 1,325  trips: 101,510  blobs: 10,433[K    stop_times: 3,393,987  patterns: 1,325  trips: 106,861  blobs: 10,514[K    stop_times: 3,557,877  patterns: 1,325  trips: 112,528  blobs: 10,543[K    stop_times: 3,723,472  patterns: 1,325  trips: 116,777  blobs: 10,644[K    stop_times: 3,885,413  patterns: 1,326  trips: 121,955  blobs: 10,664[K    stop_times: 4,046,131  patterns: 1,326  trips: 126,770  blobs: 10,686[K    stop_times: 4,210,352  patterns: 1,326  trips: 132,787  blobs: 10,714[K    stop_times: 4,293,356  patterns: 1,326  trips: 135,534  blobs: 10,744  headsigns: 800  dropped: 0  (29.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [21/131] mdb-733 ===
-[fetch] mdb-733 (Kingston Transit / Kingston / Ontario)
-[validate] mdb-733 (Kingston Transit / Kingston / Ontario)  (2.7 MB, 0.7s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  810 stops total
-[OK   ] route-types
-         info:  32 routes total
-[ERROR] stop-times-sorted-by-trip
-         error: trip_ids not grouped: 5+ trip_ids re-appear after their run ended (sample: ['2193196:569636:603386', '2193196:569636:604998', '2193196:569636:603386', '2193196:569636:604998', '2193196:569636:603386']) — build-schedule-db will emit duplicate-ID pattern rows
-         info:  280,520 stop_time rows across 11,832 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: errors found — ingest will produce broken data for this feed
-[fail] mdb-733 (Kingston Transit / Kingston / Ontario): validation errors — skipping. Pass --skip-validate to force ingest anyway.
-
-=== [22/131] mdb-734 ===
-[fetch] mdb-734 (Halifax Transit / Beaver Bank / Nova Scotia)
-[validate] mdb-734 (Halifax Transit / Beaver Bank / Nova Scotia)  (5.6 MB, 1.5s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  2,381 stops total
-[OK   ] route-types
-         info:  80 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  327,575 stop_time rows across 9,253 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  8 calendar rows, 65 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260223..20260517
-
-RESULT: all checks passed
-[ingest] mdb-734 (Halifax Transit / Beaver Bank / Nova Scotia)
-  [mdb-734] opening /tmp/tmpo0y0kh1d.zip
-    agency: 1
-    routes: 80
-    stops: 2,381
-    services: 8
-    calendar_dates: 65
-    trips: 9,253
-[K    stop_times: 144,950  patterns: 105  trips: 4,000  blobs: 527[K    stop_times: 306,834  patterns: 172  trips: 8,475  blobs: 1,455[K    stop_times: 327,575  patterns: 180  trips: 9,253  blobs: 1,565  headsigns: 162  dropped: 0  (2.2s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [23/131] mdb-735 ===
-[fetch] mdb-735 (VIA Rail Canada / Manitoba)
-[validate] mdb-735 (VIA Rail Canada / Manitoba)  (1.0 MB, 0.3s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  388 stops total
-[OK   ] route-types
-         info:  19 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  1,473 stop_time rows across 83 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  83 calendar rows, 35 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20240101..20301231
-
-RESULT: all checks passed
-[ingest] mdb-735 (VIA Rail Canada / Manitoba)
-  [mdb-735] opening /tmp/tmpbe2kys66.zip
-    agency: 1
-    routes: 19
-    stops: 388
-    services: 83
-    calendar_dates: 35
-    trips: 83
-[K    stop_times: 1,473  patterns: 67  trips: 79  blobs: 79  headsigns: 17  dropped: 4  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [24/131] mdb-736 ===
-[fetch] mdb-736 (Thunder Bay Transit / Thunder Bay / Ontario)
-[validate] mdb-736 (Thunder Bay Transit / Thunder Bay / Ontario)  (1.1 MB, 3.0s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  732 stops total
-[OK   ] route-types
-         info:  20 routes total
-[ERROR] stop-times-sorted-by-trip
-         error: trip_ids not grouped: 5+ trip_ids re-appear after their run ended (sample: ['306555:413795:417211', '306555:413795:423259', '306555:413795:417211', '306555:413795:423259', '306555:413795:417211']) — build-schedule-db will emit duplicate-ID pattern rows
-         info:  129,562 stop_time rows across 4,841 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: errors found — ingest will produce broken data for this feed
-[fail] mdb-736 (Thunder Bay Transit / Thunder Bay / Ontario): validation errors — skipping. Pass --skip-validate to force ingest anyway.
-
-=== [25/131] mdb-737 ===
-[fetch] mdb-737 (Greater Sudbury Transit / Greater Sudbury / Ontario)
-[validate] mdb-737 (Greater Sudbury Transit / Greater Sudbury / Ontario)  (1.6 MB, 0.6s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  1,100 stops total
-[OK   ] route-types
-         info:  25 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  152,728 stop_time rows across 4,972 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-737 (Greater Sudbury Transit / Greater Sudbury / Ontario)
-  [mdb-737] opening /tmp/tmp33u14fo8.zip
-    agency: 1
-    routes: 25
-    stops: 1,100
-    services: 0
-    calendar_dates: 69,981
-    trips: 4,972
-[K    stop_times: 150,643  patterns: 62  trips: 4,903  blobs: 218[K    stop_times: 152,728  patterns: 62  trips: 4,972  blobs: 218  headsigns: 52  dropped: 0  (1.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [26/131] mdb-739 ===
-[fetch] mdb-739 (Régie intermunicipale de transport des Collines (Transcollines) / Bristol / Quebec)
-[validate] mdb-739 (Régie intermunicipale de transport des Collines (Transcollines) / Bristol / Quebec)  (0.2 MB, 0.7s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  424 stops total
-[OK   ] route-types
-         info:  8 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  2,800 stop_time rows across 58 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  5 calendar rows, 6 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260105..20260823
-
-RESULT: all checks passed
-[ingest] mdb-739 (Régie intermunicipale de transport des Collines (Transcollines) / Bristol / Quebec)
-  [mdb-739] opening /tmp/tmpa16_ltqi.zip
-    agency: 1
-    routes: 8
-    stops: 424
-    services: 5
-    calendar_dates: 6
-    trips: 58
-[K    stop_times: 2,800  patterns: 20  trips: 58  blobs: 22  headsigns: 19  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [27/131] mdb-740 ===
-[fetch] mdb-740 (Société de transport de l'Outaouais / Gatineau / Quebec)
-[validate] mdb-740 (Société de transport de l'Outaouais / Gatineau / Quebec)  (2.9 MB, 3.7s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  1,868 stops total
-[OK   ] route-types
-         info:  100 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  232,564 stop_time rows across 5,775 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-740 (Société de transport de l'Outaouais / Gatineau / Quebec)
-  [mdb-740] opening /tmp/tmpn66w723y.zip
-    agency: 1
-    routes: 100
-    stops: 1,868
-    services: 0
-    calendar_dates: 57
-    trips: 5,775
-[K    stop_times: 157,609  patterns: 113  trips: 3,813  blobs: 658[K    stop_times: 232,564  patterns: 225  trips: 5,775  blobs: 1,301  headsigns: 45  dropped: 0  (1.5s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [28/131] mdb-741 ===
-[fetch] mdb-741 (Exo Sorel-Varennes / Boucherville / Quebec)
-[validate] mdb-741 (Exo Sorel-Varennes / Boucherville / Quebec)  (0.7 MB, 0.4s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  359 stops total
-[OK   ] route-types
-         info:  12 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  14,319 stop_time rows across 390 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  3 calendar rows, 2 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260407..20260621
-
-RESULT: all checks passed
-[ingest] mdb-741 (Exo Sorel-Varennes / Boucherville / Quebec)
-  [mdb-741] opening /tmp/tmpc_yhlz2n.zip
-    agency: 1
-    routes: 12
-    stops: 359
-    services: 3
-    calendar_dates: 2
-    trips: 390
-[K    stop_times: 14,319  patterns: 56  trips: 390  blobs: 177  headsigns: 12  dropped: 0  (0.1s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [29/131] mdb-742 ===
-[fetch] mdb-742 (Exo Sud-ouest / Beauharnois / Quebec)
-[validate] mdb-742 (Exo Sud-ouest / Beauharnois / Quebec)  (1.1 MB, 0.9s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  655 stops total
-[OK   ] route-types
-         info:  26 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  77,328 stop_time rows across 2,625 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  6 calendar rows, 9 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260331..20260621
-
-RESULT: all checks passed
-[ingest] mdb-742 (Exo Sud-ouest / Beauharnois / Quebec)
-  [mdb-742] opening /tmp/tmprubfckej.zip
-    agency: 1
-    routes: 26
-    stops: 655
-    services: 6
-    calendar_dates: 9
-    trips: 2,625
-[K    stop_times: 77,328  patterns: 88  trips: 2,625  blobs: 295  headsigns: 39  dropped: 0  (0.5s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [30/131] mdb-743 ===
-[fetch] mdb-743 (Exo La Presqu'île / Dollard-Des-Ormeaux / Quebec)
-[validate] mdb-743 (Exo La Presqu'île / Dollard-Des-Ormeaux / Quebec)  (1.1 MB, 0.5s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  1,039 stops total
-[OK   ] route-types
-         info:  47 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  44,237 stop_time rows across 1,723 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  7 calendar rows, 6 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260317..20260621
-
-RESULT: all checks passed
-[ingest] mdb-743 (Exo La Presqu'île / Dollard-Des-Ormeaux / Quebec)
-  [mdb-743] opening /tmp/tmp81aom09m.zip
-    agency: 1
-    routes: 47
-    stops: 1,039
-    services: 7
-    calendar_dates: 6
-    trips: 1,723
-[K    stop_times: 44,237  patterns: 177  trips: 1,723  blobs: 324  headsigns: 68  dropped: 0  (0.3s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [31/131] mdb-744 ===
-[fetch] mdb-744 (Exo Laurentides / Blainville / Quebec)
-[validate] mdb-744 (Exo Laurentides / Blainville / Quebec)  (2.8 MB, 0.5s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  2,178 stops total
-[OK   ] route-types
-         info:  55 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  324,886 stop_time rows across 8,054 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  10 calendar rows, 3 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260414..20260621
-
-RESULT: all checks passed
-[ingest] mdb-744 (Exo Laurentides / Blainville / Quebec)
-  [mdb-744] opening /tmp/tmpz4gbmm_p.zip
-    agency: 1
-    routes: 55
-    stops: 2,178
-    services: 10
-    calendar_dates: 3
-    trips: 8,054
-[K    stop_times: 137,061  patterns: 95  trips: 3,157  blobs: 397[K    stop_times: 297,823  patterns: 140  trips: 6,172  blobs: 677[K    stop_times: 324,886  patterns: 148  trips: 8,054  blobs: 738  headsigns: 84  dropped: 0  (2.2s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [32/131] mdb-748 ===
-[fetch] mdb-748 (Exo / Baie-D'Urfé / Quebec)
-[validate] mdb-748 (Exo / Baie-D'Urfé / Quebec)  (0.1 MB, 0.5s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  106 stops total
-[OK   ] route-types
-         info:  5 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  3,116 stop_time rows across 262 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  5 calendar rows, 2 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260407..20260621
-
-RESULT: all checks passed
-[ingest] mdb-748 (Exo / Baie-D'Urfé / Quebec)
-  [mdb-748] opening /tmp/tmpi5iag5gm.zip
-    agency: 1
-    routes: 5
-    stops: 106
-    services: 5
-    calendar_dates: 2
-    trips: 262
-[K    stop_times: 3,116  patterns: 21  trips: 262  blobs: 80  headsigns: 12  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [33/131] mdb-749 ===
-[fetch] mdb-749 (Société de transport de Laval / Laval / Quebec)
-[validate] mdb-749 (Société de transport de Laval / Laval / Quebec)  (2.6 MB, 12.3s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  2,845 stops total
-[OK   ] route-types
-         info:  102 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  337,643 stop_time rows across 5,333 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  3 calendar rows, 6 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260321..20260619
-
-RESULT: all checks passed
-[ingest] mdb-749 (Société de transport de Laval / Laval / Quebec)
-  [mdb-749] opening /tmp/tmpse5b5_2k.zip
-    agency: 1
-    routes: 102
-    stops: 2,845
-    services: 3
-    calendar_dates: 6
-    trips: 5,333
-[K    stop_times: 152,590  patterns: 66  trips: 2,622  blobs: 841[K    stop_times: 318,668  patterns: 113  trips: 5,068  blobs: 1,765[K    stop_times: 337,643  patterns: 122  trips: 5,333  blobs: 1,869  headsigns: 22  dropped: 0  (2.1s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [34/131] mdb-750 ===
-[fetch] mdb-750 (Exo Chambly-Richelieu-Carignan / Brossard / Quebec)
-[validate] mdb-750 (Exo Chambly-Richelieu-Carignan / Brossard / Quebec)  (0.5 MB, 0.3s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  420 stops total
-[OK   ] route-types
-         info:  24 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  22,550 stop_time rows across 1,108 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  4 calendar rows, 2 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260416..20260621
-
-RESULT: all checks passed
-[ingest] mdb-750 (Exo Chambly-Richelieu-Carignan / Brossard / Quebec)
-  [mdb-750] opening /tmp/tmpuc6rm3d7.zip
-    agency: 1
-    routes: 24
-    stops: 420
-    services: 4
-    calendar_dates: 2
-    trips: 1,108
-[K    stop_times: 22,550  patterns: 64  trips: 1,108  blobs: 121  headsigns: 29  dropped: 0  (0.2s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [35/131] mdb-751 ===
-[fetch] mdb-751 (Réseau de transport de Longueuil / Longueuil / Quebec)
-[validate] mdb-751 (Réseau de transport de Longueuil / Longueuil / Quebec)  (8.2 MB, 2.5s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  3,288 stops total
-[OK   ] route-types
-         info:  152 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  829,679 stop_time rows across 22,682 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  8 calendar rows, 14 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260406..20260621
-
-RESULT: all checks passed
-[ingest] mdb-751 (Réseau de transport de Longueuil / Longueuil / Quebec)
-  [mdb-751] opening /tmp/tmp74tnypmv.zip
-    agency: 1
-    routes: 152
-    stops: 3,288
-    services: 8
-    calendar_dates: 14
-    trips: 22,682
-[K    stop_times: 104,635  patterns: 121  trips: 2,583  blobs: 301[K    stop_times: 266,396  patterns: 134  trips: 6,772  blobs: 430[K    stop_times: 419,657  patterns: 381  trips: 11,104  blobs: 1,570[K    stop_times: 582,001  patterns: 381  trips: 15,858  blobs: 1,570[K    stop_times: 745,114  patterns: 381  trips: 20,136  blobs: 1,570[K    stop_times: 829,679  patterns: 381  trips: 22,682  blobs: 1,570  headsigns: 67  dropped: 0  (5.6s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [36/131] mdb-752 ===
-[fetch] mdb-752 (Exo Vallée du Richelieu / Beloeil / Quebec)
-[validate] mdb-752 (Exo Vallée du Richelieu / Beloeil / Quebec)  (0.8 MB, 0.3s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  433 stops total
-[OK   ] route-types
-         info:  14 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  56,040 stop_time rows across 1,374 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  8 calendar rows, 26 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20251211..20260621
-
-RESULT: all checks passed
-[ingest] mdb-752 (Exo Vallée du Richelieu / Beloeil / Quebec)
-  [mdb-752] opening /tmp/tmp_yr16x5d.zip
-    agency: 1
-    routes: 14
-    stops: 433
-    services: 8
-    calendar_dates: 26
-    trips: 1,374
-[K    stop_times: 56,040  patterns: 50  trips: 1,374  blobs: 245  headsigns: 17  dropped: 0  (0.4s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [37/131] mdb-753 ===
-[fetch] mdb-753 (Exo Ville de Sainte-Julie / Beloeil / Quebec)
-[validate] mdb-753 (Exo Ville de Sainte-Julie / Beloeil / Quebec)  (0.3 MB, 0.4s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  232 stops total
-[OK   ] route-types
-         info:  14 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  29,439 stop_time rows across 1,569 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  10 calendar rows, 39 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20251201..20260621
-
-RESULT: all checks passed
-[ingest] mdb-753 (Exo Ville de Sainte-Julie / Beloeil / Quebec)
-  [mdb-753] opening /tmp/tmp57q4kenw.zip
-    agency: 1
-    routes: 14
-    stops: 232
-    services: 10
-    calendar_dates: 39
-    trips: 1,569
-[K    stop_times: 29,439  patterns: 28  trips: 1,569  blobs: 93  headsigns: 13  dropped: 0  (0.2s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [38/131] mdb-754 ===
-[fetch] mdb-754 (Terrebonne-Mascouche / Blainville / Quebec)
-[validate] mdb-754 (Terrebonne-Mascouche / Blainville / Quebec)  (1.2 MB, 0.5s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  1,111 stops total
-[OK   ] route-types
-         info:  37 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  81,779 stop_time rows across 2,189 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  4 calendar rows, 6 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260401..20260621
-
-RESULT: all checks passed
-[ingest] mdb-754 (Terrebonne-Mascouche / Blainville / Quebec)
-  [mdb-754] opening /tmp/tmpjapkl1w0.zip
-    agency: 1
-    routes: 37
-    stops: 1,111
-    services: 4
-    calendar_dates: 6
-    trips: 2,189
-[K    stop_times: 81,779  patterns: 99  trips: 2,189  blobs: 438  headsigns: 41  dropped: 0  (0.6s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [39/131] mdb-755 ===
-[fetch] mdb-755 (Exo L'Assomption / Charlemagne / Quebec)
-[validate] mdb-755 (Exo L'Assomption / Charlemagne / Quebec)  (1.1 MB, 0.3s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  764 stops total
-[OK   ] route-types
-         info:  13 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  118,695 stop_time rows across 2,107 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  8 calendar rows, 26 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20251211..20260621
-
-RESULT: all checks passed
-[ingest] mdb-755 (Exo L'Assomption / Charlemagne / Quebec)
-  [mdb-755] opening /tmp/tmpnfgtthvb.zip
-    agency: 1
-    routes: 13
-    stops: 764
-    services: 8
-    calendar_dates: 26
-    trips: 2,107
-[K    stop_times: 118,695  patterns: 57  trips: 2,107  blobs: 271  headsigns: 12  dropped: 0  (0.8s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [40/131] mdb-757 ===
-[fetch] mdb-757 (Réseau de transport de la Capitale / Quebec City / Quebec)
-[validate] mdb-757 (Réseau de transport de la Capitale / Quebec City / Quebec)  (32.1 MB, 1.6s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  4,338 stops total
-[OK   ] route-types
-         info:  182 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  3,226,622 stop_time rows across 72,836 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  0 calendar rows, 63 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: all checks passed
-[ingest] mdb-757 (Réseau de transport de la Capitale / Quebec City / Quebec)
-  [mdb-757] opening /tmp/tmp6iezi0p7.zip
-    agency: 1
-    routes: 182
-    stops: 4,338
-    services: 0
-    calendar_dates: 63
-    trips: 72,836
-[K    stop_times: 1  patterns: 0  trips: 0  blobs: 0[K    stop_times: 167,626  patterns: 126  trips: 3,592  blobs: 859[K    stop_times: 332,133  patterns: 298  trips: 7,240  blobs: 2,096[K    stop_times: 497,995  patterns: 332  trips: 11,067  blobs: 3,131[K    stop_times: 667,508  patterns: 340  trips: 15,012  blobs: 3,139[K    stop_times: 836,237  patterns: 340  trips: 18,876  blobs: 3,139[K    stop_times: 1,008,705  patterns: 340  trips: 22,850  blobs: 3,139[K    stop_times: 1,180,435  patterns: 340  trips: 26,785  blobs: 3,139[K    stop_times: 1,353,046  patterns: 340  trips: 30,494  blobs: 3,139[K    stop_times: 1,523,269  patterns: 340  trips: 34,291  blobs: 3,139[K    stop_times: 1,691,477  patterns: 340  trips: 38,149  blobs: 3,139[K    stop_times: 1,862,164  patterns: 340  trips: 42,048  blobs: 3,139[K    stop_times: 2,034,664  patterns: 340  trips: 45,994  blobs: 3,139[K    stop_times: 2,205,995  patterns: 340  trips: 49,921  blobs: 3,139[K    stop_times: 2,378,652  patterns: 340  trips: 53,769  blobs: 3,139[K    stop_times: 2,551,700  patterns: 340  trips: 57,754  blobs: 3,139[K    stop_times: 2,722,758  patterns: 340  trips: 61,526  blobs: 3,139[K    stop_times: 2,894,398  patterns: 340  trips: 65,355  blobs: 3,139[K    stop_times: 3,063,453  patterns: 342  trips: 69,076  blobs: 3,160[K    stop_times: 3,226,622  patterns: 342  trips: 72,836  blobs: 3,160  headsigns: 112  dropped: 0  (20.4s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [41/131] mdb-758 ===
-[fetch] mdb-758 (Metrobus Transit / St. John's / Newfoundland and Labrador)
-[validate] mdb-758 (Metrobus Transit / St. John's / Newfoundland and Labrador)  (1.1 MB, 0.9s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  928 stops total
-[OK   ] route-types
-         info:  26 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  65,643 stop_time rows across 1,829 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  3 calendar rows, 2 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260105..20260426
-
-RESULT: all checks passed
-[ingest] mdb-758 (Metrobus Transit / St. John's / Newfoundland and Labrador)
-  [mdb-758] opening /tmp/tmpxpyeqvsh.zip
-    agency: 1
-    routes: 26
-    stops: 928
-    services: 3
-    calendar_dates: 2
-    trips: 1,829
-[K    stop_times: 65,643  patterns: 69  trips: 1,829  blobs: 133  headsigns: 54  dropped: 0  (0.4s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [42/131] mdb-759 ===
-[fetch] mdb-759 (Milton Transit / Milton / Ontario)
-[validate] mdb-759 (Milton Transit / Milton / Ontario)  (0.4 MB, 0.4s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  414 stops total
-[OK   ] route-types
-         info:  17 routes total
-[ERROR] stop-times-sorted-by-trip
-         error: trip_ids not grouped: 5+ trip_ids re-appear after their run ended (sample: ['116528:1484378:1485758', '116528:1484378:1485792', '116528:1484378:1485758', '116528:1484378:1485792', '116528:1484378:1485758']) — build-schedule-db will emit duplicate-ID pattern rows
-         info:  63,759 stop_time rows across 1,809 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: errors found — ingest will produce broken data for this feed
-[fail] mdb-759 (Milton Transit / Milton / Ontario): validation errors — skipping. Pass --skip-validate to force ingest anyway.
-
-=== [43/131] mdb-761 ===
-[fetch] mdb-761 (Port Alberni / Alberni-Clayoquot Regional District / British Columbia)
-[validate] mdb-761 (Port Alberni / Alberni-Clayoquot Regional District / British Columbia)  (0.1 MB, 0.1s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  145 stops total
-[OK   ] route-types
-         info:  4 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  6,349 stop_time rows across 128 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-761 (Port Alberni / Alberni-Clayoquot Regional District / British Columbia)
-  [mdb-761] opening /tmp/tmpbcqqornu.zip
-    agency: 1
-    routes: 4
-    stops: 145
-    services: 0
-    calendar_dates: 143
-    trips: 128
-[K    stop_times: 6,349  patterns: 5  trips: 128  blobs: 7  headsigns: 4  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [44/131] mdb-763 ===
-[fetch] mdb-763 (Société de transport de Lévis / Lévis / Quebec)
-[validate] mdb-763 (Société de transport de Lévis / Lévis / Quebec)  (1.6 MB, 0.3s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  1,632 stops total
-[OK   ] route-types
-         info:  74 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  162,161 stop_time rows across 3,199 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  0 calendar rows, 652 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: all checks passed
-[ingest] mdb-763 (Société de transport de Lévis / Lévis / Quebec)
-  [mdb-763] opening /tmp/tmpnbimzybg.zip
-    agency: 1
-    routes: 74
-    stops: 1,632
-    services: 0
-    calendar_dates: 652
-    trips: 3,199
-[K    stop_times: 155,228  patterns: 202  trips: 3,030  blobs: 588[K    stop_times: 162,161  patterns: 202  trips: 3,199  blobs: 588  headsigns: 69  dropped: 0  (1.1s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [45/131] mdb-1111 ===
-[fetch] mdb-1111 (Codiac Transport / Dieppe / New Brunswick)
-[validate] mdb-1111 (Codiac Transport / Dieppe / New Brunswick)  (2.4 MB, 1.5s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  669 stops total
-[OK   ] route-types
-         info:  19 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  153,112 stop_time rows across 3,606 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-1111 (Codiac Transport / Dieppe / New Brunswick)
-  [mdb-1111] opening /tmp/tmpxtvfkkmt.zip
-    agency: 1
-    routes: 19
-    stops: 669
-    services: 0
-    calendar_dates: 123
-    trips: 3,606
-[K    stop_times: 143,277  patterns: 40  trips: 3,372  blobs: 229[K    stop_times: 153,112  patterns: 40  trips: 3,606  blobs: 232  headsigns: 17  dropped: 0  (1.1s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [46/131] mdb-1806 ===
+=== [1/132] mdb-2 ===
+[skip] mdb-2 already ingested
+
+=== [2/132] mdb-3 ===
+[skip] mdb-3 already ingested
+
+=== [3/132] mdb-286 ===
+[skip] mdb-286 already ingested
+
+=== [4/132] mdb-689 ===
+[skip] mdb-689 already ingested
+
+=== [5/132] mdb-690 ===
+[skip] mdb-690 already ingested
+
+=== [6/132] mdb-696 ===
+[skip] mdb-696 already ingested
+
+=== [7/132] mdb-710 ===
+[skip] mdb-710 already ingested
+
+=== [8/132] mdb-712 ===
+[skip] mdb-712 already ingested
+
+=== [9/132] mdb-714 ===
+[skip] mdb-714 already ingested
+
+=== [10/132] mdb-715 ===
+[skip] mdb-715 already ingested
+
+=== [11/132] mdb-717 ===
+[skip] mdb-717 already ingested
+
+=== [12/132] mdb-718 ===
+[skip] mdb-718 already ingested
+
+=== [13/132] mdb-720 ===
+[skip] mdb-720 already ingested
+
+=== [14/132] mdb-721 ===
+[skip] mdb-721 already ingested
+
+=== [15/132] mdb-724 ===
+[skip] mdb-724 already ingested
+
+=== [16/132] mdb-725 ===
+[skip] mdb-725 already ingested
+
+=== [17/132] mdb-726 ===
+[skip] mdb-726 already ingested
+
+=== [18/132] mdb-728 ===
+[skip] mdb-728 already ingested
+
+=== [19/132] mdb-730 ===
+[skip] mdb-730 already ingested
+
+=== [20/132] mdb-732 ===
+[skip] mdb-732 already ingested
+
+=== [21/132] mdb-733 ===
+[skip] mdb-733 already ingested
+
+=== [22/132] mdb-734 ===
+[skip] mdb-734 already ingested
+
+=== [23/132] mdb-735 ===
+[skip] mdb-735 already ingested
+
+=== [24/132] mdb-736 ===
+[skip] mdb-736 already ingested
+
+=== [25/132] mdb-737 ===
+[skip] mdb-737 already ingested
+
+=== [26/132] mdb-739 ===
+[skip] mdb-739 already ingested
+
+=== [27/132] mdb-740 ===
+[skip] mdb-740 already ingested
+
+=== [28/132] mdb-741 ===
+[skip] mdb-741 already ingested
+
+=== [29/132] mdb-742 ===
+[skip] mdb-742 already ingested
+
+=== [30/132] mdb-743 ===
+[skip] mdb-743 already ingested
+
+=== [31/132] mdb-744 ===
+[skip] mdb-744 already ingested
+
+=== [32/132] mdb-748 ===
+[skip] mdb-748 already ingested
+
+=== [33/132] mdb-749 ===
+[skip] mdb-749 already ingested
+
+=== [34/132] mdb-750 ===
+[skip] mdb-750 already ingested
+
+=== [35/132] mdb-751 ===
+[skip] mdb-751 already ingested
+
+=== [36/132] mdb-752 ===
+[skip] mdb-752 already ingested
+
+=== [37/132] mdb-753 ===
+[skip] mdb-753 already ingested
+
+=== [38/132] mdb-754 ===
+[skip] mdb-754 already ingested
+
+=== [39/132] mdb-755 ===
+[skip] mdb-755 already ingested
+
+=== [40/132] mdb-757 ===
+[skip] mdb-757 already ingested
+
+=== [41/132] mdb-758 ===
+[skip] mdb-758 already ingested
+
+=== [42/132] mdb-759 ===
+[skip] mdb-759 already ingested
+
+=== [43/132] mdb-761 ===
+[skip] mdb-761 already ingested
+
+=== [44/132] mdb-763 ===
+[skip] mdb-763 already ingested
+
+=== [45/132] mdb-1111 ===
+[skip] mdb-1111 already ingested
+
+=== [46/132] mdb-1806 ===
 [fetch] mdb-1806 (Miramichi Transit / Miramichi / New Brunswick)
 [fail] mdb-1806 (Miramichi Transit / Miramichi / New Brunswick): download error HTTP Error 404: Not Found
 
-=== [47/131] mdb-1858 ===
-[fetch] mdb-1858 (Belleville Transit / Belleville / Ontario)
-[validate] mdb-1858 (Belleville Transit / Belleville / Ontario)  (0.4 MB, 0.2s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  220 stops total
-[OK   ] route-types
-         info:  10 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  20,993 stop_time rows across 1,277 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-1858 (Belleville Transit / Belleville / Ontario)
-  [mdb-1858] opening /tmp/tmpfbq3yrv4.zip
-    agency: 1
-    routes: 10
-    stops: 220
-    services: 0
-    calendar_dates: 125,247
-    trips: 1,277
-[K    stop_times: 20,993  patterns: 16  trips: 1,277  blobs: 32  headsigns: 16  dropped: 0  (0.1s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [48/131] mdb-1991 ===
-[fetch] mdb-1991 (BC Transit (Central Fraser Valley | Chilliwack | Agassiz-Harrison | Hope) / Abbotsford / British Columbia)
-[validate] mdb-1991 (BC Transit (Central Fraser Valley | Chilliwack | Agassiz-Harrison | Hope) / Abbotsford / British Columbia)  (0.9 MB, 1.1s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  960 stops total
-[OK   ] route-types
-         info:  37 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  69,165 stop_time rows across 2,199 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-1991 (BC Transit (Central Fraser Valley | Chilliwack | Agassiz-Harrison | Hope) / Abbotsford / British Columbia)
-  [mdb-1991] opening /tmp/tmptm65tyna.zip
-    agency: 1
-    routes: 37
-    stops: 960
-    services: 0
-    calendar_dates: 83
-    trips: 2,199
-[K    stop_times: 69,165  patterns: 82  trips: 2,199  blobs: 928  headsigns: 51  dropped: 0  (0.5s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [49/131] mdb-1992 ===
-[fetch] mdb-1992 (Red Deer Transit / City of Red Deer / Alberta)
-[validate] mdb-1992 (Red Deer Transit / City of Red Deer / Alberta)  (1.5 MB, 3.2s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  612 stops total
-[OK   ] route-types
-         info:  42 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  65,379 stop_time rows across 2,321 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  4 calendar rows, 36 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260315..20260620
-
-RESULT: all checks passed
-[ingest] mdb-1992 (Red Deer Transit / City of Red Deer / Alberta)
-  [mdb-1992] opening /tmp/tmpyqz1pywo.zip
-    agency: 1
-    routes: 42
-    stops: 612
-    services: 4
-    calendar_dates: 36
-    trips: 2,321
-[K    stop_times: 65,379  patterns: 90  trips: 2,321  blobs: 97  headsigns: 66  dropped: 0  (0.5s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [50/131] mdb-1993 ===
-[fetch] mdb-1993 (Go Transit / Mississauga / Ontario)
-[validate] mdb-1993 (Go Transit / Mississauga / Ontario)  (20.6 MB, 1.3s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  923 stops total
-[OK   ] route-types
-         info:  88 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  1,596,246 stop_time rows across 94,521 trips
-[WARN ] stop-time-fields
-         warn:  1,366,075 non-monotonic departure times (sample: [('20260529-41-41475', 63600, 61500), ('20260529-41-41475', 61500, 60120), ('20260529-41-41475', 60120, 58620), ('20260529-41-41475', 58620, 58560), ('20260529-41-41475', 58560, 57600)]) — deltas will be clamped to 0
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-1993 (Go Transit / Mississauga / Ontario)
-  [mdb-1993] opening /tmp/tmpforhq989.zip
-    agency: 1
-    routes: 88
-    stops: 923
-    services: 0
-    calendar_dates: 60
-    trips: 94,521
-[K    stop_times: 43,701  patterns: 171  trips: 2,184  blobs: 807[K    stop_times: 191,238  patterns: 259  trips: 10,426  blobs: 1,236[K    stop_times: 330,590  patterns: 269  trips: 25,433  blobs: 1,354[K    stop_times: 481,748  patterns: 273  trips: 35,755  blobs: 1,409[K    stop_times: 639,882  patterns: 354  trips: 43,888  blobs: 1,688[K    stop_times: 791,867  patterns: 364  trips: 51,677  blobs: 1,806[K    stop_times: 950,261  patterns: 367  trips: 59,558  blobs: 1,815[K    stop_times: 1,113,782  patterns: 373  trips: 68,234  blobs: 1,828[K    stop_times: 1,277,130  patterns: 385  trips: 76,993  blobs: 1,859[K    stop_times: 1,440,530  patterns: 385  trips: 85,975  blobs: 1,859[K    stop_times: 1,596,246  patterns: 387  trips: 94,521  blobs: 1,877  headsigns: 267  dropped: 0  (11.1s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [51/131] mdb-1994 ===
-[fetch] mdb-1994 (Brampton Transit / Brampton / Ontario)
-[validate] mdb-1994 (Brampton Transit / Brampton / Ontario)  (6.7 MB, 0.5s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  2,878 stops total
-[OK   ] route-types
-         info:  73 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  1,027,619 stop_time rows across 26,773 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  0 calendar rows, 119 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: all checks passed
-[ingest] mdb-1994 (Brampton Transit / Brampton / Ontario)
-  [mdb-1994] opening /tmp/tmpamf6ft2i.zip
-    agency: 1
-    routes: 73
-    stops: 2,878
-    services: 0
-    calendar_dates: 119
-    trips: 26,773
-[K    stop_times: 118,511  patterns: 156  trips: 3,247  blobs: 1,265[K    stop_times: 286,101  patterns: 235  trips: 7,757  blobs: 2,839[K    stop_times: 455,798  patterns: 236  trips: 11,839  blobs: 3,757[K    stop_times: 627,367  patterns: 243  trips: 16,505  blobs: 3,936[K    stop_times: 798,805  patterns: 247  trips: 21,114  blobs: 4,364[K    stop_times: 972,225  patterns: 247  trips: 25,302  blobs: 4,499[K    stop_times: 1,027,619  patterns: 247  trips: 26,773  blobs: 4,499  headsigns: 191  dropped: 0  (6.4s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [52/131] mdb-1995 ===
-[fetch] mdb-1995 (Union Pearson Express (UP Express) / Old Toronto / Ontario)
-[validate] mdb-1995 (Union Pearson Express (UP Express) / Old Toronto / Ontario)  (0.9 MB, 0.6s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  5 stops total
-[OK   ] route-types
-         info:  1 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  138,750 stop_time rows across 27,750 trips
-[WARN ] stop-time-fields
-         warn:  111,000 non-monotonic departure times (sample: [('20260426-4304', 24780, 24240), ('20260426-4304', 24240, 24000), ('20260426-4304', 24000, 23820), ('20260426-4304', 23820, 23040), ('20260426-4007', 26880, 26160)]) — deltas will be clamped to 0
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-1995 (Union Pearson Express (UP Express) / Old Toronto / Ontario)
-  [mdb-1995] opening /tmp/tmp4eupp25w.zip
-    agency: 1
-    routes: 1
-    stops: 5
-    services: 0
-    calendar_dates: 181
-    trips: 27,750
-[K    stop_times: 133,286  patterns: 2  trips: 26,657  blobs: 7[K    stop_times: 138,750  patterns: 2  trips: 27,750  blobs: 7  headsigns: 2  dropped: 0  (1.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [53/131] mdb-1996 ===
-[fetch] mdb-1996 (Société de Transport de Sherbrooke / Sherbrooke / Quebec)
-[validate] mdb-1996 (Société de Transport de Sherbrooke / Sherbrooke / Quebec)  (1.4 MB, 0.3s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  1,463 stops total
-[OK   ] route-types
-         info:  58 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  133,131 stop_time rows across 3,949 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  7 calendar rows, 16 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260330..20260621
-
-RESULT: all checks passed
-[ingest] mdb-1996 (Société de Transport de Sherbrooke / Sherbrooke / Quebec)
-  [mdb-1996] opening /tmp/tmpogpjnw9y.zip
-    agency: 1
-    routes: 58
-    stops: 1,463
-    services: 7
-    calendar_dates: 16
-    trips: 3,949
-[K    stop_times: 133,131  patterns: 223  trips: 3,949  blobs: 1,296  headsigns: 54  dropped: 0  (0.9s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [54/131] mdb-2031 ===
-[fetch] mdb-2031 (Aquabus Ferries / Vancouver / British Columbia)
-[validate] mdb-2031 (Aquabus Ferries / Vancouver / British Columbia)  (0.0 MB, 0.2s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  8 stops total
-[OK   ] route-types
-         info:  4 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  34 stop_time rows across 8 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  1 calendar rows, 10 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20241028..20331231
-
-RESULT: all checks passed
-[ingest] mdb-2031 (Aquabus Ferries / Vancouver / British Columbia)
-  [mdb-2031] opening /tmp/tmpsg8xqtfr.zip
-    agency: 1
-    routes: 4
-    stops: 8
-    services: 1
-    calendar_dates: 10
-    trips: 8
-[K    stop_times: 34  patterns: 8  trips: 8  blobs: 7  headsigns: 8  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [55/131] mdb-2131 ===
-[fetch] mdb-2131 (Saint John Transit / Saint John / New Brunswick)
-[validate] mdb-2131 (Saint John Transit / Saint John / New Brunswick)  (0.3 MB, 0.6s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  614 stops total
-[OK   ] route-types
-         info:  15 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  37,623 stop_time rows across 870 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  3 calendar rows, 0 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260413..20271231
-
-RESULT: all checks passed
-[ingest] mdb-2131 (Saint John Transit / Saint John / New Brunswick)
-  [mdb-2131] opening /tmp/tmpxy5gjno3.zip
-    agency: 1
-    routes: 15
-    stops: 614
-    services: 3
-    calendar_dates: 0
-    trips: 870
-[K    stop_times: 37,623  patterns: 33  trips: 870  blobs: 39  headsigns: 20  dropped: 0  (0.2s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [56/131] mdb-2132 ===
-[fetch] mdb-2132 (T3 Transit / Charlottetown / Prince Edward Island)
-[validate] mdb-2132 (T3 Transit / Charlottetown / Prince Edward Island)  (0.4 MB, 0.8s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  610 stops total
-[OK   ] route-types
-         info:  11 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  15,600 stop_time rows across 613 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  3 calendar rows, 6 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20240827..20261231
-
-RESULT: all checks passed
-[ingest] mdb-2132 (T3 Transit / Charlottetown / Prince Edward Island)
-  [mdb-2132] opening /tmp/tmpvtxnc2qx.zip
-    agency: 1
-    routes: 11
-    stops: 610
-    services: 3
-    calendar_dates: 6
-    trips: 613
-[K    stop_times: 15,600  patterns: 58  trips: 613  blobs: 65  headsigns: 10  dropped: 0  (0.1s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [57/131] mdb-2142 ===
-[fetch] mdb-2142 (Exo Le Richelain / Roussillon / La Prairie / Quebec)
-[validate] mdb-2142 (Exo Le Richelain / Roussillon / La Prairie / Quebec)  (0.7 MB, 0.3s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  715 stops total
-[OK   ] route-types
-         info:  41 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  54,706 stop_time rows across 2,255 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  4 calendar rows, 6 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260114..20260621
-
-RESULT: all checks passed
-[ingest] mdb-2142 (Exo Le Richelain / Roussillon / La Prairie / Quebec)
-  [mdb-2142] opening /tmp/tmp4ab7_w8d.zip
-    agency: 1
-    routes: 41
-    stops: 715
-    services: 4
-    calendar_dates: 6
-    trips: 2,255
-[K    stop_times: 54,706  patterns: 92  trips: 2,255  blobs: 181  headsigns: 33  dropped: 0  (0.4s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [58/131] mdb-2276 ===
-[fetch] mdb-2276 (Société des transports de Rimouski / Rimouski / Quebec)
-[validate] mdb-2276 (Société des transports de Rimouski / Rimouski / Quebec)  (0.0 MB, 0.3s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  152 stops total
-[OK   ] route-types
-         info:  5 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  4,125 stop_time rows across 125 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  4 calendar rows, 53 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260101..20270214
-
-RESULT: all checks passed
-[ingest] mdb-2276 (Société des transports de Rimouski / Rimouski / Quebec)
-  [mdb-2276] opening /tmp/tmpknoa8feu.zip
-    agency: 1
-    routes: 5
-    stops: 152
-    services: 4
-    calendar_dates: 53
-    trips: 125
-[K    stop_times: 4,125  patterns: 5  trips: 125  blobs: 5  headsigns: 1  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [59/131] mdb-2379 ===
-[fetch] mdb-2379 (Société de transport collectif de Pierre-De Saurel / Longueuil / Quebec)
-[validate] mdb-2379 (Société de transport collectif de Pierre-De Saurel / Longueuil / Quebec)  (0.1 MB, 0.9s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  176 stops total
-[OK   ] route-types
-         info:  5 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  5,786 stop_time rows across 224 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  2 calendar rows, 19 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260129..20261231
-
-RESULT: all checks passed
-[ingest] mdb-2379 (Société de transport collectif de Pierre-De Saurel / Longueuil / Quebec)
-  [mdb-2379] opening /tmp/tmp4udpp3kv.zip
-    agency: 1
-    routes: 5
-    stops: 176
-    services: 2
-    calendar_dates: 19
-    trips: 224
-[K    stop_times: 5,786  patterns: 10  trips: 224  blobs: 13  headsigns: 4  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [60/131] mdb-2389 ===
-[fetch] mdb-2389 (Hullo Ferries / Vancouver / British Columbia)
-[validate] mdb-2389 (Hullo Ferries / Vancouver / British Columbia)  (0.0 MB, 0.2s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  2 stops total
-[OK   ] route-types
-         info:  2 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  2,074 stop_time rows across 1,037 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-2389 (Hullo Ferries / Vancouver / British Columbia)
-  [mdb-2389] opening /tmp/tmpe3nltpov.zip
-    agency: 1
-    routes: 2
-    stops: 2
-    services: 0
-    calendar_dates: 126
-    trips: 1,037
-[K    stop_times: 2,074  patterns: 2  trips: 1,037  blobs: 4  headsigns: 2  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [61/131] mdb-2417 ===
-[fetch] mdb-2417 (Maritime Bus / Halifax / Nova Scotia)
-[validate] mdb-2417 (Maritime Bus / Halifax / Nova Scotia)  (0.8 MB, 0.8s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  63 stops total
-[OK   ] route-types
-         info:  20 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  174 stop_time rows across 24 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  3 calendar rows, 3 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20221201..20261231
-
-RESULT: all checks passed
-[ingest] mdb-2417 (Maritime Bus / Halifax / Nova Scotia)
-  [mdb-2417] opening /tmp/tmp8hclp_1e.zip
-    agency: 1
-    routes: 20
-    stops: 63
-    services: 3
-    calendar_dates: 3
-    trips: 24
-[K    stop_times: 174  patterns: 20  trips: 24  blobs: 22  headsigns: 12  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [62/131] mdb-2460 ===
-[fetch] mdb-2460 (Fredericton Transit / Fredericton / New Brunswick)
-[validate] mdb-2460 (Fredericton Transit / Fredericton / New Brunswick)  (0.3 MB, 0.6s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  421 stops total
-[OK   ] route-types
-         info:  17 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  25,296 stop_time rows across 578 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-2460 (Fredericton Transit / Fredericton / New Brunswick)
-  [mdb-2460] opening /tmp/tmpd2a164h2.zip
-    agency: 1
-    routes: 17
-    stops: 421
-    services: 0
-    calendar_dates: 18,608
-    trips: 578
-[K    stop_times: 25,296  patterns: 49  trips: 578  blobs: 61  headsigns: 24  dropped: 0  (0.2s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [63/131] mdb-2462 ===
-[fetch] mdb-2462 (BC Transit (Hazelton | Kitimat | Terrace) / Area B (Suskwa/Kitwanga/Kispiox) / British Columbia)
-[validate] mdb-2462 (BC Transit (Hazelton | Kitimat | Terrace) / Area B (Suskwa/Kitwanga/Kispiox) / British Columbia)  (0.2 MB, 0.6s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  293 stops total
-[OK   ] route-types
-         info:  20 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  13,668 stop_time rows across 552 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-2462 (BC Transit (Hazelton | Kitimat | Terrace) / Area B (Suskwa/Kitwanga/Kispiox) / British Columbia)
-  [mdb-2462] opening /tmp/tmpflvvfvnn.zip
-    agency: 1
-    routes: 20
-    stops: 293
-    services: 0
-    calendar_dates: 111
-    trips: 552
-[K    stop_times: 13,668  patterns: 55  trips: 552  blobs: 61  headsigns: 29  dropped: 0  (0.1s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [64/131] mdb-2463 ===
-[fetch] mdb-2463 (BC Transit (Quesnel) / Area A (Red Bluff/Quesnel South) / British Columbia)
-[validate] mdb-2463 (BC Transit (Quesnel) / Area A (Red Bluff/Quesnel South) / British Columbia)  (0.1 MB, 0.2s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  141 stops total
-[OK   ] route-types
-         info:  8 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  2,574 stop_time rows across 98 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-2463 (BC Transit (Quesnel) / Area A (Red Bluff/Quesnel South) / British Columbia)
-  [mdb-2463] opening /tmp/tmpv03gmtct.zip
-    agency: 1
-    routes: 8
-    stops: 141
-    services: 0
-    calendar_dates: 259
-    trips: 98
-[K    stop_times: 2,574  patterns: 22  trips: 98  blobs: 24  headsigns: 14  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [65/131] mdb-2464 ===
-[fetch] mdb-2464 (BC Transit (Revelstoke) / Revelstoke / British Columbia)
-[validate] mdb-2464 (BC Transit (Revelstoke) / Revelstoke / British Columbia)  (0.0 MB, 0.2s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  92 stops total
-[OK   ] route-types
-         info:  3 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  1,051 stop_time rows across 38 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-2464 (BC Transit (Revelstoke) / Revelstoke / British Columbia)
-  [mdb-2464] opening /tmp/tmpye10mart.zip
-    agency: 1
-    routes: 3
-    stops: 92
-    services: 0
-    calendar_dates: 418
-    trips: 38
-[K    stop_times: 1,051  patterns: 4  trips: 38  blobs: 4  headsigns: 4  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [66/131] mdb-2466 ===
-[fetch] mdb-2466 (BC Transit (Salt Spring Island) / Salt Spring Island Electoral Area / British Columbia)
-[validate] mdb-2466 (BC Transit (Salt Spring Island) / Salt Spring Island Electoral Area / British Columbia)  (0.1 MB, 0.1s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  29 stops total
-[OK   ] route-types
-         info:  8 routes total
-[ERROR] stop-times-sorted-by-trip
-         error: trip_ids not grouped: 5+ trip_ids re-appear after their run ended (sample: ['2382944:13061346:13082168', '2382944:13061346:13082678', '2382959:13061757:13081902', '2382959:13061757:13082414', '2382959:13061757:13081902']) — build-schedule-db will emit duplicate-ID pattern rows
-         info:  3,123 stop_time rows across 650 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: errors found — ingest will produce broken data for this feed
-[fail] mdb-2466 (BC Transit (Salt Spring Island) / Salt Spring Island Electoral Area / British Columbia): validation errors — skipping. Pass --skip-validate to force ingest anyway.
-
-=== [67/131] mdb-2467 ===
-[fetch] mdb-2467 (BC Transit (Mount Waddington) / Area B (Quatsino Sound/Cape Scott) / British Columbia)
-[validate] mdb-2467 (BC Transit (Mount Waddington) / Area B (Quatsino Sound/Cape Scott) / British Columbia)  (0.0 MB, 0.1s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  73 stops total
-[OK   ] route-types
-         info:  6 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  579 stop_time rows across 42 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-2467 (BC Transit (Mount Waddington) / Area B (Quatsino Sound/Cape Scott) / British Columbia)
-  [mdb-2467] opening /tmp/tmpq1v68bur.zip
-    agency: 1
-    routes: 6
-    stops: 73
-    services: 0
-    calendar_dates: 213
-    trips: 42
-[K    stop_times: 579  patterns: 11  trips: 42  blobs: 28  headsigns: 7  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [68/131] mdb-2468 ===
-[fetch] mdb-2468 (BC Transit (Ashcroft-Cache Creek-Clinton Transit System) / Ashcroft / British Columbia)
-[validate] mdb-2468 (BC Transit (Ashcroft-Cache Creek-Clinton Transit System) / Ashcroft / British Columbia)  (0.0 MB, 0.2s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  5 stops total
-[OK   ] route-types
-         info:  1 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  16 stop_time rows across 4 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-2468 (BC Transit (Ashcroft-Cache Creek-Clinton Transit System) / Ashcroft / British Columbia)
-  [mdb-2468] opening /tmp/tmp4z5_55_o.zip
-    agency: 1
-    routes: 1
-    stops: 5
-    services: 0
-    calendar_dates: 70
-    trips: 4
-[K    stop_times: 16  patterns: 2  trips: 4  blobs: 4  headsigns: 1  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [69/131] mdb-2469 ===
-[fetch] mdb-2469 (BC Transit (100 Mile House) / 100 Mile House / British Columbia)
-[validate] mdb-2469 (BC Transit (100 Mile House) / 100 Mile House / British Columbia)  (0.0 MB, 0.1s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  22 stops total
-[OK   ] route-types
-         info:  2 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  103 stop_time rows across 8 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-2469 (BC Transit (100 Mile House) / 100 Mile House / British Columbia)
-  [mdb-2469] opening /tmp/tmpqwx43sv9.zip
-    agency: 1
-    routes: 2
-    stops: 22
-    services: 0
-    calendar_dates: 177
-    trips: 8
-[K    stop_times: 103  patterns: 7  trips: 8  blobs: 7  headsigns: 2  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [70/131] mdb-2470 ===
-[fetch] mdb-2470 (BC Transit (Pemberton Valley) / Area C (Pemberton Valley/Mount Currie/D'Arcy) / British Columbia)
-[validate] mdb-2470 (BC Transit (Pemberton Valley) / Area C (Pemberton Valley/Mount Currie/D'Arcy) / British Columbia)  (0.0 MB, 0.1s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  38 stops total
-[OK   ] route-types
-         info:  2 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  420 stop_time rows across 27 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-2470 (BC Transit (Pemberton Valley) / Area C (Pemberton Valley/Mount Currie/D'Arcy) / British Columbia)
-  [mdb-2470] opening /tmp/tmpkidejkum.zip
-    agency: 1
-    routes: 2
-    stops: 38
-    services: 0
-    calendar_dates: 222
-    trips: 27
-[K    stop_times: 420  patterns: 4  trips: 27  blobs: 5  headsigns: 3  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [71/131] mdb-2471 ===
-[fetch] mdb-2471 (BC Transit (Merritt) / Area M (Beautiful Nicola Valley - North) / British Columbia)
-[validate] mdb-2471 (BC Transit (Merritt) / Area M (Beautiful Nicola Valley - North) / British Columbia)  (0.0 MB, 0.1s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  74 stops total
-[OK   ] route-types
-         info:  4 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  2,562 stop_time rows across 174 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-2471 (BC Transit (Merritt) / Area M (Beautiful Nicola Valley - North) / British Columbia)
-  [mdb-2471] opening /tmp/tmpz9fqexfd.zip
-    agency: 1
-    routes: 4
-    stops: 74
-    services: 0
-    calendar_dates: 258
-    trips: 174
-[K    stop_times: 2,562  patterns: 5  trips: 174  blobs: 5  headsigns: 5  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [72/131] mdb-2472 ===
-[fetch] mdb-2472 (BC Transit (Smithers) / Area A (Hudson Bay Mountain) / British Columbia)
-[validate] mdb-2472 (BC Transit (Smithers) / Area A (Hudson Bay Mountain) / British Columbia)  (0.0 MB, 0.2s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  20 stops total
-[OK   ] route-types
-         info:  2 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  242 stop_time rows across 32 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-2472 (BC Transit (Smithers) / Area A (Hudson Bay Mountain) / British Columbia)
-  [mdb-2472] opening /tmp/tmpfokq68fr.zip
-    agency: 1
-    routes: 2
-    stops: 20
-    services: 0
-    calendar_dates: 212
-    trips: 32
-[K    stop_times: 242  patterns: 7  trips: 32  blobs: 7  headsigns: 3  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [73/131] mdb-2473 ===
-[fetch] mdb-2473 (BC Transit (Nanaimo) / Area A (Cassidy/Cedar) / British Columbia)
-[validate] mdb-2473 (BC Transit (Nanaimo) / Area A (Cassidy/Cedar) / British Columbia)  (0.7 MB, 0.2s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  842 stops total
-[OK   ] route-types
-         info:  22 routes total
-[ERROR] stop-times-sorted-by-trip
-         error: trip_ids not grouped: 5+ trip_ids re-appear after their run ended (sample: ['3996537:12771884:12939907', '3996537:12771884:12940042', '3996537:12771884:12939907', '3996537:12771884:12940042', '3996537:12771884:12939907']) — build-schedule-db will emit duplicate-ID pattern rows
-         info:  56,527 stop_time rows across 1,670 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: errors found — ingest will produce broken data for this feed
-[fail] mdb-2473 (BC Transit (Nanaimo) / Area A (Cassidy/Cedar) / British Columbia): validation errors — skipping. Pass --skip-validate to force ingest anyway.
-
-=== [74/131] mdb-2508 ===
-[fetch] mdb-2508 (BC Transit (Shuswap | Vernon) / Area B (Westside/Swan Lake/Kalamalka Lake) / British Columbia)
-[validate] mdb-2508 (BC Transit (Shuswap | Vernon) / Area B (Westside/Swan Lake/Kalamalka Lake) / British Columbia)  (0.3 MB, 0.2s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  409 stops total
-[OK   ] route-types
-         info:  20 routes total
-[ERROR] stop-times-sorted-by-trip
-         error: trip_ids not grouped: 5+ trip_ids re-appear after their run ended (sample: ['2109563:12155623:12798221', '2109563:12155623:12798424', '2109563:12155623:12798221', '2109563:12155623:12798424', '2109563:12155623:12798221']) — build-schedule-db will emit duplicate-ID pattern rows
-         info:  26,573 stop_time rows across 1,282 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: errors found — ingest will produce broken data for this feed
-[fail] mdb-2508 (BC Transit (Shuswap | Vernon) / Area B (Westside/Swan Lake/Kalamalka Lake) / British Columbia): validation errors — skipping. Pass --skip-validate to force ingest anyway.
-
-=== [75/131] mdb-2510 ===
-[fetch] mdb-2510 (BC Transit (Bulkley-Nechako | Prince George) / Area A (Hudson Bay Mountain) / British Columbia)
-[validate] mdb-2510 (BC Transit (Bulkley-Nechako | Prince George) / Area A (Hudson Bay Mountain) / British Columbia)  (0.7 MB, 0.3s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  563 stops total
-[OK   ] route-types
-         info:  18 routes total
-[ERROR] stop-times-sorted-by-trip
-         error: trip_ids not grouped: 5+ trip_ids re-appear after their run ended (sample: ['2061515:11575586:11584697', '2061515:11575586:11584968', '2061515:11575586:11584697', '2061515:11575586:11584968', '2061515:11575586:11584697']) — build-schedule-db will emit duplicate-ID pattern rows
-         info:  63,611 stop_time rows across 2,128 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: errors found — ingest will produce broken data for this feed
-[fail] mdb-2510 (BC Transit (Bulkley-Nechako | Prince George) / Area A (Hudson Bay Mountain) / British Columbia): validation errors — skipping. Pass --skip-validate to force ingest anyway.
-
-=== [76/131] mdb-2514 ===
-[fetch] mdb-2514 (BC Transit (Campbell River Transit) / Area D (Oyster Bay/Buttle Lake) / British Columbia)
-[validate] mdb-2514 (BC Transit (Campbell River Transit) / Area D (Oyster Bay/Buttle Lake) / British Columbia)  (0.1 MB, 0.6s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  284 stops total
-[OK   ] route-types
-         info:  8 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  12,809 stop_time rows across 428 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-2514 (BC Transit (Campbell River Transit) / Area D (Oyster Bay/Buttle Lake) / British Columbia)
-  [mdb-2514] opening /tmp/tmpn94r42kx.zip
-    agency: 1
-    routes: 8
-    stops: 284
-    services: 0
-    calendar_dates: 141
-    trips: 428
-[K    stop_times: 12,809  patterns: 20  trips: 428  blobs: 22  headsigns: 14  dropped: 0  (0.1s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [77/131] mdb-2515 ===
-[fetch] mdb-2515 (BC Transit (Clearwater) / Area A (Wells Gray Country) / British Columbia)
-[validate] mdb-2515 (BC Transit (Clearwater) / Area A (Wells Gray Country) / British Columbia)  (0.0 MB, 0.1s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  19 stops total
-[OK   ] route-types
-         info:  4 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  80 stop_time rows across 14 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-2515 (BC Transit (Clearwater) / Area A (Wells Gray Country) / British Columbia)
-  [mdb-2515] opening /tmp/tmp23yceyod.zip
-    agency: 1
-    routes: 4
-    stops: 19
-    services: 0
-    calendar_dates: 60
-    trips: 14
-[K    stop_times: 80  patterns: 11  trips: 14  blobs: 11  headsigns: 5  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [78/131] mdb-2520 ===
-[fetch] mdb-2520 (BC Transit (Columbia Valley | Cranbrook | Elk Valley | Kimberley) / Area A (Upper Flathead/Elk Valley) / British Columbia)
-[validate] mdb-2520 (BC Transit (Columbia Valley | Cranbrook | Elk Valley | Kimberley) / Area A (Upper Flathead/Elk Valley) / British Columbia)  (0.1 MB, 0.4s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  249 stops total
-[OK   ] route-types
-         info:  13 routes total
-[ERROR] stop-times-sorted-by-trip
-         error: trip_ids not grouped: 5+ trip_ids re-appear after their run ended (sample: ['2083373:12891848:12895027', '2083373:12891848:12895082', '2083373:12891848:12895027', '2083373:12891848:12895082', '2083373:12891848:12895027']) — build-schedule-db will emit duplicate-ID pattern rows
-         info:  10,847 stop_time rows across 515 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: errors found — ingest will produce broken data for this feed
-[fail] mdb-2520 (BC Transit (Columbia Valley | Cranbrook | Elk Valley | Kimberley) / Area A (Upper Flathead/Elk Valley) / British Columbia): validation errors — skipping. Pass --skip-validate to force ingest anyway.
-
-=== [79/131] mdb-2524 ===
-[fetch] mdb-2524 (BC Transit (Comox Valley Transit System) / Area A (Baynes Sound) / British Columbia)
-[validate] mdb-2524 (BC Transit (Comox Valley Transit System) / Area A (Baynes Sound) / British Columbia)  (0.2 MB, 0.6s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  273 stops total
-[OK   ] route-types
-         info:  16 routes total
-[ERROR] stop-times-sorted-by-trip
-         error: trip_ids not grouped: 5+ trip_ids re-appear after their run ended (sample: ['2093007:11550687:11560601', '2093007:11550687:11560956', '2093007:11550687:11560601', '2093007:11550687:11560956', '2093007:11550687:11560601']) — build-schedule-db will emit duplicate-ID pattern rows
-         info:  11,983 stop_time rows across 560 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: errors found — ingest will produce broken data for this feed
-[fail] mdb-2524 (BC Transit (Comox Valley Transit System) / Area A (Baynes Sound) / British Columbia): validation errors — skipping. Pass --skip-validate to force ingest anyway.
-
-=== [80/131] mdb-2528 ===
-[fetch] mdb-2528 (BC Transit (Cowichan Valley Regional Transit System) / Area A (Mill Bay / Malahat) / British Columbia)
-[validate] mdb-2528 (BC Transit (Cowichan Valley Regional Transit System) / Area A (Mill Bay / Malahat) / British Columbia)  (0.3 MB, 0.5s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  599 stops total
-[OK   ] route-types
-         info:  15 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  14,657 stop_time rows across 509 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-2528 (BC Transit (Cowichan Valley Regional Transit System) / Area A (Mill Bay / Malahat) / British Columbia)
-  [mdb-2528] opening /tmp/tmp75eu9h2y.zip
-    agency: 1
-    routes: 15
-    stops: 599
-    services: 0
-    calendar_dates: 259
-    trips: 509
-[K    stop_times: 14,657  patterns: 38  trips: 509  blobs: 149  headsigns: 26  dropped: 0  (0.1s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [81/131] mdb-2529 ===
-[fetch] mdb-2529 (BC Transit (Powell River Regional Transit System) / Area A (Malaspina/Toba) / British Columbia)
-[validate] mdb-2529 (BC Transit (Powell River Regional Transit System) / Area A (Malaspina/Toba) / British Columbia)  (0.1 MB, 0.1s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  233 stops total
-[OK   ] route-types
-         info:  7 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  7,908 stop_time rows across 193 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-2529 (BC Transit (Powell River Regional Transit System) / Area A (Malaspina/Toba) / British Columbia)
-  [mdb-2529] opening /tmp/tmp85iqnczq.zip
-    agency: 1
-    routes: 7
-    stops: 233
-    services: 0
-    calendar_dates: 161
-    trips: 193
-[K    stop_times: 7,908  patterns: 33  trips: 193  blobs: 34  headsigns: 17  dropped: 0  (0.1s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [82/131] mdb-2532 ===
-[fetch] mdb-2532 (BC Transit (South Okanagan-Similkameen) / Area A (Osoyoos Lake) / British Columbia)
-[validate] mdb-2532 (BC Transit (South Okanagan-Similkameen) / Area A (Osoyoos Lake) / British Columbia)  (0.2 MB, 0.3s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  374 stops total
-[OK   ] route-types
-         info:  16 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  11,589 stop_time rows across 400 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-2532 (BC Transit (South Okanagan-Similkameen) / Area A (Osoyoos Lake) / British Columbia)
-  [mdb-2532] opening /tmp/tmpdry7bbll.zip
-    agency: 1
-    routes: 16
-    stops: 374
-    services: 0
-    calendar_dates: 101
-    trips: 400
-[K    stop_times: 11,589  patterns: 70  trips: 400  blobs: 83  headsigns: 35  dropped: 0  (0.1s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [83/131] mdb-2536 ===
-[fetch] mdb-2536 (BC Transit (Creston Valley) / Area A / British Columbia)
-[validate] mdb-2536 (BC Transit (Creston Valley) / Area A / British Columbia)  (0.0 MB, 0.1s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  32 stops total
-[OK   ] route-types
-         info:  3 routes total
-[ERROR] stop-times-sorted-by-trip
-         error: trip_ids not grouped: 5+ trip_ids re-appear after their run ended (sample: ['2083821:12891850:12895031', '2083821:12891850:12895121', '2083821:12891850:12895137', '2083821:12891850:12895153', '2083821:12891850:12895031']) — build-schedule-db will emit duplicate-ID pattern rows
-         info:  687 stop_time rows across 53 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: errors found — ingest will produce broken data for this feed
-[fail] mdb-2536 (BC Transit (Creston Valley) / Area A / British Columbia): validation errors — skipping. Pass --skip-validate to force ingest anyway.
-
-=== [84/131] mdb-2543 ===
-[fetch] mdb-2543 (BC Transit (Port Edward | Prince Rupert) / Port Edward / British Columbia)
-[validate] mdb-2543 (BC Transit (Port Edward | Prince Rupert) / Port Edward / British Columbia)  (0.1 MB, 0.2s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  117 stops total
-[OK   ] route-types
-         info:  8 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  7,175 stop_time rows across 289 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-2543 (BC Transit (Port Edward | Prince Rupert) / Port Edward / British Columbia)
-  [mdb-2543] opening /tmp/tmpaf_fvo7u.zip
-    agency: 1
-    routes: 8
-    stops: 117
-    services: 0
-    calendar_dates: 61
-    trips: 289
-[K    stop_times: 7,175  patterns: 18  trips: 289  blobs: 21  headsigns: 10  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [85/131] mdb-2547 ===
-[fetch] mdb-2547 (BC Transit (Fort St John Transit System) / Fort St. John / British Columbia)
-[validate] mdb-2547 (BC Transit (Fort St John Transit System) / Fort St. John / British Columbia)  (0.1 MB, 0.8s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  95 stops total
-[OK   ] route-types
-         info:  5 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  12,880 stop_time rows across 378 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-2547 (BC Transit (Fort St John Transit System) / Fort St. John / British Columbia)
-  [mdb-2547] opening /tmp/tmpc80v6p0e.zip
-    agency: 1
-    routes: 5
-    stops: 95
-    services: 0
-    calendar_dates: 213
-    trips: 378
-[K    stop_times: 12,880  patterns: 10  trips: 378  blobs: 9  headsigns: 5  dropped: 0  (0.1s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [86/131] mdb-2551 ===
-[fetch] mdb-2551 (BC Transit (Kamloops Transit System) / British Columbia / British Columbia)
-[validate] mdb-2551 (BC Transit (Kamloops Transit System) / British Columbia / British Columbia)  (1.1 MB, 0.4s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  588 stops total
-[OK   ] route-types
-         info:  26 routes total
-[ERROR] stop-times-sorted-by-trip
-         error: trip_ids not grouped: 5+ trip_ids re-appear after their run ended (sample: ['2318991:11555413:11560479', '2318991:11555413:11560739', '2318991:11555413:11560479', '2318991:11555413:11560739', '2318991:11555413:11560479']) — build-schedule-db will emit duplicate-ID pattern rows
-         info:  107,335 stop_time rows across 3,674 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: errors found — ingest will produce broken data for this feed
-[fail] mdb-2551 (BC Transit (Kamloops Transit System) / British Columbia / British Columbia): validation errors — skipping. Pass --skip-validate to force ingest anyway.
-
-=== [87/131] mdb-2555 ===
-[fetch] mdb-2555 (BC Transit (Kelowna Regional Transit System) / British Columbia / British Columbia)
-[validate] mdb-2555 (BC Transit (Kelowna Regional Transit System) / British Columbia / British Columbia)  (1.5 MB, 0.3s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  989 stops total
-[OK   ] route-types
-         info:  30 routes total
-[ERROR] stop-times-sorted-by-trip
-         error: trip_ids not grouped: 5+ trip_ids re-appear after their run ended (sample: ['2846758:11783668:12950805', '2846758:11783668:12950840', '2846758:11783668:12950805', '2846758:11783668:12950840', '2846758:11783668:12950805']) — build-schedule-db will emit duplicate-ID pattern rows
-         info:  140,087 stop_time rows across 5,336 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: errors found — ingest will produce broken data for this feed
-[fail] mdb-2555 (BC Transit (Kelowna Regional Transit System) / British Columbia / British Columbia): validation errors — skipping. Pass --skip-validate to force ingest anyway.
-
-=== [88/131] mdb-2563 ===
-[fetch] mdb-2563 (BC Transit (Squamish) / British Columbia / British Columbia)
-[validate] mdb-2563 (BC Transit (Squamish) / British Columbia / British Columbia)  (0.1 MB, 0.2s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  124 stops total
-[OK   ] route-types
-         info:  5 routes total
-[ERROR] stop-times-sorted-by-trip
-         error: trip_ids not grouped: 5+ trip_ids re-appear after their run ended (sample: ['2491219:11632834:12461079', '2491219:11632834:12461209', '2491219:11632834:12461079', '2491219:11632834:12461209', '2491219:11632834:12461079']) — build-schedule-db will emit duplicate-ID pattern rows
-         info:  10,176 stop_time rows across 332 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: errors found — ingest will produce broken data for this feed
-[fail] mdb-2563 (BC Transit (Squamish) / British Columbia / British Columbia): validation errors — skipping. Pass --skip-validate to force ingest anyway.
-
-=== [89/131] mdb-2567 ===
-[fetch] mdb-2567 (BC Transit (Sunshine Coast Transit System) / Area B (Halfmoon Bay) / British Columbia)
-[validate] mdb-2567 (BC Transit (Sunshine Coast Transit System) / Area B (Halfmoon Bay) / British Columbia)  (0.3 MB, 0.2s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  298 stops total
-[OK   ] route-types
-         info:  5 routes total
-[ERROR] stop-times-sorted-by-trip
-         error: trip_ids not grouped: 5+ trip_ids re-appear after their run ended (sample: ['2119310:11395092:12188505', '2119310:11395092:12188688', '2119310:11395092:12188505', '2119310:11395092:12188688', '2119310:11395092:12188505']) — build-schedule-db will emit duplicate-ID pattern rows
-         info:  33,305 stop_time rows across 674 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: errors found — ingest will produce broken data for this feed
-[fail] mdb-2567 (BC Transit (Sunshine Coast Transit System) / Area B (Halfmoon Bay) / British Columbia): validation errors — skipping. Pass --skip-validate to force ingest anyway.
-
-=== [90/131] mdb-2571 ===
-[fetch] mdb-2571 (BC Transit (Victoria Regional Transit System) / British Columbia / British Columbia)
-[validate] mdb-2571 (BC Transit (Victoria Regional Transit System) / British Columbia / British Columbia)  (5.2 MB, 0.7s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  2,355 stops total
-[OK   ] route-types
-         info:  67 routes total
-[ERROR] stop-times-sorted-by-trip
-         error: trip_ids not grouped: 5+ trip_ids re-appear after their run ended (sample: ['11507234:12859307:12889468', '11507234:12859307:12891554', '11507234:12859307:12889468', '11507234:12859307:12891554', '11507234:12859307:12889468']) — build-schedule-db will emit duplicate-ID pattern rows
-         info:  484,983 stop_time rows across 12,467 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: errors found — ingest will produce broken data for this feed
-[fail] mdb-2571 (BC Transit (Victoria Regional Transit System) / British Columbia / British Columbia): validation errors — skipping. Pass --skip-validate to force ingest anyway.
-
-=== [91/131] mdb-2575 ===
-[fetch] mdb-2575 (BC Transit (West Coast) / Area C (Long Beach) / British Columbia)
-[validate] mdb-2575 (BC Transit (West Coast) / Area C (Long Beach) / British Columbia)  (0.0 MB, 0.4s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  39 stops total
-[OK   ] route-types
-         info:  1 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  427 stop_time rows across 20 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-2575 (BC Transit (West Coast) / Area C (Long Beach) / British Columbia)
-  [mdb-2575] opening /tmp/tmp5n_ig0pq.zip
-    agency: 1
-    routes: 1
-    stops: 39
-    services: 0
-    calendar_dates: 252
-    trips: 20
-[K    stop_times: 427  patterns: 7  trips: 20  blobs: 7  headsigns: 3  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [92/131] mdb-2579 ===
-[fetch] mdb-2579 (BC Transit (West Kootenay Transit System) / Area A (Pend Oreille/Bear Creek) / British Columbia)
-[validate] mdb-2579 (BC Transit (West Kootenay Transit System) / Area A (Pend Oreille/Bear Creek) / British Columbia)  (0.4 MB, 0.2s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  628 stops total
-[OK   ] route-types
-         info:  33 routes total
-[ERROR] stop-times-sorted-by-trip
-         error: trip_ids not grouped: 5+ trip_ids re-appear after their run ended (sample: ['2076238:9982668:9992314', '2076238:9982668:9992545', '2076238:9982668:9992314', '2076238:9982668:9992545', '2076238:9982668:9992314']) — build-schedule-db will emit duplicate-ID pattern rows
-         info:  11,164 stop_time rows across 468 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: errors found — ingest will produce broken data for this feed
-[fail] mdb-2579 (BC Transit (West Kootenay Transit System) / Area A (Pend Oreille/Bear Creek) / British Columbia): validation errors — skipping. Pass --skip-validate to force ingest anyway.
-
-=== [93/131] mdb-2583 ===
-[fetch] mdb-2583 (BC Transit (Whistler Transit System) / Whistler Resort Municipality / British Columbia)
-[validate] mdb-2583 (BC Transit (Whistler Transit System) / Whistler Resort Municipality / British Columbia)  (0.2 MB, 0.2s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  152 stops total
-[OK   ] route-types
-         info:  13 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  21,627 stop_time rows across 1,156 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-2583 (BC Transit (Whistler Transit System) / Whistler Resort Municipality / British Columbia)
-  [mdb-2583] opening /tmp/tmpttlbf2ae.zip
-    agency: 1
-    routes: 13
-    stops: 152
-    services: 0
-    calendar_dates: 220
-    trips: 1,156
-[K    stop_times: 21,627  patterns: 35  trips: 1,156  blobs: 109  headsigns: 25  dropped: 0  (0.2s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [94/131] mdb-2587 ===
-[fetch] mdb-2587 (BC Transit (Williams Lake) / British Columbia / British Columbia)
-[validate] mdb-2587 (BC Transit (Williams Lake) / British Columbia / British Columbia)  (0.0 MB, 0.1s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  77 stops total
-[OK   ] route-types
-         info:  4 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  1,640 stop_time rows across 55 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-2587 (BC Transit (Williams Lake) / British Columbia / British Columbia)
-  [mdb-2587] opening /tmp/tmpfk6mcjjn.zip
-    agency: 1
-    routes: 4
-    stops: 77
-    services: 0
-    calendar_dates: 358
-    trips: 55
-[K    stop_times: 1,640  patterns: 4  trips: 55  blobs: 7  headsigns: 4  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [95/131] mdb-2591 ===
-[fetch] mdb-2591 (Medicine Hat Transit / Medicine Hat / Alberta)
-[validate] mdb-2591 (Medicine Hat Transit / Medicine Hat / Alberta)  (0.4 MB, 0.5s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  222 stops total
-[OK   ] route-types
-         info:  11 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  17,029 stop_time rows across 751 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] mdb-2591 (Medicine Hat Transit / Medicine Hat / Alberta)
-  [mdb-2591] opening /tmp/tmpqzghkd2y.zip
-    agency: 1
-    routes: 11
-    stops: 222
-    services: 0
-    calendar_dates: 102,070
-    trips: 751
-[K    stop_times: 17,029  patterns: 20  trips: 751  blobs: 56  headsigns: 11  dropped: 0  (0.1s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [96/131] mdb-2603 ===
-[fetch] mdb-2603 (Rouyn-Noranda / Rouyn-Noranda / Quebec)
-[validate] mdb-2603 (Rouyn-Noranda / Rouyn-Noranda / Quebec)  (0.1 MB, 0.5s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  119 stops total
-[OK   ] route-types
-         info:  4 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  3,403 stop_time rows across 111 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  3 calendar rows, 15 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20250918..20300101
-
-RESULT: all checks passed
-[ingest] mdb-2603 (Rouyn-Noranda / Rouyn-Noranda / Quebec)
-  [mdb-2603] opening /tmp/tmp1_ws9shp.zip
-    agency: 1
-    routes: 4
-    stops: 119
-    services: 3
-    calendar_dates: 15
-    trips: 111
-[K    stop_times: 3,403  patterns: 8  trips: 111  blobs: 16  headsigns: 4  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [97/131] mdb-2618 ===
-[fetch] mdb-2618 (Hamilton Street Railway / Burlington / Ontario)
-[validate] mdb-2618 (Hamilton Street Railway / Burlington / Ontario)  (10.0 MB, 3.0s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  2,371 stops total
-[OK   ] route-types
-         info:  71 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  1,073,851 stop_time rows across 23,902 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  46 calendar rows, 625 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20250831..20260425
-
-RESULT: all checks passed
-[ingest] mdb-2618 (Hamilton Street Railway / Burlington / Ontario)
-  [mdb-2618] opening /tmp/tmp1x6g5yc1.zip
-    agency: 1
-    routes: 71
-    stops: 2,371
-    services: 46
-    calendar_dates: 625
-    trips: 23,992
-[K    stop_times: 103,098  patterns: 111  trips: 2,318  blobs: 456[K    stop_times: 269,247  patterns: 132  trips: 5,972  blobs: 797[K    stop_times: 434,124  patterns: 144  trips: 9,548  blobs: 965[K    stop_times: 597,767  patterns: 152  trips: 13,247  blobs: 1,040[K    stop_times: 762,221  patterns: 159  trips: 16,845  blobs: 1,082[K    stop_times: 899,901  patterns: 161  trips: 19,954  blobs: 1,100[K    stop_times: 1,008,761  patterns: 161  trips: 22,413  blobs: 1,108[K    stop_times: 1,073,851  patterns: 161  trips: 23,902  blobs: 1,115  headsigns: 88  dropped: 0  (7.6s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [98/131] tld-857 ===
-[fetch] tld-857 (Régie de transport en commun de Shawinigan / Shawinigan / Quebec)
-[validate] tld-857 (Régie de transport en commun de Shawinigan / Shawinigan / Quebec)  (0.1 MB, 1.6s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  254 stops total
-[OK   ] route-types
-         info:  3 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  7,993 stop_time rows across 104 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  5 calendar rows, 50 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20230521..20260524
-
-RESULT: all checks passed
-[ingest] tld-857 (Régie de transport en commun de Shawinigan / Shawinigan / Quebec)
-  [tld-857] opening /tmp/tmpgjtnde0f.zip
-    agency: 1
-    routes: 3
-    stops: 254
-    services: 5
-    calendar_dates: 50
-    trips: 104
-[K    stop_times: 7,993  patterns: 0  trips: 0  blobs: 0  headsigns: 0  dropped: 104  (0.1s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [99/131] tld-859 ===
-[fetch] tld-859 (Niagara Region Transit / St. Catharines / Ontario)
-[validate] tld-859 (Niagara Region Transit / St. Catharines / Ontario)  (6.0 MB, 0.6s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  1,848 stops total
-[OK   ] route-types
-         info:  98 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  488,933 stop_time rows across 24,751 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  19 calendar rows, 134 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260315..20260425
-
-RESULT: all checks passed
-[ingest] tld-859 (Niagara Region Transit / St. Catharines / Ontario)
-  [tld-859] opening /tmp/tmp3s_n3u5z.zip
-    agency: 1
-    routes: 98
-    stops: 1,848
-    services: 19
-    calendar_dates: 134
-    trips: 24,751
-[K    stop_times: 116,698  patterns: 186  trips: 5,887  blobs: 313[K    stop_times: 271,926  patterns: 192  trips: 13,697  blobs: 337[K    stop_times: 426,951  patterns: 194  trips: 21,507  blobs: 351[K    stop_times: 488,933  patterns: 194  trips: 24,751  blobs: 352  headsigns: 150  dropped: 0  (3.4s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [100/131] tld-4682 ===
-[fetch] tld-4682 (Orangeville Transit / Orangeville / Ontario)
-[validate] tld-4682 (Orangeville Transit / Orangeville / Ontario)  (0.1 MB, 0.2s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  68 stops total
-[OK   ] route-types
-         info:  2 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  5,254 stop_time rows across 148 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] tld-4682 (Orangeville Transit / Orangeville / Ontario)
-  [tld-4682] opening /tmp/tmpn6h0w08n.zip
-    agency: 1
-    routes: 2
-    stops: 68
-    services: 0
-    calendar_dates: 8,876
-    trips: 148
-[K    stop_times: 5,254  patterns: 2  trips: 148  blobs: 2  headsigns: 3  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [101/131] tld-4683 ===
-[fetch] tld-4683 (Orillia Transit / Orillia / Ontario)
-[validate] tld-4683 (Orillia Transit / Orillia / Ontario)  (0.3 MB, 0.7s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  201 stops total
-[OK   ] route-types
-         info:  6 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  11,564 stop_time rows across 336 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] tld-4683 (Orillia Transit / Orillia / Ontario)
-  [tld-4683] opening /tmp/tmpeh_29wio.zip
-    agency: 1
-    routes: 6
-    stops: 201
-    services: 0
-    calendar_dates: 109,074
-    trips: 336
-[K    stop_times: 11,564  patterns: 7  trips: 336  blobs: 9  headsigns: 7  dropped: 0  (0.1s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [102/131] tld-4684 ===
+=== [47/132] mdb-1858 ===
+[skip] mdb-1858 already ingested
+
+=== [48/132] mdb-1991 ===
+[skip] mdb-1991 already ingested
+
+=== [49/132] mdb-1992 ===
+[skip] mdb-1992 already ingested
+
+=== [50/132] mdb-1993 ===
+[skip] mdb-1993 already ingested
+
+=== [51/132] mdb-1994 ===
+[skip] mdb-1994 already ingested
+
+=== [52/132] mdb-1995 ===
+[skip] mdb-1995 already ingested
+
+=== [53/132] mdb-1996 ===
+[skip] mdb-1996 already ingested
+
+=== [54/132] mdb-2031 ===
+[skip] mdb-2031 already ingested
+
+=== [55/132] mdb-2131 ===
+[skip] mdb-2131 already ingested
+
+=== [56/132] mdb-2132 ===
+[skip] mdb-2132 already ingested
+
+=== [57/132] mdb-2142 ===
+[skip] mdb-2142 already ingested
+
+=== [58/132] mdb-2276 ===
+[skip] mdb-2276 already ingested
+
+=== [59/132] mdb-2379 ===
+[skip] mdb-2379 already ingested
+
+=== [60/132] mdb-2389 ===
+[skip] mdb-2389 already ingested
+
+=== [61/132] mdb-2417 ===
+[skip] mdb-2417 already ingested
+
+=== [62/132] mdb-2460 ===
+[skip] mdb-2460 already ingested
+
+=== [63/132] mdb-2462 ===
+[skip] mdb-2462 already ingested
+
+=== [64/132] mdb-2463 ===
+[skip] mdb-2463 already ingested
+
+=== [65/132] mdb-2464 ===
+[skip] mdb-2464 already ingested
+
+=== [66/132] mdb-2466 ===
+[skip] mdb-2466 already ingested
+
+=== [67/132] mdb-2467 ===
+[skip] mdb-2467 already ingested
+
+=== [68/132] mdb-2468 ===
+[skip] mdb-2468 already ingested
+
+=== [69/132] mdb-2469 ===
+[skip] mdb-2469 already ingested
+
+=== [70/132] mdb-2470 ===
+[skip] mdb-2470 already ingested
+
+=== [71/132] mdb-2471 ===
+[skip] mdb-2471 already ingested
+
+=== [72/132] mdb-2472 ===
+[skip] mdb-2472 already ingested
+
+=== [73/132] mdb-2473 ===
+[skip] mdb-2473 already ingested
+
+=== [74/132] mdb-2508 ===
+[skip] mdb-2508 already ingested
+
+=== [75/132] mdb-2510 ===
+[skip] mdb-2510 already ingested
+
+=== [76/132] mdb-2514 ===
+[skip] mdb-2514 already ingested
+
+=== [77/132] mdb-2515 ===
+[skip] mdb-2515 already ingested
+
+=== [78/132] mdb-2520 ===
+[skip] mdb-2520 already ingested
+
+=== [79/132] mdb-2524 ===
+[skip] mdb-2524 already ingested
+
+=== [80/132] mdb-2528 ===
+[skip] mdb-2528 already ingested
+
+=== [81/132] mdb-2529 ===
+[skip] mdb-2529 already ingested
+
+=== [82/132] mdb-2532 ===
+[skip] mdb-2532 already ingested
+
+=== [83/132] mdb-2536 ===
+[skip] mdb-2536 already ingested
+
+=== [84/132] mdb-2543 ===
+[skip] mdb-2543 already ingested
+
+=== [85/132] mdb-2547 ===
+[skip] mdb-2547 already ingested
+
+=== [86/132] mdb-2551 ===
+[skip] mdb-2551 already ingested
+
+=== [87/132] mdb-2555 ===
+[skip] mdb-2555 already ingested
+
+=== [88/132] mdb-2563 ===
+[skip] mdb-2563 already ingested
+
+=== [89/132] mdb-2567 ===
+[skip] mdb-2567 already ingested
+
+=== [90/132] mdb-2571 ===
+[skip] mdb-2571 already ingested
+
+=== [91/132] mdb-2575 ===
+[skip] mdb-2575 already ingested
+
+=== [92/132] mdb-2579 ===
+[skip] mdb-2579 already ingested
+
+=== [93/132] mdb-2583 ===
+[skip] mdb-2583 already ingested
+
+=== [94/132] mdb-2587 ===
+[skip] mdb-2587 already ingested
+
+=== [95/132] mdb-2591 ===
+[skip] mdb-2591 already ingested
+
+=== [96/132] mdb-2603 ===
+[skip] mdb-2603 already ingested
+
+=== [97/132] mdb-2618 ===
+[skip] mdb-2618 already ingested
+
+=== [98/132] tld-857 ===
+[skip] tld-857 already ingested
+
+=== [99/132] tld-859 ===
+[skip] tld-859 already ingested
+
+=== [100/132] tld-4682 ===
+[skip] tld-4682 already ingested
+
+=== [101/132] tld-4683 ===
+[skip] tld-4683 already ingested
+
+=== [102/132] tld-4684 ===
 [fetch] tld-4684 (PC Connect Transit System / Kitchener / Ontario)
 [fail] tld-4684 (PC Connect Transit System / Kitchener / Ontario): download error HTTP Error 404: Not Found
 
-=== [103/131] tld-4685 ===
-[fetch] tld-4685 (Quinte Transit / Quinte West / Ontario)
-[validate] tld-4685 (Quinte Transit / Quinte West / Ontario)  (0.4 MB, 0.5s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  232 stops total
-[OK   ] route-types
-         info:  22 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  9,813 stop_time rows across 383 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
+=== [103/132] tld-4685 ===
+[skip] tld-4685 already ingested
 
-RESULT: warnings only — ingest should work but review output
-[ingest] tld-4685 (Quinte Transit / Quinte West / Ontario)
-  [tld-4685] opening /tmp/tmpheg_irl_.zip
-    agency: 1
-    routes: 22
-    stops: 232
-    services: 0
-    calendar_dates: 515
-    trips: 383
-[K    stop_times: 9,813  patterns: 34  trips: 383  blobs: 18  headsigns: 9  dropped: 0  (0.1s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
+=== [104/132] tld-4690 ===
+[skip] tld-4690 already ingested
 
-=== [104/131] tld-4690 ===
-[fetch] tld-4690 (Regional Municipality of Wood Buffalo Transit / Fort McMurray / Alberta)
-[validate] tld-4690 (Regional Municipality of Wood Buffalo Transit / Fort McMurray / Alberta)  (0.4 MB, 0.3s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  329 stops total
-[OK   ] route-types
-         info:  42 routes total
-[ERROR] stop-times-sorted-by-trip
-         error: trip_ids not grouped: 5+ trip_ids re-appear after their run ended (sample: ['201553-MONFRI-Reg', '201554-MONFRI-Reg', '201555-MONFRI-Reg', '201556-MONFRI-Reg', '201557-MONFRI-Reg']) — build-schedule-db will emit duplicate-ID pattern rows
-         info:  19,623 stop_time rows across 903 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  3 calendar rows, 4 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260403..20260625
+=== [105/132] tld-4700 ===
+[skip] tld-4700 already ingested
 
-RESULT: errors found — ingest will produce broken data for this feed
-[fail] tld-4690 (Regional Municipality of Wood Buffalo Transit / Fort McMurray / Alberta): validation errors — skipping. Pass --skip-validate to force ingest anyway.
+=== [106/132] tld-4704 ===
+[skip] tld-4704 already ingested
 
-=== [105/131] tld-4700 ===
-[fetch] tld-4700 (North Bay Transit / North Bay / Ontario)
-[validate] tld-4700 (North Bay Transit / North Bay / Ontario)  (0.6 MB, 1.5s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  268 stops total
-[OK   ] route-types
-         info:  14 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  40,216 stop_time rows across 1,004 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] tld-4700 (North Bay Transit / North Bay / Ontario)
-  [tld-4700] opening /tmp/tmpf4oq_o0m.zip
-    agency: 1
-    routes: 14
-    stops: 268
-    services: 0
-    calendar_dates: 62,111
-    trips: 1,004
-[K    stop_times: 40,216  patterns: 25  trips: 1,004  blobs: 51  headsigns: 17  dropped: 0  (0.3s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [106/131] tld-4704 ===
-[fetch] tld-4704 (Midland Penetanguishene Transit Service / Midland / Ontario)
-[validate] tld-4704 (Midland Penetanguishene Transit Service / Midland / Ontario)  (0.0 MB, 0.7s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  30 stops total
-[OK   ] route-types
-         info:  2 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  819 stop_time rows across 42 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  4 calendar rows, 0 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20250506..20260630
-
-RESULT: all checks passed
-[ingest] tld-4704 (Midland Penetanguishene Transit Service / Midland / Ontario)
-  [tld-4704] opening /tmp/tmpzn3709sc.zip
-    agency: 1
-    routes: 2
-    stops: 30
-    services: 4
-    calendar_dates: 0
-    trips: 42
-[K    stop_times: 819  patterns: 2  trips: 42  blobs: 4  headsigns: 4  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [107/131] tld-4708 ===
+=== [107/132] tld-4708 ===
 [fetch] tld-4708 (Yellowknife Transit / Yellowknife / Northwest Territories)
 [fail] tld-4708 (Yellowknife Transit / Yellowknife / Northwest Territories): download error <urlopen error timed out>
 
-=== [108/131] tld-4732 ===
-[fetch] tld-4732 (Lindsay Transit / Kawartha Lakes / Ontario)
-[validate] tld-4732 (Lindsay Transit / Kawartha Lakes / Ontario)  (0.1 MB, 0.6s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  235 stops total
-[OK   ] route-types
-         info:  4 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  3,660 stop_time rows across 60 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
+=== [108/132] tld-4732 ===
+[skip] tld-4732 already ingested
 
-RESULT: warnings only — ingest should work but review output
-[ingest] tld-4732 (Lindsay Transit / Kawartha Lakes / Ontario)
-  [tld-4732] opening /tmp/tmpha_7g3mg.zip
-    agency: 1
-    routes: 4
-    stops: 235
-    services: 0
-    calendar_dates: 15,480
-    trips: 60
-[K    stop_times: 3,660  patterns: 4  trips: 60  blobs: 4  headsigns: 4  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
+=== [109/132] tld-4738 ===
+[skip] tld-4738 already ingested
 
-=== [109/131] tld-4738 ===
-[fetch] tld-4738 (Sarnia Transit / Sarnia / Ontario)
-[validate] tld-4738 (Sarnia Transit / Sarnia / Ontario)  (0.3 MB, 0.2s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  391 stops total
-[OK   ] route-types
-         info:  18 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  19,133 stop_time rows across 544 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
+=== [110/132] tld-4740 ===
+[skip] tld-4740 already ingested
 
-RESULT: warnings only — ingest should work but review output
-[ingest] tld-4738 (Sarnia Transit / Sarnia / Ontario)
-  [tld-4738] opening /tmp/tmpy19ysiyo.zip
-    agency: 1
-    routes: 18
-    stops: 391
-    services: 0
-    calendar_dates: 69,981
-    trips: 544
-[K    stop_times: 19,133  patterns: 39  trips: 544  blobs: 44  headsigns: 19  dropped: 0  (0.1s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
+=== [111/132] tld-4742 ===
+[skip] tld-4742 already ingested
 
-=== [110/131] tld-4740 ===
-[fetch] tld-4740 (Sault Ste. Marie Transit / Sault Ste. Marie / Ontario)
-[validate] tld-4740 (Sault Ste. Marie Transit / Sault Ste. Marie / Ontario)  (0.4 MB, 0.4s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  654 stops total
-[OK   ] route-types
-         info:  8 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  43,621 stop_time rows across 433 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
+=== [112/132] tld-4744 ===
+[skip] tld-4744 already ingested
 
-RESULT: warnings only — ingest should work but review output
-[ingest] tld-4740 (Sault Ste. Marie Transit / Sault Ste. Marie / Ontario)
-  [tld-4740] opening /tmp/tmplruemb_n.zip
-    agency: 1
-    routes: 8
-    stops: 654
-    services: 0
-    calendar_dates: 9,320
-    trips: 433
-[K    stop_times: 43,621  patterns: 23  trips: 433  blobs: 32  headsigns: 11  dropped: 0  (0.3s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
+=== [113/132] tld-4746 ===
+[skip] tld-4746 already ingested
 
-=== [111/131] tld-4742 ===
-[fetch] tld-4742 (Simcoe County LINX / Collingwood / Ontario)
-[validate] tld-4742 (Simcoe County LINX / Collingwood / Ontario)  (0.2 MB, 0.5s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  129 stops total
-[OK   ] route-types
-         info:  6 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  3,371 stop_time rows across 221 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
+=== [114/132] tld-4748 ===
+[skip] tld-4748 already ingested
 
-RESULT: warnings only — ingest should work but review output
-[ingest] tld-4742 (Simcoe County LINX / Collingwood / Ontario)
-  [tld-4742] opening /tmp/tmpbw681st3.zip
-    agency: 1
-    routes: 6
-    stops: 129
-    services: 0
-    calendar_dates: 42,300
-    trips: 221
-[K    stop_times: 3,371  patterns: 15  trips: 221  blobs: 16  headsigns: 13  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
+=== [115/132] tld-4750 ===
+[skip] tld-4750 already ingested
 
-=== [112/131] tld-4744 ===
-[fetch] tld-4744 (Stratford Transit / Stratford / Ontario)
-[validate] tld-4744 (Stratford Transit / Stratford / Ontario)  (0.2 MB, 0.8s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  282 stops total
-[OK   ] route-types
-         info:  9 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  9,803 stop_time rows across 230 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
+=== [116/132] tld-4761 ===
+[skip] tld-4761 already ingested
 
-RESULT: warnings only — ingest should work but review output
-[ingest] tld-4744 (Stratford Transit / Stratford / Ontario)
-  [tld-4744] opening /tmp/tmphta08cnt.zip
-    agency: 1
-    routes: 9
-    stops: 282
-    services: 0
-    calendar_dates: 58,190
-    trips: 230
-[K    stop_times: 9,803  patterns: 13  trips: 230  blobs: 22  headsigns: 1  dropped: 0  (0.1s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
+=== [117/132] tld-4817 ===
+[skip] tld-4817 already ingested
 
-=== [113/131] tld-4746 ===
-[fetch] tld-4746 (Railway City Transit / St. Thomas / Ontario)
-[validate] tld-4746 (Railway City Transit / St. Thomas / Ontario)  (0.1 MB, 0.2s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  119 stops total
-[OK   ] route-types
-         info:  5 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  4,787 stop_time rows across 168 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] tld-4746 (Railway City Transit / St. Thomas / Ontario)
-  [tld-4746] opening /tmp/tmp2drwf9tq.zip
-    agency: 1
-    routes: 5
-    stops: 119
-    services: 0
-    calendar_dates: 2,098
-    trips: 168
-[K    stop_times: 4,787  patterns: 11  trips: 168  blobs: 10  headsigns: 7  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [114/131] tld-4748 ===
-[fetch] tld-4748 (Temiskaming Transit / Temiskaming Shores / Ontario)
-[validate] tld-4748 (Temiskaming Transit / Temiskaming Shores / Ontario)  (0.0 MB, 0.2s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  95 stops total
-[OK   ] route-types
-         info:  2 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  1,903 stop_time rows across 40 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] tld-4748 (Temiskaming Transit / Temiskaming Shores / Ontario)
-  [tld-4748] opening /tmp/tmprxfd8yuc.zip
-    agency: 1
-    routes: 2
-    stops: 95
-    services: 0
-    calendar_dates: 5,858
-    trips: 40
-[K    stop_times: 1,903  patterns: 2  trips: 40  blobs: 2  headsigns: 2  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [115/131] tld-4750 ===
-[fetch] tld-4750 (Timmins Transit / Timmins / Ontario)
-[validate] tld-4750 (Timmins Transit / Timmins / Ontario)  (0.2 MB, 0.8s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  291 stops total
-[OK   ] route-types
-         info:  13 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  17,322 stop_time rows across 377 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] tld-4750 (Timmins Transit / Timmins / Ontario)
-  [tld-4750] opening /tmp/tmpn_d13rib.zip
-    agency: 1
-    routes: 13
-    stops: 291
-    services: 0
-    calendar_dates: 41,879
-    trips: 377
-[K    stop_times: 17,322  patterns: 19  trips: 377  blobs: 26  headsigns: 17  dropped: 0  (0.1s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [116/131] tld-4761 ===
-[fetch] tld-4761 (Bus Mont-Tremblant / Mont-Tremblant / Quebec)
-[validate] tld-4761 (Bus Mont-Tremblant / Mont-Tremblant / Quebec)  (0.1 MB, 0.6s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  84 stops total
-[OK   ] route-types
-         info:  1 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  7,270 stop_time rows across 98 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  4 calendar rows, 4 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260226..20260503
-
-RESULT: all checks passed
-[ingest] tld-4761 (Bus Mont-Tremblant / Mont-Tremblant / Quebec)
-  [tld-4761] opening /tmp/tmp630xysv8.zip
-    agency: 1
-    routes: 1
-    stops: 84
-    services: 4
-    calendar_dates: 4
-    trips: 98
-[K    stop_times: 7,270  patterns: 7  trips: 98  blobs: 16  headsigns: 1  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [117/131] tld-4817 ===
-[fetch] tld-4817 (Ontario Northland / Unorganized North Cochrane / Ontario)
-[validate] tld-4817 (Ontario Northland / Unorganized North Cochrane / Ontario)  (0.8 MB, 1.9s download)
-[WARN ] required-files
-         warn:  no calendar.txt — all services must be exception-based in calendar_dates.txt
-[OK   ] stop-coordinates
-         info:  204 stops total
-[OK   ] route-types
-         info:  18 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  889 stop_time rows across 61 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  no calendar.txt — cannot determine freshness from calendar
-
-RESULT: warnings only — ingest should work but review output
-[ingest] tld-4817 (Ontario Northland / Unorganized North Cochrane / Ontario)
-  [tld-4817] opening /tmp/tmp0v7e7qgo.zip
-    agency: 1
-    routes: 18
-    stops: 204
-    services: 0
-    calendar_dates: 20,929
-    trips: 61
-[K    stop_times: 889  patterns: 46  trips: 61  blobs: 47  headsigns: 13  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [118/131] tld-4819 ===
+=== [118/132] tld-4819 ===
 [fetch] tld-4819 (Airdrie Transit / Calgary / Alberta)
-[validate] tld-4819 (Airdrie Transit / Calgary / Alberta)  (0.0 MB, 0.8s download)
-[ERROR] cannot open zip: File is not a zip file
-[fail] tld-4819 (Airdrie Transit / Calgary / Alberta): validation errors — skipping. Pass --skip-validate to force ingest anyway.
+[fail] tld-4819 (Airdrie Transit / Calgary / Alberta): download returned near-empty body
 
-=== [119/131] tld-4820 ===
-[fetch] tld-4820 (Brandon Transit / Brandon / Manitoba)
-[validate] tld-4820 (Brandon Transit / Brandon / Manitoba)  (0.4 MB, 1.3s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  274 stops total
-[OK   ] route-types
-         info:  13 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  33,202 stop_time rows across 1,060 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  4 calendar rows, 126 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20251229..20260503
+=== [119/132] tld-4820 ===
+[skip] tld-4820 already ingested
 
-RESULT: all checks passed
-[ingest] tld-4820 (Brandon Transit / Brandon / Manitoba)
-  [tld-4820] opening /tmp/tmpqzqlatn1.zip
-    agency: 1
-    routes: 13
-    stops: 274
-    services: 4
-    calendar_dates: 126
-    trips: 1,060
-[K    stop_times: 33,202  patterns: 15  trips: 1,060  blobs: 20  headsigns: 4  dropped: 0  (0.2s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
+=== [120/132] tld-4821 ===
+[skip] tld-4821 already ingested
 
-=== [120/131] tld-4821 ===
-[fetch] tld-4821 (Grande Prairie Transit / Grande Prairie / Alberta)
-[validate] tld-4821 (Grande Prairie Transit / Grande Prairie / Alberta)  (0.1 MB, 0.4s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  210 stops total
-[OK   ] route-types
-         info:  9 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  13,523 stop_time rows across 990 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  4 calendar rows, 6 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20230804..20260701
-
-RESULT: all checks passed
-[ingest] tld-4821 (Grande Prairie Transit / Grande Prairie / Alberta)
-  [tld-4821] opening /tmp/tmpv70un9jy.zip
-    agency: 1
-    routes: 9
-    stops: 210
-    services: 4
-    calendar_dates: 6
-    trips: 990
-[K    stop_times: 13,523  patterns: 20  trips: 990  blobs: 20  headsigns: 1  dropped: 0  (0.1s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [121/131] tld-5509_1 ===
+=== [121/132] tld-5509_1 ===
 [fetch] tld-5509_1 (Prince Albert Transit / Prince Albert / Saskatchewan)
 [fail] tld-5509_1 (Prince Albert Transit / Prince Albert / Saskatchewan): download error HTTP Error 404: Not Found
 
-=== [122/131] tld-5552 ===
-[fetch] tld-5552 (Chatham Kent Transit (Ride CK) / Chatham-Kent / Ontario)
-[validate] tld-5552 (Chatham Kent Transit (Ride CK) / Chatham-Kent / Ontario)  (0.1 MB, 0.9s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  289 stops total
-[OK   ] route-types
-         info:  12 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  6,273 stop_time rows across 165 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  6 calendar rows, 4 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260331..20260630
+=== [122/132] tld-5552 ===
+[skip] tld-5552 already ingested
 
-RESULT: all checks passed
-[ingest] tld-5552 (Chatham Kent Transit (Ride CK) / Chatham-Kent / Ontario)
-  [tld-5552] opening /tmp/tmppnl9ea06.zip
-    agency: 1
-    routes: 12
-    stops: 289
-    services: 6
-    calendar_dates: 4
-    trips: 165
-[K    stop_times: 6,273  patterns: 10  trips: 165  blobs: 11  headsigns: 15  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
+=== [123/132] tld-5630 ===
+[skip] tld-5630 already ingested
 
-=== [123/131] tld-5630 ===
-[fetch] tld-5630 (Saint Jean Sur Richelieu / Brossard / Quebec)
-[validate] tld-5630 (Saint Jean Sur Richelieu / Brossard / Quebec)  (0.2 MB, 1.5s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  538 stops total
-[OK   ] route-types
-         info:  9 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  20,590 stop_time rows across 517 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  5 calendar rows, 7 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260101..20260430
-
-RESULT: all checks passed
-[ingest] tld-5630 (Saint Jean Sur Richelieu / Brossard / Quebec)
-  [tld-5630] opening /tmp/tmpc8gc3k4a.zip
-    agency: 1
-    routes: 9
-    stops: 538
-    services: 5
-    calendar_dates: 7
-    trips: 517
-[K    stop_times: 20,590  patterns: 17  trips: 517  blobs: 132  headsigns: 11  dropped: 0  (0.1s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [124/131] tld-5721 ===
+=== [124/132] tld-5721 ===
 [fetch] tld-5721 (Orléans Express / La Malbaie / Quebec)
-[validate] tld-5721 (Orléans Express / La Malbaie / Quebec)  (0.0 MB, 0.9s download)
+[validate] tld-5721 (Orléans Express / La Malbaie / Quebec)  (0.0 MB, 0.2s download)
 [OK   ] required-files
 [OK   ] stop-coordinates
          info:  126 stops total
@@ -3640,188 +384,53 @@ RESULT: all checks passed
 [OK   ] stop-times-sorted-by-trip
          info:  618 stop_time rows across 102 trips
 [OK   ] stop-time-fields
-[ERROR] referential-integrity
-         error: 4 stop_times reference unknown stop_id (sample: ['743', '740', '740', '743'])
+[WARN ] referential-integrity
+         warn:  4 stop_times reference unknown stop_id (sample: ['743', '740', '740', '743']) — row dropped by build
 [OK   ] calendar-fields
          info:  127 calendar rows, 0 calendar_dates rows
 [OK   ] direction-ids
 [OK   ] feed-freshness
          info:  calendar covers 20260416..20260601
 
-RESULT: errors found — ingest will produce broken data for this feed
-[fail] tld-5721 (Orléans Express / La Malbaie / Quebec): validation errors — skipping. Pass --skip-validate to force ingest anyway.
-
-=== [125/131] tld-5722 ===
-[fetch] tld-5722 (L'Inter des Laurentides / Ivry-sur-le-Lac / Quebec)
-[validate] tld-5722 (L'Inter des Laurentides / Ivry-sur-le-Lac / Quebec)  (0.1 MB, 0.4s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  113 stops total
-[OK   ] route-types
-         info:  2 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  1,901 stop_time rows across 34 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  2 calendar rows, 8 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260217..20260804
-
-RESULT: all checks passed
-[ingest] tld-5722 (L'Inter des Laurentides / Ivry-sur-le-Lac / Quebec)
-  [tld-5722] opening /tmp/tmp7jt8giqq.zip
-    agency: 1
-    routes: 2
-    stops: 113
-    services: 2
-    calendar_dates: 8
-    trips: 34
-[K    stop_times: 1,901  patterns: 5  trips: 34  blobs: 19  headsigns: 2  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [126/131] tld-5869 ===
-[fetch] tld-5869 (MRC de Montcalm / Saint-Jérôme / Quebec)
-[validate] tld-5869 (MRC de Montcalm / Saint-Jérôme / Quebec)  (0.1 MB, 0.5s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  72 stops total
-[OK   ] route-types
-         info:  2 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  602 stop_time rows across 21 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  3 calendar rows, 33 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20251120..20261130
-
-RESULT: all checks passed
-[ingest] tld-5869 (MRC de Montcalm / Saint-Jérôme / Quebec)
-  [tld-5869] opening /tmp/tmpm68tj4v7.zip
-    agency: 1
-    routes: 2
-    stops: 72
-    services: 3
-    calendar_dates: 33
-    trips: 21
-[K    stop_times: 602  patterns: 7  trips: 21  blobs: 12  headsigns: 5  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [127/131] tld-5874 ===
-[fetch] tld-5874 (Ride Norfolk / Brant County / Ontario)
-[validate] tld-5874 (Ride Norfolk / Brant County / Ontario)  (0.0 MB, 0.2s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  8 stops total
-[OK   ] route-types
-         info:  1 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  24 stop_time rows across 4 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  1 calendar rows, 12 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20251204..20261001
-
-RESULT: all checks passed
-[ingest] tld-5874 (Ride Norfolk / Brant County / Ontario)
-  [tld-5874] opening /tmp/tmp2ex4ze7u.zip
-    agency: 1
-    routes: 1
-    stops: 8
-    services: 1
-    calendar_dates: 12
-    trips: 4
-[K    stop_times: 24  patterns: 2  trips: 4  blobs: 4  headsigns: 2  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [128/131] tld-5875 ===
-[fetch] tld-5875 (Middlesex County Connect / London / Ontario)
-[validate] tld-5875 (Middlesex County Connect / London / Ontario)  (0.3 MB, 0.7s download)
-[ERROR] cannot open zip: File is not a zip file
-[fail] tld-5875 (Middlesex County Connect / London / Ontario): validation errors — skipping. Pass --skip-validate to force ingest anyway.
-
-=== [129/131] tld-6692 ===
-[fetch] tld-6692 (MRC du Haut-Saint-Laurent / Ormstown / Quebec)
-[validate] tld-6692 (MRC du Haut-Saint-Laurent / Ormstown / Quebec)  (0.0 MB, 1.8s download)
-[ERROR] cannot open zip: File is not a zip file
-[fail] tld-6692 (MRC du Haut-Saint-Laurent / Ormstown / Quebec): validation errors — skipping. Pass --skip-validate to force ingest anyway.
-
-=== [130/131] tld-6711 ===
-[fetch] tld-6711 (Ville de Drummondville / Drummondville / Quebec)
-[validate] tld-6711 (Ville de Drummondville / Drummondville / Quebec)  (0.1 MB, 0.4s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  253 stops total
-[OK   ] route-types
-         info:  77 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  2,292 stop_time rows across 615 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  5 calendar rows, 13 calendar_dates rows
-[OK   ] direction-ids
-[OK   ] feed-freshness
-         info:  calendar covers 20260415..20270101
-
-RESULT: all checks passed
-[ingest] tld-6711 (Ville de Drummondville / Drummondville / Quebec)
-  [tld-6711] opening /tmp/tmpgd6d2l8l.zip
-    agency: 1
-    routes: 77
-    stops: 253
-    services: 5
-    calendar_dates: 13
-    trips: 615
-[K    stop_times: 2,292  patterns: 124  trips: 615  blobs: 22  headsigns: 18  dropped: 0  (0.0s)
-  VACUUM…
-  ANALYZE…
-  → data/schedule.sqlite
-
-=== [131/131] tld-6756 ===
-[fetch] tld-6756 (Gabriola Community Shuttle / Area B (DeCourcy/Gabriola/Mudge) / British Columbia)
-[validate] tld-6756 (Gabriola Community Shuttle / Area B (DeCourcy/Gabriola/Mudge) / British Columbia)  (0.1 MB, 1.0s download)
-[OK   ] required-files
-[OK   ] stop-coordinates
-         info:  96 stops total
-[OK   ] route-types
-         info:  4 routes total
-[OK   ] stop-times-sorted-by-trip
-         info:  799 stop_time rows across 22 trips
-[OK   ] stop-time-fields
-[OK   ] referential-integrity
-[OK   ] calendar-fields
-         info:  5 calendar rows, 2 calendar_dates rows
-[OK   ] direction-ids
-[WARN ] feed-freshness
-         warn:  all calendar entries expired before today (20260419) — feed is stale
-         info:  calendar covers 20240617..20250930
-
 RESULT: warnings only — ingest should work but review output
-[ingest] tld-6756 (Gabriola Community Shuttle / Area B (DeCourcy/Gabriola/Mudge) / British Columbia)
-  [tld-6756] opening /tmp/tmp0lho8qv4.zip
-    agency: 1
-    routes: 4
-    stops: 96
-    services: 5
-    calendar_dates: 2
-    trips: 22
-[K    stop_times: 799  patterns: 18  trips: 22  blobs: 22  headsigns: 13  dropped: 0  (0.0s)
+[ingest] tld-5721 (Orléans Express / La Malbaie / Quebec)
+  [tld-5721] opening /tmp/tmp9av4aim1.zip
+    agency: 2
+    routes: 23
+    stops: 126
+    services: 127
+    calendar_dates: 0
+[K    shapes: 0 (0 points, 0.0s)
+    trips: 102
+[K    stop_times: 614  patterns: 59  trips: 102  blobs: 66  headsigns: 21  dropped: 0  (0.0s)
   VACUUM…
   ANALYZE…
   → data/schedule.sqlite
 
-=== done: ok=106, skipped=0, download_failed=4, validation_failed=21, ingest_failed=0 ===
+=== [125/132] tld-5722 ===
+[skip] tld-5722 already ingested
+
+=== [126/132] tld-5869 ===
+[skip] tld-5869 already ingested
+
+=== [127/132] tld-5874 ===
+[skip] tld-5874 already ingested
+
+=== [128/132] tld-5875 ===
+[fetch] tld-5875 (Middlesex County Connect / London / Ontario)
+[fail] tld-5875 (Middlesex County Connect / London / Ontario): download body is not a zip file
+
+=== [129/132] tld-6692 ===
+[fetch] tld-6692 (MRC du Haut-Saint-Laurent / Ormstown / Quebec)
+[fail] tld-6692 (MRC du Haut-Saint-Laurent / Ormstown / Quebec): download body is not a zip file
+
+=== [130/132] tld-6711 ===
+[skip] tld-6711 already ingested
+
+=== [131/132] tld-6756 ===
+[skip] tld-6756 already ingested
+
+=== [132/132] stm ===
+[skip] stm already ingested
+
+=== done: ok=1, skipped=124, download_failed=7, validation_failed=0, ingest_failed=0 ===

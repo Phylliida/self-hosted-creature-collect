@@ -12,6 +12,8 @@ and skipped; rerun to retry. Peak disk usage is bounded by the largest
 single GTFS zip (~100-300 MB for major metros).
 """
 import argparse
+import csv
+import io
 import os
 import pathlib
 import shutil
@@ -22,6 +24,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import zipfile
 
 
 BUILD_SCRIPT = pathlib.Path(__file__).parent / "build-schedule-db.py"
@@ -42,8 +45,9 @@ def read_feeds_tsv(path):
             slug = parts[0].strip()
             url = parts[1].strip()
             name = parts[2].strip() if len(parts) > 2 else ""
+            fallback = parts[3].strip() if len(parts) > 3 else ""
             if slug and url:
-                feeds.append((slug, url, name))
+                feeds.append((slug, url, name, fallback))
     return feeds
 
 
@@ -68,7 +72,84 @@ def download(url, dest):
             shutil.copyfileobj(resp, f, length=1024 * 1024)
 
 
-def ingest_one(db_path, slug, url, name, tmp_root, skip_validate=False):
+def try_download(url, dest):
+    """Download + sanity-check that we actually got a zip archive. Many GTFS
+    mirrors return 200 OK with an HTML error page or an empty body; a zip-
+    magic-byte check catches these before we hand the file to the validator.
+    Returns None on success, or a short reason string on failure."""
+    try:
+        download(url, dest)
+    except (urllib.error.URLError, urllib.error.HTTPError,
+            TimeoutError, OSError) as e:
+        return f"download error {e}"
+    try:
+        if os.path.getsize(dest) < 22:  # minimum valid zip is ~22 bytes
+            return "download returned near-empty body"
+        with open(dest, "rb") as f:
+            sig = f.read(4)
+        if sig[:2] != b"PK":
+            return "download body is not a zip file"
+    except OSError as e:
+        return f"post-download check failed: {e}"
+    return None
+
+
+def presort_stop_times_in_zip(zip_path):
+    """If stop_times.txt isn't already grouped by trip_id, rewrite the zip
+    with the rows sorted by (trip_id, stop_sequence). `build-schedule-db.py`
+    streams stop_times in source order and flushes per trip_id transition,
+    so unsorted input produces duplicate pattern rows — this pre-sort pass
+    makes those feeds ingestable without any changes downstream.
+    """
+    try:
+        z = zipfile.ZipFile(zip_path)
+    except zipfile.BadZipFile:
+        return  # validator will flag
+    try:
+        try:
+            raw = z.read("stop_times.txt")
+        except KeyError:
+            return
+        # Fast path: scan once. If no trip_id re-appears after its run, already sorted.
+        reader = csv.DictReader(io.StringIO(raw.decode("utf-8-sig")))
+        seen = set(); current = None; sorted_ = True
+        for row in reader:
+            tid = row.get("trip_id", "")
+            if tid != current:
+                if tid in seen:
+                    sorted_ = False
+                    break
+                seen.add(tid); current = tid
+        if sorted_:
+            return
+        sys.stderr.write(f"[presort] stop_times.txt not grouped by trip_id — rewriting\n")
+        # Re-parse and sort. Keep other files byte-identical.
+        reader = csv.DictReader(io.StringIO(raw.decode("utf-8-sig")))
+        rows = list(reader)
+        fieldnames = reader.fieldnames or []
+        def _seq(v):
+            try: return int(v)
+            except (TypeError, ValueError): return 0
+        rows.sort(key=lambda r: (r.get("trip_id", ""),
+                                 _seq(r.get("stop_sequence", 0))))
+        out = io.StringIO()
+        writer = csv.DictWriter(out, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+        sorted_bytes = out.getvalue().encode("utf-8")
+        other_names = [n for n in z.namelist() if n != "stop_times.txt"]
+        others = {n: z.read(n) for n in other_names}
+    finally:
+        z.close()
+    tmp = zip_path + ".tmp"
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+        zout.writestr("stop_times.txt", sorted_bytes)
+        for n, data in others.items():
+            zout.writestr(n, data)
+    os.replace(tmp, zip_path)
+
+
+def ingest_one(db_path, slug, url, name, tmp_root, skip_validate=False, fallback=""):
     if already_ingested(db_path, slug):
         sys.stderr.write(f"[skip] {slug} already ingested\n")
         return "skipped"
@@ -81,12 +162,18 @@ def ingest_one(db_path, slug, url, name, tmp_root, skip_validate=False):
     ) as tmp:
         tmp_path = tmp.name
     try:
-        try:
-            download(url, tmp_path)
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as e:
-            sys.stderr.write(f"[fail] {label}: download error {e}\n")
+        err = try_download(url, tmp_path)
+        if err and fallback and fallback != url:
+            sys.stderr.write(f"[retry] {label}: {err} — trying fallback URL\n")
+            err = try_download(fallback, tmp_path)
+        if err:
+            sys.stderr.write(f"[fail] {label}: {err}\n")
             return "download_failed"
         zip_size = os.path.getsize(tmp_path)
+        try:
+            presort_stop_times_in_zip(tmp_path)
+        except Exception as e:
+            sys.stderr.write(f"[warn] {label}: presort failed ({e}) — continuing\n")
         sys.stderr.write(
             f"[validate] {label}  ({zip_size / 1024 / 1024:.1f} MB, "
             f"{time.time() - t0:.1f}s download)\n"
@@ -141,7 +228,7 @@ def main():
 
     feeds = []
     if args.single:
-        feeds.append((args.single[0], args.single[1], ""))
+        feeds.append((args.single[0], args.single[1], "", ""))
     if args.feeds:
         feeds.extend(read_feeds_tsv(args.feeds))
     if not feeds:
@@ -152,11 +239,12 @@ def main():
 
     counts = {"ok": 0, "skipped": 0, "download_failed": 0,
               "validation_failed": 0, "ingest_failed": 0}
-    for i, (slug, url, name) in enumerate(feeds, 1):
+    for i, (slug, url, name, fallback) in enumerate(feeds, 1):
         sys.stderr.write(f"\n=== [{i}/{len(feeds)}] {slug} ===\n")
         try:
             result = ingest_one(args.schedule_db, slug, url, name, tmp_root,
-                                skip_validate=args.skip_validate)
+                                skip_validate=args.skip_validate,
+                                fallback=fallback)
         except KeyboardInterrupt:
             sys.stderr.write("interrupted\n")
             break
