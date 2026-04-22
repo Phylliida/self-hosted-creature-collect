@@ -31,6 +31,30 @@
   #install .msg { flex: 1; }
   #install button { background: transparent; color: #fff; border: 1px solid #fff;
                     border-radius: 4px; padding: 4px 8px; cursor: pointer; }
+  #welcome {
+    position: fixed; inset: 0; z-index: 50; display: none;
+    justify-content: center; align-items: center;
+    background: rgba(0, 0, 0, 0.55);
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+            env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  #welcome.show { display: flex; }
+  #welcome .card {
+    background: #fff; border-radius: 14px; padding: 24px;
+    max-width: 360px; width: 92%; box-sizing: border-box;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.35);
+    text-align: center; color: #333; font-size: 14px; line-height: 1.45;
+  }
+  #welcome h2 { margin: 0 0 10px; font-size: 20px; }
+  #welcome p { margin: 0 0 18px; color: #555; }
+  #welcomeStart {
+    background: #3b7fdf; color: #fff; border: none;
+    padding: 12px 24px; border-radius: 6px; font-size: 15px;
+    cursor: pointer; width: 100%;
+  }
+  #welcomeStart:disabled { background: #88a; cursor: wait; }
+  #welcomeStatus { margin-top: 10px; font-size: 12px; color: #888;
+                   min-height: 14px; }
   #panel {
     position: absolute; left: 8px; right: 68px; z-index: 10;
     bottom: calc(8px + env(safe-area-inset-bottom));
@@ -729,6 +753,10 @@
       <select id="timezoneSelect" style="max-width: 240px;"></select>
     </div>
     <div class="row">
+      <label for="showPanelToggle">Show offline maps panel</label>
+      <input type="checkbox" id="showPanelToggle" checked>
+    </div>
+    <div class="row">
       <label>Backup</label>
       <span>
         <button id="exportBtn" type="button" style="padding: 6px 10px; font-size: 13px; margin-right: 4px;">Export</button>
@@ -742,6 +770,16 @@
 <div id="install">
   <div class="msg">Tap <b>Share</b> → <b>Add to Home Screen</b> so offline tiles aren't evicted.</div>
   <button id="installDismiss">ok</button>
+</div>
+<div id="welcome">
+  <div class="card">
+    <h2>Welcome!</h2>
+    <p>Before you start, the app needs to download a small one-time bundle:
+       fonts, POI icons, and a low-zoom world map (~8&nbsp;MB total). Without
+       it the map won't render labels or low-zoom tiles.</p>
+    <button id="welcomeStart">↓ Download app data</button>
+    <div id="welcomeStatus"></div>
+  </div>
 </div>
 <div id="panel">
   <details>
@@ -5621,7 +5659,56 @@ function fmtDate(ts) {
     status.textContent = 'app data ready';
     btn.disabled = false;
     map.setStyle(map.getStyle());
+    window.dispatchEvent(new CustomEvent('cc:app-data-ready'));
   };
+
+  // First-run welcome overlay: prompts for the one-time app-data download,
+  // then reloads so every style layer picks up the newly-cached fonts and
+  // tiles. Set cc.welcomeSeen once a download completes so we don't block
+  // subsequent visits even if the user somehow clears tile cache later.
+  const welcomeEl = document.getElementById('welcome');
+  const welcomeStart = document.getElementById('welcomeStart');
+  const welcomeStatus = document.getElementById('welcomeStatus');
+  if (welcomeEl && welcomeStart && !localStorage.getItem('cc.welcomeSeen')) {
+    welcomeEl.classList.add('show');
+    // Mirror the shared status element's text into our overlay while the
+    // background downloader writes to it.
+    const statusEl = document.getElementById('status');
+    const mirror = () => { welcomeStatus.textContent = statusEl.textContent; };
+    const mo = new MutationObserver(mirror);
+    welcomeStart.onclick = () => {
+      welcomeStart.disabled = true;
+      welcomeStart.textContent = 'Downloading…';
+      mo.observe(statusEl, { childList: true, characterData: true, subtree: true });
+      window.addEventListener('cc:app-data-ready', () => {
+        mo.disconnect();
+        localStorage.setItem('cc.welcomeSeen', '1');
+        welcomeStatus.textContent = 'Reloading…';
+        setTimeout(() => location.reload(), 400);
+      }, { once: true });
+      // Reuse the existing app-data flow.
+      document.getElementById('appDataBtn').click();
+    };
+  }
+
+  // "Show offline maps panel" toggle (on by default). When off, the bottom
+  // offline-maps details dropdown is hidden; power users can re-enable via
+  // settings. Doesn't affect any downloads or stored regions.
+  const panelToggle = document.getElementById('showPanelToggle');
+  const panelEl = document.getElementById('panel');
+  const applyPanelVisibility = () => {
+    if (!panelEl) return;
+    const hidden = localStorage.getItem('cc.hidePanel') === '1';
+    panelEl.style.display = hidden ? 'none' : '';
+    if (panelToggle) panelToggle.checked = !hidden;
+  };
+  applyPanelVisibility();
+  if (panelToggle) {
+    panelToggle.addEventListener('change', () => {
+      localStorage.setItem('cc.hidePanel', panelToggle.checked ? '0' : '1');
+      applyPanelVisibility();
+    });
+  }
 })();
 </script>
 </body>
