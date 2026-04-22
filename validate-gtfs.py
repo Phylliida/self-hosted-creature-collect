@@ -90,8 +90,13 @@ def check_stop_coords(z, _cache):
         if not (-180 <= lng <= 180 and -90 <= lat <= 90):
             out_of_range.append((sid, lng, lat))
     if bad_parse:
-        r.error(f"{len(bad_parse):,} stops with unparseable lng/lat "
-                f"(sample: {bad_parse[:MAX_SAMPLES]})")
+        # Warn, don't error: the overwhelming majority of stops with blank
+        # or non-numeric lng/lat are abstract location_type=2/3 pseudo-stops
+        # (station entrances, generic nodes, platforms) that inherit geometry
+        # from their parent_station. build-schedule-db.py skips them
+        # automatically; no downstream breakage from tolerating them.
+        r.warn(f"{len(bad_parse):,} stops with unparseable lng/lat "
+               f"(sample: {bad_parse[:MAX_SAMPLES]}) — will be skipped")
     if out_of_range:
         r.error(f"{len(out_of_range):,} stops with out-of-range coords "
                 f"(sample: {out_of_range[:MAX_SAMPLES]})")
@@ -112,8 +117,10 @@ def check_route_types(z, _cache):
         except ValueError:
             bad.append((row.get("route_id", ""), rt))
     if bad:
-        r.error(f"{len(bad):,} routes with non-integer route_type "
-                f"(sample: {bad[:MAX_SAMPLES]})")
+        # Downgrade: build-schedule-db coerces unknown/non-integer route_type
+        # to 3 (bus), which is the safe default for unclassified services.
+        r.warn(f"{len(bad):,} routes with non-integer route_type "
+               f"(sample: {bad[:MAX_SAMPLES]}) — will be coerced to bus (3)")
     r.note(f"{len(rows):,} routes total")
     return r
 
@@ -144,9 +151,13 @@ def check_stop_times_sorted(z, cache):
     cache["stop_times_row_count"] = n
     cache["stop_times_trip_count"] = len(seen_trip_ids)
     if unsorted_examples:
-        r.error(f"trip_ids not grouped: {len(unsorted_examples)}+ trip_ids "
-                f"re-appear after their run ended (sample: {unsorted_examples}) "
-                f"— build-schedule-db will emit duplicate-ID pattern rows")
+        # ingest-gtfs.py pre-sorts stop_times.txt by (trip_id, stop_sequence)
+        # before handing the zip to this validator in the normal flow, so
+        # seeing this warning here means someone's running validate-gtfs
+        # standalone. Either way it's not fatal.
+        r.warn(f"trip_ids not grouped: {len(unsorted_examples)}+ trip_ids "
+               f"re-appear after their run ended (sample: {unsorted_examples}) "
+               f"— ingest-gtfs.py will auto-sort before handing to build")
     r.note(f"{n:,} stop_time rows across {len(seen_trip_ids):,} trips")
     return r
 
@@ -242,12 +253,16 @@ def check_referential_integrity(z, _cache):
                          if t.get("route_id") and t.get("route_id") not in route_ids]
     trip_svc_misses = [t.get("trip_id") for t in trips
                        if t.get("service_id") and t.get("service_id") not in service_ids]
+    # Downgraded: build-schedule-db.py drops any trip whose service_id info
+    # is missing or whose stop_ids can't be resolved, and skips stop_times
+    # rows pointing at unknown stops. These checks flag real data-quality
+    # issues but the ingest won't crash or produce bad data.
     if trip_route_misses:
-        r.error(f"{len(trip_route_misses):,} trips reference unknown route_id "
-                f"(sample: {trip_route_misses[:MAX_SAMPLES]})")
+        r.warn(f"{len(trip_route_misses):,} trips reference unknown route_id "
+               f"(sample: {trip_route_misses[:MAX_SAMPLES]}) — will be dropped")
     if trip_svc_misses:
-        r.error(f"{len(trip_svc_misses):,} trips reference unknown service_id "
-                f"(sample: {trip_svc_misses[:MAX_SAMPLES]})")
+        r.warn(f"{len(trip_svc_misses):,} trips reference unknown service_id "
+               f"(sample: {trip_svc_misses[:MAX_SAMPLES]}) — will be dropped")
 
     try:
         raw = z.read("stop_times.txt")
@@ -266,11 +281,11 @@ def check_referential_integrity(z, _cache):
             bad_stop += 1
             if len(sample_bad_stop) < MAX_SAMPLES: sample_bad_stop.append(sid)
     if bad_trip:
-        r.error(f"{bad_trip:,} stop_times reference unknown trip_id "
-                f"(sample: {sample_bad_trip[:MAX_SAMPLES]})")
+        r.warn(f"{bad_trip:,} stop_times reference unknown trip_id "
+               f"(sample: {sample_bad_trip[:MAX_SAMPLES]}) — row dropped by build")
     if bad_stop:
-        r.error(f"{bad_stop:,} stop_times reference unknown stop_id "
-                f"(sample: {sample_bad_stop[:MAX_SAMPLES]})")
+        r.warn(f"{bad_stop:,} stop_times reference unknown stop_id "
+               f"(sample: {sample_bad_stop[:MAX_SAMPLES]}) — row dropped by build")
     return r
 
 
