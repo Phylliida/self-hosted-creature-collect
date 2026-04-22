@@ -2166,16 +2166,16 @@ function fmtDate(ts) {
           paint: { 'text-color': _initTheme.poiLabel, 'text-halo-color': _initTheme.poiHalo, 'text-halo-width': 1.5 } },
         { id: 'boundary-country-base', type: 'line', source: 'base', 'source-layer': 'boundary',
           filter: ['all', ['==', ['get', 'admin_level'], 2], ['!=', ['get', 'maritime'], 1]],
-          paint: { 'line-color': '#888', 'line-width': ['interpolate', ['linear'], ['zoom'], 0, 0.5, 6, 1, 12, 1.4] } },
+          paint: { 'line-color': _initTheme.roadLabel, 'line-width': ['interpolate', ['linear'], ['zoom'], 0, 0.5, 6, 1, 12, 1.4] } },
         { id: 'boundary-state-base', type: 'line', source: 'base', 'source-layer': 'boundary',
           filter: ['all', ['==', ['get', 'admin_level'], 4], ['!=', ['get', 'maritime'], 1]],
-          paint: { 'line-color': '#aaa', 'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.3, 8, 0.6, 14, 1], 'line-dasharray': [3, 2] } },
+          paint: { 'line-color': _initTheme.roadLabel, 'line-opacity': 0.6, 'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.3, 8, 0.6, 14, 1], 'line-dasharray': [3, 2] } },
         { id: 'boundary-country', type: 'line', source: 'local', 'source-layer': 'boundary',
           filter: ['all', ['==', ['get', 'admin_level'], 2], ['!=', ['get', 'maritime'], 1]],
-          paint: { 'line-color': '#888', 'line-width': ['interpolate', ['linear'], ['zoom'], 0, 0.5, 6, 1, 12, 1.4] } },
+          paint: { 'line-color': _initTheme.roadLabel, 'line-width': ['interpolate', ['linear'], ['zoom'], 0, 0.5, 6, 1, 12, 1.4] } },
         { id: 'boundary-state', type: 'line', source: 'local', 'source-layer': 'boundary',
           filter: ['all', ['==', ['get', 'admin_level'], 4], ['!=', ['get', 'maritime'], 1]],
-          paint: { 'line-color': '#aaa', 'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.3, 8, 0.6, 14, 1], 'line-dasharray': [3, 2] } },
+          paint: { 'line-color': _initTheme.roadLabel, 'line-opacity': 0.6, 'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.3, 8, 0.6, 14, 1], 'line-dasharray': [3, 2] } },
         { id: 'places-base', type: 'symbol', source: 'base', 'source-layer': 'place',
           filter: ['in', ['get', 'class'], ['literal', ['country', 'state', 'continent', 'city', 'town']]],
           layout: {
@@ -2566,6 +2566,13 @@ function fmtDate(ts) {
       try {
         map.setPaintProperty('walk-route', 'line-color', t.ui?.accent || '#3b7fdf');
       } catch {}
+      // Administrative boundaries: solid for countries, dashed + half-opacity
+      // for states. Both track the road-label color so they stay visible on
+      // dark themes (where #888/#aaa vanishes into the bg).
+      for (const id of ['boundary-country-base', 'boundary-country',
+                        'boundary-state-base', 'boundary-state']) {
+        try { map.setPaintProperty(id, 'line-color', t.roadLabel); } catch {}
+      }
     } catch {}
     localStorage.setItem('cc.theme', name);
     document.getElementById('map').style.background = t.landcover;
