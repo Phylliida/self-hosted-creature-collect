@@ -55,6 +55,486 @@
   #welcomeStart:disabled { background: #88a; cursor: wait; }
   #welcomeStatus { margin-top: 10px; font-size: 12px; color: #888;
                    min-height: 14px; }
+
+  /* ============================================================
+     MEDIEVAL THEME — parchment + sepia + rust, styled to read as
+     an old chart but kept crisp (no blur/grain, hairline rules,
+     small-caps display type, tight rust CTAs). */
+  html[data-theme="medieval"] {
+    --med-parchment:    #f2e3b6;
+    --med-parchment-lt: #f8ecc6;
+    --med-parchment-dk: #e4cf9a;
+    --med-ink:          #2e1d10;
+    --med-sepia:        #6a4a2a;
+    --med-rust:         #9b4a2a;
+    --med-rust-dk:      #7a3a20;
+    --med-gold:         #b08237;
+  }
+  html[data-theme="medieval"] body {
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    color: var(--med-ink);
+  }
+
+  /* Panels — parchment cards with a double-ruled sepia border. */
+  html[data-theme="medieval"] #panel,
+  html[data-theme="medieval"] #poiCard,
+  html[data-theme="medieval"] #settingsPanel .sheet,
+  html[data-theme="medieval"] #welcome .card,
+  html[data-theme="medieval"] #routingPanel,
+  html[data-theme="medieval"] #searchInput,
+  html[data-theme="medieval"] #searchResults {
+    background: var(--med-parchment);
+    color: var(--med-ink);
+    border: 1px solid var(--med-sepia);
+    box-shadow: 0 0 0 2px var(--med-parchment),
+                0 0 0 3px var(--med-sepia),
+                0 4px 12px rgba(46, 29, 16, 0.25);
+    border-radius: 2px;
+  }
+  html[data-theme="medieval"] #panel summary b,
+  html[data-theme="medieval"] #settingsPanel h3,
+  html[data-theme="medieval"] #welcome h2,
+  html[data-theme="medieval"] #poiCardName {
+    font-variant: small-caps;
+    letter-spacing: 0.08em;
+    color: var(--med-ink);
+  }
+
+  /* Buttons — hairline sepia stroke, parchment fill. Primary CTAs use rust. */
+  html[data-theme="medieval"] button,
+  html[data-theme="medieval"] #panel button,
+  html[data-theme="medieval"] #settingsPanel button.close {
+    background: var(--med-parchment-lt);
+    color: var(--med-ink);
+    border: 1px solid var(--med-sepia);
+    border-radius: 2px;
+    font-family: inherit;
+    letter-spacing: 0.04em;
+  }
+  html[data-theme="medieval"] button:hover {
+    background: var(--med-parchment-dk);
+  }
+  html[data-theme="medieval"] #welcomeStart,
+  html[data-theme="medieval"] #downloadBtn,
+  html[data-theme="medieval"] #appDataBtn {
+    background: var(--med-rust);
+    color: var(--med-parchment-lt);
+    border: 1px solid var(--med-rust-dk);
+    font-variant: small-caps;
+    letter-spacing: 0.1em;
+  }
+  html[data-theme="medieval"] #welcomeStart:hover,
+  html[data-theme="medieval"] #downloadBtn:hover,
+  html[data-theme="medieval"] #appDataBtn:hover {
+    background: var(--med-rust-dk);
+  }
+  html[data-theme="medieval"] #welcomeStart:disabled {
+    background: var(--med-gold);
+    border-color: var(--med-sepia);
+    color: var(--med-parchment);
+  }
+
+  /* Hairline rules between region rows, numbers in monospace for that
+     "treasury ledger" feel. */
+  html[data-theme="medieval"] .region {
+    border-top: 1px solid var(--med-sepia);
+  }
+  html[data-theme="medieval"] #status,
+  html[data-theme="medieval"] #storage,
+  html[data-theme="medieval"] .region .sizes,
+  html[data-theme="medieval"] #poiStat {
+    font-family: "SF Mono", "Menlo", Consolas, "Liberation Mono", monospace;
+    font-size: 11px;
+    color: var(--med-sepia);
+  }
+  html[data-theme="medieval"] input[type="text"],
+  html[data-theme="medieval"] input[type="number"],
+  html[data-theme="medieval"] select,
+  html[data-theme="medieval"] #searchInput {
+    background: var(--med-parchment-lt);
+    color: var(--med-ink);
+    border: 1px solid var(--med-sepia);
+    border-radius: 2px;
+    font-family: inherit;
+  }
+  html[data-theme="medieval"] #install {
+    background: var(--med-ink);
+    color: var(--med-parchment);
+    border-bottom: 1px solid var(--med-gold);
+  }
+  html[data-theme="medieval"] #install button {
+    border-color: var(--med-parchment);
+    color: var(--med-parchment);
+  }
+
+  /* Search bar + "all types" filter + results list. */
+  html[data-theme="medieval"] #searchInput,
+  html[data-theme="medieval"] #searchFilter {
+    background: var(--med-parchment);
+    color: var(--med-ink);
+    border: 1px solid var(--med-sepia);
+    border-radius: 2px;
+    box-shadow: 0 0 0 2px var(--med-parchment),
+                0 0 0 3px var(--med-sepia),
+                0 3px 8px rgba(46, 29, 16, 0.2);
+  }
+  html[data-theme="medieval"] #searchInput::placeholder,
+  html[data-theme="medieval"] #transitSearch::placeholder {
+    color: var(--med-sepia); opacity: 0.7;
+  }
+  html[data-theme="medieval"] #searchResults {
+    background: var(--med-parchment);
+    border: 1px solid var(--med-sepia);
+    border-radius: 2px;
+    box-shadow: 0 0 0 2px var(--med-parchment),
+                0 0 0 3px var(--med-sepia),
+                0 4px 12px rgba(46, 29, 16, 0.25);
+    color: var(--med-ink);
+  }
+  html[data-theme="medieval"] .poi-result {
+    border-bottom: 1px solid var(--med-sepia);
+    color: var(--med-ink);
+  }
+  html[data-theme="medieval"] .poi-result:active { background: var(--med-parchment-dk); }
+  html[data-theme="medieval"] .poi-result .name { color: var(--med-ink); }
+  html[data-theme="medieval"] .poi-result .cat,
+  html[data-theme="medieval"] .poi-result .dist { color: var(--med-sepia); }
+  html[data-theme="medieval"] .poi-count {
+    background: var(--med-parchment-dk);
+    color: var(--med-sepia);
+    border-bottom: 1px solid var(--med-sepia);
+    font-variant: small-caps; letter-spacing: 0.08em;
+  }
+
+  /* Transit layers panel — list rows + filter chips on parchment. */
+  html[data-theme="medieval"] #transitPanel .sheet,
+  html[data-theme="medieval"] #transitRoutes {
+    background: var(--med-parchment); color: var(--med-ink);
+    border-color: var(--med-sepia);
+  }
+  html[data-theme="medieval"] #transitSearch {
+    background: var(--med-parchment-lt);
+    color: var(--med-ink);
+    border: 1px solid var(--med-sepia) !important;
+    border-radius: 2px !important;
+  }
+  html[data-theme="medieval"] #transitModes button,
+  html[data-theme="medieval"] #transitRoutes button,
+  html[data-theme="medieval"] #transitAll,
+  html[data-theme="medieval"] #transitNone {
+    background: var(--med-parchment-lt);
+    color: var(--med-ink);
+    border: 1px solid var(--med-sepia);
+    border-radius: 2px;
+  }
+  html[data-theme="medieval"] #transitModes button.on,
+  html[data-theme="medieval"] #transitRoutes .route-item.on {
+    background: var(--med-rust);
+    color: var(--med-parchment-lt);
+    border-color: var(--med-rust-dk);
+  }
+  /* Mode filter chips (spans, not buttons — different class). Keep the
+     pill shape they already have but swap in the parchment/sepia/rust
+     palette so they match the other controls. */
+  html[data-theme="medieval"] .mode-chip {
+    background: var(--med-parchment-lt);
+    border: 1px solid var(--med-sepia);
+    color: var(--med-ink);
+  }
+  html[data-theme="medieval"] .mode-chip.on {
+    background: var(--med-rust);
+    border-color: var(--med-rust-dk);
+    color: var(--med-parchment-lt);
+  }
+  /* "Done" buttons in the transit + settings panels have inline-style
+     backgrounds set on the elements themselves, so we need !important
+     to theme them. Rust CTA variant matches the welcome / routing Go /
+     download-app-data look. */
+  html[data-theme="medieval"] button.close,
+  html[data-theme="medieval"] #transitClose {
+    background: var(--med-rust) !important;
+    color: var(--med-parchment-lt) !important;
+    border: 1px solid var(--med-rust-dk) !important;
+    border-radius: 2px !important;
+    font-variant: small-caps;
+    letter-spacing: 0.08em;
+  }
+  html[data-theme="medieval"] button.close:hover,
+  html[data-theme="medieval"] #transitClose:hover {
+    background: var(--med-rust-dk) !important;
+  }
+  html[data-theme="medieval"] #transitCount {
+    color: var(--med-sepia);
+    font-family: "SF Mono", "Menlo", Consolas, monospace;
+  }
+
+  /* POI card directions button inherits rust CTA look. */
+  html[data-theme="medieval"] #poiCardDirections {
+    background: var(--med-rust);
+    color: var(--med-parchment-lt);
+    border: 1px solid var(--med-rust-dk);
+    font-variant: small-caps; letter-spacing: 0.08em;
+  }
+
+  /* Routing panel — from/to endpoints, swap, Saved, Plan route. */
+  html[data-theme="medieval"] #routingPanel .endpoint {
+    background: var(--med-parchment-lt);
+    border: 1px solid var(--med-sepia);
+    border-radius: 2px;
+  }
+  html[data-theme="medieval"] #routingPanel .endpoint input {
+    background: transparent; color: var(--med-ink); border: none;
+  }
+  html[data-theme="medieval"] #routingPanel .endpoint input::placeholder {
+    color: var(--med-sepia); opacity: 0.65;
+  }
+  html[data-theme="medieval"] #routingPanel .endpoint .clear {
+    color: var(--med-sepia);
+  }
+  html[data-theme="medieval"] #routingPanel .when select,
+  html[data-theme="medieval"] #routingPanel .when input {
+    background: var(--med-parchment-lt);
+    color: var(--med-ink);
+    border: 1px solid var(--med-sepia);
+    border-radius: 2px;
+  }
+  html[data-theme="medieval"] #routingPanel .swap {
+    background: var(--med-parchment-lt);
+    border: 1px solid var(--med-sepia);
+    border-radius: 2px;
+    color: var(--med-ink);
+  }
+  html[data-theme="medieval"] #routingPanel .swap:hover {
+    background: var(--med-parchment-dk);
+  }
+  html[data-theme="medieval"] #routingPanel .saved-btn,
+  html[data-theme="medieval"] #routingViewSaved {
+    background: var(--med-parchment-lt);
+    color: var(--med-ink);
+    border: 1px solid var(--med-sepia);
+    border-radius: 2px;
+    font-variant: small-caps;
+    letter-spacing: 0.06em;
+  }
+  html[data-theme="medieval"] #routingGo {
+    background: var(--med-rust);
+    color: var(--med-parchment-lt);
+    border: 1px solid var(--med-rust-dk);
+    border-radius: 2px;
+    font-variant: small-caps; letter-spacing: 0.1em;
+  }
+  html[data-theme="medieval"] #routingGo:hover:not(:disabled) {
+    background: var(--med-rust-dk);
+  }
+  html[data-theme="medieval"] #routingGo:disabled {
+    background: var(--med-parchment-dk);
+    color: var(--med-sepia);
+    border-color: var(--med-sepia);
+  }
+  /* Autocomplete dropdown below each endpoint. */
+  html[data-theme="medieval"] .ep-dropdown {
+    background: var(--med-parchment);
+    border: 1px solid var(--med-sepia);
+    border-radius: 2px;
+    box-shadow: 0 0 0 2px var(--med-parchment),
+                0 0 0 3px var(--med-sepia),
+                0 4px 10px rgba(46, 29, 16, 0.2);
+  }
+  html[data-theme="medieval"] .ep-suggest {
+    border-top-color: var(--med-sepia);
+    color: var(--med-ink);
+  }
+  html[data-theme="medieval"] .ep-suggest:hover {
+    background: var(--med-parchment-dk);
+  }
+
+  /* Route result panel (directions + step list + alt-route option strip). */
+  html[data-theme="medieval"] #directionsPanel {
+    background: var(--med-parchment);
+    color: var(--med-ink);
+    border: 1px solid var(--med-sepia);
+    border-radius: 2px;
+    box-shadow: 0 0 0 2px var(--med-parchment),
+                0 0 0 3px var(--med-sepia),
+                0 4px 12px rgba(46, 29, 16, 0.25);
+  }
+  html[data-theme="medieval"] #directionsPanel .summary,
+  html[data-theme="medieval"] #directionsPanel .step .text { color: var(--med-ink); }
+  html[data-theme="medieval"] #directionsPanel .summary strong {
+    color: var(--med-rust);
+  }
+  html[data-theme="medieval"] #directionsPanel .summary-breakdown {
+    color: var(--med-sepia);
+    border-bottom-color: var(--med-sepia);
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+  }
+  html[data-theme="medieval"] #directionsPanel .step {
+    border-top-color: var(--med-sepia);
+  }
+  html[data-theme="medieval"] #directionsPanel .step .dist {
+    color: var(--med-sepia);
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+  }
+  html[data-theme="medieval"] #directionsPanel button.close,
+  html[data-theme="medieval"] #directionsPanel .top-ctrls button {
+    background: none !important;
+    color: var(--med-sepia) !important;
+    border: none !important;
+    font-variant: normal;
+    letter-spacing: 0;
+  }
+  html[data-theme="medieval"] .opt-pill {
+    background: var(--med-parchment-lt);
+    border: 1px solid var(--med-sepia);
+    border-radius: 2px;
+    color: var(--med-ink);
+  }
+  html[data-theme="medieval"] .opt-pill.selected {
+    background: var(--med-rust);
+    border-color: var(--med-rust-dk);
+    color: var(--med-parchment-lt);
+  }
+  html[data-theme="medieval"] .step .stops-details .count { color: var(--med-sepia); }
+  html[data-theme="medieval"] .step .stops-timeline {
+    border-left-color: var(--med-sepia);
+  }
+  html[data-theme="medieval"] .step .stops-timeline .stop-time {
+    color: var(--med-sepia);
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+  }
+  html[data-theme="medieval"] .step .stops-timeline .stop-name { color: var(--med-ink); }
+
+  /* Saved routes sheet (bottom-sheet modal, list of bookmarked plans). */
+  html[data-theme="medieval"] #savedRoutesPanel .sheet {
+    background: var(--med-parchment);
+    border: 1px solid var(--med-sepia);
+    border-radius: 2px 2px 0 0;
+    box-shadow: 0 0 0 2px var(--med-parchment),
+                0 0 0 3px var(--med-sepia),
+                0 -4px 16px rgba(46, 29, 16, 0.3);
+    color: var(--med-ink);
+  }
+  html[data-theme="medieval"] .saved-item {
+    border-top-color: var(--med-sepia);
+    color: var(--med-ink);
+  }
+  html[data-theme="medieval"] .saved-item:hover { background: var(--med-parchment-dk); }
+  html[data-theme="medieval"] .saved-item .meta {
+    color: var(--med-sepia);
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  /* Schedule modal — bus/tram/subway departure times for a selected stop. */
+  html[data-theme="medieval"] #scheduleModal .sheet {
+    background: var(--med-parchment);
+    border: 1px solid var(--med-sepia);
+    border-radius: 2px 2px 0 0;
+    box-shadow: 0 0 0 2px var(--med-parchment),
+                0 0 0 3px var(--med-sepia),
+                0 -4px 16px rgba(46, 29, 16, 0.3);
+    color: var(--med-ink);
+  }
+  html[data-theme="medieval"] #scheduleModal .subtitle {
+    color: var(--med-sepia);
+    font-variant: small-caps;
+    letter-spacing: 0.06em;
+  }
+  html[data-theme="medieval"] #scheduleModal .tabs button {
+    background: var(--med-parchment-lt);
+    border: 1px solid var(--med-sepia);
+    border-radius: 2px;
+    color: var(--med-ink);
+  }
+  html[data-theme="medieval"] #scheduleModal .tabs button.active {
+    background: var(--med-rust);
+    border-color: var(--med-rust-dk);
+    color: var(--med-parchment-lt);
+  }
+  html[data-theme="medieval"] #scheduleModal .tabs button.empty { color: var(--med-sepia); opacity: 0.4; }
+  html[data-theme="medieval"] #scheduleModal .times .t {
+    color: var(--med-ink);
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+  }
+  html[data-theme="medieval"] #scheduleModal .times .t.match {
+    background: var(--med-rust);
+    color: var(--med-parchment-lt);
+    font-weight: 600;
+  }
+  html[data-theme="medieval"] #scheduleModal .empty-msg { color: var(--med-sepia); }
+
+  /* Wipe button stays red-ish but on parchment so it still reads as
+     "danger" against the rest of the chrome. */
+  html[data-theme="medieval"] #wipeBtn {
+    background: var(--med-parchment-lt) !important;
+    color: #9b1c1c !important;
+    border: 1px solid #9b1c1c !important;
+  }
+
+  /* MapLibre built-in controls — scale bar + attribution "i", plus the
+     zoom-and-geolocate group — in parchment + sepia so they match the
+     rest of the chart. Hairline rules, ink-coloured ticks, no drop
+     shadows that fight the double-ruled card borders. */
+  html[data-theme="medieval"] .maplibregl-ctrl-group,
+  html[data-theme="medieval"] .maplibregl-ctrl-attrib {
+    background: var(--med-parchment);
+    border: 1px solid var(--med-sepia);
+    border-radius: 2px;
+    box-shadow: 0 0 0 2px var(--med-parchment),
+                0 0 0 3px var(--med-sepia);
+  }
+  html[data-theme="medieval"] .maplibregl-ctrl-group button {
+    background-color: transparent;
+  }
+  html[data-theme="medieval"] .maplibregl-ctrl-group button + button {
+    border-top: 1px solid var(--med-sepia);
+  }
+  html[data-theme="medieval"] .maplibregl-ctrl-group button .maplibregl-ctrl-icon,
+  html[data-theme="medieval"] .maplibregl-ctrl-group button svg {
+    filter: invert(13%) sepia(60%) saturate(410%) hue-rotate(355deg) brightness(90%) contrast(95%);
+  }
+  html[data-theme="medieval"] .maplibregl-ctrl-attrib {
+    color: var(--med-ink);
+    font-family: inherit;
+  }
+  html[data-theme="medieval"] .maplibregl-ctrl-attrib a { color: var(--med-rust); }
+  html[data-theme="medieval"] .maplibregl-ctrl-attrib-button {
+    background-color: var(--med-parchment) !important;
+    background-image: none !important;
+    width: 24px !important;
+    height: 24px !important;
+    min-width: 24px !important;
+    padding: 0 !important;
+    flex: 0 0 24px !important;
+    position: relative;
+  }
+  html[data-theme="medieval"] .maplibregl-ctrl-attrib-button::before {
+    content: "i";
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font: italic 700 14px/1 "Iowan Old Style", Palatino, Georgia, serif;
+    color: var(--med-ink);
+  }
+  html[data-theme="medieval"] #settingsPanel .attribution {
+    border-top-color: var(--med-sepia) !important;
+    color: var(--med-sepia) !important;
+    font-family: inherit;
+    font-style: italic;
+  }
+  html[data-theme="medieval"] #settingsPanel .attribution a {
+    color: var(--med-rust);
+  }
+  html[data-theme="medieval"] .maplibregl-ctrl-scale {
+    background: var(--med-parchment);
+    border: 1px solid var(--med-sepia);
+    border-top: none;
+    color: var(--med-ink);
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11px;
+    padding: 0 4px;
+    box-shadow: 0 0 0 1px var(--med-parchment),
+                0 0 0 2px var(--med-sepia);
+  }
   #panel {
     position: absolute; left: 8px; right: 68px; z-index: 10;
     bottom: calc(8px + env(safe-area-inset-bottom));
@@ -721,6 +1201,7 @@
         <option value="night">Night</option>
         <option value="sepia">Sepia</option>
         <option value="mono">Monochrome</option>
+        <option value="medieval">Medieval map</option>
         <option value="custom">Custom…</option>
       </select>
     </div>
@@ -763,6 +1244,16 @@
         <button id="importBtn" type="button" style="padding: 6px 10px; font-size: 13px;">Import</button>
         <input type="file" id="importFile" accept=".json,application/json" style="display:none">
       </span>
+    </div>
+    <div class="attribution" style="margin-top: 14px; padding-top: 10px;
+         border-top: 1px solid #e0e0e0; font-size: 11px; color: #888;
+         line-height: 1.5;">
+      Map data © <a href="https://www.openstreetmap.org/copyright"
+         target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors ·
+      rendered with <a href="https://maplibre.org/" target="_blank"
+         rel="noopener noreferrer">MapLibre</a> ·
+      low-zoom shapes from <a href="https://www.naturalearthdata.com/"
+         target="_blank" rel="noopener noreferrer">Natural Earth</a>
     </div>
     <div class="actions"><button class="close" id="settingsClose">Done</button></div>
   </div>
@@ -1229,6 +1720,10 @@ function fmtDate(ts) {
   const map = new maplibregl.Map({
     container: 'map',
     hash: true,
+    // Replace the default AttributionControl with an explicitly-compact
+    // one so the "i" tile is a proper square by default instead of a
+    // wide bar that expands into the visible area.
+    attributionControl: { compact: true },
     center: savedView?.center || [0, 0],
     zoom: savedView?.zoom ?? 2,
     bearing: savedView?.bearing || 0,
@@ -1754,11 +2249,15 @@ function fmtDate(ts) {
   }).observe(document.getElementById('transitPanel'), { attributes: true, attributeFilter: ['class'] });
 
   const THEMES = {
-    default: { bg: '#f5f5dc', landcover: '#e6e6d6', landuse: '#e0e0d0', water: '#a0c8f0', building: '#d9d0c9', road: '#ffffff', roadLabel: '#555', roadHalo: '#fff', placeLabel: '#333', placeHalo: '#fff', poiLabel: '#333', poiHalo: '#fff', poiIcon: '#333333' },
-    dark:    { bg: '#1e1e24', landcover: '#2a2a30', landuse: '#252530', water: '#162740', building: '#3a3a45', road: '#52525e', roadLabel: '#cdcdd4', roadHalo: '#1e1e24', placeLabel: '#eaeaea', placeHalo: '#1e1e24', poiLabel: '#dcdce2', poiHalo: '#1e1e24', poiIcon: '#dcdce2' },
-    night:   { bg: '#05070f', landcover: '#0a0f1a', landuse: '#080d17', water: '#0d1a30', building: '#151c2a', road: '#293247', roadLabel: '#7a8aa8', roadHalo: '#05070f', placeLabel: '#a0b0cc', placeHalo: '#05070f', poiLabel: '#8ea0b8', poiHalo: '#05070f', poiIcon: '#8ea0b8' },
-    sepia:   { bg: '#efe1c8', landcover: '#e5d3b3', landuse: '#dec8a0', water: '#b5b99a', building: '#c9b28a', road: '#fbf2dd', roadLabel: '#6a563a', roadHalo: '#fbf2dd', placeLabel: '#3a2e1a', placeHalo: '#fbf2dd', poiLabel: '#3a2e1a', poiHalo: '#fbf2dd', poiIcon: '#3a2e1a' },
-    mono:    { bg: '#f2f2f2', landcover: '#e8e8e8', landuse: '#e0e0e0', water: '#c0c0c0', building: '#d4d4d4', road: '#ffffff', roadLabel: '#555', roadHalo: '#fff', placeLabel: '#222', placeHalo: '#fff', poiLabel: '#333', poiHalo: '#fff', poiIcon: '#333333' }
+    default:  { bg: '#f5f5dc', landcover: '#e6e6d6', landuse: '#e0e0d0', water: '#a0c8f0', building: '#d9d0c9', road: '#ffffff', roadLabel: '#555', roadHalo: '#fff', placeLabel: '#333', placeHalo: '#fff', poiLabel: '#333', poiHalo: '#fff', poiIcon: '#333333' },
+    dark:     { bg: '#1e1e24', landcover: '#2a2a30', landuse: '#252530', water: '#162740', building: '#3a3a45', road: '#52525e', roadLabel: '#cdcdd4', roadHalo: '#1e1e24', placeLabel: '#eaeaea', placeHalo: '#1e1e24', poiLabel: '#dcdce2', poiHalo: '#1e1e24', poiIcon: '#dcdce2' },
+    night:    { bg: '#05070f', landcover: '#0a0f1a', landuse: '#080d17', water: '#0d1a30', building: '#151c2a', road: '#293247', roadLabel: '#7a8aa8', roadHalo: '#05070f', placeLabel: '#a0b0cc', placeHalo: '#05070f', poiLabel: '#8ea0b8', poiHalo: '#05070f', poiIcon: '#8ea0b8' },
+    sepia:    { bg: '#efe1c8', landcover: '#e5d3b3', landuse: '#dec8a0', water: '#b5b99a', building: '#c9b28a', road: '#fbf2dd', roadLabel: '#6a563a', roadHalo: '#fbf2dd', placeLabel: '#3a2e1a', placeHalo: '#fbf2dd', poiLabel: '#3a2e1a', poiHalo: '#fbf2dd', poiIcon: '#3a2e1a' },
+    mono:     { bg: '#f2f2f2', landcover: '#e8e8e8', landuse: '#e0e0e0', water: '#c0c0c0', building: '#d4d4d4', road: '#ffffff', roadLabel: '#555', roadHalo: '#fff', placeLabel: '#222', placeHalo: '#fff', poiLabel: '#333', poiHalo: '#fff', poiIcon: '#333333' },
+    // Parchment/ink palette — continents painted aged vellum, oceans a muted
+    // steel blue, buildings burnt-sienna, roads drawn in dark ink. Still a
+    // flat-shaded style so every line stays crisp.
+    medieval: { bg: '#e6d3a3', landcover: '#e8d9b0', landuse: '#d9c390', water: '#7d98a6', building: '#a0603b', road: '#2e1e10', roadLabel: '#2e1810', roadHalo: '#f0e3bf', placeLabel: '#2e1810', placeHalo: '#f0e3bf', poiLabel: '#2e1810', poiHalo: '#f0e3bf', poiIcon: '#3a2416' }
   };
   function customToTheme(c) {
     return {
@@ -1797,6 +2296,10 @@ function fmtDate(ts) {
       map.setPaintProperty('water', 'fill-color', t.water);
       map.setPaintProperty('buildings', 'fill-color', t.building);
       map.setPaintProperty('roads', 'line-color', t.road);
+      // The low-zoom companion layer renders the same features from the
+      // base source at z0-5; keep its colour in sync so roads don't flip
+      // white when the camera pulls back.
+      map.setPaintProperty('roads-base', 'line-color', t.road);
       map.setPaintProperty('road-labels', 'text-color', t.roadLabel);
       map.setPaintProperty('road-labels', 'text-halo-color', t.roadHalo);
       map.setPaintProperty('places', 'text-color', t.placeLabel);
@@ -1804,11 +2307,25 @@ function fmtDate(ts) {
       map.setPaintProperty('poi-labels', 'text-color', t.poiLabel);
       map.setPaintProperty('poi-labels', 'text-halo-color', t.poiHalo);
       map.setPaintProperty('poi-icons', 'icon-color', t.poiIcon);
+      // Every other label layer also gets the theme's text + halo so the
+      // halo colour doesn't flip between layers (e.g. white on parks but
+      // parchment on POI). All label layers share placeLabel/placeHalo.
+      for (const id of ['places-base', 'park-labels', 'water-labels',
+                        'airport-labels', 'housenumbers',
+                        'route-trip-stop-labels']) {
+        try {
+          map.setPaintProperty(id, 'text-color', t.placeLabel);
+          map.setPaintProperty(id, 'text-halo-color', t.placeHalo);
+        } catch {}
+      }
     } catch {}
     localStorage.setItem('cc.theme', name);
     document.getElementById('map').style.background = t.bg;
     document.documentElement.style.setProperty('--cc-label-color', t.poiLabel);
     document.documentElement.style.setProperty('--cc-label-halo', t.poiHalo);
+    // Surface the current theme on the root element so the CSS can apply
+    // theme-specific chrome (e.g. the medieval parchment palette).
+    document.documentElement.setAttribute('data-theme', name);
   }
 
   class SettingsControl {
@@ -2023,10 +2540,10 @@ function fmtDate(ts) {
     await rebuildScheduleIndex();
     // The walk graph is chunky (80-120 MB live for a country-sized region);
     // defer it until the user actually asks to plan a route (see ensureWalkGraph).
-    applyTheme(localStorage.getItem('cc.theme') || 'default');
+    applyTheme(localStorage.getItem('cc.theme') || 'medieval');
   });
   map.on('styledata', () => {
-    applyTheme(localStorage.getItem('cc.theme') || 'default');
+    applyTheme(localStorage.getItem('cc.theme') || 'medieval');
   });
 
   const themeSelect = document.getElementById('themeSelect');
@@ -2047,7 +2564,7 @@ function fmtDate(ts) {
   function updateCustomVisibility() {
     customControls.style.display = themeSelect.value === 'custom' ? '' : 'none';
   }
-  themeSelect.value = localStorage.getItem('cc.theme') || 'default';
+  themeSelect.value = localStorage.getItem('cc.theme') || 'medieval';
   syncCustomInputs(loadCustomTheme());
   updateCustomVisibility();
   themeSelect.addEventListener('change', () => {
