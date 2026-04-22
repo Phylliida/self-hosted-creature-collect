@@ -18,7 +18,7 @@
     height: 100vh; height: -webkit-fill-available; height: 100dvh;
     overscroll-behavior: none;
   }
-  #map { position: absolute; inset: 0; background: #f5f5dc; }
+  #map { position: absolute; inset: 0; background: var(--ui-map-bg, #f5f5dc); }
   #install {
     position: absolute; left: 0; right: 0; top: 0; z-index: 20;
     padding: 10px 14px;
@@ -1176,6 +1176,103 @@
     pointer-events: none;
   }
 </style>
+<script>
+// Flash-prevention: read the saved theme from localStorage and apply its
+// UI palette (CSS vars + data-theme attribute + map bg) BEFORE the rest
+// of the page renders. Without this, every load briefly shows the default
+// blue/beige palette until maplibre is ready and the deferred applyTheme
+// runs. window.THEMES is then reused by the main script below.
+(function(){
+  window.THEMES = {
+    default:  { bg: '#f5f5dc', landcover: '#e6e6d6', landuse: '#e0e0d0', water: '#a0c8f0', building: '#d9d0c9', road: '#ffffff', roadLabel: '#555', roadHalo: '#fff', placeLabel: '#333', placeHalo: '#fff', poiLabel: '#333', poiHalo: '#fff', poiIcon: '#333333',
+                ui: { panelBg: '#ffffff', panelText: '#333', muted: '#888', border: 'transparent', hairline: '#eee', hover: '#f5f5f5', inputBg: '#ffffff', radius: '8px', shadow: '0 2px 8px rgba(0,0,0,0.2)', accent: '#3b7fdf', accentText: '#ffffff', accentBorder: '#3070c8', danger: '#c44' } },
+    dark:     { bg: '#1e1e24', landcover: '#2a2a30', landuse: '#252530', water: '#162740', building: '#3a3a45', road: '#52525e', roadLabel: '#cdcdd4', roadHalo: '#1e1e24', placeLabel: '#eaeaea', placeHalo: '#1e1e24', poiLabel: '#dcdce2', poiHalo: '#1e1e24', poiIcon: '#dcdce2',
+                ui: { panelBg: '#2a2a30', panelText: '#eaeaea', muted: '#a8a8b2', border: '#4a4a55', hairline: '#3a3a45', hover: '#35353c', inputBg: '#24242a', radius: '8px', shadow: '0 2px 12px rgba(0,0,0,0.5)', accent: '#5a9fe8', accentText: '#ffffff', accentBorder: '#3b7fdf', danger: '#e77' } },
+    night:    { bg: '#05070f', landcover: '#0a0f1a', landuse: '#080d17', water: '#0d1a30', building: '#151c2a', road: '#293247', roadLabel: '#7a8aa8', roadHalo: '#05070f', placeLabel: '#a0b0cc', placeHalo: '#05070f', poiLabel: '#8ea0b8', poiHalo: '#05070f', poiIcon: '#8ea0b8',
+                ui: { panelBg: '#0d1524', panelText: '#a8b8d2', muted: '#6a7f9e', border: '#1f2b3f', hairline: '#182236', hover: '#121b2c', inputBg: '#0a0f1a', radius: '8px', shadow: '0 2px 14px rgba(0,0,0,0.75)', accent: '#6a8fc0', accentText: '#eaf0fc', accentBorder: '#3a5a8e', danger: '#c66' } },
+    sepia:    { bg: '#efe1c8', landcover: '#e5d3b3', landuse: '#dec8a0', water: '#b5b99a', building: '#c9b28a', road: '#fbf2dd', roadLabel: '#6a563a', roadHalo: '#fbf2dd', placeLabel: '#3a2e1a', placeHalo: '#fbf2dd', poiLabel: '#3a2e1a', poiHalo: '#fbf2dd', poiIcon: '#3a2e1a',
+                ui: { panelBg: '#f0e3bf', panelText: '#3a2e1a', muted: '#7a6545', border: '#b49a70', hairline: '#d9c08c', hover: '#e5d3b3', inputBg: '#fbf2dd', radius: '6px', shadow: '0 2px 8px rgba(106, 86, 58, 0.3)', accent: '#a0593a', accentText: '#fbf2dd', accentBorder: '#7a3a20', danger: '#a33' } },
+    mono:     { bg: '#f2f2f2', landcover: '#e8e8e8', landuse: '#e0e0e0', water: '#c0c0c0', building: '#d4d4d4', road: '#ffffff', roadLabel: '#555', roadHalo: '#fff', placeLabel: '#222', placeHalo: '#fff', poiLabel: '#333', poiHalo: '#fff', poiIcon: '#333333',
+                ui: { panelBg: '#ffffff', panelText: '#333', muted: '#888', border: '#ccc', hairline: '#e8e8e8', hover: '#f5f5f5', inputBg: '#ffffff', radius: '6px', shadow: '0 2px 8px rgba(0,0,0,0.2)', accent: '#555', accentText: '#ffffff', accentBorder: '#333', danger: '#a33' } },
+    medieval: { bg: '#e6d3a3', landcover: '#e8d9b0', landuse: '#d9c390', water: '#7d98a6', building: '#a0603b', road: '#2e1e10', roadLabel: '#2e1810', roadHalo: '#f0e3bf', placeLabel: '#2e1810', placeHalo: '#f0e3bf', poiLabel: '#2e1810', poiHalo: '#f0e3bf', poiIcon: '#3a2416',
+                ui: { panelBg: '#f2e3b6', panelText: '#2e1d10', muted: '#6a4a2a', border: '#6a4a2a', hairline: '#6a4a2a', hover: '#e4cf9a', inputBg: '#f8ecc6', radius: '2px', shadow: '0 0 0 2px var(--ui-bg), 0 0 0 3px var(--ui-border), 0 4px 12px rgba(46, 29, 16, 0.25)', accent: '#9b4a2a', accentText: '#f8ecc6', accentBorder: '#7a3a20', danger: '#9b1c1c' } },
+    vaporwave: { bg: '#2d1b4e', landcover: '#3f2370', landuse: '#4a2a7e', water: '#ff71ce', building: '#7c4dff', road: '#01cdfe', roadLabel: '#ffffff', roadHalo: '#2d1b4e', placeLabel: '#05ffa1', placeHalo: '#2d1b4e', poiLabel: '#fffb96', poiHalo: '#2d1b4e', poiIcon: '#ff71ce',
+                ui: { panelBg: '#3a2560', panelText: '#ffffff', muted: '#b38cdb', border: '#ff71ce', hairline: '#4a2968', hover: '#3f2970', inputBg: '#2d1b4e', radius: '4px', shadow: '0 0 20px rgba(255,113,206,0.4), 0 2px 8px rgba(0,0,0,0.5)', accent: '#ff71ce', accentText: '#2d1b4e', accentBorder: '#b967ff', danger: '#ff6b6b' } },
+    blueprint: { bg: '#0e3a5f', landcover: '#12456e', landuse: '#0e3a5f', water: '#082033', building: '#195580', road: '#a8d8f0', roadLabel: '#c8e8f8', roadHalo: '#0e3a5f', placeLabel: '#e0f4ff', placeHalo: '#0e3a5f', poiLabel: '#a8d8f0', poiHalo: '#0e3a5f', poiIcon: '#a8d8f0',
+                ui: { panelBg: '#12456e', panelText: '#e0f4ff', muted: '#7aa8c8', border: '#a8d8f0', hairline: '#1d5c8a', hover: '#1a5480', inputBg: '#0a2944', radius: '0px', shadow: '0 0 0 1px rgba(168,216,240,0.4), 0 4px 12px rgba(0,0,0,0.4)', accent: '#a8d8f0', accentText: '#0e3a5f', accentBorder: '#e0f4ff', danger: '#ff8080' } },
+    terminal: { bg: '#050a05', landcover: '#0a1408', landuse: '#0c1a08', water: '#041f14', building: '#16281a', road: '#33ff66', roadLabel: '#66ff99', roadHalo: '#050a05', placeLabel: '#33ff66', placeHalo: '#050a05', poiLabel: '#99ff66', poiHalo: '#050a05', poiIcon: '#33ff66',
+                ui: { panelBg: '#050a05', panelText: '#33ff66', muted: '#1a8a2e', border: '#33ff66', hairline: '#1a3a20', hover: '#0a1a0d', inputBg: '#050a05', radius: '0px', shadow: '0 0 12px rgba(51,255,102,0.35)', accent: '#33ff66', accentText: '#050a05', accentBorder: '#66ff99', danger: '#ff4040' } },
+    forest: { bg: '#e8dfc0', landcover: '#c4d4a0', landuse: '#b0c08e', water: '#7a9aa0', building: '#8a6d4a', road: '#f5ecd0', roadLabel: '#3d2f1f', roadHalo: '#f5ecd0', placeLabel: '#2a4028', placeHalo: '#f5ecd0', poiLabel: '#2a4028', poiHalo: '#f5ecd0', poiIcon: '#3a5a38',
+              ui: { panelBg: '#faf0d8', panelText: '#2a4028', muted: '#6a8a5a', border: '#8aa878', hairline: '#c4d4a0', hover: '#eee2c0', inputBg: '#faf4e0', radius: '12px', shadow: '0 4px 14px rgba(42,64,40,0.25)', accent: '#4a7a4a', accentText: '#faf0d8', accentBorder: '#2a4028', danger: '#a84020' } },
+    neon: { bg: '#080016', landcover: '#10001e', landuse: '#0c0018', water: '#00f0ff', building: '#1a0032', road: '#ff00ff', roadLabel: '#ffffff', roadHalo: '#080016', placeLabel: '#ffff4a', placeHalo: '#080016', poiLabel: '#00ff88', poiHalo: '#080016', poiIcon: '#ff00ff',
+            ui: { panelBg: '#0f0028', panelText: '#ffffff', muted: '#8844aa', border: '#ff00ff', hairline: '#330055', hover: '#1a003a', inputBg: '#080016', radius: '2px', shadow: '0 0 14px rgba(255,0,255,0.5), 0 0 6px rgba(0,240,255,0.35)', accent: '#ff00ff', accentText: '#ffffff', accentBorder: '#00ffff', danger: '#ff3366' } },
+    pastel: { bg: '#fef3f0', landcover: '#fae0dc', landuse: '#f4d0d8', water: '#b8e0e4', building: '#e8c8d4', road: '#ffffff', roadLabel: '#a87a8a', roadHalo: '#ffffff', placeLabel: '#7a4a5a', placeHalo: '#fef3f0', poiLabel: '#7a4a5a', poiHalo: '#fef3f0', poiIcon: '#d48aa0',
+              ui: { panelBg: '#fffafa', panelText: '#7a4a5a', muted: '#b89aa8', border: '#e8c8d4', hairline: '#f4e0e6', hover: '#f9e8ee', inputBg: '#fffafa', radius: '14px', shadow: '0 4px 16px rgba(232,168,200,0.45)', accent: '#e89ab0', accentText: '#ffffff', accentBorder: '#d48aa0', danger: '#cc6680' } },
+    autumn: { bg: '#f5e6d3', landcover: '#f0d8b8', landuse: '#eccfa8', water: '#7aa8d8', building: '#c87a4a', road: '#fffbf0', roadLabel: '#6a3a10', roadHalo: '#fffbf0', placeLabel: '#5a2a08', placeHalo: '#fffbf0', poiLabel: '#5a2a08', poiHalo: '#fffbf0', poiIcon: '#a85028',
+              ui: { panelBg: '#fef5e6', panelText: '#5a2a08', muted: '#9a6a42', border: '#d4a878', hairline: '#f0d8b8', hover: '#f5e6c8', inputBg: '#fffbf0', radius: '8px', shadow: '0 3px 12px rgba(200,120,80,0.3)', accent: '#d4632a', accentText: '#fef5e6', accentBorder: '#a8431a', danger: '#b83020' } },
+    ocean: { bg: '#e4f1f0', landcover: '#c8e4e0', landuse: '#b4d4d0', water: '#0a4a6a', building: '#4a7888', road: '#ffffff', roadLabel: '#1a3848', roadHalo: '#ffffff', placeLabel: '#0a2838', placeHalo: '#ffffff', poiLabel: '#0a2838', poiHalo: '#ffffff', poiIcon: '#0a4a6a',
+             ui: { panelBg: '#f0faf9', panelText: '#0a2838', muted: '#5a8090', border: '#a0c8c4', hairline: '#c8e4e0', hover: '#e0efed', inputBg: '#f8fcfb', radius: '10px', shadow: '0 4px 14px rgba(10,74,106,0.25)', accent: '#0e8a9a', accentText: '#f0faf9', accentBorder: '#0a4a6a', danger: '#c44040' } },
+    desert: { bg: '#f0d8a8', landcover: '#edc990', landuse: '#e8ba78', water: '#a8c8d8', building: '#c86a3a', road: '#fdf5e0', roadLabel: '#5a3010', roadHalo: '#fdf5e0', placeLabel: '#4a2808', placeHalo: '#fdf5e0', poiLabel: '#4a2808', poiHalo: '#fdf5e0', poiIcon: '#a84a18',
+              ui: { panelBg: '#fcedc8', panelText: '#4a2808', muted: '#8a6030', border: '#c89850', hairline: '#edc990', hover: '#f5deb0', inputBg: '#fdf5e0', radius: '6px', shadow: '0 3px 10px rgba(168,74,24,0.3)', accent: '#c86a3a', accentText: '#fdf5e0', accentBorder: '#a84a18', danger: '#b02020' } },
+    nordic: { bg: '#f0f4f8', landcover: '#e0e8f0', landuse: '#d4dce6', water: '#8aa8c4', building: '#c4d0dc', road: '#ffffff', roadLabel: '#4a5868', roadHalo: '#ffffff', placeLabel: '#1a2a3a', placeHalo: '#ffffff', poiLabel: '#1a2a3a', poiHalo: '#ffffff', poiIcon: '#2a5078',
+              ui: { panelBg: '#fafcfe', panelText: '#1a2a3a', muted: '#6a7c8c', border: '#b8c8d8', hairline: '#e0e8f0', hover: '#e8eff5', inputBg: '#ffffff', radius: '6px', shadow: '0 2px 10px rgba(26,42,58,0.15)', accent: '#4a7aaa', accentText: '#ffffff', accentBorder: '#2a5078', danger: '#b03040' } },
+    sakura: { bg: '#faecef', landcover: '#fadee2', landuse: '#f5d0d8', water: '#c8d8e8', building: '#e8b8c4', road: '#ffffff', roadLabel: '#8a3a58', roadHalo: '#ffffff', placeLabel: '#5a1838', placeHalo: '#ffffff', poiLabel: '#5a1838', poiHalo: '#ffffff', poiIcon: '#c83878',
+              ui: { panelBg: '#fefafa', panelText: '#5a1838', muted: '#a8708a', border: '#e8b8c4', hairline: '#f5d0d8', hover: '#fae0e6', inputBg: '#fefafa', radius: '12px', shadow: '0 4px 16px rgba(200,56,120,0.25)', accent: '#d8548a', accentText: '#ffffff', accentBorder: '#a8305a', danger: '#a82040' } },
+    amber: { bg: '#0c0803', landcover: '#150e04', landuse: '#1a1105', water: '#1f1a0a', building: '#2a1d08', road: '#ffaa00', roadLabel: '#ffcc33', roadHalo: '#0c0803', placeLabel: '#ffaa00', placeHalo: '#0c0803', poiLabel: '#ffcc66', poiHalo: '#0c0803', poiIcon: '#ffaa00',
+             ui: { panelBg: '#0c0803', panelText: '#ffaa00', muted: '#8a5a0a', border: '#ffaa00', hairline: '#3a2408', hover: '#18110a', inputBg: '#0c0803', radius: '0px', shadow: '0 0 12px rgba(255,170,0,0.35)', accent: '#ffaa00', accentText: '#0c0803', accentBorder: '#ffcc33', danger: '#ff4040' } },
+    galaxy: { bg: '#0a0a24', landcover: '#141030', landuse: '#1a1440', water: '#050515', building: '#2a1e50', road: '#c0c8e0', roadLabel: '#ffffff', roadHalo: '#0a0a24', placeLabel: '#e0d0ff', placeHalo: '#0a0a24', poiLabel: '#ffee88', poiHalo: '#0a0a24', poiIcon: '#d0b0ff',
+              ui: { panelBg: '#14103a', panelText: '#e0d0ff', muted: '#7a68a8', border: '#5a4898', hairline: '#281e58', hover: '#1c1848', inputBg: '#0a0a24', radius: '8px', shadow: '0 0 20px rgba(180,130,255,0.35)', accent: '#a080ff', accentText: '#0a0a24', accentBorder: '#d0b0ff', danger: '#ff7070' } },
+    noir: { bg: '#f2f2f2', landcover: '#e8e8e8', landuse: '#d8d8d8', water: '#a8a8a8', building: '#585858', road: '#ffffff', roadLabel: '#202020', roadHalo: '#ffffff', placeLabel: '#000000', placeHalo: '#ffffff', poiLabel: '#000000', poiHalo: '#ffffff', poiIcon: '#202020',
+            ui: { panelBg: '#ffffff', panelText: '#101010', muted: '#707070', border: '#000000', hairline: '#d0d0d0', hover: '#f0f0f0', inputBg: '#ffffff', radius: '0px', shadow: '4px 4px 0 #000000', accent: '#c8101c', accentText: '#ffffff', accentBorder: '#880808', danger: '#c8101c' } },
+    gameboy: { bg: '#9bbc0f', landcover: '#8bac0f', landuse: '#8bac0f', water: '#306230', building: '#306230', road: '#e0f8d0', roadLabel: '#0f380f', roadHalo: '#9bbc0f', placeLabel: '#0f380f', placeHalo: '#9bbc0f', poiLabel: '#0f380f', poiHalo: '#9bbc0f', poiIcon: '#0f380f',
+               ui: { panelBg: '#9bbc0f', panelText: '#0f380f', muted: '#306230', border: '#0f380f', hairline: '#306230', hover: '#8bac0f', inputBg: '#e0f8d0', radius: '0px', shadow: '3px 3px 0 #0f380f', accent: '#0f380f', accentText: '#9bbc0f', accentBorder: '#0f380f', danger: '#b03030' } },
+    mint: { bg: '#d8f0dc', landcover: '#c0e6c8', landuse: '#a8d8b2', water: '#6a9a7a', building: '#3a2418', road: '#f4fff5', roadLabel: '#3a2418', roadHalo: '#f4fff5', placeLabel: '#2a1a10', placeHalo: '#f4fff5', poiLabel: '#2a1a10', poiHalo: '#f4fff5', poiIcon: '#5a3820',
+            ui: { panelBg: '#f0faf2', panelText: '#2a1a10', muted: '#6a5a50', border: '#8a6a50', hairline: '#c0e6c8', hover: '#e0f0e4', inputBg: '#f8fcf8', radius: '8px', shadow: '0 3px 10px rgba(58,36,24,0.25)', accent: '#5a3820', accentText: '#d8f0dc', accentBorder: '#2a1a10', danger: '#a03030' } },
+    coral: { bg: '#ffeee0', landcover: '#ffe0d0', landuse: '#ffd0bc', water: '#2a9098', building: '#ff8080', road: '#ffffff', roadLabel: '#8a3020', roadHalo: '#ffffff', placeLabel: '#4a1810', placeHalo: '#ffffff', poiLabel: '#4a1810', poiHalo: '#ffffff', poiIcon: '#ff5a4a',
+             ui: { panelBg: '#fff8f4', panelText: '#4a1810', muted: '#a85a48', border: '#ff9a8a', hairline: '#ffd0bc', hover: '#ffe4d4', inputBg: '#fffcf8', radius: '12px', shadow: '0 4px 14px rgba(255,90,74,0.3)', accent: '#ff5a4a', accentText: '#ffffff', accentBorder: '#c83a2a', danger: '#c81c1c' } }
+  };
+  function resolve(name) {
+    if (name === 'custom') {
+      try {
+        const c = JSON.parse(localStorage.getItem('cc.themeCustom') || 'null');
+        if (c && c.bg) return {
+          bg: c.bg, landcover: c.land, ui: window.THEMES.default.ui
+        };
+      } catch {}
+    }
+    return window.THEMES[name] || window.THEMES.default;
+  }
+  var name = localStorage.getItem('cc.theme') || 'medieval';
+  var t = resolve(name);
+  var r = document.documentElement;
+  r.setAttribute('data-theme', name);
+  var s = r.style;
+  s.setProperty('--ui-map-bg', t.landcover);
+  if (t.ui) {
+    s.setProperty('--ui-bg',            t.ui.panelBg);
+    s.setProperty('--ui-text',          t.ui.panelText);
+    s.setProperty('--ui-muted',         t.ui.muted);
+    s.setProperty('--ui-border',        t.ui.border);
+    s.setProperty('--ui-hairline',      t.ui.hairline);
+    s.setProperty('--ui-hover',         t.ui.hover);
+    s.setProperty('--ui-input-bg',      t.ui.inputBg);
+    s.setProperty('--ui-radius',        t.ui.radius);
+    s.setProperty('--ui-shadow',        t.ui.shadow);
+    s.setProperty('--ui-accent',        t.ui.accent);
+    s.setProperty('--ui-accent-text',   t.ui.accentText);
+    s.setProperty('--ui-accent-border', t.ui.accentBorder);
+    s.setProperty('--ui-danger',        t.ui.danger);
+  }
+  // POI label color/halo default for .fav-label until applyTheme runs.
+  s.setProperty('--cc-label-color', t.poiLabel || '#333');
+  s.setProperty('--cc-label-halo',  t.poiHalo  || '#fff');
+  // Browser chrome (address bar tint on mobile) should also match.
+  try {
+    const m = document.querySelector('meta[name="theme-color"]');
+    if (m && t.ui && t.ui.panelBg) m.setAttribute('content', t.ui.panelBg);
+  } catch {}
+})();
+</script>
 </head>
 <body>
 <div id="map"></div>
@@ -1843,6 +1940,27 @@ function fmtDate(ts) {
     try { return JSON.parse(localStorage.getItem(viewKey) || 'null'); } catch { return null; }
   })();
 
+  // Resolve the saved theme's map palette NOW (before building the style)
+  // so the canvas's first frame paints the right colors. applyTheme runs
+  // async after 'styledata' — too late to avoid the beige-before-theme flash.
+  const _initTheme = (() => {
+    const name = localStorage.getItem('cc.theme') || 'medieval';
+    const T = window.THEMES;
+    if (name === 'custom') {
+      try {
+        const c = JSON.parse(localStorage.getItem('cc.themeCustom') || 'null');
+        if (c && c.bg) return {
+          bg: c.bg, landcover: c.land, landuse: c.land, water: c.water,
+          building: c.building, road: c.road,
+          roadLabel: c.labelText, placeLabel: c.labelText, poiLabel: c.labelText,
+          roadHalo: c.labelHalo, placeHalo: c.labelHalo, poiHalo: c.labelHalo,
+          poiIcon: c.poiIcon, ui: T.default.ui
+        };
+      } catch {}
+    }
+    return T[name] || T.default;
+  })();
+
   const map = new maplibregl.Map({
     container: 'map',
     hash: true,
@@ -1875,22 +1993,22 @@ function fmtDate(ts) {
         'housenumbers': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } }
       },
       layers: [
-        { id: 'bg', type: 'background', paint: { 'background-color': '#f5f5dc' } },
+        { id: 'bg', type: 'background', paint: { 'background-color': _initTheme.landcover } },
         { id: 'water-base', type: 'fill', source: 'base', 'source-layer': 'water',
-          paint: { 'fill-color': '#a0c8f0' } },
-        { id: 'landcover', type: 'fill', source: 'local', 'source-layer': 'landcover', paint: { 'fill-color': '#e6e6d6' } },
-        { id: 'landuse', type: 'fill', source: 'local', 'source-layer': 'landuse', paint: { 'fill-color': '#e0e0d0' } },
+          paint: { 'fill-color': _initTheme.water } },
+        { id: 'landcover', type: 'fill', source: 'local', 'source-layer': 'landcover', paint: { 'fill-color': _initTheme.landcover } },
+        { id: 'landuse', type: 'fill', source: 'local', 'source-layer': 'landuse', paint: { 'fill-color': _initTheme.landuse } },
         { id: 'park', type: 'fill', source: 'local', 'source-layer': 'park', minzoom: 11,
           paint: { 'fill-color': '#c6e2c0', 'fill-opacity': 0.65 } },
-        { id: 'water', type: 'fill', source: 'local', 'source-layer': 'water', paint: { 'fill-color': '#a0c8f0' } },
-        { id: 'buildings', type: 'fill', source: 'local', 'source-layer': 'building', minzoom: 13, paint: { 'fill-color': '#d9d0c9' } },
+        { id: 'water', type: 'fill', source: 'local', 'source-layer': 'water', paint: { 'fill-color': _initTheme.water } },
+        { id: 'buildings', type: 'fill', source: 'local', 'source-layer': 'building', minzoom: 13, paint: { 'fill-color': _initTheme.building } },
         { id: 'roads-base', type: 'line', source: 'base', 'source-layer': 'transportation',
           filter: ['in', ['get', 'class'], ['literal', ['motorway', 'trunk', 'primary']]],
           paint: {
-            'line-color': '#ffffff',
+            'line-color': _initTheme.road,
             'line-width': ['interpolate', ['linear'], ['zoom'], 5, 0.5, 10, 1.2, 14, 1.8, 18, 2.6]
           } },
-        { id: 'roads', type: 'line', source: 'local', 'source-layer': 'transportation', paint: { 'line-color': '#ffffff', 'line-width': 1 } },
+        { id: 'roads', type: 'line', source: 'local', 'source-layer': 'transportation', paint: { 'line-color': _initTheme.road, 'line-width': 1 } },
         { id: 'rail-mainline', type: 'line', source: 'local', 'source-layer': 'transportation',
           filter: ['==', ['get', 'class'], 'rail'],
           layout: { visibility: localStorage.getItem('cc.transitOn') === '0' ? 'none' : 'visible' },
@@ -1930,7 +2048,7 @@ function fmtDate(ts) {
           filter: ['!=', ['get', 'kind'], 'transit'],
           layout: { 'line-cap': 'round', 'line-join': 'round' },
           paint: {
-            'line-color': '#3b7fdf',
+            'line-color': _initTheme.ui?.accent || '#3b7fdf',
             'line-dasharray': [1.5, 1.5],
             'line-width': ['interpolate', ['linear'], ['zoom'], 10, 2.5, 16, 5, 20, 9]
           } },
@@ -1960,8 +2078,8 @@ function fmtDate(ts) {
             'text-allow-overlap': false
           },
           paint: {
-            'text-color': '#333',
-            'text-halo-color': '#fff',
+            'text-color': _initTheme.placeLabel,
+            'text-halo-color': _initTheme.placeHalo,
             'text-halo-width': 1.5
           } },
         { id: 'bus-routes', type: 'line', source: 'bus-routes',
@@ -1983,7 +2101,7 @@ function fmtDate(ts) {
           minzoom: 13,
           layout: { 'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name'], ['get', 'name_int']], 'text-font': ['KlokanTech Noto Sans Regular'],
                     'text-size': 11, 'symbol-placement': 'line' },
-          paint: { 'text-color': '#555', 'text-halo-color': '#fff', 'text-halo-width': 1 } },
+          paint: { 'text-color': _initTheme.roadLabel, 'text-halo-color': _initTheme.roadHalo, 'text-halo-width': 1 } },
         { id: 'housenumbers', type: 'symbol', source: 'housenumbers',
           minzoom: 17,
           layout: {
@@ -1992,7 +2110,7 @@ function fmtDate(ts) {
             'text-size': 10,
             'text-anchor': 'center',
           },
-          paint: { 'text-color': '#7a6f65', 'text-halo-color': '#fff', 'text-halo-width': 1 } },
+          paint: { 'text-color': _initTheme.placeLabel, 'text-halo-color': _initTheme.placeHalo, 'text-halo-width': 1 } },
         { id: 'park-labels', type: 'symbol', source: 'local', 'source-layer': 'park',
           minzoom: 12,
           layout: {
@@ -2000,7 +2118,7 @@ function fmtDate(ts) {
             'text-font': ['KlokanTech Noto Sans Regular'],
             'text-size': 11,
           },
-          paint: { 'text-color': '#4a7a3a', 'text-halo-color': '#fff', 'text-halo-width': 1 } },
+          paint: { 'text-color': _initTheme.placeLabel, 'text-halo-color': _initTheme.placeHalo, 'text-halo-width': 1 } },
         { id: 'water-labels', type: 'symbol', source: 'local', 'source-layer': 'water_name',
           minzoom: 10,
           layout: {
@@ -2009,7 +2127,7 @@ function fmtDate(ts) {
             'text-size': 11,
             'text-letter-spacing': 0.08,
           },
-          paint: { 'text-color': '#4a6a8a', 'text-halo-color': '#bcdcf2', 'text-halo-width': 1 } },
+          paint: { 'text-color': _initTheme.placeLabel, 'text-halo-color': _initTheme.placeHalo, 'text-halo-width': 1 } },
         { id: 'airport-labels', type: 'symbol', source: 'local', 'source-layer': 'aerodrome_label',
           minzoom: 10,
           layout: {
@@ -2017,7 +2135,7 @@ function fmtDate(ts) {
             'text-font': ['KlokanTech Noto Sans Regular'],
             'text-size': 11,
           },
-          paint: { 'text-color': '#555', 'text-halo-color': '#fff', 'text-halo-width': 1 } },
+          paint: { 'text-color': _initTheme.placeLabel, 'text-halo-color': _initTheme.placeHalo, 'text-halo-width': 1 } },
         { id: 'poi-icons', type: 'symbol', source: 'local', 'source-layer': 'poi',
           layout: {
             'icon-image': ['coalesce',
@@ -2030,7 +2148,7 @@ function fmtDate(ts) {
             'icon-ignore-placement': true
           },
           paint: {
-            'icon-color': '#333',
+            'icon-color': _initTheme.poiIcon,
             // Bus stops stay visible from the POI source's native z12;
             // everything else waits until z13 so the low-zoom map stays
             // legible and transit remains findable. `step` must be the
@@ -2045,7 +2163,7 @@ function fmtDate(ts) {
           layout: { 'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name'], ['get', 'name_int']], 'text-font': ['KlokanTech Noto Sans Regular'],
                     'text-size': 11, 'text-offset': [0, 0.9], 'text-anchor': 'top',
                     'text-optional': true },
-          paint: { 'text-color': '#333', 'text-halo-color': '#fff', 'text-halo-width': 1.5 } },
+          paint: { 'text-color': _initTheme.poiLabel, 'text-halo-color': _initTheme.poiHalo, 'text-halo-width': 1.5 } },
         { id: 'boundary-country-base', type: 'line', source: 'base', 'source-layer': 'boundary',
           filter: ['all', ['==', ['get', 'admin_level'], 2], ['!=', ['get', 'maritime'], 1]],
           paint: { 'line-color': '#888', 'line-width': ['interpolate', ['linear'], ['zoom'], 0, 0.5, 6, 1, 12, 1.4] } },
@@ -2071,8 +2189,8 @@ function fmtDate(ts) {
               14, ['match', ['get', 'class'], 'city', 14, 'town', 11, 10]
             ]
           },
-          paint: { 'text-color': '#333', 'text-halo-color': '#fff', 'text-halo-width': 1.2 } },
-        { id: 'places', type: 'symbol', source: 'local', 'source-layer': 'place',
+          paint: { 'text-color': _initTheme.placeLabel, 'text-halo-color': _initTheme.placeHalo, 'text-halo-width': 1.2 } },
+        { id: 'places', type: 'symbol', 'source': 'local', 'source-layer': 'place',
           layout: {
             'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name'], ['get', 'name_int']],
             'text-font': ['KlokanTech Noto Sans Regular'],
@@ -2086,7 +2204,7 @@ function fmtDate(ts) {
             ],
             'text-padding': 1
           },
-          paint: { 'text-color': '#333', 'text-halo-color': '#fff', 'text-halo-width': 1.2 } }
+          paint: { 'text-color': _initTheme.placeLabel, 'text-halo-color': _initTheme.placeHalo, 'text-halo-width': 1.2 } }
       ]
     },
   });
@@ -2374,75 +2492,9 @@ function fmtDate(ts) {
     }
   }).observe(document.getElementById('transitPanel'), { attributes: true, attributeFilter: ['class'] });
 
-  const THEMES = {
-    default:  { bg: '#f5f5dc', landcover: '#e6e6d6', landuse: '#e0e0d0', water: '#a0c8f0', building: '#d9d0c9', road: '#ffffff', roadLabel: '#555', roadHalo: '#fff', placeLabel: '#333', placeHalo: '#fff', poiLabel: '#333', poiHalo: '#fff', poiIcon: '#333333',
-                ui: { panelBg: '#ffffff', panelText: '#333', muted: '#888', border: 'transparent', hairline: '#eee', hover: '#f5f5f5', inputBg: '#ffffff', radius: '8px', shadow: '0 2px 8px rgba(0,0,0,0.2)', accent: '#3b7fdf', accentText: '#ffffff', accentBorder: '#3070c8', danger: '#c44' } },
-    dark:     { bg: '#1e1e24', landcover: '#2a2a30', landuse: '#252530', water: '#162740', building: '#3a3a45', road: '#52525e', roadLabel: '#cdcdd4', roadHalo: '#1e1e24', placeLabel: '#eaeaea', placeHalo: '#1e1e24', poiLabel: '#dcdce2', poiHalo: '#1e1e24', poiIcon: '#dcdce2',
-                ui: { panelBg: '#2a2a30', panelText: '#eaeaea', muted: '#a8a8b2', border: '#4a4a55', hairline: '#3a3a45', hover: '#35353c', inputBg: '#24242a', radius: '8px', shadow: '0 2px 12px rgba(0,0,0,0.5)', accent: '#5a9fe8', accentText: '#ffffff', accentBorder: '#3b7fdf', danger: '#e77' } },
-    night:    { bg: '#05070f', landcover: '#0a0f1a', landuse: '#080d17', water: '#0d1a30', building: '#151c2a', road: '#293247', roadLabel: '#7a8aa8', roadHalo: '#05070f', placeLabel: '#a0b0cc', placeHalo: '#05070f', poiLabel: '#8ea0b8', poiHalo: '#05070f', poiIcon: '#8ea0b8',
-                ui: { panelBg: '#0d1524', panelText: '#a8b8d2', muted: '#6a7f9e', border: '#1f2b3f', hairline: '#182236', hover: '#121b2c', inputBg: '#0a0f1a', radius: '8px', shadow: '0 2px 14px rgba(0,0,0,0.75)', accent: '#6a8fc0', accentText: '#eaf0fc', accentBorder: '#3a5a8e', danger: '#c66' } },
-    sepia:    { bg: '#efe1c8', landcover: '#e5d3b3', landuse: '#dec8a0', water: '#b5b99a', building: '#c9b28a', road: '#fbf2dd', roadLabel: '#6a563a', roadHalo: '#fbf2dd', placeLabel: '#3a2e1a', placeHalo: '#fbf2dd', poiLabel: '#3a2e1a', poiHalo: '#fbf2dd', poiIcon: '#3a2e1a',
-                ui: { panelBg: '#f0e3bf', panelText: '#3a2e1a', muted: '#7a6545', border: '#b49a70', hairline: '#d9c08c', hover: '#e5d3b3', inputBg: '#fbf2dd', radius: '6px', shadow: '0 2px 8px rgba(106, 86, 58, 0.3)', accent: '#a0593a', accentText: '#fbf2dd', accentBorder: '#7a3a20', danger: '#a33' } },
-    mono:     { bg: '#f2f2f2', landcover: '#e8e8e8', landuse: '#e0e0e0', water: '#c0c0c0', building: '#d4d4d4', road: '#ffffff', roadLabel: '#555', roadHalo: '#fff', placeLabel: '#222', placeHalo: '#fff', poiLabel: '#333', poiHalo: '#fff', poiIcon: '#333333',
-                ui: { panelBg: '#ffffff', panelText: '#333', muted: '#888', border: '#ccc', hairline: '#e8e8e8', hover: '#f5f5f5', inputBg: '#ffffff', radius: '6px', shadow: '0 2px 8px rgba(0,0,0,0.2)', accent: '#555', accentText: '#ffffff', accentBorder: '#333', danger: '#a33' } },
-    // Parchment/ink palette — continents painted aged vellum, oceans a muted
-    // steel blue, buildings burnt-sienna, roads drawn in dark ink. Still a
-    // flat-shaded style so every line stays crisp. The UI palette uses
-    // double-ruled borders (via box-shadow) for the period look.
-    medieval: { bg: '#e6d3a3', landcover: '#e8d9b0', landuse: '#d9c390', water: '#7d98a6', building: '#a0603b', road: '#2e1e10', roadLabel: '#2e1810', roadHalo: '#f0e3bf', placeLabel: '#2e1810', placeHalo: '#f0e3bf', poiLabel: '#2e1810', poiHalo: '#f0e3bf', poiIcon: '#3a2416',
-                ui: { panelBg: '#f2e3b6', panelText: '#2e1d10', muted: '#6a4a2a', border: '#6a4a2a', hairline: '#6a4a2a', hover: '#e4cf9a', inputBg: '#f8ecc6', radius: '2px', shadow: '0 0 0 2px var(--ui-bg), 0 0 0 3px var(--ui-border), 0 4px 12px rgba(46, 29, 16, 0.25)', accent: '#9b4a2a', accentText: '#f8ecc6', accentBorder: '#7a3a20', danger: '#9b1c1c' } },
-    // Synthwave neon — 80s sunset, hot pink highways on deep purple land.
-    vaporwave: { bg: '#2d1b4e', landcover: '#3f2370', landuse: '#4a2a7e', water: '#ff71ce', building: '#7c4dff', road: '#01cdfe', roadLabel: '#ffffff', roadHalo: '#2d1b4e', placeLabel: '#05ffa1', placeHalo: '#2d1b4e', poiLabel: '#fffb96', poiHalo: '#2d1b4e', poiIcon: '#ff71ce',
-                ui: { panelBg: '#3a2560', panelText: '#ffffff', muted: '#b38cdb', border: '#ff71ce', hairline: '#4a2968', hover: '#3f2970', inputBg: '#2d1b4e', radius: '4px', shadow: '0 0 20px rgba(255,113,206,0.4), 0 2px 8px rgba(0,0,0,0.5)', accent: '#ff71ce', accentText: '#2d1b4e', accentBorder: '#b967ff', danger: '#ff6b6b' } },
-    // Blueprint — technical schematic, pale cyan lines on deep navy.
-    blueprint: { bg: '#0e3a5f', landcover: '#12456e', landuse: '#0e3a5f', water: '#082033', building: '#195580', road: '#a8d8f0', roadLabel: '#c8e8f8', roadHalo: '#0e3a5f', placeLabel: '#e0f4ff', placeHalo: '#0e3a5f', poiLabel: '#a8d8f0', poiHalo: '#0e3a5f', poiIcon: '#a8d8f0',
-                ui: { panelBg: '#12456e', panelText: '#e0f4ff', muted: '#7aa8c8', border: '#a8d8f0', hairline: '#1d5c8a', hover: '#1a5480', inputBg: '#0a2944', radius: '0px', shadow: '0 0 0 1px rgba(168,216,240,0.4), 0 4px 12px rgba(0,0,0,0.4)', accent: '#a8d8f0', accentText: '#0e3a5f', accentBorder: '#e0f4ff', danger: '#ff8080' } },
-    // Phosphor CRT — green-on-black terminal, every road a command-line trace.
-    terminal: { bg: '#050a05', landcover: '#0a1408', landuse: '#0c1a08', water: '#041f14', building: '#16281a', road: '#33ff66', roadLabel: '#66ff99', roadHalo: '#050a05', placeLabel: '#33ff66', placeHalo: '#050a05', poiLabel: '#99ff66', poiHalo: '#050a05', poiIcon: '#33ff66',
-                ui: { panelBg: '#050a05', panelText: '#33ff66', muted: '#1a8a2e', border: '#33ff66', hairline: '#1a3a20', hover: '#0a1a0d', inputBg: '#050a05', radius: '0px', shadow: '0 0 12px rgba(51,255,102,0.35)', accent: '#33ff66', accentText: '#050a05', accentBorder: '#66ff99', danger: '#ff4040' } },
-    // Forest — mossy greens and trail-parchment, Studio Ghibli woodland.
-    forest: { bg: '#e8dfc0', landcover: '#c4d4a0', landuse: '#b0c08e', water: '#7a9aa0', building: '#8a6d4a', road: '#f5ecd0', roadLabel: '#3d2f1f', roadHalo: '#f5ecd0', placeLabel: '#2a4028', placeHalo: '#f5ecd0', poiLabel: '#2a4028', poiHalo: '#f5ecd0', poiIcon: '#3a5a38',
-              ui: { panelBg: '#faf0d8', panelText: '#2a4028', muted: '#6a8a5a', border: '#8aa878', hairline: '#c4d4a0', hover: '#eee2c0', inputBg: '#faf4e0', radius: '12px', shadow: '0 4px 14px rgba(42,64,40,0.25)', accent: '#4a7a4a', accentText: '#faf0d8', accentBorder: '#2a4028', danger: '#a84020' } },
-    // Neon arcade — hot magenta roads, electric cyan water, pitch-black map.
-    neon: { bg: '#080016', landcover: '#10001e', landuse: '#0c0018', water: '#00f0ff', building: '#1a0032', road: '#ff00ff', roadLabel: '#ffffff', roadHalo: '#080016', placeLabel: '#ffff4a', placeHalo: '#080016', poiLabel: '#00ff88', poiHalo: '#080016', poiIcon: '#ff00ff',
-            ui: { panelBg: '#0f0028', panelText: '#ffffff', muted: '#8844aa', border: '#ff00ff', hairline: '#330055', hover: '#1a003a', inputBg: '#080016', radius: '2px', shadow: '0 0 14px rgba(255,0,255,0.5), 0 0 6px rgba(0,240,255,0.35)', accent: '#ff00ff', accentText: '#ffffff', accentBorder: '#00ffff', danger: '#ff3366' } },
-    // Pastel — soft blush pinks and pale mint water, rounded and gentle.
-    pastel: { bg: '#fef3f0', landcover: '#fae0dc', landuse: '#f4d0d8', water: '#b8e0e4', building: '#e8c8d4', road: '#ffffff', roadLabel: '#a87a8a', roadHalo: '#ffffff', placeLabel: '#7a4a5a', placeHalo: '#fef3f0', poiLabel: '#7a4a5a', poiHalo: '#fef3f0', poiIcon: '#d48aa0',
-              ui: { panelBg: '#fffafa', panelText: '#7a4a5a', muted: '#b89aa8', border: '#e8c8d4', hairline: '#f4e0e6', hover: '#f9e8ee', inputBg: '#fffafa', radius: '14px', shadow: '0 4px 16px rgba(232,168,200,0.45)', accent: '#e89ab0', accentText: '#ffffff', accentBorder: '#d48aa0', danger: '#cc6680' } },
-    // Autumn — warm pumpkin/maple land, cool blue water for contrast.
-    autumn: { bg: '#f5e6d3', landcover: '#f0d8b8', landuse: '#eccfa8', water: '#7aa8d8', building: '#c87a4a', road: '#fffbf0', roadLabel: '#6a3a10', roadHalo: '#fffbf0', placeLabel: '#5a2a08', placeHalo: '#fffbf0', poiLabel: '#5a2a08', poiHalo: '#fffbf0', poiIcon: '#a85028',
-              ui: { panelBg: '#fef5e6', panelText: '#5a2a08', muted: '#9a6a42', border: '#d4a878', hairline: '#f0d8b8', hover: '#f5e6c8', inputBg: '#fffbf0', radius: '8px', shadow: '0 3px 12px rgba(200,120,80,0.3)', accent: '#d4632a', accentText: '#fef5e6', accentBorder: '#a8431a', danger: '#b83020' } },
-    // Ocean — seafoam land, deep teal water. Coastal map vibes.
-    ocean: { bg: '#e4f1f0', landcover: '#c8e4e0', landuse: '#b4d4d0', water: '#0a4a6a', building: '#4a7888', road: '#ffffff', roadLabel: '#1a3848', roadHalo: '#ffffff', placeLabel: '#0a2838', placeHalo: '#ffffff', poiLabel: '#0a2838', poiHalo: '#ffffff', poiIcon: '#0a4a6a',
-             ui: { panelBg: '#f0faf9', panelText: '#0a2838', muted: '#5a8090', border: '#a0c8c4', hairline: '#c8e4e0', hover: '#e0efed', inputBg: '#f8fcfb', radius: '10px', shadow: '0 4px 14px rgba(10,74,106,0.25)', accent: '#0e8a9a', accentText: '#f0faf9', accentBorder: '#0a4a6a', danger: '#c44040' } },
-    // Desert — sandy tans and terracotta, cool mirage-blue water.
-    desert: { bg: '#f0d8a8', landcover: '#edc990', landuse: '#e8ba78', water: '#a8c8d8', building: '#c86a3a', road: '#fdf5e0', roadLabel: '#5a3010', roadHalo: '#fdf5e0', placeLabel: '#4a2808', placeHalo: '#fdf5e0', poiLabel: '#4a2808', poiHalo: '#fdf5e0', poiIcon: '#a84a18',
-              ui: { panelBg: '#fcedc8', panelText: '#4a2808', muted: '#8a6030', border: '#c89850', hairline: '#edc990', hover: '#f5deb0', inputBg: '#fdf5e0', radius: '6px', shadow: '0 3px 10px rgba(168,74,24,0.3)', accent: '#c86a3a', accentText: '#fdf5e0', accentBorder: '#a84a18', danger: '#b02020' } },
-    // Nordic — icy whites and glacial blues, soft Scandinavian palette.
-    nordic: { bg: '#f0f4f8', landcover: '#e0e8f0', landuse: '#d4dce6', water: '#8aa8c4', building: '#c4d0dc', road: '#ffffff', roadLabel: '#4a5868', roadHalo: '#ffffff', placeLabel: '#1a2a3a', placeHalo: '#ffffff', poiLabel: '#1a2a3a', poiHalo: '#ffffff', poiIcon: '#2a5078',
-              ui: { panelBg: '#fafcfe', panelText: '#1a2a3a', muted: '#6a7c8c', border: '#b8c8d8', hairline: '#e0e8f0', hover: '#e8eff5', inputBg: '#ffffff', radius: '6px', shadow: '0 2px 10px rgba(26,42,58,0.15)', accent: '#4a7aaa', accentText: '#ffffff', accentBorder: '#2a5078', danger: '#b03040' } },
-    // Sakura — cherry-blossom pinks, cool pale water. Hanami season.
-    sakura: { bg: '#faecef', landcover: '#fadee2', landuse: '#f5d0d8', water: '#c8d8e8', building: '#e8b8c4', road: '#ffffff', roadLabel: '#8a3a58', roadHalo: '#ffffff', placeLabel: '#5a1838', placeHalo: '#ffffff', poiLabel: '#5a1838', poiHalo: '#ffffff', poiIcon: '#c83878',
-              ui: { panelBg: '#fefafa', panelText: '#5a1838', muted: '#a8708a', border: '#e8b8c4', hairline: '#f5d0d8', hover: '#fae0e6', inputBg: '#fefafa', radius: '12px', shadow: '0 4px 16px rgba(200,56,120,0.25)', accent: '#d8548a', accentText: '#ffffff', accentBorder: '#a8305a', danger: '#a82040' } },
-    // Amber — vintage amber phosphor CRT, the warm cousin of terminal.
-    amber: { bg: '#0c0803', landcover: '#150e04', landuse: '#1a1105', water: '#1f1a0a', building: '#2a1d08', road: '#ffaa00', roadLabel: '#ffcc33', roadHalo: '#0c0803', placeLabel: '#ffaa00', placeHalo: '#0c0803', poiLabel: '#ffcc66', poiHalo: '#0c0803', poiIcon: '#ffaa00',
-             ui: { panelBg: '#0c0803', panelText: '#ffaa00', muted: '#8a5a0a', border: '#ffaa00', hairline: '#3a2408', hover: '#18110a', inputBg: '#0c0803', radius: '0px', shadow: '0 0 12px rgba(255,170,0,0.35)', accent: '#ffaa00', accentText: '#0c0803', accentBorder: '#ffcc33', danger: '#ff4040' } },
-    // Galaxy — deep space purple-black with starlight streets and nebula glow.
-    galaxy: { bg: '#0a0a24', landcover: '#141030', landuse: '#1a1440', water: '#050515', building: '#2a1e50', road: '#c0c8e0', roadLabel: '#ffffff', roadHalo: '#0a0a24', placeLabel: '#e0d0ff', placeHalo: '#0a0a24', poiLabel: '#ffee88', poiHalo: '#0a0a24', poiIcon: '#d0b0ff',
-              ui: { panelBg: '#14103a', panelText: '#e0d0ff', muted: '#7a68a8', border: '#5a4898', hairline: '#281e58', hover: '#1c1848', inputBg: '#0a0a24', radius: '8px', shadow: '0 0 20px rgba(180,130,255,0.35)', accent: '#a080ff', accentText: '#0a0a24', accentBorder: '#d0b0ff', danger: '#ff7070' } },
-    // Noir — film-noir black-and-white newsprint with a single red streak.
-    noir: { bg: '#f2f2f2', landcover: '#e8e8e8', landuse: '#d8d8d8', water: '#a8a8a8', building: '#585858', road: '#ffffff', roadLabel: '#202020', roadHalo: '#ffffff', placeLabel: '#000000', placeHalo: '#ffffff', poiLabel: '#000000', poiHalo: '#ffffff', poiIcon: '#202020',
-            ui: { panelBg: '#ffffff', panelText: '#101010', muted: '#707070', border: '#000000', hairline: '#d0d0d0', hover: '#f0f0f0', inputBg: '#ffffff', radius: '0px', shadow: '4px 4px 0 #000000', accent: '#c8101c', accentText: '#ffffff', accentBorder: '#880808', danger: '#c8101c' } },
-    // GameBoy DMG — the authentic 4-color pea-green palette of 1989.
-    gameboy: { bg: '#9bbc0f', landcover: '#8bac0f', landuse: '#8bac0f', water: '#306230', building: '#306230', road: '#e0f8d0', roadLabel: '#0f380f', roadHalo: '#9bbc0f', placeLabel: '#0f380f', placeHalo: '#9bbc0f', poiLabel: '#0f380f', poiHalo: '#9bbc0f', poiIcon: '#0f380f',
-               ui: { panelBg: '#9bbc0f', panelText: '#0f380f', muted: '#306230', border: '#0f380f', hairline: '#306230', hover: '#8bac0f', inputBg: '#e0f8d0', radius: '0px', shadow: '3px 3px 0 #0f380f', accent: '#0f380f', accentText: '#9bbc0f', accentBorder: '#0f380f', danger: '#b03030' } },
-    // Mint chocolate — cool mint land with rich chocolate brown ink.
-    mint: { bg: '#d8f0dc', landcover: '#c0e6c8', landuse: '#a8d8b2', water: '#6a9a7a', building: '#3a2418', road: '#f4fff5', roadLabel: '#3a2418', roadHalo: '#f4fff5', placeLabel: '#2a1a10', placeHalo: '#f4fff5', poiLabel: '#2a1a10', poiHalo: '#f4fff5', poiIcon: '#5a3820',
-            ui: { panelBg: '#f0faf2', panelText: '#2a1a10', muted: '#6a5a50', border: '#8a6a50', hairline: '#c0e6c8', hover: '#e0f0e4', inputBg: '#f8fcf8', radius: '8px', shadow: '0 3px 10px rgba(58,36,24,0.25)', accent: '#5a3820', accentText: '#d8f0dc', accentBorder: '#2a1a10', danger: '#a03030' } },
-    // Coral reef — tropical coral pinks and warm teal. Scuba vibes.
-    coral: { bg: '#ffeee0', landcover: '#ffe0d0', landuse: '#ffd0bc', water: '#2a9098', building: '#ff8080', road: '#ffffff', roadLabel: '#8a3020', roadHalo: '#ffffff', placeLabel: '#4a1810', placeHalo: '#ffffff', poiLabel: '#4a1810', poiHalo: '#ffffff', poiIcon: '#ff5a4a',
-             ui: { panelBg: '#fff8f4', panelText: '#4a1810', muted: '#a85a48', border: '#ff9a8a', hairline: '#ffd0bc', hover: '#ffe4d4', inputBg: '#fffcf8', radius: '12px', shadow: '0 4px 14px rgba(255,90,74,0.3)', accent: '#ff5a4a', accentText: '#ffffff', accentBorder: '#c83a2a', danger: '#c81c1c' } }
-  };
+  // THEMES is defined in the early flash-prevention <script> in <head>
+  // (shared source of truth — duplication would risk palette drift).
+  const THEMES = window.THEMES;
   function customToTheme(c) {
     return {
       bg: c.bg, landcover: c.land, landuse: c.land,
