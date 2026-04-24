@@ -101,7 +101,7 @@ self.addEventListener('message', (e) => {
   }
 });
 
-async function downloadRegion({ bbox, minZoom, maxZoom, extraUrls = [], id }, client) {
+async function downloadRegion({ bbox, minZoom, maxZoom, extraUrls = [], id, workers = 6 }, client) {
   const tiles = tileUrls(bbox, minZoom, maxZoom);
   const queue = [
     ...tiles.map(u => ({ url: u, cacheName: TILES_CACHE })),
@@ -109,7 +109,10 @@ async function downloadRegion({ bbox, minZoom, maxZoom, extraUrls = [], id }, cl
   ];
   const total = queue.length;
   let done = 0, failed = 0;
-  const workers = Array(6).fill(0).map(async () => {
+  // Worker count chosen by the main thread: 6 on mobile (iOS backgrounds the
+  // SW aggressively, high concurrency stalls) and 60 on desktop (modern
+  // browsers handle 50+ parallel connections comfortably, ~10x throughput).
+  const workerPool = Array(workers).fill(0).map(async () => {
     while (queue.length) {
       const item = queue.pop();
       try {
@@ -127,7 +130,7 @@ async function downloadRegion({ bbox, minZoom, maxZoom, extraUrls = [], id }, cl
       }
     }
   });
-  await Promise.all(workers);
+  await Promise.all(workerPool);
   if (client) client.postMessage({ type: 'done', id, done, total, failed, urls: tiles });
 }
 
