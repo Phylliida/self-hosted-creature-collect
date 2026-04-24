@@ -1,0 +1,43 @@
+
+=== [1/3] mdb-2134 ===
+[fetch] mdb-2134 (Daytrip Shuttle / Solidaridad / Quintana Roo)
+[validate] mdb-2134 (Daytrip Shuttle / Solidaridad / Quintana Roo)  (0.0 MB, 0.3s download)
+[OK   ] required-files
+[OK   ] stop-coordinates
+         info:  10 stops total
+[OK   ] route-types
+         info:  13 routes total
+[OK   ] stop-times-sorted-by-trip
+         info:  328 stop_time rows across 80 trips
+[OK   ] stop-time-fields
+[OK   ] referential-integrity
+[OK   ] calendar-fields
+         info:  1 calendar rows, 3 calendar_dates rows
+[OK   ] direction-ids
+[OK   ] feed-freshness
+         info:  calendar covers 20251201..20260430
+
+RESULT: all checks passed
+[ingest] mdb-2134 (Daytrip Shuttle / Solidaridad / Quintana Roo)
+  [mdb-2134] opening /tmp/tmplny51s7p.zip
+    agency: 1
+    routes: 13
+    stops: 10
+    services: 1
+    calendar_dates: 3
+[K    shapes: 0 (0 points, 0.0s)
+    trips: 80
+[K    stop_times: 328  patterns: 13  trips: 80  blobs: 22  headsigns: 1  dropped: 0  (0.0s)
+  VACUUM…
+  ANALYZE…
+  → data/schedule.sqlite
+
+=== [2/3] mdb-2865 ===
+[fetch] mdb-2865 (Gobierno del estado de México (Government of the State of Mexico) / Toluca / Mexico)
+[fail] mdb-2865 (Gobierno del estado de México (Government of the State of Mexico) / Toluca / Mexico): download error <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1010)>
+
+=== [3/3] mdb-2866 ===
+[fetch] mdb-2866 (Ayuntamiento Constitucional de Jilotepec Equipo de Planeación y Movilida (Constitutional Municipality of Jilotepec Planning and Mobility Team) / Jilotepec / Mexico)
+[fail] mdb-2866 (Ayuntamiento Constitucional de Jilotepec Equipo de Planeación y Movilida (Constitutional Municipality of Jilotepec Planning and Mobility Team) / Jilotepec / Mexico): download error <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1010)>
+
+=== done: ok=1, skipped=0, download_failed=2, validation_failed=0, ingest_failed=0 ===

@@ -255,6 +255,913 @@
     letter-spacing: 0.06em;
   }
 
+  /* Windows 95 — beveled chrome, MS Sans Serif, navy title bars.
+     The classic 4-layer bevel (white/silver highlight, grey/black shadow)
+     is rendered as inset box-shadows so every panel gets the signature
+     raised-window look without needing extra wrapper elements. */
+  html[data-theme="win95"] body {
+    font-family: "MS Sans Serif", "Microsoft Sans Serif", "Tahoma", Geneva, Verdana, sans-serif;
+    font-size: 12px;
+  }
+  html[data-theme="win95"] button {
+    font-family: inherit;
+    border: 1px solid #000 !important;
+    border-radius: 0 !important;
+    box-shadow:
+      inset  1px  1px 0 #ffffff,
+      inset -1px -1px 0 #808080,
+      inset  2px  2px 0 #dfdfdf,
+      inset -2px -2px 0 #000000 !important;
+    background: #c0c0c0 !important;
+    color: #000 !important;
+    text-shadow: none !important;
+    padding: 4px 12px;
+  }
+  html[data-theme="win95"] button:active:not(:disabled) {
+    box-shadow:
+      inset  1px  1px 0 #000000,
+      inset -1px -1px 0 #ffffff,
+      inset  2px  2px 0 #808080,
+      inset -2px -2px 0 #dfdfdf !important;
+  }
+  html[data-theme="win95"] #welcomeStart,
+  html[data-theme="win95"] #downloadBtn,
+  html[data-theme="win95"] #appDataBtn,
+  html[data-theme="win95"] #poiCardDirections,
+  html[data-theme="win95"] #routingGo,
+  html[data-theme="win95"] button.close,
+  html[data-theme="win95"] #transitClose,
+  html[data-theme="win95"] #savedRoutesClose {
+    color: #000 !important;
+    background: #c0c0c0 !important;
+  }
+  /* Headings become navy title bars — with a dotted-underline nod to the
+     classic inactive-window blur and a draggy title-bar feel. */
+  html[data-theme="win95"] #settingsPanel h3,
+  html[data-theme="win95"] #welcome h2,
+  html[data-theme="win95"] #poiCardName {
+    background: #000080;
+    color: #ffffff;
+    padding: 2px 6px;
+    margin: 0 0 8px;
+    font-weight: 700;
+    font-size: 13px;
+  }
+  /* Inputs are "sunken" fields — inverse bevel. */
+  html[data-theme="win95"] input[type="text"],
+  html[data-theme="win95"] input[type="search"],
+  html[data-theme="win95"] input[type="number"],
+  html[data-theme="win95"] select,
+  html[data-theme="win95"] #searchInput,
+  html[data-theme="win95"] #searchFilter,
+  html[data-theme="win95"] #transitSearch {
+    background: #ffffff !important;
+    color: #000 !important;
+    border: 1px solid #000 !important;
+    border-radius: 0 !important;
+    box-shadow:
+      inset  1px  1px 0 #808080,
+      inset -1px -1px 0 #dfdfdf,
+      inset  2px  2px 0 #000000,
+      inset -2px -2px 0 #ffffff !important;
+    font-family: inherit;
+    padding: 2px 4px;
+  }
+  /* Fancy desktop-teal glow on the map background behind the panels. */
+  html[data-theme="win95"] .theme-card.active {
+    box-shadow: 0 0 0 2px #000080, 1px 1px 0 #000 !important;
+  }
+
+  /* Classic Mac OS 9 — platinum chrome with pinstripe title bars. */
+  html[data-theme="macos9"] body {
+    font-family: "Lucida Grande", "Geneva", "Helvetica", sans-serif;
+    font-size: 12px;
+  }
+  html[data-theme="macos9"] #settingsPanel h3,
+  html[data-theme="macos9"] #welcome h2,
+  html[data-theme="macos9"] #poiCardName {
+    background: repeating-linear-gradient(
+      to bottom,
+      #e8e8e8 0 2px,
+      #c8c8c8 2px 3px
+    );
+    color: #000;
+    padding: 4px 10px;
+    border-radius: 6px 6px 0 0;
+    border-bottom: 1px solid #888;
+    margin: -4px -4px 8px;
+    font-weight: 600;
+    text-align: center;
+  }
+  html[data-theme="macos9"] button {
+    background: linear-gradient(to bottom, #ffffff 0%, #d0d0d0 50%, #b8b8b8 100%);
+    border: 1px solid #5a5a5a;
+    color: #000;
+    font-family: inherit;
+  }
+  html[data-theme="macos9"] #welcomeStart,
+  html[data-theme="macos9"] #downloadBtn,
+  html[data-theme="macos9"] #appDataBtn,
+  html[data-theme="macos9"] #poiCardDirections,
+  html[data-theme="macos9"] #routingGo,
+  html[data-theme="macos9"] button.close,
+  html[data-theme="macos9"] #transitClose,
+  html[data-theme="macos9"] #savedRoutesClose {
+    background: linear-gradient(to bottom, #6a9ed8 0%, #4070b0 50%, #2a4a80 100%);
+    color: #ffffff;
+    border: 1px solid #1a3060;
+    text-shadow: 0 -1px 0 rgba(0,0,0,0.2);
+  }
+
+  /* Chalkboard — dark slate with chalky handwritten labels. A thin light
+     ring + slight drop-shadow mimics the frame around an actual blackboard. */
+  html[data-theme="chalkboard"] body {
+    font-family: "Caveat", "Gochi Hand", "Bradley Hand", "Segoe Script", "Marker Felt", cursive;
+    font-size: 16px;
+  }
+  html[data-theme="chalkboard"] #settingsPanel h3,
+  html[data-theme="chalkboard"] #welcome h2,
+  html[data-theme="chalkboard"] #poiCardName,
+  html[data-theme="chalkboard"] #panel summary b {
+    font-size: 22px; font-weight: 400;
+    border-bottom: 2px solid #f8eadd;
+    padding-bottom: 2px;
+    text-shadow: 0 0 1px rgba(248,234,221,0.5);
+  }
+  html[data-theme="chalkboard"] button,
+  html[data-theme="chalkboard"] input,
+  html[data-theme="chalkboard"] select { font-family: inherit; }
+
+  /* Comic Sans — embrace the chaos. Everything bounces. */
+  html[data-theme="comicsans"] body {
+    font-family: "Comic Sans MS", "Comic Sans", "Chalkboard SE", "Marker Felt", cursive;
+  }
+  html[data-theme="comicsans"] button {
+    font-family: inherit; font-weight: 700;
+    transition: transform 0.1s ease;
+  }
+  html[data-theme="comicsans"] button:active:not(:disabled) {
+    transform: scale(0.94) rotate(-1deg);
+  }
+  html[data-theme="comicsans"] #settingsPanel h3,
+  html[data-theme="comicsans"] #welcome h2,
+  html[data-theme="comicsans"] #poiCardName {
+    color: #ff70aa;
+    text-shadow: 2px 2px 0 #4a1838;
+  }
+
+  /* Notebook paper — ruled lines on every panel, with a red left margin. */
+  html[data-theme="notebook"] body {
+    font-family: "Kalam", "Caveat", "Segoe Script", "Marker Felt", "Comic Sans MS", cursive;
+    font-size: 15px;
+  }
+  html[data-theme="notebook"] #panel,
+  html[data-theme="notebook"] #poiCard,
+  html[data-theme="notebook"] #settingsPanel .sheet,
+  html[data-theme="notebook"] #welcome .card,
+  html[data-theme="notebook"] #routingPanel,
+  html[data-theme="notebook"] #savedRoutesPanel .sheet,
+  html[data-theme="notebook"] #scheduleModal .sheet,
+  html[data-theme="notebook"] #directionsPanel,
+  html[data-theme="notebook"] #transitPanel .sheet,
+  html[data-theme="notebook"] #favPanel .sheet {
+    background-color: #fdfbed;
+    background-image:
+      repeating-linear-gradient(
+        transparent 0, transparent 23px,
+        rgba(42, 58, 122, 0.22) 23px, rgba(42, 58, 122, 0.22) 24px
+      );
+    border-left: 3px solid rgba(200, 60, 60, 0.55);
+    background-position: 0 6px;
+  }
+  html[data-theme="notebook"] #settingsPanel h3,
+  html[data-theme="notebook"] #welcome h2,
+  html[data-theme="notebook"] #poiCardName {
+    font-weight: 700;
+    text-decoration: underline;
+    text-decoration-color: rgba(200, 60, 60, 0.7);
+    text-decoration-thickness: 2px;
+    text-underline-offset: 3px;
+  }
+  html[data-theme="notebook"] button { font-family: inherit; }
+
+  /* NES — pixel-chunky everything. Press Start 2P font if available,
+     falls back through bitmap-y system choices. Sharp hard-shadow buttons
+     like the classic "Press start" prompt. */
+  html[data-theme="nes"] body {
+    font-family: "Press Start 2P", "Pixelated MS Sans Serif", "Courier New", "VT323", monospace;
+    font-size: 11px; letter-spacing: 0.02em;
+    image-rendering: pixelated;
+  }
+  html[data-theme="nes"] button {
+    font-family: inherit; font-size: 10px;
+    border: 3px solid #181818 !important;
+    border-radius: 0 !important;
+    box-shadow: 4px 4px 0 #181818 !important;
+    padding: 6px 10px;
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  html[data-theme="nes"] button:active:not(:disabled) {
+    transform: translate(2px, 2px);
+    box-shadow: 2px 2px 0 #181818 !important;
+  }
+  html[data-theme="nes"] #settingsPanel h3,
+  html[data-theme="nes"] #welcome h2,
+  html[data-theme="nes"] #poiCardName {
+    background: #a81820; color: #fcfcfc;
+    padding: 6px 10px;
+    border: 3px solid #181818;
+    margin: 0 0 10px;
+    text-transform: uppercase; letter-spacing: 0.1em;
+    box-shadow: 4px 4px 0 #181818;
+  }
+  html[data-theme="nes"] input,
+  html[data-theme="nes"] select {
+    border: 3px solid #181818 !important;
+    border-radius: 0 !important;
+    font-family: inherit;
+  }
+
+  /* Atari 2600 — wood-grain console brown. Adds a repeating linear-gradient
+     stripe to panels to suggest the real 2600 faceplate woodgrain, and uses
+     a blocky monospace for that "Cart Label" typography. */
+  html[data-theme="atari"] body {
+    font-family: "Courier New", "VT323", "Press Start 2P", monospace;
+    font-size: 12px;
+  }
+  html[data-theme="atari"] #panel,
+  html[data-theme="atari"] #poiCard,
+  html[data-theme="atari"] #settingsPanel .sheet,
+  html[data-theme="atari"] #welcome .card,
+  html[data-theme="atari"] #routingPanel,
+  html[data-theme="atari"] #savedRoutesPanel .sheet,
+  html[data-theme="atari"] #scheduleModal .sheet,
+  html[data-theme="atari"] #directionsPanel,
+  html[data-theme="atari"] #transitPanel .sheet,
+  html[data-theme="atari"] #favPanel .sheet {
+    background-color: #2a1a0a;
+    background-image: repeating-linear-gradient(
+      90deg,
+      rgba(120, 70, 30, 0.18) 0px,
+      transparent 2px,
+      rgba(80, 40, 15, 0.22) 4px,
+      transparent 8px,
+      rgba(120, 70, 30, 0.18) 10px,
+      transparent 14px
+    );
+  }
+  html[data-theme="atari"] button {
+    font-family: inherit; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    border: 2px solid #000 !important;
+    border-radius: 2px !important;
+    box-shadow: 3px 3px 0 #000 !important;
+  }
+  html[data-theme="atari"] button:active:not(:disabled) {
+    transform: translate(2px, 2px);
+    box-shadow: 1px 1px 0 #000 !important;
+  }
+  html[data-theme="atari"] #settingsPanel h3,
+  html[data-theme="atari"] #welcome h2,
+  html[data-theme="atari"] #poiCardName {
+    color: #f0b030;
+    border: 2px solid #f0b030;
+    padding: 4px 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    background: #000000;
+    font-size: 14px;
+  }
+  html[data-theme="atari"] input,
+  html[data-theme="atari"] select {
+    border: 2px solid #f0b030 !important;
+    font-family: inherit;
+  }
+
+  /* The Sims — deep blue menu bar, glossy buttons, and plumbob-green
+     accents. Headings get a tiny spinning-diamond indicator. */
+  html[data-theme="sims"] body {
+    font-family: "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
+  }
+  html[data-theme="sims"] button {
+    background: linear-gradient(to bottom, #3a7ac0 0%, #1a4a7a 50%, #0a2a5a 100%) !important;
+    color: #ffffff !important;
+    border: 1px solid #0a1a3a !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.35), 0 2px 4px rgba(0,0,0,0.35) !important;
+    font-family: inherit; font-weight: 600;
+  }
+  html[data-theme="sims"] #welcomeStart,
+  html[data-theme="sims"] #downloadBtn,
+  html[data-theme="sims"] #appDataBtn,
+  html[data-theme="sims"] #poiCardDirections,
+  html[data-theme="sims"] #routingGo,
+  html[data-theme="sims"] button.close,
+  html[data-theme="sims"] #transitClose,
+  html[data-theme="sims"] #savedRoutesClose {
+    background: linear-gradient(to bottom, #90ff40 0%, #4cff00 50%, #2ac800 100%) !important;
+    color: #0a2a5a !important;
+    border: 1px solid #206000 !important;
+    text-shadow: 0 1px 0 rgba(255,255,255,0.35);
+    font-weight: 700;
+  }
+  html[data-theme="sims"] #settingsPanel h3,
+  html[data-theme="sims"] #welcome h2,
+  html[data-theme="sims"] #poiCardName {
+    color: #4cff00;
+    text-shadow: 0 0 8px rgba(76,255,0,0.6), 0 2px 0 #0a2a5a;
+    letter-spacing: 0.02em;
+  }
+  html[data-theme="sims"] #settingsPanel h3::before,
+  html[data-theme="sims"] #welcome h2::before,
+  html[data-theme="sims"] #poiCardName::before {
+    content: "◆ ";
+    color: #4cff00;
+    text-shadow: 0 0 6px rgba(76,255,0,0.9);
+  }
+
+  /* Roller Coaster Tycoon — chunky pixel-art chrome panels and gold-cent
+     CTAs. Tiny caps typography for that "Park Entrance: £100" vibe. */
+  html[data-theme="rct"] body {
+    font-family: "Trebuchet MS", "MS Sans Serif", "Tahoma", sans-serif;
+    font-size: 12px;
+    image-rendering: pixelated;
+  }
+  html[data-theme="rct"] button {
+    font-family: inherit; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    border: 2px solid #000000 !important;
+    border-radius: 0 !important;
+    box-shadow:
+      inset  1px  1px 0 rgba(255,255,255,0.25),
+      inset -1px -1px 0 rgba(0,0,0,0.55),
+      2px 2px 0 #000000 !important;
+  }
+  html[data-theme="rct"] button:active:not(:disabled) {
+    transform: translate(1px, 1px);
+    box-shadow:
+      inset  1px  1px 0 rgba(0,0,0,0.55),
+      inset -1px -1px 0 rgba(255,255,255,0.25),
+      1px 1px 0 #000000 !important;
+  }
+  html[data-theme="rct"] #settingsPanel h3,
+  html[data-theme="rct"] #welcome h2,
+  html[data-theme="rct"] #poiCardName {
+    background: #303030;
+    color: #ffc020;
+    padding: 4px 10px;
+    border: 2px solid #000000;
+    text-transform: uppercase; letter-spacing: 0.12em;
+    margin: 0 0 8px;
+    text-shadow: 1px 1px 0 #000;
+  }
+  html[data-theme="rct"] input,
+  html[data-theme="rct"] select {
+    border: 2px solid #000000 !important;
+    border-radius: 0 !important;
+    box-shadow: inset 1px 1px 0 rgba(0,0,0,0.5) !important;
+    font-family: inherit;
+  }
+
+  /* Hand-carved wood — wood-grain stripe pattern on every panel plus a
+     subtle knot swirl via radial-gradient. Text is inset-shadow carved. */
+  html[data-theme="wood"] body {
+    font-family: "Book Antiqua", "Palatino Linotype", Palatino, Georgia, serif;
+  }
+  html[data-theme="wood"] #panel,
+  html[data-theme="wood"] #poiCard,
+  html[data-theme="wood"] #settingsPanel .sheet,
+  html[data-theme="wood"] #welcome .card,
+  html[data-theme="wood"] #routingPanel,
+  html[data-theme="wood"] #savedRoutesPanel .sheet,
+  html[data-theme="wood"] #scheduleModal .sheet,
+  html[data-theme="wood"] #directionsPanel,
+  html[data-theme="wood"] #transitPanel .sheet,
+  html[data-theme="wood"] #favPanel .sheet,
+  html[data-theme="wood"] #pinBar {
+    background-color: #c08850;
+    background-image:
+      repeating-linear-gradient(
+        92deg,
+        rgba(90, 56, 32, 0.10) 0 2px,
+        transparent 2px 7px,
+        rgba(120, 76, 40, 0.13) 7px 9px,
+        transparent 9px 16px,
+        rgba(90, 56, 32, 0.10) 16px 18px,
+        transparent 18px 30px
+      ),
+      radial-gradient(ellipse at 20% 40%, rgba(70, 40, 16, 0.25) 0%, transparent 40%),
+      radial-gradient(ellipse at 80% 80%, rgba(70, 40, 16, 0.20) 0%, transparent 35%);
+  }
+  html[data-theme="wood"] button {
+    background: linear-gradient(to bottom, #d8a068 0%, #b07840 100%) !important;
+    color: #3a1e08 !important;
+    border: 1px solid #3a1e08 !important;
+    text-shadow: 1px 1px 0 rgba(255,230,200,0.5);
+    font-family: inherit; font-weight: 600;
+    box-shadow:
+      inset 0 1px 0 rgba(255,230,200,0.55),
+      inset 0 -1px 0 rgba(40,20,8,0.45),
+      0 2px 4px rgba(40,20,8,0.5) !important;
+  }
+  html[data-theme="wood"] #welcomeStart,
+  html[data-theme="wood"] #downloadBtn,
+  html[data-theme="wood"] #appDataBtn,
+  html[data-theme="wood"] #poiCardDirections,
+  html[data-theme="wood"] #routingGo,
+  html[data-theme="wood"] button.close,
+  html[data-theme="wood"] #transitClose,
+  html[data-theme="wood"] #savedRoutesClose {
+    background: linear-gradient(to bottom, #6a4020 0%, #3a1e08 100%) !important;
+    color: #f2deb8 !important;
+    border: 1px solid #1a0a02 !important;
+    text-shadow: 1px 1px 0 rgba(0,0,0,0.6);
+  }
+  html[data-theme="wood"] #settingsPanel h3,
+  html[data-theme="wood"] #welcome h2,
+  html[data-theme="wood"] #poiCardName {
+    font-variant: small-caps; letter-spacing: 0.1em;
+    text-shadow:
+      1px 1px 0 rgba(255,230,200,0.6),
+      -1px -1px 0 rgba(40,20,8,0.55);
+  }
+
+  /* Sheet metal — brushed-aluminum gradient on panels with corner rivets
+     (radial-gradient dots), plus stencil-style heading typography. */
+  html[data-theme="metal"] body {
+    font-family: "Helvetica Neue", "Arial Narrow", "Arial Black", Impact, sans-serif;
+  }
+  html[data-theme="metal"] #panel,
+  html[data-theme="metal"] #poiCard,
+  html[data-theme="metal"] #settingsPanel .sheet,
+  html[data-theme="metal"] #welcome .card,
+  html[data-theme="metal"] #routingPanel,
+  html[data-theme="metal"] #savedRoutesPanel .sheet,
+  html[data-theme="metal"] #scheduleModal .sheet,
+  html[data-theme="metal"] #directionsPanel,
+  html[data-theme="metal"] #transitPanel .sheet,
+  html[data-theme="metal"] #favPanel .sheet,
+  html[data-theme="metal"] #pinBar {
+    background-color: #8a8a8a;
+    background-image:
+      /* horizontal brushed lines */
+      repeating-linear-gradient(
+        0deg,
+        rgba(255,255,255,0.08) 0 1px,
+        transparent 1px 2px,
+        rgba(0,0,0,0.08) 2px 3px,
+        transparent 3px 5px
+      ),
+      /* rivet corners */
+      radial-gradient(circle at 8px 8px, #666 2px, #444 3px, transparent 4px),
+      radial-gradient(circle at calc(100% - 8px) 8px, #666 2px, #444 3px, transparent 4px),
+      radial-gradient(circle at 8px calc(100% - 8px), #666 2px, #444 3px, transparent 4px),
+      radial-gradient(circle at calc(100% - 8px) calc(100% - 8px), #666 2px, #444 3px, transparent 4px),
+      /* top sheen */
+      linear-gradient(to bottom, #a8a8a8 0%, #8a8a8a 50%, #707070 100%);
+  }
+  html[data-theme="metal"] button {
+    background: linear-gradient(to bottom, #d0d0d0 0%, #a0a0a0 50%, #808080 100%) !important;
+    color: #101010 !important;
+    border: 1px solid #2a2a2a !important;
+    font-family: inherit; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.5),
+      inset 0 -1px 0 rgba(0,0,0,0.35),
+      0 2px 5px rgba(0,0,0,0.5) !important;
+  }
+  html[data-theme="metal"] button:active:not(:disabled) {
+    background: linear-gradient(to bottom, #808080 0%, #a0a0a0 50%, #c0c0c0 100%) !important;
+  }
+  html[data-theme="metal"] #welcomeStart,
+  html[data-theme="metal"] #downloadBtn,
+  html[data-theme="metal"] #appDataBtn,
+  html[data-theme="metal"] #poiCardDirections,
+  html[data-theme="metal"] #routingGo,
+  html[data-theme="metal"] button.close,
+  html[data-theme="metal"] #transitClose,
+  html[data-theme="metal"] #savedRoutesClose {
+    background: linear-gradient(to bottom, #ffc040 0%, #f0a020 50%, #c08010 100%) !important;
+    color: #1a1a1a !important;
+    border: 1px solid #604000 !important;
+    text-shadow: 0 1px 0 rgba(255,255,255,0.35);
+  }
+  html[data-theme="metal"] #settingsPanel h3,
+  html[data-theme="metal"] #welcome h2,
+  html[data-theme="metal"] #poiCardName {
+    font-weight: 900; text-transform: uppercase; letter-spacing: 0.12em;
+    color: #1a1a1a;
+    text-shadow: 0 1px 0 rgba(255,255,255,0.5);
+    border-bottom: 2px solid #2a2a2a;
+    padding-bottom: 4px;
+  }
+
+  /* Google Maps — Roboto / system font, soft rounded cards. */
+  html[data-theme="google"] body {
+    font-family: "Google Sans", "Roboto", "Helvetica Neue", Arial, sans-serif;
+  }
+
+  /* Apple Maps — SF Pro rounded with that particular system-grey card feel. */
+  html[data-theme="apple"] body {
+    font-family: -apple-system, "SF Pro Text", "SF Pro Display",
+                 "Helvetica Neue", Helvetica, Arial, sans-serif;
+  }
+  html[data-theme="apple"] button {
+    font-family: inherit; font-weight: 500;
+  }
+
+  /* Minecraft — pixel-art blocks everywhere. Panels get a dirt-top grass
+     stripe, buttons get block-style deep 4-way bevels. */
+  html[data-theme="minecraft"] body {
+    font-family: "Press Start 2P", "Pixelated MS Sans Serif", "Courier New", monospace;
+    font-size: 11px; letter-spacing: 0.02em;
+    image-rendering: pixelated;
+  }
+  html[data-theme="minecraft"] button {
+    font-family: inherit; font-size: 10px;
+    border: 2px solid #1d1d1d !important;
+    border-radius: 0 !important;
+    box-shadow:
+      inset  2px  2px 0 rgba(255,255,255,0.25),
+      inset -2px -2px 0 rgba(0,0,0,0.45),
+      3px 3px 0 #1d1d1d !important;
+    padding: 6px 12px;
+    text-transform: uppercase; letter-spacing: 0.06em;
+  }
+  html[data-theme="minecraft"] button:active:not(:disabled) {
+    transform: translate(2px, 2px);
+    box-shadow:
+      inset  2px  2px 0 rgba(0,0,0,0.45),
+      inset -2px -2px 0 rgba(255,255,255,0.25),
+      1px 1px 0 #1d1d1d !important;
+  }
+  html[data-theme="minecraft"] #settingsPanel h3,
+  html[data-theme="minecraft"] #welcome h2,
+  html[data-theme="minecraft"] #poiCardName {
+    background: #3aaa35; color: #ffffff;
+    border: 2px solid #1d1d1d;
+    padding: 6px 10px;
+    margin: 0 0 10px;
+    text-shadow: 2px 2px 0 rgba(0,0,0,0.5);
+    letter-spacing: 0.08em;
+  }
+  html[data-theme="minecraft"] input,
+  html[data-theme="minecraft"] select {
+    border: 2px solid #1d1d1d !important;
+    border-radius: 0 !important;
+    font-family: inherit;
+  }
+
+  /* Tron — cyan glow, grid lines on panels, futuristic monospace. */
+  html[data-theme="tron"] body {
+    font-family: "Orbitron", "Michroma", "Eurostile", "Consolas", monospace;
+    letter-spacing: 0.04em;
+  }
+  html[data-theme="tron"] #panel,
+  html[data-theme="tron"] #poiCard,
+  html[data-theme="tron"] #settingsPanel .sheet,
+  html[data-theme="tron"] #welcome .card,
+  html[data-theme="tron"] #routingPanel,
+  html[data-theme="tron"] #savedRoutesPanel .sheet,
+  html[data-theme="tron"] #scheduleModal .sheet,
+  html[data-theme="tron"] #directionsPanel,
+  html[data-theme="tron"] #transitPanel .sheet,
+  html[data-theme="tron"] #favPanel .sheet,
+  html[data-theme="tron"] #pinBar {
+    background-color: #020810;
+    background-image:
+      repeating-linear-gradient(
+        0deg,
+        transparent 0 19px,
+        rgba(0,221,255,0.08) 19px 20px
+      ),
+      repeating-linear-gradient(
+        90deg,
+        transparent 0 19px,
+        rgba(0,221,255,0.08) 19px 20px
+      );
+  }
+  html[data-theme="tron"] button {
+    background: #000 !important;
+    color: #00ddff !important;
+    border: 1px solid #00ddff !important;
+    font-family: inherit; text-transform: uppercase; letter-spacing: 0.12em;
+    box-shadow:
+      inset 0 0 10px rgba(0,221,255,0.2),
+      0 0 8px rgba(0,221,255,0.4) !important;
+    text-shadow: 0 0 6px rgba(0,221,255,0.8);
+  }
+  html[data-theme="tron"] #welcomeStart,
+  html[data-theme="tron"] #downloadBtn,
+  html[data-theme="tron"] #appDataBtn,
+  html[data-theme="tron"] #poiCardDirections,
+  html[data-theme="tron"] #routingGo,
+  html[data-theme="tron"] button.close,
+  html[data-theme="tron"] #transitClose,
+  html[data-theme="tron"] #savedRoutesClose {
+    background: #00ddff !important;
+    color: #000 !important;
+    text-shadow: none !important;
+  }
+  html[data-theme="tron"] #settingsPanel h3,
+  html[data-theme="tron"] #welcome h2,
+  html[data-theme="tron"] #poiCardName {
+    color: #00ddff;
+    text-shadow: 0 0 8px rgba(0,221,255,0.8);
+    text-transform: uppercase; letter-spacing: 0.18em;
+    border-bottom: 1px solid #00ddff;
+    padding-bottom: 3px;
+  }
+
+  /* Wes Anderson — Futura-family geometric sans, symmetric headings,
+     muted mustard CTAs that look like tickets. */
+  html[data-theme="wes"] body {
+    font-family: "Futura", "Futura PT", "Century Gothic", "Avenir Next", sans-serif;
+    letter-spacing: 0.01em;
+  }
+  html[data-theme="wes"] #settingsPanel h3,
+  html[data-theme="wes"] #welcome h2,
+  html[data-theme="wes"] #poiCardName {
+    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    font-weight: 500;
+    border-top: 2px solid #8a4a3a;
+    border-bottom: 2px solid #8a4a3a;
+    padding: 6px 0;
+    margin: 0 0 10px;
+  }
+  html[data-theme="wes"] button { font-family: inherit; }
+
+  /* Pac-Man — arcade black, blue walls, neon yellow. Headings pulse
+     with a subtle chomp scale animation via text-shadow. */
+  html[data-theme="pacman"] body {
+    font-family: "Press Start 2P", "VT323", "Courier New", monospace;
+    font-size: 12px;
+  }
+  html[data-theme="pacman"] button {
+    font-family: inherit; font-size: 11px;
+    border: 2px solid #2121de !important;
+    border-radius: 0 !important;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    box-shadow: 3px 3px 0 #2121de !important;
+  }
+  html[data-theme="pacman"] button:active:not(:disabled) {
+    transform: translate(2px, 2px);
+    box-shadow: 1px 1px 0 #2121de !important;
+  }
+  html[data-theme="pacman"] #settingsPanel h3,
+  html[data-theme="pacman"] #welcome h2,
+  html[data-theme="pacman"] #poiCardName {
+    color: #ffff00;
+    text-shadow: 2px 2px 0 #2121de;
+    text-align: center;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+  }
+  html[data-theme="pacman"] #settingsPanel h3::before,
+  html[data-theme="pacman"] #settingsPanel h3::after,
+  html[data-theme="pacman"] #welcome h2::before,
+  html[data-theme="pacman"] #welcome h2::after {
+    content: " • ";
+    color: #ffcc00;
+  }
+  html[data-theme="pacman"] input,
+  html[data-theme="pacman"] select {
+    background: #000 !important; color: #ffff00 !important;
+    border: 2px solid #2121de !important;
+    border-radius: 0 !important;
+    font-family: inherit;
+  }
+
+  /* Bloodmoon — slasher serif with a dripping glow under headings. */
+  html[data-theme="bloodmoon"] body {
+    font-family: "Cinzel", "Nosifer", "Times New Roman", serif;
+  }
+  html[data-theme="bloodmoon"] #settingsPanel h3,
+  html[data-theme="bloodmoon"] #welcome h2,
+  html[data-theme="bloodmoon"] #poiCardName {
+    color: #ff3030;
+    text-shadow:
+      0 0 4px rgba(255,0,0,0.6),
+      0 0 12px rgba(200,0,0,0.5),
+      0 2px 0 rgba(80,0,0,1);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  html[data-theme="bloodmoon"] button {
+    text-shadow: 0 0 4px rgba(255,0,0,0.4);
+  }
+
+  /* Haunted mansion — ornate Gothic blackletter-ish serif. Dark velvet
+     panels get a subtle cobweb radial-gradient in the corners. */
+  html[data-theme="haunted"] body {
+    font-family: "UnifrakturMaguntia", "Luminari", "Papyrus",
+                 "Book Antiqua", Georgia, serif;
+  }
+  html[data-theme="haunted"] #panel,
+  html[data-theme="haunted"] #poiCard,
+  html[data-theme="haunted"] #settingsPanel .sheet,
+  html[data-theme="haunted"] #welcome .card,
+  html[data-theme="haunted"] #routingPanel,
+  html[data-theme="haunted"] #savedRoutesPanel .sheet,
+  html[data-theme="haunted"] #scheduleModal .sheet,
+  html[data-theme="haunted"] #directionsPanel,
+  html[data-theme="haunted"] #transitPanel .sheet,
+  html[data-theme="haunted"] #favPanel .sheet {
+    background-image:
+      radial-gradient(ellipse at 0% 0%, rgba(138,10,10,0.18) 0%, transparent 35%),
+      radial-gradient(ellipse at 100% 100%, rgba(138,10,10,0.15) 0%, transparent 35%);
+  }
+  html[data-theme="haunted"] #settingsPanel h3,
+  html[data-theme="haunted"] #welcome h2,
+  html[data-theme="haunted"] #poiCardName {
+    font-variant: small-caps;
+    letter-spacing: 0.12em;
+    text-shadow: 0 0 10px rgba(232,208,160,0.4);
+    border-bottom: 1px solid #5a4030;
+    padding-bottom: 4px;
+  }
+
+  /* Fogbank — desaturated monospace with a soft-blurred glow behind text
+     to feel like letters seen through fog. */
+  html[data-theme="fogbank"] body {
+    font-family: "American Typewriter", "Courier New", "Consolas", monospace;
+  }
+  html[data-theme="fogbank"] #settingsPanel h3,
+  html[data-theme="fogbank"] #welcome h2,
+  html[data-theme="fogbank"] #poiCardName {
+    color: #e0d8c8;
+    text-shadow: 0 0 12px rgba(200,192,176,0.45);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  html[data-theme="fogbank"] #settingsPanel h3::before,
+  html[data-theme="fogbank"] #welcome h2::before {
+    content: "▲  "; color: #8a3a1a;
+  }
+
+  /* Abyss — ancient serif with a cursed-yellow glow on headings like a
+     forbidden tome's illuminated capitals. */
+  html[data-theme="abyss"] body {
+    font-family: "IM Fell English", "Goudy Bookletter 1911",
+                 "Hoefler Text", "Garamond", Georgia, serif;
+  }
+  html[data-theme="abyss"] #settingsPanel h3,
+  html[data-theme="abyss"] #welcome h2,
+  html[data-theme="abyss"] #poiCardName {
+    color: #e8d070;
+    text-shadow: 0 0 14px rgba(232,208,112,0.55);
+    font-style: italic;
+    letter-spacing: 0.04em;
+  }
+
+  /* VHS — chromatic aberration on headings + full-page scanlines overlay
+     via a fixed-position ::before pseudo-element on <html>. Fontography
+     favors a 70s-broadcast look. */
+  html[data-theme="vhs"] body {
+    font-family: "Consolas", "Menlo", "Courier New", monospace;
+  }
+  html[data-theme="vhs"]::before {
+    content: "";
+    position: fixed; inset: 0; z-index: 9999;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+      to bottom,
+      rgba(255,255,255,0.02) 0 1px,
+      rgba(0,0,0,0.08) 1px 2px,
+      transparent 2px 3px
+    );
+    mix-blend-mode: overlay;
+    opacity: 0.75;
+  }
+  html[data-theme="vhs"] #settingsPanel h3,
+  html[data-theme="vhs"] #welcome h2,
+  html[data-theme="vhs"] #poiCardName {
+    color: #e0e0ff;
+    text-shadow:
+      2px 0 0 rgba(255,0,255,0.7),
+      -2px 0 0 rgba(0,255,238,0.7);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  html[data-theme="vhs"] button {
+    font-family: inherit;
+    text-shadow:
+      1px 0 0 rgba(255,0,255,0.4),
+      -1px 0 0 rgba(0,255,238,0.4);
+  }
+
+  /* Backrooms — buzzing fluorescent flicker on headings, plain Helvetica
+     like the signage of a place that doesn't want you to remember it. */
+  @keyframes backrooms-buzz {
+    0%, 100% { opacity: 1; }
+    45% { opacity: 1; }
+    46% { opacity: 0.85; }
+    47% { opacity: 1; }
+    82% { opacity: 1; }
+    83% { opacity: 0.7; }
+    84% { opacity: 1; }
+  }
+  html[data-theme="backrooms"] body {
+    font-family: "Helvetica", "Arial", sans-serif;
+  }
+  html[data-theme="backrooms"] #settingsPanel h3,
+  html[data-theme="backrooms"] #welcome h2,
+  html[data-theme="backrooms"] #poiCardName {
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    animation: backrooms-buzz 4s infinite;
+  }
+  html[data-theme="backrooms"] #welcomeStart,
+  html[data-theme="backrooms"] #downloadBtn,
+  html[data-theme="backrooms"] #appDataBtn,
+  html[data-theme="backrooms"] #poiCardDirections,
+  html[data-theme="backrooms"] #routingGo,
+  html[data-theme="backrooms"] button.close,
+  html[data-theme="backrooms"] #transitClose,
+  html[data-theme="backrooms"] #savedRoutesClose {
+    /* red exit sign */
+    letter-spacing: 0.15em; font-weight: 700;
+  }
+
+  /* Poolrooms — tile grid pattern on every panel, like the endless
+     bathroom-tile walls. Clean monospace for the uncanny feel. */
+  html[data-theme="poolrooms"] body {
+    font-family: "Helvetica Neue", "Arial", sans-serif;
+  }
+  html[data-theme="poolrooms"] #panel,
+  html[data-theme="poolrooms"] #poiCard,
+  html[data-theme="poolrooms"] #settingsPanel .sheet,
+  html[data-theme="poolrooms"] #welcome .card,
+  html[data-theme="poolrooms"] #routingPanel,
+  html[data-theme="poolrooms"] #savedRoutesPanel .sheet,
+  html[data-theme="poolrooms"] #scheduleModal .sheet,
+  html[data-theme="poolrooms"] #directionsPanel,
+  html[data-theme="poolrooms"] #transitPanel .sheet,
+  html[data-theme="poolrooms"] #favPanel .sheet {
+    background-image:
+      linear-gradient(rgba(74,158,184,0.18) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(74,158,184,0.18) 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+
+  /* Dead mall — retro rounded chrome headings, 80s geometry. */
+  html[data-theme="deadmall"] body {
+    font-family: "Avenir Next", "Futura", "Century Gothic", sans-serif;
+  }
+  html[data-theme="deadmall"] #settingsPanel h3,
+  html[data-theme="deadmall"] #welcome h2,
+  html[data-theme="deadmall"] #poiCardName {
+    background: linear-gradient(to bottom, #faecf0 0%, #ebd0da 50%, #a87a8a 100%);
+    -webkit-background-clip: text;
+            background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    font-weight: 700;
+    text-shadow: 0 2px 0 rgba(168,122,138,0.3);
+  }
+
+  /* 3am parking garage — stencil typography, concrete noise on panels
+     via a subtle repeating background. Everything feels slightly damp. */
+  html[data-theme="garage"] body {
+    font-family: "Stencil", "Impact", "Arial Narrow", "Arial Black", sans-serif;
+    letter-spacing: 0.02em;
+  }
+  html[data-theme="garage"] #panel,
+  html[data-theme="garage"] #poiCard,
+  html[data-theme="garage"] #settingsPanel .sheet,
+  html[data-theme="garage"] #welcome .card,
+  html[data-theme="garage"] #routingPanel,
+  html[data-theme="garage"] #savedRoutesPanel .sheet,
+  html[data-theme="garage"] #scheduleModal .sheet,
+  html[data-theme="garage"] #directionsPanel,
+  html[data-theme="garage"] #transitPanel .sheet,
+  html[data-theme="garage"] #favPanel .sheet {
+    background-image:
+      radial-gradient(circle at 10% 20%, rgba(255,138,48,0.08) 0%, transparent 40%),
+      radial-gradient(circle at 90% 80%, rgba(255,138,48,0.06) 0%, transparent 35%),
+      repeating-linear-gradient(
+        45deg,
+        rgba(0,0,0,0.04) 0 2px,
+        transparent 2px 6px,
+        rgba(255,255,255,0.02) 6px 8px,
+        transparent 8px 14px
+      );
+  }
+  html[data-theme="garage"] #settingsPanel h3,
+  html[data-theme="garage"] #welcome h2,
+  html[data-theme="garage"] #poiCardName {
+    color: #ff8a30;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    text-shadow: 0 0 16px rgba(255,138,48,0.6);
+    border-bottom: 2px solid #1a1a18;
+    padding-bottom: 4px;
+  }
+
   /* Buttons — secondary (neutral) and primary (accent CTA). */
   #welcomeStart,
   #downloadBtn,
@@ -1231,7 +2138,7 @@
                 ui: { panelBg: '#f0e3bf', panelText: '#3a2e1a', muted: '#7a6545', border: '#b49a70', hairline: '#d9c08c', hover: '#e5d3b3', inputBg: '#fbf2dd', radius: '6px', shadow: '0 2px 8px rgba(106, 86, 58, 0.3)', accent: '#a0593a', accentText: '#fbf2dd', accentBorder: '#7a3a20', danger: '#a33' } },
     mono:     { bg: '#f2f2f2', landcover: '#e8e8e8', landuse: '#e0e0e0', water: '#c0c0c0', building: '#d4d4d4', road: '#ffffff', roadLabel: '#555', roadHalo: '#fff', placeLabel: '#222', placeHalo: '#fff', poiLabel: '#333', poiHalo: '#fff', poiIcon: '#333333',
                 ui: { panelBg: '#ffffff', panelText: '#333', muted: '#888', border: '#ccc', hairline: '#e8e8e8', hover: '#f5f5f5', inputBg: '#ffffff', radius: '6px', shadow: '0 2px 8px rgba(0,0,0,0.2)', accent: '#555', accentText: '#ffffff', accentBorder: '#333', danger: '#a33' } },
-    medieval: { bg: '#e6d3a3', landcover: '#e8d9b0', landuse: '#d9c390', water: '#7d98a6', building: '#a0603b', road: '#2e1e10', roadLabel: '#2e1810', roadHalo: '#f0e3bf', placeLabel: '#2e1810', placeHalo: '#f0e3bf', poiLabel: '#2e1810', poiHalo: '#f0e3bf', poiIcon: '#3a2416',
+    medieval: { bg: '#e6d3a3', landcover: '#e8d9b0', landuse: '#d9c390', water: '#7d98a6', building: '#c48862', road: '#2e1e10', roadLabel: '#2e1810', roadHalo: '#f0e3bf', placeLabel: '#2e1810', placeHalo: '#f0e3bf', poiLabel: '#2e1810', poiHalo: '#f0e3bf', poiIcon: '#3a2416',
                 ui: { panelBg: '#f2e3b6', panelText: '#2e1d10', muted: '#6a4a2a', border: '#6a4a2a', hairline: '#6a4a2a', hover: '#e4cf9a', inputBg: '#f8ecc6', radius: '2px', shadow: '0 0 0 2px var(--ui-bg), 0 0 0 3px var(--ui-border), 0 4px 12px rgba(46, 29, 16, 0.25)', accent: '#9b4a2a', accentText: '#f8ecc6', accentBorder: '#7a3a20', danger: '#9b1c1c' } },
     vaporwave: { bg: '#2d1b4e', landcover: '#3f2370', landuse: '#4a2a7e', water: '#ff71ce', building: '#7c4dff', road: '#01cdfe', roadLabel: '#ffffff', roadHalo: '#2d1b4e', placeLabel: '#05ffa1', placeHalo: '#2d1b4e', poiLabel: '#fffb96', poiHalo: '#2d1b4e', poiIcon: '#ff71ce',
                 ui: { panelBg: '#3a2560', panelText: '#ffffff', muted: '#b38cdb', border: '#ff71ce', hairline: '#4a2968', hover: '#3f2970', inputBg: '#2d1b4e', radius: '4px', shadow: '0 0 20px rgba(255,113,206,0.4), 0 2px 8px rgba(0,0,0,0.5)', accent: '#ff71ce', accentText: '#2d1b4e', accentBorder: '#b967ff', danger: '#ff6b6b' } },
@@ -1266,7 +2173,111 @@
     mint: { bg: '#d8f0dc', landcover: '#c0e6c8', landuse: '#a8d8b2', water: '#6a9a7a', building: '#3a2418', road: '#f4fff5', roadLabel: '#3a2418', roadHalo: '#f4fff5', placeLabel: '#2a1a10', placeHalo: '#f4fff5', poiLabel: '#2a1a10', poiHalo: '#f4fff5', poiIcon: '#5a3820',
             ui: { panelBg: '#f0faf2', panelText: '#2a1a10', muted: '#6a5a50', border: '#8a6a50', hairline: '#c0e6c8', hover: '#e0f0e4', inputBg: '#f8fcf8', radius: '8px', shadow: '0 3px 10px rgba(58,36,24,0.25)', accent: '#5a3820', accentText: '#d8f0dc', accentBorder: '#2a1a10', danger: '#a03030' } },
     coral: { bg: '#ffeee0', landcover: '#ffe0d0', landuse: '#ffd0bc', water: '#2a9098', building: '#ff8080', road: '#ffffff', roadLabel: '#8a3020', roadHalo: '#ffffff', placeLabel: '#4a1810', placeHalo: '#ffffff', poiLabel: '#4a1810', poiHalo: '#ffffff', poiIcon: '#ff5a4a',
-             ui: { panelBg: '#fff8f4', panelText: '#4a1810', muted: '#a85a48', border: '#ff9a8a', hairline: '#ffd0bc', hover: '#ffe4d4', inputBg: '#fffcf8', radius: '12px', shadow: '0 4px 14px rgba(255,90,74,0.3)', accent: '#ff5a4a', accentText: '#ffffff', accentBorder: '#c83a2a', danger: '#c81c1c' } }
+             ui: { panelBg: '#fff8f4', panelText: '#4a1810', muted: '#a85a48', border: '#ff9a8a', hairline: '#ffd0bc', hover: '#ffe4d4', inputBg: '#fffcf8', radius: '12px', shadow: '0 4px 14px rgba(255,90,74,0.3)', accent: '#ff5a4a', accentText: '#ffffff', accentBorder: '#c83a2a', danger: '#c81c1c' } },
+    // Windows 95 — silver desktop, teal water (the iconic default wallpaper
+    // color), black ink, navy accents. CSS decoration adds beveled borders
+    // and title-bar headings for the full chrome experience.
+    win95: { bg: '#c0c0c0', landcover: '#c0c0c0', landuse: '#b8b8b8', water: '#008080', building: '#808080', road: '#ffffff', roadLabel: '#000000', roadHalo: '#c0c0c0', placeLabel: '#000000', placeHalo: '#ffffff', poiLabel: '#000000', poiHalo: '#ffffff', poiIcon: '#000080',
+             ui: { panelBg: '#c0c0c0', panelText: '#000000', muted: '#606060', border: '#000000', hairline: '#808080', hover: '#a0a0a0', inputBg: '#ffffff', radius: '0px', shadow: 'inset 1px 1px 0 #ffffff, inset -1px -1px 0 #808080, inset 2px 2px 0 #dfdfdf, inset -2px -2px 0 #000000', accent: '#000080', accentText: '#ffffff', accentBorder: '#000040', danger: '#800000' } },
+    // Classic Mac OS 9 — warm platinum, sky-blue water, pinstripe title bars.
+    macos9: { bg: '#d8d8d0', landcover: '#d8d8d0', landuse: '#cccbc0', water: '#8cb4e8', building: '#a89f95', road: '#ffffff', roadLabel: '#2a2a2a', roadHalo: '#ffffff', placeLabel: '#1a1a1a', placeHalo: '#ffffff', poiLabel: '#1a1a1a', poiHalo: '#ffffff', poiIcon: '#2a4a80',
+              ui: { panelBg: '#dedede', panelText: '#000000', muted: '#666666', border: '#5a5a5a', hairline: '#a8a8a8', hover: '#c8c8c8', inputBg: '#ffffff', radius: '6px', shadow: 'inset 0 1px 0 #ffffff, 0 1px 0 #5a5a5a, 0 3px 8px rgba(0,0,0,0.25)', accent: '#4070b0', accentText: '#ffffff', accentBorder: '#2a4a80', danger: '#a02020' } },
+    // Chalkboard — dark slate green, chalk-white labels, handwritten.
+    chalkboard: { bg: '#1a3a28', landcover: '#1e4030', landuse: '#224535', water: '#2a5548', building: '#284a38', road: '#f5f2e8', roadLabel: '#f5f2e8', roadHalo: '#1a3a28', placeLabel: '#f8eadd', placeHalo: '#1a3a28', poiLabel: '#ffe5a8', poiHalo: '#1a3a28', poiIcon: '#ffe5a8',
+                  ui: { panelBg: '#1a3a28', panelText: '#f8eadd', muted: '#a8b8a8', border: '#5a6a55', hairline: '#3a5a48', hover: '#2a4a38', inputBg: '#1a3a28', radius: '2px', shadow: '0 0 0 1px #f8eadd, 2px 2px 0 rgba(0,0,0,0.4)', accent: '#ffe5a8', accentText: '#1a3a28', accentBorder: '#f8eadd', danger: '#ff8a8a' } },
+    // Comic Sans! — maximum chaos. Pastel pinks, rounded everything, and
+    // the font nobody expected you to actually enjoy but you kind of do.
+    comicsans: { bg: '#ffe8f0', landcover: '#ffe0ea', landuse: '#ffd0dc', water: '#80d8f0', building: '#c878a0', road: '#ffffff', roadLabel: '#8a2040', roadHalo: '#ffffff', placeLabel: '#6a1848', placeHalo: '#ffffff', poiLabel: '#6a1848', poiHalo: '#ffffff', poiIcon: '#e848a0',
+                 ui: { panelBg: '#fff8fc', panelText: '#4a1838', muted: '#a878a0', border: '#e080b0', hairline: '#f8d0e0', hover: '#ffe8f0', inputBg: '#fffcff', radius: '20px', shadow: '4px 4px 0 #e080b0, 6px 6px 0 #4a1838', accent: '#ff70aa', accentText: '#ffffff', accentBorder: '#e048a0', danger: '#e02040' } },
+    // Notebook paper — cream sheet with blue rules and a red margin line.
+    notebook: { bg: '#fdfbed', landcover: '#fdfbed', landuse: '#fbf8e0', water: '#a8c8e0', building: '#e0d0b8', road: '#ffffff', roadLabel: '#2a3a7a', roadHalo: '#fdfbed', placeLabel: '#1a2a5a', placeHalo: '#fdfbed', poiLabel: '#1a2a5a', poiHalo: '#fdfbed', poiIcon: '#2a3a7a',
+                ui: { panelBg: '#fdfbed', panelText: '#1a2a5a', muted: '#6a7aa0', border: '#a8c0e0', hairline: '#d8e4f0', hover: '#faf0d8', inputBg: '#ffffff', radius: '4px', shadow: '2px 2px 0 rgba(42,58,122,0.15), 0 4px 12px rgba(42,58,122,0.12)', accent: '#2a3a7a', accentText: '#fdfbed', accentBorder: '#1a2a5a', danger: '#c02020' } },
+    // NES — Super Mario Bros. overworld palette: SMB sky-blue water, tan
+    // ground, Mario-red buildings, chunky NES-grey console chrome UI.
+    nes: { bg: '#f8d0a8', landcover: '#f8d0a8', landuse: '#e8b888', water: '#5c94fc', building: '#a81820', road: '#fcfcfc', roadLabel: '#181818', roadHalo: '#fcfcfc', placeLabel: '#181818', placeHalo: '#fcfcfc', poiLabel: '#181818', poiHalo: '#fcfcfc', poiIcon: '#a81820',
+           ui: { panelBg: '#bcbcbc', panelText: '#181818', muted: '#585858', border: '#181818', hairline: '#8c8c8c', hover: '#a8a8a8', inputBg: '#fcfcfc', radius: '0px', shadow: '4px 4px 0 #181818', accent: '#a81820', accentText: '#fcfcfc', accentBorder: '#58000c', danger: '#f83800' } },
+    // Atari 2600 — wood-grain console front panel with bright cart colors:
+    // golden yellow roads, brick red buildings, dark CRT water.
+    atari: { bg: '#a07038', landcover: '#a07038', landuse: '#8f6030', water: '#2a1a0a', building: '#d04018', road: '#f0b030', roadLabel: '#201010', roadHalo: '#f0e8d8', placeLabel: '#f0e8d8', placeHalo: '#201010', poiLabel: '#f0e8d8', poiHalo: '#201010', poiIcon: '#e03030',
+             ui: { panelBg: '#2a1a0a', panelText: '#f0e8d8', muted: '#b08860', border: '#000000', hairline: '#503020', hover: '#402010', inputBg: '#000000', radius: '2px', shadow: '4px 4px 0 #000000, 6px 6px 0 rgba(208,64,24,0.7)', accent: '#f0b030', accentText: '#201010', accentBorder: '#a87020', danger: '#d04018' } },
+    // The Sims — suburban lawn green, pool water, beige houses with orange
+    // roofs. UI is the classic deep-blue sim menu bar with plumbob neon
+    // green accent. The happy smell of afternoon BB.
+    sims: { bg: '#8bc868', landcover: '#8bc868', landuse: '#a0d680', water: '#6ac0e8', building: '#e8a868', road: '#c8b890', roadLabel: '#1a3a1a', roadHalo: '#e8e8c8', placeLabel: '#1a2a1a', placeHalo: '#ffffff', poiLabel: '#1a2a1a', poiHalo: '#ffffff', poiIcon: '#4cff00',
+            ui: { panelBg: '#1a4a7a', panelText: '#ffffff', muted: '#8ab0d0', border: '#0a2a5a', hairline: '#3a6aaa', hover: '#3a6aaa', inputBg: '#0a2a5a', radius: '8px', shadow: 'inset 0 1px 0 rgba(255,255,255,0.25), 0 4px 14px rgba(10,42,90,0.5)', accent: '#4cff00', accentText: '#0a2a5a', accentBorder: '#2ac800', danger: '#ff5858' } },
+    // Roller Coaster Tycoon — vibrant grass green map, sandy footpaths,
+    // blue pond water, coaster-red rides. UI is the classic RCT2 window
+    // chrome — grey slab panels with yellow gold accents (park coins!).
+    rct: { bg: '#4a8820', landcover: '#4a8820', landuse: '#3d7020', water: '#3a6eae', building: '#c85030', road: '#e0b878', roadLabel: '#181818', roadHalo: '#e0b878', placeLabel: '#ffffff', placeHalo: '#181818', poiLabel: '#ffffff', poiHalo: '#181818', poiIcon: '#ffd040',
+           ui: { panelBg: '#707070', panelText: '#ffffff', muted: '#b8b8b8', border: '#000000', hairline: '#505050', hover: '#606060', inputBg: '#303030', radius: '0px', shadow: '3px 3px 0 #000000, inset 1px 1px 0 rgba(255,255,255,0.15)', accent: '#ffc020', accentText: '#181818', accentBorder: '#a06000', danger: '#c02020' } },
+    // Hand-carved wood — warm oak/walnut tones, carved dark lettering,
+    // panels get a wood-grain ring pattern via linear-gradient decoration.
+    wood: { bg: '#d4a468', landcover: '#d4a468', landuse: '#c69256', water: '#5a3820', building: '#b88554', road: '#f2deb8', roadLabel: '#3a1e08', roadHalo: '#e8c890', placeLabel: '#3a1e08', placeHalo: '#e8c890', poiLabel: '#3a1e08', poiHalo: '#e8c890', poiIcon: '#5a3820',
+            ui: { panelBg: '#c08850', panelText: '#3a1e08', muted: '#6a3e18', border: '#3a1e08', hairline: '#8a5a2a', hover: '#b07840', inputBg: '#f2deb8', radius: '4px', shadow: 'inset 0 2px 0 rgba(255,230,200,0.35), inset 0 -2px 0 rgba(40,20,8,0.35), 0 3px 10px rgba(40,20,8,0.45)', accent: '#5a3820', accentText: '#f2deb8', accentBorder: '#2a1408', danger: '#a03020' } },
+    // Sheet metal — brushed-aluminum panels with hazard-yellow accents and
+    // bolted-down cornering. Cold industrial palette with chrome roads.
+    metal: { bg: '#a8a8a8', landcover: '#a8a8a8', landuse: '#999999', water: '#4a5c6a', building: '#848484', road: '#e8e8e8', roadLabel: '#1a1a1a', roadHalo: '#e8e8e8', placeLabel: '#1a1a1a', placeHalo: '#e8e8e8', poiLabel: '#1a1a1a', poiHalo: '#e8e8e8', poiIcon: '#f0a020',
+             ui: { panelBg: '#8a8a8a', panelText: '#101010', muted: '#4a4a4a', border: '#2a2a2a', hairline: '#6a6a6a', hover: '#9a9a9a', inputBg: '#d8d8d8', radius: '2px', shadow: 'inset 0 1px 0 rgba(255,255,255,0.4), inset 0 -1px 0 rgba(0,0,0,0.35), 0 4px 10px rgba(0,0,0,0.5)', accent: '#f0a020', accentText: '#1a1a1a', accentBorder: '#a06000', danger: '#d03030' } },
+    // Google Maps — that universal cream-land + blue-water palette you see
+    // everywhere. Roboto-feeling, soft grey text, Google-red POI pins.
+    google: { bg: '#f5f1e9', landcover: '#f5f1e9', landuse: '#ecdfca', water: '#a5cbe7', building: '#e8dcc7', road: '#ffffff', roadLabel: '#3c4043', roadHalo: '#ffffff', placeLabel: '#3c4043', placeHalo: '#ffffff', poiLabel: '#3c4043', poiHalo: '#ffffff', poiIcon: '#ea4335',
+              ui: { panelBg: '#ffffff', panelText: '#202124', muted: '#5f6368', border: '#dadce0', hairline: '#e8eaed', hover: '#f1f3f4', inputBg: '#ffffff', radius: '8px', shadow: '0 2px 10px rgba(60,64,67,0.15), 0 1px 3px rgba(60,64,67,0.1)', accent: '#1a73e8', accentText: '#ffffff', accentBorder: '#1765cc', danger: '#ea4335' } },
+    // Apple Maps — pale mint land, pastel blue water, Apple system grey UI
+    // with rounded everything and the classic San Francisco vibe.
+    apple: { bg: '#e8efdd', landcover: '#e8efdd', landuse: '#dee7d0', water: '#a1cdef', building: '#d8d8da', road: '#ffffff', roadLabel: '#333333', roadHalo: '#ffffff', placeLabel: '#1d1d1f', placeHalo: '#ffffff', poiLabel: '#1d1d1f', poiHalo: '#ffffff', poiIcon: '#ff3b30',
+             ui: { panelBg: '#f5f5f7', panelText: '#1d1d1f', muted: '#86868b', border: '#d2d2d7', hairline: '#e5e5ea', hover: '#e8e8ed', inputBg: '#ffffff', radius: '12px', shadow: '0 4px 16px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.06)', accent: '#007aff', accentText: '#ffffff', accentBorder: '#0051c7', danger: '#ff3b30' } },
+    // Minecraft — grass-block green, dirt-path brown, oak-plank buildings.
+    // Blocky panels, pixelated font, iconic Mojang green CTAs.
+    minecraft: { bg: '#7cb850', landcover: '#7cb850', landuse: '#6fa245', water: '#2e5e9e', building: '#8b6a4a', road: '#c4a37a', roadLabel: '#1d1d1d', roadHalo: '#c4a37a', placeLabel: '#ffffff', placeHalo: '#1d1d1d', poiLabel: '#ffffff', poiHalo: '#1d1d1d', poiIcon: '#ffd700',
+                 ui: { panelBg: '#888888', panelText: '#ffffff', muted: '#c0c0c0', border: '#1d1d1d', hairline: '#555555', hover: '#a0a0a0', inputBg: '#1d1d1d', radius: '0px', shadow: 'inset 2px 2px 0 rgba(255,255,255,0.2), inset -2px -2px 0 rgba(0,0,0,0.45), 4px 4px 0 #1d1d1d', accent: '#3aaa35', accentText: '#ffffff', accentBorder: '#1e7a1e', danger: '#c53030' } },
+    // Tron — pitch-black plane with glowing cyan grid lines, orange
+    // programs (rogues), chrome-free UI. Everything cast in neon.
+    tron: { bg: '#000000', landcover: '#020810', landuse: '#030d18', water: '#00060c', building: '#0f2a3a', road: '#00ddff', roadLabel: '#00ddff', roadHalo: '#000000', placeLabel: '#ffffff', placeHalo: '#000000', poiLabel: '#ffa040', poiHalo: '#000000', poiIcon: '#00ddff',
+            ui: { panelBg: '#020810', panelText: '#00ddff', muted: '#407080', border: '#00ddff', hairline: '#1a3848', hover: '#0a1a2a', inputBg: '#000000', radius: '2px', shadow: '0 0 12px rgba(0,221,255,0.5), inset 0 0 0 1px #00ddff', accent: '#00ddff', accentText: '#000000', accentBorder: '#66eeff', danger: '#ff4040' } },
+    // Wes Anderson — pastel pink land, muted teal water, mustard cream UI,
+    // salmon buildings. Everything symmetric and slightly too perfect.
+    wes: { bg: '#ffcab0', landcover: '#ffcab0', landuse: '#f8c4a8', water: '#7ab8d4', building: '#c58070', road: '#fff5e0', roadLabel: '#5c2b1a', roadHalo: '#ffcab0', placeLabel: '#4c1a08', placeHalo: '#ffcab0', poiLabel: '#4c1a08', poiHalo: '#ffcab0', poiIcon: '#d4af37',
+           ui: { panelBg: '#f4d9a8', panelText: '#5c2b1a', muted: '#a07a5a', border: '#8a4a3a', hairline: '#d4b088', hover: '#eac888', inputBg: '#fff5e0', radius: '4px', shadow: '3px 3px 0 rgba(92,43,26,0.25), 0 6px 16px rgba(92,43,26,0.15)', accent: '#d4af37', accentText: '#5c2b1a', accentBorder: '#a08020', danger: '#c85040' } },
+    // Pac-Man — pitch-black arcade maze with bright blue walls, pac-yellow
+    // paths and ghost-pink accents. Dots every where.
+    pacman: { bg: '#000000', landcover: '#000000', landuse: '#000000', water: '#2121de', building: '#2121de', road: '#ffcc00', roadLabel: '#ffffff', roadHalo: '#000000', placeLabel: '#ffff00', placeHalo: '#000000', poiLabel: '#ffb8ff', poiHalo: '#000000', poiIcon: '#ff0000',
+              ui: { panelBg: '#000000', panelText: '#ffff00', muted: '#888888', border: '#2121de', hairline: '#1a1a9e', hover: '#0a0a40', inputBg: '#000000', radius: '0px', shadow: '3px 3px 0 #2121de, 6px 6px 0 rgba(33,33,222,0.5)', accent: '#ffff00', accentText: '#000000', accentBorder: '#c0c000', danger: '#ff0000' } },
+    // Bloodmoon — pitch-black ground, dried-blood buildings, screaming-red
+    // streets. Everything feels like walking through a slasher flick set.
+    bloodmoon: { bg: '#1a0008', landcover: '#1a0008', landuse: '#240408', water: '#3a0004', building: '#5a0c0c', road: '#a00810', roadLabel: '#ffffff', roadHalo: '#1a0008', placeLabel: '#ff3030', placeHalo: '#1a0008', poiLabel: '#ff3030', poiHalo: '#1a0008', poiIcon: '#ff0000',
+                 ui: { panelBg: '#1a0008', panelText: '#e8c0c0', muted: '#783030', border: '#5a0808', hairline: '#2a0a0a', hover: '#2a0010', inputBg: '#0a0004', radius: '0px', shadow: '0 0 22px rgba(200,0,0,0.4), 0 0 3px rgba(255,0,0,0.8)', accent: '#c00010', accentText: '#ffffff', accentBorder: '#800000', danger: '#ff2020' } },
+    // Haunted mansion — aged wallpaper, murky waters, candlelit parlor UI
+    // with dark velvet-red accents and ornate Gothic typography.
+    haunted: { bg: '#3a2828', landcover: '#3a2828', landuse: '#402a2a', water: '#1a1a20', building: '#5a4040', road: '#8a7468', roadLabel: '#d8c8a0', roadHalo: '#3a2828', placeLabel: '#e8d0a0', placeHalo: '#1a0808', poiLabel: '#e8d0a0', poiHalo: '#1a0808', poiIcon: '#a08040',
+               ui: { panelBg: '#2a1a1a', panelText: '#d8c0a0', muted: '#8a7060', border: '#5a4030', hairline: '#3a2820', hover: '#3a2222', inputBg: '#1a1010', radius: '4px', shadow: '0 0 0 1px #5a4030, 0 8px 22px rgba(0,0,0,0.75)', accent: '#8a0a0a', accentText: '#e8d0a0', accentBorder: '#400000', danger: '#a03030' } },
+    // Fogbank — Silent Hill. Desaturated grey-brown haze, rust-orange
+    // accents that feel like the emergency sirens just went off.
+    fogbank: { bg: '#2a2824', landcover: '#2a2824', landuse: '#302e2a', water: '#1a1816', building: '#48403a', road: '#6a5a50', roadLabel: '#c8c0b0', roadHalo: '#2a2824', placeLabel: '#e0d8c8', placeHalo: '#2a2824', poiLabel: '#e0d8c8', poiHalo: '#2a2824', poiIcon: '#8a3a1a',
+               ui: { panelBg: '#2a2824', panelText: '#c8c0b0', muted: '#706860', border: '#48403a', hairline: '#3a3630', hover: '#3a3630', inputBg: '#1a1816', radius: '2px', shadow: '0 0 40px rgba(138,58,26,0.3), 0 4px 22px rgba(0,0,0,0.85)', accent: '#8a3a1a', accentText: '#e0d8c8', accentBorder: '#5a2410', danger: '#c03020' } },
+    // Abyss — cosmic horror. Deep-sea near-black teal, with sickly cursed
+    // yellow accents (the color of ancient, forbidden knowledge).
+    abyss: { bg: '#0a1820', landcover: '#0a1820', landuse: '#0e2028', water: '#000606', building: '#1a3035', road: '#4a7070', roadLabel: '#8aa8a0', roadHalo: '#0a1820', placeLabel: '#c8e0c0', placeHalo: '#0a1820', poiLabel: '#e8d070', poiHalo: '#0a1820', poiIcon: '#70b0a0',
+             ui: { panelBg: '#0a1820', panelText: '#8aa8a0', muted: '#4a6868', border: '#2a4848', hairline: '#1a2828', hover: '#122028', inputBg: '#000808', radius: '3px', shadow: '0 0 32px rgba(112,176,160,0.3), inset 0 0 22px rgba(0,0,0,0.6)', accent: '#e8d070', accentText: '#0a1820', accentBorder: '#a08040', danger: '#c0404a' } },
+    // VHS — analog horror. Degraded-tape blues and blacks with chromatic
+    // aberration (magenta/cyan bleed) on headings. Don't trust the signal.
+    vhs: { bg: '#0a0a1a', landcover: '#0a0a1a', landuse: '#0e0e20', water: '#101030', building: '#2a2a48', road: '#6a6aa0', roadLabel: '#e0e0ff', roadHalo: '#0a0a1a', placeLabel: '#ff00ff', placeHalo: '#0a0a1a', poiLabel: '#00ffee', poiHalo: '#0a0a1a', poiIcon: '#ff0040',
+           ui: { panelBg: '#0a0a1a', panelText: '#e0e0ff', muted: '#6a6a8a', border: '#ff00ff', hairline: '#2a2a48', hover: '#12122a', inputBg: '#000008', radius: '0px', shadow: '3px 3px 0 rgba(255,0,255,0.35), -3px -3px 0 rgba(0,255,238,0.35), 0 0 18px rgba(255,0,64,0.3)', accent: '#ff0040', accentText: '#ffffff', accentBorder: '#800020', danger: '#ff0040' } },
+    // Backrooms (Level 0) — iconic yellow wallpaper land, damp-carpet
+    // moisture-stain water. Monstera-free. Red-exit-sign accents.
+    backrooms: { bg: '#e0c988', landcover: '#e0c988', landuse: '#d4b67a', water: '#8a6f3a', building: '#ae8f4e', road: '#f0d89a', roadLabel: '#3a2a0a', roadHalo: '#e0c988', placeLabel: '#3a2a0a', placeHalo: '#e0c988', poiLabel: '#3a2a0a', poiHalo: '#e0c988', poiIcon: '#6a4a1a',
+                 ui: { panelBg: '#d8c080', panelText: '#2a1a08', muted: '#8a6f3a', border: '#4a3a1a', hairline: '#a08a50', hover: '#c8b070', inputBg: '#e8d8a0', radius: '0px', shadow: '0 0 60px rgba(240,200,100,0.35), 0 4px 8px rgba(40,30,8,0.4)', accent: '#8a0a0a', accentText: '#f0d89a', accentBorder: '#4a0000', danger: '#c01010' } },
+    // Poolrooms (Level 37) — endless cyan tile walls, clear pool water
+    // everywhere, fluorescent-bright ceiling. Deeply wrong but calming.
+    poolrooms: { bg: '#a8e0e8', landcover: '#a8e0e8', landuse: '#98d0d8', water: '#4a9eb8', building: '#d8f0f8', road: '#ffffff', roadLabel: '#0a3040', roadHalo: '#a8e0e8', placeLabel: '#0a3040', placeHalo: '#ffffff', poiLabel: '#0a3040', poiHalo: '#ffffff', poiIcon: '#0a7090',
+                 ui: { panelBg: '#d8f0f4', panelText: '#0a3040', muted: '#5a8a98', border: '#4a9eb8', hairline: '#a8d8e0', hover: '#c0e0e8', inputBg: '#ffffff', radius: '0px', shadow: '0 0 0 1px #4a9eb8, 0 4px 18px rgba(74,158,184,0.3)', accent: '#0a7090', accentText: '#ffffff', accentBorder: '#042a38', danger: '#c03030' } },
+    // Dead mall — dusty rose floors, faded teal planters, 80s mall pastels.
+    // The food court is closed but the music still plays somewhere.
+    deadmall: { bg: '#e8d4c8', landcover: '#e8d4c8', landuse: '#d8bdac', water: '#8ab4b8', building: '#c8a890', road: '#f0e4d8', roadLabel: '#4a2a1a', roadHalo: '#f0e4d8', placeLabel: '#4a2a1a', placeHalo: '#f0e4d8', poiLabel: '#4a2a1a', poiHalo: '#f0e4d8', poiIcon: '#b84a6a',
+                ui: { panelBg: '#ebd0da', panelText: '#4a2a3a', muted: '#8a6a7a', border: '#a87a8a', hairline: '#d8b0c0', hover: '#dfbec8', inputBg: '#faecf0', radius: '2px', shadow: '0 0 0 1px #a87a8a, 0 6px 18px rgba(74,42,58,0.25)', accent: '#b84a6a', accentText: '#faecf0', accentBorder: '#802a4a', danger: '#c04030' } },
+    // Parking garage at 3am — cold concrete with the sickly warm glow of
+    // sodium-vapor lights. Your footsteps are the only sound.
+    garage: { bg: '#4a4a48', landcover: '#4a4a48', landuse: '#444442', water: '#1a1a18', building: '#606060', road: '#8a7a5a', roadLabel: '#ffcc88', roadHalo: '#2a2a28', placeLabel: '#ffcc88', placeHalo: '#2a2a28', poiLabel: '#ffcc88', poiHalo: '#2a2a28', poiIcon: '#ff8a30',
+              ui: { panelBg: '#3a3a38', panelText: '#e8d8b8', muted: '#8a8a88', border: '#1a1a18', hairline: '#4a4a48', hover: '#484846', inputBg: '#1a1a18', radius: '1px', shadow: '0 0 40px rgba(255,180,100,0.2), 0 4px 12px rgba(0,0,0,0.8)', accent: '#ff8a30', accentText: '#1a1a18', accentBorder: '#c04a10', danger: '#ff3030' } }
   };
   function resolve(name) {
     if (name === 'custom') {
@@ -1464,6 +2475,32 @@
         <option value="gameboy">GameBoy</option>
         <option value="mint">Mint choc</option>
         <option value="coral">Coral reef</option>
+        <option value="win95">Windows 95</option>
+        <option value="macos9">Mac OS 9</option>
+        <option value="chalkboard">Chalkboard</option>
+        <option value="comicsans">Comic Sans</option>
+        <option value="notebook">Notebook</option>
+        <option value="nes">NES</option>
+        <option value="atari">Atari 2600</option>
+        <option value="sims">The Sims</option>
+        <option value="rct">Roller Coaster Tycoon</option>
+        <option value="wood">Hand-carved wood</option>
+        <option value="metal">Sheet metal</option>
+        <option value="google">Google Maps</option>
+        <option value="apple">Apple Maps</option>
+        <option value="minecraft">Minecraft</option>
+        <option value="tron">Tron</option>
+        <option value="wes">Wes Anderson</option>
+        <option value="pacman">Pac-Man</option>
+        <option value="bloodmoon">Bloodmoon</option>
+        <option value="haunted">Haunted mansion</option>
+        <option value="fogbank">Fogbank</option>
+        <option value="abyss">Abyss</option>
+        <option value="vhs">VHS</option>
+        <option value="backrooms">Backrooms</option>
+        <option value="poolrooms">Poolrooms</option>
+        <option value="deadmall">Dead mall</option>
+        <option value="garage">3am parking garage</option>
         <option value="custom">Custom</option>
       </select>
     </div>
@@ -1501,6 +2538,10 @@
       <input type="checkbox" id="showPanelToggle" checked>
     </div>
     <div class="row">
+      <label for="wifiOnlyToggle">Only download on WiFi</label>
+      <input type="checkbox" id="wifiOnlyToggle">
+    </div>
+    <div class="row">
       <label>Backup</label>
       <span>
         <button id="exportBtn" type="button" style="padding: 6px 10px; font-size: 13px; margin-right: 4px;">Export</button>
@@ -1517,6 +2558,10 @@
          rel="noopener noreferrer">MapLibre</a> ·
       low-zoom shapes from <a href="https://www.naturalearthdata.com/"
          target="_blank" rel="noopener noreferrer">Natural Earth</a>
+    </div>
+    <div style="margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--ui-border, rgba(0,0,0,0.08)); font-size: 11px; color: var(--ui-muted); display: flex; justify-content: space-between; gap: 12px;">
+      <span>creature-collect <span id="versionBadge">v?</span></span>
+      <span id="memBadge" title="estimated live JS heap used by map data"></span>
     </div>
     <div class="actions"><button class="close" id="settingsClose">Done</button></div>
   </div>
@@ -1553,8 +2598,25 @@
 <script src="/static/vendor/maplibre-gl.js"></script>
 <script src="/static/trip-planner.js"></script>
 <script>
+// Single source of truth for the app version. Bumped manually when shipping
+// a user-visible change (new features, data format upgrades, etc.). Shown
+// at the bottom of the settings panel so it's easy to read off during
+// support / bug reports.
+const APP_VERSION = 'v0.1.0';
+{
+  const el = document.getElementById('versionBadge');
+  if (el) el.textContent = APP_VERSION;
+}
+
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
   || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isAndroid = /Android/.test(navigator.userAgent);
+const isMobile = isIOS || isAndroid;
+// Desktop has no battery/thermal throttling and modern browsers happily
+// open 50+ concurrent connections, so we crank the tile-download parallelism
+// 10x. Mobile stays conservative (6) — iOS backgrounds the SW aggressively
+// and bursting too many connections can stall.
+const TILE_DOWNLOAD_WORKERS = isMobile ? 6 : 60;
 const isStandalone = window.navigator.standalone
   || window.matchMedia('(display-mode: standalone)').matches;
 if (isIOS && !isStandalone && localStorage.getItem('cc.installDismissed') !== '1') {
@@ -2918,7 +3980,16 @@ function fmtDate(ts) {
     neon: 'Neon', pastel: 'Pastel', autumn: 'Autumn', ocean: 'Ocean',
     desert: 'Desert', nordic: 'Nordic', sakura: 'Sakura', amber: 'Amber',
     galaxy: 'Galaxy', noir: 'Noir', gameboy: 'GameBoy', mint: 'Mint choc',
-    coral: 'Coral reef', custom: 'Custom…'
+    coral: 'Coral reef', win95: 'Win95', macos9: 'Mac OS 9',
+    chalkboard: 'Chalkboard', comicsans: 'Comic Sans!', notebook: 'Notebook',
+    nes: 'NES', atari: 'Atari 2600', sims: 'The Sims 💎',
+    rct: 'RCT 🎢', wood: 'Wood 🪵', metal: 'Sheet metal 🔩',
+    google: 'Google', apple: 'Apple', minecraft: 'Minecraft ⛏',
+    tron: 'Tron', wes: 'Wes Anderson', pacman: 'Pac-Man',
+    bloodmoon: 'Bloodmoon 🩸', haunted: 'Haunted 🕯', fogbank: 'Fogbank 🌫',
+    abyss: 'Abyss 🐙', vhs: 'VHS 📼',
+    backrooms: 'Backrooms', poolrooms: 'Poolrooms', deadmall: 'Dead mall',
+    garage: '3am garage', custom: 'Custom…'
   };
   function themePreviewSVG(t) {
     const accent = t.ui?.accent || '#3b7fdf';
@@ -4870,6 +5941,7 @@ function fmtDate(ts) {
         <div class="sizes" data-sizes="${r.id}">measuring…</div>
       </div>
       <div><button data-goto="${r.id}">go</button>
+      <button data-refresh="${r.id}" title="re-download all data for this region">↻</button>
       <button data-del="${r.id}">×</button></div>`;
       el.appendChild(row);
     }
@@ -4900,6 +5972,9 @@ function fmtDate(ts) {
     el.querySelectorAll('[data-goto]').forEach(b => b.onclick = () => {
       const r = loadRegions().find(x => x.id === b.dataset.goto);
       if (r) map.fitBounds([[r.bbox[0], r.bbox[1]], [r.bbox[2], r.bbox[3]]]);
+    });
+    el.querySelectorAll('[data-refresh]').forEach(b => b.onclick = () => {
+      refreshRegion(b.dataset.refresh);
     });
     el.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
       const id = b.dataset.del;
@@ -6472,51 +7547,115 @@ function fmtDate(ts) {
     applyTransitTileVisibility();
   }
 
-  document.getElementById('downloadBtn').onclick = async () => {
-    const maxZoom = +document.getElementById('zMax').value;
-    if (maxZoom < MIN_ZOOM) return;
-    const minZoom = MIN_ZOOM;
-    const bbox = currentBbox();
-    const id = crypto.randomUUID();
+  // Gate large downloads when "Only download on WiFi" is enabled.
+  // - Chrome/Android reports cellular via navigator.connection.type → hard block.
+  // - iOS/Safari doesn't ship Network Information API → soft confirm prompt.
+  // - Setting off → always allow.
+  function checkWifiGate() {
+    if (localStorage.getItem('cc.wifiOnly') !== '1') return true;
+    const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (conn && conn.type) {
+      if (conn.type === 'wifi' || conn.type === 'ethernet' || conn.type === 'wimax') return true;
+      alert(`Download blocked: you're on ${conn.type}. Connect to WiFi or disable "Only download on WiFi" in Settings.`);
+      return false;
+    }
+    // API unavailable (iOS Safari). Soft-prompt the user.
+    return confirm("Can't detect your connection type on this browser. Make sure you're on WiFi — large downloads can use hundreds of MB. Continue?");
+  }
+
+  // Shared download/refresh implementation. Called both by the "save current
+  // view" button (with a fresh UUID) and the per-region refresh button
+  // (re-using an existing region's id so IDB records and the region entry
+  // are overwritten in place). IDB stores key by regionId, and SW's tile
+  // cache keys by URL, so re-running with the same id naturally replaces.
+  async function performRegionDownload({ id, bbox, minZoom, maxZoom, isRefresh }) {
     const status = document.getElementById('status');
-    status.textContent = 'downloading POIs…';
+    if (isRefresh) {
+      // Clean in-memory copies for this region before we re-fetch, so the
+      // POI/walk/hn arrays don't end up double-counting the region.
+      allPois = allPois.filter(p => p.regionId !== id);
+      unloadWalkGraph();
+      hnRegions = [];
+    }
+    const verb = isRefresh ? 'refreshing' : 'downloading';
+    status.textContent = `${verb} POIs…`;
     const poiCount = await fetchAndSavePois(id, bbox);
-    status.textContent = 'downloading schedules…';
+    status.textContent = `${verb} schedules…`;
     await fetchAndSaveSchedule(id, bbox);
     await rebuildScheduleIndex();
     await fetchAndSaveWalkGraph(id, bbox, status);
     // Drop any in-memory walk graph so next routing call re-loads and picks
-    // up the new region. Lazy — we don't rebuild here.
+    // up the new region's data. Lazy — we don't rebuild here.
     unloadWalkGraph();
-    status.textContent = 'downloading housenumbers…';
+    status.textContent = `${verb} housenumbers…`;
     await fetchAndSaveHousenumbers(id, bbox);
-    // Force re-parse on next z16+ zoom so the new region's data is picked up.
+    // Force re-parse on next z16+ zoom so the new data is picked up.
     hnRegions = [];
-    const extraUrls = [];
+
     const reg = await navigator.serviceWorker.ready;
-    const onMsg = (e) => {
-      if (e.data.id !== id) return;
-      if (e.data.type === 'progress') {
-        status.textContent = `downloading ${e.data.done}/${e.data.total}${e.data.failed ? ` (${e.data.failed} failed)` : ''}`;
-      } else if (e.data.type === 'done') {
-        status.textContent = `saved ${e.data.done - e.data.failed} tiles, ${poiCount} POIs (${e.data.failed} failed)`;
-        const list = loadRegions();
-        list.push({
-          id, createdAt: Date.now(), bbox, minZoom, maxZoom,
-          tileCount: e.data.done - e.data.failed, urls: e.data.urls,
-          poiCount
-        });
-        saveRegions(list);
-        renderRegions();
-        updateAppDataLabel();
-        requestPersistent();
-        const src = map.getSource('local');
-        if (src && src.setTiles) src.setTiles([location.origin + '/tiles/{z}/{x}/{y}.pbf']);
-        navigator.serviceWorker.removeEventListener('message', onMsg);
-      }
-    };
-    navigator.serviceWorker.addEventListener('message', onMsg);
-    reg.active.postMessage({ type: 'download', bbox, minZoom, maxZoom, id, extraUrls });
+    await new Promise((resolve) => {
+      const onMsg = (e) => {
+        if (e.data.id !== id) return;
+        if (e.data.type === 'progress') {
+          status.textContent =
+            `${verb} tiles ${e.data.done}/${e.data.total}` +
+            (e.data.failed ? ` (${e.data.failed} failed)` : '');
+        } else if (e.data.type === 'done') {
+          const ok = e.data.done - e.data.failed;
+          status.textContent = `${isRefresh ? 'refreshed' : 'saved'} ${ok} tiles, ${poiCount} POIs` +
+            (e.data.failed ? ` (${e.data.failed} failed)` : '');
+          const list = loadRegions();
+          const existing = list.find(x => x.id === id);
+          const record = {
+            id, createdAt: Date.now(), bbox, minZoom, maxZoom,
+            tileCount: ok, urls: e.data.urls, poiCount,
+          };
+          if (existing) {
+            // Refresh: mutate in place, preserving the array position so
+            // the UI order is stable.
+            Object.assign(existing, record);
+          } else {
+            list.push(record);
+          }
+          saveRegions(list);
+          renderRegions();
+          updateAppDataLabel();
+          requestPersistent();
+          const src = map.getSource('local');
+          if (src && src.setTiles) src.setTiles([location.origin + '/tiles/{z}/{x}/{y}.pbf']);
+          navigator.serviceWorker.removeEventListener('message', onMsg);
+          resolve();
+        }
+      };
+      navigator.serviceWorker.addEventListener('message', onMsg);
+      reg.active.postMessage({
+        type: 'download', bbox, minZoom, maxZoom, id,
+        extraUrls: [], workers: TILE_DOWNLOAD_WORKERS,
+      });
+    });
+  }
+
+  async function refreshRegion(id) {
+    if (!checkWifiGate()) return;
+    const r = loadRegions().find(x => x.id === id);
+    if (!r) return;
+    if (!confirm('Re-download everything for this region? Uses the original bbox and zoom.')) return;
+    await performRegionDownload({
+      id, bbox: r.bbox, minZoom: r.minZoom, maxZoom: r.maxZoom, isRefresh: true,
+    });
+  }
+
+  document.getElementById('downloadBtn').onclick = async () => {
+    if (!checkWifiGate()) return;
+    const maxZoom = +document.getElementById('zMax').value;
+    if (maxZoom < MIN_ZOOM) return;
+    await performRegionDownload({
+      id: crypto.randomUUID(),
+      bbox: currentBbox(),
+      minZoom: MIN_ZOOM,
+      maxZoom,
+      isRefresh: false,
+    });
   };
 
   const FONTS_MB = 3.7;
@@ -6539,6 +7678,7 @@ function fmtDate(ts) {
   updateAppDataLabel();
 
   document.getElementById('appDataBtn').onclick = async () => {
+    if (!checkWifiGate()) return;
     const btn = document.getElementById('appDataBtn');
     const status = document.getElementById('status');
     btn.disabled = true;
@@ -6546,7 +7686,7 @@ function fmtDate(ts) {
     const fontUrls = await getFontUrls();
     let fontDone = 0;
     const fontQueue = fontUrls.slice();
-    const fontWorkers = Array(6).fill(0).map(async () => {
+    const fontWorkers = Array(TILE_DOWNLOAD_WORKERS).fill(0).map(async () => {
       while (fontQueue.length) {
         const url = fontQueue.pop();
         try { await fetch(url, { headers: { 'X-Download': '1' } }); } catch {}
@@ -6622,6 +7762,17 @@ function fmtDate(ts) {
     panelToggle.addEventListener('change', () => {
       localStorage.setItem('cc.hidePanel', panelToggle.checked ? '0' : '1');
       applyPanelVisibility();
+    });
+  }
+
+  // "Only download on WiFi" toggle. Uses the Network Information API
+  // (navigator.connection.type) to detect cellular connections. iOS Safari
+  // doesn't ship this API, so there it falls back to a soft confirm prompt.
+  const wifiToggle = document.getElementById('wifiOnlyToggle');
+  if (wifiToggle) {
+    wifiToggle.checked = localStorage.getItem('cc.wifiOnly') === '1';
+    wifiToggle.addEventListener('change', () => {
+      localStorage.setItem('cc.wifiOnly', wifiToggle.checked ? '1' : '0');
     });
   }
 })();
