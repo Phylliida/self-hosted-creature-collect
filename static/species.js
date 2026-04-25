@@ -18,8 +18,10 @@
 
   const NAMES_KEY = 'cc.speciesNames';
   const TYPES_KEY = 'cc.speciesTypes';
+  const EVOS_KEY  = 'cc.speciesEvolutions';
   let _names = null;
   let _types = null;
+  let _evos = null;
   let _loadPromise = null;
 
   try {
@@ -30,11 +32,16 @@
     const raw = localStorage.getItem(TYPES_KEY);
     if (raw) _types = JSON.parse(raw);
   } catch { /* corrupt entry — re-fetch */ }
+  try {
+    const raw = localStorage.getItem(EVOS_KEY);
+    if (raw) _evos = JSON.parse(raw);
+  } catch { /* corrupt entry — re-fetch */ }
 
   function ensureLoaded() {
     const namesNeeded = !(_names && _names.length);
     const typesNeeded = !(_types && Object.keys(_types).length);
-    if (!namesNeeded && !typesNeeded) return Promise.resolve();
+    const evosNeeded  = !(_evos  && Object.keys(_evos).length);
+    if (!namesNeeded && !typesNeeded && !evosNeeded) return Promise.resolve();
     if (_loadPromise) return _loadPromise;
     _loadPromise = (async () => {
       const tasks = [];
@@ -59,6 +66,17 @@
             try { localStorage.setItem(TYPES_KEY, JSON.stringify(map)); } catch {}
           }
         } catch { /* types just won't render */ }
+      })());
+      if (evosNeeded) tasks.push((async () => {
+        try {
+          const resp = await fetch('/creature-evolutions');
+          if (!resp.ok) return;
+          const map = await resp.json();
+          if (map && typeof map === 'object') {
+            _evos = map;
+            try { localStorage.setItem(EVOS_KEY, JSON.stringify(map)); } catch {}
+          }
+        } catch { /* evolutions just won't render */ }
       })());
       await Promise.all(tasks);
       _loadPromise = null;
@@ -103,7 +121,37 @@
     return [primary, secondary];
   }
 
-  global.Species = { nameFor, typesFor, fusionTypesFor, ensureLoaded };
+  // Forward evolutions for a single species. Each entry is
+  //   { target: <idx>, method: <string>, param: <int|string> }
+  function evolutionsFor(idx) {
+    if (!_evos) return [];
+    const raw = _evos[String(idx)];
+    if (!Array.isArray(raw)) return [];
+    return raw.map((e) => ({ target: e[0], method: e[1], param: e[2] }));
+  }
+
+  // All next-step fusion evolutions for the pair (a, b). Either side
+  // can evolve independently; we emit one entry per evolution path,
+  // tagged with which side moved. Same shape as evolutionsFor entries
+  // plus { newA, newB, source: 'A'|'B' }.
+  function fusionEvolutionsFor(a, b) {
+    const out = [];
+    for (const e of evolutionsFor(a)) {
+      out.push({ newA: e.target, newB: b, source: 'A',
+                 method: e.method, param: e.param });
+    }
+    for (const e of evolutionsFor(b)) {
+      out.push({ newA: a, newB: e.target, source: 'B',
+                 method: e.method, param: e.param });
+    }
+    return out;
+  }
+
+  global.Species = {
+    nameFor, typesFor, fusionTypesFor,
+    evolutionsFor, fusionEvolutionsFor,
+    ensureLoaded,
+  };
   // Intentionally no auto-fetch. ensureLoaded() is invoked from the
   // sprite bulk-download flow so network requests only happen on an
   // explicit user action.

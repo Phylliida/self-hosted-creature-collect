@@ -109,6 +109,50 @@
       : [];
   }
 
+  function fusionEvolutionsFor(a, b) {
+    return global.Species && global.Species.fusionEvolutionsFor
+      ? global.Species.fusionEvolutionsFor(a, b)
+      : [];
+  }
+
+  // Render an evolution method (Level 16, Item THUNDERSTONE, etc.) into
+  // a short, human-readable label. Best-effort formatting — unrecognized
+  // methods fall back to "<Method> <param>".
+  function formatEvolutionMethod(method, param) {
+    const item = (s) => {
+      if (typeof s !== 'string') return String(s);
+      // FIRESTONE / THUNDERSTONE → Fire Stone / Thunder Stone
+      // KINGSROCK / METALCOAT → Kings Rock / Metal Coat
+      const tail = ['STONE', 'ROCK', 'SCALE', 'COAT', 'CHIP', 'SCROLL'];
+      let s2 = s;
+      for (const t of tail) {
+        const re = new RegExp(`(\\w+)${t}$`, 'i');
+        s2 = s2.replace(re, (_, w) => `${w} ${t}`);
+      }
+      return s2.toLowerCase()
+        .split(/[\s_]+/)
+        .map((p) => p ? p[0].toUpperCase() + p.slice(1) : '')
+        .join(' ').trim();
+    };
+    switch (method) {
+      case 'Level':           return `Lv ${param}`;
+      case 'LevelDay':        return `Lv ${param} (day)`;
+      case 'LevelNight':      return `Lv ${param} (night)`;
+      case 'Item':            return `Use ${item(param)}`;
+      case 'TradeItem':       return `Trade w/ ${item(param)}`;
+      case 'DayHoldItem':     return `Hold ${item(param)} (day)`;
+      case 'HasMove':         return `Knows ${item(param)}`;
+      case 'AttackGreater':   return `Lv ${param}, Atk > Def`;
+      case 'DefenseGreater':  return `Lv ${param}, Def > Atk`;
+      case 'AtkDefEqual':     return `Lv ${param}, Atk = Def`;
+      case 'Ninjask':
+      case 'Silcoon':         return `Lv ${param}`;
+      case 'Shedinja':
+      case 'Cascoon':         return `Lv ${param} (alt)`;
+      default:                return param != null ? `${method} ${param}` : method;
+    }
+  }
+
   function formatSize(sizeM) {
     if (sizeM == null) return '';
     const imperial = localStorage.getItem('cc.units') === 'mi';
@@ -381,6 +425,46 @@
       #creatureInventory .detail-caught {
         text-align: center; font-size: 12px;
         color: var(--ui-muted, #666); margin: 0 0 8px;
+      }
+      #creatureInventory .detail-evos {
+        margin: 4px 0 8px;
+      }
+      #creatureInventory .detail-evos-label {
+        font-size: 11px; color: var(--ui-muted, #666);
+        margin: 0 0 4px;
+      }
+      #creatureInventory .evo-row {
+        display: flex; align-items: center; gap: 8px;
+        padding: 4px 6px;
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+        border-radius: var(--ui-radius, 8px);
+        margin-bottom: 4px;
+      }
+      #creatureInventory .evo-row .evo-arrow {
+        color: var(--ui-muted, #666); font-size: 14px; flex-shrink: 0;
+      }
+      #creatureInventory .evo-row .evo-art {
+        width: 36px; height: 36px; flex-shrink: 0;
+        display: flex; align-items: center; justify-content: center;
+        background: var(--ui-bg, #fff);
+        border-radius: var(--ui-radius, 8px);
+      }
+      #creatureInventory .evo-row .evo-art img {
+        width: 100%; height: 100%; object-fit: contain;
+        image-rendering: pixelated; image-rendering: crisp-edges;
+        display: none;
+      }
+      #creatureInventory .evo-row.evo-art-ready .evo-art img { display: block; }
+      #creatureInventory .evo-row.evo-art-ready .evo-art-placeholder { display: none; }
+      #creatureInventory .evo-row .evo-art-placeholder {
+        font-size: 16px; color: var(--ui-muted, #666);
+      }
+      #creatureInventory .evo-row .evo-name {
+        flex: 1; min-width: 0; font-size: 13px;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      #creatureInventory .evo-row .evo-req {
+        font-size: 11px; color: var(--ui-muted, #666); flex-shrink: 0;
       }
       #creatureInventory .detail-art img.detail-art-img {
         width: 100%; height: 100%; object-fit: contain;
@@ -688,6 +772,30 @@
     const typesHtml = (c.speciesA != null && c.speciesB != null)
       ? typeChipsHtml(fusionTypesFor(c.speciesA, c.speciesB))
       : '';
+    let evosHtml = '';
+    let evoEntries = [];
+    if (c.speciesA != null && c.speciesB != null) {
+      evoEntries = fusionEvolutionsFor(c.speciesA, c.speciesB);
+      if (evoEntries.length) {
+        evosHtml = `<div class="detail-evos">
+          <div class="detail-evos-label">Evolves to</div>
+          ${evoEntries.map((e, i) => {
+            const targetName = global.Species
+              ? `${global.Species.nameFor(e.newA)} × ${global.Species.nameFor(e.newB)}`
+              : `#${e.newA} × #${e.newB}`;
+            return `<div class="evo-row" data-evo-idx="${i}">
+              <span class="evo-arrow">→</span>
+              <div class="evo-art">
+                <span class="evo-art-placeholder" aria-hidden="true">•</span>
+                <img alt="">
+              </div>
+              <div class="evo-name">${escapeHtml(targetName)}</div>
+              <div class="evo-req">${escapeHtml(formatEvolutionMethod(e.method, e.param))}</div>
+            </div>`;
+          }).join('')}
+        </div>`;
+      }
+    }
     body.innerHTML = `
       <div class="detail-art">
         <span class="detail-art-placeholder" aria-hidden="true">${escapeHtml(c.emoji || '•')}</span>
@@ -701,7 +809,26 @@
       ${typesHtml}
       ${statsHtml}
       ${caughtLine}
+      ${evosHtml}
     `;
+    // Async-load each evolution row's sprite from IDB (no network).
+    if (global.Sprites && evoEntries.length) {
+      for (let i = 0; i < evoEntries.length; i++) {
+        const e = evoEntries[i];
+        const row = body.querySelector(`.evo-row[data-evo-idx="${i}"]`);
+        if (!row) continue;
+        global.Sprites.getSpriteUrl(e.newA, e.newB).then((url) => {
+          if (!url) return;
+          const img = row.querySelector('.evo-art img');
+          if (!img) { URL.revokeObjectURL(url); return; }
+          img.onload = () => {
+            URL.revokeObjectURL(url);
+            row.classList.add('evo-art-ready');
+          };
+          img.src = url;
+        });
+      }
+    }
     body.querySelector('.rename-edit').addEventListener('click', () => {
       enterRenameMode(c);
     });

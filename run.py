@@ -204,6 +204,21 @@ def icons_list():
     return {"files": sorted(f.name for f in d.iterdir() if f.name.endswith(".svg"))}
 
 
+@app.route("/creature-evolutions")
+def creature_evolutions():
+    # Map of species idx (string) -> list of forward evolutions, each
+    # [targetIdx, method, param]. `method` is e.g. "Level" / "Item" /
+    # "HasMove" / "TradeItem" / "DayHoldItem" / "LevelDay" / etc;
+    # `param` is the integer level or item-name string for that method.
+    # Reverse evolutions (baby → adult) are stripped at extraction time.
+    path = ROOT / "data" / "Battlers" / "evolutions.json"
+    if not path.is_file():
+        abort(404)
+    resp = send_from_directory(path.parent, path.name, mimetype="application/json")
+    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return resp
+
+
 @app.route("/creature-types")
 def creature_types():
     # Plain JSON map of species idx (string) -> [type1, type2|null].
