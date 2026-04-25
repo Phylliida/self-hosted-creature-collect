@@ -8054,6 +8054,14 @@ function fmtDate(ts) {
       });
       const sheetsRemaining = pre.sheetsTotal - pre.sheetsComplete.size;
       const iconsRemaining = pre.iconsTotal - pre.iconsPresent;
+      // Always pump metadata (names + types) on a Download click, even
+      // when sprites are already complete — users who downloaded before
+      // /creature-types existed need this to populate the types list
+      // without re-fetching every sheet.
+      if (window.Species && typeof window.Species.ensureLoaded === 'function') {
+        spritesStatus.textContent = 'fetching metadata…';
+        try { await window.Species.ensureLoaded(); } catch {}
+      }
       if (iconsRemaining === 0) {
         updateSpritesStatus();
         return;
