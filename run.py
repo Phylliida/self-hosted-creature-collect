@@ -204,6 +204,20 @@ def icons_list():
     return {"files": sorted(f.name for f in d.iterdir() if f.name.endswith(".svg"))}
 
 
+@app.route("/creature-types")
+def creature_types():
+    # Plain JSON map of species idx (string) -> [type1, type2|null].
+    # Types are uppercase strings like "GRASS", "POISON". Extracted
+    # from the upstream Pokémon Infinite Fusion species.dat (Ruby
+    # Marshal) into data/Battlers/types.json.
+    path = ROOT / "data" / "Battlers" / "types.json"
+    if not path.is_file():
+        abort(404)
+    resp = send_from_directory(path.parent, path.name, mimetype="application/json")
+    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return resp
+
+
 @app.route("/creature-names")
 def creature_names():
     # Plain-text "one species name per line", 1-indexed (line 1 == pokemon 1).

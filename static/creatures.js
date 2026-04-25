@@ -84,6 +84,31 @@
     return `#${a} × #${b}`;
   }
 
+  // Standard Pokémon type colors (close-enough to canon for chips).
+  const TYPE_COLORS = {
+    NORMAL:   '#A8A77A', FIGHTING: '#C22E28', FLYING:   '#A98FF3',
+    POISON:   '#A33EA1', GROUND:   '#E2BF65', ROCK:     '#B6A136',
+    BUG:      '#A6B91A', GHOST:    '#735797', STEEL:    '#B7B7CE',
+    FIRE:     '#EE8130', WATER:    '#6390F0', GRASS:    '#7AC74C',
+    ELECTRIC: '#F7D02C', PSYCHIC:  '#F95587', ICE:      '#96D9D6',
+    DRAGON:   '#6F35FC', DARK:     '#705746', FAIRY:    '#D685AD',
+  };
+
+  function typeChipsHtml(types) {
+    if (!types || !types.length) return '';
+    return `<div class="type-chips">` + types.map((t) => {
+      const bg = TYPE_COLORS[t] || '#888';
+      const label = t.charAt(0) + t.slice(1).toLowerCase();
+      return `<span class="type-chip" style="background:${bg}">${escapeHtml(label)}</span>`;
+    }).join('') + `</div>`;
+  }
+
+  function fusionTypesFor(a, b) {
+    return global.Species && global.Species.fusionTypesFor
+      ? global.Species.fusionTypesFor(a, b)
+      : [];
+  }
+
   function formatSize(sizeM) {
     if (sizeM == null) return '';
     const imperial = localStorage.getItem('cc.units') === 'mi';
@@ -181,6 +206,9 @@
       }
       #creatureInventory.show { display: flex; }
       #creatureInventory .sheet {
+        position: relative;
+        display: flex;
+        flex-direction: column;
         width: calc(100% - 40px); max-width: 360px;
         padding: 18px 20px 14px;
         max-height: 85vh; overflow-y: auto;
@@ -189,6 +217,28 @@
         border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
         border-radius: var(--ui-radius, 8px);
         box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+      }
+      #creatureInventory .inventory-x {
+        /* Matches the routing/directions panel close button:
+           transparent, muted-color, font-size:22, line-height:1.
+           Sticky-positioned + align-self:flex-end so it stays pinned
+           to the top-right of .sheet's scroll viewport no matter how
+           far the user has scrolled. Negative margins collapse its
+           layout footprint so it sits in the corner without pushing
+           content down. */
+        position: sticky;
+        top: 0;
+        align-self: flex-end;
+        margin: -8px -8px -22px 0;
+        z-index: 5;
+        background: none;
+        border: none;
+        font-size: 22px;
+        line-height: 1;
+        cursor: pointer;
+        color: var(--ui-muted, #666);
+        padding: 0 4px;
+        font-family: inherit;
       }
       #creatureInventory h3 { margin: 0 0 14px; font-size: 16px; }
       #creatureInventory .sort-row {
@@ -414,11 +464,11 @@
       #battleScreen.show { display: block; }
       #battleScreen .battle-sprite-wrap {
         position: absolute;
-        top: 8%;
+        top: 12%;
         left: 50%;
         transform: translateX(-50%);
-        width: min(550px, 85vw);
-        height: min(550px, 60vh);
+        width: min(200px, 54vw);
+        height: min(200px, 29vh);
         display: flex; align-items: center; justify-content: center;
       }
       #battleScreen .battle-sprite-placeholder {
@@ -428,7 +478,8 @@
       }
       #battleScreen img.battle-sprite {
         display: none;
-        max-width: 100%; max-height: 100%;
+        width: 100%; height: 100%;
+        object-fit: contain;
         image-rendering: pixelated;
         image-rendering: crisp-edges;
         filter: drop-shadow(0 6px 10px rgba(0,0,0,0.6));
@@ -457,6 +508,21 @@
         font-size: 13px;
         color: var(--ui-muted, #666);
         margin-top: 4px;
+      }
+      .type-chips {
+        display: flex; justify-content: center; gap: 6px;
+        margin-top: 6px;
+      }
+      .type-chip {
+        display: inline-block;
+        padding: 2px 8px;
+        font-size: 11px;
+        font-weight: 600;
+        color: #fff;
+        text-transform: capitalize;
+        border-radius: 999px;
+        text-shadow: 0 1px 1px rgba(0,0,0,0.4);
+        line-height: 1.4;
       }
       #battleScreen .battle-actions {
         position: absolute;
@@ -494,6 +560,7 @@
     panel.id = 'creatureInventory';
     panel.innerHTML = `
       <div class="sheet">
+        <button class="close inventory-x" type="button" aria-label="close">×</button>
         <div class="browse-view">
           <h3>Creatures</h3>
           <div class="search-row">
@@ -618,6 +685,9 @@
       if (when) parts.push(escapeHtml(when));
       caughtLine = `<div class="detail-caught">Caught at ${parts.join(' · ')}</div>`;
     }
+    const typesHtml = (c.speciesA != null && c.speciesB != null)
+      ? typeChipsHtml(fusionTypesFor(c.speciesA, c.speciesB))
+      : '';
     body.innerHTML = `
       <div class="detail-art">
         <span class="detail-art-placeholder" aria-hidden="true">${escapeHtml(c.emoji || '•')}</span>
@@ -628,6 +698,7 @@
         <button class="icon-btn rename-edit" type="button" aria-label="rename" title="rename">✎</button>
       </div>
       ${speciesLine}
+      ${typesHtml}
       ${statsHtml}
       ${caughtLine}
     `;
@@ -829,6 +900,10 @@
 
   let _currentBattleSpawn = null;
   let _battleSpriteUrl = null;
+  // True when _battleSpriteUrl was created by us (must be revoked on
+  // close); false when it was borrowed from a marker record (revoked by
+  // removeMarker — we leave it alone).
+  let _battleSpriteUrlOwned = false;
 
   function ensureBattleScreen() {
     let el = document.getElementById('battleScreen');
@@ -843,6 +918,7 @@
       <div class="battle-info">
         <div class="battle-name"></div>
         <div class="battle-stats"></div>
+        <div class="battle-types"></div>
       </div>
       <div class="battle-actions">
         <button type="button" class="flee">Flee</button>
@@ -866,18 +942,38 @@
     const statsEl = el.querySelector('.battle-stats');
     nameEl.textContent = fusionName(spawn.speciesA, spawn.speciesB);
     statsEl.textContent = `Lv ${spawn.level} · ${formatSize(spawn.sizeM)}`;
+    const typesEl = el.querySelector('.battle-types');
+    if (typesEl) {
+      typesEl.innerHTML = typeChipsHtml(fusionTypesFor(spawn.speciesA, spawn.speciesB));
+    }
     const img = el.querySelector('img.battle-sprite');
-    // Reset sprite until the fresh one loads.
-    if (_battleSpriteUrl) { URL.revokeObjectURL(_battleSpriteUrl); _battleSpriteUrl = null; }
+    // Reset previous state.
+    if (_battleSpriteUrl && _battleSpriteUrlOwned) {
+      URL.revokeObjectURL(_battleSpriteUrl);
+    }
+    _battleSpriteUrl = null;
+    _battleSpriteUrlOwned = false;
     img.removeAttribute('src');
     el.classList.remove('battle-sprite-ready');
-    if (global.Sprites) {
+
+    // If the marker for this spawn already has a loaded sprite, reuse
+    // the same URL — same blob in memory, browser uses its decoded
+    // image cache, no flash. Only fall back to a fresh IDB fetch when
+    // the marker hasn't loaded yet (first paint, or sprite missing).
+    const rec = _markers.get(spawn.id);
+    if (rec && rec.objectUrl) {
+      _battleSpriteUrl = rec.objectUrl;
+      _battleSpriteUrlOwned = false;
+      img.onload = () => { el.classList.add('battle-sprite-ready'); };
+      img.src = rec.objectUrl;
+    } else if (global.Sprites) {
       global.Sprites.getSpriteUrl(spawn.speciesA, spawn.speciesB).then((url) => {
         if (!url || _currentBattleSpawn !== spawn) {
           if (url) URL.revokeObjectURL(url);
           return;
         }
         _battleSpriteUrl = url;
+        _battleSpriteUrlOwned = true;
         img.onload = () => { el.classList.add('battle-sprite-ready'); };
         img.src = url;
       });
@@ -888,7 +984,11 @@
   function closeBattleScreen() {
     const el = document.getElementById('battleScreen');
     if (el) el.classList.remove('show');
-    if (_battleSpriteUrl) { URL.revokeObjectURL(_battleSpriteUrl); _battleSpriteUrl = null; }
+    if (_battleSpriteUrl && _battleSpriteUrlOwned) {
+      URL.revokeObjectURL(_battleSpriteUrl);
+    }
+    _battleSpriteUrl = null;
+    _battleSpriteUrlOwned = false;
     _currentBattleSpawn = null;
   }
 
@@ -944,11 +1044,10 @@
         }
         const img = el.querySelector('img.creature-sprite');
         if (!img) { URL.revokeObjectURL(url); return; }
-        img.onload = () => {
-          el.classList.add('creature-marker-ready');
-          URL.revokeObjectURL(url);
-          record.objectUrl = null;
-        };
+        // Keep the URL alive on the record (revoked in removeMarker)
+        // so the battle screen can reuse it for instant display when
+        // the user taps the creature — no IDB round-trip, no flash.
+        img.onload = () => { el.classList.add('creature-marker-ready'); };
         record.objectUrl = url;
         img.src = url;
       })
@@ -1021,10 +1120,29 @@
     }
   }
 
+  // Don't render pokemon based on a coarse first fix (typically Wi-Fi
+  // or cell-tower triangulation, accurate to 50-200 m). The resulting
+  // markers would be in the wrong place and vanish once the real GPS
+  // fix arrives a few seconds later — disappointing if the user spots
+  // a cool one and goes to tap it. After the deadline we give up
+  // waiting and accept whatever accuracy we have, so users in
+  // low-signal areas still see something eventually.
+  const FIRST_FIX_MIN_ACCURACY_M = 50;
+  const FIRST_FIX_TIMEOUT_MS = 5000;
+  let _firstFixDeadline = 0;
+
   function startLocationWatch() {
     if (_geoWatchId != null || !navigator.geolocation) return;
+    _firstFixDeadline = Date.now() + FIRST_FIX_TIMEOUT_MS;
     _geoWatchId = navigator.geolocation.watchPosition(
       (pos) => {
+        const acc = pos.coords.accuracy;
+        if (_userLat == null
+            && acc != null
+            && acc > FIRST_FIX_MIN_ACCURACY_M
+            && Date.now() < _firstFixDeadline) {
+          return;
+        }
         _userLat = pos.coords.latitude;
         _userLng = pos.coords.longitude;
         refreshSpawnOverlay();
@@ -1041,6 +1159,7 @@
     _geoWatchId = null;
     _userLat = null;
     _userLng = null;
+    _firstFixDeadline = 0;
   }
 
   function updateMarkerScale() {
