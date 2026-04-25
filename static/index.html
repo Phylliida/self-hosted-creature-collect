@@ -3785,11 +3785,13 @@ function fmtDate(ts) {
   });
   map.addControl(geolocate, 'bottom-right');
 
+  // Auto-activate the GeolocateControl on every load so the user-dot
+  // shows up without a button press. trigger() is idempotent for an
+  // already-active control, and a no-op (other than the permission
+  // prompt) if location is denied.
   map.on('load', () => {
-    if (!savedView && localStorage.getItem('cc.geoPromptDone') !== '1') {
-      geolocate.trigger();
-      localStorage.setItem('cc.geoPromptDone', '1');
-    }
+    try { geolocate.trigger(); } catch {}
+    localStorage.setItem('cc.geoPromptDone', '1');
   });
 
   // Prompt for location permission on first load and any time the tab
