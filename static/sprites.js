@@ -309,19 +309,29 @@
     // Before fetching anything new, migrate any legacy 96×96 padded PNGs
     // to tight-bbox crops in place. Purely local work — no network — so
     // users who already downloaded the whole set don't pay to fix them.
-    for (let i = 0; i < keys.length; i++) {
-      if (signal && signal.aborted) return { cancelled: true };
-      const key = keys[i];
-      const blob = await idbGet(key);
-      if (!(await isLegacyPaddedPng(blob))) continue;
-      const trimmed = await retrimStoredBlob(blob);
-      if (trimmed) await idbPut(key, trimmed);
-      if (i % 50 === 0) {
-        onProgress({
-          sheetsDone: 0, sheetsTotal: sheetTo - sheetFrom + 1,
-          currentSheet: 0, indexInSheet: i, phase: 'repairing',
-        });
+    // Skip entirely after the first successful migration (flag in
+    // localStorage) so subsequent downloads don't re-scan thousands of
+    // already-trimmed entries.
+    const REPAIR_DONE_KEY = 'cc.spritesRepairDone';
+    if (localStorage.getItem(REPAIR_DONE_KEY) !== '1') {
+      for (let i = 0; i < keys.length; i++) {
+        if (signal && signal.aborted) return { cancelled: true };
+        const key = keys[i];
+        // Progress fires on EVERY 50 keys so the UI reflects the scan
+        // even when nothing actually needs migrating (which is the
+        // common post-fix case).
+        if (i % 50 === 0) {
+          onProgress({
+            sheetsDone: 0, sheetsTotal: sheetTo - sheetFrom + 1,
+            currentSheet: 0, indexInSheet: i, phase: 'repairing',
+          });
+        }
+        const blob = await idbGet(key);
+        if (!(await isLegacyPaddedPng(blob))) continue;
+        const trimmed = await retrimStoredBlob(blob);
+        if (trimmed) await idbPut(key, trimmed);
       }
+      localStorage.setItem(REPAIR_DONE_KEY, '1');
     }
 
     const have = new Set(keys);

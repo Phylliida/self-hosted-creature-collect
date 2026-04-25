@@ -90,16 +90,46 @@
 
   // Wild spawns are restricted to species at the root of their evolution
   // family (so the user has to evolve up to reach Charizard etc.) AND
-  // exclude legendaries (those will get a separate mechanic). Computed
-  // once from data/Battlers/evolutions.json: any species that's never an
-  // evolution target counts as a root, then we drop {144, 145, 146, 150}.
-  // Baked in here rather than fetched so the deterministic spawn mapping
-  // doesn't depend on whether species data has been downloaded yet.
-  const SPAWNABLE_SPECIES = [
-    1, 4, 7, 10, 13, 16, 19, 21, 23, 27, 29, 32, 37, 41, 43, 46, 48, 50,
-    52, 54, 56, 58, 60, 63, 66, 69, 72, 74, 77, 79, 81, 83, 84, 86, 88,
-    90, 92, 95, 96, 98, 100, 102, 104, 108, 109, 111, 114, 115, 116, 118,
-    120, 123, 127, 128, 129, 131, 132, 133, 137, 138, 140, 142, 147,
+  // exclude legendaries (those will get a separate mechanic).
+  //
+  // Architecture supports an asymmetric A vs B pool — the fusion's slot
+  // A (head) can pull from up to 509 species since each downloaded
+  // sheet contains all those slots, while slot B (body) is constrained
+  // to the sheet numbers we downloaded.
+  //
+  // For now, both pools are restricted to gen 1 (1-150) so the bulk
+  // download stays the manageable ~150 MB. To enable the wider A pool
+  // (217 species across gens 1-4), swap SPAWNABLE_SPECIES_A for
+  // SPAWNABLE_SPECIES_A_FULL below AND bump bulkDownload's indexTo to
+  // 509 in static/index.html (three call sites).
+  const SPAWNABLE_SPECIES_A = [
+    1, 4, 7, 10, 13, 16, 19, 21, 23, 25, 27, 29, 32, 35, 37, 39, 41,
+    43, 46, 48, 50, 52, 54, 56, 58, 60, 63, 66, 69, 72, 74, 77, 79,
+    81, 83, 84, 86, 88, 90, 92, 95, 96, 98, 100, 102, 104, 106, 107,
+    108, 109, 111, 113, 114, 115, 116, 118, 120, 122, 123, 124, 125,
+    126, 127, 128, 129, 131, 132, 133, 137, 138, 140, 142, 143, 147,
+  ];
+  const SPAWNABLE_SPECIES_B = SPAWNABLE_SPECIES_A;
+  // Drop-in replacement for SPAWNABLE_SPECIES_A when expanding to the
+  // full gen 1-4 head range (requires bulkDownload indexTo: 509).
+  // eslint-disable-next-line no-unused-vars
+  const SPAWNABLE_SPECIES_A_FULL = [
+    1, 4, 7, 10, 13, 16, 19, 21, 23, 27, 29, 32, 37, 41, 43, 46, 48,
+    50, 52, 54, 56, 58, 60, 63, 66, 69, 72, 74, 77, 79, 81, 83, 84, 86,
+    88, 90, 92, 95, 96, 98, 100, 102, 104, 108, 109, 111, 114, 115,
+    116, 118, 120, 123, 127, 128, 129, 131, 132, 133, 137, 138, 140,
+    142, 147, 152, 155, 158, 161, 163, 165, 167, 170, 172, 173, 174,
+    175, 177, 179, 187, 190, 191, 193, 194, 198, 200, 201, 203, 204,
+    206, 207, 209, 211, 213, 214, 215, 216, 218, 220, 222, 223, 225,
+    227, 228, 231, 234, 235, 236, 238, 239, 240, 241, 246, 252, 253,
+    257, 258, 259, 260, 261, 276, 279, 282, 285, 290, 291, 294, 295,
+    297, 300, 301, 303, 305, 307, 310, 311, 316, 319, 322, 325, 327,
+    330, 358, 365, 370, 371, 373, 375, 382, 384, 385, 387, 388, 390,
+    392, 394, 395, 397, 399, 400, 402, 403, 404, 405, 406, 408, 409,
+    411, 412, 413, 414, 416, 417, 419, 420, 421, 422, 425, 427, 430,
+    431, 432, 433, 434, 436, 438, 440, 442, 444, 450, 451, 453, 454,
+    456, 457, 459, 461, 463, 469, 470, 471, 474, 476, 478, 479, 482,
+    485, 488, 489, 491, 493, 495, 498, 499, 500, 501, 502, 504, 506,
   ];
 
   function goodMod(a, b) { return ((a % b) + b) % b; }
@@ -109,6 +139,79 @@
 
   function currentTick(nowMs) {
     return Math.floor((nowMs == null ? Date.now() : nowMs) / TICK_MS);
+  }
+
+  // --- Type weather ---
+  // Daily type rotates every UTC day; weekly type rotates every UTC
+  // week. Both are deterministic from the date (everyone sees the same
+  // weather worldwide). Spawn species are sampled from a weighted pool
+  // where species whose own types include the daily type get 5× the
+  // chance, weekly type 5×, both 25×. Density stays the same — only
+  // composition shifts.
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const WEEK_MS = 7 * DAY_MS;
+  const DAILY_SALT = 0xA1D4;
+  const WEEKLY_SALT = 0x7EE7;
+  const TYPES = [
+    'NORMAL', 'FIRE', 'WATER', 'GRASS', 'ELECTRIC', 'ICE',
+    'FIGHTING', 'POISON', 'GROUND', 'FLYING', 'PSYCHIC', 'BUG',
+    'ROCK', 'GHOST', 'DRAGON', 'DARK', 'STEEL', 'FAIRY',
+  ];
+
+  function currentWeather(nowMs) {
+    const now = nowMs == null ? Date.now() : nowMs;
+    const dayIdx = Math.floor(now / DAY_MS);
+    const weekIdx = Math.floor(now / WEEK_MS);
+    const dailyRng = getxor4069((dayIdx ^ DAILY_SALT) | 0);
+    const weeklyRng = getxor4069((weekIdx ^ WEEKLY_SALT) | 0);
+    return {
+      daily: TYPES[Math.floor(dailyRng() * TYPES.length)],
+      weekly: TYPES[Math.floor(weeklyRng() * TYPES.length)],
+    };
+  }
+
+  // Build (and cache) two weighted species pools for the current
+  // weather — one for slot A, one for slot B. Per Infinite Fusion
+  // typing rules the fusion's primary type comes from A and its
+  // secondary from B (or B's primary if B is single-typed). So each
+  // slot is weighted by the type it actually CONTRIBUTES to the fusion:
+  //   - poolA: weight by species.primary
+  //   - poolB: weight by species.secondary || species.primary
+  // This way Scyther (BUG/FLYING) is FLYING-boosted only when in slot
+  // B, and BUG-boosted only when in slot A. Returns null when types
+  // data isn't loaded — callers should treat that as "spawning
+  // disabled until data is downloaded".
+  let _cachedPoolKey = null;
+  let _cachedPools = null;
+  function getWeightedPools() {
+    const Species = global.Species;
+    if (!Species || !Species.typesFor) return null;
+    const w = currentWeather();
+    const key = `${w.daily}|${w.weekly}`;
+    if (key === _cachedPoolKey && _cachedPools) return _cachedPools;
+    const probe = Species.typesFor(SPAWNABLE_SPECIES_A[0]);
+    if (!probe || !probe.length) return null;
+    const poolA = [];
+    for (const sp of SPAWNABLE_SPECIES_A) {
+      const types = Species.typesFor(sp) || [];
+      const primary = types[0];
+      let wA = 1;
+      if (primary === w.daily)  wA *= 25;
+      if (primary === w.weekly) wA *= 25;
+      for (let i = 0; i < wA; i++) poolA.push(sp);
+    }
+    const poolB = [];
+    for (const sp of SPAWNABLE_SPECIES_B) {
+      const types = Species.typesFor(sp) || [];
+      const secondary = types[1] || types[0];
+      let wB = 1;
+      if (secondary === w.daily)  wB *= 25;
+      if (secondary === w.weekly) wB *= 25;
+      for (let i = 0; i < wB; i++) poolB.push(sp);
+    }
+    _cachedPoolKey = key;
+    _cachedPools = { poolA, poolB };
+    return _cachedPools;
   }
 
   // Per-tick PRNG seed for one cell. Mixes cell coordinates with the
@@ -133,8 +236,15 @@
     const fy = arng();
     const lat = (cellX + fx) / SCALE - 90;
     const lng = (cellY + fy) / SCALE - 180;
-    const speciesA = SPAWNABLE_SPECIES[Math.floor(arng() * SPAWNABLE_SPECIES.length)];
-    const speciesB = SPAWNABLE_SPECIES[Math.floor(arng() * SPAWNABLE_SPECIES.length)];
+    // Type-weather sampling: A is picked from a pool weighted by each
+    // species' primary type (what A contributes to the fusion); B from
+    // a pool weighted by secondary types (what B contributes). Pools
+    // are null when types data isn't loaded — bail with no spawn so
+    // the user is nudged to download data; creatures.js shows a banner.
+    const pools = getWeightedPools();
+    if (!pools) return null;
+    const speciesA = pools.poolA[Math.floor(arng() * pools.poolA.length)];
+    const speciesB = pools.poolB[Math.floor(arng() * pools.poolB.length)];
     const level = expDistr(5, 50, arng()) + 1;
     const sizeM = 0.15 + arng() * 2.0;
     const startMs = tick * TICK_MS;
@@ -191,6 +301,7 @@
 
   global.Spawns = {
     spawnsInBbox, generateCellAtTick, currentTick, isSpawnIdStale,
+    currentWeather,
     TICK_MS, LIFETIME_MS,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
