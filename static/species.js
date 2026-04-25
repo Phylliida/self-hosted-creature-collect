@@ -130,6 +130,57 @@
     return raw.map((e) => ({ target: e[0], method: e[1], param: e[2] }));
   }
 
+  // Reverse index: which species evolves INTO me? Built lazily on first
+  // call from the forward map. Cached for the lifetime of the page.
+  let _reverseEvos = null;
+  function getReverseEvos() {
+    if (_reverseEvos) return _reverseEvos;
+    if (!_evos) return null;
+    const rev = Object.create(null);
+    for (const src of Object.keys(_evos)) {
+      const srcIdx = +src;
+      for (const e of _evos[src]) {
+        const tgt = String(e[0]);
+        if (!rev[tgt]) rev[tgt] = [];
+        rev[tgt].push(srcIdx);
+      }
+    }
+    _reverseEvos = rev;
+    return rev;
+  }
+
+  // Whole evolutionary family for a species: walk back to the root
+  // (the earliest pre-evolution), then BFS forward from there. Returns
+  // a flat list of indices in BFS order — branches like Eevee's eight
+  // variants all appear at the same depth, just enumerated.
+  function familyOf(idx) {
+    if (!_evos) return [idx];
+    const rev = getReverseEvos();
+    if (!rev) return [idx];
+    let cur = idx;
+    const seen = new Set([cur]);
+    while (true) {
+      const pre = rev[String(cur)];
+      if (!pre || !pre.length) break;
+      const prev = pre[0];
+      if (seen.has(prev)) break;
+      seen.add(prev);
+      cur = prev;
+    }
+    const root = cur;
+    const family = [];
+    const visited = new Set();
+    const queue = [root];
+    while (queue.length) {
+      const id = queue.shift();
+      if (visited.has(id)) continue;
+      visited.add(id);
+      family.push(id);
+      for (const e of evolutionsFor(id)) queue.push(e.target);
+    }
+    return family;
+  }
+
   // All next-step fusion evolutions for the pair (a, b). Either side
   // can evolve independently; we emit one entry per evolution path,
   // tagged with which side moved. Same shape as evolutionsFor entries
@@ -149,7 +200,7 @@
 
   global.Species = {
     nameFor, typesFor, fusionTypesFor,
-    evolutionsFor, fusionEvolutionsFor,
+    evolutionsFor, fusionEvolutionsFor, familyOf,
     ensureLoaded,
   };
   // Intentionally no auto-fetch. ensureLoaded() is invoked from the

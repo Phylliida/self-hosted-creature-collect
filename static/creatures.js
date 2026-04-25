@@ -115,6 +115,51 @@
       : [];
   }
 
+  function famHasContent(famA, famB) {
+    return Array.isArray(famA) && Array.isArray(famB)
+      && (famA.length > 1 || famB.length > 1);
+  }
+
+  // Build the family-tree grid: rows are B's family, columns are A's
+  // family. Each cell is a small fusion sprite. Sprites load async from
+  // IDB (no network — same rule as the rest of the inventory). The
+  // current (a, b) cell is outlined.
+  function renderFamilyGrid(gridEl, famA, famB, currentA, currentB) {
+    gridEl.style.gridTemplateColumns = `repeat(${famA.length}, 1fr)`;
+    const cells = [];
+    for (let row = 0; row < famB.length; row++) {
+      for (let col = 0; col < famA.length; col++) {
+        const a = famA[col];
+        const b = famB[row];
+        const isCurrent = a === currentA && b === currentB;
+        const title = global.Species
+          ? `${global.Species.nameFor(a)} × ${global.Species.nameFor(b)}`
+          : `#${a} × #${b}`;
+        cells.push(`<div class="family-cell${isCurrent ? ' current' : ''}" `
+          + `data-a="${a}" data-b="${b}" title="${escapeHtml(title)}">`
+          + `<span class="family-cell-placeholder" aria-hidden="true">·</span>`
+          + `<img alt="">`
+          + `</div>`);
+      }
+    }
+    gridEl.innerHTML = cells.join('');
+    if (!global.Sprites) return;
+    gridEl.querySelectorAll('.family-cell').forEach((cell) => {
+      const a = +cell.dataset.a;
+      const b = +cell.dataset.b;
+      global.Sprites.getSpriteUrl(a, b).then((url) => {
+        if (!url) return;
+        const img = cell.querySelector('img');
+        if (!img) { URL.revokeObjectURL(url); return; }
+        img.onload = () => {
+          URL.revokeObjectURL(url);
+          cell.classList.add('ready');
+        };
+        img.src = url;
+      });
+    });
+  }
+
   // Render an evolution method (Level 16, Item THUNDERSTONE, etc.) into
   // a short, human-readable label. Best-effort formatting — unrecognized
   // methods fall back to "<Method> <param>".
@@ -466,6 +511,53 @@
       #creatureInventory .evo-row .evo-req {
         font-size: 11px; color: var(--ui-muted, #666); flex-shrink: 0;
       }
+      #creatureInventory .detail-family {
+        margin: 6px 0 8px;
+      }
+      #creatureInventory .family-toggle {
+        background: transparent;
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
+        border-radius: var(--ui-radius, 8px);
+        color: var(--ui-text, #111);
+        padding: 6px 10px;
+        font-size: 12px;
+        cursor: pointer;
+        font-family: inherit;
+        width: 100%;
+        text-align: center;
+      }
+      #creatureInventory .family-toggle:hover {
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+      }
+      #creatureInventory .family-grid {
+        display: grid;
+        gap: 4px;
+        margin-top: 6px;
+      }
+      #creatureInventory .family-grid[hidden] { display: none; }
+      #creatureInventory .family-cell {
+        aspect-ratio: 1;
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+        border: 1px solid transparent;
+        border-radius: var(--ui-radius, 8px);
+        display: flex; align-items: center; justify-content: center;
+        position: relative;
+        overflow: hidden;
+      }
+      #creatureInventory .family-cell.current {
+        border-color: var(--ui-accent, #888);
+        box-shadow: 0 0 0 1px var(--ui-accent, #888);
+      }
+      #creatureInventory .family-cell .family-cell-placeholder {
+        font-size: 12px; color: var(--ui-muted, #666);
+      }
+      #creatureInventory .family-cell img {
+        width: 90%; height: 90%; object-fit: contain;
+        image-rendering: pixelated; image-rendering: crisp-edges;
+        display: none;
+      }
+      #creatureInventory .family-cell.ready img { display: block; }
+      #creatureInventory .family-cell.ready .family-cell-placeholder { display: none; }
       #creatureInventory .detail-art img.detail-art-img {
         width: 100%; height: 100%; object-fit: contain;
         image-rendering: pixelated; image-rendering: crisp-edges;
@@ -796,6 +888,22 @@
         </div>`;
       }
     }
+    let familyHtml = '';
+    let famA = null, famB = null;
+    if (c.speciesA != null && c.speciesB != null
+        && global.Species && global.Species.familyOf) {
+      famA = global.Species.familyOf(c.speciesA);
+      famB = global.Species.familyOf(c.speciesB);
+      // Only show the toggle if there's more than one cell to display.
+      if (famA.length > 1 || famB.length > 1) {
+        familyHtml = `<div class="detail-family">
+          <button class="family-toggle" type="button" aria-expanded="false">
+            View family tree (${famA.length}×${famB.length})
+          </button>
+          <div class="family-grid" hidden></div>
+        </div>`;
+      }
+    }
     body.innerHTML = `
       <div class="detail-art">
         <span class="detail-art-placeholder" aria-hidden="true">${escapeHtml(c.emoji || '•')}</span>
@@ -810,7 +918,30 @@
       ${statsHtml}
       ${caughtLine}
       ${evosHtml}
+      ${familyHtml}
     `;
+    if (famA && famB && famHasContent(famA, famB)) {
+      const toggle = body.querySelector('.family-toggle');
+      const grid = body.querySelector('.family-grid');
+      if (toggle && grid) {
+        toggle.addEventListener('click', () => {
+          const expanded = toggle.getAttribute('aria-expanded') === 'true';
+          if (expanded) {
+            grid.hidden = true;
+            toggle.setAttribute('aria-expanded', 'false');
+            toggle.textContent = `View family tree (${famA.length}×${famB.length})`;
+          } else {
+            if (!grid.dataset.rendered) {
+              renderFamilyGrid(grid, famA, famB, c.speciesA, c.speciesB);
+              grid.dataset.rendered = '1';
+            }
+            grid.hidden = false;
+            toggle.setAttribute('aria-expanded', 'true');
+            toggle.textContent = 'Hide family tree';
+          }
+        });
+      }
+    }
     // Async-load each evolution row's sprite from IDB (no network).
     if (global.Sprites && evoEntries.length) {
       for (let i = 0; i < evoEntries.length; i++) {
