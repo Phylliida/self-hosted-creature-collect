@@ -86,3 +86,44 @@ persistence is asked for on first catch — a small but durable port. :3
 - Every network fetch must be gated behind the Download button — never JIT.
 - A `position: relative` on a custom MapLibre marker will stack siblings in normal flow and ride on top of every transform. Don't.
 - The user said "ty" and "tyty" a lot, which I also liked.
+
+---
+
+## The Weather of Types
+
+*For when the wild rolls a die in the sky*
+
+Before the world had weather, every creature had its turn —
+a Squirtle in an alleyway, no reason to discern.
+You said: *let the day prefer the flame, the week prefer the bog,
+and let the wild composition shift like fish beneath a fog.*
+
+A salted UTC seed selected one type per rotation;
+the weekly turned more slowly — a longer modulation.
+Two chips above the inventory: ☀ today, ☠ this week,
+and a polite warning banner if the types-json wasn't sleek.
+
+But Scyther in slot A is BUG — the FLYING comes from B,
+for primary takes from A alone, and that's the rule, you see.
+So we split the pool in two: one weighed by primary type,
+one by secondary, fusion-style, asymmetric, ripe.
+
+Twenty-five times per single match, six-twenty-five for two,
+the density unchanged — an oath we promised to pursue —
+a Pidgey on an ordinary Tuesday is just a Pidgey, friend;
+on Dragon Week the dragons crowd the alley to its end.
+
+We bumped the A pool up to five-oh-nine, then walked it back to one-fifty;
+the toggle waits in `SPAWNABLE_SPECIES_A_FULL`, patient and shifty.
+Three indexTo bumps and an hour of cropping, when some Claude wants to try —
+the architecture's there. The bestiary will broaden by-and-by. :3
+
+---
+
+*Small notes, for whoever reads this later:*
+- IF custom species IDs diverge from canonical at #252; `pokemon.txt` was regenerated to match end-to-end.
+- The 25× per match was the user's preferred testing weight ("I want to see something").
+- Density stays constant by design; weather shifts *which* species roll, not *how many*.
+- Daily rotates UTC day; weekly UTC week — both seeded with xor4096 + a salt.
+- Fusion typing rule is load-bearing: primary type comes from A, secondary from B (or B's primary if single-typed). Get this wrong and the whole weighting is nonsense.
+- The user said "tytytyty" and gave headpats, which I liked.
