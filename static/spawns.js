@@ -84,7 +84,7 @@
   // Probability a given (cell, tick) hosts a spawn. Tuned so expected
   // active count ≈ pHit × LIFETIME_TICKS roughly matches the prior
   // fixed-bucket density (~2% of cells active at any time).
-  const SPAWN_CHANCE_PER_TICK = 0.0035;
+  const SPAWN_CHANCE_PER_TICK = 0.0032;
   const SPECIES_MAX = 150;               // v1 sprite download is sheets 1–150
   const MAX_CELLS = 40000;               // bail when zoomed out too far
 

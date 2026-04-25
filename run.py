@@ -4,6 +4,7 @@ import contextlib
 import gzip
 import json
 import pathlib
+import re
 import sqlite3
 import struct
 import sys
@@ -202,6 +203,41 @@ def icons_list():
     if not d.is_dir():
         abort(404)
     return {"files": sorted(f.name for f in d.iterdir() if f.name.endswith(".svg"))}
+
+
+_SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\- ]{0,63}$")
+
+
+@app.route("/save", methods=["POST"])
+def save_backup():
+    """Save the client's exported backup JSON to saves/<name>_<ms>.json.
+
+    The trainer name comes from the body's `backupName` field (a mirror
+    of the Settings text field, also stored client-side). Names are
+    sanitized to prevent path traversal — letters, digits, dot, dash,
+    underscore, and space; can't start with a separator. The trailing
+    `_<millis>` (milliseconds since epoch, taken from the request time)
+    means every save creates a new file rather than overwriting, so the
+    user has a full history they can roll back through.
+    """
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "expected JSON object"}), 400
+    name = (payload.get("backupName") or "").strip()
+    if not name:
+        return jsonify({"error": "missing backupName"}), 400
+    if not _SAFE_NAME_RE.fullmatch(name):
+        return jsonify({"error": "invalid name (use letters/digits/._- and spaces)"}), 400
+    saves_dir = ROOT / "saves"
+    saves_dir.mkdir(exist_ok=True)
+    millis = int(time.time() * 1000)
+    path = saves_dir / f"{name}_{millis}.json"
+    # Atomic-ish write so a crash mid-save doesn't corrupt the file.
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
+                   encoding="utf-8")
+    tmp.replace(path)
+    return jsonify({"ok": True, "saved": path.name})
 
 
 @app.route("/creature-evolutions")
