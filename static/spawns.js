@@ -88,6 +88,20 @@
   const SPECIES_MAX = 150;               // v1 sprite download is sheets 1–150
   const MAX_CELLS = 40000;               // bail when zoomed out too far
 
+  // Wild spawns are restricted to species at the root of their evolution
+  // family (so the user has to evolve up to reach Charizard etc.) AND
+  // exclude legendaries (those will get a separate mechanic). Computed
+  // once from data/Battlers/evolutions.json: any species that's never an
+  // evolution target counts as a root, then we drop {144, 145, 146, 150}.
+  // Baked in here rather than fetched so the deterministic spawn mapping
+  // doesn't depend on whether species data has been downloaded yet.
+  const SPAWNABLE_SPECIES = [
+    1, 4, 7, 10, 13, 16, 19, 21, 23, 27, 29, 32, 37, 41, 43, 46, 48, 50,
+    52, 54, 56, 58, 60, 63, 66, 69, 72, 74, 77, 79, 81, 83, 84, 86, 88,
+    90, 92, 95, 96, 98, 100, 102, 104, 108, 109, 111, 114, 115, 116, 118,
+    120, 123, 127, 128, 129, 131, 132, 133, 137, 138, 140, 142, 147,
+  ];
+
   function goodMod(a, b) { return ((a % b) + b) % b; }
   function expDistr(avg, max, v) {
     return Math.min(max, Math.round(-Math.log(v || 1e-12) * avg));
@@ -119,8 +133,8 @@
     const fy = arng();
     const lat = (cellX + fx) / SCALE - 90;
     const lng = (cellY + fy) / SCALE - 180;
-    const speciesA = 1 + Math.floor(arng() * SPECIES_MAX);
-    const speciesB = 1 + Math.floor(arng() * SPECIES_MAX);
+    const speciesA = SPAWNABLE_SPECIES[Math.floor(arng() * SPAWNABLE_SPECIES.length)];
+    const speciesB = SPAWNABLE_SPECIES[Math.floor(arng() * SPAWNABLE_SPECIES.length)];
     const level = expDistr(5, 50, arng()) + 1;
     const sizeM = 0.15 + arng() * 2.0;
     const startMs = tick * TICK_MS;

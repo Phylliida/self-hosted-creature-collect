@@ -4169,6 +4169,7 @@ function fmtDate(ts) {
       creatureSortDir: localStorage.getItem('cc.creatureSortDir'),
       creatureMode: localStorage.getItem('cc.creatureMode'),
       caughtSpawnIds: JSON.parse(localStorage.getItem('cc.caughtSpawnIds') || '[]'),
+      seenFusions: JSON.parse(localStorage.getItem('cc.seenFusions') || '{}'),
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -4248,6 +4249,22 @@ function fmtDate(ts) {
         JSON.parse(localStorage.getItem('cc.caughtSpawnIds') || '[]'));
       for (const id of data.caughtSpawnIds) existing.add(id);
       localStorage.setItem('cc.caughtSpawnIds', JSON.stringify([...existing]));
+    }
+    if (data.seenFusions && typeof data.seenFusions === 'object') {
+      const current = JSON.parse(localStorage.getItem('cc.seenFusions') || '{}');
+      // Merge: keep the earliest firstSeen, latest lastSeen.
+      for (const [key, val] of Object.entries(data.seenFusions)) {
+        if (!val) continue;
+        const cur = current[key];
+        if (!cur) { current[key] = val; continue; }
+        if (val.firstSeen && (!cur.firstSeen || val.firstSeen < cur.firstSeen)) {
+          cur.firstSeen = val.firstSeen;
+        }
+        if (val.lastSeen && (!cur.lastSeen || val.lastSeen > cur.lastSeen)) {
+          cur.lastSeen = val.lastSeen;
+        }
+      }
+      localStorage.setItem('cc.seenFusions', JSON.stringify(current));
     }
     if (data.creatureSortBy && !localStorage.getItem('cc.creatureSortBy')) {
       localStorage.setItem('cc.creatureSortBy', data.creatureSortBy);
