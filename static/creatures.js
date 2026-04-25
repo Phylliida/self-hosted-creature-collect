@@ -14,6 +14,7 @@
   const STORAGE_KEY = 'cc.creatureMode';
   const CAPTURED_KEY = 'cc.capturedCreatures';
   const CAUGHT_SPAWNS_KEY = 'cc.caughtSpawnIds';
+  const SEEN_FUSIONS_KEY = 'cc.seenFusions';
 
   // Captured inventory lives as an array of entries keyed by their own
   // `id`. We intentionally store speciesA/B (not the derived display
@@ -77,6 +78,67 @@
     }));
   }
 
+  // Pokédex storage: every fusion we've ever opened the battle screen
+  // for, even if it wasn't caught. Captured creatures are backfilled
+  // into this set on first read so existing players don't lose history.
+  function readSeenFusions() {
+    try {
+      const raw = localStorage.getItem(SEEN_FUSIONS_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+  }
+  function writeSeenFusions(map) {
+    try { localStorage.setItem(SEEN_FUSIONS_KEY, JSON.stringify(map)); } catch {}
+  }
+  function markFusionSeen(a, b, spawn) {
+    if (a == null || b == null) return;
+    const seen = readSeenFusions();
+    const key = `${a}-${b}`;
+    const now = Date.now();
+    if (!seen[key]) seen[key] = { firstSeen: now };
+    seen[key].lastSeen = now;
+    if (spawn && spawn.lat != null && spawn.lng != null) {
+      // Record the encounter location once (on the first sighting); the
+      // sub-view shows it for fusions you've only encountered, not caught.
+      if (seen[key].lat == null) {
+        seen[key].lat = spawn.lat;
+        seen[key].lng = spawn.lng;
+        const poiApi = global.CreatureCollectAPI;
+        if (poiApi && poiApi.findNearestNamedPoi) {
+          seen[key].poi = poiApi.findNearestNamedPoi(spawn.lat, spawn.lng) || null;
+        }
+      }
+    }
+    writeSeenFusions(seen);
+  }
+  // One-time idempotent migration: anything in the captured inventory
+  // is by definition seen too. Runs at install time.
+  function backfillSeenFromCaptures() {
+    const seen = readSeenFusions();
+    let changed = false;
+    for (const c of readCapturedCreatures()) {
+      if (c.speciesA == null || c.speciesB == null) continue;
+      const key = `${c.speciesA}-${c.speciesB}`;
+      if (!seen[key]) {
+        seen[key] = { firstSeen: (c.caughtAt && c.caughtAt.timestamp) || Date.now() };
+        changed = true;
+      }
+    }
+    if (changed) writeSeenFusions(seen);
+  }
+  function isFusionSeen(a, b) {
+    return readSeenFusions().hasOwnProperty(`${a}-${b}`);
+  }
+  function caughtFusionsSet() {
+    const set = new Set();
+    for (const c of readCapturedCreatures()) {
+      if (c.speciesA != null && c.speciesB != null) {
+        set.add(`${c.speciesA}-${c.speciesB}`);
+      }
+    }
+    return set;
+  }
+
   function fusionName(a, b) {
     if (global.Species) {
       return `${global.Species.nameFor(a)} × ${global.Species.nameFor(b)}`;
@@ -132,10 +194,14 @@
         const a = famA[col];
         const b = famB[row];
         const isCurrent = a === currentA && b === currentB;
-        const title = global.Species
+        const seen = isCurrent || isFusionSeen(a, b);
+        const title = (global.Species && seen)
           ? `${global.Species.nameFor(a)} × ${global.Species.nameFor(b)}`
-          : `#${a} × #${b}`;
-        cells.push(`<div class="family-cell${isCurrent ? ' current' : ''}" `
+          : '???';
+        const cls = `family-cell`
+          + (isCurrent ? ' current' : '')
+          + (seen ? '' : ' silhouette');
+        cells.push(`<div class="${cls}" `
           + `data-a="${a}" data-b="${b}" title="${escapeHtml(title)}">`
           + `<span class="family-cell-placeholder" aria-hidden="true">·</span>`
           + `<img alt="">`
@@ -248,7 +314,26 @@
     return getInventoryCreatures().find((c) => c.id === id) || null;
   }
 
-  const SORT_KEYS = new Set(['level', 'size', 'name', 'species']);
+  const SORT_KEYS = new Set(['level', 'size', 'name', 'species', 'recent']);
+  const POKEDEX_SORT_KEYS = new Set(['recent', 'a', 'b', 'aId', 'bId']);
+
+  function readPokedexSortKey() {
+    const v = localStorage.getItem('cc.pokedexSortBy');
+    return POKEDEX_SORT_KEYS.has(v) ? v : 'recent';
+  }
+  function readPokedexSortDir() {
+    const v = localStorage.getItem('cc.pokedexSortDir');
+    return SORT_DIRS.has(v) ? v : 'desc';
+  }
+  function readPokedexFilterType() {
+    return localStorage.getItem('cc.pokedexFilterType') || '';
+  }
+  function readPokedexFilterTypeA() {
+    return localStorage.getItem('cc.pokedexFilterTypeA') || '';
+  }
+  function readPokedexFilterTypeB() {
+    return localStorage.getItem('cc.pokedexFilterTypeB') || '';
+  }
   const SORT_DIRS = new Set(['asc', 'desc']);
 
   function readSortKey() {
@@ -271,6 +356,11 @@
       }
       if (key === 'species') {
         return sign * a.name.localeCompare(b.name);
+      }
+      if (key === 'recent') {
+        const at = (a.caughtAt && a.caughtAt.timestamp) || 0;
+        const bt = (b.caughtAt && b.caughtAt.timestamp) || 0;
+        return sign * (at - bt);
       }
       const field = key === 'size' ? 'sizeM' : 'level';
       const av = a[field], bv = b[field];
@@ -365,6 +455,23 @@
         border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
         border-radius: var(--ui-radius, 8px);
       }
+      #creatureInventory .pokedex-search-row {
+        display: flex; gap: 6px;
+      }
+      #creatureInventory .pokedex-search-row input {
+        flex: 1; min-width: 0;
+      }
+      #creatureInventory .pokedex-type-row { gap: 6px; }
+      #creatureInventory .pokedex-type-row select {
+        flex: 1; min-width: 0;
+      }
+      /* Visual cue that a filter has been changed from its default
+         "any" / blank state — accent-colored outline. */
+      #creatureInventory .pokedex-view input.filter-active,
+      #creatureInventory .pokedex-view select.filter-active {
+        border-color: var(--ui-accent, #888);
+        box-shadow: 0 0 0 1px var(--ui-accent, #888);
+      }
       #creatureInventory .creature-list {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
@@ -423,13 +530,23 @@
       }
       #creatureInventory .detail-view { display: none; }
       #creatureInventory .detail-view.show { display: block; }
-      #creatureInventory .detail-back {
-        padding: 4px 8px; font-size: 13px; cursor: pointer;
-        background: transparent;
+      #creatureInventory .detail-back,
+      #creatureInventory .pokedex-back,
+      #creatureInventory .fusion-back {
+        background: none;
+        border: none;
         color: var(--ui-text, #111);
-        border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
-        border-radius: var(--ui-radius, 8px);
-        margin-bottom: 10px;
+        font-size: 22px;
+        line-height: 1;
+        cursor: pointer;
+        padding: 4px 8px;
+        margin: 0 0 6px -4px;
+        font-family: inherit;
+      }
+      #creatureInventory .detail-back:hover,
+      #creatureInventory .pokedex-back:hover,
+      #creatureInventory .fusion-back:hover {
+        color: var(--ui-accent, #888);
       }
       #creatureInventory .detail-art {
         width: 140px; height: 140px; margin: 4px auto 12px;
@@ -470,6 +587,22 @@
       #creatureInventory .detail-caught {
         text-align: center; font-size: 12px;
         color: var(--ui-muted, #666); margin: 0 0 8px;
+      }
+      #creatureInventory .detail-pokedex-link {
+        display: block;
+        margin: -2px auto 8px;
+        background: transparent;
+        border: none;
+        color: var(--ui-accent, #888);
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 12px;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+        padding: 2px 6px;
+      }
+      #creatureInventory .detail-pokedex-link:hover {
+        opacity: 0.8;
       }
       #creatureInventory .detail-evos {
         margin: 4px 0 8px;
@@ -558,6 +691,136 @@
       }
       #creatureInventory .family-cell.ready img { display: block; }
       #creatureInventory .family-cell.ready .family-cell-placeholder { display: none; }
+      /* Silhouette: pokémon you haven't seen yet show as black-fill,
+         keeping their shape so you know "something" is there. Applied
+         to family-tree cells and "Evolves to" rows. */
+      #creatureInventory .silhouette img,
+      #creatureInventory .evo-row.silhouette .evo-art img,
+      #creatureInventory .family-cell.silhouette img {
+        filter: brightness(0);
+      }
+      #creatureInventory .pokedex-view { display: none; }
+      #creatureInventory .pokedex-view.show { display: block; }
+      #creatureInventory .pokedex-header {
+        display: flex; align-items: center; gap: 8px;
+        margin-bottom: 10px;
+      }
+      #creatureInventory .pokedex-stats {
+        flex: 1; text-align: right;
+        font-size: 12px; color: var(--ui-muted, #666);
+      }
+      #creatureInventory .pokedex-stats b {
+        color: var(--ui-text, #111);
+      }
+      #creatureInventory .pokedex-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+      }
+      #creatureInventory .pokedex-card {
+        position: relative;
+        display: flex; flex-direction: column; align-items: center; gap: 4px;
+        padding: 8px 4px;
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+        border-radius: var(--ui-radius, 8px);
+      }
+      #creatureInventory .pokedex-card .pokedex-art {
+        width: 100%; aspect-ratio: 1;
+        display: flex; align-items: center; justify-content: center;
+        background: var(--ui-bg, #fff);
+        border: 1px solid var(--ui-hairline, rgba(0,0,0,0.08));
+        border-radius: var(--ui-radius, 8px);
+        overflow: hidden;
+      }
+      #creatureInventory .pokedex-card .pokedex-art img {
+        width: 90%; height: 90%; object-fit: contain;
+        image-rendering: pixelated; image-rendering: crisp-edges;
+        display: none;
+      }
+      #creatureInventory .pokedex-card.ready .pokedex-art img { display: block; }
+      #creatureInventory .pokedex-card .pokedex-name {
+        font-size: 11px; text-align: center; line-height: 1.2;
+        word-break: break-word;
+      }
+      #creatureInventory .pokedex-card .caught-badge {
+        position: absolute; top: 4px; right: 4px;
+        background: var(--ui-accent, #2a8);
+        color: #fff;
+        border-radius: 999px;
+        width: 16px; height: 16px;
+        font-size: 10px; line-height: 16px;
+        text-align: center;
+        font-weight: bold;
+        z-index: 2;
+      }
+      #creatureInventory .pokedex-card { cursor: pointer; }
+      #creatureInventory .fusion-view { display: none; }
+      #creatureInventory .fusion-view.show { display: block; }
+      #creatureInventory .fusion-section-label {
+        font-size: 11px; color: var(--ui-muted, #666);
+        text-transform: uppercase; letter-spacing: 0.04em;
+        margin: 12px 0 6px;
+      }
+      #creatureInventory .fusion-caught-row {
+        display: flex; align-items: center; gap: 10px;
+        padding: 6px 8px;
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+        border-radius: var(--ui-radius, 8px);
+        margin-bottom: 4px;
+        cursor: pointer;
+      }
+      #creatureInventory .fusion-caught-row:hover {
+        background: var(--ui-border, rgba(0,0,0,0.08));
+      }
+      #creatureInventory .fusion-caught-row .row-name {
+        flex: 1; min-width: 0; font-size: 13px;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      #creatureInventory .fusion-caught-row .row-meta {
+        font-size: 11px; color: var(--ui-muted, #666);
+        flex-shrink: 0;
+      }
+      #creatureInventory .fusion-encounter {
+        font-size: 13px;
+        line-height: 1.5;
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+        padding: 10px 12px;
+        border-radius: var(--ui-radius, 8px);
+      }
+      #creatureInventory .fusion-encounter .row-meta {
+        font-size: 12px; color: var(--ui-muted, #666);
+      }
+      #creatureInventory .species-link {
+        cursor: pointer;
+        text-decoration: underline;
+        text-decoration-style: dotted;
+        text-decoration-thickness: 1px;
+        text-underline-offset: 3px;
+      }
+      #creatureInventory .species-link:hover {
+        color: var(--ui-accent, #888);
+      }
+      #creatureInventory .browse-header {
+        display: flex; align-items: center; gap: 8px;
+        margin: 0 0 14px;
+        /* Leave room for the sticky X button which sits at the
+           sheet's top-right corner and would otherwise overlap. */
+        padding-right: 28px;
+      }
+      #creatureInventory .browse-header h3 { margin: 0; flex: 1; }
+      #creatureInventory .pokedex-link {
+        background: transparent;
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
+        border-radius: var(--ui-radius, 8px);
+        color: var(--ui-text, #111);
+        padding: 4px 10px;
+        font-size: 12px;
+        cursor: pointer;
+        font-family: inherit;
+      }
+      #creatureInventory .pokedex-link:hover {
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+      }
       #creatureInventory .detail-art img.detail-art-img {
         width: 100%; height: 100%; object-fit: contain;
         image-rendering: pixelated; image-rendering: crisp-edges;
@@ -738,13 +1001,17 @@
       <div class="sheet">
         <button class="close inventory-x" type="button" aria-label="close">×</button>
         <div class="browse-view">
-          <h3>Creatures</h3>
+          <div class="browse-header">
+            <h3>Creatures</h3>
+            <button class="pokedex-link" type="button">Pokédex →</button>
+          </div>
           <div class="search-row">
             <input id="creatureSearch" type="search" placeholder="Search by name" autocomplete="off">
           </div>
           <div class="sort-row">
             <label for="creatureSortBy">Sort</label>
             <select id="creatureSortBy">
+              <option value="recent">Recent</option>
               <option value="level">Level</option>
               <option value="size">Size</option>
               <option value="name">Name</option>
@@ -756,8 +1023,104 @@
           <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
         <div class="detail-view">
-          <button class="detail-back" type="button">← Back</button>
+          <button class="detail-back" type="button" aria-label="back">←</button>
           <div class="detail-body"></div>
+          <div class="actions"><button class="close" type="button">Done</button></div>
+        </div>
+        <div class="fusion-view">
+          <button class="fusion-back" type="button" aria-label="back">←</button>
+          <div class="fusion-body"></div>
+          <div class="actions"><button class="close" type="button">Done</button></div>
+        </div>
+        <div class="pokedex-view">
+          <div class="pokedex-header">
+            <button class="pokedex-back" type="button" aria-label="back">←</button>
+            <div class="pokedex-stats"></div>
+          </div>
+          <div class="search-row">
+            <input id="pokedexSearchAny" type="search" placeholder="Search species" autocomplete="off">
+          </div>
+          <div class="search-row pokedex-search-row">
+            <input id="pokedexSearchA" type="search" placeholder="Search first species" autocomplete="off">
+            <input id="pokedexSearchB" type="search" placeholder="Search second species" autocomplete="off">
+          </div>
+          <div class="sort-row">
+            <label for="pokedexSortBy">Sort</label>
+            <select id="pokedexSortBy">
+              <option value="recent">Recent</option>
+              <option value="a">First name</option>
+              <option value="b">Second name</option>
+              <option value="aId">First ID</option>
+              <option value="bId">Second ID</option>
+            </select>
+            <button class="dir" type="button" id="pokedexSortDir" aria-label="toggle sort direction"></button>
+          </div>
+          <div class="sort-row pokedex-type-row">
+            <select id="pokedexFilterType">
+              <option value="">Either: any</option>
+              <option value="NORMAL">Either: Normal</option>
+              <option value="FIRE">Either: Fire</option>
+              <option value="WATER">Either: Water</option>
+              <option value="GRASS">Either: Grass</option>
+              <option value="ELECTRIC">Either: Electric</option>
+              <option value="ICE">Either: Ice</option>
+              <option value="FIGHTING">Either: Fighting</option>
+              <option value="POISON">Either: Poison</option>
+              <option value="GROUND">Either: Ground</option>
+              <option value="FLYING">Either: Flying</option>
+              <option value="PSYCHIC">Either: Psychic</option>
+              <option value="BUG">Either: Bug</option>
+              <option value="ROCK">Either: Rock</option>
+              <option value="GHOST">Either: Ghost</option>
+              <option value="DRAGON">Either: Dragon</option>
+              <option value="DARK">Either: Dark</option>
+              <option value="STEEL">Either: Steel</option>
+              <option value="FAIRY">Either: Fairy</option>
+            </select>
+            <select id="pokedexFilterTypeA">
+              <option value="">First: any</option>
+              <option value="NORMAL">First: Normal</option>
+              <option value="FIRE">First: Fire</option>
+              <option value="WATER">First: Water</option>
+              <option value="GRASS">First: Grass</option>
+              <option value="ELECTRIC">First: Electric</option>
+              <option value="ICE">First: Ice</option>
+              <option value="FIGHTING">First: Fighting</option>
+              <option value="POISON">First: Poison</option>
+              <option value="GROUND">First: Ground</option>
+              <option value="FLYING">First: Flying</option>
+              <option value="PSYCHIC">First: Psychic</option>
+              <option value="BUG">First: Bug</option>
+              <option value="ROCK">First: Rock</option>
+              <option value="GHOST">First: Ghost</option>
+              <option value="DRAGON">First: Dragon</option>
+              <option value="DARK">First: Dark</option>
+              <option value="STEEL">First: Steel</option>
+              <option value="FAIRY">First: Fairy</option>
+            </select>
+            <select id="pokedexFilterTypeB">
+              <option value="">Second: any</option>
+              <option value="NORMAL">Second: Normal</option>
+              <option value="FIRE">Second: Fire</option>
+              <option value="WATER">Second: Water</option>
+              <option value="GRASS">Second: Grass</option>
+              <option value="ELECTRIC">Second: Electric</option>
+              <option value="ICE">Second: Ice</option>
+              <option value="FIGHTING">Second: Fighting</option>
+              <option value="POISON">Second: Poison</option>
+              <option value="GROUND">Second: Ground</option>
+              <option value="FLYING">Second: Flying</option>
+              <option value="PSYCHIC">Second: Psychic</option>
+              <option value="BUG">Second: Bug</option>
+              <option value="ROCK">Second: Rock</option>
+              <option value="GHOST">Second: Ghost</option>
+              <option value="DRAGON">Second: Dragon</option>
+              <option value="DARK">Second: Dark</option>
+              <option value="STEEL">Second: Steel</option>
+              <option value="FAIRY">Second: Fairy</option>
+            </select>
+          </div>
+          <div class="pokedex-grid"></div>
           <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
       </div>
@@ -809,26 +1172,405 @@
       }
     });
 
-    panel.querySelector('.detail-back').addEventListener('click', showBrowse);
+    panel.querySelector('.detail-back').addEventListener('click', popView);
+    panel.querySelector('.pokedex-back').addEventListener('click', popView);
+    panel.querySelector('.fusion-back').addEventListener('click', popView);
+    panel.querySelector('.pokedex-link').addEventListener('click', () => showPokedex());
+
+    // Pokédex card → fusion sub-view (delegated; cards are re-rendered).
+    const pokedexGrid = panel.querySelector('.pokedex-grid');
+    pokedexGrid.addEventListener('click', (e) => {
+      const card = e.target.closest && e.target.closest('.pokedex-card');
+      if (!card) return;
+      const key = card.dataset.key;
+      if (!key) return;
+      const dash = key.indexOf('-');
+      const a = +key.slice(0, dash);
+      const b = +key.slice(dash + 1);
+      showFusionView(a, b);
+    });
+
+    const pokedexSortBy = panel.querySelector('#pokedexSortBy');
+    const pokedexSortDir = panel.querySelector('#pokedexSortDir');
+    const syncPokedexDirButton = () => {
+      const dir = readPokedexSortDir();
+      pokedexSortDir.textContent = dir === 'asc' ? '↑' : '↓';
+      pokedexSortDir.title = dir === 'asc'
+        ? 'ascending (oldest / A→Z)'
+        : 'descending (newest / Z→A)';
+    };
+    pokedexSortBy.value = readPokedexSortKey();
+    syncPokedexDirButton();
+    pokedexSortBy.addEventListener('change', () => {
+      localStorage.setItem('cc.pokedexSortBy', pokedexSortBy.value);
+      renderPokedex();
+    });
+    pokedexSortDir.addEventListener('click', () => {
+      const next = readPokedexSortDir() === 'asc' ? 'desc' : 'asc';
+      localStorage.setItem('cc.pokedexSortDir', next);
+      syncPokedexDirButton();
+      renderPokedex();
+    });
+
+    const pokedexFilterType = panel.querySelector('#pokedexFilterType');
+    pokedexFilterType.value = readPokedexFilterType();
+    pokedexFilterType.addEventListener('change', () => {
+      localStorage.setItem('cc.pokedexFilterType', pokedexFilterType.value);
+      renderPokedex();
+    });
+
+    const pokedexFilterTypeA = panel.querySelector('#pokedexFilterTypeA');
+    pokedexFilterTypeA.value = readPokedexFilterTypeA();
+    pokedexFilterTypeA.addEventListener('change', () => {
+      localStorage.setItem('cc.pokedexFilterTypeA', pokedexFilterTypeA.value);
+      renderPokedex();
+    });
+
+    const pokedexFilterTypeB = panel.querySelector('#pokedexFilterTypeB');
+    pokedexFilterTypeB.value = readPokedexFilterTypeB();
+    pokedexFilterTypeB.addEventListener('change', () => {
+      localStorage.setItem('cc.pokedexFilterTypeB', pokedexFilterTypeB.value);
+      renderPokedex();
+    });
+
+    const pokedexSearchAny = panel.querySelector('#pokedexSearchAny');
+    const pokedexSearchA = panel.querySelector('#pokedexSearchA');
+    const pokedexSearchB = panel.querySelector('#pokedexSearchB');
+    pokedexSearchAny.addEventListener('input', renderPokedex);
+    pokedexSearchA.addEventListener('input', renderPokedex);
+    pokedexSearchB.addEventListener('input', renderPokedex);
 
     document.body.appendChild(panel);
     return panel;
   }
 
-  function showBrowse() {
+  // Navigation history. Each entry is a view state object:
+  //   { view: 'browse' }
+  //   { view: 'detail', id }
+  //   { view: 'fusion', a, b }
+  //   { view: 'pokedex', opts }
+  // Every show* function pushes; every Back button pops. Stack is
+  // cleared (back to [browse]) when the panel is opened from outside,
+  // so a fresh tap of the creature-ball gives a fresh start.
+  let _viewStack = [{ view: 'browse' }];
+
+  function applyTopView() {
     const panel = ensurePanel();
+    const top = _viewStack[_viewStack.length - 1] || { view: 'browse' };
+    panel.querySelector('.browse-view').style.display = 'none';
     panel.querySelector('.detail-view').classList.remove('show');
-    panel.querySelector('.browse-view').style.display = '';
-    renderList(panel.querySelector('.creature-list'));
+    panel.querySelector('.pokedex-view').classList.remove('show');
+    panel.querySelector('.fusion-view').classList.remove('show');
+    switch (top.view) {
+      case 'browse':
+        panel.querySelector('.browse-view').style.display = '';
+        renderList(panel.querySelector('.creature-list'));
+        return;
+      case 'detail': {
+        const creature = findCreature(top.id);
+        if (!creature) {
+          // Capture was deleted underfoot — drop this entry and re-apply
+          // whatever was below it.
+          _viewStack.pop();
+          applyTopView();
+          return;
+        }
+        renderDetail(creature);
+        panel.querySelector('.detail-view').classList.add('show');
+        return;
+      }
+      case 'fusion':
+        renderFusionView(top.a, top.b);
+        panel.querySelector('.fusion-view').classList.add('show');
+        return;
+      case 'pokedex': {
+        const opts = top.opts || {};
+        const sAny = panel.querySelector('#pokedexSearchAny');
+        const sa = panel.querySelector('#pokedexSearchA');
+        const sb = panel.querySelector('#pokedexSearchB');
+        if (sAny) sAny.value = opts.searchAny || '';
+        if (sa)   sa.value   = opts.searchA   || '';
+        if (sb)   sb.value   = opts.searchB   || '';
+        panel.querySelector('.pokedex-view').classList.add('show');
+        renderPokedex();
+        return;
+      }
+    }
+  }
+
+  function pushView(state) {
+    _viewStack.push(state);
+    applyTopView();
+  }
+
+  function popView() {
+    if (_viewStack.length > 1) {
+      _viewStack.pop();
+      applyTopView();
+    } else {
+      // Already at the root view — nothing to pop. Stay put.
+      applyTopView();
+    }
+  }
+
+  function showBrowse() {
+    _viewStack = [{ view: 'browse' }];
+    applyTopView();
   }
 
   function showDetail(id) {
-    const panel = ensurePanel();
-    const creature = findCreature(id);
-    if (!creature) return;
-    renderDetail(creature);
-    panel.querySelector('.browse-view').style.display = 'none';
-    panel.querySelector('.detail-view').classList.add('show');
+    pushView({ view: 'detail', id });
+  }
+
+  function showFusionView(a, b) {
+    pushView({ view: 'fusion', a, b });
+  }
+
+  function showPokedex(opts) {
+    pushView({ view: 'pokedex', opts: opts || null });
+  }
+
+  function renderFusionView(a, b) {
+    const panel = document.getElementById('creatureInventory');
+    if (!panel) return;
+    const body = panel.querySelector('.fusion-body');
+    if (!body) return;
+
+    const nameA = global.Species ? global.Species.nameFor(a) : `#${a}`;
+    const nameB = global.Species ? global.Species.nameFor(b) : `#${b}`;
+    const display = `${nameA} × ${nameB}`;
+    const typesHtml = typeChipsHtml(fusionTypesFor(a, b));
+
+    // All captures of this fusion, newest first.
+    const myCaptures = readCapturedCreatures()
+      .filter((c) => c.speciesA === a && c.speciesB === b)
+      .sort((x, y) => (y.caughtAt && y.caughtAt.timestamp || 0)
+                    - (x.caughtAt && x.caughtAt.timestamp || 0));
+
+    let capturedHtml = '';
+    if (myCaptures.length) {
+      const nicks = readNicknames();
+      capturedHtml = `<div class="fusion-section-label">Captured (${myCaptures.length})</div>`
+        + myCaptures.map((cap) => {
+          const nm = nicks[cap.id] || display;
+          const date = cap.caughtAt && cap.caughtAt.timestamp
+            ? new Date(cap.caughtAt.timestamp).toLocaleDateString()
+            : '';
+          const meta = [];
+          if (cap.level != null) meta.push(`Lv ${cap.level}`);
+          if (cap.sizeM != null) meta.push(formatSize(cap.sizeM));
+          if (date) meta.push(date);
+          return `<div class="fusion-caught-row" data-id="${escapeHtml(cap.id)}" role="button" tabindex="0">
+            <div class="row-name">${escapeHtml(nm)}</div>
+            <div class="row-meta">${escapeHtml(meta.join(' · '))}</div>
+          </div>`;
+        }).join('');
+    }
+
+    // Encounter info (always shown — even for caught fusions, the first
+    // encounter timestamp is interesting).
+    const seen = readSeenFusions()[`${a}-${b}`] || {};
+    let encounterHtml = '';
+    if (seen.firstSeen || seen.lat != null) {
+      const when = seen.firstSeen ? new Date(seen.firstSeen).toLocaleString() : '';
+      const where = seen.poi && seen.poi.name
+        ? `${seen.poi.name} (${Math.round(seen.poi.distanceM)} m away)`
+        : (seen.lat != null
+            ? `${seen.lat.toFixed(5)}, ${seen.lng.toFixed(5)}`
+            : '');
+      const lines = [];
+      if (when) lines.push(`<div>First encountered ${escapeHtml(when)}</div>`);
+      if (where) lines.push(`<div class="row-meta">${escapeHtml(where)}</div>`);
+      if (lines.length) {
+        encounterHtml = `<div class="fusion-section-label">Encounter</div>`
+          + `<div class="fusion-encounter">${lines.join('')}</div>`;
+      }
+    }
+
+    body.innerHTML = `
+      <div class="detail-art">
+        <span class="detail-art-placeholder" aria-hidden="true">•</span>
+        <img class="detail-art-img" alt="" style="display:none">
+      </div>
+      <div class="detail-name-row">
+        <div class="detail-name">
+          <span class="species-link" data-side="A">${escapeHtml(nameA)}</span>
+          <span> × </span>
+          <span class="species-link" data-side="B">${escapeHtml(nameB)}</span>
+        </div>
+      </div>
+      ${typesHtml}
+      ${capturedHtml}
+      ${encounterHtml}
+    `;
+    body.querySelectorAll('.species-link').forEach((link) => {
+      link.addEventListener('click', () => {
+        if (link.dataset.side === 'A') showPokedex({ searchA: nameA });
+        else showPokedex({ searchB: nameB });
+      });
+    });
+
+    // Fusion sprite for the header.
+    if (global.Sprites) {
+      global.Sprites.getSpriteUrl(a, b).then((url) => {
+        if (!url) return;
+        const img = body.querySelector('.detail-art-img');
+        const ph = body.querySelector('.detail-art-placeholder');
+        if (!img) { URL.revokeObjectURL(url); return; }
+        img.onload = () => {
+          URL.revokeObjectURL(url);
+          if (ph) ph.style.display = 'none';
+          img.style.display = 'block';
+        };
+        img.src = url;
+      });
+    }
+
+    // Wire row clicks → existing detail view. The view stack pushes
+    // detail on top of fusion, so detail's Back returns here naturally.
+    body.querySelectorAll('.fusion-caught-row').forEach((row) => {
+      const open = () => showDetail(row.dataset.id);
+      row.addEventListener('click', open);
+      row.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          open();
+        }
+      });
+    });
+  }
+
+  // Toggle a `filter-active` class on each Pokédex filter control whose
+  // value isn't the default "any" / blank, so it's visually obvious
+  // when the grid is being narrowed by something the user might have
+  // forgotten about.
+  function updatePokedexFilterIndicators(panel) {
+    const checks = [
+      '#pokedexSearchAny',
+      '#pokedexSearchA',
+      '#pokedexSearchB',
+      '#pokedexFilterType',
+      '#pokedexFilterTypeA',
+      '#pokedexFilterTypeB',
+    ];
+    for (const sel of checks) {
+      const el = panel.querySelector(sel);
+      if (!el) continue;
+      const isActive = (el.value || '').trim() !== '';
+      el.classList.toggle('filter-active', isActive);
+    }
+  }
+
+  function renderPokedex() {
+    const panel = document.getElementById('creatureInventory');
+    if (!panel) return;
+    updatePokedexFilterIndicators(panel);
+    const seen = readSeenFusions();
+    const caught = caughtFusionsSet();
+    let entries = Object.keys(seen).map((key) => {
+      const dash = key.indexOf('-');
+      const a = +key.slice(0, dash);
+      const b = +key.slice(dash + 1);
+      return {
+        key, a, b,
+        firstSeen: (seen[key] && seen[key].firstSeen) || 0,
+        caught: caught.has(key),
+      };
+    });
+
+    const filterType = readPokedexFilterType();
+    const filterTypeA = readPokedexFilterTypeA();
+    const filterTypeB = readPokedexFilterTypeB();
+    if (filterType || filterTypeA || filterTypeB) {
+      entries = entries.filter((e) => {
+        const types = fusionTypesFor(e.a, e.b);
+        if (!types || !types.length) return false;
+        // "Either": any of the fusion's types matches.
+        if (filterType && !types.includes(filterType)) return false;
+        // "First": the fusion's primary slot (always types[0]).
+        if (filterTypeA && types[0] !== filterTypeA) return false;
+        // "Second": the fusion's secondary slot (types[1]); a fusion
+        // whose A and B share the same effective type is single-typed
+        // post-dedup and won't match any "Second" filter.
+        if (filterTypeB && types[1] !== filterTypeB) return false;
+        return true;
+      });
+    }
+
+    const nameOfLower = (idx) => global.Species
+      ? global.Species.nameFor(idx).toLowerCase()
+      : `#${idx}`;
+    const sAny = (panel.querySelector('#pokedexSearchAny') || {}).value || '';
+    const sa = (panel.querySelector('#pokedexSearchA') || {}).value || '';
+    const sb = (panel.querySelector('#pokedexSearchB') || {}).value || '';
+    const qAny = sAny.trim().toLowerCase();
+    const qA = sa.trim().toLowerCase();
+    const qB = sb.trim().toLowerCase();
+    if (qAny) entries = entries.filter((e) =>
+      nameOfLower(e.a).includes(qAny) || nameOfLower(e.b).includes(qAny));
+    if (qA) entries = entries.filter((e) => nameOfLower(e.a).includes(qA));
+    if (qB) entries = entries.filter((e) => nameOfLower(e.b).includes(qB));
+
+    const sortKey = readPokedexSortKey();
+    const sortDir = readPokedexSortDir();
+    const sign = sortDir === 'asc' ? 1 : -1;
+    const nameOf = (idx) => global.Species ? global.Species.nameFor(idx) : `#${idx}`;
+    entries.sort((x, y) => {
+      if (sortKey === 'a')   return sign * nameOf(x.a).localeCompare(nameOf(y.a));
+      if (sortKey === 'b')   return sign * nameOf(x.b).localeCompare(nameOf(y.b));
+      if (sortKey === 'aId') return sign * (x.a - y.a);
+      if (sortKey === 'bId') return sign * (x.b - y.b);
+      // 'recent': firstSeen
+      return sign * (x.firstSeen - y.firstSeen);
+    });
+
+    const totalSeen = entries.length;
+    const totalCaught = caught.size;
+    const encounteredOnly = Math.max(0, totalSeen - totalCaught);
+    const statsEl = panel.querySelector('.pokedex-stats');
+    if (statsEl) {
+      statsEl.innerHTML =
+        `<b>${totalCaught}</b> caught · <b>${encounteredOnly}</b> encountered`;
+    }
+
+    const grid = panel.querySelector('.pokedex-grid');
+    if (!grid) return;
+    if (!entries.length) {
+      const filteredOut = filterType || filterTypeA || filterTypeB
+        || qAny || qA || qB;
+      const msg = filteredOut
+        ? 'No seen creatures match those filters.'
+        : 'No creatures seen yet — go exploring!';
+      grid.innerHTML = `<div class="creature-empty">${escapeHtml(msg)}</div>`;
+      return;
+    }
+    grid.innerHTML = entries.map((e) => {
+      const display = global.Species
+        ? `${global.Species.nameFor(e.a)} × ${global.Species.nameFor(e.b)}`
+        : `#${e.a} × #${e.b}`;
+      return `<div class="pokedex-card" data-key="${escapeHtml(e.key)}">
+        ${e.caught ? '<span class="caught-badge" title="caught">✓</span>' : ''}
+        <div class="pokedex-art"><img alt=""></div>
+        <div class="pokedex-name">${escapeHtml(display)}</div>
+      </div>`;
+    }).join('');
+    if (!global.Sprites) return;
+    grid.querySelectorAll('.pokedex-card').forEach((card) => {
+      const key = card.dataset.key;
+      const dash = key.indexOf('-');
+      const a = +key.slice(0, dash);
+      const b = +key.slice(dash + 1);
+      global.Sprites.getSpriteUrl(a, b).then((url) => {
+        if (!url) return;
+        const img = card.querySelector('img');
+        if (!img) { URL.revokeObjectURL(url); return; }
+        img.onload = () => {
+          URL.revokeObjectURL(url);
+          card.classList.add('ready');
+        };
+        img.src = url;
+      });
+    });
   }
 
   function renderDetail(c) {
@@ -872,10 +1614,11 @@
         evosHtml = `<div class="detail-evos">
           <div class="detail-evos-label">Evolves to</div>
           ${evoEntries.map((e, i) => {
-            const targetName = global.Species
+            const seen = isFusionSeen(e.newA, e.newB);
+            const targetName = (global.Species && seen)
               ? `${global.Species.nameFor(e.newA)} × ${global.Species.nameFor(e.newB)}`
-              : `#${e.newA} × #${e.newB}`;
-            return `<div class="evo-row" data-evo-idx="${i}">
+              : '???';
+            return `<div class="evo-row${seen ? '' : ' silhouette'}" data-evo-idx="${i}">
               <span class="evo-arrow">→</span>
               <div class="evo-art">
                 <span class="evo-art-placeholder" aria-hidden="true">•</span>
@@ -904,6 +1647,9 @@
         </div>`;
       }
     }
+    const pokedexLinkHtml = (c.speciesA != null && c.speciesB != null)
+      ? `<button class="detail-pokedex-link" type="button">View pokédex entry →</button>`
+      : '';
     body.innerHTML = `
       <div class="detail-art">
         <span class="detail-art-placeholder" aria-hidden="true">${escapeHtml(c.emoji || '•')}</span>
@@ -913,6 +1659,7 @@
         <div class="detail-name">${escapeHtml(name)}</div>
         <button class="icon-btn rename-edit" type="button" aria-label="rename" title="rename">✎</button>
       </div>
+      ${pokedexLinkHtml}
       ${speciesLine}
       ${typesHtml}
       ${statsHtml}
@@ -920,6 +1667,12 @@
       ${evosHtml}
       ${familyHtml}
     `;
+    const pokedexLink = body.querySelector('.detail-pokedex-link');
+    if (pokedexLink) {
+      pokedexLink.addEventListener('click', () => {
+        showFusionView(c.speciesA, c.speciesB);
+      });
+    }
     if (famA && famB && famHasContent(famA, famB)) {
       const toggle = body.querySelector('.family-toggle');
       const grid = body.querySelector('.family-grid');
@@ -1196,6 +1949,7 @@
   function openBattleScreen(spawn) {
     const el = ensureBattleScreen();
     _currentBattleSpawn = spawn;
+    markFusionSeen(spawn.speciesA, spawn.speciesB, spawn);
     const nameEl = el.querySelector('.battle-name');
     const statsEl = el.querySelector('.battle-stats');
     nameEl.textContent = fusionName(spawn.speciesA, spawn.speciesB);
@@ -1494,6 +2248,7 @@
 
   function install(map) {
     injectStyles();
+    backfillSeenFromCaptures();
     const ctrl = new CreatureBallControl();
     map.addControl(ctrl, 'bottom-right');
     if (readEnabled()) attachSpawnOverlay(map);
