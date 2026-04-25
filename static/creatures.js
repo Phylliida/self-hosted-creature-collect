@@ -177,6 +177,166 @@
       : [];
   }
 
+  // Windowed virtualizer for the pokédex / inventory grids. Renders
+  // only the rows whose y-range overlaps the visible viewport (+ a
+  // 2-row buffer above and below). Card height is measured once from
+  // a hidden sample so we don't have to hardcode it across themes /
+  // viewport widths.
+  //
+  //   opts: {
+  //     scrollEl,           // element with overflow-y:auto (the .sheet)
+  //     gridEl,             // the grid container we virtualize inside
+  //     items,              // array of opaque item objects
+  //     cols,               // column count (e.g. 3)
+  //     rowGap,             // px gap between rows
+  //     makeCardEl(item, i) // returns the DOM for one card
+  //     loadSpriteFor(card, item) // optional async sprite hook
+  //   }
+  function virtualizeGrid(opts) {
+    const { scrollEl, gridEl, items, cols, rowGap,
+            makeCardEl, loadSpriteFor } = opts;
+
+    // Tear down any previous virtualization on this grid before starting
+    // a new one (filter / sort changes re-enter renderPokedex etc.).
+    if (gridEl._virtCleanup) gridEl._virtCleanup();
+    gridEl.innerHTML = '';
+
+    if (!items.length) {
+      gridEl.style.height = '';
+      gridEl.style.display = '';
+      gridEl.style.position = '';
+      return;
+    }
+
+    // Card height is hardcoded per caller (see opts.cardHeight). We
+    // tried dynamic measurement but it was unreliable on the panel's
+    // first show — even with the sample card rendered as a real grid
+    // item, the first measurement could come back too short and cause
+    // overlap. The hardcoded value is set by each grid type to match
+    // what its cards actually render at on a typical viewport. Cards
+    // also have a matching explicit CSS height so they can't overflow
+    // beyond their slot.
+    const cardH = opts.cardHeight || 160;
+
+    const rowPitch = cardH + rowGap;
+    const numRows = Math.ceil(items.length / cols);
+
+    gridEl.style.position = 'relative';
+    gridEl.style.display = 'block';
+    gridEl.style.height = (numRows * rowPitch - rowGap) + 'px';
+
+    const renderedRows = new Map();
+
+    function renderRow(rowIdx) {
+      const row = document.createElement('div');
+      row.style.cssText = `
+        position: absolute; left: 0; right: 0;
+        top: ${rowIdx * rowPitch}px;
+        display: grid; gap: ${rowGap}px;
+        grid-template-columns: repeat(${cols}, 1fr);
+      `;
+      for (let c = 0; c < cols; c++) {
+        const idx = rowIdx * cols + c;
+        if (idx >= items.length) break;
+        const cardEl = makeCardEl(items[idx], idx);
+        row.appendChild(cardEl);
+        if (loadSpriteFor) loadSpriteFor(cardEl, items[idx]);
+      }
+      return row;
+    }
+
+    function recomputeWindow() {
+      // Cheap escape: when this grid's view is hidden (display:none on
+      // any ancestor), offsetParent is null and we can skip.
+      if (gridEl.offsetParent === null) return;
+      const scrollTop = scrollEl.scrollTop;
+      const viewportH = scrollEl.clientHeight;
+      // gridEl.offsetTop gives the grid's offset within its nearest
+      // positioned ancestor (the .sheet, which is position:relative).
+      const gridTop = gridEl.offsetTop;
+      const localTop = Math.max(0, scrollTop - gridTop);
+      const buffer = rowPitch * 2;
+      const startRow = Math.max(0, Math.floor((localTop - buffer) / rowPitch));
+      const endRow = Math.min(
+        numRows - 1,
+        Math.ceil((localTop + viewportH + buffer) / rowPitch));
+
+      for (const [r, el] of renderedRows) {
+        if (r < startRow || r > endRow) {
+          revokeObjectUrlsIn(el);
+          el.remove();
+          renderedRows.delete(r);
+        }
+      }
+      for (let r = startRow; r <= endRow; r++) {
+        if (renderedRows.has(r)) continue;
+        const rowEl = renderRow(r);
+        gridEl.appendChild(rowEl);
+        renderedRows.set(r, rowEl);
+      }
+    }
+
+    let pending = false;
+    function scheduleUpdate() {
+      if (pending) return;
+      pending = true;
+      requestAnimationFrame(() => { pending = false; recomputeWindow(); });
+    }
+    scrollEl.addEventListener('scroll', scheduleUpdate, { passive: true });
+    recomputeWindow();
+    // Safety net: when the panel just became visible synchronously,
+    // ancestor display/styles may not be fully computed yet, so the
+    // first recomputeWindow's offsetParent check can bail and leave
+    // the grid blank until the user scrolls. A second pass on the
+    // next animation frame fixes that without anyone needing to
+    // touch the wheel.
+    requestAnimationFrame(recomputeWindow);
+
+    gridEl._virtCleanup = () => {
+      scrollEl.removeEventListener('scroll', scheduleUpdate);
+      // Revoke every still-loading sprite URL before wiping the rows,
+      // otherwise their blobs hang around in memory.
+      revokeObjectUrlsIn(gridEl);
+      renderedRows.clear();
+      gridEl.innerHTML = '';
+      gridEl.style.height = '';
+      gridEl.style.position = '';
+      gridEl.style.display = '';
+      delete gridEl._virtCleanup;
+    };
+
+    // Web fonts may still be loading the very first time the inventory
+    // panel opens after page load — our sample measure then uses
+    // fallback-font metrics which can be shorter than the real font's,
+    // producing row overlap. Re-virtualize once fonts settle so the
+    // row pitch corrects itself. No-op on subsequent opens because
+    // status is already 'loaded' by then.
+    if (document.fonts && document.fonts.status !== 'loaded') {
+      const myCleanup = gridEl._virtCleanup;
+      document.fonts.ready.then(() => {
+        // Bail if a different render has replaced ours since.
+        if (gridEl._virtCleanup !== myCleanup) return;
+        virtualizeGrid(opts);
+      });
+    }
+  }
+
+  // Revoke any object URLs held by `<img>` children of this element.
+  // Call before detaching the element from the DOM to prevent the blob
+  // it points to from leaking — img.onload is what normally revokes,
+  // but onload doesn't fire if the load is interrupted (e.g. the row
+  // gets virtualized out of view before the sprite finishes decoding).
+  function revokeObjectUrlsIn(el) {
+    if (!el) return;
+    el.querySelectorAll('img').forEach((img) => {
+      const src = img.src;
+      if (src && src.startsWith('blob:')) {
+        URL.revokeObjectURL(src);
+        img.removeAttribute('src');
+      }
+    });
+  }
+
   // Lazy sprite loader for grid views. Items array is
   //   [{ card, a, b }, ...]
   // and `apply(card, url)` is the per-card hook that wires the loaded
@@ -225,6 +385,8 @@
   // IDB (no network — same rule as the rest of the inventory). The
   // current (a, b) cell is outlined.
   function renderFamilyGrid(gridEl, famA, famB, currentA, currentB) {
+    // Revoke any sprite URLs from a prior expansion of this grid.
+    revokeObjectUrlsIn(gridEl);
     gridEl.style.gridTemplateColumns = `repeat(${famA.length}, 1fr)`;
     const cells = [];
     for (let row = 0; row < famB.length; row++) {
@@ -523,6 +685,13 @@
         cursor: pointer;
         border: 1px solid transparent;
         transition: transform 0.08s ease, border-color 0.08s ease;
+        /* Hardcoded to match virtualizeGrid({ cardHeight: 178 }) — keeps
+           the row pitch correct without dynamic measurement. Excess
+           content is clipped (rare; happens only on unusually wide
+           screens or large fonts). */
+        height: 178px;
+        box-sizing: border-box;
+        overflow: hidden;
       }
       #creatureInventory .creature-card:hover {
         border-color: var(--ui-accent, #888);
@@ -547,6 +716,15 @@
       #creatureInventory .creature-card .name {
         font-size: 13px; text-align: center; line-height: 1.2;
         word-break: break-word;
+        /* Always reserve 2 lines so card heights are uniform — the
+           virtualizer measures one card and assumes that height for
+           every row. Without this, long fusion names wrap to 2 lines
+           and overlap the next row. */
+        height: 2.4em;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
       }
       #creatureInventory .creature-card .stats {
         display: flex; justify-content: center; gap: 6px;
@@ -773,6 +951,11 @@
         padding: 8px 4px;
         background: var(--ui-hover, rgba(0,0,0,0.04));
         border-radius: var(--ui-radius, 8px);
+        /* Matches virtualizeGrid({ cardHeight: 150 }) — fixed height
+           keeps the row pitch correct without dynamic measurement. */
+        height: 150px;
+        box-sizing: border-box;
+        overflow: hidden;
       }
       #creatureInventory .pokedex-card .pokedex-art {
         width: 100%; aspect-ratio: 1;
@@ -791,6 +974,13 @@
       #creatureInventory .pokedex-card .pokedex-name {
         font-size: 11px; text-align: center; line-height: 1.2;
         word-break: break-word;
+        /* Reserve 2 lines so virtualizer can assume uniform card
+           height regardless of name length. */
+        height: 2.4em;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
       }
       #creatureInventory .pokedex-card .caught-badge {
         position: absolute; top: 4px; right: 4px;
@@ -1094,17 +1284,6 @@
             <input id="pokedexSearchA" type="search" placeholder="Search first species" autocomplete="off">
             <input id="pokedexSearchB" type="search" placeholder="Search second species" autocomplete="off">
           </div>
-          <div class="sort-row">
-            <label for="pokedexSortBy">Sort</label>
-            <select id="pokedexSortBy">
-              <option value="recent">Recent</option>
-              <option value="a">First name</option>
-              <option value="b">Second name</option>
-              <option value="aId">First ID</option>
-              <option value="bId">Second ID</option>
-            </select>
-            <button class="dir" type="button" id="pokedexSortDir" aria-label="toggle sort direction"></button>
-          </div>
           <div class="sort-row pokedex-type-row">
             <select id="pokedexFilterType">
               <option value="">Either: any</option>
@@ -1169,6 +1348,17 @@
               <option value="STEEL">Second: Steel</option>
               <option value="FAIRY">Second: Fairy</option>
             </select>
+          </div>
+          <div class="sort-row">
+            <label for="pokedexSortBy">Sort</label>
+            <select id="pokedexSortBy">
+              <option value="recent">Recent</option>
+              <option value="a">First name</option>
+              <option value="b">Second name</option>
+              <option value="aId">First ID</option>
+              <option value="bId">Second ID</option>
+            </select>
+            <button class="dir" type="button" id="pokedexSortDir" aria-label="toggle sort direction"></button>
           </div>
           <div class="pokedex-grid"></div>
           <div class="actions"><button class="close" type="button">Done</button></div>
@@ -1385,6 +1575,10 @@
     if (!panel) return;
     const body = panel.querySelector('.fusion-body');
     if (!body) return;
+    // Revoke leftover sprite URLs from the previous render before we
+    // wipe the body — without this, navigating back into the fusion
+    // view repeatedly leaks one URL per visible card.
+    revokeObjectUrlsIn(body);
 
     const nameA = global.Species ? global.Species.nameFor(a) : `#${a}`;
     const nameB = global.Species ? global.Species.nameFor(b) : `#${b}`;
@@ -1604,6 +1798,7 @@
     const grid = panel.querySelector('.pokedex-grid');
     if (!grid) return;
     if (!entries.length) {
+      if (grid._virtCleanup) grid._virtCleanup();
       const filteredOut = filterType || filterTypeA || filterTypeB
         || qAny || qA || qB;
       const msg = filteredOut
@@ -1612,34 +1807,41 @@
       grid.innerHTML = `<div class="creature-empty">${escapeHtml(msg)}</div>`;
       return;
     }
-    grid.innerHTML = entries.map((e) => {
-      const display = global.Species
-        ? `${global.Species.nameFor(e.a)} × ${global.Species.nameFor(e.b)}`
-        : `#${e.a} × #${e.b}`;
-      return `<div class="pokedex-card" data-key="${escapeHtml(e.key)}">
-        ${e.caught ? '<span class="caught-badge" title="caught">✓</span>' : ''}
-        <div class="pokedex-art"><img alt=""></div>
-        <div class="pokedex-name">${escapeHtml(display)}</div>
-      </div>`;
-    }).join('');
-    const spriteItems = [];
-    grid.querySelectorAll('.pokedex-card').forEach((card) => {
-      const key = card.dataset.key;
-      const dash = key.indexOf('-');
-      spriteItems.push({
-        card,
-        a: +key.slice(0, dash),
-        b: +key.slice(dash + 1),
-      });
-    });
-    lazyLoadSpritesIntoGrid(grid, spriteItems, (card, url) => {
-      const img = card.querySelector('img');
-      if (!img) { URL.revokeObjectURL(url); return; }
-      img.onload = () => {
-        URL.revokeObjectURL(url);
-        card.classList.add('ready');
-      };
-      img.src = url;
+
+    const sheet = panel.querySelector('.sheet');
+    virtualizeGrid({
+      scrollEl: sheet,
+      gridEl: grid,
+      items: entries,
+      cols: 3,
+      rowGap: 8,
+      cardHeight: 150,
+      makeCardEl(entry) {
+        const display = global.Species
+          ? `${global.Species.nameFor(entry.a)} × ${global.Species.nameFor(entry.b)}`
+          : `#${entry.a} × #${entry.b}`;
+        const card = document.createElement('div');
+        card.className = 'pokedex-card';
+        card.dataset.key = entry.key;
+        card.innerHTML =
+          (entry.caught ? '<span class="caught-badge" title="caught">✓</span>' : '')
+          + `<div class="pokedex-art"><img alt=""></div>`
+          + `<div class="pokedex-name">${escapeHtml(display)}</div>`;
+        return card;
+      },
+      loadSpriteFor(card, entry) {
+        if (!global.Sprites) return;
+        global.Sprites.getSpriteUrl(entry.a, entry.b).then((url) => {
+          if (!url) return;
+          const img = card.querySelector('img');
+          if (!img) { URL.revokeObjectURL(url); return; }
+          img.onload = () => {
+            URL.revokeObjectURL(url);
+            card.classList.add('ready');
+          };
+          img.src = url;
+        });
+      },
     });
   }
 
@@ -1647,6 +1849,10 @@
     const panel = document.getElementById('creatureInventory');
     if (!panel) return;
     const body = panel.querySelector('.detail-body');
+    // Revoke any in-flight sprite URLs from the previous render so
+    // we don't leak blobs when the detail view is re-rendered (every
+    // navigation back here re-runs renderDetail).
+    revokeObjectUrlsIn(body);
     const nick = readNicknames()[c.id];
     const name = nick || c.name;
     const stats = [];
@@ -1866,52 +2072,60 @@
         c.name.toLowerCase().includes(q));
     }
     if (!items.length) {
+      if (listEl._virtCleanup) listEl._virtCleanup();
       const msg = q
         ? 'No creatures match that name.'
         : 'No creatures yet — go exploring!';
       listEl.innerHTML = `<div class="creature-empty">${msg}</div>`;
       return;
     }
-    listEl.innerHTML = items.map((c) => {
-      const stats = [];
-      if (c.level != null) stats.push(`Lv ${c.level}`);
-      if (c.sizeM != null) stats.push(formatSize(c.sizeM));
-      const statsHtml = stats.length
-        ? `<div class="stats">${stats.map((s, i) =>
-            (i ? '<span class="sep">·</span>' : '') + `<span>${escapeHtml(s)}</span>`
-          ).join('')}</div>`
-        : '';
-      return `
-        <div class="creature-card" data-id="${escapeHtml(c.id)}" role="button" tabindex="0">
-          <div class="art">
-            <span class="art-placeholder" aria-hidden="true">${escapeHtml(c.emoji || '•')}</span>
-            <img class="art-img" alt="">
-          </div>
-          <div class="name">${escapeHtml(displayName(c))}</div>
-          ${statsHtml}
-        </div>
-      `;
-    }).join('');
-    // Async sprite load per card, lazy via IntersectionObserver — only
-    // cards close to the viewport actually fetch + decode. Reads IDB
-    // only — no network per the "zero automatic fetches" rule.
-    const spriteItems = [];
-    for (const c of items) {
-      if (c.speciesA == null || c.speciesB == null) continue;
-      const card = listEl.querySelector(
-        `.creature-card[data-id="${CSS.escape(c.id)}"]`);
-      if (card) spriteItems.push({ card, a: c.speciesA, b: c.speciesB });
-    }
-    lazyLoadSpritesIntoGrid(listEl, spriteItems, (card, url) => {
-      const img = card.querySelector('.art-img');
-      const ph = card.querySelector('.art-placeholder');
-      if (!img) { URL.revokeObjectURL(url); return; }
-      img.onload = () => {
-        URL.revokeObjectURL(url);
-        if (ph) ph.style.display = 'none';
-        img.style.display = 'block';
-      };
-      img.src = url;
+    const sheet = listEl.closest('.sheet');
+    virtualizeGrid({
+      scrollEl: sheet,
+      gridEl: listEl,
+      items,
+      cols: 3,
+      rowGap: 8,
+      cardHeight: 178,
+      makeCardEl(c) {
+        const card = document.createElement('div');
+        card.className = 'creature-card';
+        card.dataset.id = c.id;
+        card.setAttribute('role', 'button');
+        card.tabIndex = 0;
+        const stats = [];
+        if (c.level != null) stats.push(`Lv ${c.level}`);
+        if (c.sizeM != null) stats.push(formatSize(c.sizeM));
+        const statsHtml = stats.length
+          ? `<div class="stats">${stats.map((s, i) =>
+              (i ? '<span class="sep">·</span>' : '') + `<span>${escapeHtml(s)}</span>`
+            ).join('')}</div>`
+          : '';
+        card.innerHTML =
+          `<div class="art">`
+          + `<span class="art-placeholder" aria-hidden="true">${escapeHtml(c.emoji || '•')}</span>`
+          + `<img class="art-img" alt="">`
+          + `</div>`
+          + `<div class="name">${escapeHtml(displayName(c))}</div>`
+          + statsHtml;
+        return card;
+      },
+      loadSpriteFor(card, c) {
+        if (!global.Sprites) return;
+        if (c.speciesA == null || c.speciesB == null) return;
+        global.Sprites.getSpriteUrl(c.speciesA, c.speciesB).then((url) => {
+          if (!url) return;
+          const img = card.querySelector('.art-img');
+          const ph = card.querySelector('.art-placeholder');
+          if (!img) { URL.revokeObjectURL(url); return; }
+          img.onload = () => {
+            URL.revokeObjectURL(url);
+            if (ph) ph.style.display = 'none';
+            img.style.display = 'block';
+          };
+          img.src = url;
+        });
+      },
     });
   }
 
@@ -1980,10 +2194,14 @@
     // The root is pointer-events: none so map gestures can pass through
     // — wire click only to the two elements that are visually "the
     // creature" (placeholder dot when sprite hasn't loaded, sprite img
-    // when it has). We deliberately do NOT call stopPropagation: it'd
-    // suppress the map's double-tap-to-zoom detection when the second
-    // tap lands on a creature.
-    const onClick = () => openBattleScreen(spawn);
+    // when it has). stopPropagation prevents the click from bubbling
+    // to MapLibre's map-level click handler (which would otherwise
+    // open the POI underneath). Pinch-zoom / wheel-zoom are handled
+    // via touch/wheel events, not click, so this is safe for them.
+    const onClick = (e) => {
+      e.stopPropagation();
+      openBattleScreen(spawn);
+    };
     el.querySelector('.creature-placeholder').addEventListener('click', onClick);
     el.querySelector('img.creature-sprite').addEventListener('click', onClick);
     return el;

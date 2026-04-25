@@ -17,7 +17,12 @@
   const STORE_ICONS = 'icons';
   const SPRITE_SIZE = 96;
   const SHEET_COLS = 10;
-  const MAX_SHEET_CACHE = 8;
+  // Sheets are huge ImageBitmaps (~18 MB decoded each). We only need
+  // a tiny cache because bulk download processes them sequentially and
+  // explicitly releases after cropping; after that the cache is empty.
+  // Two slots covers the case where the next sheet is being requested
+  // while the previous one is still being closed by the GC.
+  const MAX_SHEET_CACHE = 2;
 
   let _dbPromise = null;
 

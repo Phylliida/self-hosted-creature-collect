@@ -1203,9 +1203,25 @@
     font-variant: small-caps;
     letter-spacing: 0.08em;
   }
-  /* Secondary neutral buttons (Import / Export in settings and similar). */
+  /* Backup row: label, then trainer-name input that shares space with
+     the action buttons on the right. The label keeps its small fixed
+     width; the input flexes to fill leftover space; buttons sit at
+     the end. wrap is allowed for narrow viewports. */
+  #settingsPanel .backup-row { flex-wrap: wrap; }
+  #settingsPanel .backup-row label { flex: 0 0 auto; }
+  #settingsPanel .backup-row #backupName {
+    flex: 1; min-width: 80px;
+  }
+  #settingsPanel .backup-row .backup-actions {
+    display: inline-flex; gap: 4px;
+  }
+  /* Secondary neutral buttons (Import / Export / Save / sprite download
+     in settings and similar). */
   #exportBtn,
-  #importBtn {
+  #importBtn,
+  #saveBtn,
+  #spritesDownloadBtn,
+  #spritesClearBtn {
     background: var(--ui-input-bg);
     color: var(--ui-text);
     border: 1px solid var(--ui-border);
@@ -1213,7 +1229,10 @@
     cursor: pointer;
   }
   #exportBtn:hover,
-  #importBtn:hover { background: var(--ui-hover); }
+  #importBtn:hover,
+  #saveBtn:hover,
+  #spritesDownloadBtn:hover,
+  #spritesClearBtn:hover { background: var(--ui-hover); }
   /* "Done" buttons in transit + settings panels carry inline-style
      backgrounds from the markup — force the CTA look. */
   button.close,
@@ -1565,8 +1584,26 @@
     bottom: env(safe-area-inset-bottom) !important;
     right: env(safe-area-inset-right) !important;
   }
-  #panel button { padding: 8px 12px; font-size: 14px; margin: 2px; cursor: pointer; }
-  #panel input { padding: 6px; font-size: 14px; margin: 2px; }
+  /* Themed neutral buttons in the offline-maps panel: top-level
+     download/save buttons, plus the per-region go / refresh / delete
+     trio. Matches the Import/Export/Save styling. */
+  #panel button {
+    padding: 8px 12px; font-size: 14px; margin: 2px; cursor: pointer;
+    background: var(--ui-input-bg);
+    color: var(--ui-text);
+    border: 1px solid var(--ui-border);
+    border-radius: var(--ui-radius);
+    font-family: inherit;
+  }
+  #panel button:hover { background: var(--ui-hover); }
+  #panel input {
+    padding: 6px; font-size: 14px; margin: 2px;
+    background: var(--ui-input-bg);
+    color: var(--ui-text);
+    border: 1px solid var(--ui-border);
+    border-radius: var(--ui-radius);
+    font-family: inherit;
+  }
   #status { font-size: 12px; color: var(--ui-muted); margin-top: 4px; }
   .region { display: flex; justify-content: space-between; align-items: center;
             padding: 4px 0; border-top: 1px solid var(--ui-hairline); }
@@ -1574,7 +1611,9 @@
   .region .meta { font-size: 11px; color: var(--ui-muted); }
   .region .sizes { font-size: 11px; color: var(--ui-muted); margin-top: 2px;
                    font-variant-numeric: tabular-nums; }
-  .region .sizes .bucket { margin-right: 8px; white-space: nowrap; }
+  /* Each storage bucket on its own line so the per-region breakdown
+     is easy to read at a glance instead of wrapping awkwardly. */
+  .region .sizes .bucket { display: block; white-space: nowrap; }
   details summary { cursor: pointer; user-select: none; }
   #search {
     position: absolute; top: 0; left: 8px; right: 8px; z-index: 15;
@@ -2553,11 +2592,13 @@
       </span>
     </div>
     <div id="spritesStatus" style="font-size: 11px; color: var(--ui-muted); margin: -4px 0 6px;"></div>
-    <div class="row">
-      <label>Backup</label>
-      <span>
-        <button id="exportBtn" type="button" style="padding: 6px 10px; font-size: 13px; margin-right: 4px;">Export</button>
+    <div class="row backup-row">
+      <label for="backupName">Backup</label>
+      <input type="text" id="backupName" placeholder="trainer name" maxlength="40" autocomplete="off">
+      <span class="backup-actions">
+        <button id="exportBtn" type="button" style="padding: 6px 10px; font-size: 13px;">Export</button>
         <button id="importBtn" type="button" style="padding: 6px 10px; font-size: 13px;">Import</button>
+        <button id="saveBtn" type="button" style="padding: 6px 10px; font-size: 13px;">Save</button>
         <input type="file" id="importFile" accept=".json,application/json" style="display:none">
       </span>
     </div>
@@ -4149,8 +4190,8 @@ function fmtDate(ts) {
     return localStorage.getItem('cc.timezone') || browserTz;
   }
 
-  async function exportData() {
-    const data = {
+  async function buildBackupPayload() {
+    return {
       version: 1,
       exportedAt: new Date().toISOString(),
       favorites: await loadAllFavorites(),
@@ -4170,7 +4211,12 @@ function fmtDate(ts) {
       creatureMode: localStorage.getItem('cc.creatureMode'),
       caughtSpawnIds: JSON.parse(localStorage.getItem('cc.caughtSpawnIds') || '[]'),
       seenFusions: JSON.parse(localStorage.getItem('cc.seenFusions') || '{}'),
+      backupName: localStorage.getItem('cc.backupName') || null,
     };
+  }
+
+  async function exportData() {
+    const data = await buildBackupPayload();
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -4181,6 +4227,27 @@ function fmtDate(ts) {
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function saveToServer() {
+    const name = (localStorage.getItem('cc.backupName') || '').trim();
+    if (!name) {
+      alert('Enter a Name in the field below first — that\u2019s used for the saved filename.');
+      return;
+    }
+    const data = await buildBackupPayload();
+    try {
+      const resp = await fetch('/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      const body = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+      alert(`Saved to server as ${body.saved || name + '.json'}`);
+    } catch (e) {
+      alert('Save failed: ' + (e && e.message ? e.message : e));
+    }
   }
   async function importData(file) {
     const text = await file.text();
@@ -4275,6 +4342,11 @@ function fmtDate(ts) {
     if (data.creatureMode && !localStorage.getItem('cc.creatureMode')) {
       localStorage.setItem('cc.creatureMode', data.creatureMode);
     }
+    if (data.backupName && !localStorage.getItem('cc.backupName')) {
+      localStorage.setItem('cc.backupName', data.backupName);
+      const nameInput = document.getElementById('backupName');
+      if (nameInput) nameInput.value = data.backupName;
+    }
     alert(
       `Imported: ${favAdded} favorite(s) (${favSkipped} skipped), ` +
       `${regAdded} region(s), ` +
@@ -4283,6 +4355,7 @@ function fmtDate(ts) {
   }
   document.getElementById('exportBtn').onclick = () => exportData();
   document.getElementById('importBtn').onclick = () => document.getElementById('importFile').click();
+  document.getElementById('saveBtn').onclick = () => saveToServer();
   document.getElementById('importFile').addEventListener('change', async (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
@@ -6059,6 +6132,39 @@ function fmtDate(ts) {
     return { tiles, pois, schedule, walk, hn,
              total: tiles + pois + schedule + walk + hn };
   }
+  // Cached wrapper: storage measurement walks the SW Cache API + a
+  // bunch of IDB stores, which is slow enough to hurt every time the
+  // panel re-renders. Cache the per-region results in localStorage,
+  // invalidated on download / refresh / delete.
+  const REGION_SIZES_KEY = 'cc.regionSizes.v1';
+  function readRegionSizesCache() {
+    try {
+      const raw = localStorage.getItem(REGION_SIZES_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+  }
+  function writeRegionSizesCache(obj) {
+    try { localStorage.setItem(REGION_SIZES_KEY, JSON.stringify(obj)); } catch {}
+  }
+  function invalidateRegionSizes(regionId) {
+    const c = readRegionSizesCache();
+    if (regionId == null) {
+      writeRegionSizesCache({});
+    } else if (regionId in c) {
+      delete c[regionId];
+      writeRegionSizesCache(c);
+    }
+  }
+  async function measureRegionBytesCached(region) {
+    const cache = readRegionSizesCache();
+    const hit = cache[region.id];
+    if (hit && typeof hit.total === 'number') return hit;
+    const sizes = await measureRegionBytes(region);
+    const fresh = readRegionSizesCache();
+    fresh[region.id] = sizes;
+    writeRegionSizesCache(fresh);
+    return sizes;
+  }
   function fmtBytes(n) {
     if (n < 1024) return `${n} B`;
     if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
@@ -6088,7 +6194,7 @@ function fmtDate(ts) {
     }
     // Kick off per-region measurement (async, fills in as each finishes).
     // Also track a running grand total for the top-level storage line.
-    const results = list.map(r => measureRegionBytes(r).then(s => {
+    const results = list.map(r => measureRegionBytesCached(r).then(s => {
       const target = el.querySelector(`[data-sizes="${r.id}"]`);
       if (target) {
         target.innerHTML =
@@ -6136,6 +6242,7 @@ function fmtDate(ts) {
       hnRegions = [];  // force re-parse of remaining regions on next zoom-in
       allPois = allPois.filter(p => p.regionId !== id);
       saveRegions(list.filter(x => x.id !== id));
+      invalidateRegionSizes(id);
       renderRegions();
       renderPoiStat();
       populateFilter();
@@ -7857,6 +7964,8 @@ function fmtDate(ts) {
             list.push(record);
           }
           saveRegions(list);
+          // The size measurements we may have cached are now stale.
+          invalidateRegionSizes(id);
           renderRegions();
           updateAppDataLabel();
           requestPersistent();
@@ -8020,6 +8129,18 @@ function fmtDate(ts) {
     creatureToggle.checked = creatureUi.isEnabled();
     creatureToggle.addEventListener('change', () => {
       creatureUi.setEnabled(creatureToggle.checked);
+    });
+  }
+
+  // Trainer name — persisted locally and exported alongside other
+  // backup data so a future server-side save flow can key by it.
+  const backupNameInput = document.getElementById('backupName');
+  if (backupNameInput) {
+    backupNameInput.value = localStorage.getItem('cc.backupName') || '';
+    backupNameInput.addEventListener('input', () => {
+      const v = backupNameInput.value.trim();
+      if (v) localStorage.setItem('cc.backupName', v);
+      else localStorage.removeItem('cc.backupName');
     });
   }
 
