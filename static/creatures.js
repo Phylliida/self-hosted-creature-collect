@@ -633,15 +633,33 @@
         position: sticky;
         top: 0;
         align-self: flex-end;
-        margin: -8px -8px -22px 0;
+        /* Top margin 0 (was -8px) so the X sits at the sheet's
+           padding-top, the same Y as the .browse-header that follows
+           — visually a three-button row with Candy/Dex. Bottom margin
+           matches the X's height (25px) so it still contributes zero
+           to the column's layout (next sibling starts at the same
+           Y as if the X weren't there). */
+        margin: 0 -8px -25px 0;
         z-index: 5;
         background: var(--ui-bg, #fff);
         border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
         border-radius: var(--ui-radius, 8px);
-        font-size: 12px;
+        font-size: 16px;
+        line-height: 1;
         cursor: pointer;
         color: var(--ui-text, #111);
-        padding: 4px 10px;
+        /* Explicit border-box dimensions so the *box* shrinks by 4px
+           in each direction (20→16 tall, 30→26 wide) without changing
+           the 16px × glyph. inline-flex centers the glyph as it
+           lightly overflows the smaller content area; × has no
+           ascender/descender so the slight overflow is invisible. */
+        box-sizing: border-box;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 25px;
+        height: 25px;
+        padding: 0;
         font-family: inherit;
       }
       #creatureInventory .inventory-x:hover {
@@ -997,8 +1015,17 @@
         margin-bottom: 10px;
       }
       #creatureInventory .pokedex-stats {
-        flex: 1; text-align: right;
+        flex: 1; text-align: center;
         font-size: 12px; color: var(--ui-muted, #666);
+        /* Align the text's vertical center with the sticky X button.
+           The header row is taller than the X (back button is ~30px,
+           X is 25px), so by default flex-center would put this text
+           ~3px below the X. Pinning to the row top + matching the X's
+           25px height + line-height puts the text center at the same
+           Y as the X center. */
+        align-self: flex-start;
+        height: 25px;
+        line-height: 25px;
       }
       #creatureInventory .pokedex-stats b {
         color: var(--ui-text, #111);
