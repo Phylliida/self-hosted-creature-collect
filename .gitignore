@@ -1,7 +1,6 @@
-\.claude/
-.direnv/
 fonts/
 data/
 osmpbf/
 icons/
 landcover/
+.direnv/
