@@ -1622,22 +1622,24 @@
         <div class="pokedex-name">${escapeHtml(display)}</div>
       </div>`;
     }).join('');
-    if (!global.Sprites) return;
+    const spriteItems = [];
     grid.querySelectorAll('.pokedex-card').forEach((card) => {
       const key = card.dataset.key;
       const dash = key.indexOf('-');
-      const a = +key.slice(0, dash);
-      const b = +key.slice(dash + 1);
-      global.Sprites.getSpriteUrl(a, b).then((url) => {
-        if (!url) return;
-        const img = card.querySelector('img');
-        if (!img) { URL.revokeObjectURL(url); return; }
-        img.onload = () => {
-          URL.revokeObjectURL(url);
-          card.classList.add('ready');
-        };
-        img.src = url;
+      spriteItems.push({
+        card,
+        a: +key.slice(0, dash),
+        b: +key.slice(dash + 1),
       });
+    });
+    lazyLoadSpritesIntoGrid(grid, spriteItems, (card, url) => {
+      const img = card.querySelector('img');
+      if (!img) { URL.revokeObjectURL(url); return; }
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        card.classList.add('ready');
+      };
+      img.src = url;
     });
   }
 
@@ -1890,27 +1892,27 @@
         </div>
       `;
     }).join('');
-    // Async sprite load per card (reads IDB only — no network per the
-    // "zero automatic fetches" rule).
-    if (global.Sprites) {
-      for (const c of items) {
-        if (c.speciesA == null || c.speciesB == null) continue;
-        const card = listEl.querySelector(`.creature-card[data-id="${CSS.escape(c.id)}"]`);
-        if (!card) continue;
-        global.Sprites.getSpriteUrl(c.speciesA, c.speciesB).then((url) => {
-          if (!url) return;
-          const img = card.querySelector('.art-img');
-          const ph = card.querySelector('.art-placeholder');
-          if (!img) { URL.revokeObjectURL(url); return; }
-          img.onload = () => {
-            URL.revokeObjectURL(url);
-            if (ph) ph.style.display = 'none';
-            img.style.display = 'block';
-          };
-          img.src = url;
-        });
-      }
+    // Async sprite load per card, lazy via IntersectionObserver — only
+    // cards close to the viewport actually fetch + decode. Reads IDB
+    // only — no network per the "zero automatic fetches" rule.
+    const spriteItems = [];
+    for (const c of items) {
+      if (c.speciesA == null || c.speciesB == null) continue;
+      const card = listEl.querySelector(
+        `.creature-card[data-id="${CSS.escape(c.id)}"]`);
+      if (card) spriteItems.push({ card, a: c.speciesA, b: c.speciesB });
     }
+    lazyLoadSpritesIntoGrid(listEl, spriteItems, (card, url) => {
+      const img = card.querySelector('.art-img');
+      const ph = card.querySelector('.art-placeholder');
+      if (!img) { URL.revokeObjectURL(url); return; }
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        if (ph) ph.style.display = 'none';
+        img.style.display = 'block';
+      };
+      img.src = url;
+    });
   }
 
   function show() {
