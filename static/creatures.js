@@ -1061,6 +1061,29 @@
       #creatureInventory .pokedex-link:hover {
         background: var(--ui-hover, rgba(0,0,0,0.04));
       }
+      #creatureInventory .weather-bar {
+        margin: 0 0 12px;
+      }
+      #creatureInventory .weather-row {
+        display: flex; align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--ui-muted, #666);
+        flex-wrap: wrap;
+      }
+      #creatureInventory .weather-row .label {
+        color: var(--ui-muted, #666);
+      }
+      #creatureInventory .weather-warning {
+        font-size: 12px;
+        color: var(--ui-text, #111);
+        background: rgba(255, 165, 0, 0.15);
+        border: 1px solid rgba(255, 165, 0, 0.4);
+        border-radius: var(--ui-radius, 8px);
+        padding: 8px 10px;
+        line-height: 1.4;
+      }
+      #creatureInventory .weather-warning b { color: #c66200; }
       #creatureInventory .detail-art img.detail-art-img {
         width: 100%; height: 100%; object-fit: contain;
         image-rendering: pixelated; image-rendering: crisp-edges;
@@ -1245,6 +1268,7 @@
             <h3>Creatures</h3>
             <button class="pokedex-link" type="button">Dex →</button>
           </div>
+          <div class="weather-bar"></div>
           <div class="search-row">
             <input id="creatureSearch" type="search" placeholder="Search by name" autocomplete="off">
           </div>
@@ -2060,7 +2084,38 @@
     });
   }
 
+  function renderWeatherBar() {
+    const panel = document.getElementById('creatureInventory');
+    if (!panel) return;
+    const bar = panel.querySelector('.weather-bar');
+    if (!bar) return;
+    const typesLoaded = global.Species
+      && global.Species.typesFor
+      && (global.Species.typesFor(1) || []).length > 0;
+    if (!typesLoaded) {
+      bar.innerHTML = `<div class="weather-warning">
+        <b>No creature data downloaded.</b><br>
+        Wild spawns will not appear until you tap
+        <b>↓ download</b> next to "Creature sprites" in Settings.
+      </div>`;
+      return;
+    }
+    const w = (global.Spawns && global.Spawns.currentWeather)
+      ? global.Spawns.currentWeather() : null;
+    if (!w) { bar.innerHTML = ''; return; }
+    const chip = (type) => {
+      const bg = TYPE_COLORS[type] || '#888';
+      const label = type.charAt(0) + type.slice(1).toLowerCase();
+      return `<span class="type-chip" style="background:${bg}">${escapeHtml(label)}</span>`;
+    };
+    bar.innerHTML = `<div class="weather-row">
+      <span class="label">Today:</span>${chip(w.daily)}
+      <span class="label" style="margin-left:6px;">Week:</span>${chip(w.weekly)}
+    </div>`;
+  }
+
   function renderList(listEl) {
+    renderWeatherBar();
     const searchEl = document.getElementById('creatureSearch');
     const q = (searchEl && searchEl.value || '').trim().toLowerCase();
     let items = sortedCreatures();
