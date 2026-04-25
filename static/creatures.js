@@ -374,6 +374,12 @@
         box-shadow: 0 1px 3px rgba(0,0,0,0.45);
         pointer-events: auto;
         cursor: pointer;
+        /* Don't let the browser claim native gestures (tap-zoom etc.)
+           on the marker — JS owns these so MapLibre's pinch handler
+           keeps receiving touchmove. Without this the browser would
+           briefly co-handle the touch and the map's gesture would
+           stutter when a finger crosses a creature. */
+        touch-action: none;
       }
       .creature-marker img.creature-sprite {
         position: absolute;
@@ -390,6 +396,7 @@
            size) does not intercept. */
         pointer-events: auto;
         cursor: pointer;
+        touch-action: none;
       }
       .creature-marker.creature-marker-ready img.creature-sprite {
         display: block;
@@ -805,11 +812,10 @@
     // The root is pointer-events: none so map gestures can pass through
     // — wire click only to the two elements that are visually "the
     // creature" (placeholder dot when sprite hasn't loaded, sprite img
-    // when it has).
-    const onClick = (e) => {
-      e.stopPropagation();
-      openBattleScreen(spawn);
-    };
+    // when it has). We deliberately do NOT call stopPropagation: it'd
+    // suppress the map's double-tap-to-zoom detection when the second
+    // tap lands on a creature.
+    const onClick = () => openBattleScreen(spawn);
     el.querySelector('.creature-placeholder').addEventListener('click', onClick);
     el.querySelector('img.creature-sprite').addEventListener('click', onClick);
     return el;
