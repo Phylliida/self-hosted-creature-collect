@@ -177,6 +177,44 @@
       : [];
   }
 
+  // Lazy sprite loader for grid views. Items array is
+  //   [{ card, a, b }, ...]
+  // and `apply(card, url)` is the per-card hook that wires the loaded
+  // object-URL into the card's DOM (different markup for inventory vs
+  // pokédex). IntersectionObserver fires when a card scrolls within
+  // rootMargin of the viewport, so we never touch IDB for cards the
+  // user hasn't scrolled to. Old observers attached to the same root
+  // are disconnected so re-renders don't leak.
+  function lazyLoadSpritesIntoGrid(rootEl, items, apply) {
+    if (!global.Sprites || !items.length) return;
+    if (rootEl._spriteObserver) {
+      rootEl._spriteObserver.disconnect();
+      rootEl._spriteObserver = null;
+    }
+    const fetchInto = (card, a, b) => {
+      global.Sprites.getSpriteUrl(a, b).then((url) => {
+        if (!url) return;
+        apply(card, url);
+      }).catch(() => { /* swallow — placeholder stays */ });
+    };
+    if (typeof IntersectionObserver === 'undefined') {
+      for (const it of items) fetchInto(it.card, it.a, it.b);
+      return;
+    }
+    const byEl = new Map(items.map((it) => [it.card, it]));
+    const scrollRoot = rootEl.closest('.sheet') || null;
+    const obs = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        obs.unobserve(entry.target);
+        const it = byEl.get(entry.target);
+        if (it) fetchInto(it.card, it.a, it.b);
+      }
+    }, { root: scrollRoot, rootMargin: '200px 0px' });
+    for (const it of items) obs.observe(it.card);
+    rootEl._spriteObserver = obs;
+  }
+
   function famHasContent(famA, famB) {
     return Array.isArray(famA) && Array.isArray(famB)
       && (famA.length > 1 || famB.length > 1);
@@ -587,6 +625,18 @@
       #creatureInventory .detail-caught {
         text-align: center; font-size: 12px;
         color: var(--ui-muted, #666); margin: 0 0 8px;
+      }
+      #creatureInventory .detail-caught-clickable,
+      #creatureInventory .fusion-encounter-clickable {
+        cursor: pointer;
+      }
+      #creatureInventory .detail-caught-clickable:hover {
+        color: var(--ui-text, #111);
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      #creatureInventory .fusion-encounter-clickable:hover {
+        outline: 1px solid var(--ui-accent, #888);
       }
       #creatureInventory .detail-pokedex-link {
         display: block;
@@ -1003,7 +1053,7 @@
         <div class="browse-view">
           <div class="browse-header">
             <h3>Creatures</h3>
-            <button class="pokedex-link" type="button">Pokédex →</button>
+            <button class="pokedex-link" type="button">Dex →</button>
           </div>
           <div class="search-row">
             <input id="creatureSearch" type="search" placeholder="Search by name" autocomplete="off">
@@ -1368,9 +1418,11 @@
     }
 
     // Encounter info (always shown — even for caught fusions, the first
-    // encounter timestamp is interesting).
+    // encounter timestamp is interesting). Clickable when we have a
+    // location, to fly the map to the first sighting.
     const seen = readSeenFusions()[`${a}-${b}`] || {};
     let encounterHtml = '';
+    let encounterClickable = false;
     if (seen.firstSeen || seen.lat != null) {
       const when = seen.firstSeen ? new Date(seen.firstSeen).toLocaleString() : '';
       const where = seen.poi && seen.poi.name
@@ -1382,8 +1434,13 @@
       if (when) lines.push(`<div>First encountered ${escapeHtml(when)}</div>`);
       if (where) lines.push(`<div class="row-meta">${escapeHtml(where)}</div>`);
       if (lines.length) {
+        encounterClickable = seen.lat != null && seen.lng != null;
+        const cls = `fusion-encounter${encounterClickable ? ' fusion-encounter-clickable' : ''}`;
+        const attrs = encounterClickable
+          ? ` role="button" tabindex="0" title="show on map"`
+          : '';
         encounterHtml = `<div class="fusion-section-label">Encounter</div>`
-          + `<div class="fusion-encounter">${lines.join('')}</div>`;
+          + `<div class="${cls}"${attrs}>${lines.join('')}</div>`;
       }
     }
 
@@ -1424,6 +1481,17 @@
         };
         img.src = url;
       });
+    }
+
+    if (encounterClickable) {
+      const enc = body.querySelector('.fusion-encounter-clickable');
+      if (enc) {
+        const fly = () => flyToCaughtLocation(seen.lat, seen.lng);
+        enc.addEventListener('click', fly);
+        enc.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fly(); }
+        });
+      }
     }
 
     // Wire row clicks → existing detail view. The view stack pushes
@@ -1591,6 +1659,7 @@
       ? `<div class="detail-species">Species: ${escapeHtml(c.name)}</div>`
       : '';
     let caughtLine = '';
+    let caughtClickable = false;
     if (c.caughtAt) {
       const when = c.caughtAt.timestamp
         ? new Date(c.caughtAt.timestamp).toLocaleDateString()
@@ -1601,7 +1670,12 @@
       const parts = [];
       if (where) parts.push(escapeHtml(where));
       if (when) parts.push(escapeHtml(when));
-      caughtLine = `<div class="detail-caught">Caught at ${parts.join(' · ')}</div>`;
+      caughtClickable = c.caughtAt.lat != null && c.caughtAt.lng != null;
+      const cls = `detail-caught${caughtClickable ? ' detail-caught-clickable' : ''}`;
+      const attrs = caughtClickable
+        ? ` role="button" tabindex="0" title="show on map"`
+        : '';
+      caughtLine = `<div class="${cls}"${attrs}>Caught at ${parts.join(' · ')}</div>`;
     }
     const typesHtml = (c.speciesA != null && c.speciesB != null)
       ? typeChipsHtml(fusionTypesFor(c.speciesA, c.speciesB))
@@ -1648,7 +1722,7 @@
       }
     }
     const pokedexLinkHtml = (c.speciesA != null && c.speciesB != null)
-      ? `<button class="detail-pokedex-link" type="button">View pokédex entry →</button>`
+      ? `<button class="detail-pokedex-link" type="button">View dex entry →</button>`
       : '';
     body.innerHTML = `
       <div class="detail-art">
@@ -1672,6 +1746,16 @@
       pokedexLink.addEventListener('click', () => {
         showFusionView(c.speciesA, c.speciesB);
       });
+    }
+    if (caughtClickable) {
+      const caughtEl = body.querySelector('.detail-caught-clickable');
+      if (caughtEl) {
+        const fly = () => flyToCaughtLocation(c.caughtAt.lat, c.caughtAt.lng);
+        caughtEl.addEventListener('click', fly);
+        caughtEl.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fly(); }
+        });
+      }
     }
     if (famA && famB && famHasContent(famA, famB)) {
       const toggle = body.querySelector('.family-toggle');
@@ -2246,9 +2330,22 @@
     }
   }
 
+  // Map reference captured at install so the inventory's "go to caught
+  // location" links can fly the camera independent of whether the spawn
+  // overlay (creature mode) is currently attached.
+  let _installedMap = null;
+
+  function flyToCaughtLocation(lat, lng) {
+    if (!_installedMap || lat == null || lng == null) return;
+    const targetZoom = Math.max(_installedMap.getZoom(), 17);
+    _installedMap.flyTo({ center: [lng, lat], zoom: targetZoom });
+    hide();
+  }
+
   function install(map) {
     injectStyles();
     backfillSeenFromCaptures();
+    _installedMap = map;
     const ctrl = new CreatureBallControl();
     map.addControl(ctrl, 'bottom-right');
     if (readEnabled()) attachSpawnOverlay(map);
