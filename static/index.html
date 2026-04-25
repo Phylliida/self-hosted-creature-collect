@@ -3827,10 +3827,33 @@ function fmtDate(ts) {
   map.addControl(geolocate, 'bottom-right');
 
   // Auto-activate the GeolocateControl on every load so the user-dot
-  // shows up without a button press. trigger() is idempotent for an
-  // already-active control, and a no-op (other than the permission
-  // prompt) if location is denied.
+  // shows up without a button press AND the permission prompt fires
+  // first-load. But if we have a saved camera view to honor, we don't
+  // want the control's first GPS fix to fly/zoom the map (its default
+  // is fitBounds → maxZoom 15, which clobbers `savedView`).
+  //
+  // Trick: monkey-patch `_onSuccess` so the first fix transitions
+  // WAITING_ACTIVE → BACKGROUND instead of WAITING_ACTIVE → ACTIVE_LOCK.
+  // The original handler then takes its BACKGROUND branch — it still
+  // calls `_updateMarker` (dot appears + tracks) but skips
+  // `_updateCamera` (no fly). A later tap of the geolocate button
+  // transitions BACKGROUND → ACTIVE_LOCK as normal, recentering on
+  // demand. Patch self-clears after one fix so it doesn't intercept
+  // future button-driven transitions.
   map.on('load', () => {
+    if (savedView) {
+      const orig = geolocate._onSuccess;
+      let consumed = false;
+      geolocate._onSuccess = (position) => {
+        if (!consumed) {
+          consumed = true;
+          if (geolocate._watchState === 'WAITING_ACTIVE') {
+            geolocate._watchState = 'BACKGROUND';
+          }
+        }
+        return orig(position);
+      };
+    }
     try { geolocate.trigger(); } catch {}
     localStorage.setItem('cc.geoPromptDone', '1');
   });
@@ -4211,6 +4234,7 @@ function fmtDate(ts) {
       creatureMode: localStorage.getItem('cc.creatureMode'),
       caughtSpawnIds: JSON.parse(localStorage.getItem('cc.caughtSpawnIds') || '[]'),
       seenFusions: JSON.parse(localStorage.getItem('cc.seenFusions') || '{}'),
+      candy: JSON.parse(localStorage.getItem('cc.candy.v1') || '{}'),
       backupName: localStorage.getItem('cc.backupName') || null,
     };
   }
@@ -4332,6 +4356,17 @@ function fmtDate(ts) {
         }
       }
       localStorage.setItem('cc.seenFusions', JSON.stringify(current));
+    }
+    // Candy: per-type max merge so re-importing the same backup is
+    // idempotent and combining devices keeps whichever had more of each
+    // type. (No spend mechanism yet, so summing isn't required.)
+    if (data.candy && typeof data.candy === 'object') {
+      const current = JSON.parse(localStorage.getItem('cc.candy.v1') || '{}');
+      for (const [type, n] of Object.entries(data.candy)) {
+        const v = Number(n) || 0;
+        if (v > (current[type] || 0)) current[type] = v;
+      }
+      localStorage.setItem('cc.candy.v1', JSON.stringify(current));
     }
     if (data.creatureSortBy && !localStorage.getItem('cc.creatureSortBy')) {
       localStorage.setItem('cc.creatureSortBy', data.creatureSortBy);

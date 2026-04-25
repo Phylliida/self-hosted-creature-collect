@@ -15,6 +15,7 @@
   const CAPTURED_KEY = 'cc.capturedCreatures';
   const CAUGHT_SPAWNS_KEY = 'cc.caughtSpawnIds';
   const SEEN_FUSIONS_KEY = 'cc.seenFusions';
+  const CANDY_KEY = 'cc.candy.v1';
 
   // Captured inventory lives as an array of entries keyed by their own
   // `id`. We intentionally store speciesA/B (not the derived display
@@ -27,6 +28,31 @@
   }
   function writeCapturedCreatures(arr) {
     localStorage.setItem(CAPTURED_KEY, JSON.stringify(arr));
+  }
+
+  // Candy: earned per-capture. One per type the fusion has, OR two of
+  // the single type if it's monotype. Stored as a plain `{ TYPE: n }`
+  // map. No spend mechanism yet — saved against a future evolve / item
+  // mechanic. If types data isn't loaded (Species.fusionTypesFor returns
+  // []), we award nothing rather than guess a type.
+  function readCandy() {
+    try {
+      const raw = localStorage.getItem(CANDY_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+  }
+  function writeCandy(map) {
+    localStorage.setItem(CANDY_KEY, JSON.stringify(map));
+  }
+  function awardCandyForCapture(speciesA, speciesB) {
+    const types = fusionTypesFor(speciesA, speciesB);
+    if (!types || !types.length) return;
+    const candy = readCandy();
+    const inc = types.length === 1 ? 2 : 1;
+    for (const t of types) {
+      candy[t] = (candy[t] || 0) + inc;
+    }
+    writeCandy(candy);
   }
 
   // Caught spawn IDs — once a spawn has been captured locally, we don't
@@ -598,26 +624,28 @@
         box-shadow: 0 8px 24px rgba(0,0,0,0.25);
       }
       #creatureInventory .inventory-x {
-        /* Matches the routing/directions panel close button:
-           transparent, muted-color, font-size:22, line-height:1.
-           Sticky-positioned + align-self:flex-end so it stays pinned
-           to the top-right of .sheet's scroll viewport no matter how
-           far the user has scrolled. Negative margins collapse its
-           layout footprint so it sits in the corner without pushing
-           content down. */
+        /* Sticky to the sheet's top-right corner. Negative margins
+           collapse its layout footprint so it sits in the corner
+           without pushing content down. Box-model is matched 1:1 to
+           .candy-link / .pokedex-link so the three buttons read as a
+           single right-side action cluster. The × glyph is small at
+           12px but stays recognizable in context. */
         position: sticky;
         top: 0;
         align-self: flex-end;
         margin: -8px -8px -22px 0;
         z-index: 5;
-        background: none;
-        border: none;
-        font-size: 22px;
-        line-height: 1;
+        background: var(--ui-bg, #fff);
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
+        border-radius: var(--ui-radius, 8px);
+        font-size: 12px;
         cursor: pointer;
-        color: var(--ui-muted, #666);
-        padding: 0 4px;
+        color: var(--ui-text, #111);
+        padding: 4px 10px;
         font-family: inherit;
+      }
+      #creatureInventory .inventory-x:hover {
+        background: var(--ui-hover, rgba(0,0,0,0.04));
       }
       #creatureInventory h3 { margin: 0 0 14px; font-size: 16px; }
       #creatureInventory .sort-row {
@@ -748,7 +776,8 @@
       #creatureInventory .detail-view.show { display: block; }
       #creatureInventory .detail-back,
       #creatureInventory .pokedex-back,
-      #creatureInventory .fusion-back {
+      #creatureInventory .fusion-back,
+      #creatureInventory .candy-back {
         background: none;
         border: none;
         color: var(--ui-text, #111);
@@ -761,7 +790,8 @@
       }
       #creatureInventory .detail-back:hover,
       #creatureInventory .pokedex-back:hover,
-      #creatureInventory .fusion-back:hover {
+      #creatureInventory .fusion-back:hover,
+      #creatureInventory .candy-back:hover {
         color: var(--ui-accent, #888);
       }
       #creatureInventory .detail-art {
@@ -929,6 +959,39 @@
       }
       #creatureInventory .pokedex-view { display: none; }
       #creatureInventory .pokedex-view.show { display: block; }
+      #creatureInventory .candy-view { display: none; }
+      #creatureInventory .candy-view.show { display: block; }
+      #creatureInventory .candy-title {
+        font-size: 16px; font-weight: 600;
+        text-align: center; margin: 0 0 4px;
+      }
+      #creatureInventory .candy-subtitle {
+        font-size: 12px; color: var(--ui-muted, #666);
+        text-align: center; margin: 0 0 14px;
+      }
+      #creatureInventory .candy-list {
+        display: flex; flex-direction: column; gap: 6px;
+      }
+      #creatureInventory .candy-row {
+        display: flex; align-items: center; gap: 10px;
+        padding: 8px 10px;
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+        border: 1px solid var(--ui-hairline, rgba(0,0,0,0.08));
+        border-radius: var(--ui-radius, 8px);
+      }
+      #creatureInventory .candy-row .type-chip { margin: 0; }
+      #creatureInventory .candy-row .candy-count {
+        margin-left: auto;
+        font-size: 14px; font-weight: 600;
+        color: var(--ui-text, #111);
+        font-variant-numeric: tabular-nums;
+      }
+      #creatureInventory .candy-empty {
+        padding: 20px 8px;
+        text-align: center;
+        color: var(--ui-muted, #666);
+        font-size: 13px;
+      }
       #creatureInventory .pokedex-header {
         display: flex; align-items: center; gap: 8px;
         margin-bottom: 10px;
@@ -1044,11 +1107,15 @@
         display: flex; align-items: center; gap: 8px;
         margin: 0 0 14px;
         /* Leave room for the sticky X button which sits at the
-           sheet's top-right corner and would otherwise overlap. */
-        padding-right: 28px;
+           sheet's top-right corner. The +8px on top of the X's own
+           ~20px footprint gives the same gap between Dex and X as
+           between Candy and Dex (8px), keeping the right-side action
+           cluster evenly spaced. */
+        padding-right: 36px;
       }
       #creatureInventory .browse-header h3 { margin: 0; flex: 1; }
-      #creatureInventory .pokedex-link {
+      #creatureInventory .pokedex-link,
+      #creatureInventory .candy-link {
         background: transparent;
         border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
         border-radius: var(--ui-radius, 8px);
@@ -1058,7 +1125,8 @@
         cursor: pointer;
         font-family: inherit;
       }
-      #creatureInventory .pokedex-link:hover {
+      #creatureInventory .pokedex-link:hover,
+      #creatureInventory .candy-link:hover {
         background: var(--ui-hover, rgba(0,0,0,0.04));
       }
       #creatureInventory .weather-bar {
@@ -1266,7 +1334,8 @@
         <div class="browse-view">
           <div class="browse-header">
             <h3>Creatures</h3>
-            <button class="pokedex-link" type="button">Dex →</button>
+            <button class="candy-link" type="button">Candy</button>
+            <button class="pokedex-link" type="button">Dex</button>
           </div>
           <div class="weather-bar"></div>
           <div class="search-row">
@@ -1387,6 +1456,11 @@
           <div class="pokedex-grid"></div>
           <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
+        <div class="candy-view">
+          <button class="candy-back" type="button" aria-label="back">←</button>
+          <div class="candy-body"></div>
+          <div class="actions"><button class="close" type="button">Done</button></div>
+        </div>
       </div>
     `;
     panel.addEventListener('click', (e) => {
@@ -1439,7 +1513,9 @@
     panel.querySelector('.detail-back').addEventListener('click', popView);
     panel.querySelector('.pokedex-back').addEventListener('click', popView);
     panel.querySelector('.fusion-back').addEventListener('click', popView);
+    panel.querySelector('.candy-back').addEventListener('click', popView);
     panel.querySelector('.pokedex-link').addEventListener('click', () => showPokedex());
+    panel.querySelector('.candy-link').addEventListener('click', () => showCandy());
 
     // Pokédex card → fusion sub-view (delegated; cards are re-rendered).
     const pokedexGrid = panel.querySelector('.pokedex-grid');
@@ -1525,6 +1601,7 @@
     panel.querySelector('.detail-view').classList.remove('show');
     panel.querySelector('.pokedex-view').classList.remove('show');
     panel.querySelector('.fusion-view').classList.remove('show');
+    panel.querySelector('.candy-view').classList.remove('show');
     switch (top.view) {
       case 'browse':
         panel.querySelector('.browse-view').style.display = '';
@@ -1559,6 +1636,10 @@
         renderPokedex();
         return;
       }
+      case 'candy':
+        renderCandy();
+        panel.querySelector('.candy-view').classList.add('show');
+        return;
     }
   }
 
@@ -1592,6 +1673,50 @@
 
   function showPokedex(opts) {
     pushView({ view: 'pokedex', opts: opts || null });
+  }
+
+  function showCandy() {
+    pushView({ view: 'candy' });
+  }
+
+  // Candy view: type-chip rows with cumulative counts. Sorted by count
+  // descending so the user's heaviest stockpiles surface at the top;
+  // ties broken alphabetically by type name for stable ordering.
+  function renderCandy() {
+    const panel = document.getElementById('creatureInventory');
+    if (!panel) return;
+    const body = panel.querySelector('.candy-body');
+    if (!body) return;
+    const candy = readCandy();
+    const entries = Object.entries(candy)
+      .filter(([, n]) => n > 0)
+      .sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0]));
+    const total = entries.reduce((sum, [, n]) => sum + n, 0);
+    const subtitle = total > 0
+      ? `${total} candy across ${entries.length} type${entries.length === 1 ? '' : 's'}`
+      : '';
+    if (!entries.length) {
+      body.innerHTML = `
+        <div class="candy-title">Candy</div>
+        <div class="candy-empty">No candy yet — catch some creatures to earn candy of their types!</div>
+      `;
+      return;
+    }
+    const rows = entries.map(([type, n]) => {
+      const bg = TYPE_COLORS[type] || '#888';
+      const label = type.charAt(0) + type.slice(1).toLowerCase();
+      return `
+        <div class="candy-row">
+          <span class="type-chip" style="background:${bg}">${escapeHtml(label)}</span>
+          <span class="candy-count">×${n}</span>
+        </div>
+      `;
+    }).join('');
+    body.innerHTML = `
+      <div class="candy-title">Candy</div>
+      <div class="candy-subtitle">${escapeHtml(subtitle)}</div>
+      <div class="candy-list">${rows}</div>
+    `;
   }
 
   function renderFusionView(a, b) {
@@ -2387,6 +2512,7 @@
     const list = readCapturedCreatures();
     list.push(entry);
     writeCapturedCreatures(list);
+    awardCandyForCapture(spawn.speciesA, spawn.speciesB);
     markSpawnCaught(spawn.id);
     removeMarker(spawn.id);
     closeBattleScreen();
@@ -2637,5 +2763,5 @@
     };
   }
 
-  global.Creatures = { install, isEnabled: readEnabled };
+  global.Creatures = { install, isEnabled: readEnabled, getCandy: readCandy };
 })(typeof window !== 'undefined' ? window : globalThis);

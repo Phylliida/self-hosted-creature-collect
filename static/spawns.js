@@ -145,9 +145,9 @@
   // Daily type rotates every UTC day; weekly type rotates every UTC
   // week. Both are deterministic from the date (everyone sees the same
   // weather worldwide). Spawn species are sampled from a weighted pool
-  // where species whose own types include the daily type get 5× the
-  // chance, weekly type 5×, both 25×. Density stays the same — only
-  // composition shifts.
+  // where species whose own types match the daily type get 35× the
+  // weight, weekly type 25×, both stack (35×25 = 875×). Density stays
+  // the same — only composition shifts.
   const DAY_MS = 24 * 60 * 60 * 1000;
   const WEEK_MS = 7 * DAY_MS;
   const DAILY_SALT = 0xA1D4;
@@ -196,7 +196,7 @@
       const types = Species.typesFor(sp) || [];
       const primary = types[0];
       let wA = 1;
-      if (primary === w.daily)  wA *= 25;
+      if (primary === w.daily)  wA *= 35;
       if (primary === w.weekly) wA *= 25;
       for (let i = 0; i < wA; i++) poolA.push(sp);
     }
@@ -205,7 +205,7 @@
       const types = Species.typesFor(sp) || [];
       const secondary = types[1] || types[0];
       let wB = 1;
-      if (secondary === w.daily)  wB *= 25;
+      if (secondary === w.daily)  wB *= 35;
       if (secondary === w.weekly) wB *= 25;
       for (let i = 0; i < wB; i++) poolB.push(sp);
     }
