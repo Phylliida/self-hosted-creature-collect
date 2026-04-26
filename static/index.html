@@ -1671,21 +1671,30 @@
   }
   .selected-marker.cooldown-ready .icon { filter: brightness(0) invert(1); }
   /* Cooldown overlay: the POI's own icon, tinted gray (on cooldown)
-     or pink (ready). No background circle, no img — CSS `mask-image`
-     clips the element's solid background-color into the icon's
-     silhouette. Size is driven by the `--cooldown-overlay-size` CSS
-     variable, kept in sync with the tile-icon zoom curve so the
-     overlay matches the underlying POI at every zoom level.
-     pointer-events: none keeps taps falling through. */
+     or pink (ready). Two-element structure — the OUTER carries the
+     drop-shadow `filter` (the puff), and the INNER carries the mask
+     + background-color that paints the icon silhouette. They have
+     to be separate elements: if mask + filter sit on the same
+     element, the filter runs first (shadowing the rectangular
+     background) and then the mask clips both the body and the
+     shadow → no visible halo. With them split, the outer's filter
+     sees the inner's already-masked silhouette and adds the halo
+     around THAT. Size is driven by `--cooldown-overlay-size`, kept
+     in sync with the tile-icon zoom curve so the overlay matches
+     the underlying POI at every zoom level. pointer-events: none
+     keeps taps falling through. */
   .cooldown-overlay {
     width: var(--cooldown-overlay-size, 18px);
     height: var(--cooldown-overlay-size, 18px);
     pointer-events: none;
+  }
+  .cooldown-overlay-inner {
+    width: 100%; height: 100%;
     /* Stretch the mask to fill (NOT `contain`) — svgToImageData
-       rasterizes the icon by drawing it at the full canvas size
-       (line ~3988), which stretches non-square SVGs the same way.
-       Using `contain` would preserve aspect and put the visual
-       center at a different spot than the tile-rendered icon. */
+       rasterizes the icon by drawing it at the full canvas size,
+       which stretches non-square SVGs the same way. Using
+       `contain` would preserve aspect and shift the visual center
+       relative to the tile-rendered icon. */
     -webkit-mask-size: 100% 100%;
             mask-size: 100% 100%;
     -webkit-mask-position: center;
@@ -1693,21 +1702,20 @@
     -webkit-mask-repeat: no-repeat;
             mask-repeat: no-repeat;
   }
-  /* Stacked zero-offset drop-shadows in the same color as the fill
-     "puff" the icon outward by ~1-2px, burying the underlying icon's
-     anti-aliased edge bleed. Two layers makes the halo opaque enough
-     to look solid rather than blurred. */
+  /* Puff: a single zero-offset drop-shadow with a small blur radius
+     gives a soft sub-pixel halo around the silhouette, just enough
+     to bury the underlying icon's anti-aliased edge bleed. */
   .cooldown-overlay.cooldown-active {
+    filter: drop-shadow(0 0 1px #888);
+  }
+  .cooldown-overlay.cooldown-active .cooldown-overlay-inner {
     background-color: #888;
-    filter:
-      drop-shadow( 3px 0 0 #888) drop-shadow(-3px 0 0 #888)
-      drop-shadow(0  3px 0 #888) drop-shadow(0 -3px 0 #888);
   }
   .cooldown-overlay.cooldown-ready {
+    filter: drop-shadow(0 0 1px #f088b0);
+  }
+  .cooldown-overlay.cooldown-ready .cooldown-overlay-inner {
     background-color: #f088b0;
-    filter:
-      drop-shadow( 3px 0 0 #f088b0) drop-shadow(-3px 0 0 #f088b0)
-      drop-shadow(0  3px 0 #f088b0) drop-shadow(0 -3px 0 #f088b0);
   }
   #poiCard {
     position: absolute; left: 8px; right: 68px; z-index: 12;
@@ -4633,6 +4641,10 @@ function fmtDate(ts) {
   // the per-card countdown that self-stops when the card closes or
   // the cooldown expires.
   const POI_COOLDOWN_MS = 10 * 60 * 1000;
+  // Collecting from one POI also locks every other POI within this
+  // many meters — prevents farming a tight cluster (e.g., a corner
+  // with parking + restaurant + ATM all on the same point).
+  const POI_COOLDOWN_RADIUS_M = 10;
   const POI_COOLDOWNS_KEY = 'cc.poiCooldowns.v1';
   const poiCooldownKey = (lng, lat) => `${lng.toFixed(5)},${lat.toFixed(5)}`;
   function readPoiCooldowns() {
@@ -4660,6 +4672,37 @@ function fmtDate(ts) {
     if (entry && typeof entry === 'object') return entry.t || 0;
     return 0;
   }
+  // Find every currently-rendered POI within `radiusM` meters of
+  // (centerLng, centerLat). Uses queryRenderedFeatures bounded by a
+  // bbox-in-screen-pixels and then filters by haversine distance for
+  // accuracy. Returns the raw tile features (so callers can pull
+  // geometry + properties). Empty if the radius is zero, or if the
+  // POI layer isn't rendering at the current zoom.
+  function findRenderedPoisWithin(centerLng, centerLat, radiusM) {
+    if (radiusM <= 0) return [];
+    const dLat = radiusM / 111000;
+    const dLng = radiusM / (111000 * Math.cos(centerLat * Math.PI / 180));
+    const corners = [
+      map.project([centerLng - dLng, centerLat - dLat]),
+      map.project([centerLng + dLng, centerLat + dLat]),
+    ];
+    const x1 = Math.min(corners[0].x, corners[1].x);
+    const x2 = Math.max(corners[0].x, corners[1].x);
+    const y1 = Math.min(corners[0].y, corners[1].y);
+    const y2 = Math.max(corners[0].y, corners[1].y);
+    let features;
+    try {
+      features = map.queryRenderedFeatures([[x1, y1], [x2, y2]], {
+        layers: ['poi-icons'],
+      });
+    } catch { return []; }
+    return features.filter((f) => {
+      const c = f.geometry && f.geometry.coordinates;
+      if (!c) return false;
+      return haversineKm(centerLat, centerLng, c[1], c[0]) * 1000 <= radiusM;
+    });
+  }
+
   function markPoiCollected(lng, lat, category) {
     const map = readPoiCooldowns();
     // Prune expired entries opportunistically so the map can't grow
@@ -4781,10 +4824,15 @@ function fmtDate(ts) {
         const iconUrl = `/icons/${encodeURIComponent(iconFile)}.svg`;
         const el = document.createElement('div');
         el.className = `cooldown-overlay cooldown-${info.status}`;
-        // Inline mask URL — CSS clips the element's background color
-        // into the icon's silhouette, no img element required.
-        el.style.webkitMaskImage = `url("${iconUrl}")`;
-        el.style.maskImage = `url("${iconUrl}")`;
+        // Inner element carries the mask + bg color (the silhouette).
+        // Outer element carries the puff filter — the split is
+        // necessary so the filter sees the masked output instead of
+        // the rectangular background. See CSS comment for details.
+        const inner = document.createElement('div');
+        inner.className = 'cooldown-overlay-inner';
+        inner.style.webkitMaskImage = `url("${iconUrl}")`;
+        inner.style.maskImage = `url("${iconUrl}")`;
+        el.appendChild(inner);
         const m = new maplibregl.Marker({ element: el, anchor: 'center' })
           .setLngLat([info.lng, info.lat])
           .addTo(map);
@@ -6118,6 +6166,18 @@ function fmtDate(ts) {
     if (poiCooldownRemainingMs(stored.lng, stored.lat) > 0) return;
     window.Creatures.grantItem('capture_sphere', 1);
     markPoiCollected(stored.lng, stored.lat, stored.category);
+    // Radius cooldown: also lock every other rendered POI within
+    // POI_COOLDOWN_RADIUS_M of the collected one.
+    const nearby = findRenderedPoisWithin(
+      stored.lng, stored.lat, POI_COOLDOWN_RADIUS_M);
+    for (const f of nearby) {
+      const [nLng, nLat] = f.geometry.coordinates;
+      // Skip the original — already marked above.
+      if (Math.abs(nLng - stored.lng) < 1e-9
+          && Math.abs(nLat - stored.lat) < 1e-9) continue;
+      const cat = (f.properties && (f.properties.subclass || f.properties.class)) || '';
+      markPoiCollected(nLng, nLat, cat);
+    }
     applyCooldownStyleToSelectedMarker();
     refreshCooldownOverlays();
     document.getElementById('poiCard').classList.remove('show');
