@@ -1670,6 +1670,45 @@
     box-shadow: 0 0 0 2px rgba(245, 100, 160, 0.55), 0 2px 6px rgba(0,0,0,0.35);
   }
   .selected-marker.cooldown-ready .icon { filter: brightness(0) invert(1); }
+  /* Cooldown overlay: the POI's own icon, tinted gray (on cooldown)
+     or pink (ready). No background circle, no img — CSS `mask-image`
+     clips the element's solid background-color into the icon's
+     silhouette. Size is driven by the `--cooldown-overlay-size` CSS
+     variable, kept in sync with the tile-icon zoom curve so the
+     overlay matches the underlying POI at every zoom level.
+     pointer-events: none keeps taps falling through. */
+  .cooldown-overlay {
+    width: var(--cooldown-overlay-size, 18px);
+    height: var(--cooldown-overlay-size, 18px);
+    pointer-events: none;
+    /* Stretch the mask to fill (NOT `contain`) — svgToImageData
+       rasterizes the icon by drawing it at the full canvas size
+       (line ~3988), which stretches non-square SVGs the same way.
+       Using `contain` would preserve aspect and put the visual
+       center at a different spot than the tile-rendered icon. */
+    -webkit-mask-size: 100% 100%;
+            mask-size: 100% 100%;
+    -webkit-mask-position: center;
+            mask-position: center;
+    -webkit-mask-repeat: no-repeat;
+            mask-repeat: no-repeat;
+  }
+  /* Stacked zero-offset drop-shadows in the same color as the fill
+     "puff" the icon outward by ~1-2px, burying the underlying icon's
+     anti-aliased edge bleed. Two layers makes the halo opaque enough
+     to look solid rather than blurred. */
+  .cooldown-overlay.cooldown-active {
+    background-color: #888;
+    filter:
+      drop-shadow( 3px 0 0 #888) drop-shadow(-3px 0 0 #888)
+      drop-shadow(0  3px 0 #888) drop-shadow(0 -3px 0 #888);
+  }
+  .cooldown-overlay.cooldown-ready {
+    background-color: #f088b0;
+    filter:
+      drop-shadow( 3px 0 0 #f088b0) drop-shadow(-3px 0 0 #f088b0)
+      drop-shadow(0  3px 0 #f088b0) drop-shadow(0 -3px 0 #f088b0);
+  }
   #poiCard {
     position: absolute; left: 8px; right: 68px; z-index: 12;
     top: calc(100px + env(safe-area-inset-top));
@@ -3859,6 +3898,14 @@ function fmtDate(ts) {
       bearing: map.getBearing(), pitch: map.getPitch()
     }));
   });
+  // Reconcile pokéstop cooldown overlays whenever the viewport
+  // changes so they appear/disappear with what's actually visible.
+  // Functions are hoisted via `function` declarations below — safe
+  // to reference here even though they live further down the file.
+  map.on('moveend', () => { try { refreshCooldownOverlays(); } catch {} });
+  // Resize the overlay whenever the map zoom changes so the icon
+  // tracks the tile-rendered POI's screen size.
+  map.on('zoom', () => { try { updateCooldownOverlaySize(); } catch {} });
   const scaleCtrl = new maplibregl.ScaleControl({ maxWidth: 120,
     unit: localStorage.getItem('cc.units') === 'mi' ? 'imperial' : 'metric' });
   map.addControl(scaleCtrl, 'bottom-left');
@@ -3887,6 +3934,10 @@ function fmtDate(ts) {
   // demand. Patch self-clears after one fix so it doesn't intercept
   // future button-driven transitions.
   map.on('load', () => {
+    // Draw any existing cooldown overlays for whatever's already in
+    // the viewport (preserved from a previous session via localStorage).
+    try { updateCooldownOverlaySize(); } catch {}
+    try { refreshCooldownOverlays(); } catch {}
     if (savedView) {
       const orig = geolocate._onSuccess;
       let consumed = false;
@@ -4594,30 +4645,166 @@ function fmtDate(ts) {
   function writePoiCooldowns(map) {
     localStorage.setItem(POI_COOLDOWNS_KEY, JSON.stringify(map));
   }
-  function markPoiCollected(lng, lat) {
+  // Each entry is `{ t: <ms>, c: <category> }`. Older entries written
+  // before the schema bump may be a bare number (legacy timestamp);
+  // poiCooldownEntry normalizes both shapes so call sites don't care.
+  function poiCooldownEntry(lng, lat) {
+    const e = readPoiCooldowns()[poiCooldownKey(lng, lat)];
+    if (e == null) return null;
+    if (typeof e === 'number') return { t: e, c: '' };
+    if (typeof e === 'object') return { t: e.t || 0, c: e.c || '' };
+    return null;
+  }
+  function entryTimestamp(entry) {
+    if (typeof entry === 'number') return entry;
+    if (entry && typeof entry === 'object') return entry.t || 0;
+    return 0;
+  }
+  function markPoiCollected(lng, lat, category) {
     const map = readPoiCooldowns();
     // Prune expired entries opportunistically so the map can't grow
     // unbounded across long play sessions.
     const now = Date.now();
     for (const k of Object.keys(map)) {
-      if (now - map[k] > POI_COOLDOWN_MS) delete map[k];
+      if (now - entryTimestamp(map[k]) > POI_COOLDOWN_MS) delete map[k];
     }
-    map[poiCooldownKey(lng, lat)] = now;
+    // Store full-precision lng/lat (x, y) in the value alongside the
+    // timestamp + category. The key is still the toFixed(5) version
+    // (sufficient to identify the POI), but rendering reads x/y so
+    // the overlay sits exactly on the tile-rendered icon — parsing
+    // the key would round to ~1.1m, which is several pixels off at
+    // high zoom.
+    map[poiCooldownKey(lng, lat)] = { t: now, c: category || '', x: lng, y: lat };
     writePoiCooldowns(map);
   }
   function poiCooldownRemainingMs(lng, lat) {
-    const t = readPoiCooldowns()[poiCooldownKey(lng, lat)];
-    if (!t) return 0;
-    const remain = POI_COOLDOWN_MS - (Date.now() - t);
+    const e = poiCooldownEntry(lng, lat);
+    if (!e) return 0;
+    const remain = POI_COOLDOWN_MS - (Date.now() - e.t);
     return remain > 0 ? remain : 0;
   }
   // Returns: 'active' (gray, on cooldown), 'ready' (pink, collected
   // before but cooldown elapsed), or 'none' (never collected here).
   function poiCooldownStatus(lng, lat) {
-    const t = readPoiCooldowns()[poiCooldownKey(lng, lat)];
-    if (!t) return 'none';
-    return (Date.now() - t < POI_COOLDOWN_MS) ? 'active' : 'ready';
+    const e = poiCooldownEntry(lng, lat);
+    if (!e) return 'none';
+    return (Date.now() - e.t < POI_COOLDOWN_MS) ? 'active' : 'ready';
   }
+  // Cooldown overlays: a small ring drawn on the map for every POI in
+  // the cooldowns map that's currently inside the viewport. The rings
+  // are pointer-events: none so taps go through to the underlying
+  // tile-rendered POI exactly as before. Reconciled on map moves /
+  // collect / mode toggle, plus a self-managing 30s poll that ONLY
+  // runs while overlays exist (so the gray → pink transition shows up
+  // even if the user is staring at the screen with no input).
+  const _cooldownOverlayMarkers = new Map(); // poiKey → { marker, el, status }
+  let _cooldownOverlayPoll = null;
+  // Replicate MapLibre's exact icon-size paint expression from the
+  // POI symbol layer — same control points, same base-1.5 exponential
+  // easing — multiplied by the sprite's source pixel size (24px,
+  // matching svgToImageData(..., 24, 2)). Result: overlay icon size
+  // tracks the tile-rendered POI pixel-for-pixel at every zoom.
+  // Updates a CSS variable so all overlays resize at once via the
+  // var() in their width/height rules.
+  const POI_ICON_SIZE_STOPS = [
+    [11, 0.08], [14, 0.2], [16, 0.4], [18, 0.75], [20, 1.0],
+  ];
+  const POI_ICON_SIZE_BASE = 1.5;
+  const POI_ICON_SOURCE_PX = 24;
+  function poiIconScaleAtZoom(z) {
+    const S = POI_ICON_SIZE_STOPS;
+    if (z <= S[0][0]) return S[0][1];
+    if (z >= S[S.length - 1][0]) return S[S.length - 1][1];
+    for (let i = 0; i < S.length - 1; i++) {
+      const [z0, s0] = S[i];
+      const [z1, s1] = S[i + 1];
+      if (z >= z0 && z <= z1) {
+        const b = POI_ICON_SIZE_BASE;
+        const t = (Math.pow(b, z - z0) - 1) / (Math.pow(b, z1 - z0) - 1);
+        return s0 + (s1 - s0) * t;
+      }
+    }
+    return S[S.length - 1][1];
+  }
+  // Cached last size keeps the per-frame `render` listener cheap by
+  // skipping the setProperty when nothing changed.
+  let _lastCooldownOverlaySize = -1;
+  function updateCooldownOverlaySize() {
+    const sz = poiIconScaleAtZoom(map.getZoom()) * POI_ICON_SOURCE_PX;
+    if (Math.abs(sz - _lastCooldownOverlaySize) < 0.01) return;
+    _lastCooldownOverlaySize = sz;
+    document.documentElement.style.setProperty(
+      '--cooldown-overlay-size', Math.max(2, sz) + 'px');
+  }
+  function refreshCooldownOverlays() {
+    const inCreatureMode = !!(window.Creatures && window.Creatures.isEnabled
+      && window.Creatures.isEnabled());
+    const wanted = new Map();
+    if (inCreatureMode) {
+      const cooldowns = readPoiCooldowns();
+      const bounds = map.getBounds();
+      for (const key of Object.keys(cooldowns)) {
+        const raw = cooldowns[key];
+        // Prefer full-precision lng/lat from the entry value;
+        // fall back to parsing the key (legacy entries written
+        // before the schema bumped to include x/y).
+        let lng, lat;
+        if (raw && typeof raw === 'object' && isFinite(raw.x) && isFinite(raw.y)) {
+          lng = raw.x;
+          lat = raw.y;
+        } else {
+          const dot = key.indexOf(',');
+          if (dot < 0) continue;
+          lng = parseFloat(key.slice(0, dot));
+          lat = parseFloat(key.slice(dot + 1));
+        }
+        if (!isFinite(lng) || !isFinite(lat)) continue;
+        if (!bounds.contains([lng, lat])) continue;
+        const t = entryTimestamp(raw);
+        const cat = (raw && typeof raw === 'object') ? (raw.c || '') : '';
+        const status = (Date.now() - t < POI_COOLDOWN_MS) ? 'active' : 'ready';
+        wanted.set(key, { lng, lat, status, category: cat });
+      }
+    }
+    // Drop overlays that left the viewport / left creature mode.
+    for (const [key, rec] of _cooldownOverlayMarkers) {
+      if (!wanted.has(key)) {
+        rec.marker.remove();
+        _cooldownOverlayMarkers.delete(key);
+      }
+    }
+    // Add new ones, retag class on status transitions (gray → pink).
+    for (const [key, info] of wanted) {
+      let rec = _cooldownOverlayMarkers.get(key);
+      if (!rec) {
+        const iconFile = iconFileFor(info.category);
+        const iconUrl = `/icons/${encodeURIComponent(iconFile)}.svg`;
+        const el = document.createElement('div');
+        el.className = `cooldown-overlay cooldown-${info.status}`;
+        // Inline mask URL — CSS clips the element's background color
+        // into the icon's silhouette, no img element required.
+        el.style.webkitMaskImage = `url("${iconUrl}")`;
+        el.style.maskImage = `url("${iconUrl}")`;
+        const m = new maplibregl.Marker({ element: el, anchor: 'center' })
+          .setLngLat([info.lng, info.lat])
+          .addTo(map);
+        _cooldownOverlayMarkers.set(key, { marker: m, el, status: info.status });
+      } else if (rec.status !== info.status) {
+        rec.el.classList.remove('cooldown-active', 'cooldown-ready');
+        rec.el.classList.add('cooldown-' + info.status);
+        rec.status = info.status;
+      }
+    }
+    // Self-managing low-freq poll: alive only while there's something
+    // to potentially transition.
+    if (wanted.size > 0 && _cooldownOverlayPoll == null) {
+      _cooldownOverlayPoll = setInterval(refreshCooldownOverlays, 30000);
+    } else if (wanted.size === 0 && _cooldownOverlayPoll != null) {
+      clearInterval(_cooldownOverlayPoll);
+      _cooldownOverlayPoll = null;
+    }
+  }
+
   // Paint the currently-selected POI marker per its cooldown state.
   // No-op outside creature mode (so the marker stays its default
   // white/favorite-color in regular map use).
@@ -5930,8 +6117,9 @@ function fmtDate(ts) {
     if (!stored) return;
     if (poiCooldownRemainingMs(stored.lng, stored.lat) > 0) return;
     window.Creatures.grantItem('capture_sphere', 1);
-    markPoiCollected(stored.lng, stored.lat);
+    markPoiCollected(stored.lng, stored.lat, stored.category);
     applyCooldownStyleToSelectedMarker();
+    refreshCooldownOverlays();
     document.getElementById('poiCard').classList.remove('show');
     stopPoiCollectCountdown();
   };
@@ -6157,11 +6345,18 @@ function fmtDate(ts) {
         || (tileCat ? humanize(tileCat) : 'Unnamed');
       const [lng, lat] = poiFallback.geometry.coordinates;
       const full = findFullPoi(lng, lat, name);
-      const poi = full || {
-        lng, lat, name,
-        category: pr.subclass || pr.class || '',
-        props: {}
-      };
+      // When a "full" POI exists, keep its richer info (props,
+      // category, etc.) but override lng/lat with the tile feature's
+      // exact coordinates. The full POI's stored coords can drift
+      // from the tile rendering point by < 1e-4° (~11m), which is
+      // sub-pixel at low zoom but several pixels off at z=19+.
+      const poi = full
+        ? { ...full, lng, lat }
+        : {
+            lng, lat, name,
+            category: pr.subclass || pr.class || '',
+            props: {}
+          };
       setSelected(poi);
       return;
     }
@@ -8410,6 +8605,9 @@ function fmtDate(ts) {
     creatureToggle.checked = creatureUi.isEnabled();
     creatureToggle.addEventListener('change', () => {
       creatureUi.setEnabled(creatureToggle.checked);
+      // Cooldown overlays are creature-mode-only, so toggle drops or
+      // restores the whole set as the mode flips.
+      try { refreshCooldownOverlays(); } catch {}
     });
   }
 
