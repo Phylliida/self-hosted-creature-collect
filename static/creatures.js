@@ -403,14 +403,17 @@
       : [];
   }
 
-  // Tag picker for the detail view. Chips for every tag (built-in
-  // first, then user-created); the ones currently applied to this
-  // capture render with the `applied` accent style. User chips toggle
-  // membership on click; built-in chips are non-clickable (their
-  // applied state comes from a predicate, not user choice — visually
-  // marked with the `builtin` modifier so they look slightly muted).
+  // Tag picker for the detail view. Chips for:
+  //   - every built-in tag whose predicate fires for THIS creature
+  //     (so e.g. "Pure" only appears for monotype captures, never as
+  //     a non-applicable chip on a real fusion)
+  //   - every user-created tag (toggleable, applied state shown)
+  // Built-in chips are non-clickable (their applied state comes from
+  // a predicate, not user choice). User chips toggle membership.
   function detailTagsHtml(creature) {
-    const names = allTagNames();
+    const matchedBuiltins = builtinTagsForCreature(creature);
+    const userTags = readTags().filter((t) => !isBuiltinTag(t));
+    const names = [...matchedBuiltins, ...userTags];
     if (!names.length) {
       return `<div class="detail-tags-empty">No tags yet \u2014 create some in the Tags menu.</div>`;
     }
