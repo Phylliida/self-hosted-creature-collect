@@ -4237,6 +4237,7 @@ function fmtDate(ts) {
       caughtSpawnIds: JSON.parse(localStorage.getItem('cc.caughtSpawnIds') || '[]'),
       seenFusions: JSON.parse(localStorage.getItem('cc.seenFusions') || '{}'),
       candy: JSON.parse(localStorage.getItem('cc.candy.v1') || '{}'),
+      candyMigrated: localStorage.getItem('cc.candyMigrated.speciesV1') === '1',
       bag: JSON.parse(localStorage.getItem('cc.bag.v1') || 'null'),
       backupName: localStorage.getItem('cc.backupName') || null,
     };
@@ -4364,16 +4365,25 @@ function fmtDate(ts) {
       }
       localStorage.setItem('cc.seenFusions', JSON.stringify(current));
     }
-    // Candy: per-type max merge so re-importing the same backup is
+    // Candy: per-key max merge so re-importing the same backup is
     // idempotent and combining devices keeps whichever had more of each
-    // type. (No spend mechanism yet, so summing isn't required.)
-    if (data.candy && typeof data.candy === 'object') {
+    // entry. Only merged when the imported payload was already on the
+    // species-keyed candy format (candyMigrated flag); otherwise the
+    // imported data is type-keyed and would mix incompatibly with the
+    // local species-keyed map. The local migration replays imported
+    // captures into species candy on the next readCandy regardless.
+    if (data.candyMigrated && data.candy && typeof data.candy === 'object') {
       const current = JSON.parse(localStorage.getItem('cc.candy.v1') || '{}');
-      for (const [type, n] of Object.entries(data.candy)) {
+      for (const [key, n] of Object.entries(data.candy)) {
         const v = Number(n) || 0;
-        if (v > (current[type] || 0)) current[type] = v;
+        if (v > (current[key] || 0)) current[key] = v;
       }
       localStorage.setItem('cc.candy.v1', JSON.stringify(current));
+    }
+    // If the import was already migrated, mark local as migrated too
+    // so the lazy migration doesn't wipe the just-imported candy.
+    if (data.candyMigrated) {
+      localStorage.setItem('cc.candyMigrated.speciesV1', '1');
     }
     // Bag: per-item max merge for the same reason — idempotent
     // re-imports + combining devices keeps the higher count. Bag is

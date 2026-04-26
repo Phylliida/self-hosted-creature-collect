@@ -251,7 +251,16 @@
     const speciesB = pools.poolB[Math.floor(arng() * pools.poolB.length)];
     const level = expDistr(5, 50, arng()) + 1;
     const sizeM = 0.15 + arng() * 2.0;
-    const startMs = tick * TICK_MS;
+    // Deterministic intra-tick birth offset (0..TICK_MS-1 ms) so spawns
+    // smear evenly across the minute instead of all appearing on the
+    // UTC minute boundary. Drawn LAST so adding it doesn't shift any
+    // earlier PRNG outputs — species/lat/lng/level/sizeM for any given
+    // (cell, tick) stay identical to the pre-offset version. The cost
+    // is one extra tick of scan window (see firstTick below) so a
+    // late-offset spawn from the oldest tick is still picked up in
+    // its dying seconds.
+    const bornOffset = Math.floor(arng() * TICK_MS);
+    const startMs = tick * TICK_MS + bornOffset;
     return {
       id: `${cellX}:${cellY}:${tick}:0`,
       lat, lng, speciesA, speciesB, level, sizeM,
@@ -274,7 +283,11 @@
     const cellsY = maxLngCell - minLngCell + 1;
     if (cellsX * cellsY > MAX_CELLS) return [];
 
-    const firstTick = curTick - LIFETIME_TICKS + 1;
+    // One extra tick of scan window (vs LIFETIME_TICKS + 1) covers the
+    // intra-tick birth offset: a spawn born late in the oldest tick
+    // can still be alive in its dying seconds when the offset pushes
+    // birth toward the end of that minute.
+    const firstTick = curTick - LIFETIME_TICKS;
     const out = [];
     for (let cx = minLatCell; cx <= maxLatCell; cx++) {
       for (let cy = minLngCell; cy <= maxLngCell; cy++) {
@@ -300,7 +313,9 @@
     if (parts.length < 3) return true;
     const tick = +parts[2];
     if (!Number.isFinite(tick)) return true;
-    return tick < currentTick(nowMs) - LIFETIME_TICKS + 1;
+    // -LIFETIME_TICKS (not +1) matches the spawn scan window — see
+    // generateCellAtTick's intra-tick birth offset.
+    return tick < currentTick(nowMs) - LIFETIME_TICKS;
   }
 
   global.Spawns = {
