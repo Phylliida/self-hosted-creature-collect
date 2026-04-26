@@ -4768,7 +4768,14 @@ function fmtDate(ts) {
           ['within', buildCooldownPolygon(readyPts)],  _currentCooldownReadyColor,
           _currentPoiThemeColor]
       : _currentPoiThemeColor;
-    try { map.setPaintProperty('poi-icons', 'icon-color', expr); } catch {}
+    try {
+      map.setPaintProperty('poi-icons', 'icon-color', expr);
+      // Force the new color to land on the very next frame instead of
+      // waiting for MapLibre's render loop to schedule a repaint —
+      // without this, there's a noticeable lag before the just-
+      // collected POI turns gray.
+      map.triggerRepaint();
+    } catch {}
     // Poll only while at least one *active* (gray) entry exists —
     // those are the ones that will transition to pink. Pure-pink
     // sets won't change status, so no poll needed.
@@ -6105,10 +6112,12 @@ function fmtDate(ts) {
       const cat = (f.properties && (f.properties.subclass || f.properties.class)) || '';
       markPoiCollected(nLng, nLat, cat);
     }
-    applyCooldownStyleToSelectedMarker();
     refreshCooldownOverlays();
-    document.getElementById('poiCard').classList.remove('show');
+    // Clear the selected POI entirely (card + map marker) — same
+    // as the X button — so the user doesn't have to dismiss
+    // anything after collecting.
     stopPoiCollectCountdown();
+    setSelected(null);
   };
 
   favorites = await loadAllFavorites();
