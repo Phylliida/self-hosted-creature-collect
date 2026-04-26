@@ -23,6 +23,8 @@
   // in the export/import payload so a re-import doesn't re-trigger.
   const CANDY_MIGRATED_KEY = 'cc.candyMigrated.speciesV1';
   const BAG_KEY = 'cc.bag.v1';
+  const TAGS_KEY = 'cc.tags.v1';
+  const TAG_MAX_LEN = 8;
   const LAST_SAVE_KEY = 'cc.lastSaveAt';
   const SAVE_REMINDER_DAYS = 7;
 
@@ -134,6 +136,130 @@
     localStorage.setItem(BAG_KEY, JSON.stringify(map));
   }
 
+  // Built-in tags are predicate-driven and never stored on a capture
+  // record. They render alongside user tags everywhere (Tags menu,
+  // detail-view picker, inventory filter row) but can't be created,
+  // deleted, or toggled by the user. Add new ones by appending here.
+  const BUILTIN_TAGS = [
+    {
+      name: 'Pure',
+      description: 'Same species on both sides (no fusion).',
+      predicate: (c) => c && c.speciesA != null && c.speciesA === c.speciesB,
+    },
+  ];
+  const BUILTIN_TAG_NAMES = new Set(BUILTIN_TAGS.map((b) => b.name));
+  function isBuiltinTag(name) { return BUILTIN_TAG_NAMES.has(name); }
+  function builtinTagsForCreature(c) {
+    return BUILTIN_TAGS.filter((b) => b.predicate(c)).map((b) => b.name);
+  }
+  // The full set of tags currently on a creature, combining the user-
+  // applied stored tags with any built-ins whose predicate matches.
+  // Stored entries that happen to collide with a built-in name (e.g.
+  // legacy data from before Pure existed) are filtered out so the
+  // built-in's predicate stays authoritative.
+  function effectiveTagsForCreature(c) {
+    const stored = Array.isArray(c.tags) ? c.tags : [];
+    const builtin = builtinTagsForCreature(c);
+    return Array.from(new Set([
+      ...builtin,
+      ...stored.filter((t) => !BUILTIN_TAG_NAMES.has(t)),
+    ]));
+  }
+  // The ordered list of all tag names that should appear in pickers
+  // (Tags menu, detail picker, inventory filter row): built-ins first
+  // in their declaration order, then user-created tags in creation
+  // order. User tags that collide with built-in names are hidden so
+  // the picker never shows two "Pure" entries side-by-side.
+  function allTagNames() {
+    const userTags = readTags().filter((t) => !BUILTIN_TAG_NAMES.has(t));
+    return [...BUILTIN_TAGS.map((b) => b.name), ...userTags];
+  }
+
+  // Tags: a flat ordered list of short label strings. Each captured
+  // creature can carry zero or more of these on its `tags` field.
+  // Tag names are 1..TAG_MAX_LEN chars, trimmed, deduped (case-
+  // sensitive). Order is the user's creation order — not sorted.
+  // Built-in tag names (BUILTIN_TAG_NAMES above) are reserved.
+  function readTags() {
+    try {
+      const raw = localStorage.getItem(TAGS_KEY);
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr : [];
+    } catch { return []; }
+  }
+  function writeTags(arr) {
+    localStorage.setItem(TAGS_KEY, JSON.stringify(arr));
+  }
+  function normalizeTagName(raw) {
+    if (typeof raw !== 'string') return null;
+    const t = raw.trim();
+    if (!t) return null;
+    if (t.length > TAG_MAX_LEN) return null;
+    return t;
+  }
+  function addTag(name) {
+    const t = normalizeTagName(name);
+    if (!t) return false;
+    if (isBuiltinTag(t)) return false;
+    const list = readTags();
+    if (list.includes(t)) return false;
+    list.push(t);
+    writeTags(list);
+    return true;
+  }
+  // Delete a tag from the global list AND strip it from every captured
+  // creature that has it. Returns the count of creatures touched so the
+  // caller can surface a confirmation message. Built-in tags are
+  // protected — calls with a built-in name are no-ops.
+  function deleteTag(name) {
+    if (isBuiltinTag(name)) return 0;
+    const list = readTags();
+    const idx = list.indexOf(name);
+    if (idx < 0) return 0;
+    list.splice(idx, 1);
+    writeTags(list);
+    const captured = readCapturedCreatures();
+    let touched = 0;
+    for (const c of captured) {
+      if (!Array.isArray(c.tags)) continue;
+      const j = c.tags.indexOf(name);
+      if (j >= 0) {
+        c.tags.splice(j, 1);
+        touched++;
+      }
+    }
+    if (touched) writeCapturedCreatures(captured);
+    // Also strip from the inventory's active tag-filter selection so a
+    // since-deleted tag doesn't keep the filter "stuck" inert.
+    const sel = readInvTagFilter();
+    const si = sel.indexOf(name);
+    if (si >= 0) {
+      sel.splice(si, 1);
+      writeInvTagFilter(sel);
+    }
+    return touched;
+  }
+  // Tags applied to a single capture. Returns a fresh array (caller
+  // can mutate without affecting storage).
+  function getCreatureTags(id) {
+    const c = readCapturedCreatures().find((x) => x.id === id);
+    if (!c || !Array.isArray(c.tags)) return [];
+    return c.tags.slice();
+  }
+  function toggleCreatureTag(id, tagName) {
+    // Built-in tags are computed from a predicate; toggling is a no-op.
+    if (isBuiltinTag(tagName)) return false;
+    const list = readCapturedCreatures();
+    const c = list.find((x) => x.id === id);
+    if (!c) return false;
+    const tags = Array.isArray(c.tags) ? c.tags.slice() : [];
+    const i = tags.indexOf(tagName);
+    if (i >= 0) tags.splice(i, 1); else tags.push(tagName);
+    c.tags = tags;
+    writeCapturedCreatures(list);
+    return true;
+  }
+
   // Caught spawn IDs — once a spawn has been captured locally, we don't
   // want its marker to keep reappearing until the time bucket rotates.
   // Other players on other devices still see the spawn (no server).
@@ -180,6 +306,7 @@
       sizeM: e.sizeM,
       name: fusionName(e.speciesA, e.speciesB),
       caughtAt: e.caughtAt,
+      tags: Array.isArray(e.tags) ? e.tags.slice() : [],
     }));
   }
 
@@ -274,6 +401,33 @@
     return global.Species && global.Species.fusionTypesFor
       ? global.Species.fusionTypesFor(a, b)
       : [];
+  }
+
+  // Tag picker for the detail view. Chips for every tag (built-in
+  // first, then user-created); the ones currently applied to this
+  // capture render with the `applied` accent style. User chips toggle
+  // membership on click; built-in chips are non-clickable (their
+  // applied state comes from a predicate, not user choice — visually
+  // marked with the `builtin` modifier so they look slightly muted).
+  function detailTagsHtml(creature) {
+    const names = allTagNames();
+    if (!names.length) {
+      return `<div class="detail-tags-empty">No tags yet \u2014 create some in the Tags menu.</div>`;
+    }
+    const applied = new Set(effectiveTagsForCreature(creature));
+    const chips = names.map((t) => {
+      const builtin = isBuiltinTag(t);
+      const classes = ['detail-tag-chip'];
+      if (applied.has(t)) classes.push('applied');
+      if (builtin) classes.push('builtin');
+      // Built-in chips intentionally don't carry a data-tag — the
+      // click handler bails on missing data-tag, so it acts as a
+      // visual-only chip without using the browser's disabled style
+      // (which would override our custom appearance).
+      const attrs = builtin ? '' : `data-tag="${escapeHtml(t)}"`;
+      return `<button class="${classes.join(' ')}" type="button" ${attrs}>${escapeHtml(t)}</button>`;
+    }).join('');
+    return `<div class="detail-tags">${chips}</div>`;
   }
 
   // Inline candy tally for an opened pokémon. Mirrors the species-candy
@@ -664,6 +818,18 @@
   function readInvFilterTypeB() {
     return localStorage.getItem('cc.invFilterTypeB') || '';
   }
+  // Inventory tag filter: array of selected tag names. Multiple
+  // selected tags use AND semantics (creature must have all of them).
+  function readInvTagFilter() {
+    try {
+      const raw = localStorage.getItem('cc.invTagFilter');
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr : [];
+    } catch { return []; }
+  }
+  function writeInvTagFilter(arr) {
+    localStorage.setItem('cc.invTagFilter', JSON.stringify(arr));
+  }
   // Shared list used to generate the type-filter <select> options for
   // both the Pokédex and the inventory. Pokédex's hardcoded options
   // pre-date this helper and stay as-is to avoid noisy diffs; new
@@ -964,7 +1130,8 @@
       #creatureInventory .pokedex-back,
       #creatureInventory .fusion-back,
       #creatureInventory .candy-back,
-      #creatureInventory .bag-back {
+      #creatureInventory .bag-back,
+      #creatureInventory .tags-back {
         background: none;
         border: none;
         color: var(--ui-text, #111);
@@ -979,7 +1146,8 @@
       #creatureInventory .pokedex-back:hover,
       #creatureInventory .fusion-back:hover,
       #creatureInventory .candy-back:hover,
-      #creatureInventory .bag-back:hover {
+      #creatureInventory .bag-back:hover,
+      #creatureInventory .tags-back:hover {
         color: var(--ui-accent, #888);
       }
       #creatureInventory .detail-art {
@@ -1225,6 +1393,130 @@
         color: var(--ui-muted, #666);
         font-size: 13px;
       }
+      #creatureInventory .tags-view { display: none; }
+      #creatureInventory .tags-view.show { display: block; }
+      #creatureInventory .tags-title {
+        font-size: 16px; font-weight: 600;
+        text-align: center; margin: 0 0 4px;
+      }
+      #creatureInventory .tags-subtitle {
+        font-size: 12px; color: var(--ui-muted, #666);
+        text-align: center; margin: 0 0 14px;
+      }
+      #creatureInventory .tags-create {
+        display: block;
+        width: 100%;
+        padding: 8px 10px;
+        margin: 0 0 12px;
+        font-size: 13px;
+        font-family: inherit;
+        cursor: pointer;
+        background: var(--ui-bg, #fff);
+        color: var(--ui-text, #111);
+        border: 1px dashed var(--ui-border, rgba(0,0,0,0.25));
+        border-radius: var(--ui-radius, 8px);
+      }
+      #creatureInventory .tags-create:hover {
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+        border-style: solid;
+      }
+      #creatureInventory .tags-list {
+        display: flex; flex-direction: column; gap: 6px;
+      }
+      #creatureInventory .tags-row {
+        display: flex; align-items: center; gap: 10px;
+        padding: 8px 10px;
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+        border: 1px solid var(--ui-hairline, rgba(0,0,0,0.08));
+        border-radius: var(--ui-radius, 8px);
+      }
+      #creatureInventory .tags-row .tags-name {
+        flex: 1;
+        font-size: 14px; font-weight: 600;
+        color: var(--ui-text, #111);
+      }
+      #creatureInventory .tags-row-builtin .tags-name {
+        flex: 0 0 auto;
+        font-style: italic;
+      }
+      #creatureInventory .tags-row .tags-builtin-note {
+        flex: 1;
+        font-size: 12px;
+        color: var(--ui-muted, #666);
+        text-align: right;
+      }
+      #creatureInventory .tags-row .tags-remove {
+        background: transparent;
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
+        color: var(--ui-muted, #666);
+        padding: 2px 8px;
+        font-size: 12px;
+        font-family: inherit;
+        border-radius: var(--ui-radius, 8px);
+        cursor: pointer;
+      }
+      #creatureInventory .tags-row .tags-remove:hover {
+        color: var(--ui-text, #111);
+        background: var(--ui-bg, #fff);
+      }
+      #creatureInventory .tags-empty {
+        padding: 20px 8px;
+        text-align: center;
+        color: var(--ui-muted, #666);
+        font-size: 13px;
+      }
+      /* Tag chip picker: used both in the detail view (apply tags
+         to one capture) and in the inventory's filter row (narrow
+         the listing to creatures with any selected tag). "Applied"
+         chips are filled with the accent; others are subdued
+         outlines. */
+      #creatureInventory .detail-tags {
+        display: flex; flex-wrap: wrap; gap: 6px;
+        justify-content: center;
+        margin: 6px 0 12px;
+      }
+      #creatureInventory .inv-tag-filter-row {
+        display: flex; flex-wrap: wrap; gap: 6px;
+        justify-content: flex-start;
+        margin: 6px 0 12px;
+      }
+      #creatureInventory .inv-tag-filter-row:empty { display: none; }
+      #creatureInventory .detail-tag-chip,
+      #creatureInventory .inv-tag-chip {
+        display: inline-block;
+        padding: 3px 9px;
+        font-size: 12px;
+        font-family: inherit;
+        line-height: 1.3;
+        border-radius: 999px;
+        cursor: pointer;
+        background: transparent;
+        color: var(--ui-muted, #666);
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
+      }
+      #creatureInventory .detail-tag-chip.applied,
+      #creatureInventory .inv-tag-chip.applied {
+        background: var(--ui-accent, #888);
+        color: #fff;
+        border-color: var(--ui-accent, #888);
+        font-weight: 600;
+      }
+      /* Built-in chips in the detail view are predicate-driven and
+         not user-toggleable. Italic + dashed outline + default cursor
+         signal that they're informational. The .applied accent still
+         applies on top so the user sees whether the predicate fires. */
+      #creatureInventory .detail-tag-chip.builtin {
+        font-style: italic;
+        border-style: dashed;
+        cursor: default;
+      }
+      #creatureInventory .detail-tag-chip.builtin.applied {
+        border-style: solid;
+      }
+      #creatureInventory .detail-tags-empty {
+        font-size: 12px; color: var(--ui-muted, #666);
+        text-align: center; margin: 6px 0 12px;
+      }
       #creatureInventory .pokedex-header {
         display: flex; align-items: center; gap: 8px;
         margin-bottom: 10px;
@@ -1358,7 +1650,8 @@
       #creatureInventory .browse-header h3 { margin: 0; flex: 1; }
       #creatureInventory .pokedex-link,
       #creatureInventory .candy-link,
-      #creatureInventory .bag-link {
+      #creatureInventory .bag-link,
+      #creatureInventory .tags-link {
         background: transparent;
         border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
         border-radius: var(--ui-radius, 8px);
@@ -1370,7 +1663,8 @@
       }
       #creatureInventory .pokedex-link:hover,
       #creatureInventory .candy-link:hover,
-      #creatureInventory .bag-link:hover {
+      #creatureInventory .bag-link:hover,
+      #creatureInventory .tags-link:hover {
         background: var(--ui-hover, rgba(0,0,0,0.04));
       }
       #creatureInventory .weather-bar {
@@ -1611,6 +1905,7 @@
         <div class="browse-view">
           <div class="browse-header">
             <h3>Creatures</h3>
+            <button class="tags-link" type="button">Tags</button>
             <button class="bag-link" type="button">Bag</button>
             <button class="candy-link" type="button">Candy</button>
             <button class="pokedex-link" type="button">Dex</button>
@@ -1629,6 +1924,7 @@
             <label class="type-pair"><span>First:</span>${typeFilterSelectHtml('creatureFilterTypeA')}</label>
             <label class="type-pair"><span>Second:</span>${typeFilterSelectHtml('creatureFilterTypeB')}</label>
           </div>
+          <div class="inv-tag-filter-row"></div>
           <div class="sort-row">
             <label for="creatureSortBy">Sort</label>
             <select id="creatureSortBy">
@@ -1692,6 +1988,11 @@
         <div class="bag-view">
           <button class="bag-back" type="button" aria-label="back">←</button>
           <div class="bag-body"></div>
+          <div class="actions"><button class="close" type="button">Done</button></div>
+        </div>
+        <div class="tags-view">
+          <button class="tags-back" type="button" aria-label="back">←</button>
+          <div class="tags-body"></div>
           <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
       </div>
@@ -1786,9 +2087,11 @@
     panel.querySelector('.fusion-back').addEventListener('click', popView);
     panel.querySelector('.candy-back').addEventListener('click', popView);
     panel.querySelector('.bag-back').addEventListener('click', popView);
+    panel.querySelector('.tags-back').addEventListener('click', popView);
     panel.querySelector('.pokedex-link').addEventListener('click', () => showPokedex());
     panel.querySelector('.candy-link').addEventListener('click', () => showCandy());
     panel.querySelector('.bag-link').addEventListener('click', () => showBag());
+    panel.querySelector('.tags-link').addEventListener('click', () => showTags());
     panel.querySelector('.save-reminder').addEventListener('click', openSettingsFromInventory);
 
     // Pokédex card → fusion sub-view (delegated; cards are re-rendered).
@@ -1883,6 +2186,7 @@
     panel.querySelector('.fusion-view').classList.remove('show');
     panel.querySelector('.candy-view').classList.remove('show');
     panel.querySelector('.bag-view').classList.remove('show');
+    panel.querySelector('.tags-view').classList.remove('show');
     switch (top.view) {
       case 'browse':
         panel.querySelector('.browse-view').style.display = '';
@@ -1925,6 +2229,10 @@
         renderBag();
         panel.querySelector('.bag-view').classList.add('show');
         return;
+      case 'tags':
+        renderTags();
+        panel.querySelector('.tags-view').classList.add('show');
+        return;
     }
   }
 
@@ -1966,6 +2274,80 @@
 
   function showBag() {
     pushView({ view: 'bag' });
+  }
+
+  function showTags() {
+    pushView({ view: 'tags' });
+  }
+
+  // Tags view: a "Create new tag" button at the top, followed by the
+  // list of all tags. Built-in tags appear first with a "(built-in)"
+  // hint and no Remove button (they're predicate-driven and can't be
+  // deleted). User tags can be removed via a confirm() prompt that
+  // warns about removal from any creatures that have it applied.
+  function renderTags() {
+    const panel = document.getElementById('creatureInventory');
+    if (!panel) return;
+    const body = panel.querySelector('.tags-body');
+    if (!body) return;
+    const userTags = readTags().filter((t) => !isBuiltinTag(t));
+    const total = BUILTIN_TAGS.length + userTags.length;
+    const subtitle = `${total} tag${total === 1 ? '' : 's'}`
+      + (BUILTIN_TAGS.length
+        ? ` · ${BUILTIN_TAGS.length} built-in, ${userTags.length} custom`
+        : '');
+    const builtinRows = BUILTIN_TAGS.map((b) => `
+      <div class="tags-row tags-row-builtin">
+        <span class="tags-name">${escapeHtml(b.name)}</span>
+        <span class="tags-builtin-note">${escapeHtml(b.description)}</span>
+      </div>
+    `).join('');
+    const userRows = userTags.map((t) => `
+      <div class="tags-row" data-tag="${escapeHtml(t)}">
+        <span class="tags-name">${escapeHtml(t)}</span>
+        <button class="tags-remove" type="button">Remove</button>
+      </div>
+    `).join('');
+    body.innerHTML = `
+      <div class="tags-title">Tags</div>
+      <div class="tags-subtitle">${escapeHtml(subtitle)}</div>
+      <button class="tags-create" type="button">+ Create new tag</button>
+      <div class="tags-list">${builtinRows}${userRows}</div>
+    `;
+    body.querySelector('.tags-create').addEventListener('click', () => {
+      const raw = window.prompt(`New tag (max ${TAG_MAX_LEN} characters)`);
+      if (raw == null) return;
+      const t = normalizeTagName(raw);
+      if (!t) {
+        alert(`Tag must be 1\u2013${TAG_MAX_LEN} non-empty characters.`);
+        return;
+      }
+      if (isBuiltinTag(t)) {
+        alert(`"${t}" is a built-in tag name and can't be used.`);
+        return;
+      }
+      if (readTags().includes(t)) {
+        alert(`Tag "${t}" already exists.`);
+        return;
+      }
+      addTag(t);
+      renderTags();
+    });
+    body.querySelectorAll('.tags-row').forEach((row) => {
+      const t = row.dataset.tag;
+      if (!t) return; // built-in row, no remove button
+      row.querySelector('.tags-remove').addEventListener('click', () => {
+        const usedBy = readCapturedCreatures()
+          .filter((c) => Array.isArray(c.tags) && c.tags.includes(t))
+          .length;
+        const note = usedBy > 0
+          ? `\nThis will also remove "${t}" from ${usedBy} creature${usedBy === 1 ? '' : 's'}.`
+          : '';
+        if (!confirm(`Delete tag "${t}"?${note}`)) return;
+        deleteTag(t);
+        renderTags();
+      });
+    });
   }
 
   // Bag view: row per item with name + description + count. Sorted by
@@ -2450,6 +2832,7 @@
       ${statsHtml}
       ${caughtLine}
       ${candyTallyHtml(c.speciesA, c.speciesB)}
+      ${detailTagsHtml(c)}
       ${evosHtml}
       ${familyHtml}
     `;
@@ -2511,6 +2894,17 @@
     }
     body.querySelector('.rename-edit').addEventListener('click', () => {
       enterRenameMode(c);
+    });
+    body.querySelectorAll('.detail-tag-chip').forEach((chip) => {
+      chip.addEventListener('click', () => {
+        const tag = chip.dataset.tag;
+        if (!tag) return;
+        toggleCreatureTag(c.id, tag);
+        // Re-render to refresh the chip styling. Re-read the creature
+        // so c.tags reflects the toggle result.
+        const fresh = findCreature(c.id);
+        if (fresh) renderDetail(fresh);
+      });
     });
     if (global.Sprites && c.speciesA != null && c.speciesB != null) {
       global.Sprites.getSpriteUrl(c.speciesA, c.speciesB).then((url) => {
@@ -2647,11 +3041,43 @@
     if (sp) sp.classList.add('show');
   }
 
+  // Inventory tag-filter chip row. Re-rendered on every renderList
+  // call (cheap; tag list is small) so newly-created tags appear and
+  // deleted tags vanish without a panel rebuild. Empty when there are
+  // no tags — the empty `<div>` collapses via the `:empty` CSS rule
+  // so it doesn't take vertical space.
+  function renderInvTagFilterRow() {
+    const panel = document.getElementById('creatureInventory');
+    if (!panel) return;
+    const row = panel.querySelector('.inv-tag-filter-row');
+    if (!row) return;
+    const names = allTagNames();
+    if (!names.length) { row.innerHTML = ''; return; }
+    const selected = new Set(readInvTagFilter());
+    row.innerHTML = names.map((t) => {
+      const cls = selected.has(t) ? 'inv-tag-chip applied' : 'inv-tag-chip';
+      return `<button class="${cls}" data-tag="${escapeHtml(t)}" type="button">${escapeHtml(t)}</button>`;
+    }).join('');
+    row.querySelectorAll('.inv-tag-chip').forEach((chip) => {
+      chip.addEventListener('click', () => {
+        const t = chip.dataset.tag;
+        if (!t) return;
+        const sel = readInvTagFilter();
+        const i = sel.indexOf(t);
+        if (i >= 0) sel.splice(i, 1); else sel.push(t);
+        writeInvTagFilter(sel);
+        const list = panel.querySelector('.creature-list');
+        if (list) renderList(list);
+      });
+    });
+  }
+
   function renderList(listEl) {
     renderWeatherBar();
     renderSaveReminder();
     const panel = document.getElementById('creatureInventory');
     if (panel) updateFilterIndicators(panel, INV_FILTER_SELECTORS);
+    renderInvTagFilterRow();
     const searchEl = document.getElementById('creatureSearch');
     const q = (searchEl && searchEl.value || '').trim().toLowerCase();
     let items = sortedCreatures();
@@ -2692,9 +3118,21 @@
       if (qA) items = items.filter((c) => c.speciesA != null && nameOfLower(c.speciesA).includes(qA));
       if (qB) items = items.filter((c) => c.speciesB != null && nameOfLower(c.speciesB).includes(qB));
     }
+    // Tag filter: AND semantics — a creature passes only when its
+    // effective tag set (user-applied + matching built-ins like
+    // "Pure") includes EVERY selected filter tag. Selected user tags
+    // that no longer exist are pruned at deleteTag() time so this
+    // list is always fresh.
+    const selectedTags = readInvTagFilter();
+    if (selectedTags.length) {
+      items = items.filter((c) => {
+        const eff = effectiveTagsForCreature(c);
+        return selectedTags.every((t) => eff.includes(t));
+      });
+    }
     if (!items.length) {
       if (listEl._virtCleanup) listEl._virtCleanup();
-      const filteredOut = q || qA || qB || filterType || filterTypeA || filterTypeB;
+      const filteredOut = q || qA || qB || filterType || filterTypeA || filterTypeB || selectedTags.length;
       const msg = filteredOut
         ? 'No creatures match those filters.'
         : 'No creatures yet — go exploring!';
@@ -2871,7 +3309,6 @@
         <div class="battle-name"></div>
         <div class="battle-stats"></div>
         <div class="battle-types"></div>
-        <div class="battle-candy"></div>
       </div>
       <div class="battle-actions">
         <button type="button" class="flee">Flee</button>
@@ -2899,10 +3336,6 @@
     const typesEl = el.querySelector('.battle-types');
     if (typesEl) {
       typesEl.innerHTML = typeChipsHtml(fusionTypesFor(spawn.speciesA, spawn.speciesB));
-    }
-    const candyEl = el.querySelector('.battle-candy');
-    if (candyEl) {
-      candyEl.innerHTML = candyTallyHtml(spawn.speciesA, spawn.speciesB);
     }
     const img = el.querySelector('img.battle-sprite');
     // Reset previous state.
@@ -3256,7 +3689,7 @@
 
   global.Creatures = {
     install, isEnabled: readEnabled,
-    getCandy: readCandy, getBag: readBag,
+    getCandy: readCandy, getBag: readBag, getTags: readTags,
     timeSinceLastSave,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

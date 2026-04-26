@@ -4239,6 +4239,7 @@ function fmtDate(ts) {
       candy: JSON.parse(localStorage.getItem('cc.candy.v1') || '{}'),
       candyMigrated: localStorage.getItem('cc.candyMigrated.speciesV1') === '1',
       bag: JSON.parse(localStorage.getItem('cc.bag.v1') || 'null'),
+      tags: JSON.parse(localStorage.getItem('cc.tags.v1') || '[]'),
       backupName: localStorage.getItem('cc.backupName') || null,
     };
   }
@@ -4396,6 +4397,20 @@ function fmtDate(ts) {
         if (v > (current[item] || 0)) current[item] = v;
       }
       localStorage.setItem('cc.bag.v1', JSON.stringify(current));
+    }
+    // Tags: union merge that keeps existing order and appends any new
+    // tags from the import. Per-creature tag membership rides along
+    // inside the `captured` array so it's already covered above.
+    if (Array.isArray(data.tags)) {
+      const current = JSON.parse(localStorage.getItem('cc.tags.v1') || '[]');
+      const existing = new Set(current);
+      for (const t of data.tags) {
+        if (typeof t === 'string' && t && !existing.has(t)) {
+          current.push(t);
+          existing.add(t);
+        }
+      }
+      localStorage.setItem('cc.tags.v1', JSON.stringify(current));
     }
     if (data.creatureSortBy && !localStorage.getItem('cc.creatureSortBy')) {
       localStorage.setItem('cc.creatureSortBy', data.creatureSortBy);
