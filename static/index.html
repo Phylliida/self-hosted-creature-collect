@@ -1694,7 +1694,7 @@
     grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
     gap: 8px;
     margin: 2px 0 10px;
-    max-height: 260px;
+    max-height: 230px;
     overflow-y: auto;
     padding: 2px;
   }
@@ -2602,6 +2602,7 @@
         <input type="file" id="importFile" accept=".json,application/json" style="display:none">
       </span>
     </div>
+    <div id="backupStatus" style="font-size: 11px; color: var(--ui-muted); margin: -4px 0 6px;"></div>
     <div class="attribution" style="margin-top: 14px; padding-top: 10px;
          border-top: 1px solid var(--ui-hairline); font-size: 11px; color: var(--ui-muted);
          line-height: 1.5;">
@@ -3780,6 +3781,7 @@ function fmtDate(ts) {
       b.onclick = () => {
         document.getElementById('settingsPanel').classList.add('show');
         if (typeof updateMemBadge === 'function') updateMemBadge();
+        if (typeof updateBackupStatus === 'function') updateBackupStatus();
       };
       c.appendChild(b);
       return c;
@@ -4235,6 +4237,7 @@ function fmtDate(ts) {
       caughtSpawnIds: JSON.parse(localStorage.getItem('cc.caughtSpawnIds') || '[]'),
       seenFusions: JSON.parse(localStorage.getItem('cc.seenFusions') || '{}'),
       candy: JSON.parse(localStorage.getItem('cc.candy.v1') || '{}'),
+      bag: JSON.parse(localStorage.getItem('cc.bag.v1') || 'null'),
       backupName: localStorage.getItem('cc.backupName') || null,
     };
   }
@@ -4268,6 +4271,10 @@ function fmtDate(ts) {
       });
       const body = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+      // Successful save — record the timestamp so the inventory's
+      // "save reminder" banner stays hidden for the next 7 days.
+      localStorage.setItem('cc.lastSaveAt', String(Date.now()));
+      updateBackupStatus();
       alert(`Saved to server as ${body.saved || name + '.json'}`);
     } catch (e) {
       alert('Save failed: ' + (e && e.message ? e.message : e));
@@ -4367,6 +4374,18 @@ function fmtDate(ts) {
         if (v > (current[type] || 0)) current[type] = v;
       }
       localStorage.setItem('cc.candy.v1', JSON.stringify(current));
+    }
+    // Bag: per-item max merge for the same reason — idempotent
+    // re-imports + combining devices keeps the higher count. Bag is
+    // null in payloads from before items existed; skip in that case
+    // so the local starter pack isn't disturbed.
+    if (data.bag && typeof data.bag === 'object') {
+      const current = JSON.parse(localStorage.getItem('cc.bag.v1') || '{}');
+      for (const [item, n] of Object.entries(data.bag)) {
+        const v = Number(n) || 0;
+        if (v > (current[item] || 0)) current[item] = v;
+      }
+      localStorage.setItem('cc.bag.v1', JSON.stringify(current));
     }
     if (data.creatureSortBy && !localStorage.getItem('cc.creatureSortBy')) {
       localStorage.setItem('cc.creatureSortBy', data.creatureSortBy);
@@ -8178,6 +8197,22 @@ function fmtDate(ts) {
       else localStorage.removeItem('cc.backupName');
     });
   }
+
+  // Backup status: small line under the backup row that clarifies Save
+  // is one of the few actions in this PWA that uses the network, and
+  // surfaces the time since last save so users know if they're due
+  // for a backup. Re-rendered on settings open + after a save.
+  function updateBackupStatus() {
+    const el = document.getElementById('backupStatus');
+    if (!el) return;
+    const info = window.Creatures && window.Creatures.timeSinceLastSave
+      ? window.Creatures.timeSinceLastSave() : null;
+    const tail = info
+      ? `Last saved ${info.label}.`
+      : `Never saved yet.`;
+    el.textContent = `Save uploads to the server (uses data). ${tail}`;
+  }
+  updateBackupStatus();
 
   // Creature sprite bulk download: fetches all 150 fusion sheets, crops
   // every (a, b) pair for a, b in [1,150] into the IDB icon cache, and

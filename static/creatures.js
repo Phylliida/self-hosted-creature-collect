@@ -17,6 +17,8 @@
   const SEEN_FUSIONS_KEY = 'cc.seenFusions';
   const CANDY_KEY = 'cc.candy.v1';
   const BAG_KEY = 'cc.bag.v1';
+  const LAST_SAVE_KEY = 'cc.lastSaveAt';
+  const SAVE_REMINDER_DAYS = 7;
 
   // Item catalog. Bag is stored as a flat `{ <key>: <count> }` map (same
   // shape as candy); this catalog maps keys to display names so future
@@ -68,6 +70,23 @@
       candy[t] = (candy[t] || 0) + inc;
     }
     writeCandy(candy);
+  }
+
+  // Item bag. Same shape as candy: `{ <itemKey>: <count> }` flat map.
+  // First-ever read seeds STARTER_BAG so existing players get spheres
+  // on next load. Subsequent reads return whatever's there (including
+  // empty `{}` if the user spent everything — no auto re-seed).
+  function readBag() {
+    const raw = localStorage.getItem(BAG_KEY);
+    if (raw === null) {
+      const seed = { ...STARTER_BAG };
+      writeBag(seed);
+      return seed;
+    }
+    try { return JSON.parse(raw) || {}; } catch { return {}; }
+  }
+  function writeBag(map) {
+    localStorage.setItem(BAG_KEY, JSON.stringify(map));
   }
 
   // Caught spawn IDs — once a spawn has been captured locally, we don't
@@ -810,7 +829,8 @@
       #creatureInventory .detail-back,
       #creatureInventory .pokedex-back,
       #creatureInventory .fusion-back,
-      #creatureInventory .candy-back {
+      #creatureInventory .candy-back,
+      #creatureInventory .bag-back {
         background: none;
         border: none;
         color: var(--ui-text, #111);
@@ -824,7 +844,8 @@
       #creatureInventory .detail-back:hover,
       #creatureInventory .pokedex-back:hover,
       #creatureInventory .fusion-back:hover,
-      #creatureInventory .candy-back:hover {
+      #creatureInventory .candy-back:hover,
+      #creatureInventory .bag-back:hover {
         color: var(--ui-accent, #888);
       }
       #creatureInventory .detail-art {
@@ -1025,6 +1046,48 @@
         color: var(--ui-muted, #666);
         font-size: 13px;
       }
+      #creatureInventory .bag-view { display: none; }
+      #creatureInventory .bag-view.show { display: block; }
+      #creatureInventory .bag-title {
+        font-size: 16px; font-weight: 600;
+        text-align: center; margin: 0 0 4px;
+      }
+      #creatureInventory .bag-subtitle {
+        font-size: 12px; color: var(--ui-muted, #666);
+        text-align: center; margin: 0 0 14px;
+      }
+      #creatureInventory .bag-list {
+        display: flex; flex-direction: column; gap: 6px;
+      }
+      #creatureInventory .bag-row {
+        display: flex; align-items: flex-start; gap: 10px;
+        padding: 10px;
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+        border: 1px solid var(--ui-hairline, rgba(0,0,0,0.08));
+        border-radius: var(--ui-radius, 8px);
+      }
+      #creatureInventory .bag-row .bag-info {
+        flex: 1; display: flex; flex-direction: column; gap: 2px;
+      }
+      #creatureInventory .bag-row .bag-name {
+        font-size: 14px; font-weight: 600;
+        color: var(--ui-text, #111);
+      }
+      #creatureInventory .bag-row .bag-desc {
+        font-size: 12px; color: var(--ui-muted, #666);
+      }
+      #creatureInventory .bag-row .bag-count {
+        font-size: 14px; font-weight: 600;
+        color: var(--ui-text, #111);
+        font-variant-numeric: tabular-nums;
+        align-self: center;
+      }
+      #creatureInventory .bag-empty {
+        padding: 20px 8px;
+        text-align: center;
+        color: var(--ui-muted, #666);
+        font-size: 13px;
+      }
       #creatureInventory .pokedex-header {
         display: flex; align-items: center; gap: 8px;
         margin-bottom: 10px;
@@ -1157,7 +1220,8 @@
       }
       #creatureInventory .browse-header h3 { margin: 0; flex: 1; }
       #creatureInventory .pokedex-link,
-      #creatureInventory .candy-link {
+      #creatureInventory .candy-link,
+      #creatureInventory .bag-link {
         background: transparent;
         border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
         border-radius: var(--ui-radius, 8px);
@@ -1168,7 +1232,8 @@
         font-family: inherit;
       }
       #creatureInventory .pokedex-link:hover,
-      #creatureInventory .candy-link:hover {
+      #creatureInventory .candy-link:hover,
+      #creatureInventory .bag-link:hover {
         background: var(--ui-hover, rgba(0,0,0,0.04));
       }
       #creatureInventory .weather-bar {
@@ -1194,6 +1259,28 @@
         line-height: 1.4;
       }
       #creatureInventory .weather-warning b { color: #c66200; }
+      #creatureInventory .save-reminder {
+        display: none;
+        margin: 0 0 12px;
+        font-size: 12px;
+        color: var(--ui-text, #111);
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
+        border-radius: var(--ui-radius, 8px);
+        padding: 8px 10px;
+        line-height: 1.4;
+        cursor: pointer;
+        text-align: center;
+        font-family: inherit;
+        width: 100%;
+        box-sizing: border-box;
+      }
+      #creatureInventory .save-reminder.show { display: block; }
+      #creatureInventory .save-reminder:hover {
+        background: var(--ui-bg, #fff);
+        border-color: var(--ui-text, #111);
+      }
+      #creatureInventory .save-reminder b { color: var(--ui-accent, #888); }
       #creatureInventory .detail-art img.detail-art-img {
         width: 100%; height: 100%; object-fit: contain;
         image-rendering: pixelated; image-rendering: crisp-edges;
@@ -1376,10 +1463,12 @@
         <div class="browse-view">
           <div class="browse-header">
             <h3>Creatures</h3>
+            <button class="bag-link" type="button">Bag</button>
             <button class="candy-link" type="button">Candy</button>
             <button class="pokedex-link" type="button">Dex</button>
           </div>
           <div class="weather-bar"></div>
+          <button class="save-reminder" type="button"></button>
           <div class="search-row">
             <input id="creatureSearch" type="search" placeholder="Search by name" autocomplete="off">
           </div>
@@ -1503,6 +1592,11 @@
           <div class="candy-body"></div>
           <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
+        <div class="bag-view">
+          <button class="bag-back" type="button" aria-label="back">←</button>
+          <div class="bag-body"></div>
+          <div class="actions"><button class="close" type="button">Done</button></div>
+        </div>
       </div>
     `;
     panel.addEventListener('click', (e) => {
@@ -1556,8 +1650,11 @@
     panel.querySelector('.pokedex-back').addEventListener('click', popView);
     panel.querySelector('.fusion-back').addEventListener('click', popView);
     panel.querySelector('.candy-back').addEventListener('click', popView);
+    panel.querySelector('.bag-back').addEventListener('click', popView);
     panel.querySelector('.pokedex-link').addEventListener('click', () => showPokedex());
     panel.querySelector('.candy-link').addEventListener('click', () => showCandy());
+    panel.querySelector('.bag-link').addEventListener('click', () => showBag());
+    panel.querySelector('.save-reminder').addEventListener('click', openSettingsFromInventory);
 
     // Pokédex card → fusion sub-view (delegated; cards are re-rendered).
     const pokedexGrid = panel.querySelector('.pokedex-grid');
@@ -1644,6 +1741,7 @@
     panel.querySelector('.pokedex-view').classList.remove('show');
     panel.querySelector('.fusion-view').classList.remove('show');
     panel.querySelector('.candy-view').classList.remove('show');
+    panel.querySelector('.bag-view').classList.remove('show');
     switch (top.view) {
       case 'browse':
         panel.querySelector('.browse-view').style.display = '';
@@ -1682,6 +1780,10 @@
         renderCandy();
         panel.querySelector('.candy-view').classList.add('show');
         return;
+      case 'bag':
+        renderBag();
+        panel.querySelector('.bag-view').classList.add('show');
+        return;
     }
   }
 
@@ -1719,6 +1821,57 @@
 
   function showCandy() {
     pushView({ view: 'candy' });
+  }
+
+  function showBag() {
+    pushView({ view: 'bag' });
+  }
+
+  // Bag view: row per item with name + description + count. Sorted by
+  // count descending so the user's stockpiles surface first; ties are
+  // broken alphabetically by display name. Items with no catalog entry
+  // (e.g. forward-compat from a future build) still render via their
+  // raw key so nothing silently disappears.
+  function renderBag() {
+    const panel = document.getElementById('creatureInventory');
+    if (!panel) return;
+    const body = panel.querySelector('.bag-body');
+    if (!body) return;
+    const bag = readBag();
+    const entries = Object.entries(bag)
+      .filter(([, n]) => n > 0)
+      .sort((a, b) => {
+        if (b[1] !== a[1]) return b[1] - a[1];
+        const na = (ITEMS[a[0]] && ITEMS[a[0]].name) || a[0];
+        const nb = (ITEMS[b[0]] && ITEMS[b[0]].name) || b[0];
+        return na.localeCompare(nb);
+      });
+    if (!entries.length) {
+      body.innerHTML = `
+        <div class="bag-title">Bag</div>
+        <div class="bag-empty">Bag is empty.</div>
+      `;
+      return;
+    }
+    const total = entries.reduce((sum, [, n]) => sum + n, 0);
+    const subtitle = `${total} item${total === 1 ? '' : 's'} across ${entries.length} type${entries.length === 1 ? '' : 's'}`;
+    const rows = entries.map(([key, n]) => {
+      const meta = ITEMS[key] || { name: key, desc: '' };
+      return `
+        <div class="bag-row">
+          <div class="bag-info">
+            <div class="bag-name">${escapeHtml(meta.name)}</div>
+            ${meta.desc ? `<div class="bag-desc">${escapeHtml(meta.desc)}</div>` : ''}
+          </div>
+          <div class="bag-count">×${n}</div>
+        </div>
+      `;
+    }).join('');
+    body.innerHTML = `
+      <div class="bag-title">Bag</div>
+      <div class="bag-subtitle">${escapeHtml(subtitle)}</div>
+      <div class="bag-list">${rows}</div>
+    `;
   }
 
   // Candy view: type-chip rows with cumulative counts. Sorted by count
@@ -2281,8 +2434,62 @@
     </div>`;
   }
 
+  // Format a duration as "Xs ago", "X minutes ago", "X hours ago",
+  // "X days ago" — coarse but readable. Used both in the inventory
+  // save-reminder banner and the Settings backup status line.
+  function formatTimeAgo(ms) {
+    const sec = Math.max(0, Math.floor(ms / 1000));
+    if (sec < 60) return `${sec}s ago`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min} minute${min === 1 ? '' : 's'} ago`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return `${hr} hour${hr === 1 ? '' : 's'} ago`;
+    const day = Math.floor(hr / 24);
+    return `${day} day${day === 1 ? '' : 's'} ago`;
+  }
+  // Returns null if save has never run, otherwise
+  // { last, ageMs, label } where label is the formatTimeAgo string.
+  function timeSinceLastSave() {
+    const raw = localStorage.getItem(LAST_SAVE_KEY);
+    if (!raw) return null;
+    const last = Number(raw);
+    if (!isFinite(last) || last <= 0) return null;
+    const ageMs = Date.now() - last;
+    return { last, ageMs, label: formatTimeAgo(ageMs) };
+  }
+
+  // Save reminder: shown at the top of the browse view (below the
+  // weather chips) when the user has never pressed Save in Settings,
+  // or when the last save was more than SAVE_REMINDER_DAYS ago.
+  // Tapping the banner pops the creature panel and opens Settings so
+  // the user can enter a name + press Save without hunting for it.
+  // The copy explicitly notes that Save uses data — Save is one of
+  // the few things in this app that hits the network at all (per the
+  // zero-data PWA rule everywhere else).
+  function renderSaveReminder() {
+    const panel = document.getElementById('creatureInventory');
+    if (!panel) return;
+    const el = panel.querySelector('.save-reminder');
+    if (!el) return;
+    const info = timeSinceLastSave();
+    const stale = !info || info.ageMs > SAVE_REMINDER_DAYS * 24 * 60 * 60 * 1000;
+    if (!stale) { el.classList.remove('show'); return; }
+    const msg = !info
+      ? `<b>Saving uses data</b> — recommended weekly. Tap to enter your name and Save in Settings.`
+      : `<b>Saving uses data</b> — last saved ${escapeHtml(info.label)}. Tap to back up in Settings.`;
+    el.innerHTML = msg;
+    el.classList.add('show');
+  }
+
+  function openSettingsFromInventory() {
+    hide();
+    const sp = document.getElementById('settingsPanel');
+    if (sp) sp.classList.add('show');
+  }
+
   function renderList(listEl) {
     renderWeatherBar();
+    renderSaveReminder();
     const searchEl = document.getElementById('creatureSearch');
     const q = (searchEl && searchEl.value || '').trim().toLowerCase();
     let items = sortedCreatures();
@@ -2805,5 +3012,9 @@
     };
   }
 
-  global.Creatures = { install, isEnabled: readEnabled, getCandy: readCandy };
+  global.Creatures = {
+    install, isEnabled: readEnabled,
+    getCandy: readCandy, getBag: readBag,
+    timeSinceLastSave,
+  };
 })(typeof window !== 'undefined' ? window : globalThis);

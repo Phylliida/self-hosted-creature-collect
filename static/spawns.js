@@ -78,13 +78,17 @@
   const LAT_MOD = 5001;                  // prime wrap-around for hash
   const LON_MOD = 5503;
   const TICK_MS = 60 * 1000;             // birth-tick granularity (1 min)
-  const LIFETIME_MS = 5 * 60 * 1000;     // each spawn lives 5 min
-  const LIFETIME_TICKS = Math.ceil(LIFETIME_MS / TICK_MS);  // 5
+  const LIFETIME_MS = 10 * 60 * 1000;    // each spawn lives 10 min
+  const LIFETIME_TICKS = Math.ceil(LIFETIME_MS / TICK_MS);  // 10
   const DAY_SALT = 0x1F3B2C;             // bump to invalidate every seed
-  // Probability a given (cell, tick) hosts a spawn. Tuned so expected
-  // active count ≈ pHit × LIFETIME_TICKS roughly matches the prior
-  // fixed-bucket density (~2% of cells active at any time).
-  const SPAWN_CHANCE_PER_TICK = 0.0032;
+  // Probability a given (cell, tick) hosts a spawn. Visible-density
+  // factor is pHit × LIFETIME_TICKS — the count of spawns active in a
+  // cell at any moment averages this. Doubling lifetime + halving the
+  // hit probability keeps this product constant (0.0016 × 10 = 0.016,
+  // same as the prior 0.0032 × 5), so walking density is unchanged
+  // — but stationary players see new spawns appear half as often,
+  // since each (cell, tick) roll is now half as likely to hit.
+  const SPAWN_CHANCE_PER_TICK = 0.0016;
   const SPECIES_MAX = 150;               // v1 sprite download is sheets 1–150
   const MAX_CELLS = 40000;               // bail when zoomed out too far
 
