@@ -16,12 +16,35 @@
   const CAUGHT_SPAWNS_KEY = 'cc.caughtSpawnIds';
   const SEEN_FUSIONS_KEY = 'cc.seenFusions';
   const CANDY_KEY = 'cc.candy.v1';
-  // Bumped from type-keyed (FIRE/WATER/...) to species-keyed (numeric
-  // species indices). Migration is lazy: first call to readCandy after
-  // deploy clears the old type-keyed candy and replays every captured
-  // creature through the new species-level award logic. Flag travels
-  // in the export/import payload so a re-import doesn't re-trigger.
-  const CANDY_MIGRATED_KEY = 'cc.candyMigrated.speciesV1';
+  // Candy is keyed by an evolution-family ROOT species index — every
+  // species in a family contributes to (and reads from) the same
+  // bucket. The flag below tracks the latest schema version; if it's
+  // missing on read, readCandy clears the map and replays every
+  // captured creature through the current award logic. Travels in
+  // the export/import payload so re-imports don't re-trigger.
+  //
+  // History:
+  //   cc.candyMigrated.speciesV1 (deprecated): one bucket per species
+  //   cc.candyMigrated.familyV1  (deprecated): family-root, no baby skip
+  //   cc.candyMigrated.familyV2  (current):    family-root, babies promoted
+  const CANDY_MIGRATED_KEY = 'cc.candyMigrated.familyV2';
+  // Known baby species that should NOT serve as a candy root — the
+  // bucket promotes past them to the next stage so e.g. a Cleffa line
+  // contributes "Clefairy candy", not "Cleffa candy". Even though our
+  // current spawn pool is gen-1-only, gen-2 baby pre-evolutions still
+  // sit at the head of evolution chains for gen-1 species (Cleffa →
+  // Clefairy, Pichu → Pikachu, etc.), so familyOf walks back to them
+  // and they need to be filtered out of root selection.
+  const CANDY_ROOT_BABIES = new Set([
+    172, // Pichu       → Pikachu
+    173, // Cleffa      → Clefairy
+    174, // Igglybuff   → Jigglypuff
+    175, // Togepi      → Togetic (Togepi treated as baby for consistency)
+    236, // Tyrogue     → Hitmonlee/Hitmonchan/Hitmontop
+    238, // Smoochum    → Jynx
+    239, // Elekid      → Electabuzz
+    240, // Magby       → Magmar
+  ]);
   const BAG_KEY = 'cc.bag.v1';
   const TAGS_KEY = 'cc.tags.v1';
   const TAG_MAX_LEN = 8;
@@ -55,15 +78,17 @@
     localStorage.setItem(CAPTURED_KEY, JSON.stringify(arr));
   }
 
-  // Candy: earned per-capture, keyed by SPECIES INDEX (not type).
-  // Stored as a plain `{ <speciesIdxStr>: <count> }` map.
+  // Candy: earned per-capture, keyed by EVOLUTION-FAMILY ROOT (a
+  // species index). Stored as `{ <rootIdxStr>: <count> }`. Charizard
+  // and Charmander both contribute to (and consume) "Charmander
+  // candy" because they share a family root.
   //
-  // Award rule:
-  //   A === B  → 2 candy of that one species
-  //   A !== B  → uniform random over three outcomes:
-  //                 2 candy of A, OR
-  //                 2 candy of B, OR
-  //                 1 candy of A and 1 candy of B
+  // Award rule (post-promotion to roots):
+  //   rootA === rootB  → 2 candy of that one root
+  //   rootA !== rootB  → uniform random over three outcomes:
+  //                        2 candy of rootA, OR
+  //                        2 candy of rootB, OR
+  //                        1 candy of rootA and 1 candy of rootB
   //
   // No spend mechanism yet — saved against a future evolve / item
   // mechanic.
@@ -82,30 +107,51 @@
     map[k] = (map[k] || 0) + n;
     writeCandy(map);
   }
+  // Walk a species' evolution family and return the index that all
+  // members of the family share their candy bucket under: the earliest
+  // non-baby form. If species data isn't loaded yet, falls back to the
+  // species itself — the migration step below is gated on data being
+  // loaded so a temporary fallback doesn't poison the canonical map.
+  function candyRootFor(idx) {
+    if (idx == null) return idx;
+    if (!global.Species || !global.Species.familyOf) return idx;
+    const family = global.Species.familyOf(idx);
+    if (!family || !family.length) return idx;
+    let i = 0;
+    while (i < family.length - 1 && CANDY_ROOT_BABIES.has(family[i])) {
+      i++;
+    }
+    return family[i];
+  }
   function awardCandyForCapture(speciesA, speciesB) {
     if (speciesA == null || speciesB == null) return;
-    if (speciesA === speciesB) {
-      bumpCandy(speciesA, 2);
+    const rootA = candyRootFor(speciesA);
+    const rootB = candyRootFor(speciesB);
+    if (rootA === rootB) {
+      bumpCandy(rootA, 2);
       return;
     }
     const r = Math.random();
     if (r < 1 / 3) {
-      bumpCandy(speciesA, 2);
+      bumpCandy(rootA, 2);
     } else if (r < 2 / 3) {
-      bumpCandy(speciesB, 2);
+      bumpCandy(rootB, 2);
     } else {
-      bumpCandy(speciesA, 1);
-      bumpCandy(speciesB, 1);
+      bumpCandy(rootA, 1);
+      bumpCandy(rootB, 1);
     }
   }
-  // One-shot migration from type-keyed candy to species-keyed candy.
-  // Lazy: triggered by readCandy on first call when the flag is unset.
-  // Clears any existing type-keyed candy and replays every captured
-  // creature through awardCandyForCapture so the user ends up with a
-  // species-candy distribution that matches their full play history
-  // under the new rules.
+  // One-shot lazy migration to the current candy schema (family-root
+  // keyed). Triggered from readCandy on first call when the flag is
+  // unset. Gated on Species data being loaded — without it,
+  // candyRootFor falls back to the species idx and we'd produce a
+  // bad species-keyed map. Clears any existing candy and replays
+  // every captured creature through awardCandyForCapture so the user
+  // ends up with a distribution matching their full play history
+  // under the current rules.
   function migrateCandyIfNeeded() {
     if (localStorage.getItem(CANDY_MIGRATED_KEY) === '1') return;
+    if (!global.Species || !global.Species.familyOf) return;
     writeCandy({});
     const captured = readCapturedCreatures();
     for (const c of captured) {
@@ -113,6 +159,10 @@
       awardCandyForCapture(c.speciesA, c.speciesB);
     }
     localStorage.setItem(CANDY_MIGRATED_KEY, '1');
+    // Clean up older schema flags so a stale entry can't quietly
+    // resurface if anything ever reads them by name.
+    localStorage.removeItem('cc.candyMigrated.speciesV1');
+    localStorage.removeItem('cc.candyMigrated.familyV1');
   }
   function readCandy() {
     migrateCandyIfNeeded();
@@ -433,15 +483,18 @@
     return `<div class="detail-tags">${chips}</div>`;
   }
 
-  // Inline candy tally for an opened pokémon. Mirrors the species-candy
-  // award rule visually: monotype fusion shows one pip, mixed fusion
-  // shows both. Reads the raw map (no migration trigger) — the candy
-  // view's read covers migration on first inspection.
+  // Inline candy tally for an opened pokémon. Pivots both species to
+  // their family roots first, then dedupes — so Charizard×Charmander
+  // shows a single "Charmander candy" pip (both sides share a root)
+  // and Growlithe×Vulpix shows both. Uses readCandy so opening a
+  // detail/fusion view triggers the lazy schema migration.
   function candyTallyHtml(speciesA, speciesB) {
     if (speciesA == null || speciesB == null) return '';
-    const candy = readCandyRaw();
-    const species = (speciesA === speciesB) ? [speciesA] : [speciesA, speciesB];
-    const parts = species.map((idx) => {
+    const candy = readCandy();
+    const rootA = candyRootFor(speciesA);
+    const rootB = candyRootFor(speciesB);
+    const roots = (rootA === rootB) ? [rootA] : [rootA, rootB];
+    const parts = roots.map((idx) => {
       const name = speciesNameFor(idx);
       const count = candy[String(idx)] || 0;
       return `<span class="candy-tally-pip">${escapeHtml(name)} candy <b>×${count}</b></span>`;
@@ -832,6 +885,19 @@
   }
   function writeInvTagFilter(arr) {
     localStorage.setItem('cc.invTagFilter', JSON.stringify(arr));
+  }
+  // Pokedex tag filter: only built-in tags are offered (user tags
+  // apply to specific captures, not abstract fusions). AND semantics
+  // — fusion must satisfy every selected tag's predicate.
+  function readPokedexTagFilter() {
+    try {
+      const raw = localStorage.getItem('cc.pokedexTagFilter');
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr : [];
+    } catch { return []; }
+  }
+  function writePokedexTagFilter(arr) {
+    localStorage.setItem('cc.pokedexTagFilter', JSON.stringify(arr));
   }
   // Shared list used to generate the type-filter <select> options for
   // both the Pokédex and the inventory. Pokédex's hardcoded options
@@ -1478,12 +1544,14 @@
         justify-content: center;
         margin: 6px 0 12px;
       }
-      #creatureInventory .inv-tag-filter-row {
+      #creatureInventory .inv-tag-filter-row,
+      #creatureInventory .pokedex-tag-filter-row {
         display: flex; flex-wrap: wrap; gap: 6px;
         justify-content: flex-start;
         margin: 6px 0 12px;
       }
-      #creatureInventory .inv-tag-filter-row:empty { display: none; }
+      #creatureInventory .inv-tag-filter-row:empty,
+      #creatureInventory .pokedex-tag-filter-row:empty { display: none; }
       #creatureInventory .detail-tag-chip,
       #creatureInventory .inv-tag-chip {
         display: inline-block;
@@ -1969,6 +2037,7 @@
             <label class="type-pair"><span>First:</span>${typeFilterSelectHtml('pokedexFilterTypeA')}</label>
             <label class="type-pair"><span>Second:</span>${typeFilterSelectHtml('pokedexFilterTypeB')}</label>
           </div>
+          <div class="pokedex-tag-filter-row"></div>
           <div class="sort-row">
             <label for="pokedexSortBy">Sort</label>
             <select id="pokedexSortBy">
@@ -2427,12 +2496,12 @@
       });
     const total = entries.reduce((sum, [, n]) => sum + n, 0);
     const subtitle = total > 0
-      ? `${total} candy across ${entries.length} species`
+      ? `${total} candy across ${entries.length} famil${entries.length === 1 ? 'y' : 'ies'}`
       : '';
     if (!entries.length) {
       body.innerHTML = `
         <div class="candy-title">Candy</div>
-        <div class="candy-empty">No candy yet — catch some creatures to earn candy of their species!</div>
+        <div class="candy-empty">No candy yet — catch some creatures to earn family candy!</div>
       `;
       return;
     }
@@ -2532,7 +2601,6 @@
       ${typesHtml}
       ${capturedHtml}
       ${encounterHtml}
-      ${candyTallyHtml(a, b)}
     `;
     body.querySelectorAll('.species-link').forEach((link) => {
       link.addEventListener('click', () => {
@@ -2611,10 +2679,39 @@
     '#creatureFilterTypeB',
   ];
 
+  // Pokedex tag-filter chip row. Only built-in tags appear here —
+  // user tags are per-capture and don't apply to abstract fusions.
+  // AND semantics on click (match every selected predicate).
+  function renderPokedexTagFilterRow() {
+    const panel = document.getElementById('creatureInventory');
+    if (!panel) return;
+    const row = panel.querySelector('.pokedex-tag-filter-row');
+    if (!row) return;
+    if (!BUILTIN_TAGS.length) { row.innerHTML = ''; return; }
+    const selected = new Set(readPokedexTagFilter());
+    row.innerHTML = BUILTIN_TAGS.map((b) => {
+      const t = b.name;
+      const cls = selected.has(t) ? 'inv-tag-chip applied' : 'inv-tag-chip';
+      return `<button class="${cls}" data-tag="${escapeHtml(t)}" type="button">${escapeHtml(t)}</button>`;
+    }).join('');
+    row.querySelectorAll('.inv-tag-chip').forEach((chip) => {
+      chip.addEventListener('click', () => {
+        const t = chip.dataset.tag;
+        if (!t) return;
+        const sel = readPokedexTagFilter();
+        const i = sel.indexOf(t);
+        if (i >= 0) sel.splice(i, 1); else sel.push(t);
+        writePokedexTagFilter(sel);
+        renderPokedex();
+      });
+    });
+  }
+
   function renderPokedex() {
     const panel = document.getElementById('creatureInventory');
     if (!panel) return;
     updateFilterIndicators(panel, POKEDEX_FILTER_SELECTORS);
+    renderPokedexTagFilterRow();
     const seen = readSeenFusions();
     const caught = caughtFusionsSet();
     let entries = Object.keys(seen).map((key) => {
@@ -2645,6 +2742,21 @@
         if (filterTypeB && types[1] !== filterTypeB) return false;
         return true;
       });
+    }
+    // Built-in tag filter (e.g. "Pure"). Predicates take a creature-
+    // shaped object — for the abstract pokedex entry we synthesize
+    // one from the (a, b) pair. AND semantics across selected tags.
+    const selectedPokedexTags = readPokedexTagFilter();
+    if (selectedPokedexTags.length) {
+      const preds = selectedPokedexTags
+        .map((name) => BUILTIN_TAGS.find((b) => b.name === name))
+        .filter(Boolean);
+      if (preds.length) {
+        entries = entries.filter((e) => {
+          const synthetic = { speciesA: e.a, speciesB: e.b };
+          return preds.every((b) => b.predicate(synthetic));
+        });
+      }
     }
 
     const nameOfLower = (idx) => global.Species
