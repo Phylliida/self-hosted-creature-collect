@@ -1654,6 +1654,22 @@
     box-shadow: 0 0 0 3px rgba(0,0,0,0.55), 0 2px 6px rgba(0,0,0,0.45);
   }
   .selected-marker.favorited .icon { filter: brightness(0) invert(1); }
+  /* Pokéstop cooldown states. Applied to the selected POI marker by
+     applyCooldownStyleToSelectedMarker — overrides the favorite color
+     so the cooldown signal stays the dominant visual. */
+  .selected-marker.cooldown-active {
+    background: #b0b0b0 !important;
+    border-color: #fff !important;
+  }
+  .selected-marker.cooldown-active .icon {
+    filter: grayscale(1) brightness(0.5);
+  }
+  .selected-marker.cooldown-ready {
+    background: #f5a3c4 !important;
+    border-color: #fff !important;
+    box-shadow: 0 0 0 2px rgba(245, 100, 160, 0.55), 0 2px 6px rgba(0,0,0,0.35);
+  }
+  .selected-marker.cooldown-ready .icon { filter: brightness(0) invert(1); }
   #poiCard {
     position: absolute; left: 8px; right: 68px; z-index: 12;
     top: calc(100px + env(safe-area-inset-top));
@@ -4595,6 +4611,30 @@ function fmtDate(ts) {
     const remain = POI_COOLDOWN_MS - (Date.now() - t);
     return remain > 0 ? remain : 0;
   }
+  // Returns: 'active' (gray, on cooldown), 'ready' (pink, collected
+  // before but cooldown elapsed), or 'none' (never collected here).
+  function poiCooldownStatus(lng, lat) {
+    const t = readPoiCooldowns()[poiCooldownKey(lng, lat)];
+    if (!t) return 'none';
+    return (Date.now() - t < POI_COOLDOWN_MS) ? 'active' : 'ready';
+  }
+  // Paint the currently-selected POI marker per its cooldown state.
+  // No-op outside creature mode (so the marker stays its default
+  // white/favorite-color in regular map use).
+  function applyCooldownStyleToSelectedMarker() {
+    if (!selectedMarker) return;
+    const el = selectedMarker.getElement();
+    if (!el) return;
+    el.classList.remove('cooldown-active', 'cooldown-ready');
+    const inCreatureMode = !!(window.Creatures && window.Creatures.isEnabled
+      && window.Creatures.isEnabled());
+    if (!inCreatureMode) return;
+    const stored = JSON.parse(localStorage.getItem(SELECTED_KEY) || 'null');
+    if (!stored) return;
+    const status = poiCooldownStatus(stored.lng, stored.lat);
+    if (status === 'active') el.classList.add('cooldown-active');
+    else if (status === 'ready') el.classList.add('cooldown-ready');
+  }
 
   // Live countdown for the Collect button while the POI card is open.
   // One interval at a time; self-stops when the card hides or the
@@ -4614,6 +4654,9 @@ function fmtDate(ts) {
     const stored = JSON.parse(localStorage.getItem(SELECTED_KEY) || 'null');
     if (!stored) return false;
     const remain = poiCooldownRemainingMs(stored.lng, stored.lat);
+    // Re-paint the map marker on every tick so it transitions from
+    // gray (active) to pink (ready) the moment the countdown ends.
+    applyCooldownStyleToSelectedMarker();
     if (remain <= 0) {
       collectBtn.disabled = false;
       collectBtn.innerHTML = '🎁 Collect items';
@@ -4757,6 +4800,12 @@ function fmtDate(ts) {
       };
     });
     card.classList.add('show');
+    // Pokéstop cooldown: if creature mode is on, sync the Collect
+    // button against this POI's stored cooldown (and start a live
+    // countdown if it's still active). Outside creature mode, make
+    // sure no stale countdown is left running.
+    if (inCreatureMode) startPoiCollectCountdown();
+    else stopPoiCollectCountdown();
   }
 
   function setSelected(poi, opts = {}) {
@@ -4783,6 +4832,7 @@ function fmtDate(ts) {
       .addTo(map);
     localStorage.setItem(SELECTED_KEY, JSON.stringify(poi));
     renderPoiCard(poi);
+    applyCooldownStyleToSelectedMarker();
     if (opts.flyTo) {
       map.flyTo({ center: [poi.lng, poi.lat], zoom: Math.max(map.getZoom(), 16) });
     }
@@ -5869,12 +5919,21 @@ function fmtDate(ts) {
   document.getElementById('poiCardDirectionsTop').onclick = openDirectionsForSelectedPoi;
 
   // POI "Collect items" — start of the pokestop system. For now,
-  // every press grants 1 capture sphere with no cooldown. Cooldowns,
-  // varied loot, and rate-limiting come in a follow-up iteration.
+  // every press grants 1 capture sphere and sets a 10-min cooldown
+  // on this POI so it can't be re-farmed instantly. The cooldown
+  // is read on demand whenever the POI card opens; no global timers
+  // (the only running timer is the per-card countdown in
+  // startPoiCollectCountdown, which self-stops on close/expiry).
   document.getElementById('poiCardCollect').onclick = () => {
     if (!(window.Creatures && window.Creatures.grantItem)) return;
+    const stored = JSON.parse(localStorage.getItem(SELECTED_KEY) || 'null');
+    if (!stored) return;
+    if (poiCooldownRemainingMs(stored.lng, stored.lat) > 0) return;
     window.Creatures.grantItem('capture_sphere', 1);
+    markPoiCollected(stored.lng, stored.lat);
+    applyCooldownStyleToSelectedMarker();
     document.getElementById('poiCard').classList.remove('show');
+    stopPoiCollectCountdown();
   };
 
   favorites = await loadAllFavorites();
