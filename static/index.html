@@ -1765,11 +1765,37 @@
     color: var(--ui-muted); padding: 4px 6px; opacity: 0.6;
   }
   #poiCardFav.favorited { color: #e53935; opacity: 1; }
-  #poiCardDirections {
+  /* Top-left icon-only directions button. Hidden by default; shown
+     only when the POI card is in creature mode. The favorite star
+     also slides over to sit immediately to its right in that mode. */
+  #poiCardDirectionsTop {
+    position: absolute; top: 6px; left: 6px;
+    background: none; border: none; cursor: pointer;
+    font-size: 20px; line-height: 1;
+    color: var(--ui-muted); padding: 4px 6px;
+    display: none;
+  }
+  #poiCard.creature-mode #poiCardDirectionsTop { display: block; }
+  #poiCard.creature-mode #poiCardFav {
+    /* Sit immediately to the right of the top-left directions
+       button instead of in the top-right cluster. */
+    left: 38px; right: auto;
+  }
+  #poiCard.creature-mode #poiCardName {
+    /* Make room for the two top-left icons. */
+    padding-left: 64px;
+  }
+  #poiCardDirections,
+  #poiCardCollect {
     margin-top: 10px; padding: 8px 14px;
     font-size: 13px; cursor: pointer;
     width: 100%; font-weight: 600;
   }
+  /* Bottom button swap: Directions outside creature mode,
+     Collect items inside creature mode. Exactly one is ever visible. */
+  #poiCardCollect { display: none; }
+  #poiCard.creature-mode #poiCardDirections { display: none; }
+  #poiCard.creature-mode #poiCardCollect { display: block; }
   #directionsPanel {
     position: absolute; left: 8px; right: 8px; z-index: 13;
     bottom: calc(8px + env(safe-area-inset-bottom));
@@ -2396,11 +2422,13 @@
 </div>
 <div id="poiCard">
   <button id="poiCardClose" aria-label="close">×</button>
+  <button id="poiCardDirectionsTop" type="button" aria-label="directions" title="directions"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="display:block;margin:auto"><path d="M19 15l-6 6-1.4-1.4 3.6-3.6H4V6h2v8h9.2l-3.6-3.6L13 9l6 6z"/></svg></button>
   <button id="poiCardFav" aria-label="favorite">☆</button>
   <div id="poiCardName"></div>
   <div id="poiCardMeta"></div>
   <div id="poiCardBody"></div>
-  <button id="poiCardDirections" type="button">🧭 Directions</button>
+  <button id="poiCardDirections" type="button"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-2px;margin-right:6px"><path d="M19 15l-6 6-1.4-1.4 3.6-3.6H4V6h2v8h9.2l-3.6-3.6L13 9l6 6z"/></svg>Directions</button>
+  <button id="poiCardCollect" type="button">🎁 Collect items</button>
 </div>
 <div id="routingPanel">
   <div class="header">
@@ -4530,9 +4558,94 @@ function fmtDate(ts) {
     return null;
   }
 
+  // POI cooldowns for the pokéstop "Collect items" button. Stored as
+  // `{ "<lng>,<lat>": <lastCollectedMs>, ... }` in localStorage; an
+  // entry is considered active while now - last < POI_COOLDOWN_MS.
+  // We read on demand (whenever the POI card opens or the live
+  // countdown ticks) — no global timers; the only running timer is
+  // the per-card countdown that self-stops when the card closes or
+  // the cooldown expires.
+  const POI_COOLDOWN_MS = 10 * 60 * 1000;
+  const POI_COOLDOWNS_KEY = 'cc.poiCooldowns.v1';
+  const poiCooldownKey = (lng, lat) => `${lng.toFixed(5)},${lat.toFixed(5)}`;
+  function readPoiCooldowns() {
+    try {
+      const raw = localStorage.getItem(POI_COOLDOWNS_KEY);
+      const obj = raw ? JSON.parse(raw) : {};
+      return (obj && typeof obj === 'object') ? obj : {};
+    } catch { return {}; }
+  }
+  function writePoiCooldowns(map) {
+    localStorage.setItem(POI_COOLDOWNS_KEY, JSON.stringify(map));
+  }
+  function markPoiCollected(lng, lat) {
+    const map = readPoiCooldowns();
+    // Prune expired entries opportunistically so the map can't grow
+    // unbounded across long play sessions.
+    const now = Date.now();
+    for (const k of Object.keys(map)) {
+      if (now - map[k] > POI_COOLDOWN_MS) delete map[k];
+    }
+    map[poiCooldownKey(lng, lat)] = now;
+    writePoiCooldowns(map);
+  }
+  function poiCooldownRemainingMs(lng, lat) {
+    const t = readPoiCooldowns()[poiCooldownKey(lng, lat)];
+    if (!t) return 0;
+    const remain = POI_COOLDOWN_MS - (Date.now() - t);
+    return remain > 0 ? remain : 0;
+  }
+
+  // Live countdown for the Collect button while the POI card is open.
+  // One interval at a time; self-stops when the card hides or the
+  // cooldown reaches zero.
+  let _poiCooldownTimer = null;
+  function stopPoiCollectCountdown() {
+    if (_poiCooldownTimer != null) {
+      clearInterval(_poiCooldownTimer);
+      _poiCooldownTimer = null;
+    }
+  }
+  function syncPoiCollectButton() {
+    const card = document.getElementById('poiCard');
+    const collectBtn = document.getElementById('poiCardCollect');
+    if (!card || !collectBtn) return false;
+    if (!card.classList.contains('show')) return false;
+    const stored = JSON.parse(localStorage.getItem(SELECTED_KEY) || 'null');
+    if (!stored) return false;
+    const remain = poiCooldownRemainingMs(stored.lng, stored.lat);
+    if (remain <= 0) {
+      collectBtn.disabled = false;
+      collectBtn.innerHTML = '🎁 Collect items';
+      return false; // no countdown needed
+    }
+    collectBtn.disabled = true;
+    const sec = Math.ceil(remain / 1000);
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    collectBtn.textContent = `Available in ${m}:${String(s).padStart(2, '0')}`;
+    return true; // still ticking
+  }
+  function startPoiCollectCountdown() {
+    stopPoiCollectCountdown();
+    if (!syncPoiCollectButton()) return;
+    _poiCooldownTimer = setInterval(() => {
+      if (!syncPoiCollectButton()) stopPoiCollectCountdown();
+    }, 1000);
+  }
+
   function renderPoiCard(poi) {
     const card = document.getElementById('poiCard');
-    if (!poi) { card.classList.remove('show'); return; }
+    if (!poi) {
+      card.classList.remove('show');
+      stopPoiCollectCountdown();
+      return;
+    }
+    // Creature-mode swaps: top-left directions icon visible, star
+    // moves next to it, bottom button becomes "Collect items".
+    const inCreatureMode = !!(window.Creatures && window.Creatures.isEnabled
+      && window.Creatures.isEnabled());
+    card.classList.toggle('creature-mode', inCreatureMode);
     document.getElementById('poiCardName').textContent = poiDisplayName(poi);
     const favBtn = document.getElementById('poiCardFav');
     const fav = findFavorite(poi.lng, poi.lat);
@@ -5741,7 +5854,7 @@ function fmtDate(ts) {
   }
   routingGo.onclick = runRoutingPlan;
 
-  document.getElementById('poiCardDirections').onclick = () => {
+  function openDirectionsForSelectedPoi() {
     const stored = JSON.parse(localStorage.getItem(SELECTED_KEY) || 'null');
     if (!stored) return;
     const toEp = { kind: 'poi', name: stored.name, lng: stored.lng, lat: stored.lat,
@@ -5750,6 +5863,17 @@ function fmtDate(ts) {
       to: toEp,
       from: lastKnownPos ? { kind: 'my-location' } : null,
     });
+    document.getElementById('poiCard').classList.remove('show');
+  }
+  document.getElementById('poiCardDirections').onclick = openDirectionsForSelectedPoi;
+  document.getElementById('poiCardDirectionsTop').onclick = openDirectionsForSelectedPoi;
+
+  // POI "Collect items" — start of the pokestop system. For now,
+  // every press grants 1 capture sphere with no cooldown. Cooldowns,
+  // varied loot, and rate-limiting come in a follow-up iteration.
+  document.getElementById('poiCardCollect').onclick = () => {
+    if (!(window.Creatures && window.Creatures.grantItem)) return;
+    window.Creatures.grantItem('capture_sphere', 1);
     document.getElementById('poiCard').classList.remove('show');
   };
 
