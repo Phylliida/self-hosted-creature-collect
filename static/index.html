@@ -1817,6 +1817,26 @@
   #poiCardCollect { display: none; }
   #poiCard.creature-mode #poiCardDirections { display: none; }
   #poiCard.creature-mode #poiCardCollect { display: block; }
+  /* Loot animation: shown briefly inside the collect button after a
+     successful collect, before the card auto-closes. Each item icon
+     bounces in via collect-pop, with a stagger so they appear one
+     after another instead of all at once. */
+  .collect-anim {
+    display: flex; justify-content: center; align-items: center;
+    gap: 10px;
+  }
+  .collect-anim-icon {
+    width: 32px; height: 32px;
+    transform: scale(0);
+    animation: collect-pop 350ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  }
+  .collect-anim-icon:nth-child(2) { animation-delay: 80ms; }
+  .collect-anim-icon:nth-child(3) { animation-delay: 160ms; }
+  @keyframes collect-pop {
+    0%   { transform: scale(0)   rotate(-180deg); opacity: 0; }
+    60%  { transform: scale(1.2) rotate(20deg);   opacity: 1; }
+    100% { transform: scale(1)   rotate(0deg);    opacity: 1; }
+  }
   #directionsPanel {
     position: absolute; left: 8px; right: 8px; z-index: 13;
     bottom: calc(8px + env(safe-area-inset-bottom));
@@ -4610,7 +4630,7 @@ function fmtDate(ts) {
   // Collecting from one POI also locks every other POI within this
   // many meters — prevents farming a tight cluster (e.g., a corner
   // with parking + restaurant + ATM all on the same point).
-  const POI_COOLDOWN_RADIUS_M = 10;
+  const POI_COOLDOWN_RADIUS_M = 80;
   const POI_COOLDOWNS_KEY = 'cc.poiCooldowns.v1';
   const poiCooldownKey = (lng, lat) => `${lng.toFixed(5)},${lat.toFixed(5)}`;
   function readPoiCooldowns() {
@@ -4958,6 +4978,14 @@ function fmtDate(ts) {
     }
 
     const body = document.getElementById('poiCardBody');
+    // Reset Collect-items button to its canonical bottom slot in case
+    // a previous render hoisted it into a transit-POI body. Has to
+    // happen BEFORE we wipe body.innerHTML, otherwise the button gets
+    // destroyed along with the previous body contents.
+    const collectBtn = document.getElementById('poiCardCollect');
+    if (collectBtn && collectBtn.parentNode !== card) {
+      card.appendChild(collectBtn);
+    }
     body.innerHTML = rows.join('');
     body.querySelectorAll('.dep-row').forEach(el => {
       if (!el.dataset.pattern) return;
@@ -4968,6 +4996,15 @@ function fmtDate(ts) {
         );
       };
     });
+    // For transit POIs (bus stops, etc.) in creature mode, hoist the
+    // Collect items button to sit ABOVE the schedule list — bus
+    // schedules can be tall enough to push the bottom button out of
+    // view, and the pokéstop action is the primary intent in
+    // creature mode.
+    if (inCreatureMode && collectBtn) {
+      const scheduleSection = body.querySelector('.route-popup');
+      if (scheduleSection) body.insertBefore(collectBtn, scheduleSection);
+    }
     card.classList.add('show');
     // Pokéstop cooldown: if creature mode is on, sync the Collect
     // button against this POI's stored cooldown (and start a live
@@ -6087,37 +6124,58 @@ function fmtDate(ts) {
   document.getElementById('poiCardDirections').onclick = openDirectionsForSelectedPoi;
   document.getElementById('poiCardDirectionsTop').onclick = openDirectionsForSelectedPoi;
 
-  // POI "Collect items" — start of the pokestop system. For now,
-  // every press grants 1 capture sphere and sets a 10-min cooldown
-  // on this POI so it can't be re-farmed instantly. The cooldown
-  // is read on demand whenever the POI card opens; no global timers
-  // (the only running timer is the per-card countdown in
-  // startPoiCollectCountdown, which self-stops on close/expiry).
+  // POI "Collect items" — pokéstop loot drop. Each press samples
+  // 1-3 items uniformly from Creatures.rollCollectibleItem (currently
+  // Poké Ball / Great Ball), grants them, and shows a brief icon
+  // animation in the button area. The card stays open for 500ms so
+  // the player sees what they got, then closes (also masking the
+  // tiny lag while MapLibre re-evaluates the icon-color expression
+  // for the new cooldown).
   document.getElementById('poiCardCollect').onclick = () => {
     if (!(window.Creatures && window.Creatures.grantItem)) return;
     const stored = JSON.parse(localStorage.getItem(SELECTED_KEY) || 'null');
     if (!stored) return;
     if (poiCooldownRemainingMs(stored.lng, stored.lat) > 0) return;
-    window.Creatures.grantItem('capture_sphere', 1);
+    // Sample 1-3 items.
+    const count = 1 + Math.floor(Math.random() * 3);
+    const granted = [];
+    for (let i = 0; i < count; i++) {
+      const key = window.Creatures.rollCollectibleItem();
+      if (!key) continue;
+      window.Creatures.grantItem(key, 1);
+      granted.push(key);
+    }
+    // Mark cooldowns: this POI + every other rendered POI within
+    // POI_COOLDOWN_RADIUS_M of it.
     markPoiCollected(stored.lng, stored.lat, stored.category);
-    // Radius cooldown: also lock every other rendered POI within
-    // POI_COOLDOWN_RADIUS_M of the collected one.
     const nearby = findRenderedPoisWithin(
       stored.lng, stored.lat, POI_COOLDOWN_RADIUS_M);
     for (const f of nearby) {
       const [nLng, nLat] = f.geometry.coordinates;
-      // Skip the original — already marked above.
       if (Math.abs(nLng - stored.lng) < 1e-9
           && Math.abs(nLat - stored.lat) < 1e-9) continue;
       const cat = (f.properties && (f.properties.subclass || f.properties.class)) || '';
       markPoiCollected(nLng, nLat, cat);
     }
     refreshCooldownOverlays();
-    // Clear the selected POI entirely (card + map marker) — same
-    // as the X button — so the user doesn't have to dismiss
-    // anything after collecting.
     stopPoiCollectCountdown();
-    setSelected(null);
+    // Show the loot animation in the collect button slot, then close
+    // the card after 500ms — also gives MapLibre time to re-evaluate
+    // the new icon-color expression so the POI is gray by the time
+    // the user re-finds it on the map.
+    const btn = document.getElementById('poiCardCollect');
+    if (btn && granted.length) {
+      const iconHtml = granted.map((k) => {
+        const meta = (window.Creatures.getItemMeta && window.Creatures.getItemMeta(k)) || {};
+        const src = meta.icon || '';
+        return src
+          ? `<img src="${src}" alt="${esc(meta.name || k)}" class="collect-anim-icon">`
+          : `<span class="collect-anim-text">${esc(meta.name || k)}</span>`;
+      }).join('');
+      btn.innerHTML = `<div class="collect-anim">${iconHtml}</div>`;
+      btn.disabled = true;
+    }
+    setTimeout(() => { setSelected(null); }, 500);
   };
 
   favorites = await loadAllFavorites();
