@@ -4237,7 +4237,13 @@ function fmtDate(ts) {
       caughtSpawnIds: JSON.parse(localStorage.getItem('cc.caughtSpawnIds') || '[]'),
       seenFusions: JSON.parse(localStorage.getItem('cc.seenFusions') || '{}'),
       candy: JSON.parse(localStorage.getItem('cc.candy.v1') || '{}'),
-      candyMigrated: localStorage.getItem('cc.candyMigrated.speciesV1') === '1',
+      // Family-keyed candy schema with babies promoted (v2 of family
+      // schema, v3 of candy overall). Older clients won't know about
+      // the baby promotion, so this field gates whether the imported
+      // candy values are safe to consume directly. If the field is
+      // missing or false, the local migration regenerates from the
+      // imported captures instead.
+      candyFamilyMigrated: localStorage.getItem('cc.candyMigrated.familyV2') === '1',
       bag: JSON.parse(localStorage.getItem('cc.bag.v1') || 'null'),
       tags: JSON.parse(localStorage.getItem('cc.tags.v1') || '[]'),
       backupName: localStorage.getItem('cc.backupName') || null,
@@ -4367,13 +4373,14 @@ function fmtDate(ts) {
       localStorage.setItem('cc.seenFusions', JSON.stringify(current));
     }
     // Candy: per-key max merge so re-importing the same backup is
-    // idempotent and combining devices keeps whichever had more of each
-    // entry. Only merged when the imported payload was already on the
-    // species-keyed candy format (candyMigrated flag); otherwise the
-    // imported data is type-keyed and would mix incompatibly with the
-    // local species-keyed map. The local migration replays imported
-    // captures into species candy on the next readCandy regardless.
-    if (data.candyMigrated && data.candy && typeof data.candy === 'object') {
+    // idempotent and combining devices keeps whichever had more of
+    // each entry. ONLY merged when the imported payload was already
+    // on the family-keyed schema (`candyFamilyMigrated` flag);
+    // otherwise the imported data is in an older species- or type-
+    // keyed shape and would mix incompatibly with the local map.
+    // The local migration replays imported captures on the next
+    // readCandy regardless, so candy still ends up correct.
+    if (data.candyFamilyMigrated && data.candy && typeof data.candy === 'object') {
       const current = JSON.parse(localStorage.getItem('cc.candy.v1') || '{}');
       for (const [key, n] of Object.entries(data.candy)) {
         const v = Number(n) || 0;
@@ -4381,10 +4388,11 @@ function fmtDate(ts) {
       }
       localStorage.setItem('cc.candy.v1', JSON.stringify(current));
     }
-    // If the import was already migrated, mark local as migrated too
-    // so the lazy migration doesn't wipe the just-imported candy.
-    if (data.candyMigrated) {
-      localStorage.setItem('cc.candyMigrated.speciesV1', '1');
+    // If the import was already family-migrated, mark local as
+    // migrated too so the lazy migration doesn't wipe the just-
+    // imported candy.
+    if (data.candyFamilyMigrated) {
+      localStorage.setItem('cc.candyMigrated.familyV2', '1');
     }
     // Bag: per-item max merge for the same reason — idempotent
     // re-imports + combining devices keeps the higher count. Bag is
