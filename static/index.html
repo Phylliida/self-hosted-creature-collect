@@ -1679,9 +1679,15 @@
     position: absolute; left: 8px; right: 68px; z-index: 12;
     top: calc(100px + env(safe-area-inset-top));
     padding: 12px 40px 12px 14px;
-    max-height: 42vh; overflow-y: auto; display: none;
+    max-height: 42vh; overflow-y: auto;
+    /* Fade in/out instead of jump-cut. Uses opacity+pointer-events
+       (display can't be transitioned). The card stays in the DOM
+       but is non-interactive when invisible. */
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 150ms ease;
   }
-  #poiCard.show { display: block; }
+  #poiCard.show { opacity: 1; pointer-events: auto; }
   #poiCardClose {
     position: absolute; top: 2px; right: 6px;
     background: none; border: none; font-size: 26px;
@@ -1749,6 +1755,49 @@
   #settingsPanel h3 { margin: 0 0 14px; font-size: 16px; }
   #settingsPanel .row { display: flex; align-items: center; gap: 10px; margin: 10px 0; }
   #settingsPanel .row label { flex: 1; font-size: 14px; }
+  /* Subsection grouping for related settings (e.g., Visibility).
+     Title carries an info button that toggles the muted note below. */
+  #settingsPanel .settings-subsection {
+    border-top: 1px solid var(--ui-hairline, rgba(0,0,0,0.08));
+    margin-top: 14px;
+    padding-top: 4px;
+  }
+  #settingsPanel .settings-subsection-title {
+    display: flex; align-items: center; gap: 8px;
+    margin: 8px 0 4px;
+    font-size: 13px; font-weight: 600;
+    color: var(--ui-muted, #666);
+    text-transform: uppercase; letter-spacing: 0.4px;
+  }
+  #settingsPanel .settings-info-btn {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    border: 1px solid var(--ui-border, rgba(0,0,0,0.2));
+    background: transparent;
+    color: var(--ui-muted, #666);
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    padding: 0;
+    cursor: pointer;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  #settingsPanel .settings-info-btn:hover,
+  #settingsPanel .settings-info-btn[aria-expanded="true"] {
+    color: var(--ui-text, #111);
+    border-color: var(--ui-text, #111);
+  }
+  #settingsPanel .settings-info-note {
+    font-size: 12px;
+    color: var(--ui-muted, #666);
+    background: var(--ui-hover, rgba(0,0,0,0.04));
+    border-radius: var(--ui-radius, 8px);
+    padding: 8px 10px;
+    margin: 0 0 8px;
+    line-height: 1.4;
+  }
   #settingsPanel select { padding: 6px 8px; font-size: 14px; }
   #settingsPanel .actions { display: flex; justify-content: flex-end; margin-top: 12px; }
   #settingsPanel button.close { padding: 8px 14px; font-size: 14px; cursor: pointer; }
@@ -2653,6 +2702,34 @@
       <label for="creatureModeToggle">Creature mode</label>
       <input type="checkbox" id="creatureModeToggle" checked>
     </div>
+    <div class="settings-subsection">
+      <h4 class="settings-subsection-title">
+        Visibility
+        <button type="button" id="visibilityInfoBtn"
+          class="settings-info-btn" aria-label="info"
+          aria-expanded="false">i</button>
+      </h4>
+      <div id="visibilityInfoNote" class="settings-info-note" hidden>
+        Showing more on the map means more for your phone to draw —
+        turn off layers you don't need to keep things smooth.
+      </div>
+      <div class="row">
+        <label for="buildingPoisToggle">Building pokéstops</label>
+        <input type="checkbox" id="buildingPoisToggle">
+      </div>
+      <div class="row">
+        <label for="renderBuildingsToggle">Render buildings</label>
+        <input type="checkbox" id="renderBuildingsToggle">
+      </div>
+      <div class="row">
+        <label for="renderTransitLinesToggle">Render transit lines</label>
+        <input type="checkbox" id="renderTransitLinesToggle" checked>
+      </div>
+      <div class="row">
+        <label for="renderHousenumbersToggle">Render house numbers</label>
+        <input type="checkbox" id="renderHousenumbersToggle">
+      </div>
+    </div>
     <div class="row">
       <label>Creature sprites</label>
       <span>
@@ -3230,7 +3307,9 @@ function fmtDate(ts) {
         { id: 'park', type: 'fill', source: 'local', 'source-layer': 'park', minzoom: 11,
           paint: { 'fill-color': '#c6e2c0', 'fill-opacity': 0.65 } },
         { id: 'water', type: 'fill', source: 'local', 'source-layer': 'water', paint: { 'fill-color': _initTheme.water } },
-        { id: 'buildings', type: 'fill', source: 'local', 'source-layer': 'building', minzoom: 13, paint: { 'fill-color': _initTheme.building } },
+        { id: 'buildings', type: 'fill', source: 'local', 'source-layer': 'building', minzoom: 13,
+          layout: { visibility: localStorage.getItem('cc.renderBuildings') === '1' ? 'visible' : 'none' },
+          paint: { 'fill-color': _initTheme.building } },
         { id: 'roads-base', type: 'line', source: 'base', 'source-layer': 'transportation',
           filter: ['in', ['get', 'class'], ['literal', ['motorway', 'trunk', 'primary']]],
           paint: {
@@ -3289,6 +3368,7 @@ function fmtDate(ts) {
             'line-width': ['interpolate', ['linear'], ['zoom'], 10, 3, 16, 6, 20, 11]
           } },
         { id: 'route-trip-stop-dots', type: 'circle', source: 'route-trip-stops',
+          layout: { visibility: localStorage.getItem('cc.renderTransitLines') === '0' ? 'none' : 'visible' },
           paint: {
             'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 2, 14, 4, 18, 7],
             'circle-color': '#ffffff',
@@ -3304,7 +3384,8 @@ function fmtDate(ts) {
             'text-offset': [0, 0.9],
             'text-anchor': 'top',
             'text-optional': true,
-            'text-allow-overlap': false
+            'text-allow-overlap': false,
+            visibility: localStorage.getItem('cc.renderTransitLines') === '0' ? 'none' : 'visible',
           },
           paint: {
             'text-color': _initTheme.placeLabel,
@@ -3312,13 +3393,17 @@ function fmtDate(ts) {
             'text-halo-width': 1.5
           } },
         { id: 'bus-routes', type: 'line', source: 'bus-routes',
-          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          layout: {
+            'line-cap': 'round', 'line-join': 'round',
+            visibility: localStorage.getItem('cc.renderTransitLines') === '0' ? 'none' : 'visible',
+          },
           paint: {
             'line-color': ['coalesce', ['get', 'colour'], '#e89035'],
             'line-opacity': 0.65,
             'line-width': ['interpolate', ['linear'], ['zoom'], 10, 1, 14, 2, 18, 4]
           } },
         { id: 'route-stop-bubbles', type: 'circle', source: 'route-stops',
+          layout: { visibility: localStorage.getItem('cc.renderTransitLines') === '0' ? 'none' : 'visible' },
           paint: {
             'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 3, 14, 5, 18, 9],
             'circle-color': '#ffffff',
@@ -3338,6 +3423,7 @@ function fmtDate(ts) {
             'text-font': ['KlokanTech Noto Sans Regular'],
             'text-size': 10,
             'text-anchor': 'center',
+            visibility: localStorage.getItem('cc.renderHousenumbers') === '1' ? 'visible' : 'none',
           },
           paint: { 'text-color': _initTheme.placeLabel, 'text-halo-color': _initTheme.placeHalo, 'text-halo-width': 1 } },
         { id: 'park-labels', type: 'symbol', source: 'local', 'source-layer': 'park',
@@ -3593,6 +3679,11 @@ function fmtDate(ts) {
     }
   }
 
+  // Reference captured so applyTransitLinesVisibility can hide the
+  // map-control button alongside the actual line layers — when
+  // transit lines are off, there's nothing meaningful to do in this
+  // menu, so it shouldn't take up space in the control rail.
+  let _transitMenuControlEl = null;
   class TransitMenuControl {
     onAdd() {
       const c = document.createElement('div');
@@ -3604,9 +3695,10 @@ function fmtDate(ts) {
       b.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style="display:block;margin:auto"><path d="M4 15.5C4 17.43 5.57 19 7.5 19L6 20.5V21h12v-.5L16.5 19c1.93 0 3.5-1.57 3.5-3.5V5c0-3.5-3.58-4-8-4s-8 .5-8 4v10.5zM7.5 17c-.83 0-1.5-.67-1.5-1.5S6.67 14 7.5 14s1.5.67 1.5 1.5S8.33 17 7.5 17zm9 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM18 11H6V6h12v5z"/></svg>`;
       b.onclick = () => document.getElementById('transitPanel').classList.add('show');
       c.appendChild(b);
+      _transitMenuControlEl = c;
       return c;
     }
-    onRemove() {}
+    onRemove() { _transitMenuControlEl = null; }
   }
   map.addControl(new TransitMenuControl(), 'bottom-right');
   map.on('styledata', applyTransitTileVisibility);
@@ -3789,6 +3881,9 @@ function fmtDate(ts) {
       _currentCooldownReadyColor  = (t.ui && t.ui.accent) || '#f088b0';
       try { refreshCooldownOverlays(); } catch {
         map.setPaintProperty('poi-icons', 'icon-color', t.poiIcon);
+      }
+      if (map.getLayer('building-pokestops')) {
+        try { map.setPaintProperty('building-pokestops', 'icon-color', t.poiIcon); } catch {}
       }
       // Every other label layer also gets the theme's text + halo so the
       // halo colour doesn't flip between layers (e.g. white on parks but
@@ -4100,9 +4195,14 @@ function fmtDate(ts) {
   }
 
   const DEFAULT_MARKER_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 15 15"><path d="M7.5 1C5.42 1 3 2.29 3 5.57C3 7.79 6.46 12.71 7.5 14C8.42 12.71 12 7.91 12 5.57C12 2.29 9.58 1 7.5 1Z" fill="#555" stroke="#fff" stroke-width="0.6" stroke-linejoin="round"/></svg>`;
+  // Subtle filled circle used as the building-pokéstop marker. Solid
+  // shape so the SDF icon-color tint paints cleanly. Small viewbox
+  // keeps the rasterized icon small + crisp at every zoom.
+  const BUILDING_POKESTOP_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12"><circle cx="6" cy="6" r="3.5" fill="#555"/></svg>`;
 
   async function registerDefaultMarker() {
     await registerIconFromSvg('poi-default', DEFAULT_MARKER_SVG);
+    await registerIconFromSvg('building-pokestop', BUILDING_POKESTOP_SVG);
   }
 
   let availableIconNames = [];
@@ -4124,6 +4224,22 @@ function fmtDate(ts) {
   map.on('load', async () => {
     await registerDefaultMarker();
     await loadAllIcons();
+    // Building-pokéstops layer: render the small dot icon at the
+    // centroid of every building polygon, but only at z17+ where
+    // the user is close enough to actually interact. Inserted below
+    // poi-icons so tagged POIs visually win when both are present
+    // on the same building. icon-color is theme-tinted on apply.
+    // Building-pokéstops layer is opt-in via the Settings toggle —
+    // the per-building `distance` expression evaluation is heavy on
+    // dense areas, so it's off by default. addBuildingPokestopsLayer
+    // / removeBuildingPokestopsLayer manage the lifecycle so the
+    // toggle can flip it on or off without a reload.
+    if (localStorage.getItem('cc.buildingPois') === '1') {
+      addBuildingPokestopsLayer();
+    }
+    applyBuildingsLayerVisibility();
+    applyTransitLinesVisibility();
+    applyHousenumbersVisibility();
     // rebuildScheduleIndex populates transit data and kicks off refreshRoutesSource.
     await rebuildScheduleIndex();
     // The walk graph is chunky (80-120 MB live for a country-sized region);
@@ -4658,12 +4774,13 @@ function fmtDate(ts) {
     if (entry && typeof entry === 'object') return entry.t || 0;
     return 0;
   }
-  // Find every currently-rendered POI within `radiusM` meters of
-  // (centerLng, centerLat). Uses queryRenderedFeatures bounded by a
-  // bbox-in-screen-pixels and then filters by haversine distance for
-  // accuracy. Returns the raw tile features (so callers can pull
-  // geometry + properties). Empty if the radius is zero, or if the
-  // POI layer isn't rendering at the current zoom.
+  // Find every currently-rendered pokéstop (POI icon OR building dot)
+  // within `radiusM` meters of (centerLng, centerLat). Uses
+  // queryRenderedFeatures bounded by a bbox-in-screen-pixels and then
+  // filters by haversine distance for accuracy. Returns objects with
+  // a normalized `{ lng, lat, category }` shape so callers don't have
+  // to handle the Point vs Polygon geometry difference. Empty if
+  // radius is zero or no layers are rendering at the current zoom.
   function findRenderedPoisWithin(centerLng, centerLat, radiusM) {
     if (radiusM <= 0) return [];
     const dLat = radiusM / 111000;
@@ -4676,17 +4793,30 @@ function fmtDate(ts) {
     const x2 = Math.max(corners[0].x, corners[1].x);
     const y1 = Math.min(corners[0].y, corners[1].y);
     const y2 = Math.max(corners[0].y, corners[1].y);
+    const layers = ['poi-icons'];
+    if (map.getLayer('building-pokestops')) layers.push('building-pokestops');
     let features;
     try {
-      features = map.queryRenderedFeatures([[x1, y1], [x2, y2]], {
-        layers: ['poi-icons'],
-      });
+      features = map.queryRenderedFeatures([[x1, y1], [x2, y2]], { layers });
     } catch { return []; }
-    return features.filter((f) => {
-      const c = f.geometry && f.geometry.coordinates;
-      if (!c) return false;
-      return haversineKm(centerLat, centerLng, c[1], c[0]) * 1000 <= radiusM;
-    });
+    const out = [];
+    for (const f of features) {
+      let lng, lat, category;
+      if (f.geometry && f.geometry.type === 'Point') {
+        const c = f.geometry.coordinates;
+        if (!c) continue;
+        lng = c[0]; lat = c[1];
+        category = (f.properties && (f.properties.subclass || f.properties.class)) || '';
+      } else {
+        const cent = buildingFeatureCentroid(f);
+        if (!cent) continue;
+        lng = cent[0]; lat = cent[1];
+        category = 'building';
+      }
+      if (haversineKm(centerLat, centerLng, lat, lng) * 1000 > radiusM) continue;
+      out.push({ lng, lat, category });
+    }
+    return out;
   }
 
   function markPoiCollected(lng, lat, category) {
@@ -4757,11 +4887,87 @@ function fmtDate(ts) {
     ]]);
     return { type: 'MultiPolygon', coordinates: coords };
   }
+  // Threshold (meters) used by the building-pokestops `distance`
+  // expression. Centroid points are inside the polygon → distance is
+  // 0; a small threshold (1m) guarantees we only target the building
+  // that contains each cooldown point and not its neighbors.
+  const BUILDING_COOLDOWN_DISTANCE_M = 1;
+  // Add/remove the building-pokéstops layer. The layer is opt-in via
+  // a Settings toggle because the per-building `distance` expression
+  // evaluation can be expensive in dense urban areas.
+  function addBuildingPokestopsLayer() {
+    if (map.getLayer('building-pokestops')) return;
+    map.addLayer({
+      id: 'building-pokestops',
+      type: 'symbol',
+      source: 'local',
+      'source-layer': 'building',
+      minzoom: 16,
+      layout: {
+        'icon-image': 'building-pokestop',
+        'icon-size': ['interpolate', ['exponential', 1.5], ['zoom'],
+          16, 0.3, 17, 0.45, 20, 0.85],
+        'icon-allow-overlap': true,
+        'icon-ignore-placement': true,
+      },
+      paint: {
+        'icon-color': _currentPoiThemeColor,
+        'icon-opacity': 0.45,
+      },
+    }, map.getLayer('poi-icons') ? 'poi-icons' : undefined);
+    // Re-apply cooldown coloring so any existing building entries
+    // light up immediately on toggle-on.
+    try { refreshCooldownOverlays(); } catch {}
+  }
+  function removeBuildingPokestopsLayer() {
+    if (map.getLayer('building-pokestops')) map.removeLayer('building-pokestops');
+  }
+
+  // Map-layer visibility toggles, persisted in localStorage. Defaults
+  // are ON (the cc.* keys store '0' to disable, anything else means
+  // visible). Each helper is idempotent — safe to call before the
+  // layer exists; it'll quietly no-op until the style finishes
+  // loading.
+  function applyBuildingsLayerVisibility() {
+    if (!map.getLayer('buildings')) return;
+    const on = localStorage.getItem('cc.renderBuildings') === '1';
+    map.setLayoutProperty('buildings', 'visibility', on ? 'visible' : 'none');
+  }
+  const TRANSIT_LINE_LAYERS = [
+    'bus-routes', 'route-stop-bubbles',
+    'route-trip-stop-dots', 'route-trip-stop-labels',
+  ];
+  function applyTransitLinesVisibility() {
+    const on = localStorage.getItem('cc.renderTransitLines') !== '0';
+    for (const id of TRANSIT_LINE_LAYERS) {
+      if (!map.getLayer(id)) continue;
+      map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+    }
+    // Also hide the bottom-right transit menu button — selecting
+    // lines to render is meaningless when nothing transit-related
+    // is being drawn.
+    if (_transitMenuControlEl) {
+      _transitMenuControlEl.style.display = on ? '' : 'none';
+    }
+  }
+  function applyHousenumbersVisibility() {
+    if (!map.getLayer('housenumbers')) return;
+    const on = localStorage.getItem('cc.renderHousenumbers') === '1';
+    map.setLayoutProperty('housenumbers', 'visibility', on ? 'visible' : 'none');
+  }
   function refreshCooldownOverlays() {
     const inCreatureMode = !!(window.Creatures && window.Creatures.isEnabled
       && window.Creatures.isEnabled());
-    const activePts = [];
-    const readyPts = [];
+    // POIs go into `within` polygons (Point features) for the
+    // poi-icons layer's icon-color. Buildings (category 'building')
+    // go into MultiPoint geometries for the building-pokestops
+    // layer's `distance`-based icon-color — `within` doesn't work
+    // for polygon features but `distance` does, returning 0 when
+    // the cooldown point is inside the building polygon.
+    const poiActivePts = [];
+    const poiReadyPts = [];
+    const buildingActivePts = [];
+    const buildingReadyPts = [];
     if (inCreatureMode) {
       const cooldowns = readPoiCooldowns();
       const now = Date.now();
@@ -4778,33 +4984,86 @@ function fmtDate(ts) {
         }
         if (!isFinite(lng) || !isFinite(lat)) continue;
         const t = entryTimestamp(raw);
-        if (now - t < POI_COOLDOWN_MS) activePts.push([lng, lat]);
-        else readyPts.push([lng, lat]);
+        const cat = (raw && typeof raw === 'object') ? (raw.c || '') : '';
+        const isActive = now - t < POI_COOLDOWN_MS;
+        if (cat === 'building') {
+          (isActive ? buildingActivePts : buildingReadyPts).push([lng, lat]);
+        } else {
+          (isActive ? poiActivePts : poiReadyPts).push([lng, lat]);
+        }
       }
     }
-    const expr = (activePts.length || readyPts.length)
+    // POI layer: within-based recoloring.
+    const poiExpr = (poiActivePts.length || poiReadyPts.length)
       ? ['case',
-          ['within', buildCooldownPolygon(activePts)], _currentCooldownActiveColor,
-          ['within', buildCooldownPolygon(readyPts)],  _currentCooldownReadyColor,
+          ['within', buildCooldownPolygon(poiActivePts)], _currentCooldownActiveColor,
+          ['within', buildCooldownPolygon(poiReadyPts)],  _currentCooldownReadyColor,
           _currentPoiThemeColor]
       : _currentPoiThemeColor;
+    try { map.setPaintProperty('poi-icons', 'icon-color', poiExpr); } catch {}
+    // Building layer: distance-based recoloring. MultiPoint of all
+    // active (or ready) cooldown centroids; building feature matches
+    // when its polygon's distance to the nearest point is below the
+    // small threshold (i.e., the point is essentially inside it).
+    const buildExpr = (buildingActivePts.length || buildingReadyPts.length)
+      ? buildBuildingColorExpr(buildingActivePts, buildingReadyPts)
+      : _currentPoiThemeColor;
+    const buildOpacityExpr =
+      (buildingActivePts.length || buildingReadyPts.length)
+        ? buildBuildingOpacityExpr(buildingActivePts, buildingReadyPts)
+        : 0.45;
     try {
-      map.setPaintProperty('poi-icons', 'icon-color', expr);
-      // Force the new color to land on the very next frame instead of
-      // waiting for MapLibre's render loop to schedule a repaint —
-      // without this, there's a noticeable lag before the just-
-      // collected POI turns gray.
-      map.triggerRepaint();
+      if (map.getLayer('building-pokestops')) {
+        map.setPaintProperty('building-pokestops', 'icon-color', buildExpr);
+        map.setPaintProperty('building-pokestops', 'icon-opacity', buildOpacityExpr);
+      }
     } catch {}
-    // Poll only while at least one *active* (gray) entry exists —
-    // those are the ones that will transition to pink. Pure-pink
-    // sets won't change status, so no poll needed.
-    if (activePts.length > 0 && _cooldownOverlayPoll == null) {
+    // Force both updates to land on the very next frame so the just-
+    // collected POI/building turns gray immediately.
+    try { map.triggerRepaint(); } catch {}
+    const anyActive = poiActivePts.length > 0 || buildingActivePts.length > 0;
+    if (anyActive && _cooldownOverlayPoll == null) {
       _cooldownOverlayPoll = setInterval(refreshCooldownOverlays, 30000);
-    } else if (activePts.length === 0 && _cooldownOverlayPoll != null) {
+    } else if (!anyActive && _cooldownOverlayPoll != null) {
       clearInterval(_cooldownOverlayPoll);
       _cooldownOverlayPoll = null;
     }
+  }
+  function buildBuildingColorExpr(activePts, readyPts) {
+    const branches = ['case'];
+    if (activePts.length) {
+      branches.push(
+        ['<', ['distance', { type: 'MultiPoint', coordinates: activePts }],
+          BUILDING_COOLDOWN_DISTANCE_M],
+        _currentCooldownActiveColor);
+    }
+    if (readyPts.length) {
+      branches.push(
+        ['<', ['distance', { type: 'MultiPoint', coordinates: readyPts }],
+          BUILDING_COOLDOWN_DISTANCE_M],
+        _currentCooldownReadyColor);
+    }
+    branches.push(_currentPoiThemeColor);
+    return branches;
+  }
+  function buildBuildingOpacityExpr(activePts, readyPts) {
+    // Cooldown buildings render at full opacity so the gray/pink
+    // pops; everything else stays at the subtle 0.45.
+    const branches = ['case'];
+    if (activePts.length) {
+      branches.push(
+        ['<', ['distance', { type: 'MultiPoint', coordinates: activePts }],
+          BUILDING_COOLDOWN_DISTANCE_M],
+        0.9);
+    }
+    if (readyPts.length) {
+      branches.push(
+        ['<', ['distance', { type: 'MultiPoint', coordinates: readyPts }],
+          BUILDING_COOLDOWN_DISTANCE_M],
+        0.9);
+    }
+    branches.push(0.45);
+    return branches;
   }
 
   // Paint the currently-selected POI marker per its cooldown state.
@@ -6150,12 +6409,10 @@ function fmtDate(ts) {
     markPoiCollected(stored.lng, stored.lat, stored.category);
     const nearby = findRenderedPoisWithin(
       stored.lng, stored.lat, POI_COOLDOWN_RADIUS_M);
-    for (const f of nearby) {
-      const [nLng, nLat] = f.geometry.coordinates;
-      if (Math.abs(nLng - stored.lng) < 1e-9
-          && Math.abs(nLat - stored.lat) < 1e-9) continue;
-      const cat = (f.properties && (f.properties.subclass || f.properties.class)) || '';
-      markPoiCollected(nLng, nLat, cat);
+    for (const n of nearby) {
+      if (Math.abs(n.lng - stored.lng) < 1e-9
+          && Math.abs(n.lat - stored.lat) < 1e-9) continue;
+      markPoiCollected(n.lng, n.lat, n.category);
     }
     refreshCooldownOverlays();
     stopPoiCollectCountdown();
@@ -6415,8 +6672,49 @@ function fmtDate(ts) {
       return;
     }
 
+    // Building-pokéstop fallback: if the click hit a building (and
+    // didn't match any POI/transit above), treat the building as a
+    // pokéstop. Cooldown anchor is the building's centroid (averaged
+    // outer ring) so taps anywhere on the same building map to one
+    // cooldown entry.
+    const buildingHits = map.getLayer('building-pokestops')
+      ? map.queryRenderedFeatures(poiBbox, { layers: ['building-pokestops'] })
+      : [];
+    if (buildingHits.length) {
+      const c = buildingFeatureCentroid(buildingHits[0]);
+      if (c) {
+        const [bLng, bLat] = c;
+        setSelected({
+          lng: bLng, lat: bLat,
+          name: 'Building',
+          category: 'building',
+          props: {},
+        });
+        return;
+      }
+    }
+
     setSelected(null);
   });
+
+  // Centroid (average of outer-ring vertices) for a Polygon /
+  // MultiPolygon feature. Stable across taps on the same building so
+  // cooldowns anchor to one consistent point per polygon.
+  function buildingFeatureCentroid(feat) {
+    const g = feat && feat.geometry;
+    if (!g) return null;
+    let outer;
+    if (g.type === 'Polygon') outer = g.coordinates && g.coordinates[0];
+    else if (g.type === 'MultiPolygon') outer = g.coordinates && g.coordinates[0] && g.coordinates[0][0];
+    if (!outer || !outer.length) return null;
+    let cx = 0, cy = 0, n = 0;
+    for (const p of outer) {
+      if (!p || p[0] == null || p[1] == null) continue;
+      cx += p[0]; cy += p[1]; n++;
+    }
+    if (!n) return null;
+    return [cx / n, cy / n];
+  }
 
   try {
     const stored = JSON.parse(localStorage.getItem(SELECTED_KEY) || 'null');
@@ -8662,6 +8960,72 @@ function fmtDate(ts) {
       // Cooldown overlays are creature-mode-only, so toggle drops or
       // restores the whole set as the mode flips.
       try { refreshCooldownOverlays(); } catch {}
+    });
+  }
+
+  // Building pokéstops toggle. Default off because the per-building
+  // `distance` expression can be heavy in dense urban areas.
+  const buildingPoisToggle = document.getElementById('buildingPoisToggle');
+  if (buildingPoisToggle) {
+    buildingPoisToggle.checked = localStorage.getItem('cc.buildingPois') === '1';
+    buildingPoisToggle.addEventListener('change', () => {
+      const on = buildingPoisToggle.checked;
+      localStorage.setItem('cc.buildingPois', on ? '1' : '0');
+      if (on) addBuildingPokestopsLayer();
+      else removeBuildingPokestopsLayer();
+    });
+  }
+
+  // Visibility section info-button: tap toggles the explanation
+  // note. aria-expanded mirrors the open/closed state for screen
+  // readers and our hover-style fallback.
+  const visibilityInfoBtn = document.getElementById('visibilityInfoBtn');
+  const visibilityInfoNote = document.getElementById('visibilityInfoNote');
+  if (visibilityInfoBtn && visibilityInfoNote) {
+    visibilityInfoBtn.addEventListener('click', () => {
+      const open = visibilityInfoNote.hasAttribute('hidden')
+        ? true : false;
+      if (open) {
+        visibilityInfoNote.removeAttribute('hidden');
+        visibilityInfoBtn.setAttribute('aria-expanded', 'true');
+      } else {
+        visibilityInfoNote.setAttribute('hidden', '');
+        visibilityInfoBtn.setAttribute('aria-expanded', 'false');
+      }
+    });
+  }
+
+  // Render buildings + Render transit lines toggles. Defaults on;
+  // values default to '0' = hidden, anything else (including missing
+  // key) means visible. setLayoutProperty applies instantly.
+  const renderBuildingsToggle = document.getElementById('renderBuildingsToggle');
+  if (renderBuildingsToggle) {
+    renderBuildingsToggle.checked =
+      localStorage.getItem('cc.renderBuildings') === '1';
+    renderBuildingsToggle.addEventListener('change', () => {
+      localStorage.setItem('cc.renderBuildings',
+        renderBuildingsToggle.checked ? '1' : '0');
+      applyBuildingsLayerVisibility();
+    });
+  }
+  const renderTransitLinesToggle = document.getElementById('renderTransitLinesToggle');
+  if (renderTransitLinesToggle) {
+    renderTransitLinesToggle.checked =
+      localStorage.getItem('cc.renderTransitLines') !== '0';
+    renderTransitLinesToggle.addEventListener('change', () => {
+      localStorage.setItem('cc.renderTransitLines',
+        renderTransitLinesToggle.checked ? '1' : '0');
+      applyTransitLinesVisibility();
+    });
+  }
+  const renderHousenumbersToggle = document.getElementById('renderHousenumbersToggle');
+  if (renderHousenumbersToggle) {
+    renderHousenumbersToggle.checked =
+      localStorage.getItem('cc.renderHousenumbers') === '1';
+    renderHousenumbersToggle.addEventListener('change', () => {
+      localStorage.setItem('cc.renderHousenumbers',
+        renderHousenumbersToggle.checked ? '1' : '0');
+      applyHousenumbersVisibility();
     });
   }
 
