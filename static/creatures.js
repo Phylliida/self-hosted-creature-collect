@@ -16,6 +16,21 @@
   const CAUGHT_SPAWNS_KEY = 'cc.caughtSpawnIds';
   const SEEN_FUSIONS_KEY = 'cc.seenFusions';
   const CANDY_KEY = 'cc.candy.v1';
+  const BAG_KEY = 'cc.bag.v1';
+
+  // Item catalog. Bag is stored as a flat `{ <key>: <count> }` map (same
+  // shape as candy); this catalog maps keys to display names so future
+  // items only need a one-line entry here. `desc` shows in the bag list
+  // under the item name.
+  const ITEMS = {
+    capture_sphere: {
+      name: 'Capture Sphere',
+      desc: 'Used to catch wild creatures.',
+    },
+  };
+  // Starter items granted on first-ever bag read (anyone who's played
+  // before gets these too on next load).
+  const STARTER_BAG = { capture_sphere: 2 };
 
   // Captured inventory lives as an array of entries keyed by their own
   // `id`. We intentionally store speciesA/B (not the derived display
