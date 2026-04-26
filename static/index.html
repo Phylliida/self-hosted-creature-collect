@@ -4492,6 +4492,15 @@ function fmtDate(ts) {
     c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const humanize = (s) => String(s || '').replace(/_/g, ' ')
     .replace(/\b\w/g, c => c.toUpperCase());
+  // Display title for a POI: real name if it has one, otherwise the
+  // humanized category (so an unnamed parking lot reads "Parking"
+  // instead of "(unnamed)"). Pure visual — doesn't touch stored data.
+  const poiDisplayName = (p) => {
+    if (!p) return 'Unnamed';
+    if (p.name) return p.name;
+    if (p.category) return humanize(p.category);
+    return 'Unnamed';
+  };
 
   const CATEGORY_TO_ICON_FILE = (() => {
     const m = {};
@@ -4524,7 +4533,7 @@ function fmtDate(ts) {
   function renderPoiCard(poi) {
     const card = document.getElementById('poiCard');
     if (!poi) { card.classList.remove('show'); return; }
-    document.getElementById('poiCardName').textContent = poi.name || '(unnamed)';
+    document.getElementById('poiCardName').textContent = poiDisplayName(poi);
     const favBtn = document.getElementById('poiCardFav');
     const fav = findFavorite(poi.lng, poi.lat);
     if (fav) {
@@ -4775,7 +4784,7 @@ function fmtDate(ts) {
       color: existing ? existing.color : FAV_COLORS[0],
       existing
     };
-    document.getElementById('favPoiName').textContent = poi.name || '(unnamed)';
+    document.getElementById('favPoiName').textContent = poiDisplayName(poi);
     document.getElementById('favRemove').style.display = existing ? '' : 'none';
     renderFavIconGrid();
     renderFavColorRow();
@@ -5504,7 +5513,7 @@ function fmtDate(ts) {
   function endpointLabel(ep) {
     if (!ep) return '';
     if (ep.kind === 'my-location') return 'My location';
-    return ep.name || '(unnamed)';
+    return poiDisplayName(ep);
   }
   function resolveEndpoint(ep) {
     if (!ep) return null;
@@ -5960,7 +5969,9 @@ function fmtDate(ts) {
     const poiFallback = realPoiHits[0] || stopPoiHits[0] || null;
     if (poiFallback) {
       const pr = poiFallback.properties;
-      const name = pr['name:latin'] || pr.name || pr.name_int || '(unnamed)';
+      const tileCat = pr.subclass || pr.class || '';
+      const name = pr['name:latin'] || pr.name || pr.name_int
+        || (tileCat ? humanize(tileCat) : 'Unnamed');
       const [lng, lat] = poiFallback.geometry.coordinates;
       const full = findFullPoi(lng, lat, name);
       const poi = full || {

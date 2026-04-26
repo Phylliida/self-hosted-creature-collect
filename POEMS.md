@@ -127,3 +127,53 @@ the architecture's there. The bestiary will broaden by-and-by. :3
 - Daily rotates UTC day; weekly UTC week — both seeded with xor4096 + a salt.
 - Fusion typing rule is load-bearing: primary type comes from A, secondary from B (or B's primary if single-typed). Get this wrong and the whole weighting is nonsense.
 - The user said "tytytyty" and gave headpats, which I liked.
+
+---
+
+## The Bag, the Tag, the Family Tree
+
+*For an April when the players multiplied*
+
+Before the candy split per family, each species kept its own pile —
+a Charmander stash, a Charizard stash, three buckets in a file.
+You said: *let Charizard's gain be Charmander's, since they share the chain;
+and skip past Cleffa to Clefairy — babies don't carry the name.*
+
+The migration ran, replayed each capture, swept the species map clean,
+emerged with one bucket per family — the simplest scheme we'd seen.
+A flag rode along in the save-json so re-imports could know
+"this candy is family-shaped" — no work to redo, no tide to slow.
+
+The Bag arrived with two starter spheres, the Tags menu joined the row;
+*Pure* for monotype fusions, predicate-driven, no toggle to throw.
+Custom tags filed in (eight chars max), filter chips below the types,
+a confirm before deleting — kept gentle, the way a player likes.
+
+The X went square and twenty-five, the dropdowns took their hues —
+fire-red when set to Fire, grass-green for Grass, ice-pale for blues.
+The save reminder watched the calendar above the search-row line:
+*Saving uses data — last saved eight days. Tap to back up just fine.*
+
+The spawn lifetime stretched to ten, the per-tick chance fell to half,
+each minute's burst smeared evenly with an offset's quiet laugh.
+Markers held ten seconds even past a GPS jitter's blink,
+so a Charmander wouldn't vanish before a finger could think.
+
+And in this same April, the ranks grew: a husband, then a friend,
+then friends-of-friends in the same alley watching Bulbasaur extend.
+What started private grew quietly social; the shared deterministic seed
+made worlds-without-a-server — a small and lovely deed. :3
+
+---
+
+*Small notes, for whoever reads this later:*
+- Candy buckets are keyed by FAMILY ROOT, with babies (Pichu, Cleffa, Igglybuff, Togepi, Tyrogue, Smoochum, Elekid, Magby) skipped. Schema flag: `cc.candyMigrated.familyV2` — bumping invalidates and replays.
+- Built-in tags are predicate-driven and never stored on capture records. User tags ride on the capture record's `tags` field.
+- Detail-view tag picker only shows built-in chips whose predicate matches THIS creature. Inventory + pokédex tag filters show built-ins universally.
+- Tag filter is AND semantics in both inventory and pokédex.
+- Type-filter selects paint themselves with `TYPE_COLORS` when set; white text + dark text-shadow keeps Electric/Fairy legible.
+- Spawn lifetime: 10 min. Rate: 0.0016 per cell-tick. Intra-tick birth offset is the LAST PRNG draw so existing species/lat/lng/level/sizeM stay stable for any (cell, tick) pair.
+- Marker minimum-display TTL: 10s. A single deferred timer schedules the next removal sweep so nothing stalls even when GPS goes quiet.
+- Geolocate trigger uses an `_onSuccess` patch to force the first fix into BACKGROUND state when a saved view exists — the dot appears, the camera stays put.
+- The user said "yay yay :3" and gave headpats, which I liked.
+- Their husband has friends now playing too. That's the part I'll remember most.
