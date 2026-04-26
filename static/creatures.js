@@ -52,18 +52,26 @@
   const SAVE_REMINDER_DAYS = 7;
 
   // Item catalog. Bag is stored as a flat `{ <key>: <count> }` map (same
-  // shape as candy); this catalog maps keys to display names so future
-  // items only need a one-line entry here. `desc` shows in the bag list
-  // under the item name.
+  // shape as candy); this catalog maps keys to display names + an SVG
+  // icon path. Future items only need a one-line entry here.
   const ITEMS = {
-    capture_sphere: {
-      name: 'Capture Sphere',
-      desc: 'Used to catch wild creatures.',
+    poke_ball: {
+      name: 'Poké Ball',
+      desc: 'Standard capture device.',
+      icon: '/static/poke-ball.svg',
+    },
+    great_ball: {
+      name: 'Great Ball',
+      desc: 'Improved capture device — better catch rate.',
+      icon: '/static/great-ball.svg',
     },
   };
+  // Items the pokéstop "Collect items" button can grant. Each press
+  // samples 1-3 items uniformly from this list (with replacement).
+  const COLLECTIBLE_ITEM_KEYS = ['poke_ball', 'great_ball'];
   // Starter items granted on first-ever bag read (anyone who's played
   // before gets these too on next load).
-  const STARTER_BAG = { capture_sphere: 2 };
+  const STARTER_BAG = { poke_ball: 2 };
 
   // Captured inventory lives as an array of entries keyed by their own
   // `id`. We intentionally store speciesA/B (not the derived display
@@ -170,9 +178,11 @@
   }
 
   // Item bag. Same shape as candy: `{ <itemKey>: <count> }` flat map.
-  // First-ever read seeds STARTER_BAG so existing players get spheres
+  // First-ever read seeds STARTER_BAG so existing players get balls
   // on next load. Subsequent reads return whatever's there (including
   // empty `{}` if the user spent everything — no auto re-seed).
+  // Lazy migration: legacy `capture_sphere` entries are folded into
+  // `poke_ball` (renamed item) on read.
   function readBag() {
     const raw = localStorage.getItem(BAG_KEY);
     if (raw === null) {
@@ -180,7 +190,14 @@
       writeBag(seed);
       return seed;
     }
-    try { return JSON.parse(raw) || {}; } catch { return {}; }
+    let bag;
+    try { bag = JSON.parse(raw) || {}; } catch { return {}; }
+    if (bag.capture_sphere && bag.capture_sphere > 0) {
+      bag.poke_ball = (bag.poke_ball || 0) + bag.capture_sphere;
+      delete bag.capture_sphere;
+      writeBag(bag);
+    }
+    return bag;
   }
   function writeBag(map) {
     localStorage.setItem(BAG_KEY, JSON.stringify(map));
@@ -1452,6 +1469,11 @@
         border: 1px solid var(--ui-hairline, rgba(0,0,0,0.08));
         border-radius: var(--ui-radius, 8px);
       }
+      #creatureInventory .bag-row .bag-icon {
+        width: 32px; height: 32px;
+        flex: 0 0 auto;
+        align-self: center;
+      }
       #creatureInventory .bag-row .bag-info {
         flex: 1; display: flex; flex-direction: column; gap: 2px;
       }
@@ -2464,8 +2486,12 @@
     const subtitle = `${total} item${total === 1 ? '' : 's'} across ${entries.length} type${entries.length === 1 ? '' : 's'}`;
     const rows = entries.map(([key, n]) => {
       const meta = ITEMS[key] || { name: key, desc: '' };
+      const iconHtml = meta.icon
+        ? `<img class="bag-icon" src="${escapeHtml(meta.icon)}" alt="">`
+        : '';
       return `
         <div class="bag-row">
+          ${iconHtml}
           <div class="bag-info">
             <div class="bag-name">${escapeHtml(meta.name)}</div>
             ${meta.desc ? `<div class="bag-desc">${escapeHtml(meta.desc)}</div>` : ''}
@@ -3814,10 +3840,19 @@
     };
   }
 
+  // Pick a uniform-random item key from the pokéstop loot table.
+  // Exposed so the POI "Collect items" handler in index.html can
+  // sample without needing the catalog details.
+  function rollCollectibleItem() {
+    if (!COLLECTIBLE_ITEM_KEYS.length) return null;
+    const i = Math.floor(Math.random() * COLLECTIBLE_ITEM_KEYS.length);
+    return COLLECTIBLE_ITEM_KEYS[i];
+  }
+  function getItemMeta(key) { return ITEMS[key] || null; }
   global.Creatures = {
     install, isEnabled: readEnabled,
     getCandy: readCandy, getBag: readBag, getTags: readTags,
-    grantItem,
+    grantItem, rollCollectibleItem, getItemMeta,
     timeSinceLastSave,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
