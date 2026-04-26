@@ -185,6 +185,18 @@
   function writeBag(map) {
     localStorage.setItem(BAG_KEY, JSON.stringify(map));
   }
+  // Public hook for awarding items from outside this module — used by
+  // the POI "Collect items" button in index.html (the start of the
+  // pokestop system). Resolves the bag-read first so the lazy starter
+  // pack is in place before the bump applies.
+  function grantItem(itemKey, count) {
+    if (!itemKey) return;
+    const n = Number(count) || 0;
+    if (n <= 0) return;
+    const bag = readBag();
+    bag[itemKey] = (bag[itemKey] || 0) + n;
+    writeBag(bag);
+  }
 
   // Built-in tags are predicate-driven and never stored on a capture
   // record. They render alongside user tags everywhere (Tags menu,
@@ -3805,6 +3817,7 @@
   global.Creatures = {
     install, isEnabled: readEnabled,
     getCandy: readCandy, getBag: readBag, getTags: readTags,
+    grantItem,
     timeSinceLastSave,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
