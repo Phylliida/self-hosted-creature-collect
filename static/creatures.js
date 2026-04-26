@@ -1892,11 +1892,16 @@
       #battleScreen {
         position: fixed; inset: 0;
         z-index: 40;
-        display: none;
         background: rgba(0,0,0,0.85);
         color: #fff;
+        /* Fade in/out instead of jump-cut. opacity + pointer-events
+           so the screen stays in the DOM but is non-interactive when
+           invisible. Same pattern as #poiCard. */
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 150ms ease;
       }
-      #battleScreen.show { display: block; }
+      #battleScreen.show { opacity: 1; pointer-events: auto; }
       #battleScreen .battle-sprite-wrap {
         position: absolute;
         top: 12%;
