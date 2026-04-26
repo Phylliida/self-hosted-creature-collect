@@ -16,6 +16,12 @@
   const CAUGHT_SPAWNS_KEY = 'cc.caughtSpawnIds';
   const SEEN_FUSIONS_KEY = 'cc.seenFusions';
   const CANDY_KEY = 'cc.candy.v1';
+  // Bumped from type-keyed (FIRE/WATER/...) to species-keyed (numeric
+  // species indices). Migration is lazy: first call to readCandy after
+  // deploy clears the old type-keyed candy and replays every captured
+  // creature through the new species-level award logic. Flag travels
+  // in the export/import payload so a re-import doesn't re-trigger.
+  const CANDY_MIGRATED_KEY = 'cc.candyMigrated.speciesV1';
   const BAG_KEY = 'cc.bag.v1';
   const LAST_SAVE_KEY = 'cc.lastSaveAt';
   const SAVE_REMINDER_DAYS = 7;
@@ -47,12 +53,19 @@
     localStorage.setItem(CAPTURED_KEY, JSON.stringify(arr));
   }
 
-  // Candy: earned per-capture. One per type the fusion has, OR two of
-  // the single type if it's monotype. Stored as a plain `{ TYPE: n }`
-  // map. No spend mechanism yet — saved against a future evolve / item
-  // mechanic. If types data isn't loaded (Species.fusionTypesFor returns
-  // []), we award nothing rather than guess a type.
-  function readCandy() {
+  // Candy: earned per-capture, keyed by SPECIES INDEX (not type).
+  // Stored as a plain `{ <speciesIdxStr>: <count> }` map.
+  //
+  // Award rule:
+  //   A === B  → 2 candy of that one species
+  //   A !== B  → uniform random over three outcomes:
+  //                 2 candy of A, OR
+  //                 2 candy of B, OR
+  //                 1 candy of A and 1 candy of B
+  //
+  // No spend mechanism yet — saved against a future evolve / item
+  // mechanic.
+  function readCandyRaw() {
     try {
       const raw = localStorage.getItem(CANDY_KEY);
       return raw ? JSON.parse(raw) : {};
@@ -61,15 +74,47 @@
   function writeCandy(map) {
     localStorage.setItem(CANDY_KEY, JSON.stringify(map));
   }
+  function bumpCandy(speciesIdx, n) {
+    const map = readCandyRaw();
+    const k = String(speciesIdx);
+    map[k] = (map[k] || 0) + n;
+    writeCandy(map);
+  }
   function awardCandyForCapture(speciesA, speciesB) {
-    const types = fusionTypesFor(speciesA, speciesB);
-    if (!types || !types.length) return;
-    const candy = readCandy();
-    const inc = types.length === 1 ? 2 : 1;
-    for (const t of types) {
-      candy[t] = (candy[t] || 0) + inc;
+    if (speciesA == null || speciesB == null) return;
+    if (speciesA === speciesB) {
+      bumpCandy(speciesA, 2);
+      return;
     }
-    writeCandy(candy);
+    const r = Math.random();
+    if (r < 1 / 3) {
+      bumpCandy(speciesA, 2);
+    } else if (r < 2 / 3) {
+      bumpCandy(speciesB, 2);
+    } else {
+      bumpCandy(speciesA, 1);
+      bumpCandy(speciesB, 1);
+    }
+  }
+  // One-shot migration from type-keyed candy to species-keyed candy.
+  // Lazy: triggered by readCandy on first call when the flag is unset.
+  // Clears any existing type-keyed candy and replays every captured
+  // creature through awardCandyForCapture so the user ends up with a
+  // species-candy distribution that matches their full play history
+  // under the new rules.
+  function migrateCandyIfNeeded() {
+    if (localStorage.getItem(CANDY_MIGRATED_KEY) === '1') return;
+    writeCandy({});
+    const captured = readCapturedCreatures();
+    for (const c of captured) {
+      if (!c) continue;
+      awardCandyForCapture(c.speciesA, c.speciesB);
+    }
+    localStorage.setItem(CANDY_MIGRATED_KEY, '1');
+  }
+  function readCandy() {
+    migrateCandyIfNeeded();
+    return readCandyRaw();
   }
 
   // Item bag. Same shape as candy: `{ <itemKey>: <count> }` flat map.
@@ -229,6 +274,22 @@
     return global.Species && global.Species.fusionTypesFor
       ? global.Species.fusionTypesFor(a, b)
       : [];
+  }
+
+  // Inline candy tally for an opened pokémon. Mirrors the species-candy
+  // award rule visually: monotype fusion shows one pip, mixed fusion
+  // shows both. Reads the raw map (no migration trigger) — the candy
+  // view's read covers migration on first inspection.
+  function candyTallyHtml(speciesA, speciesB) {
+    if (speciesA == null || speciesB == null) return '';
+    const candy = readCandyRaw();
+    const species = (speciesA === speciesB) ? [speciesA] : [speciesA, speciesB];
+    const parts = species.map((idx) => {
+      const name = speciesNameFor(idx);
+      const count = candy[String(idx)] || 0;
+      return `<span class="candy-tally-pip">${escapeHtml(name)} candy <b>×${count}</b></span>`;
+    });
+    return `<div class="candy-tally">${parts.join(' · ')}</div>`;
   }
 
   function fusionEvolutionsFor(a, b) {
@@ -1033,7 +1094,10 @@
         border: 1px solid var(--ui-hairline, rgba(0,0,0,0.08));
         border-radius: var(--ui-radius, 8px);
       }
-      #creatureInventory .candy-row .type-chip { margin: 0; }
+      #creatureInventory .candy-row .candy-name {
+        font-size: 14px; font-weight: 600;
+        color: var(--ui-text, #111);
+      }
       #creatureInventory .candy-row .candy-count {
         margin-left: auto;
         font-size: 14px; font-weight: 600;
@@ -1422,6 +1486,17 @@
         border-radius: 999px;
         text-shadow: 0 1px 1px rgba(0,0,0,0.4);
         line-height: 1.4;
+      }
+      .candy-tally {
+        text-align: center;
+        font-size: 12px;
+        color: var(--ui-muted, #666);
+        margin-top: 6px;
+        line-height: 1.4;
+      }
+      .candy-tally b {
+        color: var(--ui-text, #111);
+        font-weight: 600;
       }
       #battleScreen .battle-actions {
         position: absolute;
@@ -1874,9 +1949,19 @@
     `;
   }
 
-  // Candy view: type-chip rows with cumulative counts. Sorted by count
-  // descending so the user's heaviest stockpiles surface at the top;
-  // ties broken alphabetically by type name for stable ordering.
+  // Candy view: rows of species name + cumulative count. Sorted by
+  // count descending so the user's heaviest stockpiles surface at the
+  // top; ties broken alphabetically by display name. Keys are species
+  // indices (numeric strings); display name comes from Species.nameFor
+  // and falls back to "#<idx>" if names data isn't loaded.
+  function speciesNameFor(idx) {
+    const n = parseInt(idx, 10);
+    if (!isFinite(n)) return String(idx);
+    if (global.Species && global.Species.nameFor) {
+      return global.Species.nameFor(n) || `#${n}`;
+    }
+    return `#${n}`;
+  }
   function renderCandy() {
     const panel = document.getElementById('creatureInventory');
     if (!panel) return;
@@ -1885,28 +1970,27 @@
     const candy = readCandy();
     const entries = Object.entries(candy)
       .filter(([, n]) => n > 0)
-      .sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0]));
+      .sort((a, b) => {
+        if (b[1] !== a[1]) return b[1] - a[1];
+        return speciesNameFor(a[0]).localeCompare(speciesNameFor(b[0]));
+      });
     const total = entries.reduce((sum, [, n]) => sum + n, 0);
     const subtitle = total > 0
-      ? `${total} candy across ${entries.length} type${entries.length === 1 ? '' : 's'}`
+      ? `${total} candy across ${entries.length} species`
       : '';
     if (!entries.length) {
       body.innerHTML = `
         <div class="candy-title">Candy</div>
-        <div class="candy-empty">No candy yet — catch some creatures to earn candy of their types!</div>
+        <div class="candy-empty">No candy yet — catch some creatures to earn candy of their species!</div>
       `;
       return;
     }
-    const rows = entries.map(([type, n]) => {
-      const bg = TYPE_COLORS[type] || '#888';
-      const label = type.charAt(0) + type.slice(1).toLowerCase();
-      return `
-        <div class="candy-row">
-          <span class="type-chip" style="background:${bg}">${escapeHtml(label)}</span>
-          <span class="candy-count">×${n}</span>
-        </div>
-      `;
-    }).join('');
+    const rows = entries.map(([key, n]) => `
+      <div class="candy-row">
+        <span class="candy-name">${escapeHtml(speciesNameFor(key))}</span>
+        <span class="candy-count">×${n}</span>
+      </div>
+    `).join('');
     body.innerHTML = `
       <div class="candy-title">Candy</div>
       <div class="candy-subtitle">${escapeHtml(subtitle)}</div>
@@ -1997,6 +2081,7 @@
       ${typesHtml}
       ${capturedHtml}
       ${encounterHtml}
+      ${candyTallyHtml(a, b)}
     `;
     body.querySelectorAll('.species-link').forEach((link) => {
       link.addEventListener('click', () => {
@@ -2290,6 +2375,7 @@
       ${typesHtml}
       ${statsHtml}
       ${caughtLine}
+      ${candyTallyHtml(c.speciesA, c.speciesB)}
       ${evosHtml}
       ${familyHtml}
     `;
@@ -2602,6 +2688,17 @@
   let _lastRefreshLat = null;
   let _lastRefreshLng = null;
   let _lastRefreshAt = 0;
+  // Once a marker has appeared on the map it's protected from removal
+  // for MIN_DISPLAY_MS so a brief GPS jitter (or a quick walk past the
+  // edge of the visibility radius) doesn't yank it before the user can
+  // tap. After the protection window, the next refresh — or the
+  // deferred re-check below — drops the marker if it's still unwanted.
+  const MIN_DISPLAY_MS = 10000;
+  // Single pending timeout that re-runs refreshSpawnOverlay once the
+  // soonest TTL-protected marker becomes removable. Stored at module
+  // scope so successive refreshes can cancel + reschedule rather than
+  // stacking timers.
+  let _deferredRefreshTimer = null;
 
   function metersBetween(lat1, lng1, lat2, lng2) {
     const R = 6371009;
@@ -2663,6 +2760,7 @@
         <div class="battle-name"></div>
         <div class="battle-stats"></div>
         <div class="battle-types"></div>
+        <div class="battle-candy"></div>
       </div>
       <div class="battle-actions">
         <button type="button" class="flee">Flee</button>
@@ -2690,6 +2788,10 @@
     const typesEl = el.querySelector('.battle-types');
     if (typesEl) {
       typesEl.innerHTML = typeChipsHtml(fusionTypesFor(spawn.speciesA, spawn.speciesB));
+    }
+    const candyEl = el.querySelector('.battle-candy');
+    if (candyEl) {
+      candyEl.innerHTML = candyTallyHtml(spawn.speciesA, spawn.speciesB);
     }
     const img = el.querySelector('img.battle-sprite');
     // Reset previous state.
@@ -2806,7 +2908,7 @@
     const marker = new global.maplibregl.Marker({ element: el, anchor: 'center' })
       .setLngLat([spawn.lng, spawn.lat])
       .addTo(_overlayMap);
-    const record = { marker, objectUrl: null, spawn };
+    const record = { marker, objectUrl: null, spawn, firstShownAt: Date.now() };
     _markers.set(spawn.id, record);
     loadMarkerSprite(record);
   }
@@ -2856,13 +2958,42 @@
       && metersBetween(_userLat, _userLng, s.lat, s.lng) <= VISIBILITY_RADIUS_M
     );
 
-    // Reconcile markers: keep existing ids, add new ones, drop stale ones.
+    // Reconcile markers: keep existing ids, add new ones, drop stale
+    // ones — but only if they've been visible for at least
+    // MIN_DISPLAY_MS. Markers younger than that are TTL-protected so
+    // GPS jitter can't yank them before the user has a chance to tap.
+    // The soonest TTL expiry is used to schedule a deferred refresh
+    // so a stuck marker eventually gets removed even if the user is
+    // standing still (no GPS movement → no natural refresh trigger).
     const wanted = new Set(within.map((s) => s.id));
+    if (_deferredRefreshTimer != null) {
+      clearTimeout(_deferredRefreshTimer);
+      _deferredRefreshTimer = null;
+    }
+    let soonestRemovableAt = Infinity;
     for (const id of Array.from(_markers.keys())) {
-      if (!wanted.has(id)) removeMarker(id);
+      if (wanted.has(id)) continue;
+      const rec = _markers.get(id);
+      const removableAt = (rec.firstShownAt || 0) + MIN_DISPLAY_MS;
+      if (now >= removableAt) {
+        removeMarker(id);
+      } else if (removableAt < soonestRemovableAt) {
+        soonestRemovableAt = removableAt;
+      }
     }
     for (const s of within) {
       if (!_markers.has(s.id)) addMarker(s);
+    }
+    if (soonestRemovableAt !== Infinity) {
+      // Re-run after the soonest TTL-protected marker becomes
+      // removable. Bypasses dedupe by zeroing _lastRefreshAt before
+      // calling, so the refresh runs even if the user is stationary.
+      const delay = Math.max(50, soonestRemovableAt - now + 50);
+      _deferredRefreshTimer = setTimeout(() => {
+        _deferredRefreshTimer = null;
+        _lastRefreshAt = 0;
+        refreshSpawnOverlay();
+      }, delay);
     }
   }
 
