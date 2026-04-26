@@ -655,6 +655,55 @@
   function readPokedexFilterTypeB() {
     return localStorage.getItem('cc.pokedexFilterTypeB') || '';
   }
+  function readInvFilterType() {
+    return localStorage.getItem('cc.invFilterType') || '';
+  }
+  function readInvFilterTypeA() {
+    return localStorage.getItem('cc.invFilterTypeA') || '';
+  }
+  function readInvFilterTypeB() {
+    return localStorage.getItem('cc.invFilterTypeB') || '';
+  }
+  // Shared list used to generate the type-filter <select> options for
+  // both the Pokédex and the inventory. Pokédex's hardcoded options
+  // pre-date this helper and stay as-is to avoid noisy diffs; new
+  // surfaces (inventory) use this.
+  const TYPE_FILTER_LIST = [
+    'NORMAL', 'FIRE', 'WATER', 'GRASS', 'ELECTRIC', 'ICE',
+    'FIGHTING', 'POISON', 'GROUND', 'FLYING', 'PSYCHIC', 'BUG',
+    'ROCK', 'GHOST', 'DRAGON', 'DARK', 'STEEL', 'FAIRY',
+  ];
+  function typeFilterSelectHtml(id) {
+    const opts = ['<option value="">Any</option>'].concat(
+      TYPE_FILTER_LIST.map((t) => {
+        const label = t.charAt(0) + t.slice(1).toLowerCase();
+        return `<option value="${t}">${label}</option>`;
+      })
+    );
+    return `<select id="${id}" class="type-filter-select">${opts.join('')}</select>`;
+  }
+  // Paint a type-filter <select> with the type's canonical color when
+  // a real type is selected, or strip the inline styles back to the
+  // theme's defaults when it's "any". Defined after TYPE_COLORS but
+  // referenced by name later — function declaration so it hoists.
+  function applyTypeSelectColor(selectEl) {
+    if (!selectEl) return;
+    const v = selectEl.value;
+    const bg = TYPE_COLORS[v];
+    if (bg) {
+      selectEl.style.backgroundColor = bg;
+      selectEl.style.borderColor = bg;
+      selectEl.style.color = '#fff';
+      selectEl.style.fontWeight = '600';
+      selectEl.style.textShadow = '0 1px 1px rgba(0,0,0,0.4)';
+    } else {
+      selectEl.style.backgroundColor = '';
+      selectEl.style.borderColor = '';
+      selectEl.style.color = '';
+      selectEl.style.fontWeight = '';
+      selectEl.style.textShadow = '';
+    }
+  }
   const SORT_DIRS = new Set(['asc', 'desc']);
 
   function readSortKey() {
@@ -802,14 +851,38 @@
       #creatureInventory .pokedex-search-row input {
         flex: 1; min-width: 0;
       }
-      #creatureInventory .pokedex-type-row { gap: 6px; }
-      #creatureInventory .pokedex-type-row select {
-        flex: 1; min-width: 0;
+      /* "Type: Either: [▾]  First: [▾]  Second: [▾]" row. Wraps onto
+         multiple lines on narrow viewports — sheet width is 360px
+         max so all three pairs in one row tends to overflow. */
+      #creatureInventory .type-filter-row {
+        display: flex; flex-wrap: wrap;
+        align-items: center;
+        gap: 4px 4px;
+        margin: 0 0 10px;
+        font-size: 12px;
+      }
+      #creatureInventory .type-filter-row .type-pair {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        color: var(--ui-muted, #666);
+        cursor: pointer;
+      }
+      #creatureInventory .type-filter-select {
+        padding: 3px 1px;
+        font-size: 12px;
+        background: var(--ui-bg, #fff);
+        color: var(--ui-text, #111);
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
+        border-radius: var(--ui-radius, 8px);
+        font-family: inherit;
+        cursor: pointer;
       }
       /* Visual cue that a filter has been changed from its default
-         "any" / blank state — accent-colored outline. */
-      #creatureInventory .pokedex-view input.filter-active,
-      #creatureInventory .pokedex-view select.filter-active {
+         "any" / blank state — accent-colored outline. Applies in any
+         view (browse + pokedex both have type-filter selects now). */
+      #creatureInventory input.filter-active,
+      #creatureInventory select.filter-active {
         border-color: var(--ui-accent, #888);
         box-shadow: 0 0 0 1px var(--ui-accent, #888);
       }
@@ -1547,6 +1620,15 @@
           <div class="search-row">
             <input id="creatureSearch" type="search" placeholder="Search by name" autocomplete="off">
           </div>
+          <div class="search-row pokedex-search-row">
+            <input id="creatureSearchA" type="search" placeholder="Search first species" autocomplete="off">
+            <input id="creatureSearchB" type="search" placeholder="Search second species" autocomplete="off">
+          </div>
+          <div class="type-filter-row">
+            <label class="type-pair"><span>Either:</span>${typeFilterSelectHtml('creatureFilterType')}</label>
+            <label class="type-pair"><span>First:</span>${typeFilterSelectHtml('creatureFilterTypeA')}</label>
+            <label class="type-pair"><span>Second:</span>${typeFilterSelectHtml('creatureFilterTypeB')}</label>
+          </div>
           <div class="sort-row">
             <label for="creatureSortBy">Sort</label>
             <select id="creatureSortBy">
@@ -1583,70 +1665,10 @@
             <input id="pokedexSearchA" type="search" placeholder="Search first species" autocomplete="off">
             <input id="pokedexSearchB" type="search" placeholder="Search second species" autocomplete="off">
           </div>
-          <div class="sort-row pokedex-type-row">
-            <select id="pokedexFilterType">
-              <option value="">Either: any</option>
-              <option value="NORMAL">Either: Normal</option>
-              <option value="FIRE">Either: Fire</option>
-              <option value="WATER">Either: Water</option>
-              <option value="GRASS">Either: Grass</option>
-              <option value="ELECTRIC">Either: Electric</option>
-              <option value="ICE">Either: Ice</option>
-              <option value="FIGHTING">Either: Fighting</option>
-              <option value="POISON">Either: Poison</option>
-              <option value="GROUND">Either: Ground</option>
-              <option value="FLYING">Either: Flying</option>
-              <option value="PSYCHIC">Either: Psychic</option>
-              <option value="BUG">Either: Bug</option>
-              <option value="ROCK">Either: Rock</option>
-              <option value="GHOST">Either: Ghost</option>
-              <option value="DRAGON">Either: Dragon</option>
-              <option value="DARK">Either: Dark</option>
-              <option value="STEEL">Either: Steel</option>
-              <option value="FAIRY">Either: Fairy</option>
-            </select>
-            <select id="pokedexFilterTypeA">
-              <option value="">First: any</option>
-              <option value="NORMAL">First: Normal</option>
-              <option value="FIRE">First: Fire</option>
-              <option value="WATER">First: Water</option>
-              <option value="GRASS">First: Grass</option>
-              <option value="ELECTRIC">First: Electric</option>
-              <option value="ICE">First: Ice</option>
-              <option value="FIGHTING">First: Fighting</option>
-              <option value="POISON">First: Poison</option>
-              <option value="GROUND">First: Ground</option>
-              <option value="FLYING">First: Flying</option>
-              <option value="PSYCHIC">First: Psychic</option>
-              <option value="BUG">First: Bug</option>
-              <option value="ROCK">First: Rock</option>
-              <option value="GHOST">First: Ghost</option>
-              <option value="DRAGON">First: Dragon</option>
-              <option value="DARK">First: Dark</option>
-              <option value="STEEL">First: Steel</option>
-              <option value="FAIRY">First: Fairy</option>
-            </select>
-            <select id="pokedexFilterTypeB">
-              <option value="">Second: any</option>
-              <option value="NORMAL">Second: Normal</option>
-              <option value="FIRE">Second: Fire</option>
-              <option value="WATER">Second: Water</option>
-              <option value="GRASS">Second: Grass</option>
-              <option value="ELECTRIC">Second: Electric</option>
-              <option value="ICE">Second: Ice</option>
-              <option value="FIGHTING">Second: Fighting</option>
-              <option value="POISON">Second: Poison</option>
-              <option value="GROUND">Second: Ground</option>
-              <option value="FLYING">Second: Flying</option>
-              <option value="PSYCHIC">Second: Psychic</option>
-              <option value="BUG">Second: Bug</option>
-              <option value="ROCK">Second: Rock</option>
-              <option value="GHOST">Second: Ghost</option>
-              <option value="DRAGON">Second: Dragon</option>
-              <option value="DARK">Second: Dark</option>
-              <option value="STEEL">Second: Steel</option>
-              <option value="FAIRY">Second: Fairy</option>
-            </select>
+          <div class="type-filter-row">
+            <label class="type-pair"><span>Either:</span>${typeFilterSelectHtml('pokedexFilterType')}</label>
+            <label class="type-pair"><span>First:</span>${typeFilterSelectHtml('pokedexFilterTypeA')}</label>
+            <label class="type-pair"><span>Second:</span>${typeFilterSelectHtml('pokedexFilterTypeB')}</label>
           </div>
           <div class="sort-row">
             <label for="pokedexSortBy">Sort</label>
@@ -1705,6 +1727,44 @@
       renderList(listEl);
     });
     search.addEventListener('input', () => renderList(listEl));
+
+    // Inventory's per-species name searches and type filters (mirror
+    // the Pokédex set). Type filters persist via localStorage; the
+    // species-name searches are session-only (cleared on every open()).
+    const invSearchA = panel.querySelector('#creatureSearchA');
+    const invSearchB = panel.querySelector('#creatureSearchB');
+    if (invSearchA) invSearchA.addEventListener('input', () => renderList(listEl));
+    if (invSearchB) invSearchB.addEventListener('input', () => renderList(listEl));
+    const invFilterType = panel.querySelector('#creatureFilterType');
+    const invFilterTypeA = panel.querySelector('#creatureFilterTypeA');
+    const invFilterTypeB = panel.querySelector('#creatureFilterTypeB');
+    if (invFilterType) {
+      invFilterType.value = readInvFilterType();
+      applyTypeSelectColor(invFilterType);
+      invFilterType.addEventListener('change', () => {
+        localStorage.setItem('cc.invFilterType', invFilterType.value);
+        applyTypeSelectColor(invFilterType);
+        renderList(listEl);
+      });
+    }
+    if (invFilterTypeA) {
+      invFilterTypeA.value = readInvFilterTypeA();
+      applyTypeSelectColor(invFilterTypeA);
+      invFilterTypeA.addEventListener('change', () => {
+        localStorage.setItem('cc.invFilterTypeA', invFilterTypeA.value);
+        applyTypeSelectColor(invFilterTypeA);
+        renderList(listEl);
+      });
+    }
+    if (invFilterTypeB) {
+      invFilterTypeB.value = readInvFilterTypeB();
+      applyTypeSelectColor(invFilterTypeB);
+      invFilterTypeB.addEventListener('change', () => {
+        localStorage.setItem('cc.invFilterTypeB', invFilterTypeB.value);
+        applyTypeSelectColor(invFilterTypeB);
+        renderList(listEl);
+      });
+    }
 
     // Delegated card click — rebinding per render would be noisier and
     // the grid is small enough that delegation is trivially fast.
@@ -1768,22 +1828,28 @@
 
     const pokedexFilterType = panel.querySelector('#pokedexFilterType');
     pokedexFilterType.value = readPokedexFilterType();
+    applyTypeSelectColor(pokedexFilterType);
     pokedexFilterType.addEventListener('change', () => {
       localStorage.setItem('cc.pokedexFilterType', pokedexFilterType.value);
+      applyTypeSelectColor(pokedexFilterType);
       renderPokedex();
     });
 
     const pokedexFilterTypeA = panel.querySelector('#pokedexFilterTypeA');
     pokedexFilterTypeA.value = readPokedexFilterTypeA();
+    applyTypeSelectColor(pokedexFilterTypeA);
     pokedexFilterTypeA.addEventListener('change', () => {
       localStorage.setItem('cc.pokedexFilterTypeA', pokedexFilterTypeA.value);
+      applyTypeSelectColor(pokedexFilterTypeA);
       renderPokedex();
     });
 
     const pokedexFilterTypeB = panel.querySelector('#pokedexFilterTypeB');
     pokedexFilterTypeB.value = readPokedexFilterTypeB();
+    applyTypeSelectColor(pokedexFilterTypeB);
     pokedexFilterTypeB.addEventListener('change', () => {
       localStorage.setItem('cc.pokedexFilterTypeB', pokedexFilterTypeB.value);
+      applyTypeSelectColor(pokedexFilterTypeB);
       renderPokedex();
     });
 
@@ -2131,31 +2197,39 @@
     });
   }
 
-  // Toggle a `filter-active` class on each Pokédex filter control whose
-  // value isn't the default "any" / blank, so it's visually obvious
-  // when the grid is being narrowed by something the user might have
-  // forgotten about.
-  function updatePokedexFilterIndicators(panel) {
-    const checks = [
-      '#pokedexSearchAny',
-      '#pokedexSearchA',
-      '#pokedexSearchB',
-      '#pokedexFilterType',
-      '#pokedexFilterTypeA',
-      '#pokedexFilterTypeB',
-    ];
-    for (const sel of checks) {
+  // Toggle a `filter-active` class on each filter control whose value
+  // isn't the default "any" / blank, so it's visually obvious when
+  // the grid is being narrowed by something the user might have
+  // forgotten about. Used by both the Pokédex and the inventory.
+  function updateFilterIndicators(panel, selectors) {
+    for (const sel of selectors) {
       const el = panel.querySelector(sel);
       if (!el) continue;
       const isActive = (el.value || '').trim() !== '';
       el.classList.toggle('filter-active', isActive);
     }
   }
+  const POKEDEX_FILTER_SELECTORS = [
+    '#pokedexSearchAny',
+    '#pokedexSearchA',
+    '#pokedexSearchB',
+    '#pokedexFilterType',
+    '#pokedexFilterTypeA',
+    '#pokedexFilterTypeB',
+  ];
+  const INV_FILTER_SELECTORS = [
+    '#creatureSearch',
+    '#creatureSearchA',
+    '#creatureSearchB',
+    '#creatureFilterType',
+    '#creatureFilterTypeA',
+    '#creatureFilterTypeB',
+  ];
 
   function renderPokedex() {
     const panel = document.getElementById('creatureInventory');
     if (!panel) return;
-    updatePokedexFilterIndicators(panel);
+    updateFilterIndicators(panel, POKEDEX_FILTER_SELECTORS);
     const seen = readSeenFusions();
     const caught = caughtFusionsSet();
     let entries = Object.keys(seen).map((key) => {
@@ -2576,6 +2650,8 @@
   function renderList(listEl) {
     renderWeatherBar();
     renderSaveReminder();
+    const panel = document.getElementById('creatureInventory');
+    if (panel) updateFilterIndicators(panel, INV_FILTER_SELECTORS);
     const searchEl = document.getElementById('creatureSearch');
     const q = (searchEl && searchEl.value || '').trim().toLowerCase();
     let items = sortedCreatures();
@@ -2586,10 +2662,41 @@
         displayName(c).toLowerCase().includes(q) ||
         c.name.toLowerCase().includes(q));
     }
+    // Type filters (mirror Pokédex). "Either" → any of the fusion's
+    // resolved types; "First" → primary slot; "Second" → secondary slot.
+    // A monotype fusion (A and B share an effective type post-dedup) has
+    // no secondary, so it won't match any "Second" filter.
+    const filterType = readInvFilterType();
+    const filterTypeA = readInvFilterTypeA();
+    const filterTypeB = readInvFilterTypeB();
+    if (filterType || filterTypeA || filterTypeB) {
+      items = items.filter((c) => {
+        if (c.speciesA == null || c.speciesB == null) return false;
+        const types = fusionTypesFor(c.speciesA, c.speciesB);
+        if (!types || !types.length) return false;
+        if (filterType && !types.includes(filterType)) return false;
+        if (filterTypeA && types[0] !== filterTypeA) return false;
+        if (filterTypeB && types[1] !== filterTypeB) return false;
+        return true;
+      });
+    }
+    // Per-species name searches.
+    const sa = (panel && panel.querySelector('#creatureSearchA') || {}).value || '';
+    const sb = (panel && panel.querySelector('#creatureSearchB') || {}).value || '';
+    const qA = sa.trim().toLowerCase();
+    const qB = sb.trim().toLowerCase();
+    if (qA || qB) {
+      const nameOfLower = (idx) => global.Species
+        ? global.Species.nameFor(idx).toLowerCase()
+        : `#${idx}`;
+      if (qA) items = items.filter((c) => c.speciesA != null && nameOfLower(c.speciesA).includes(qA));
+      if (qB) items = items.filter((c) => c.speciesB != null && nameOfLower(c.speciesB).includes(qB));
+    }
     if (!items.length) {
       if (listEl._virtCleanup) listEl._virtCleanup();
-      const msg = q
-        ? 'No creatures match that name.'
+      const filteredOut = q || qA || qB || filterType || filterTypeA || filterTypeB;
+      const msg = filteredOut
+        ? 'No creatures match those filters.'
         : 'No creatures yet — go exploring!';
       listEl.innerHTML = `<div class="creature-empty">${msg}</div>`;
       return;
@@ -2648,6 +2755,10 @@
     const panel = ensurePanel();
     const search = panel.querySelector('#creatureSearch');
     if (search) search.value = '';
+    const searchA = panel.querySelector('#creatureSearchA');
+    if (searchA) searchA.value = '';
+    const searchB = panel.querySelector('#creatureSearchB');
+    if (searchB) searchB.value = '';
     showBrowse();
     panel.classList.add('show');
   }
