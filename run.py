@@ -296,6 +296,69 @@ def creature_sprite(sheet):
     return resp
 
 
+# Hand-drawn (custom) fusion sheets live in `spritesheets_custom/<B>/`,
+# with the base sheet at `<B>.png` and additional variants at
+# `<B>{a..z}.png`. Many cells in a custom sheet are blank (artists only
+# fill in some morphs); the client alpha-scans every cell during bulk
+# download and falls back to the autogen sheet for blanks.
+_CUSTOM_VARIANT_RE = re.compile(r"^[a-z]$")
+
+
+@app.route("/creature-sprite-custom/<int:species>")
+def creature_sprite_custom_base(species):
+    return _send_custom_sheet(species, "")
+
+
+@app.route("/creature-sprite-custom/<int:species>/<variant>")
+def creature_sprite_custom_variant(species, variant):
+    if not _CUSTOM_VARIANT_RE.fullmatch(variant or ""):
+        abort(400)
+    return _send_custom_sheet(species, variant)
+
+
+def _send_custom_sheet(species, suffix):
+    fname = f"{species}{suffix}.png"
+    path = ROOT / "data" / "Battlers" / "spritesheets_custom" / str(species) / fname
+    if not path.is_file():
+        abort(404)
+    resp = send_from_directory(path.parent, path.name, mimetype="image/png")
+    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return resp
+
+
+@app.route("/creature-sprite-custom-manifest")
+def creature_sprite_custom_manifest():
+    # Returns { "<species>": ["", "a", "b", ...] } — the list of variant
+    # suffixes that have a sheet on disk for this species. Empty string
+    # is the base sheet (`<species>.png`); letters are the additional
+    # variants (`<species>a.png`, `<species>b.png`, …). Species without
+    # any custom sheets are absent from the map (caller falls back to
+    # autogen for the entire species).
+    base = ROOT / "data" / "Battlers" / "spritesheets_custom"
+    if not base.is_dir():
+        abort(404)
+    out = {}
+    for d in base.iterdir():
+        if not d.is_dir() or not d.name.isdigit():
+            continue
+        species = int(d.name)
+        if species < 1 or species > 150:
+            continue
+        variants = []
+        for f in d.iterdir():
+            m = re.match(rf"^{species}([a-z]?)\.png$", f.name)
+            if m:
+                variants.append(m.group(1))
+        if variants:
+            # Base ('') first, then letters in alphabetical order so the
+            # client's variant indices are stable across runs.
+            variants.sort(key=lambda s: (0 if s == "" else 1, s))
+            out[str(species)] = variants
+    resp = jsonify(out)
+    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return resp
+
+
 # Field codes for binary POI props. Keys must stay in lock-step with the
 # client's POI_FIELDS array — reordering here breaks existing IDB data.
 POI_FIELDS = [

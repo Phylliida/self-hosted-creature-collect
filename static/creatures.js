@@ -399,18 +399,36 @@
 
   // Inventory view: captured creatures, normalized to the shape the
   // render/sort/search code already expects (id, name, level, sizeM,
-  // plus speciesA/B and caughtAt for the detail view).
+  // plus speciesA/B, variant, and caughtAt for the detail view).
+  // Legacy captures without a `variant` field render with the autogen
+  // sprite (their original look — IDB still has that blob).
   function getInventoryCreatures() {
     return readCapturedCreatures().map((e) => ({
       id: e.id,
       speciesA: e.speciesA,
       speciesB: e.speciesB,
+      variant: (typeof e.variant === 'number') ? e.variant : null,
       level: e.level,
       sizeM: e.sizeM,
       name: fusionName(e.speciesA, e.speciesB),
       caughtAt: e.caughtAt,
       tags: Array.isArray(e.tags) ? e.tags.slice() : [],
     }));
+  }
+
+  // Resolve a spawn's deterministic variantSeed (uniform [0,1)) to a
+  // concrete variant index using the per-cell custom-variant count
+  // currently in IDB. Returns null when the cell has no custom variants
+  // or the sprites module isn't loaded — caller should fall back to
+  // autogen. Different players see the same variant for the same spawn
+  // because variantSeed is part of the deterministic spawn generation.
+  async function resolveSpawnVariant(spawn) {
+    if (!global.Sprites || typeof spawn.variantSeed !== 'number') return null;
+    try {
+      const count = await global.Sprites.getCellVariantCount(spawn.speciesA, spawn.speciesB);
+      if (!count || count <= 0) return null;
+      return Math.floor(spawn.variantSeed * count);
+    } catch { return null; }
   }
 
   // Pokédex storage: every fusion we've ever opened the battle screen
@@ -735,14 +753,24 @@
       rootEl._spriteObserver.disconnect();
       rootEl._spriteObserver = null;
     }
-    const fetchInto = (card, a, b) => {
-      global.Sprites.getSpriteUrl(a, b).then((url) => {
+    // Each item may carry a `variant` field:
+    //   - number: render that custom variant index (captured creatures
+    //             carry their captured variant so they stay visually
+    //             stable even after future re-downloads)
+    //   - null/undefined: use the default-variant picker (custom v0
+    //             when the cell has any custom variants, autogen
+    //             otherwise) — appropriate for abstract views.
+    const fetchInto = (card, a, b, variant) => {
+      const p = (typeof variant === 'number')
+        ? global.Sprites.getSpriteUrl(a, b, variant)
+        : global.Sprites.getDefaultSpriteUrl(a, b);
+      p.then((url) => {
         if (!url) return;
         apply(card, url);
       }).catch(() => { /* swallow — placeholder stays */ });
     };
     if (typeof IntersectionObserver === 'undefined') {
-      for (const it of items) fetchInto(it.card, it.a, it.b);
+      for (const it of items) fetchInto(it.card, it.a, it.b, it.variant);
       return;
     }
     const byEl = new Map(items.map((it) => [it.card, it]));
@@ -752,7 +780,7 @@
         if (!entry.isIntersecting) continue;
         obs.unobserve(entry.target);
         const it = byEl.get(entry.target);
-        if (it) fetchInto(it.card, it.a, it.b);
+        if (it) fetchInto(it.card, it.a, it.b, it.variant);
       }
     }, { root: scrollRoot, rootMargin: '200px 0px' });
     for (const it of items) obs.observe(it.card);
@@ -797,7 +825,7 @@
     gridEl.querySelectorAll('.family-cell').forEach((cell) => {
       const a = +cell.dataset.a;
       const b = +cell.dataset.b;
-      global.Sprites.getSpriteUrl(a, b).then((url) => {
+      global.Sprites.getDefaultSpriteUrl(a, b).then((url) => {
         if (!url) return;
         const img = cell.querySelector('img');
         if (!img) { URL.revokeObjectURL(url); return; }
@@ -2798,9 +2826,10 @@
       });
     });
 
-    // Fusion sprite for the header.
+    // Fusion sprite for the header. Pokédex view is abstract — pick
+    // the artist's primary variant when one exists.
     if (global.Sprites) {
-      global.Sprites.getSpriteUrl(a, b).then((url) => {
+      global.Sprites.getDefaultSpriteUrl(a, b).then((url) => {
         if (!url) return;
         const img = body.querySelector('.detail-art-img');
         const ph = body.querySelector('.detail-art-placeholder');
@@ -3020,7 +3049,9 @@
       },
       loadSpriteFor(card, entry) {
         if (!global.Sprites) return;
-        global.Sprites.getSpriteUrl(entry.a, entry.b).then((url) => {
+        // Pokédex shows abstract fusions (no specific spawn or capture
+        // bound) — pick the artist's primary variant when available.
+        global.Sprites.getDefaultSpriteUrl(entry.a, entry.b).then((url) => {
           if (!url) return;
           const img = card.querySelector('img');
           if (!img) { URL.revokeObjectURL(url); return; }
@@ -3184,7 +3215,7 @@
         const e = evoEntries[i];
         const row = body.querySelector(`.evo-row[data-evo-idx="${i}"]`);
         if (!row) continue;
-        global.Sprites.getSpriteUrl(e.newA, e.newB).then((url) => {
+        global.Sprites.getDefaultSpriteUrl(e.newA, e.newB).then((url) => {
           if (!url) return;
           const img = row.querySelector('.evo-art img');
           if (!img) { URL.revokeObjectURL(url); return; }
@@ -3211,7 +3242,13 @@
       });
     });
     if (global.Sprites && c.speciesA != null && c.speciesB != null) {
-      global.Sprites.getSpriteUrl(c.speciesA, c.speciesB).then((url) => {
+      // Captured creature → render the variant burned in at capture
+      // time. Legacy captures (no variant field) fall back to the
+      // default-variant picker.
+      const p = (typeof c.variant === 'number')
+        ? global.Sprites.getSpriteUrl(c.speciesA, c.speciesB, c.variant)
+        : global.Sprites.getDefaultSpriteUrl(c.speciesA, c.speciesB);
+      p.then((url) => {
         if (!url) return;
         const img = body.querySelector('.detail-art-img');
         const ph = body.querySelector('.detail-art-placeholder');
@@ -3477,7 +3514,13 @@
       loadSpriteFor(card, c) {
         if (!global.Sprites) return;
         if (c.speciesA == null || c.speciesB == null) return;
-        global.Sprites.getSpriteUrl(c.speciesA, c.speciesB).then((url) => {
+        // Captured creature → render the variant burned in at capture
+        // time so the player's roster looks identical across sessions.
+        // Legacy captures (no `variant` field) get default-variant.
+        const p = (typeof c.variant === 'number')
+          ? global.Sprites.getSpriteUrl(c.speciesA, c.speciesB, c.variant)
+          : global.Sprites.getDefaultSpriteUrl(c.speciesA, c.speciesB);
+        p.then((url) => {
           if (!url) return;
           const img = card.querySelector('.art-img');
           const ph = card.querySelector('.art-placeholder');
@@ -3708,16 +3751,25 @@
       img.onload = () => { el.classList.add('battle-sprite-ready'); };
       img.src = rec.objectUrl;
     } else if (global.Sprites) {
-      global.Sprites.getSpriteUrl(spawn.speciesA, spawn.speciesB).then((url) => {
-        if (!url || _currentBattleSpawn !== spawn) {
-          if (url) URL.revokeObjectURL(url);
-          return;
-        }
-        _battleSpriteUrl = url;
-        _battleSpriteUrlOwned = true;
-        img.onload = () => { el.classList.add('battle-sprite-ready'); };
-        img.src = url;
-      });
+      // Prefer the variant cached on the marker record (resolved when
+      // the marker first painted) — saves a getCellVariantCount round-
+      // trip to IDB. Fall back to re-resolving when the marker hasn't
+      // loaded yet (e.g. user tapped before paint).
+      const variantPromise = (rec && 'variant' in rec)
+        ? Promise.resolve(rec.variant)
+        : resolveSpawnVariant(spawn);
+      variantPromise
+        .then((variant) => global.Sprites.getSpriteUrl(spawn.speciesA, spawn.speciesB, variant))
+        .then((url) => {
+          if (!url || _currentBattleSpawn !== spawn) {
+            if (url) URL.revokeObjectURL(url);
+            return;
+          }
+          _battleSpriteUrl = url;
+          _battleSpriteUrlOwned = true;
+          img.onload = () => { el.classList.add('battle-sprite-ready'); };
+          img.src = url;
+        });
     }
     el.classList.add('show');
   }
@@ -3737,16 +3789,25 @@
   // remove marker, request storage persistence). Returns the new
   // capture entry — the caller decides whether to close the battle
   // screen and/or open the inventory detail view.
-  function recordCaptureFromSpawn(spawn) {
+  async function recordCaptureFromSpawn(spawn) {
     const poiApi = global.CreatureCollectAPI;
     const poi = (poiApi && poiApi.findNearestNamedPoi)
       ? poiApi.findNearestNamedPoi(spawn.lat, spawn.lng)
       : null;
+    // Capture the variant the player saw at the moment of catching,
+    // so the inventory always shows that exact sprite even if the
+    // per-cell variant table later changes (e.g., new artist sheets).
+    // Reuses the marker record's cached variant when present.
+    const rec = _markers.get(spawn.id);
+    const variant = (rec && 'variant' in rec)
+      ? rec.variant
+      : await resolveSpawnVariant(spawn);
     const entry = {
       id: `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       spawnId: spawn.id,
       speciesA: spawn.speciesA,
       speciesB: spawn.speciesB,
+      variant,
       level: spawn.level,
       sizeM: spawn.sizeM,
       caughtAt: {
@@ -4028,7 +4089,7 @@
         { duration: 540, easing: 'cubic-bezier(0.34, 1.56, 0.64, 1)' });
       await ding.finished.catch(() => {});
       if (burst) burst.setAttribute('hidden', '');
-      const entry = recordCaptureFromSpawn(spawn);
+      const entry = await recordCaptureFromSpawn(spawn);
       closeBattleScreen();
       show();
       showDetail(entry.id);
@@ -4124,13 +4185,18 @@
     if (!global.Sprites) return;
     const { marker, spawn } = record;
     const el = marker.getElement();
-    global.Sprites.getSpriteUrl(spawn.speciesA, spawn.speciesB)
+    resolveSpawnVariant(spawn)
+      .then((variant) => {
+        // Cache the resolved variant on the record so the battle screen
+        // and the capture flow don't have to re-resolve from IDB.
+        record.variant = variant;
+        if (!_markers.has(spawn.id) || _markers.get(spawn.id) !== record) return null;
+        return global.Sprites.getSpriteUrl(spawn.speciesA, spawn.speciesB, variant);
+      })
       .then((url) => {
         // No cached sprite (user hasn't run the bulk download yet). Keep
         // the placeholder dot; never fetch on-demand.
         if (url == null) return;
-        // Marker may have been removed while sprite was decoding — bail
-        // and release the URL so we don't leak an object-URL handle.
         if (!_markers.has(spawn.id) || _markers.get(spawn.id) !== record) {
           URL.revokeObjectURL(url);
           return;

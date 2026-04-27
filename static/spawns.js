@@ -261,9 +261,18 @@
     // its dying seconds.
     const bornOffset = Math.floor(arng() * TICK_MS);
     const startMs = tick * TICK_MS + bornOffset;
+    // Variant draw — picks WHICH hand-drawn variant of (speciesA, speciesB)
+    // to render. Drawn LAST so adding it leaves species/lat/lng/level/
+    // sizeM/bornOffset stable for any (cell, tick). The seed is uniform
+    // [0, 1); the actual variant index is computed at render time as
+    // floor(variantSeed * count) where count is the per-cell custom-
+    // variant count looked up from the IDB variant table. Decoupling
+    // it from spawn-time means variant count never affects density (a
+    // cell with 5 variants is no more likely to spawn than one with 1).
+    const variantSeed = arng();
     return {
       id: `${cellX}:${cellY}:${tick}:0`,
-      lat, lng, speciesA, speciesB, level, sizeM,
+      lat, lng, speciesA, speciesB, level, sizeM, variantSeed,
       startMs, expireMs: startMs + LIFETIME_MS,
     };
   }
