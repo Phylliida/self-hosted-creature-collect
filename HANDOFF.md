@@ -194,3 +194,319 @@ polygons-only.
   cold sqlite — that's the SQLite JOIN + Python tuple unpacking, already
   streamed. Further wins would need pre-baking (build-time tiling) which
   we deferred.
+
+---
+
+# Session: Pokéstops, catch flow, in-place layer recoloring
+
+This session built out the **interactive game loop** on top of the
+already-working spawn / capture / inventory infrastructure: a real
+catch flow with thrown pokéballs, a pokéstop POI system with
+cooldowns + loot drops, in-place coloring of the underlying map
+layers (no HTML overlays) for cooldown state, and a tags / candy /
+visibility-toggle suite. Nothing in this section disturbs the
+binary-bundle infrastructure or theme system above; it all sits on
+top of the existing `static/creatures.js` + `static/index.html`.
+
+## Catch flow (was: instant Catch button → now: ball-throw + wobble)
+
+`creatures.js` battle screen used to have a single `Catch` button
+that auto-added the wild creature to the inventory. Now:
+
+- **Ball list instead of catch button.** `populateBattleBalls()`
+  reads the bag (`Creatures.getBag()`) and renders one button per
+  throwable type. Two ball items in the catalog so far: `poke_ball`
+  (per-shake stay-closed rate `0.65` → ≈28% catch) and `great_ball`
+  (`0.85` → ≈61% catch). `THROWABLE_BALL_KEYS` is the canonical list.
+- **Throw flow** in `throwBall(ballKey, sourceBtn)`:
+  1. `consumeItem(ballKey, 1)` decrements the bag.
+  2. **Arc**: compute (button-center → sprite-wrap-bottom-center)
+     via `getBoundingClientRect()` deltas; animate the ball through
+     a 3-keyframe path with a midpoint lifted ~`max(45, |dy| * 0.4)`
+     px above the throw line. Single ease-out, no rotation
+     (visible spin makes the ball look upside-down at apex —
+     reads as a glitch, not motion).
+  3. **Suck-in**: creature sprite scales + fades to 0 with a
+     simultaneous silhouette flash (a `<img>` with the sprite's
+     own `src`, white-tinted via `filter: brightness(0) invert(1)
+     drop-shadow(...)` to be the creature's outline).
+  4. **Outcome roll**: 3 independent shake checks, count successes.
+     3 successes = caught; otherwise break out at the failed shake.
+  5. **Wobble**: each shake is a full back-and-forth (0° → +22° →
+     -22° → 0°), per-keyframe `cubic-bezier(0.4, 0, 0.6, 1)` so the
+     ball "falls into" each tilt under fake gravity. Lead direction
+     **alternates** per shake. Long pause (320ms) BETWEEN shakes is
+     the suspense — same trick the original games use.
+  6. **Caught**: warm gold radial burst behind the ball, plus the
+     `ball-seam-glow` overlay (a tiny SVG that's just the seam line
+     + center button in white, with a layered drop-shadow halo)
+     pulses scale 0.85 → 1.6 / opacity 0 → 1 → 0. Ball does a small
+     "ding" squish (1 → 1.15 → 0.96 → 1, spring easing). Then
+     `recordCaptureFromSpawn` → `closeBattleScreen` →
+     `show()` + `showDetail(entry.id)` so the user lands directly
+     on the new capture's detail page.
+  7. **Break out**: cool-white burst from the ball, then the ball
+     **physically opens** — top half rotates `rotateX(-95°)` around
+     the seam (parent has `perspective: 300px` + `transform-style:
+     preserve-3d` so 3D works), translateY -22px; bottom half drops
+     8px and fades. Outer container drifts up 12px. Then the
+     silhouette flash + creature scale-back-in fire continuously
+     so the energy-release reads as one motion.
+
+The two ball halves are clipped views of the **same SVG** via
+`clip-path: inset(0 0 50% 0)` (top) and `inset(50% 0 0 0)` (bottom)
+— they overlap into one ball when closed and only the top has a
+break-out animation. Cleaner than maintaining two separate SVGs.
+
+**Web Animations API gotcha that bit us hard:** animations with
+`fill: 'forwards'` persist their final keyframe via the *animation
+effects stack*, not as inline `style.transform`. Setting
+`el.style.transform = ''` does NOT clear them. Symptoms: catch one
+creature, exit, encounter another → second creature renders at
+scale(0) opacity(0) (invisible) because the prior throw's
+suck-in animation is still applying its endpoint. Fix: a
+`cancelAnimsOn(el)` helper that walks `el.getAnimations()` and
+calls `.cancel()` on each. Called at the top of every
+`openBattleScreen` AND at the start of every `throwBall` AND at
+the end of break-out completion.
+
+## Pokéstop POI system
+
+Tap any POI in creature mode → the existing card opens with the
+bottom action swapped from "🧭 Directions" to "🎁 Collect items".
+A 10-min cooldown per POI, granting 1–3 random items per press.
+
+Storage: `cc.poiCooldowns.v1` is a `{ "<lng>,<lat>": entry }` map
+where each entry is `{ t: <ms>, c: <category>, x: <lng>, y: <lat> }`.
+The full-precision lng/lat is in the value (not parsed from the
+key) because parsing the rounded key gives a few-pixel offset at
+high zoom. Legacy entries that are bare numbers are normalized via
+`poiCooldownEntry()`.
+
+When a POI is collected:
+- `markPoiCollected(lng, lat, category)` records the entry +
+  prunes any expired entries opportunistically.
+- `findRenderedPoisWithin(centerLng, centerLat, 80m)` queries the
+  rendered POI features (and building dots if that layer is on),
+  haversine-filters to the exact circle, and we mark every nearby
+  feature as collected too. **Radius cooldown** prevents farming
+  tight clusters like "ATM + restaurant + parking on one corner".
+- The ball-list animation overlays the bottom button slot
+  (`granted.map((k) => <img>)` with a staggered scale-pop
+  keyframe) so the user sees what they got, then `setSelected(null)`
+  closes the card after 500ms. The 500ms delay also masks the
+  paint-property update lag while MapLibre re-evaluates the
+  in-place coloring.
+
+Collect button has two gates:
+- **Cooldown**: button shows `Available in MM:SS` with a live
+  countdown (single self-managed `setInterval` that auto-cancels
+  when the countdown ends or the card closes).
+- **Distance**: button is disabled and shows
+  `Too far · NN m` whenever the user is more than 100m away
+  (matching `VISIBILITY_RADIUS_M` in creatures.js so pokéstop
+  range = creature-spawn range). The same poll that drives the
+  countdown re-evaluates distance, so walking toward the POI
+  re-enables the button live.
+
+For transit POIs (bus stops etc.) in creature mode, the collect
+button is **physically hoisted into the body above the schedule
+list** — bus schedules can push the bottom button off-screen.
+
+## In-place layer recoloring without feature IDs
+
+The hardest piece. We wanted collected POIs / buildings to repaint
+**themselves** in gray (active cooldown) or pink (ready) rather than
+having an HTML / GeoJSON-source overlay layer drawn on top of them.
+
+`setFeatureState` is the textbook answer but needs feature IDs in
+the tiles, and `tilemaker-slim.json` has `"include_ids": false`. We
+declined to re-tile (would invalidate every tile and friends would
+need to re-download). So we found two MapLibre style expressions
+that work without IDs:
+
+### POI layer: `['within', polygon]`
+
+Build a `MultiPolygon` of tiny ~0.5m squares around each cooldown
+POI's lat/lng. Set `poi-icons` paint expression:
+```js
+'icon-color': ['case',
+  ['within', activeMultiPolygon], _currentCooldownActiveColor,
+  ['within', readyMultiPolygon],  _currentCooldownReadyColor,
+  _currentPoiThemeColor]
+```
+`within` checks if a feature's geometry sits inside a literal polygon.
+Only works for **Point / MultiPoint / LineString** — perfect for POIs
+which are points. Single-pass render (no second layer) means there's
+no two-layer-timing race during fast camera moves, which is what
+killed the earlier overlay-based approach.
+
+`refreshCooldownOverlays` in `index.html` rebuilds this expression on
+every change and calls `setPaintProperty('poi-icons', 'icon-color',
+expr)` + `map.triggerRepaint()` (the manual repaint trigger is
+necessary because MapLibre batches paint updates for the next loop
+tick — without it, there's a noticeable lag before the
+just-collected POI turns gray).
+
+### Building layer: `['distance', point]`
+
+Same idea but for buildings, which are polygons (can't use `within`).
+We use `['distance', { type: 'MultiPoint', coordinates: [...] }]`
+which returns shortest distance from the feature to ANY point in
+the input. For a cooldown centroid that's INSIDE the building's
+polygon, distance is 0:
+```js
+'icon-color': ['case',
+  ['<', ['distance', activeCentroidsMultiPoint], 1], gray,
+  ['<', ['distance', readyCentroidsMultiPoint],  1], pink,
+  default]
+```
+1m threshold is enough to absorb centroid jitter without catching
+neighboring buildings (typical building separation is ≥10m).
+
+Centroid is computed at click time via `buildingFeatureCentroid()`
+(average of polygon outer-ring vertices). Stored as `(lng, lat)` in
+the cooldown entry — same shape as POI entries — so the same
+storage path / refresh function handles both.
+
+### Building pokéstops are opt-in
+
+Hidden behind a Settings toggle (`cc.buildingPois`, default OFF)
+because the per-building distance evaluation is non-trivial in
+dense urban areas. When the toggle is on, `addBuildingPokestopsLayer`
+adds a small `building-pokestop` symbol layer at z16+ (subtle dot at
+each building centroid via the SDF tint of `static/poke-ball.svg`'s
+… actually a custom 12x12 dot SVG registered at runtime via
+`registerIconFromSvg`). Click handler falls back to building features
+when no POI / transit feature was hit.
+
+## Other additions (chronological)
+
+- **Family-rooted candy** (`cc.candyMigrated.familyV2`): catches
+  award candy keyed by the species' evolution-family ROOT, with
+  babies (Pichu/Cleffa/Igglybuff/Togepi/Tyrogue/Smoochum/Elekid/
+  Magby) skipped so the bucket is "Pikachu candy" not "Pichu candy".
+  Lazy migration in `readCandy()` clears the old map and replays
+  every captured creature through the new award rule.
+- **Tags system**: 1-8 char string labels stored at `cc.tags.v1`,
+  per-creature membership on the capture record's `tags` field
+  (additive — pre-existing captures default to `[]`). Built-in
+  predicate-driven tags (currently just "Pure" — `speciesA === speciesB`)
+  defined in code via `BUILTIN_TAGS`; never stored on creatures.
+  Inventory + Pokédex have AND-semantics chip filters; the detail
+  view's tag picker only shows built-in chips whose predicate fires
+  for THAT creature.
+- **Bag / candy / pokédex** filter chips, view stack with proper
+  back-button navigation across detail/fusion/pokedex/candy/bag/tags.
+- **Visibility settings section** (collapsed under a "i" info
+  button that explains "more layers = more lag"): toggles for
+  Building pokéstops (default off), Render buildings (off),
+  Render transit lines (on, also hides the transit-layers control
+  button when off), Render house numbers (off). Each layer's
+  initial visibility is read from localStorage **at style-creation
+  time**, so the JS `applyXVisibility` doesn't need to wait for
+  the map load — no first-frame flash of layers that should be
+  hidden.
+- **POI cooldown UX**: the selected POI's highlight marker also
+  recolors gray/pink. Card hides bus-stop schedule when collect is
+  hoisted. POI card itself fades 150ms in/out (opacity +
+  pointer-events, since `display` can't be transitioned). Battle
+  screen too.
+- **Save reminder banner**: "It's been 8 days since your last
+  save — tap to back up in Settings" appears at the top of the
+  inventory after 7 days. Settings backup row also gets a status
+  line clarifying that Save uses data (the only thing in the app
+  that does, per the no-network rule).
+
+## Things learned
+
+- **`setFeatureState` requires feature IDs** in the source. Without
+  re-tiling, the alternatives are `within` (points only) or
+  `distance` (any geometry, costs per-feature evaluation per frame).
+  Both let you do per-feature paint expressions without IDs.
+- **`distance` is significantly more powerful than I expected** —
+  it works on polygon features, takes any GeoJSON literal, and the
+  evaluation cost scales O(visible_features) rather than the
+  O(visible × cooldowns) you might fear (because a single MultiPoint
+  argument lets MapLibre find the nearest point in one pass).
+- **Single-pass repaint > two-layer overlay** for visual stability
+  during fast camera moves. We tried the overlay approach (separate
+  GeoJSON-sourced symbol layer drawing the same icon on top with a
+  different color) and it had a 1-2 frame mismatch where the
+  underlying icon's color "bled" through during fast zoom — the two
+  layers tile-process at slightly different rates internally. The
+  `within` / `distance` paint-expression approach is one render pass
+  per feature so no race exists by construction.
+- **`include_ids: true` in tilemaker is one line; the friction is
+  re-tiling** + everyone re-downloading. For a small social PWA
+  with real users (husband + friends), the cost-benefit didn't
+  favor re-tiling for what was achievable with paint expressions.
+- **Web Animations API + `fill: 'forwards'`** is a footgun. The
+  final state persists via the animation effects stack, not via
+  inline styles. `el.getAnimations().forEach(a => a.cancel())` is
+  the cleanup. Apply on every state-reset point.
+- **`map.triggerRepaint()`** is the manual lever for "this paint
+  property change should land on THE NEXT FRAME, not whenever the
+  render loop comes back around". Use it after every
+  `setPaintProperty` that needs to be visible immediately
+  (e.g., collect → POI turns gray).
+- **`map.queryRenderedFeatures` works against any rendered layer**,
+  including ones we just added in JS. Used for both the radius
+  cooldown sweep AND for the building pokestop click fallback.
+- **`anchor: 'center'` on `maplibregl.Marker`** plus a precise
+  lat/lng (NOT the rounded `key` parsed back to floats) is what it
+  takes to align an HTML overlay to a tile-rendered icon. Re-parsing
+  a `toFixed(5)` key loses ~1m precision = several pixels at z=18+.
+- **Tile-rendered icons scale via `icon-size` interpolated on
+  zoom**. To pixel-perfectly match a tile icon's screen size from
+  an HTML overlay (back when we were doing that), you need
+  MapLibre's exact exponential interpolator (base 1.5) over the
+  same control points, multiplied by the sprite's source pixel
+  size (set by `svgToImageData(..., 24, 2)` in this build → 24px).
+  This is moot now that we recolor in-place, but it's a lesson:
+  layer paint expressions are easier than reverse-engineering
+  rendering math.
+
+## Things deliberately NOT built (next-session leads)
+
+- **Evolve mechanic**: still on the deferred list since
+  `SESSION_SUMMARY_3.md`. Candy is now in place + wired into
+  detail view; missing pieces are (1) the evolve action button on
+  the detail page, (2) candy-cost rules per evolution, (3) the
+  evolve animation.
+- **Level-up mechanic**: walking distance? POI visits? combat?
+  unsettled.
+- **Server-side save list / restore UI**: `/save` endpoint exists,
+  no UI to list / restore historical saves yet.
+- **Wider A pool (1-509)**: architecture still in place
+  (`SPAWNABLE_SPECIES_A_FULL`), still gated behind one constant
+  swap + bumping `bulkDownload` `indexTo` to 509.
+- **Cross-device cooldown sync**: pokéstop cooldowns are local-
+  only (every device tracks its own). For a shared-world feel
+  ("my friend just emptied this stop") we'd need a server endpoint.
+  Not a priority.
+- **Building pokéstop cooldown overlay layer**: removed in favor
+  of the in-place `distance` recoloring. If we ever do want a
+  separate "all collected buildings I've been to" view (different
+  UI than the building-dot tint), we can add it back, but the
+  in-place approach was cleaner.
+
+## Files touched in this session
+
+```
+static/creatures.js               (catch flow, ball animation,
+                                   tags, candy migration, bag,
+                                   battle screen restructuring)
+static/index.html                 (pokéstop POI flow, cooldown
+                                   storage + recoloring expressions,
+                                   building pokestop layer, visibility
+                                   settings, save reminder, fade
+                                   transitions, lots of CSS)
+static/poke-ball.svg              (new — Poké Ball icon)
+static/great-ball.svg             (new — Great Ball icon)
+static/ball-seam-glow.svg         (new — seam + button outline for
+                                   the catch-success glow)
+HANDOFF.md                        (this section)
+```
+
+No `tilemaker*` / `run.py` / shell-script changes this session.

@@ -273,3 +273,8 @@ Copy the credentials JSON to `/var/lib/cloudflared/` and `nixos-rebuild switch`.
 Open the HTTPS URL in Safari → tap **Share** → **Add to Home Screen**. Launch
 from the home-screen icon (not from Safari) — this is what keeps offline tiles
 from being evicted by iOS after ~7 days.
+
+
+# Download pokemon files
+
+https://hackmd.io/@PIF-Tech/AltDownloadGuide#Download

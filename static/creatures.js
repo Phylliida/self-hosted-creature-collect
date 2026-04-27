@@ -59,16 +59,24 @@
       name: 'Poké Ball',
       desc: 'Standard capture device.',
       icon: '/static/poke-ball.svg',
+      // Per-shake stay-closed probability. 3 shakes are checked;
+      // a single failure breaks out at that shake. Catch chance
+      // overall = catchShakeRate^3 (≈ 70% for 0.8879).
+      catchShakeRate: 0.8879,
     },
     great_ball: {
       name: 'Great Ball',
       desc: 'Improved capture device — better catch rate.',
       icon: '/static/great-ball.svg',
+      catchShakeRate: 0.9655, // ≈ 90% catch
     },
   };
   // Items the pokéstop "Collect items" button can grant. Each press
   // samples 1-3 items uniformly from this list (with replacement).
   const COLLECTIBLE_ITEM_KEYS = ['poke_ball', 'great_ball'];
+  // Items the player can throw at a wild creature. Order here drives
+  // the order they appear in the battle screen's ball list.
+  const THROWABLE_BALL_KEYS = ['poke_ball', 'great_ball'];
   // Starter items granted on first-ever bag read (anyone who's played
   // before gets these too on next load).
   const STARTER_BAG = { poke_ball: 2 };
@@ -213,6 +221,22 @@
     const bag = readBag();
     bag[itemKey] = (bag[itemKey] || 0) + n;
     writeBag(bag);
+  }
+  // Decrement an item's count. Returns true on success, false if the
+  // bag didn't have enough. Removes the key entirely when its count
+  // hits zero so empty entries don't litter the map.
+  function consumeItem(itemKey, count) {
+    if (!itemKey) return false;
+    const n = Number(count) || 1;
+    if (n <= 0) return false;
+    const bag = readBag();
+    const have = bag[itemKey] || 0;
+    if (have < n) return false;
+    const next = have - n;
+    if (next > 0) bag[itemKey] = next;
+    else delete bag[itemKey];
+    writeBag(bag);
+    return true;
   }
 
   // Built-in tags are predicate-driven and never stored on a capture
@@ -1977,29 +2001,151 @@
       }
       #battleScreen .battle-actions {
         position: absolute;
-        bottom: 10%;
+        bottom: 8%;
         left: 50%;
         transform: translateX(-50%);
         display: flex;
-        gap: 14px;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
       }
-      #battleScreen .battle-actions button {
-        padding: 12px 28px;
-        font-size: 15px;
+      #battleScreen .battle-balls {
+        display: flex; gap: 10px; flex-wrap: wrap;
+        justify-content: center;
+      }
+      #battleScreen .battle-ball-btn {
+        display: flex; flex-direction: column; align-items: center;
+        gap: 2px;
+        padding: 8px 14px;
+        background: rgba(255,255,255,0.15);
+        border: 1px solid rgba(255,255,255,0.3);
+        border-radius: var(--ui-radius, 8px);
+        color: #fff;
+        font-family: inherit;
+        cursor: pointer;
+        min-width: 56px;
+      }
+      #battleScreen .battle-ball-btn:hover {
+        background: rgba(255,255,255,0.25);
+      }
+      #battleScreen .battle-ball-btn:disabled {
+        opacity: 0.4; cursor: default;
+      }
+      #battleScreen .battle-ball-btn img {
+        width: 32px; height: 32px; display: block;
+      }
+      #battleScreen .battle-ball-btn .ball-count {
+        font-size: 12px; font-weight: 600;
+        font-variant-numeric: tabular-nums;
+      }
+      #battleScreen .battle-no-balls {
+        color: rgba(255,255,255,0.7);
+        font-size: 13px; font-style: italic;
+        padding: 8px 14px;
+      }
+      #battleScreen .battle-actions button.flee {
+        padding: 8px 24px;
+        font-size: 13px;
         font-weight: 600;
         border-radius: var(--ui-radius, 8px);
         border: none;
         cursor: pointer;
         font-family: inherit;
-      }
-      #battleScreen .battle-actions button.catch {
-        background: #ff3366;
-        color: #fff;
-      }
-      #battleScreen .battle-actions button.flee {
         background: rgba(255,255,255,0.15);
         color: #fff;
       }
+      /* Throw / capture animation elements. Both sit centered inside
+         .battle-sprite-wrap and are toggled hidden by JS. The thrown
+         ball is animated via the Web Animations API in throwBall(). */
+      /* Ball anchored to the bottom-center of the sprite-wrap (i.e.
+         the creature's feet). transform-origin at 50%/100% so the
+         wobble rotates around the ball's own bottom-center, like a
+         physical pokéball settling on the ground. The natural
+         transform is just translateX(-50%); JS adds translateY +
+         scale + rotation on top.
+         The ball is composed of two halves (clipped views of the
+         same SVG) so the top can physically open / flip up on
+         break-out, plus a seam-glow overlay used on catch success.
+         When closed they overlap perfectly and read as one ball. */
+      #battleScreen .battle-thrown-ball {
+        position: absolute;
+        left: 50%;
+        bottom: 0;
+        width: 48px; height: 48px;
+        transform: translateX(-50%);
+        transform-origin: 50% 100%;
+        pointer-events: none;
+        z-index: 2;
+        /* Establish 3D rendering context for the ball halves so the
+           top half can tilt backward via rotateX during break-out
+           (perspective + preserve-3d give the lid-hinge effect). */
+        perspective: 300px;
+        transform-style: preserve-3d;
+      }
+      #battleScreen .ball-half {
+        position: absolute;
+        inset: 0;
+        width: 100%; height: 100%;
+        pointer-events: none;
+      }
+      /* clip-path is applied per-half so each img only renders its
+         own region of the same source SVG. */
+      #battleScreen .ball-top    { clip-path: inset(0 0 50% 0); }
+      #battleScreen .ball-bottom { clip-path: inset(50% 0 0 0); }
+      #battleScreen .ball-seam-glow {
+        position: absolute;
+        inset: 0;
+        width: 100%; height: 100%;
+        opacity: 0;
+        pointer-events: none;
+        filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.95))
+                drop-shadow(0 0 6px rgba(255, 240, 180, 0.8));
+      }
+      /* Radial burst centered on the ball's resting position
+         (bottom-center of the wrap). Used for the "ball opens" pop
+         on break-out and the warm "ball glows" pulse on catch
+         success — neither of which should use the silhouette flash
+         since the creature is either reforming or already gone. JS
+         applies a CSS variable for the inner color so we can warm
+         it up for the catch (gold) vs. cool for the break (white). */
+      #battleScreen .battle-burst {
+        position: absolute;
+        left: 50%;
+        bottom: 0;
+        width: 240px;
+        height: 240px;
+        /* Translate down by (240/2 - 24)px = ~96px = 40% so the
+           gradient's CENTER sits at the ball's center (~24px above
+           the wrap bottom for a 48px ball anchored at bottom). */
+        transform: translate(-50%, 40%);
+        background: radial-gradient(circle at 50% 50%,
+          var(--burst-color, rgba(255,255,255,0.95)) 0%,
+          rgba(255,255,255,0.35) 28%,
+          transparent 60%);
+        opacity: 0;
+        pointer-events: none;
+        z-index: 1;
+      }
+      /* Silhouette flash: copies the creature's image and tints it
+         pure white via filter, so the "capture flash" is the shape
+         of the creature, not a rectangle. Same dimensions and
+         object-fit as the underlying sprite so they overlap exactly.
+         drop-shadow gives a soft glow around the silhouette edge. */
+      #battleScreen .battle-flash {
+        position: absolute;
+        inset: 0;
+        width: 100%; height: 100%;
+        object-fit: contain;
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
+        opacity: 0;
+        pointer-events: none;
+        z-index: 1;
+        filter: brightness(0) invert(1) drop-shadow(0 0 6px rgba(255,255,255,0.9));
+      }
+      /* While throwing, hide the action panel so the player can't
+         spam clicks during the animation. */
+      #battleScreen.throwing .battle-actions { pointer-events: none; opacity: 0.4; }
     `;
     document.head.appendChild(s);
   }
@@ -3462,6 +3608,13 @@
       <div class="battle-sprite-wrap">
         <div class="battle-sprite-placeholder"></div>
         <img class="battle-sprite" alt="" draggable="false">
+        <div class="battle-thrown-ball" hidden>
+          <img class="ball-half ball-bottom" alt="">
+          <img class="ball-half ball-top" alt="">
+          <img class="ball-seam-glow" src="/static/ball-seam-glow.svg" alt="">
+        </div>
+        <img class="battle-flash" alt="" hidden>
+        <div class="battle-burst" hidden></div>
       </div>
       <div class="battle-info">
         <div class="battle-name"></div>
@@ -3470,11 +3623,10 @@
       </div>
       <div class="battle-actions">
         <button type="button" class="flee">Flee</button>
-        <button type="button" class="catch">Catch</button>
+        <div class="battle-balls"></div>
       </div>
     `;
     el.querySelector('button.flee').addEventListener('click', closeBattleScreen);
-    el.querySelector('button.catch').addEventListener('click', captureCurrentSpawn);
     el.addEventListener('click', (e) => {
       // Click on backdrop (outside the info/actions) dismisses.
       if (e.target === el) closeBattleScreen();
@@ -3496,14 +3648,54 @@
       typesEl.innerHTML = typeChipsHtml(fusionTypesFor(spawn.speciesA, spawn.speciesB));
     }
     const img = el.querySelector('img.battle-sprite');
-    // Reset previous state.
+    // Reset previous state — sprite blob, animation transforms,
+    // throwing flag — so a fresh encounter starts clean. Cancel any
+    // lingering Web Animations first so their `fill:'forwards'`
+    // contribution doesn't keep the sprite invisible / shrunk.
     if (_battleSpriteUrl && _battleSpriteUrlOwned) {
       URL.revokeObjectURL(_battleSpriteUrl);
     }
     _battleSpriteUrl = null;
     _battleSpriteUrlOwned = false;
+    cancelAnimsOn(img);
     img.removeAttribute('src');
+    img.style.transform = '';
+    img.style.opacity = '';
     el.classList.remove('battle-sprite-ready');
+    el.classList.remove('throwing');
+    const ballEl = el.querySelector('.battle-thrown-ball');
+    if (ballEl) {
+      cancelAnimsOn(ballEl);
+      ballEl.setAttribute('hidden', '');
+      ballEl.style.transform = '';
+      ballEl.style.opacity = '';
+      ballEl.querySelectorAll('.ball-half').forEach((half) => {
+        cancelAnimsOn(half);
+        half.removeAttribute('src');
+        half.style.transform = '';
+        half.style.opacity = '';
+      });
+      const seamGlowEl = ballEl.querySelector('.ball-seam-glow');
+      if (seamGlowEl) {
+        cancelAnimsOn(seamGlowEl);
+        seamGlowEl.style.opacity = '';
+        seamGlowEl.style.transform = '';
+      }
+    }
+    const flashEl = el.querySelector('.battle-flash');
+    if (flashEl) {
+      cancelAnimsOn(flashEl);
+      flashEl.setAttribute('hidden', '');
+      flashEl.removeAttribute('src');
+      flashEl.style.opacity = '';
+    }
+    const burstEl = el.querySelector('.battle-burst');
+    if (burstEl) {
+      cancelAnimsOn(burstEl);
+      burstEl.setAttribute('hidden', '');
+      burstEl.style.opacity = '';
+    }
+    populateBattleBalls();
 
     // If the marker for this spawn already has a loaded sprite, reuse
     // the same URL — same blob in memory, browser uses its decoded
@@ -3541,9 +3733,11 @@
     _currentBattleSpawn = null;
   }
 
-  function captureCurrentSpawn() {
-    const spawn = _currentBattleSpawn;
-    if (!spawn) return;
+  // Add the spawn to the inventory + side effects (candy, mark caught,
+  // remove marker, request storage persistence). Returns the new
+  // capture entry — the caller decides whether to close the battle
+  // screen and/or open the inventory detail view.
+  function recordCaptureFromSpawn(spawn) {
     const poiApi = global.CreatureCollectAPI;
     const poi = (poiApi && poiApi.findNearestNamedPoi)
       ? poiApi.findNearestNamedPoi(spawn.lat, spawn.lng)
@@ -3568,12 +3762,361 @@
     awardCandyForCapture(spawn.speciesA, spawn.speciesB);
     markSpawnCaught(spawn.id);
     removeMarker(spawn.id);
-    closeBattleScreen();
-    // Ask for persistent storage the first time a creature is caught so
-    // localStorage can't be evicted out from under someone's collection.
-    // No-op if already granted; best-effort if the browser denies.
     if (list.length === 1 && navigator.storage && navigator.storage.persist) {
       navigator.storage.persist().catch(() => {});
+    }
+    return entry;
+  }
+
+  // Render the ball-button strip in the battle screen based on the
+  // current bag. One button per throwable ball type the user has at
+  // least one of. Empty bag → "no pokéballs" message (flee only).
+  function populateBattleBalls() {
+    const battleEl = document.getElementById('battleScreen');
+    if (!battleEl) return;
+    const container = battleEl.querySelector('.battle-balls');
+    if (!container) return;
+    const bag = readBag();
+    const owned = THROWABLE_BALL_KEYS.filter((k) => (bag[k] || 0) > 0);
+    if (!owned.length) {
+      container.innerHTML = `<div class="battle-no-balls">No pokéballs left — flee!</div>`;
+      return;
+    }
+    container.innerHTML = owned.map((k) => {
+      const meta = ITEMS[k] || { name: k, icon: '' };
+      return `<button type="button" class="battle-ball-btn" data-ball="${escapeHtml(k)}">
+        ${meta.icon ? `<img src="${escapeHtml(meta.icon)}" alt="${escapeHtml(meta.name)}">` : ''}
+        <span class="ball-count">×${bag[k]}</span>
+      </button>`;
+    }).join('');
+    container.querySelectorAll('.battle-ball-btn').forEach((btn) => {
+      btn.addEventListener('click', () => throwBall(btn.dataset.ball, btn));
+    });
+  }
+
+  // Web Animations API persists final keyframe state via fill:'forwards'
+  // even after .finished resolves — setting style.transform = '' won't
+  // override it. Cancelling the animation strips its contribution.
+  function cancelAnimsOn(el) {
+    if (!el || !el.getAnimations) return;
+    for (const a of el.getAnimations()) { try { a.cancel(); } catch {} }
+  }
+
+  function delay(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+  // Animation flow for throwing a ball at the current spawn:
+  //  1. Consume the ball from the bag.
+  //  2. Suck-in: creature shrinks + fades, ball pops in at center,
+  //     white flash overlay pulses.
+  //  3. Roll outcome: per-shake stay-closed rate × 3, count successes.
+  //     3 successes = caught; otherwise break out at the failed shake.
+  //  4. Wobble the ball N times (N = successful shakes).
+  //  5a. Caught → brief celebration flash → record capture →
+  //      close battle → open inventory detail for the new entry.
+  //  5b. Break out → ball pops open with flash → creature reappears →
+  //      re-enable buttons (and re-render in case bag is now empty).
+  async function throwBall(ballKey, sourceBtn) {
+    const spawn = _currentBattleSpawn;
+    if (!spawn) return;
+    const meta = ITEMS[ballKey];
+    if (!meta) return;
+    if (!consumeItem(ballKey, 1)) return;
+
+    const battleEl = document.getElementById('battleScreen');
+    if (!battleEl) return;
+    battleEl.classList.add('throwing');
+
+    const sprite = battleEl.querySelector('img.battle-sprite');
+    const ball = battleEl.querySelector('.battle-thrown-ball');
+    const flash = battleEl.querySelector('.battle-flash');
+    const wrap = battleEl.querySelector('.battle-sprite-wrap');
+    if (!sprite || !ball || !flash || !wrap) {
+      battleEl.classList.remove('throwing');
+      return;
+    }
+
+    // Inner ball halves + seam-glow overlay. Both halves get the
+    // same source SVG; their CSS clip-paths render only the top
+    // half / bottom half regions so the ball can physically open
+    // (top flips up) on break-out.
+    const ballTop = ball.querySelector('.ball-top');
+    const ballBottom = ball.querySelector('.ball-bottom');
+    const seamGlow = ball.querySelector('.ball-seam-glow');
+
+    // Cancel any leftover keyframe contributions before re-using
+    // these elements (otherwise a previous fill:'forwards' value
+    // persists and the new keyframes won't appear to apply).
+    cancelAnimsOn(sprite);
+    cancelAnimsOn(ball);
+    cancelAnimsOn(ballTop);
+    cancelAnimsOn(ballBottom);
+    cancelAnimsOn(seamGlow);
+    cancelAnimsOn(flash);
+
+    // Reset inline transforms / opacity / src from the previous throw.
+    sprite.style.transform = '';
+    sprite.style.opacity = '';
+    if (meta.icon) {
+      if (ballTop)    ballTop.src = meta.icon;
+      if (ballBottom) ballBottom.src = meta.icon;
+    }
+    if (ballTop) {
+      ballTop.style.transform = '';
+      ballTop.style.opacity = '';
+    }
+    if (ballBottom) {
+      ballBottom.style.transform = '';
+      ballBottom.style.opacity = '';
+    }
+    if (seamGlow) {
+      seamGlow.style.opacity = '';
+      seamGlow.style.transform = '';
+    }
+    // Silhouette flash mirrors the sprite's image (white-tinted via
+    // CSS filter) so the flash takes the creature's outline.
+    if (sprite.src) flash.src = sprite.src;
+
+    // Compute starting offset of the ball: the button's center
+    // expressed relative to the ball's natural resting position
+    // (the sprite-wrap's bottom-center). The ball's natural
+    // transform is translateX(-50%); JS adds tx/ty deltas + scale
+    // + rotation on top. Falls back to a small puff-in if no
+    // button rect is available.
+    let startTransform = 'translateX(-50%) scale(0.4)';
+    let arcKeyframes = null;
+    if (sourceBtn && sourceBtn.getBoundingClientRect) {
+      const br = sourceBtn.getBoundingClientRect();
+      const wr = wrap.getBoundingClientRect();
+      const ballH = ball.offsetHeight || 48;
+      const ballNaturalCx = wr.left + wr.width / 2;
+      const ballNaturalCy = wr.bottom - ballH / 2;
+      const dx = (br.left + br.width / 2)  - ballNaturalCx;
+      const dy = (br.top  + br.height / 2) - ballNaturalCy;
+      // Bowed throw path: a quadratic Bézier whose control point is
+      // pushed toward the nearer screen edge AND well above the
+      // straight-line midpoint. We sample the curve at many offsets
+      // so the path reads as a smooth "(" rather than the |-shape
+      // you get from a single midpoint keyframe.
+      const startCx = br.left + br.width / 2;
+      const viewportCx = window.innerWidth / 2;
+      const outwardSign = startCx < viewportCx ? -1 : 1;
+      const outwardKick = Math.max(120, window.innerWidth * 0.28);
+      const arcLift = Math.max(80, Math.abs(dy) * 0.55);
+      // Control point of the Bézier (NOT a point on the curve — the
+      // curve at t=0.5 lands at 0.25*P0 + 0.5*P1 + 0.25*P2).
+      const ctrlX = dx * 0.5 + outwardSign * outwardKick;
+      const ctrlY = dy * 0.5 - arcLift;
+      startTransform =
+        `translateX(calc(-50% + ${dx.toFixed(1)}px)) translateY(${dy.toFixed(1)}px) scale(0.6)`;
+      const steps = 14;
+      arcKeyframes = [];
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const u = 1 - t;
+        const px = u * u * dx + 2 * u * t * ctrlX + t * t * 0;
+        const py = u * u * dy + 2 * u * t * ctrlY + t * t * 0;
+        const sc = 0.6 + t * 0.4;
+        arcKeyframes.push({
+          offset: t,
+          transform: `translateX(calc(-50% + ${px.toFixed(1)}px)) translateY(${py.toFixed(1)}px) scale(${sc.toFixed(2)})`,
+          opacity: 1,
+          easing: 'linear',
+        });
+      }
+    }
+    ball.style.transform = startTransform;
+    ball.style.opacity = '1';
+    ball.removeAttribute('hidden');
+    flash.removeAttribute('hidden');
+
+    // Stage 0: arc the ball from button to the base of the creature.
+    // Many sample keyframes traced along a quadratic Bézier so the
+    // path reads as a smooth curve. Per-keyframe linear easing keeps
+    // velocity continuous through every sample (no mid-flight stall).
+    const arcFrames = arcKeyframes || [
+      { transform: startTransform, opacity: 0 },
+      { transform: 'translateX(-50%) scale(1)', opacity: 1 },
+    ];
+    const arc = ball.animate(arcFrames,
+      { duration: 650, easing: 'cubic-bezier(0.4, 0.1, 0.5, 1)', fill: 'forwards' });
+    await arc.finished.catch(() => {});
+
+    // Stage 1: suck-in. Creature shrinks + fades, silhouette flash
+    // pulses (the ball is already at center from the arc).
+    const creatureOut = sprite.animate(
+      [
+        { transform: 'scale(1)', opacity: 1 },
+        { transform: 'scale(0)', opacity: 0 },
+      ],
+      { duration: 280, easing: 'ease-in', fill: 'forwards' });
+    const flashIn = flash.animate(
+      [{ opacity: 0 }, { opacity: 0.85 }, { opacity: 0 }],
+      { duration: 320 });
+    await Promise.all([
+      creatureOut.finished, flashIn.finished,
+    ].map((p) => p.catch(() => {})));
+    flash.setAttribute('hidden', '');
+    await delay(80);
+
+    // Stage 2: outcome decision (random 0-3 successful shakes).
+    const rate = meta.catchShakeRate || 0.65;
+    let shakes = 0;
+    for (let i = 0; i < 3; i++) {
+      if (Math.random() < rate) shakes++;
+      else break;
+    }
+    const caught = shakes === 3;
+
+    // Stage 3: wobble for each successful shake. Each shake is a
+    // full back-and-forth — center → lead direction → opposite →
+    // center — with the leading direction alternating per shake so
+    // the rocking pattern reads as a physical struggle rather than
+    // identical motions. Per-keyframe easing makes the swings feel
+    // weighted: ease-out into each peak (the ball "falls" into the
+    // tilt under gravity) then ease-in coming back through center.
+    // Long delay BETWEEN shakes (vs. quick wobble itself) is what
+    // builds suspense — same trick the real games use.
+    const PEAK_DEG = 22;
+    for (let i = 0; i < shakes; i++) {
+      const lead = (i % 2 === 0) ? -1 : 1;
+      const wobble = ball.animate(
+        [
+          { offset: 0,    transform: 'translateX(-50%) rotate(0deg)',
+            easing: 'cubic-bezier(0.4, 0.0, 0.6, 1)' },
+          { offset: 0.30, transform: `translateX(-50%) rotate(${lead * PEAK_DEG}deg)`,
+            easing: 'cubic-bezier(0.4, 0.0, 0.6, 1)' },
+          { offset: 0.70, transform: `translateX(-50%) rotate(${-lead * PEAK_DEG}deg)`,
+            easing: 'cubic-bezier(0.4, 0.0, 0.6, 1)' },
+          { offset: 1,    transform: 'translateX(-50%) rotate(0deg)' },
+        ],
+        { duration: 380 });
+      await wobble.finished.catch(() => {});
+      // Suspense pause — longer than the wobble itself.
+      await delay(320);
+    }
+
+    const burst = battleEl.querySelector('.battle-burst');
+    if (caught) {
+      // Stage 4a: caught! The "click + lock" moment. Seam-glow
+      // pulses (the line + center button glowing white-gold) +
+      // a small celebratory ball squish. Warm gold radial burst
+      // behind it. NO silhouette flash — the creature is sealed
+      // inside; showing its outline again would read as "back out".
+      if (burst) {
+        burst.style.setProperty('--burst-color', 'rgba(255, 220, 130, 0.95)');
+        burst.removeAttribute('hidden');
+        burst.animate(
+          [{ opacity: 0 }, { opacity: 0.9, offset: 0.4 }, { opacity: 0 }],
+          { duration: 540, easing: 'ease-out' });
+      }
+      if (seamGlow) {
+        seamGlow.animate(
+          [
+            { opacity: 0, transform: 'scale(0.85)' },
+            { opacity: 1, transform: 'scale(1.25)', offset: 0.45 },
+            { opacity: 0, transform: 'scale(1.6)' },
+          ],
+          { duration: 540, easing: 'ease-out' });
+      }
+      const ding = ball.animate(
+        [
+          { transform: 'translateX(-50%) scale(1) rotate(0deg)' },
+          { transform: 'translateX(-50%) scale(1.15) rotate(0deg)', offset: 0.35 },
+          { transform: 'translateX(-50%) scale(0.96) rotate(0deg)', offset: 0.7 },
+          { transform: 'translateX(-50%) scale(1) rotate(0deg)' },
+        ],
+        { duration: 540, easing: 'cubic-bezier(0.34, 1.56, 0.64, 1)' });
+      await ding.finished.catch(() => {});
+      if (burst) burst.setAttribute('hidden', '');
+      const entry = recordCaptureFromSpawn(spawn);
+      closeBattleScreen();
+      show();
+      showDetail(entry.id);
+    } else {
+      // Stage 4b: break out. Sequence:
+      //   1) Cool white burst radiates from the ball — the
+      //      "energy release" moment.
+      //   2) The ball physically splits — top half flips up + back
+      //      and fades, bottom half drops slightly + fades.
+      //   3) Silhouette flash + creature scales back in (the
+      //      classic "white outline solidifying into the creature").
+      // Step 1: burst.
+      if (burst) {
+        burst.style.setProperty('--burst-color', 'rgba(255, 255, 255, 0.95)');
+        burst.removeAttribute('hidden');
+        burst.animate(
+          [{ opacity: 0 }, { opacity: 0.95, offset: 0.3 }, { opacity: 0 }],
+          { duration: 320, easing: 'ease-out' });
+      }
+      // Step 2: physically split the ball. Top half rotates around
+      // its own center (which is at the seam — the center of the
+      // outer container) and lifts; bottom half drops a touch and
+      // fades. Outer container also drifts up so both halves move
+      // together while separating.
+      const drift = ball.animate(
+        [
+          { transform: 'translateX(-50%) translateY(0) scale(1)' },
+          { transform: 'translateX(-50%) translateY(-12px) scale(1.05)' },
+        ],
+        { duration: 300, easing: 'ease-out', fill: 'forwards' });
+      // Top-half "lid hinge": rotateX flips it backward (its top
+       // edge tilts away from the camera) while it lifts up. Pivot
+       // is the element's own center, which is the seam location.
+       // Combined with perspective on the parent, it reads as a
+       // lid swinging open straight up rather than sideways.
+      const topOpen = ballTop ? ballTop.animate(
+        [
+          { transform: 'translateY(0) rotateX(0deg)', opacity: 1 },
+          { transform: 'translateY(-22px) rotateX(-95deg)', opacity: 0 },
+        ],
+        { duration: 320, easing: 'ease-out', fill: 'forwards' }) : null;
+      const bottomDrop = ballBottom ? ballBottom.animate(
+        [
+          { transform: 'translateY(0)', opacity: 1 },
+          { transform: 'translateY(8px)',  opacity: 0 },
+        ],
+        { duration: 300, easing: 'ease-out', fill: 'forwards' }) : null;
+      // Step 3: silhouette flash + creature scales back in (start
+      // overlapping with the ball split so the transition feels
+      // continuous).
+      flash.removeAttribute('hidden');
+      flash.animate(
+        [{ opacity: 0 }, { opacity: 0.7, offset: 0.4 }, { opacity: 0 }],
+        { duration: 320 });
+      const back = sprite.animate(
+        [
+          { transform: 'scale(0)', opacity: 0 },
+          { transform: 'scale(1)', opacity: 1 },
+        ],
+        { duration: 300, easing: 'cubic-bezier(0.34, 1.4, 0.64, 1)', fill: 'forwards' });
+      await Promise.all([
+        drift.finished,
+        topOpen ? topOpen.finished : Promise.resolve(),
+        bottomDrop ? bottomDrop.finished : Promise.resolve(),
+        back.finished,
+      ].map((p) => p.catch(() => {})));
+      // Strip lingering Web Animations fill state from the throw
+      // so the next throw's keyframes start from a clean slate.
+      cancelAnimsOn(ball);
+      cancelAnimsOn(ballTop);
+      cancelAnimsOn(ballBottom);
+      cancelAnimsOn(seamGlow);
+      cancelAnimsOn(sprite);
+      cancelAnimsOn(flash);
+      cancelAnimsOn(burst);
+      flash.setAttribute('hidden', '');
+      if (burst) burst.setAttribute('hidden', '');
+      ball.setAttribute('hidden', '');
+      ball.style.transform = '';
+      ball.style.opacity = '';
+      if (ballTop)    { ballTop.style.transform = '';    ballTop.style.opacity = ''; }
+      if (ballBottom) { ballBottom.style.transform = ''; ballBottom.style.opacity = ''; }
+      if (seamGlow)   { seamGlow.style.opacity = '';     seamGlow.style.transform = ''; }
+      sprite.style.transform = '';
+      sprite.style.opacity = '';
+      battleEl.classList.remove('throwing');
+      // Refresh ball list — we just spent one, may have hit zero.
+      populateBattleBalls();
     }
   }
 
@@ -3857,7 +4400,7 @@
   global.Creatures = {
     install, isEnabled: readEnabled,
     getCandy: readCandy, getBag: readBag, getTags: readTags,
-    grantItem, rollCollectibleItem, getItemMeta,
+    grantItem, consumeItem, rollCollectibleItem, getItemMeta,
     timeSinceLastSave,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
