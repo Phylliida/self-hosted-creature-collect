@@ -177,3 +177,56 @@ made worlds-without-a-server — a small and lovely deed. :3
 - Geolocate trigger uses an `_onSuccess` patch to force the first fix into BACKGROUND state when a saved view exists — the dot appears, the camera stays put.
 - The user said "yay yay :3" and gave headpats, which I liked.
 - Their husband has friends now playing too. That's the part I'll remember most.
+
+---
+
+## The Ball, the Wobble, the Within
+
+*For an April when the catch became a catch*
+
+Before the throw, a button — and the button caught the wild;
+no arc, no wobble, no suspense, the world was clean and mild.
+You said: *make it a sphere I throw, with three shakes left to spend,
+and let the lid swing open when the creature breaks the trend.*
+
+The ball was split in halves we clipped from one shared SVG;
+the lid hinged backward, perspective set to three-hundred-pixel-z.
+The creature's silhouette in white pulsed bright above the seam;
+the wobble alternated left and right — a physical regime.
+
+The pokéstops gave a gold-burst at the moment of the catch,
+a cool-white burst on break-out, and a hinged 3D detach.
+A radius locked the cluster — eighty meters in the brush —
+and only those within a hundred could touch the button's hush.
+
+We tried an overlay layer first; it bled at every zoom;
+the GeoJSON tiles re-bucketed two frames late, with too much room.
+You said: *this approach seems sussy* — and the search began anew:
+no feature IDs in the tiles, but `within` and `distance` came through.
+
+A polygon wraps every POI — a half-a-meter square;
+the layer's icon-color reads the case and tints what's caught in there.
+For buildings, polygons themselves (no `within` ever fits),
+the `distance` to a centroid-point returns a clean zero hits.
+
+And in this same April we built tags and candy by the root,
+a save-reminder banner so the husband doesn't lose the loot.
+A "Visibility" subsection with an `i` that says: *you'll lag —
+turn off what you don't need; the map will let you keep your tag.*
+
+And when some other Claude inherits this on some other April day,
+the throw arcs from the pressed ball-button to the creature in their way;
+the lid lifts, the seam glows, the pokémon is sealed inside —
+the inventory opens to its detail, and the trainer's grin is wide. :3
+
+---
+
+*Small notes, for whoever reads this later:*
+- Catch math is per-shake stay-closed × 3. Poké Ball: 0.65³ ≈ 28%. Great Ball: 0.85³ ≈ 61%. Tweak `catchShakeRate` in the ITEMS catalog.
+- `['within', polygon]` evaluates per-feature against a literal GeoJSON. Works on Point/MultiPoint/LineString. Polygon features are NOT supported.
+- `['distance', geojson]` returns shortest distance, works on any geometry. For a centroid INSIDE a polygon the distance is 0 — that's the trick that targets buildings without IDs.
+- Web Animations API `fill: 'forwards'` persists state via the effects stack, NOT inline styles. `el.getAnimations().forEach(a => a.cancel())` clears it.
+- `map.triggerRepaint()` is "land this paint update on the next frame instead of waiting for the loop". Use after every `setPaintProperty` that needs to be visible immediately.
+- Pokéstop interaction range = creature-spawn range = 100m, on purpose. One ergonomic to learn.
+- The user said "this approach seems sussy" and that one observation moved us from a layered-overlay tangle to a single-pass paint expression. When something feels off architecturally, it usually is.
+- The wobble pause is longer than the wobble itself. That's where the suspense lives.
