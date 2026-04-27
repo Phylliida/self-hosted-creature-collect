@@ -4750,7 +4750,7 @@ function fmtDate(ts) {
   // Collecting from one POI also locks every other POI within this
   // many meters — prevents farming a tight cluster (e.g., a corner
   // with parking + restaurant + ATM all on the same point).
-  const POI_COOLDOWN_RADIUS_M = 80;
+  const POI_COOLDOWN_RADIUS_M = 54;
   const POI_COOLDOWNS_KEY = 'cc.poiCooldowns.v1';
   const poiCooldownKey = (lng, lat) => `${lng.toFixed(5)},${lat.toFixed(5)}`;
   function readPoiCooldowns() {
@@ -6403,7 +6403,7 @@ function fmtDate(ts) {
   document.getElementById('poiCardDirectionsTop').onclick = openDirectionsForSelectedPoi;
 
   // POI "Collect items" — pokéstop loot drop. Each press samples
-  // 1-3 items uniformly from Creatures.rollCollectibleItem (currently
+  // 1-6 items uniformly from Creatures.rollCollectibleItem (currently
   // Poké Ball / Great Ball), grants them, and shows a brief icon
   // animation in the button area. The card stays open for 500ms so
   // the player sees what they got, then closes (also masking the
@@ -6421,8 +6421,8 @@ function fmtDate(ts) {
       ? haversineKm(lastKnownPos.lat, lastKnownPos.lng, stored.lat, stored.lng) * 1000
       : Infinity;
     if (distM > POI_COLLECT_MAX_DISTANCE_M) return;
-    // Sample 1-3 items.
-    const count = 1 + Math.floor(Math.random() * 3);
+    // Sample 1-6 items.
+    const count = 1 + Math.floor(Math.random() * 6);
     const granted = [];
     for (let i = 0; i < count; i++) {
       const key = window.Creatures.rollCollectibleItem();
@@ -9104,14 +9104,20 @@ function fmtDate(ts) {
         sheetFrom: 1, sheetTo: SPRITE_SHEETS,
         indexFrom: 1, indexTo: 150,
       });
+      const customTail = (s.customSpeciesTotal && s.customSpeciesDone < s.customSpeciesTotal)
+        ? ` · ${s.customSpeciesDone}/${s.customSpeciesTotal} hand-drawn`
+        : (s.customSpeciesTotal && s.customSpeciesDone === s.customSpeciesTotal)
+          ? ` · hand-drawn ready`
+          : '';
       if (s.iconsPresent === 0) {
         spritesStatus.textContent = 'not downloaded';
-      } else if (s.iconsPresent === s.iconsTotal) {
-        spritesStatus.textContent = `all ${s.iconsTotal} sprites ready`;
+      } else if (s.iconsPresent === s.iconsTotal && s.customSpeciesDone === s.customSpeciesTotal) {
+        spritesStatus.textContent = `all ${s.iconsTotal} sprites ready · hand-drawn ready`;
       } else {
         spritesStatus.textContent =
           `${s.iconsPresent}/${s.iconsTotal} sprites ` +
-          `· ${s.sheetsComplete.size}/${s.sheetsTotal} sheets complete`;
+          `· ${s.sheetsComplete.size}/${s.sheetsTotal} sheets complete` +
+          customTail;
       }
     } catch (e) {
       spritesStatus.textContent = `status error: ${e && e.message ? e.message : e}`;
@@ -9131,6 +9137,7 @@ function fmtDate(ts) {
       });
       const sheetsRemaining = pre.sheetsTotal - pre.sheetsComplete.size;
       const iconsRemaining = pre.iconsTotal - pre.iconsPresent;
+      const customRemaining = (pre.customSpeciesTotal || 0) - (pre.customSpeciesDone || 0);
       // Always pump metadata (names + types) on a Download click, even
       // when sprites are already complete — users who downloaded before
       // /creature-types existed need this to populate the types list
@@ -9139,15 +9146,23 @@ function fmtDate(ts) {
         spritesStatus.textContent = 'fetching metadata…';
         try { await window.Species.ensureLoaded(); } catch {}
       }
-      if (iconsRemaining === 0) {
+      if (iconsRemaining === 0 && customRemaining === 0) {
         updateSpritesStatus();
         return;
       }
-      const ok = confirm(
-        `${iconsRemaining} sprite${iconsRemaining === 1 ? '' : 's'} ` +
-        `remaining across ${sheetsRemaining} sheet${sheetsRemaining === 1 ? '' : 's'} ` +
-        `(~${Math.round(sheetsRemaining * 1.5)} MB). Use WiFi. Continue?`
-      );
+      // Build a confirmation message that surfaces both phases. The
+      // ~1.5 MB/sheet autogen estimate stays; hand-drawn averages ~7
+      // variants/species at ~150 KB/variant, so ~1 MB/species.
+      const parts = [];
+      if (iconsRemaining > 0) {
+        parts.push(`${iconsRemaining} autogen sprite${iconsRemaining === 1 ? '' : 's'} ` +
+          `across ${sheetsRemaining} sheet${sheetsRemaining === 1 ? '' : 's'} ` +
+          `(~${Math.round(sheetsRemaining * 1.5)} MB)`);
+      }
+      if (customRemaining > 0) {
+        parts.push(`${customRemaining} hand-drawn species (~${Math.round(customRemaining * 1)} MB)`);
+      }
+      const ok = confirm(`${parts.join(' + ')}. Use WiFi. Continue?`);
       if (!ok) return;
       if (navigator.storage && navigator.storage.persist) {
         try { await navigator.storage.persist(); } catch {}
@@ -9159,9 +9174,21 @@ function fmtDate(ts) {
           sheetFrom: 1, sheetTo: SPRITE_SHEETS,
           indexFrom: 1, indexTo: 150,
           signal: _spriteDlAbort.signal,
-          onProgress: ({ sheetsDone, sheetsTotal, currentSheet, indexInSheet, phase }) => {
+          onProgress: (p) => {
+            const { sheetsDone, sheetsTotal, currentSheet, indexInSheet, phase,
+                    customSpeciesDone, customSpeciesTotal,
+                    customVariant, customVariantNum, customVariantTotal } = p;
             if (phase === 'repairing') {
               spritesStatus.textContent = `repairing legacy crops (${indexInSheet} scanned)`;
+              return;
+            }
+            if (phase === 'custom-fetching' || phase === 'custom-done' || phase === 'custom-skipped') {
+              const v = customVariant === '' ? '(base)' : customVariant ? `'${customVariant}'` : '';
+              const variantTag = (customVariantTotal != null)
+                ? ` variant ${customVariantNum}/${customVariantTotal}${v ? ' ' + v : ''}`
+                : '';
+              spritesStatus.textContent =
+                `hand-drawn ${customSpeciesDone}/${customSpeciesTotal} — species ${currentSheet}${variantTag}`;
               return;
             }
             const tag = phase === 'fetching' ? 'fetching'
