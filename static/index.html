@@ -19,6 +19,10 @@
     overscroll-behavior: none;
   }
   #map { position: absolute; inset: 0; background: var(--ui-map-bg, #f5f5dc); }
+  /* Push the MapLibre bottom-right control stack up to make room for
+     the static refresh button below it. ~40px = one control button
+     (29px) + a small gap (10px). */
+  .maplibregl-ctrl-bottom-right { margin-bottom: 40px; }
   #install {
     position: absolute; left: 0; right: 0; top: 0; z-index: 20;
     padding: 10px 14px;
@@ -2501,22 +2505,17 @@
 <div id="emergencyRefreshHolder" class="maplibregl-ctrl maplibregl-ctrl-group"
      style="position: fixed;
             bottom: max(10px, env(safe-area-inset-bottom));
-            right: max(50px, calc(env(safe-area-inset-right) + 50px));
-            z-index: 999999;
-            background: #fff; border-radius: 6px;
-            box-shadow: 0 0 0 2px rgba(0,0,0,0.1);">
+            right: max(10px, env(safe-area-inset-right));
+            z-index: 999999;">
   <button id="emergencyRefresh"
           onclick="try{caches.open('app-v1').then(function(c){['/','/manifest.webmanifest','/static/icon.svg','/static/trip-planner.js','/static/vendor/maplibre-gl.css','/static/vendor/maplibre-gl.js'].forEach(function(u){c.delete(u)})})}catch(_){}setTimeout(function(){location.reload()},150);"
           type="button"
           title="Refresh app (clears stale code, keeps icons/fonts/maps)"
           aria-label="Refresh app"
-          style="display: flex; align-items: center; justify-content: center;
-                 width: 44px; height: 44px; padding: 0;
-                 border: 0; background: transparent; color: #333;
-                 cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0.1);
+          style="-webkit-tap-highlight-color: rgba(0,0,0,0.1);
                  touch-action: manipulation;">
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"
-         style="display:block;pointer-events:none">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"
+         style="display:block;margin:auto;pointer-events:none">
       <path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10H17.6A5.99 5.99 0 0 1 12 18a6 6 0 1 1 4.22-10.22L13 11h7V4z"/>
     </svg>
   </button>
