@@ -428,7 +428,10 @@
       const count = await global.Sprites.getCellVariantCount(spawn.speciesA, spawn.speciesB);
       if (!count || count <= 0) return null;
       return Math.floor(spawn.variantSeed * count);
-    } catch { return null; }
+    } catch (e) {
+      _logCreatureError(`resolveSpawnVariant/${spawn.speciesA}-${spawn.speciesB}`, e);
+      return null;
+    }
   }
 
   // Pokédex storage: every fusion we've ever opened the battle screen
@@ -4184,16 +4187,44 @@
   // Wire an already-fetched blob into a marker record. Extracted so
   // both the single-marker path (loadMarkerSprite) and the bulk path
   // (addMarkersBatch) can share the DOM-update + URL-lifecycle code.
+  function _logCreatureError(where, err) {
+    window._spriteDiag = window._spriteDiag || {};
+    window._spriteDiag.errorCount = (window._spriteDiag.errorCount || 0) + 1;
+    window._spriteDiag.errors = window._spriteDiag.errors || [];
+    if (window._spriteDiag.errors.length < 10) {
+      const msg = (err && err.message) ? err.message : String(err);
+      window._spriteDiag.errors.push(`${where}: ${msg}`);
+    }
+  }
+
   function installSpriteBlob(record, blob) {
-    if (!blob) return;
-    if (!_markers.has(record.spawn.id) || _markers.get(record.spawn.id) !== record) return;
-    const el = record.marker.getElement();
-    const img = el.querySelector('img.creature-sprite');
-    if (!img) return;
-    const url = URL.createObjectURL(blob);
-    img.onload = () => { el.classList.add('creature-marker-ready'); };
-    record.objectUrl = url;
-    img.src = url;
+    try {
+      if (!blob) return;
+      if (!_markers.has(record.spawn.id) || _markers.get(record.spawn.id) !== record) return;
+      const el = record.marker.getElement();
+      const img = el.querySelector('img.creature-sprite');
+      if (!img) return;
+      const url = URL.createObjectURL(blob);
+      img.onload = () => {
+        el.classList.add('creature-marker-ready');
+        window._spriteDiag = window._spriteDiag || {};
+        if (window._spriteDiag.firstSpriteVisibleAt == null) {
+          window._spriteDiag.firstSpriteVisibleAt = performance.now();
+        }
+      };
+      img.onerror = (e) => {
+        _logCreatureError(`installSpriteBlob/img.onerror/${record.spawn.speciesA}-${record.spawn.speciesB}`,
+          (e && e.message) || 'image decode failed');
+      };
+      record.objectUrl = url;
+      img.src = url;
+      window._spriteDiag = window._spriteDiag || {};
+      if (window._spriteDiag.firstSpriteInstallAt == null) {
+        window._spriteDiag.firstSpriteInstallAt = performance.now();
+      }
+    } catch (e) {
+      _logCreatureError('installSpriteBlob', e);
+    }
   }
 
   function loadMarkerSprite(record) {
@@ -4206,7 +4237,9 @@
         return global.Sprites.getSpriteBlob(spawn.speciesA, spawn.speciesB, variant);
       })
       .then((blob) => { installSpriteBlob(record, blob); })
-      .catch(() => { /* leave the placeholder dot showing */ });
+      .catch((e) => {
+        _logCreatureError(`loadMarkerSprite/${spawn.speciesA}-${spawn.speciesB}`, e);
+      });
   }
 
   function addMarker(spawn) {
@@ -4217,6 +4250,16 @@
       .addTo(_overlayMap);
     const record = { marker, objectUrl: null, spawn, firstShownAt: Date.now() };
     _markers.set(spawn.id, record);
+    // Diagnostic — record when the very first spawn DOM marker is
+    // attached to the map, distinct from when its sprite finishes
+    // loading. Useful for telling "GPS was slow" from "sprite IDB
+    // was slow" in the Settings phase readout.
+    if (typeof window !== 'undefined') {
+      window._startupPhases = window._startupPhases || {};
+      if (window._startupPhases.firstSpawnMarker == null) {
+        window._startupPhases.firstSpawnMarker = performance.now();
+      }
+    }
     return record;
   }
 
@@ -4226,28 +4269,54 @@
   // serialized transactions into one pipelined one — pokémon icons
   // appear in a single frame instead of staggering over seconds.
   async function addMarkersBatch(spawns) {
-    if (!spawns.length) return;
-    const records = [];
-    for (const s of spawns) {
-      const rec = addMarker(s);
-      if (rec) records.push({ rec, spawn: s });
-    }
-    if (!global.Sprites || !global.Sprites.getSpriteBlobsBatch) {
-      // Fallback to per-marker async loads if the batch API isn't
-      // available for any reason.
-      for (const { rec } of records) loadMarkerSprite(rec);
-      return;
-    }
-    const variants = await Promise.all(
-      records.map(({ spawn }) => resolveSpawnVariant(spawn).catch(() => null))
-    );
-    const requests = records.map(({ spawn }, i) => ({
-      a: spawn.speciesA, b: spawn.speciesB, variant: variants[i], key: spawn.id,
-    }));
-    records.forEach((r, i) => { r.rec.variant = variants[i]; });
-    const results = await global.Sprites.getSpriteBlobsBatch(requests);
-    for (let i = 0; i < records.length; i++) {
-      installSpriteBlob(records[i].rec, results[i].blob);
+    try {
+      if (!spawns.length) return;
+      const records = [];
+      for (const s of spawns) {
+        try {
+          const rec = addMarker(s);
+          if (rec) records.push({ rec, spawn: s });
+        } catch (e) {
+          _logCreatureError(`addMarkersBatch/addMarker/${s.id}`, e);
+        }
+      }
+      if (!global.Sprites || !global.Sprites.getSpriteBlobsBatch) {
+        for (const { rec } of records) loadMarkerSprite(rec);
+        return;
+      }
+      let variants;
+      try {
+        variants = await Promise.all(
+          records.map(({ spawn }) =>
+            resolveSpawnVariant(spawn).catch((e) => {
+              _logCreatureError(`addMarkersBatch/resolveVariant/${spawn.id}`, e);
+              return null;
+            }))
+        );
+      } catch (e) {
+        _logCreatureError('addMarkersBatch/Promise.all(resolveSpawnVariant)', e);
+        variants = records.map(() => null);
+      }
+      const requests = records.map(({ spawn }, i) => ({
+        a: spawn.speciesA, b: spawn.speciesB, variant: variants[i], key: spawn.id,
+      }));
+      records.forEach((r, i) => { r.rec.variant = variants[i]; });
+      let results;
+      try {
+        results = await global.Sprites.getSpriteBlobsBatch(requests);
+      } catch (e) {
+        _logCreatureError('addMarkersBatch/getSpriteBlobsBatch', e);
+        return;
+      }
+      for (let i = 0; i < records.length; i++) {
+        try {
+          installSpriteBlob(records[i].rec, results[i] && results[i].blob);
+        } catch (e) {
+          _logCreatureError(`addMarkersBatch/install/${records[i].spawn.id}`, e);
+        }
+      }
+    } catch (e) {
+      _logCreatureError('addMarkersBatch/outer', e);
     }
   }
 
