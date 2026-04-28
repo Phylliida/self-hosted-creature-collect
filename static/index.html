@@ -23,7 +23,8 @@
      the static refresh button below it. ~40px = one control button
      (29px) + a small gap (10px). */
   .maplibregl-ctrl-bottom-right { margin-bottom: 40px; }
-  #install {
+  #install,
+  #appDataMissing {
     position: absolute; left: 0; right: 0; top: 0; z-index: 20;
     padding: 10px 14px;
     padding-top: calc(10px + env(safe-area-inset-top));
@@ -31,9 +32,15 @@
     padding-right: calc(14px + env(safe-area-inset-right));
     font-size: 13px; display: none;
   }
-  #install.show { display: flex; gap: 10px; align-items: center; }
-  #install .msg { flex: 1; }
-  #install button { background: transparent;
+  /* If both banners want to show at once, stack them — install is the
+     less critical one, so it sits below the app-data prompt. */
+  #appDataMissing.show ~ #install.show { top: 56px; }
+  #install.show,
+  #appDataMissing.show { display: flex; gap: 10px; align-items: center; }
+  #install .msg,
+  #appDataMissing .msg { flex: 1; }
+  #install button,
+  #appDataMissing button { background: transparent;
                     border-radius: 4px; padding: 4px 8px; cursor: pointer; }
   #welcome {
     position: fixed; inset: 0; z-index: 50; display: none;
@@ -2813,6 +2820,10 @@
   <div class="msg">Tap <b>Share</b> → <b>Add to Home Screen</b> so offline tiles aren't evicted.</div>
   <button id="installDismiss">ok</button>
 </div>
+<div id="appDataMissing" style="display:none">
+  <div class="msg"><b>App data missing.</b> Map labels and POI icons need a one-time download (~5&nbsp;MB).</div>
+  <button id="appDataMissingFetch">↓ download</button>
+</div>
 <div id="welcome">
   <div class="card">
     <h2>Welcome!</h2>
@@ -2854,6 +2865,7 @@
 <script src="/static/trip-planner.js"></script>
 <script src="/static/spawns.js"></script>
 <script src="/static/sprites.js"></script>
+<script src="/static/appdata.js"></script>
 <script src="/static/species.js"></script>
 <script src="/static/creatures.js"></script>
 <script>
@@ -3322,6 +3334,14 @@ function fmtDate(ts) {
     return T[name] || T.default;
   })();
 
+  // Preload font blob URLs from IDB BEFORE constructing the map so
+  // the transformRequest hook below can serve fonts synchronously
+  // for the very first tile fetches. Empty on a fresh install
+  // (user hasn't downloaded yet) — the welcome step covers that.
+  if (window.AppData && window.AppData.preloadFontBlobUrls) {
+    try { await window.AppData.preloadFontBlobUrls(); } catch {}
+  }
+
   const map = new maplibregl.Map({
     container: 'map',
     hash: true,
@@ -3329,6 +3349,20 @@ function fmtDate(ts) {
     // one so the "i" tile is a proper square by default instead of a
     // wide bar that expands into the visible area.
     attributionControl: { compact: true },
+    // Sync hook — MapLibre calls this for every glyph/tile fetch. We
+    // intercept /fonts/{stack}/{range}.pbf URLs and redirect them to
+    // a blob URL pulled from IDB (populated at startup via
+    // AppData.preloadFontBlobUrls). Falls through to the original URL
+    // for anything not in IDB; the SW serves cached, otherwise 204 →
+    // MapLibre paints labels without that font range.
+    transformRequest: (url, resourceType) => {
+      if ((resourceType === 'Glyphs' || /\/fonts\/[^?#]+\.pbf/.test(url))
+          && window.AppData) {
+        const blobUrl = window.AppData.fontBlobUrlFor(url);
+        if (blobUrl) return { url: blobUrl };
+      }
+      return { url };
+    },
     center: savedView?.center || [0, 0],
     zoom: savedView?.zoom ?? 2,
     bearing: savedView?.bearing || 0,
@@ -4220,16 +4254,19 @@ function fmtDate(ts) {
   // the chain (so pokémon/pokéball/POI icons silently disappear).
   // Sharing the in-flight promise per name eliminates the race.
   const _iconPromises = new Map();
-  function loadIcon(name, opts = {}) {
+  function loadIcon(name) {
     if (map.hasImage(name)) return Promise.resolve(true);
     const existing = _iconPromises.get(name);
     if (existing) return existing;
     const p = (async () => {
       try {
-        const headers = opts.download ? { 'X-Download': '1' } : {};
-        const res = await fetch(`/icons/${encodeURIComponent(name)}.svg`, { headers });
-        if (!res.ok || res.status === 204) return false;
-        const svg = await res.text();
+        // IDB-first via the AppData module — durable across iOS PWA
+        // SW Cache evictions. Returns null when the user hasn't
+        // bulk-downloaded icons yet; caller falls back to placeholder.
+        if (!global.AppData) return false;
+        const blob = await global.AppData.getIconBlob(name);
+        if (!blob) return false;
+        const svg = await blob.text();
         if (!svg) return false;
         return registerIconFromSvg(name, svg);
       } catch { return false; }
@@ -4251,21 +4288,19 @@ function fmtDate(ts) {
   }
 
   let availableIconNames = [];
-  async function loadAllIcons(opts = {}) {
-    // No top-level dedup here on purpose: the two callers have
-    // different opts (map.on('load') without download, the welcome
-    // step with download:true) and sharing one in-flight promise
-    // would lose the download intent. Per-icon dedup in loadIcon()
-    // is what actually prevents the duplicate-addImage race.
+  async function loadAllIcons() {
+    // Reads the list of cached icon names from IDB (via AppData).
+    // The actual download into IDB is the responsibility of the
+    // appDataBtn handler (or welcome step 1) — this function only
+    // populates MapLibre with what's already on disk. Per-icon
+    // dedup in loadIcon() prevents the duplicate-addImage race.
     try {
-      const res = await fetch('/iconslist', opts.download ? { headers: { 'X-Download': '1' } } : undefined);
-      if (!res.ok) return 0;
-      const { files = [] } = await res.json();
-      if (!files.length) return 0;
-      const names = files.map(f => f.replace(/\.svg$/, '')).sort();
+      if (!global.AppData) return 0;
+      const names = await global.AppData.iconNames();
+      if (!names || !names.length) return 0;
       availableIconNames = names;
       let loaded = 0;
-      await Promise.all(names.map(async (n) => { if (await loadIcon(n, opts)) loaded++; }));
+      await Promise.all(names.map(async (n) => { if (await loadIcon(n)) loaded++; }));
       if (loaded) map.triggerRepaint();
       return loaded;
     } catch { return 0; }
@@ -7186,17 +7221,6 @@ function fmtDate(ts) {
   renderPoiStat();
       populateFilter();
 
-  async function getFontUrls() {
-    const fontstack = 'KlokanTech Noto Sans Regular';
-    try {
-      const res = await fetch(`/fontslist/${encodeURIComponent(fontstack)}`,
-        { headers: { 'X-Download': '1' } });
-      if (!res.ok) return [];
-      const { files } = await res.json();
-      return files.map(f => `/fonts/${encodeURIComponent(fontstack)}/${f}`);
-    } catch { return []; }
-  }
-
   async function fetchAndSavePois(regionId, bbox) {
     try {
       const pres = await fetch(`/poi?bbox=${bbox.join(',')}`,
@@ -8962,30 +8986,36 @@ function fmtDate(ts) {
     const btn = document.getElementById('appDataBtn');
     const status = document.getElementById('status');
     btn.disabled = true;
-    status.textContent = 'fetching font list…';
-    const fontUrls = await getFontUrls();
-    let fontDone = 0;
-    const fontQueue = fontUrls.slice();
-    const fontWorkers = Array(TILE_DOWNLOAD_WORKERS).fill(0).map(async () => {
-      while (fontQueue.length) {
-        const url = fontQueue.pop();
-        try { await fetch(url, { headers: { 'X-Download': '1' } }); } catch {}
-        fontDone++;
-        if (fontDone % 10 === 0) {
-          status.textContent = `fonts ${fontDone}/${fontUrls.length}`;
-        }
-      }
+
+    // Fonts → IDB (via AppData). Replaces the per-URL fetch + SW
+    // Cache flow; iOS keeps IDB across cache evictions, so refreshes
+    // no longer wipe fonts.
+    status.textContent = 'downloading fonts…';
+    const fontStack = 'KlokanTech Noto Sans Regular';
+    const fontResult = await window.AppData.fontBulkDownload(fontStack, {
+      onProgress: ({ loaded, total }) => {
+        status.textContent = `fonts ${loaded}/${total}`;
+      },
     });
-    await Promise.all(fontWorkers);
-    status.textContent = `fonts: ${fontDone}/${fontUrls.length}`;
-    if (fontDone === fontUrls.length && fontUrls.length > 0) {
+    if (fontResult.total > 0 && fontResult.loaded >= fontResult.total) {
       localStorage.setItem('cc.fontsDownloaded', '1');
     }
+    // Refresh in-memory blob URLs so MapLibre's transformRequest can
+    // serve newly-cached fonts immediately without a reload.
+    await window.AppData.preloadFontBlobUrls();
 
+    // Icons → IDB.
     status.textContent = 'downloading icons…';
-    const iconCount = await loadAllIcons({ download: true });
-    status.textContent = `icons: ${iconCount}`;
-    if (iconCount > 0) localStorage.setItem('cc.iconsDownloaded', '1');
+    const iconResult = await window.AppData.iconBulkDownload({
+      onProgress: ({ loaded, total }) => {
+        status.textContent = `icons ${loaded}/${total}`;
+      },
+    });
+    if (iconResult.total > 0 && iconResult.loaded >= iconResult.total) {
+      localStorage.setItem('cc.iconsDownloaded', '1');
+    }
+    // Register the freshly-downloaded icons into MapLibre.
+    await loadAllIcons();
 
     await prefetchBaseMap(status);
 
@@ -8996,6 +9026,37 @@ function fmtDate(ts) {
     map.setStyle(map.getStyle());
     window.dispatchEvent(new CustomEvent('cc:app-data-ready'));
   };
+
+  // App-data missing detector. After the welcome card has been seen
+  // (so we don't double-prompt new users), check IDB for icons + fonts.
+  // If either is empty, surface the persistent banner so the user can
+  // recover without digging into Settings. Re-checks whenever the user
+  // closes Settings (in case they wiped data manually) and on the
+  // `cc:app-data-ready` event (to dismiss after a successful download).
+  const appDataMissingEl = document.getElementById('appDataMissing');
+  async function checkAppDataPresent() {
+    if (!appDataMissingEl || !window.AppData) return;
+    if (!localStorage.getItem('cc.welcomeSeen')) return;  // welcome handles it
+    try {
+      const s = await window.AppData.getDownloadStatus();
+      if (s.icons === 0 || s.fonts === 0) appDataMissingEl.classList.add('show');
+      else appDataMissingEl.classList.remove('show');
+    } catch { /* IDB unavailable — leave banner alone */ }
+  }
+  document.getElementById('appDataMissingFetch').onclick = () => {
+    document.getElementById('appDataBtn').click();
+  };
+  window.addEventListener('cc:app-data-ready', () => {
+    appDataMissingEl && appDataMissingEl.classList.remove('show');
+  });
+  // Re-check when the user closes Settings (might have hit "delete
+  // sprites" or otherwise wiped data while in there).
+  document.getElementById('settingsPanel')?.addEventListener('transitionend', () => {
+    if (!document.getElementById('settingsPanel').classList.contains('show')) {
+      checkAppDataPresent();
+    }
+  });
+  checkAppDataPresent();
 
   // First-run welcome overlay: prompts for the one-time app-data download,
   // then reloads so every style layer picks up the newly-cached fonts and
