@@ -8156,6 +8156,14 @@ function fmtDate(ts) {
       if (sd.errors && sd.errors.length) {
         for (const e of sd.errors) lines.push(`  • ${e}`);
       }
+      const cd = window._creditDiag || {};
+      lines.push(
+        `[credit lookup]`,
+        `  calls=${cd.calls ?? 0} hits=${cd.hits ?? 0}`,
+      );
+      if (cd.reasons) {
+        for (const [k, v] of Object.entries(cd.reasons)) lines.push(`  • ${k}: ${v}`);
+      }
       pEl.textContent = lines.join('\n');
       pEl.style.whiteSpace = 'pre';
     }
@@ -9588,15 +9596,16 @@ function fmtDate(ts) {
         : (s.customSpeciesTotal && s.customSpeciesDone === s.customSpeciesTotal)
           ? ` · hand-drawn ready`
           : '';
+      const creditsTail = s.creditsReady ? ' · credits ready' : '';
       if (s.iconsPresent === 0) {
         spritesStatus.textContent = 'not downloaded';
       } else if (s.iconsPresent === s.iconsTotal && s.customSpeciesDone === s.customSpeciesTotal) {
-        spritesStatus.textContent = `all ${s.iconsTotal} sprites ready · hand-drawn ready`;
+        spritesStatus.textContent = `all ${s.iconsTotal} sprites ready · hand-drawn ready` + creditsTail;
       } else {
         spritesStatus.textContent =
           `${s.iconsPresent}/${s.iconsTotal} sprites ` +
           `· ${s.sheetsComplete.size}/${s.sheetsTotal} sheets complete` +
-          customTail;
+          customTail + creditsTail;
       }
     } catch (e) {
       spritesStatus.textContent = `status error: ${e && e.message ? e.message : e}`;
@@ -9626,6 +9635,13 @@ function fmtDate(ts) {
         try { await window.Species.ensureLoaded(); } catch {}
       }
       if (iconsRemaining === 0 && customRemaining === 0) {
+        // Sprites are complete but the credits bundle is a separate
+        // payload added later — fetch it on its own if missing,
+        // without forcing a full re-download.
+        if (!pre.creditsReady && window.Sprites.downloadCreditsBundle) {
+          spritesStatus.textContent = 'fetching credits…';
+          try { await window.Sprites.downloadCreditsBundle(); } catch {}
+        }
         updateSpritesStatus();
         return;
       }
