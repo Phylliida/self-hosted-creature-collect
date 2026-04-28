@@ -46,6 +46,14 @@
   // number of custom variants. Filled on first call after IDB is open.
   let _variantCountCache = null;
   let _variantCountPromise = null;
+  // Diagnostic counter — number of sprite reads currently in flight.
+  // Wraps every IDB blob fetch (single + batch). Surfaced via
+  // Sprites.getInflightCount() for the Settings debug badge so we
+  // can confirm lazy-loading is actually happening (count should
+  // stay in single digits if only visible spawns are being fetched).
+  let _inflightSpriteReads = 0;
+  function _incInflight() { _inflightSpriteReads++; }
+  function _decInflight() { if (_inflightSpriteReads > 0) _inflightSpriteReads--; }
 
   function openDb() {
     if (_dbPromise) return _dbPromise;
@@ -254,7 +262,10 @@
   async function getSpriteBlob(a, b, variant) {
     const isCustom = (typeof variant === 'number' && variant >= 0);
     const key = isCustom ? customKey(a, b, variant) : autogenKey(a, b);
-    const cached = await idbGet(key);
+    _incInflight();
+    let cached;
+    try { cached = await idbGet(key); }
+    finally { _decInflight(); }
     if (cached) {
       // Self-heal: legacy autogen v1 crops were stored as full 96×96 PNGs
       // with transparent padding around the creature. Trim on first
@@ -278,6 +289,58 @@
     if (!blob) return null;
     return URL.createObjectURL(blob);
   }
+
+  // Bulk lookup: open ONE readonly transaction and fire all gets
+  // inside it, instead of per-call transactions. Crucial on iOS
+  // Safari, which serializes IDB transactions — ~50 individual
+  // markers each opening their own transaction translates to seconds
+  // of staggered sprite appearances. With one transaction the OS
+  // pipelines all the reads.
+  //
+  // requests: Array<{ a, b, variant, key? }>  // key is the caller's
+  //   stable id (e.g. spawn id) so they can correlate results.
+  // Returns: Array<{ key, blob }> in the same order as `requests`,
+  //   with blob === null for entries that aren't in IDB. Does NOT
+  //   handle the legacy-padded-PNG self-heal path (rare, and the
+  //   per-call getSpriteBlob is still the right place for that).
+  async function getSpriteBlobsBatch(requests) {
+    if (!requests || !requests.length) return [];
+    const db = await openDb();
+    // Each entry in the batch counts as one in-flight read so the
+    // debug badge reflects the true scope of work, not just one
+    // "transaction".
+    for (let i = 0; i < requests.length; i++) _incInflight();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_ICONS, 'readonly');
+      const store = tx.objectStore(STORE_ICONS);
+      const results = new Array(requests.length);
+      let pending = requests.length;
+      requests.forEach((req, i) => {
+        const key = (typeof req.variant === 'number' && req.variant >= 0)
+          ? customKey(req.a, req.b, req.variant)
+          : autogenKey(req.a, req.b);
+        const r = store.get(key);
+        r.onsuccess = () => {
+          results[i] = { key: req.key != null ? req.key : key, blob: r.result || null };
+          _decInflight();
+          if (--pending === 0) resolve(results);
+        };
+        r.onerror = () => {
+          results[i] = { key: req.key != null ? req.key : key, blob: null };
+          _decInflight();
+          if (--pending === 0) resolve(results);
+        };
+      });
+      tx.onerror = () => {
+        // If the whole transaction blows up, drain any remaining
+        // counts so the badge can return to zero.
+        for (let i = 0; i < pending; i++) _decInflight();
+        reject(tx.error);
+      };
+    });
+  }
+
+  function getInflightCount() { return _inflightSpriteReads; }
 
   // Abstract views (pokédex, evolution previews, family grids) don't
   // have a specific spawn or capture in hand, so they pick the "best
@@ -629,10 +692,11 @@
   }
 
   global.Sprites = {
-    getSpriteUrl, getSpriteBlob,
+    getSpriteUrl, getSpriteBlob, getSpriteBlobsBatch,
     getDefaultSpriteUrl, getDefaultSpriteBlob,
     getCellVariantCount,
     bulkDownload, getDownloadedSheets, getDownloadStatus, deleteAllSprites,
     getCustomManifest,
+    getInflightCount,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

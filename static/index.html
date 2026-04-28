@@ -2809,8 +2809,9 @@
       low-zoom shapes from <a href="https://www.naturalearthdata.com/"
          target="_blank" rel="noopener noreferrer">Natural Earth</a>
     </div>
-    <div style="margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--ui-border, rgba(0,0,0,0.08)); font-size: 11px; color: var(--ui-muted); display: flex; justify-content: space-between; gap: 12px;">
+    <div style="margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--ui-border, rgba(0,0,0,0.08)); font-size: 11px; color: var(--ui-muted); display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
       <span>creature-collect <span id="versionBadge">v?</span></span>
+      <span id="spriteInflightBadge" title="creature sprite IDB reads currently in flight (should stay near 0 except briefly when new spawns enter view)"></span>
       <span id="memBadge" title="estimated live JS heap used by map data"></span>
     </div>
     <div class="actions"><button class="close" id="settingsClose">Done</button></div>
@@ -7906,6 +7907,27 @@ function fmtDate(ts) {
       (rg ? ` · walk: ${rg} region${rg === 1 ? '' : 's'}` : '');
   }
   setInterval(updateMemBadge, 5_000);
+
+  // Live counter — updates on a tighter cadence than memBadge because
+  // the value spikes briefly during marker batch loads and would
+  // otherwise just look like 0 by the time you glance at it. Only
+  // visible while the Settings panel is open (no point polling
+  // otherwise), and bails fast if the sprites module isn't loaded.
+  function updateSpriteInflightBadge() {
+    const el = document.getElementById('spriteInflightBadge');
+    if (!el) return;
+    if (!window.Sprites || typeof window.Sprites.getInflightCount !== 'function') {
+      el.textContent = '';
+      return;
+    }
+    const n = window.Sprites.getInflightCount();
+    el.textContent = `sprite reads in flight: ${n}`;
+  }
+  setInterval(() => {
+    const panel = document.getElementById('settingsPanel');
+    if (panel && panel.classList.contains('show')) updateSpriteInflightBadge();
+  }, 250);
+  updateSpriteInflightBadge();
 
   function haversineM(lng1, lat1, lng2, lat2) {
     const R = 6371000;
