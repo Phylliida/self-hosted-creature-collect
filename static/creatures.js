@@ -4284,8 +4284,17 @@
         for (const { rec } of records) loadMarkerSprite(rec);
         return;
       }
+      // Pre-batch the variant-count IDB reads into ONE transaction
+      // — without this, 50 concurrent resolveSpawnVariant calls
+      // open 50 separate iOS IDB transactions (slow). With the
+      // summary blob loaded this is all in-memory anyway; without
+      // it, this is one pipelined read.
       let variants;
       try {
+        if (global.Sprites && global.Sprites.getCellVariantCountsBatch) {
+          const cells = records.map(({ spawn }) => [spawn.speciesA, spawn.speciesB]);
+          await global.Sprites.getCellVariantCountsBatch(cells);
+        }
         variants = await Promise.all(
           records.map(({ spawn }) =>
             resolveSpawnVariant(spawn).catch((e) => {
