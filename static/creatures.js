@@ -1293,7 +1293,7 @@
         padding: 8px 14px; font-size: 14px; cursor: pointer;
       }
       #creatureInventory .detail-view { display: none; }
-      #creatureInventory .detail-view.show { display: block; }
+      /* .show -> display:flex via the column-layout rule below. */
       #creatureInventory .detail-back,
       #creatureInventory .pokedex-back,
       #creatureInventory .fusion-back,
@@ -1326,6 +1326,17 @@
       #creatureInventory .fusion-view {
         position: relative;
         overflow: hidden;
+        /* flex column so the track between header (.detail-back) and
+           footer (.actions) takes the remaining height. flex:1 inside
+           the .sheet (which is also a flex column) makes the view
+           fill the panel height up to .sheet's max. */
+        flex-direction: column;
+        flex: 1 1 auto;
+        min-height: 60vh;
+      }
+      #creatureInventory .detail-view.show,
+      #creatureInventory .fusion-view.show {
+        display: flex;
       }
       #creatureInventory .nav-arrow {
         position: absolute;
@@ -1349,18 +1360,33 @@
       #creatureInventory .nav-arrow:disabled { opacity: 0.3; cursor: not-allowed; }
       #creatureInventory .nav-prev { left: 6px; }
       #creatureInventory .nav-next { right: 6px; }
-      /* Sliding transition for sibling navigation. The body div is
-         transformed; an absolutely-positioned clone of the previous
-         body slides off in the opposite direction. */
-      #creatureInventory .detail-body,
-      #creatureInventory .fusion-body { will-change: transform; }
-      #creatureInventory .nav-snapshot {
-        position: absolute;
-        top: 0; left: 0; right: 0;
-        z-index: 2;
-        pointer-events: none;
+      /* Sibling-navigation carousel. Each sub-view holds a track div
+         containing 1–3 absolutely-positioned slots (prev/center/next).
+         The track itself is transformed during drag (so all slots
+         move together with the finger). On commit, the track animates
+         to ±viewWidth, then the slots get rotated and the track snaps
+         back to 0. Slots are cached across navigations so going back
+         to a recently-viewed sibling is instant. */
+      #creatureInventory .detail-track,
+      #creatureInventory .fusion-track {
+        position: relative;
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: visible;
+        will-change: transform;
+        touch-action: pan-y;  /* allow vertical scroll, claim horizontal */
       }
-      #creatureInventory .nav-anim { transition: transform 340ms cubic-bezier(0.25, 0.46, 0.45, 0.94); }
+      #creatureInventory .body-slot {
+        position: absolute;
+        top: 0; left: 0; right: 0; bottom: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+        overscroll-behavior: contain;
+      }
+      #creatureInventory .body-slot.prev { transform: translateX(-100%); }
+      #creatureInventory .body-slot.center { transform: translateX(0); }
+      #creatureInventory .body-slot.next { transform: translateX(100%); }
+      #creatureInventory .nav-anim { transition: transform 320ms cubic-bezier(0.25, 0.46, 0.45, 0.94); }
       #creatureInventory .detail-art {
         width: 140px; height: 140px; margin: 4px auto 12px;
         display: flex; align-items: center; justify-content: center;
@@ -1810,7 +1836,7 @@
       }
       #creatureInventory .pokedex-card { cursor: pointer; }
       #creatureInventory .fusion-view { display: none; }
-      #creatureInventory .fusion-view.show { display: block; }
+      /* .show -> display:flex via the column-layout rule earlier. */
       #creatureInventory .fusion-section-label {
         font-size: 11px; color: var(--ui-muted, #666);
         text-transform: uppercase; letter-spacing: 0.04em;
@@ -2288,14 +2314,14 @@
           <button class="detail-back" type="button" aria-label="back">←</button>
           <button class="nav-arrow nav-prev" type="button" aria-label="previous">‹</button>
           <button class="nav-arrow nav-next" type="button" aria-label="next">›</button>
-          <div class="detail-body"></div>
+          <div class="detail-track"></div>
           <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
         <div class="fusion-view">
           <button class="fusion-back" type="button" aria-label="back">←</button>
           <button class="nav-arrow nav-prev" type="button" aria-label="previous">‹</button>
           <button class="nav-arrow nav-next" type="button" aria-label="next">›</button>
-          <div class="fusion-body"></div>
+          <div class="fusion-track"></div>
           <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
         <div class="pokedex-view">
@@ -2461,32 +2487,123 @@
       if (e.key === 'ArrowRight') { e.preventDefault(); navigateSibling(1); }
       else if (e.key === 'ArrowLeft') { e.preventDefault(); navigateSibling(-1); }
     });
-    // Swipe gesture: track horizontal touch travel; if it crosses
-    // SWIPE_THRESHOLD without significant vertical drift, navigate.
-    // Vertical scrolling within the sub-view stays unaffected.
-    const SWIPE_THRESHOLD = 60;
-    function attachSwipe(viewEl) {
-      let startX = 0, startY = 0, tracking = false;
+    // Finger-tracking drag — track translates with the finger live;
+    // on release we either commit (animate to ±viewWidth then update
+    // state) or revert (animate back to 0). Vertical scrolling
+    // within a slot still works because the lock-in heuristic only
+    // claims the gesture once horizontal travel dominates.
+    function attachDrag(viewName) {
+      const viewEl = panel.querySelector(_viewSelector(viewName));
+      const trackSel = _trackSelector(viewName);
+      if (!viewEl) return;
+      let startX = 0, startY = 0, lastX = 0, lastT = 0;
+      let tracking = false, decided = false, dragging = false;
+      let startTime = 0;
+      const DECIDE_THRESHOLD = 8;     // px of travel before committing to a direction
+      const COMMIT_FRACTION = 0.28;   // fraction of viewWidth that triggers commit
+      const VELOCITY_THRESHOLD = 0.5; // px/ms after release that triggers commit
+
       viewEl.addEventListener('touchstart', (e) => {
-        if (e.touches.length !== 1) { tracking = false; return; }
-        startX = e.touches[0].clientX;
+        if (e.touches.length !== 1) return;
+        if (_navAnimating) return;
+        const top = _viewStack[_viewStack.length - 1];
+        if (!top || !Array.isArray(top.list)) return;
+        startX = lastX = e.touches[0].clientX;
         startY = e.touches[0].clientY;
-        tracking = true;
+        startTime = lastT = performance.now();
+        tracking = true; decided = false; dragging = false;
       }, { passive: true });
-      viewEl.addEventListener('touchend', (e) => {
+
+      viewEl.addEventListener('touchmove', (e) => {
         if (!tracking) return;
-        tracking = false;
-        const t = e.changedTouches[0];
-        if (!t) return;
+        const t = e.touches[0];
         const dx = t.clientX - startX;
         const dy = t.clientY - startY;
-        if (Math.abs(dx) < SWIPE_THRESHOLD) return;
-        if (Math.abs(dy) > Math.abs(dx) * 0.7) return;  // mostly vertical → ignore
-        navigateSibling(dx < 0 ? 1 : -1);
+        if (!decided) {
+          if (Math.abs(dx) < DECIDE_THRESHOLD && Math.abs(dy) < DECIDE_THRESHOLD) return;
+          decided = true;
+          if (Math.abs(dx) > Math.abs(dy) * 1.2) {
+            dragging = true;
+          } else {
+            // Vertical scroll wins — bow out for the rest of this gesture.
+            tracking = false;
+            return;
+          }
+        }
+        if (!dragging) return;
+        e.preventDefault();
+        const top = _viewStack[_viewStack.length - 1];
+        const track = panel.querySelector(trackSel);
+        if (!track) return;
+        // Rubber-band at ends — drag still moves but with reduced response.
+        let applied = dx;
+        if ((top.idx <= 0 && dx > 0) || (top.idx >= top.list.length - 1 && dx < 0)) {
+          applied = dx * 0.3;
+        }
+        track.style.transition = 'none';
+        track.style.transform = `translateX(${applied}px)`;
+        lastX = t.clientX;
+        lastT = performance.now();
+      }, { passive: false });
+
+      viewEl.addEventListener('touchend', () => {
+        if (!tracking) { return; }
+        tracking = false;
+        if (!dragging) return;
+        dragging = false;
+        const top = _viewStack[_viewStack.length - 1];
+        const track = panel.querySelector(trackSel);
+        if (!top || !track) return;
+        const viewWidth = viewEl.offsetWidth || 320;
+        const dx = lastX - startX;
+        const totalElapsed = performance.now() - startTime;
+        const velocity = totalElapsed > 0 ? dx / totalElapsed : 0;  // px/ms
+        let direction = 0;
+        if (Math.abs(dx) > viewWidth * COMMIT_FRACTION) direction = dx > 0 ? -1 : 1;
+        else if (Math.abs(velocity) > VELOCITY_THRESHOLD) direction = velocity > 0 ? -1 : 1;
+        // Clamp at ends.
+        if (direction !== 0) {
+          const newIdx = top.idx + direction;
+          if (newIdx < 0 || newIdx >= top.list.length) direction = 0;
+        }
+        track.classList.add('nav-anim');
+        track.style.transition = '';
+        if (direction === 0) {
+          track.style.transform = 'translateX(0)';
+        } else {
+          track.style.transform = `translateX(${direction > 0 ? -viewWidth : viewWidth}px)`;
+        }
+        const onEnd = () => {
+          track.removeEventListener('transitionend', onEnd);
+          track.classList.remove('nav-anim');
+          track.style.transition = 'none';
+          if (direction !== 0) _commitNavigate(direction);
+          else track.style.transform = 'translateX(0)';
+        };
+        track.addEventListener('transitionend', onEnd);
+        // Belt-and-braces in case transitionend doesn't fire.
+        setTimeout(() => {
+          if (track.classList.contains('nav-anim')) onEnd();
+        }, 500);
+      }, { passive: true });
+
+      viewEl.addEventListener('touchcancel', () => {
+        if (!dragging) { tracking = false; return; }
+        const track = panel.querySelector(trackSel);
+        if (track) {
+          track.classList.add('nav-anim');
+          track.style.transition = '';
+          track.style.transform = 'translateX(0)';
+          setTimeout(() => {
+            track.classList.remove('nav-anim');
+            track.style.transition = 'none';
+          }, 350);
+        }
+        tracking = false; dragging = false; decided = false;
       }, { passive: true });
     }
-    attachSwipe(panel.querySelector('.detail-view'));
-    attachSwipe(panel.querySelector('.fusion-view'));
+    attachDrag('detail');
+    attachDrag('fusion');
     panel.querySelector('.candy-back').addEventListener('click', popView);
     panel.querySelector('.bag-back').addEventListener('click', popView);
     panel.querySelector('.tags-back').addEventListener('click', popView);
@@ -2614,13 +2731,25 @@
           applyTopView();
           return;
         }
-        renderDetail(creature);
+        // Drop any cached slot for this id so renderDetail re-renders
+        // (covers nickname / tag changes that happen between visits).
+        const k = _slotKey('detail', { id: creature.id });
+        if (k) {
+          const cached = _slotCache.get(k);
+          if (cached) {
+            const inner = cached.firstChild;
+            if (inner) revokeObjectUrlsIn(inner);
+            if (cached.parentNode) cached.remove();
+            _slotCache.delete(k);
+          }
+        }
+        _populateTrack('detail', top);
         panel.querySelector('.detail-view').classList.add('show');
         _updateNavArrows();
         return;
       }
       case 'fusion':
-        renderFusionView(top.a, top.b);
+        _populateTrack('fusion', top);
         panel.querySelector('.fusion-view').classList.add('show');
         _updateNavArrows();
         return;
@@ -2737,74 +2866,168 @@
     if (viewName === 'fusion') return '.fusion-view';
     return null;
   }
-  function _bodySelector(viewName) {
-    if (viewName === 'detail') return '.detail-body';
-    if (viewName === 'fusion') return '.fusion-body';
+  function _trackSelector(viewName) {
+    if (viewName === 'detail') return '.detail-track';
+    if (viewName === 'fusion') return '.fusion-track';
     return null;
+  }
+
+  // Body-slot cache. Each cached entry is a `<div class="body-slot">`
+  // containing a fully-rendered detail/fusion body. Caching means
+  // when the user swipes to a sibling and back, the previous slot's
+  // DOM (with its loaded sprites) is reused instead of re-rendered.
+  // Eviction policy: keep entries within ±2 of the current index.
+  // Beyond that, the slot is removed from the cache and any object
+  // URLs inside are revoked.
+  const _slotCache = new Map();
+  function _slotKey(view, item) {
+    if (view === 'detail') return `detail:${item.id}`;
+    if (view === 'fusion') return `fusion:${item.a}-${item.b}`;
+    return null;
+  }
+  function _evictDistantSlots(view, list, idx) {
+    if (!list || idx == null) return;
+    const keep = new Set();
+    for (let i = -2; i <= 2; i++) {
+      const j = idx + i;
+      if (j >= 0 && j < list.length) keep.add(_slotKey(view, list[j]));
+    }
+    for (const k of [..._slotCache.keys()]) {
+      if (!k.startsWith(view + ':')) continue;
+      if (keep.has(k)) continue;
+      const slot = _slotCache.get(k);
+      if (slot) {
+        const inner = slot.firstChild;
+        if (inner && inner.querySelectorAll) revokeObjectUrlsIn(inner);
+        if (slot.parentNode) slot.remove();
+      }
+      _slotCache.delete(k);
+    }
+  }
+  function _getOrCreateSlot(view, item) {
+    if (!item) return null;
+    const key = _slotKey(view, item);
+    if (!key) return null;
+    if (_slotCache.has(key)) return _slotCache.get(key);
+    const slot = document.createElement('div');
+    slot.className = 'body-slot';
+    slot.dataset.key = key;
+    const body = document.createElement('div');
+    body.className = view === 'detail' ? 'detail-body' : 'fusion-body';
+    if (view === 'detail') {
+      const c = findCreature(item.id);
+      if (!c) return null;
+      renderDetail(c, body);
+    } else if (view === 'fusion') {
+      renderFusionView(item.a, item.b, body);
+    }
+    slot.appendChild(body);
+    _slotCache.set(key, slot);
+    return slot;
+  }
+
+  // Populate the track for a sub-view with prev/center/next slots
+  // (where they exist in the list). Idempotent — clears the track
+  // first. Reset transform to translateX(0) so the center slot is
+  // visible at default.
+  function _populateTrack(viewName, top) {
+    const panel = document.getElementById('creatureInventory');
+    if (!panel) return;
+    const track = panel.querySelector(_trackSelector(viewName));
+    if (!track) return;
+    track.innerHTML = '';
+    track.style.transition = 'none';
+    track.style.transform = 'translateX(0)';
+    const list = Array.isArray(top.list) ? top.list : null;
+    const idx = typeof top.idx === 'number' ? top.idx : null;
+    // Center slot — always present. Built from the current top state
+    // even when there's no list (single-item view).
+    const centerItem = viewName === 'detail'
+      ? { id: top.id }
+      : { a: top.a, b: top.b };
+    const center = _getOrCreateSlot(viewName, centerItem);
+    if (center) {
+      center.classList.remove('prev', 'next');
+      center.classList.add('center');
+      track.appendChild(center);
+    }
+    // Prev / next only when we have list context.
+    if (list && idx !== null) {
+      if (idx > 0) {
+        const prev = _getOrCreateSlot(viewName, list[idx - 1]);
+        if (prev) {
+          prev.classList.remove('center', 'next');
+          prev.classList.add('prev');
+          track.appendChild(prev);
+        }
+      }
+      if (idx < list.length - 1) {
+        const next = _getOrCreateSlot(viewName, list[idx + 1]);
+        if (next) {
+          next.classList.remove('center', 'prev');
+          next.classList.add('next');
+          track.appendChild(next);
+        }
+      }
+      _evictDistantSlots(viewName, list, idx);
+    }
   }
 
   let _navAnimating = false;
 
-  // Step the current sub-view through its sibling list with a
-  // sliding transition. Replaces the top stack entry in place; the
-  // parent's scroll position is recomputed so popping back lands
-  // on the row of whichever sibling we ended on. Clamps at ends.
-  function navigateSibling(delta) {
-    if (_navAnimating) return;
+  // Commit the navigation: update top stack entry to the new index,
+  // recompute parent scroll, rebuild the track. Used by both touch
+  // (after the drag's commit animation) and click/keyboard arrow.
+  function _commitNavigate(delta) {
     const top = _viewStack[_viewStack.length - 1];
     if (!top || !Array.isArray(top.list) || typeof top.idx !== 'number') return;
     const newIdx = top.idx + delta;
     if (newIdx < 0 || newIdx >= top.list.length) return;
     const sibling = top.list[newIdx];
     if (!sibling) return;
-    const panel = document.getElementById('creatureInventory');
-    const viewSel = _viewSelector(top.view);
-    const bodySel = _bodySelector(top.view);
-    const view = panel && viewSel && panel.querySelector(viewSel);
-    const body = panel && bodySel && panel.querySelector(bodySel);
-    if (!view || !body) return;
-
-    _navAnimating = true;
-    // Snapshot the current body content as an absolute-positioned
-    // clone that slides off in the direction matching the swipe.
-    const snapshot = body.cloneNode(true);
-    snapshot.classList.add('nav-snapshot');
-    snapshot.style.transform = 'translateX(0)';
-    view.appendChild(snapshot);
-
-    // Apply the new state and re-render the body in place.
-    const parentViewForScroll =
-      top.view === 'detail' ? 'browse' :
-      top.view === 'fusion' ? 'pokedex' : null;
     if (top.view === 'detail') { top.id = sibling.id; top.idx = newIdx; }
     else if (top.view === 'fusion') { top.a = sibling.a; top.b = sibling.b; top.idx = newIdx; }
-    else { _navAnimating = false; snapshot.remove(); return; }
+    else return;
     top.scrollY = 0;
-    if (parentViewForScroll) _updateParentScrollForSibling(parentViewForScroll, newIdx);
-    applyTopView();
+    const parentView =
+      top.view === 'detail' ? 'browse' :
+      top.view === 'fusion' ? 'pokedex' : null;
+    if (parentView) _updateParentScrollForSibling(parentView, newIdx);
+    _populateTrack(top.view, top);
+    _updateNavArrows();
+  }
 
-    // Position the new body off-screen on the side it's coming from,
-    // then animate both clone + new body to translateX(±100%) and 0
-    // in parallel.
-    const incoming = body;  // applyTopView re-rendered this in place
-    incoming.style.transition = 'none';
-    incoming.style.transform = `translateX(${delta > 0 ? '100%' : '-100%'})`;
-    // Force a layout flush before adding the transition class.
-    void incoming.offsetWidth;
-    incoming.classList.add('nav-anim');
-    snapshot.classList.add('nav-anim');
-    requestAnimationFrame(() => {
-      incoming.style.transition = '';
-      incoming.style.transform = 'translateX(0)';
-      snapshot.style.transform = `translateX(${delta > 0 ? '-100%' : '100%'})`;
-    });
-    setTimeout(() => {
-      snapshot.remove();
-      incoming.classList.remove('nav-anim');
-      incoming.style.transform = '';
+  // Animated navigation for non-touch entry points (keyboard arrows,
+  // arrow buttons). Touch swipe drives the animation directly via the
+  // drag handlers. Animates the track to ±viewWidth, then commits.
+  function navigateSibling(delta) {
+    if (_navAnimating) return;
+    const top = _viewStack[_viewStack.length - 1];
+    if (!top || !Array.isArray(top.list) || typeof top.idx !== 'number') return;
+    const newIdx = top.idx + delta;
+    if (newIdx < 0 || newIdx >= top.list.length) return;
+    const panel = document.getElementById('creatureInventory');
+    const view = panel && panel.querySelector(_viewSelector(top.view));
+    const track = panel && panel.querySelector(_trackSelector(top.view));
+    if (!view || !track) return;
+    _navAnimating = true;
+    const viewWidth = view.offsetWidth || 320;
+    track.style.transition = '';
+    track.classList.add('nav-anim');
+    track.style.transform = `translateX(${delta > 0 ? -viewWidth : viewWidth}px)`;
+    const onEnd = () => {
+      track.removeEventListener('transitionend', onEnd);
+      track.classList.remove('nav-anim');
+      track.style.transition = 'none';
+      _commitNavigate(delta);
       _navAnimating = false;
-      _updateNavArrows();
-    }, 360);
+    };
+    track.addEventListener('transitionend', onEnd);
+    // Safety timeout in case transitionend doesn't fire (e.g. layout
+    // swap interrupts).
+    setTimeout(() => {
+      if (_navAnimating) onEnd();
+    }, 500);
   }
 
   // Toggle visibility + disabled state of the in-view nav arrows
@@ -3013,10 +3236,10 @@
     `;
   }
 
-  function renderFusionView(a, b) {
+  function renderFusionView(a, b, targetBody) {
     const panel = document.getElementById('creatureInventory');
     if (!panel) return;
-    const body = panel.querySelector('.fusion-body');
+    const body = targetBody || panel.querySelector('.fusion-body');
     if (!body) return;
     // Revoke leftover sprite URLs from the previous render before we
     // wipe the body — without this, navigating back into the fusion
@@ -3350,10 +3573,10 @@
     });
   }
 
-  function renderDetail(c) {
+  function renderDetail(c, targetBody) {
     const panel = document.getElementById('creatureInventory');
     if (!panel) return;
-    const body = panel.querySelector('.detail-body');
+    const body = targetBody || panel.querySelector('.detail-body');
     // Revoke any in-flight sprite URLs from the previous render so
     // we don't leak blobs when the detail view is re-rendered (every
     // navigation back here re-runs renderDetail).
