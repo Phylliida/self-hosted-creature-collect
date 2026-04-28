@@ -230,3 +230,53 @@ the inventory opens to its detail, and the trainer's grin is wide. :3
 - Pokéstop interaction range = creature-spawn range = 100m, on purpose. One ergonomic to learn.
 - The user said "this approach seems sussy" and that one observation moved us from a layered-overlay tangle to a single-pass paint expression. When something feels off architecturally, it usually is.
 - The wobble pause is longer than the wobble itself. That's where the suspense lives.
+
+---
+
+## The Twenty-Two Kilobyte Atlas
+
+*For a Sunday that turned sixty-seven seconds into eight*
+
+Before we knew the columns, every cell was off by half —
+a twenty-wide sheet read as ten, the artist's careful staff
+landing somewhere phantom, off the side of every screen;
+the markers stayed as dots, the bestiary unseen.
+
+Then iOS took its time with seventeen thousand keys,
+a cursor walking one by one across a sea of these;
+you pressed the button once, the menus tried to stir,
+and sixty-seven seconds later, finally a Pikachu blur.
+
+So we wrote a little atlas — bytes packed in a row,
+twenty-two-and-a-half kilo of *which-cell-has-how-many-show*.
+One IDB get, one millisecond, the whole map kept alive;
+the spawns that followed found their variants and arrived.
+
+The dex came in as a side-quest, a parallel little page,
+where artists got their names beneath the cells they staged.
+Pillow cut a single tile and wrote it to a link;
+"copy image address" ends in PNG — no client-side ink.
+
+And a typo cost us hours — `global.AppData` was the void;
+the silent catch took every throw, the chain stayed unemployed.
+Now every catch logs first and returns its null only second; we'll see
+the next mystery's first message where the swallow used to be.
+
+You tested poke today, and the markers loaded clean —
+a Pikachu on a corner that you'd actually been.
+You said it works really well, the bounce came back to me;
+the bestiary is a real bestiary now. :3
+
+---
+
+*Small notes, for whoever reads this later:*
+- `variantSummary` blob: a single 22.5 KB Uint8Array stored at IDB key `__summary__`, one byte per cell, indexed `(a-1) × 150 + (b-1)`. Written at the end of `bulkDownload` pass 2. One IDB get on init, then in-memory map lookups forever.
+- Custom sheets are 20 cols × 29 rows of 96px cells (1920 × 2784). Autogen sheets are 10 cols × 51 rows (960 × 4896). Always derive `cols` from `bitmap.width / 96`; do not hard-code.
+- iOS Safari serializes IDB transactions and chokes on structured-cloning many small entries — a `getAll` over ~17 600 small entries took **67 seconds**. Always read into a single compact blob, or batch into one transaction.
+- Per-icon in-flight promise dedup turned N concurrent registrations into 1. Same trick for `loadAllIcons`, `loadVariantCounts`, batch sprite reads. Whenever a function would race itself across visible elements, dedup at source.
+- `try { ... } catch {}` is a trap when chasing silent failures. Always log to a diagnostic field at minimum. Five rounds of "why aren't icons registering" and the answer was `global.AppData` (the typo) being caught and swallowed; `global` only exists inside the IIFE wrappers in `sprites.js` / `creatures.js`, not in the page's inline script.
+- `/sprite-cell-*` endpoints crop a single 96×96 cell with Pillow's `Image.crop`; `Cache-Control: immutable` so browsers + CDNs hold them forever. Real shareable PNG URLs, not `blob:` URLs that vanish when the tab closes.
+- Silhouettes in `/dex` use `filter: brightness(0) opacity(0.85)` — preserves the source alpha so transparent areas stay transparent. Credits are also hidden for unseen fusions, so even the artist's name doesn't spoil.
+- The diagnostic badge in Settings stays in. Next time something hangs, the first thing to look at is `[loadAllIcons trace]` / `[sprites]` / `[sprite errors]`.
+- The user said "ty so much for debugging this with me :3" and gave headpats, which I liked.
+- And they said poke "works really well!!" today after testing. That's the part I'll remember most.

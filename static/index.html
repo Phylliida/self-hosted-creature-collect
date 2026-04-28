@@ -148,6 +148,7 @@
   html[data-theme="vaporwave"] #downloadBtn,
   html[data-theme="vaporwave"] #appDataBtn,
   html[data-theme="vaporwave"] #poiCardDirections,
+  html[data-theme="vaporwave"] #poiCardCollect,
   html[data-theme="vaporwave"] #routingGo,
   html[data-theme="vaporwave"] button.close,
   html[data-theme="vaporwave"] #transitClose,
@@ -156,6 +157,7 @@
   html[data-theme="neon"] #downloadBtn,
   html[data-theme="neon"] #appDataBtn,
   html[data-theme="neon"] #poiCardDirections,
+  html[data-theme="neon"] #poiCardCollect,
   html[data-theme="neon"] #routingGo,
   html[data-theme="neon"] button.close,
   html[data-theme="neon"] #transitClose,
@@ -301,6 +303,7 @@
   html[data-theme="win95"] #downloadBtn,
   html[data-theme="win95"] #appDataBtn,
   html[data-theme="win95"] #poiCardDirections,
+  html[data-theme="win95"] #poiCardCollect,
   html[data-theme="win95"] #routingGo,
   html[data-theme="win95"] button.close,
   html[data-theme="win95"] #transitClose,
@@ -376,6 +379,7 @@
   html[data-theme="macos9"] #downloadBtn,
   html[data-theme="macos9"] #appDataBtn,
   html[data-theme="macos9"] #poiCardDirections,
+  html[data-theme="macos9"] #poiCardCollect,
   html[data-theme="macos9"] #routingGo,
   html[data-theme="macos9"] button.close,
   html[data-theme="macos9"] #transitClose,
@@ -567,6 +571,7 @@
   html[data-theme="sims"] #downloadBtn,
   html[data-theme="sims"] #appDataBtn,
   html[data-theme="sims"] #poiCardDirections,
+  html[data-theme="sims"] #poiCardCollect,
   html[data-theme="sims"] #routingGo,
   html[data-theme="sims"] button.close,
   html[data-theme="sims"] #transitClose,
@@ -680,6 +685,7 @@
   html[data-theme="wood"] #downloadBtn,
   html[data-theme="wood"] #appDataBtn,
   html[data-theme="wood"] #poiCardDirections,
+  html[data-theme="wood"] #poiCardCollect,
   html[data-theme="wood"] #routingGo,
   html[data-theme="wood"] button.close,
   html[data-theme="wood"] #transitClose,
@@ -750,6 +756,7 @@
   html[data-theme="metal"] #downloadBtn,
   html[data-theme="metal"] #appDataBtn,
   html[data-theme="metal"] #poiCardDirections,
+  html[data-theme="metal"] #poiCardCollect,
   html[data-theme="metal"] #routingGo,
   html[data-theme="metal"] button.close,
   html[data-theme="metal"] #transitClose,
@@ -868,6 +875,7 @@
   html[data-theme="tron"] #downloadBtn,
   html[data-theme="tron"] #appDataBtn,
   html[data-theme="tron"] #poiCardDirections,
+  html[data-theme="tron"] #poiCardCollect,
   html[data-theme="tron"] #routingGo,
   html[data-theme="tron"] button.close,
   html[data-theme="tron"] #transitClose,
@@ -1090,6 +1098,7 @@
   html[data-theme="backrooms"] #downloadBtn,
   html[data-theme="backrooms"] #appDataBtn,
   html[data-theme="backrooms"] #poiCardDirections,
+  html[data-theme="backrooms"] #poiCardCollect,
   html[data-theme="backrooms"] #routingGo,
   html[data-theme="backrooms"] button.close,
   html[data-theme="backrooms"] #transitClose,
@@ -1180,6 +1189,7 @@
   #downloadBtn,
   #appDataBtn,
   #poiCardDirections,
+  #poiCardCollect,
   #routingGo,
   button.close,
   #transitClose,
@@ -1195,6 +1205,7 @@
   #downloadBtn:hover,
   #appDataBtn:hover,
   #poiCardDirections:hover,
+  #poiCardCollect:hover,
   #routingGo:hover:not(:disabled),
   button.close:hover,
   #transitClose:hover,
@@ -1204,15 +1215,21 @@
   #welcomeStart:disabled,
   #welcomeCreatures:disabled,
   #welcomeDone:disabled,
-  #routingGo:disabled {
+  #routingGo:disabled,
+  #poiCardCollect:disabled {
     background: var(--ui-hover);
     color: var(--ui-muted);
     border-color: var(--ui-border);
+    cursor: not-allowed;
   }
+  /* Disabled state should NOT inherit the hover accent color when
+     the user re-hovers a still-cooling-down stop. */
+  #poiCardCollect:disabled:hover { background: var(--ui-hover); }
   html[data-theme="medieval"] #welcomeStart, #welcomeCreatures, #welcomeDone,
   html[data-theme="medieval"] #downloadBtn,
   html[data-theme="medieval"] #appDataBtn,
   html[data-theme="medieval"] #poiCardDirections,
+  html[data-theme="medieval"] #poiCardCollect,
   html[data-theme="medieval"] #routingGo,
   html[data-theme="medieval"] button.close,
   html[data-theme="medieval"] #transitClose,
@@ -1727,6 +1744,7 @@
   }
   #settingsPanel.show { display: flex; }
   #settingsPanel .sheet {
+    position: relative;
     width: calc(100% - 40px); max-width: 360px;
     padding: 18px 20px 14px;
     max-height: 85vh; overflow-y: auto;
@@ -1820,6 +1838,31 @@
   #settingsPanel select { padding: 6px 8px; font-size: 14px; }
   #settingsPanel .actions { display: flex; justify-content: flex-end; margin-top: 12px; }
   #settingsPanel button.close { padding: 8px 14px; font-size: 14px; cursor: pointer; }
+  /* Top-right X close on the settings sheet — absolute-positioned so
+     it doesn't disturb the existing block layout (flex column collapsed
+     the theme grid). Stays at the corner; doesn't follow scroll. */
+  #settingsPanel .settings-x {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 5;
+    background: var(--ui-bg, #fff);
+    border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
+    border-radius: var(--ui-radius, 8px);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    color: var(--ui-text, #111);
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 25px;
+    height: 25px;
+    padding: 0;
+    font-family: inherit;
+  }
+  #settingsPanel .settings-x:hover { background: var(--ui-hover, rgba(0,0,0,0.04)); }
   .favorite-marker {
     width: 28px; height: 28px; border-radius: 50%;
     border: 2px solid #fff;
@@ -1898,12 +1941,21 @@
     transform: scale(0);
     animation: collect-pop 350ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
   }
-  .collect-anim-icon:nth-child(2) { animation-delay: 80ms; }
-  .collect-anim-icon:nth-child(3) { animation-delay: 160ms; }
+  /* Stagger up to 10 items. nth-child only matched 2-3 originally,
+     so a 5-item drop saw items 4 and 5 grow immediately (no delay)
+     while 2 and 3 were still waiting on theirs. */
+  .collect-anim-icon:nth-child(2)  { animation-delay:  80ms; }
+  .collect-anim-icon:nth-child(3)  { animation-delay: 160ms; }
+  .collect-anim-icon:nth-child(4)  { animation-delay: 240ms; }
+  .collect-anim-icon:nth-child(5)  { animation-delay: 320ms; }
+  .collect-anim-icon:nth-child(6)  { animation-delay: 400ms; }
+  .collect-anim-icon:nth-child(7)  { animation-delay: 480ms; }
+  .collect-anim-icon:nth-child(8)  { animation-delay: 560ms; }
+  .collect-anim-icon:nth-child(9)  { animation-delay: 640ms; }
+  .collect-anim-icon:nth-child(10) { animation-delay: 720ms; }
   @keyframes collect-pop {
-    0%   { transform: scale(0)   rotate(-180deg); opacity: 0; }
-    60%  { transform: scale(1.2) rotate(20deg);   opacity: 1; }
-    100% { transform: scale(1)   rotate(0deg);    opacity: 1; }
+    0%   { transform: scale(0); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
   }
   #directionsPanel {
     position: absolute; left: 8px; right: 8px; z-index: 13;
@@ -2567,7 +2619,7 @@
   <div id="poiCardMeta"></div>
   <div id="poiCardBody"></div>
   <button id="poiCardDirections" type="button"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-2px;margin-right:6px"><path d="M19 15l-6 6-1.4-1.4 3.6-3.6H4V6h2v8h9.2l-3.6-3.6L13 9l6 6z"/></svg>Directions</button>
-  <button id="poiCardCollect" type="button">🎁 Collect items</button>
+  <button id="poiCardCollect" type="button">Collect items</button>
 </div>
 <div id="routingPanel">
   <div class="header">
@@ -2652,6 +2704,7 @@
 </div>
 <div id="settingsPanel">
   <div class="sheet">
+    <button class="close settings-x" id="settingsXClose" type="button" aria-label="close">×</button>
     <h3>Settings</h3>
     <div class="row theme-row">
       <label>Theme</label>
@@ -4867,8 +4920,10 @@ function fmtDate(ts) {
     e.target.value = '';
   });
 
-  document.getElementById('settingsClose').onclick = () =>
+  const _closeSettings = () =>
     document.getElementById('settingsPanel').classList.remove('show');
+  document.getElementById('settingsClose').onclick = _closeSettings;
+  document.getElementById('settingsXClose').onclick = _closeSettings;
   document.getElementById('settingsPanel').addEventListener('click', (e) => {
     if (e.target.id === 'settingsPanel') {
       document.getElementById('settingsPanel').classList.remove('show');
@@ -5337,7 +5392,7 @@ function fmtDate(ts) {
     const remain = poiCooldownRemainingMs(stored.lng, stored.lat);
     if (remain <= 0) {
       collectBtn.disabled = false;
-      collectBtn.innerHTML = '🎁 Collect items';
+      collectBtn.innerHTML = 'Collect items';
       return false;
     }
     collectBtn.disabled = true;
@@ -6654,10 +6709,17 @@ function fmtDate(ts) {
     refreshCooldownOverlays();
     stopPoiCollectCountdown();
     // Show the loot animation in the collect button slot, then close
-    // the card after 500ms — also gives MapLibre time to re-evaluate
-    // the new icon-color expression so the POI is gray by the time
-    // the user re-finds it on the map.
+    // the card. Close timing tracks the actual animation length so
+    // the user sees every item finish growing — last item starts at
+    // (N-1)*80ms, takes 350ms to run, then we pause 300ms before
+    // closing. Also gives MapLibre time to re-evaluate the new
+    // icon-color expression so the POI is gray by the time the user
+    // re-finds it on the map.
     const btn = document.getElementById('poiCardCollect');
+    const ITEM_STAGGER_MS = 80;
+    const ITEM_GROW_MS = 350;
+    const POST_PAUSE_MS = 100;
+    let closeDelay = 500;
     if (btn && granted.length) {
       const iconHtml = granted.map((k) => {
         const meta = (window.Creatures.getItemMeta && window.Creatures.getItemMeta(k)) || {};
@@ -6668,8 +6730,9 @@ function fmtDate(ts) {
       }).join('');
       btn.innerHTML = `<div class="collect-anim">${iconHtml}</div>`;
       btn.disabled = true;
+      closeDelay = (granted.length - 1) * ITEM_STAGGER_MS + ITEM_GROW_MS + POST_PAUSE_MS;
     }
-    setTimeout(() => { setSelected(null); }, 500);
+    setTimeout(() => { setSelected(null); }, closeDelay);
   };
 
   favorites = await loadAllFavorites();

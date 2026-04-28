@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sprite Dex</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #faf7f0;
+    --panel: #fff;
+    --border: rgba(0,0,0,0.12);
+    --hairline: rgba(0,0,0,0.06);
+    --text: #1a1a1a;
+    --muted: #666;
+    --accent: #b6896c;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    margin: 0; padding: 24px 20px 40px;
+    background: var(--bg); color: var(--text);
+  }
+  .wrap { max-width: 1200px; margin: 0 auto; }
+  h1 { margin: 0 0 6px; font-size: 22px; font-weight: 600; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+  .controls {
+    display: flex; flex-wrap: wrap; gap: 14px;
+    background: var(--panel); padding: 12px 14px;
+    border: 1px solid var(--border); border-radius: 8px;
+    margin-bottom: 16px;
+  }
+  .field { display: flex; flex-direction: column; gap: 4px; min-width: 160px; }
+  .field label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .field-row { display: flex; align-items: center; gap: 8px; }
+  .field input[type=text] {
+    width: 200px; padding: 6px 8px; font-size: 14px;
+    border: 1px solid var(--border); border-radius: 4px;
+    font-family: inherit; background: #fff;
+  }
+  .field input[type=text].invalid { border-color: #c97a6a; background: #fdf3f0; }
+  /* Custom autocomplete popup — appears under the input as the user
+     types. Native <datalist> behaves inconsistently on iOS so we
+     render our own. */
+  .field-row { position: relative; }
+  .ac-list {
+    position: absolute; top: 100%; left: 0;
+    width: 230px; max-height: 240px; overflow-y: auto;
+    margin-top: 2px; padding: 0;
+    background: var(--panel);
+    border: 1px solid var(--border); border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    z-index: 10;
+    list-style: none;
+    display: none;
+  }
+  .ac-list.show { display: block; }
+  .ac-item {
+    padding: 6px 10px; font-size: 13px; cursor: pointer;
+    display: flex; justify-content: space-between; gap: 12px;
+  }
+  .ac-item .id { color: var(--muted); font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+  .ac-item:hover, .ac-item.active { background: var(--hairline); }
+  .ac-item mark { background: #ffe79e; color: inherit; padding: 0; }
+  .field .name { font-size: 13px; color: var(--text); }
+  .field .stepper {
+    display: inline-flex; gap: 2px;
+  }
+  .field .stepper button {
+    width: 28px; height: 28px; padding: 0; cursor: pointer;
+    border: 1px solid var(--border); background: #fff;
+    border-radius: 4px; font-size: 16px; line-height: 1;
+  }
+  .field .stepper button:hover { background: var(--hairline); }
+  .swap {
+    align-self: flex-end; padding: 6px 12px; cursor: pointer;
+    border: 1px solid var(--border); background: #fff;
+    border-radius: 4px; font-size: 13px; font-family: inherit;
+    margin-bottom: 0;
+  }
+  .swap:hover { background: var(--hairline); }
+  .meta {
+    margin: 0 0 12px; font-size: 12px; color: var(--muted);
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(212px, 1fr));
+    gap: 14px;
+  }
+  .cell {
+    background: var(--panel); padding: 10px 10px 8px;
+    border: 1px solid var(--border); border-radius: 8px;
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+  }
+  .cell.autogen { border-color: var(--accent); }
+  .sprite-wrap {
+    width: 192px; height: 192px;
+    background: #fff;
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+    cursor: zoom-in;
+  }
+  .sprite-wrap:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .sprite {
+    width: 192px; height: 192px;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    background-repeat: no-repeat;
+  }
+  .label {
+    font-size: 11px; color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .credit {
+    font-size: 11px; color: var(--muted); margin-top: 2px;
+    text-align: center; max-width: 200px; word-wrap: break-word;
+  }
+  .credit b { color: var(--text); font-weight: 500; }
+  .cell.autogen .label { color: var(--accent); font-weight: 600; }
+  .empty {
+    color: var(--muted); font-style: italic; padding: 32px;
+    text-align: center;
+  }
+  .err {
+    color: #b94a3a; padding: 8px 12px; border: 1px solid #f0c0b8;
+    border-radius: 6px; background: #fdf3f0; font-size: 13px;
+    margin-bottom: 12px;
+  }
+  /* Spoiler-free silhouette for fusions the trainer hasn't seen.
+     brightness(0) preserves alpha so transparent areas of the sprite
+     stay transparent — a solid black cutout shows through. */
+  .cell.silhouette .sprite { filter: brightness(0) opacity(0.85); }
+  .cell.silhouette .label { color: #aaa; font-style: italic; }
+  /* Trainer gate */
+  #trainerGate {
+    background: var(--panel); padding: 18px 20px;
+    border: 1px solid var(--border); border-radius: 8px;
+    max-width: 420px; margin: 0 auto;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  #trainerGate h2 { margin: 0; font-size: 16px; font-weight: 600; }
+  #trainerGate p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+  #trainerGate .field-row { display: flex; gap: 8px; }
+  #trainerGate input { flex: 1; padding: 8px 10px; font-size: 14px;
+    border: 1px solid var(--border); border-radius: 4px; font-family: inherit; }
+  #trainerGate button {
+    padding: 8px 16px; font-size: 14px; cursor: pointer;
+    border: 1px solid var(--accent); background: var(--accent); color: #fff;
+    border-radius: 4px; font-family: inherit;
+  }
+  #trainerGate button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #trainerBar {
+    font-size: 12px; color: var(--muted); margin-bottom: 12px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  #trainerBar a { color: var(--accent); cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Sprite dex</h1>
+  <div class="sub">Browse every art variant for a fusion. Loads sheets live from disk.</div>
+
+  <!-- Trainer gate: shown until the user picks a trainer name. After
+       login, fusions the trainer hasn't SEEN (battled with) render
+       as silhouettes so this page can be browsed without spoilers. -->
+  <div id="trainerGate">
+    <h2>Pick your trainer</h2>
+    <p>Uncaught fusions appear as silhouettes — no spoilers for what you haven't found yet.</p>
+    <div class="field-row" style="position: relative;">
+      <input id="trainerInput" type="text" autocomplete="off" placeholder="trainer name…">
+      <ul class="ac-list" id="acTrainer" role="listbox"></ul>
+      <button id="trainerGo" type="button">Enter</button>
+    </div>
+    <div id="trainerErr" class="err" style="display:none"></div>
+  </div>
+
+  <div id="trainerBar" style="display:none">
+    Trainer: <b id="trainerNameBar"></b> · <a id="trainerSwitch">switch</a>
+  </div>
+
+  <div id="dexUi" style="display:none">
+  <div class="controls">
+    <div class="field">
+      <label for="morphA">Morph A</label>
+      <div class="field-row">
+        <input id="morphA" type="text" autocomplete="off" placeholder="type a name…">
+        <ul class="ac-list" id="acA" role="listbox"></ul>
+      </div>
+    </div>
+    <div class="field">
+      <label for="morphB">Morph B</label>
+      <div class="field-row">
+        <input id="morphB" type="text" autocomplete="off" placeholder="type a name…">
+        <ul class="ac-list" id="acB" role="listbox"></ul>
+      </div>
+    </div>
+    <button class="swap" id="swapBtn" type="button">⇄ swap</button>
+  </div>
+
+  <div class="meta" id="meta"></div>
+  <div id="errors"></div>
+  <div class="grid" id="grid"></div>
+  </div><!-- /#dexUi -->
+</div>
+
+<script>
+  // Sheet layout constants. Determined empirically from the asset
+  // dimensions (autogen 960×4896, custom 1920×2784) — see the
+  // earlier debugging story in HANDOFF when the cell-size mismatch
+  // hid every custom variant for a session.
+  const CELL_DISPLAY = 192;       // displayed cell size (2× source)
+  const AUTOGEN_COLS = 10;
+  const AUTOGEN_ROWS = 51;
+  const CUSTOM_COLS = 20;
+  const CUSTOM_ROWS = 29;
+
+  let names = [];
+  let manifest = {};
+  // name (lowercased) -> 1-based index. Built once after /creature-names
+  // resolves, used to translate input text → species id.
+  const nameToIdx = new Map();
+  // Set of "${a}-${b}" fusions the trainer has seen (battled with).
+  // Sourced from the trainer's most recent save's `seenFusions` map
+  // — same source the in-app pokédex uses, so dex.html matches what
+  // the player sees in /. Empty until a trainer is loaded.
+  let seenFusions = new Set();
+  let trainerName = null;
+  const TRAINER_LS_KEY = 'cc.dex.trainer';
+
+  async function init() {
+    const errBox = document.getElementById('errors');
+    try {
+      const [n, m] = await Promise.all([
+        fetch('/creature-names').then((r) => r.ok ? r.json() : []).catch(() => []),
+        fetch('/creature-sprite-custom-manifest').then((r) => r.ok ? r.json() : {}).catch(() => ({})),
+      ]);
+      names = n || [];
+      manifest = m || {};
+      for (let i = 0; i < names.length; i++) {
+        nameToIdx.set(names[i].toLowerCase(), i + 1);
+      }
+      // Initial input values: hash takes precedence (deep links),
+      // otherwise default both to the first species.
+      const aInput = document.getElementById('morphA');
+      const bInput = document.getElementById('morphB');
+      const { a: hashA, b: hashB } = readHash();
+      if (hashA != null) aInput.value = hashA;
+      else if (!aInput.value && names[0]) aInput.value = names[0];
+      if (hashB != null) bInput.value = hashB;
+      else if (!bInput.value && names[0]) bInput.value = names[0];
+    } catch (e) {
+      errBox.innerHTML = `<div class="err">Failed to load metadata: ${escapeHtml(e.message)}</div>`;
+    }
+    render();
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[c]);
+  }
+
+  // Resolve an input value to a 1-based species index. Accepts the
+  // exact name (case-insensitive), a partial prefix that uniquely
+  // matches one species, or a raw number. Returns null when ambiguous
+  // or unknown.
+  function resolveSpecies(text) {
+    const s = (text || '').trim();
+    if (!s) return null;
+    const num = +s;
+    if (Number.isInteger(num) && num >= 1 && num <= names.length + 100) return num;
+    const lower = s.toLowerCase();
+    if (nameToIdx.has(lower)) return nameToIdx.get(lower);
+    // Prefix match — only resolves if exactly one species starts with it.
+    const matches = [];
+    for (let i = 0; i < names.length; i++) {
+      if (names[i].toLowerCase().startsWith(lower)) matches.push(i + 1);
+      if (matches.length > 1) break;
+    }
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  // Per-sheet HTMLImageElement cache so we don't redecode the same
+  // sheet for every variant scan + display.
+  const _sheetImgCache = new Map();
+  function loadSheetImage(url) {
+    if (_sheetImgCache.has(url)) return _sheetImgCache.get(url);
+    const p = new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error(`failed to load ${url}`));
+      img.crossOrigin = 'anonymous';  // safe (same-origin) and lets us getImageData
+      img.src = url;
+    });
+    _sheetImgCache.set(url, p);
+    return p;
+  }
+
+  // Returns true if any pixel in the cell is non-transparent. Used to
+  // skip blank custom variants. Threshold matches sprites.js's
+  // ALPHA_MIN so we agree on "filled".
+  async function cellHasContent(url, index, cols) {
+    const img = await loadSheetImage(url);
+    // Source is at native 96 px; the cell math here is independent of
+    // how we DISPLAY the cell.
+    const SRC = 96;
+    const col = index % cols;
+    const row = Math.floor(index / cols);
+    if ((row + 1) * SRC > img.height) return false;
+    const canvas = document.createElement('canvas');
+    canvas.width = SRC;
+    canvas.height = SRC;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, col * SRC, row * SRC, SRC, SRC, 0, 0, SRC, SRC);
+    const data = ctx.getImageData(0, 0, SRC, SRC).data;
+    for (let i = 3; i < data.length; i += 4) {
+      if (data[i] > 8) return true;
+    }
+    return false;
+  }
+
+  // Each render bumps a token; async work that resolves after a
+  // newer render started is dropped on the floor. Prevents the grid
+  // from being polluted by stale-batch results when the user types
+  // quickly through several species.
+  let _renderToken = 0;
+
+  async function render() {
+    // No-op until a trainer has logged in — otherwise we'd kick off
+    // alpha-scans for the default fusion that the user can't even
+    // see (the dex grid is hidden behind the trainer gate).
+    if (!trainerName) return;
+    const aInput = document.getElementById('morphA');
+    const bInput = document.getElementById('morphB');
+    const a = resolveSpecies(aInput.value);
+    const b = resolveSpecies(bInput.value);
+    aInput.classList.toggle('invalid', !!aInput.value && !a);
+    bInput.classList.toggle('invalid', !!bInput.value && !b);
+
+    const grid = document.getElementById('grid');
+    const meta = document.getElementById('meta');
+    grid.innerHTML = '';
+
+    if (!a || !b) {
+      meta.textContent = 'Pick a species for both morphs.';
+      writeHash(a, b);
+      return;
+    }
+
+    writeHash(a, b);
+
+    const variants = manifest[String(b)] || [];
+    const aName = names[a - 1] || `#${a}`;
+    const bName = names[b - 1] || `#${b}`;
+    meta.textContent = `${aName} × ${bName} (#${a} × #${b}) · checking variants…`;
+
+    const myToken = ++_renderToken;
+
+    const isSeen = seenFusions.has(`${a}-${b}`);
+
+    // Fetch artist credits for this fusion in parallel with the
+    // alpha-scans below. Map<variantSuffix, artist>; '' is base.
+    // Don't show credits for silhouettes (would spoil the artist
+    // name for an unseen fusion).
+    const creditsP = isSeen
+      ? fetch(`/sprite-credit/${a}/${b}`).then((r) => r.ok ? r.json() : {}).catch(() => ({}))
+      : Promise.resolve({});
+
+    // Autogen always shown — server has full coverage and the cell
+    // is by definition non-blank for autogenerated art.
+    grid.appendChild(makeCell({
+      label: 'autogen',
+      url: `/creature-sprite/${b}`,
+      cellUrl: `/sprite-cell-auto/${a}/${b}`,
+      index: a, cols: AUTOGEN_COLS, rows: AUTOGEN_ROWS, isAutogen: true,
+      silhouette: !isSeen,
+    }));
+
+    // Pre-append every variant card in manifest order, hidden until
+    // its alpha-scan confirms the cell is non-blank. This way the
+    // visible order is deterministic — autogen, then custom base,
+    // then 'a', 'b', 'c', ... — even though the scans resolve in
+    // arbitrary order.
+    const slots = variants.map((v) => {
+      const url = v
+        ? `/creature-sprite-custom/${b}/${v}`
+        : `/creature-sprite-custom/${b}`;
+      const cellUrl = v
+        ? `/sprite-cell-custom/${a}/${b}/${v}`
+        : `/sprite-cell-custom/${a}/${b}`;
+      const cell = makeCell({
+        label: v === '' ? 'custom · base' : `custom · ${v}`,
+        url, cellUrl,
+        index: a, cols: CUSTOM_COLS, rows: CUSTOM_ROWS, isAutogen: false,
+        silhouette: !isSeen,
+      });
+      cell.style.display = 'none';
+      grid.appendChild(cell);
+      return { v, url, cell };
+    });
+    // Stamp the autogen cell's credit (if known). Sprite_Credits.csv
+    // attributes the AUTOGEN result of the Pokefusion 2 generator —
+    // not really an artist credit; skip it. Custom cells get their
+    // per-variant artist below.
+    let shown = 0;
+    const [, credits] = await Promise.all([
+      Promise.all(slots.map(async ({ v, url, cell }) => {
+        let filled = false;
+        try { filled = await cellHasContent(url, a, CUSTOM_COLS); }
+        catch { filled = false; }
+        if (myToken !== _renderToken) return;
+        if (filled) { cell.style.display = ''; shown++; }
+        else cell.remove();
+      })),
+      creditsP,
+    ]);
+    if (myToken !== _renderToken) return;
+    // Apply credits AFTER the alpha-scan reveals which cells stuck.
+    if (isSeen && credits && typeof credits === 'object') {
+      for (const { v, cell } of slots) {
+        if (!cell.parentNode) continue;  // was blank/removed
+        const artist = credits[v];
+        if (!artist) continue;
+        const cr = document.createElement('div');
+        cr.className = 'credit';
+        cr.innerHTML = `art by <b>${escapeHtml(artist)}</b>`;
+        cell.appendChild(cr);
+      }
+    }
+
+    if (myToken !== _renderToken) return;
+    meta.textContent =
+      `${aName} × ${bName} (#${a} × #${b}) · ` +
+      `1 autogen + ${shown} custom variant${shown === 1 ? '' : 's'}`;
+  }
+
+  // ---- Hash state ------------------------------------------------
+  // URL hash format: #t=Trainer&a=Bulbasaur&b=Pikachu (or numeric ids).
+  // Updated on every render; parsed on init + hashchange so deep
+  // links and back/forward navigation work as expected. Trainer name
+  // is part of the hash so URLs you share automatically gate to the
+  // right pokédex.
+  let _suppressHashWrite = false;
+  function writeHash(a, b) {
+    if (_suppressHashWrite) return;
+    const parts = [];
+    if (trainerName) parts.push(`t=${encodeURIComponent(trainerName)}`);
+    if (a) parts.push(`a=${encodeURIComponent(names[a - 1] || a)}`);
+    if (b) parts.push(`b=${encodeURIComponent(names[b - 1] || b)}`);
+    const next = parts.length ? '#' + parts.join('&') : '';
+    if (next !== location.hash) {
+      history.replaceState(null, '', next || '#');
+    }
+  }
+  function readHash() {
+    const h = location.hash.replace(/^#/, '');
+    const out = {};
+    for (const kv of h.split('&')) {
+      const [k, v] = kv.split('=');
+      if (k && v != null) out[k] = decodeURIComponent(v);
+    }
+    return out;
+  }
+  async function applyHash() {
+    const { a, b, t } = readHash();
+    // If hash specifies a different trainer, switch to them.
+    if (t && t !== trainerName) {
+      document.getElementById('trainerInput').value = t;
+      await attemptLogin();
+      // attemptLogin → showDexUi → render() handles the rest;
+      // re-applying a/b below covers the case where login succeeded.
+    }
+    const aInput = document.getElementById('morphA');
+    const bInput = document.getElementById('morphB');
+    _suppressHashWrite = true;
+    if (a != null) aInput.value = a;
+    if (b != null) bInput.value = b;
+    _suppressHashWrite = false;
+    render();
+  }
+  window.addEventListener('hashchange', applyHash);
+
+  function makeCell({ label, url, cellUrl, index, cols, rows, isAutogen, silhouette, credit }) {
+    const cell = document.createElement('div');
+    cell.className = 'cell'
+      + (isAutogen ? ' autogen' : '')
+      + (silhouette ? ' silhouette' : '');
+    if (credit) cell.dataset.credit = credit;
+    // Wrap the sprite in an <a> so the URL is a real, shareable
+    // link — right-click → "Copy Link" or middle-click works as you'd
+    // expect. The href points at the server-side single-cell PNG
+    // endpoint, not a temporary in-memory blob URL.
+    const wrap = document.createElement('a');
+    wrap.className = 'sprite-wrap';
+    wrap.title = 'click to open just this cell · right-click to copy link';
+    if (cellUrl) {
+      wrap.href = cellUrl;
+      wrap.target = '_blank';
+      wrap.rel = 'noopener';
+    }
+    const sprite = document.createElement('div');
+    sprite.className = 'sprite';
+    const col = index % cols;
+    const row = Math.floor(index / cols);
+    sprite.style.backgroundImage = `url('${url}')`;
+    sprite.style.backgroundSize = `${cols * CELL_DISPLAY}px ${rows * CELL_DISPLAY}px`;
+    sprite.style.backgroundPosition = `-${col * CELL_DISPLAY}px -${row * CELL_DISPLAY}px`;
+    wrap.appendChild(sprite);
+    cell.appendChild(wrap);
+    const lbl = document.createElement('div');
+    lbl.className = 'label';
+    lbl.textContent = label;
+    cell.appendChild(lbl);
+    if (credit) {
+      const cr = document.createElement('div');
+      cr.className = 'credit';
+      cr.innerHTML = `art by <b>${escapeHtml(credit)}</b>`;
+      cell.appendChild(cr);
+    }
+    return cell;
+  }
+
+  // ---- Autocomplete ---------------------------------------------
+  // Custom popup shown below each input as the user types. Native
+  // <datalist> behaves inconsistently on iOS; this gives a uniform
+  // experience and lets us highlight the matched substring.
+  const AC_MAX = 30;  // cap on visible suggestions
+
+  function buildSuggestions(query) {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    // Two-pass: prefix matches first, then "contains" matches.
+    const prefix = [];
+    const contains = [];
+    for (let i = 0; i < names.length; i++) {
+      const lower = names[i].toLowerCase();
+      if (lower.startsWith(q)) prefix.push(i + 1);
+      else if (lower.includes(q)) contains.push(i + 1);
+      if (prefix.length + contains.length >= AC_MAX * 2) break;
+    }
+    return prefix.concat(contains).slice(0, AC_MAX);
+  }
+
+  function highlight(name, query) {
+    const q = query.trim();
+    if (!q) return escapeHtml(name);
+    const lower = name.toLowerCase();
+    const i = lower.indexOf(q.toLowerCase());
+    if (i < 0) return escapeHtml(name);
+    return escapeHtml(name.slice(0, i)) +
+      `<mark>${escapeHtml(name.slice(i, i + q.length))}</mark>` +
+      escapeHtml(name.slice(i + q.length));
+  }
+
+  function attachAutocomplete(inputId, listId) {
+    const input = document.getElementById(inputId);
+    const list = document.getElementById(listId);
+    let activeIdx = -1;
+    let currentIds = [];
+
+    function paint() {
+      const ids = buildSuggestions(input.value);
+      currentIds = ids;
+      activeIdx = -1;
+      if (!ids.length) { list.classList.remove('show'); list.innerHTML = ''; return; }
+      list.innerHTML = ids.map((id, i) =>
+        `<li class="ac-item" role="option" data-id="${id}">` +
+          `<span class="nm">${highlight(names[id - 1], input.value)}</span>` +
+          `<span class="id">#${id}</span>` +
+        `</li>`
+      ).join('');
+      list.classList.add('show');
+    }
+    function pick(id) {
+      input.value = names[id - 1] || String(id);
+      list.classList.remove('show');
+      list.innerHTML = '';
+      render();
+    }
+    function setActive(idx) {
+      const items = list.querySelectorAll('.ac-item');
+      items.forEach((el, i) => el.classList.toggle('active', i === idx));
+      const el = items[idx];
+      if (el) el.scrollIntoView({ block: 'nearest' });
+      activeIdx = idx;
+    }
+
+    input.addEventListener('input', () => { paint(); render(); });
+    input.addEventListener('focus', paint);
+    // Delay hide so a click on a suggestion fires before blur.
+    input.addEventListener('blur', () => setTimeout(() => list.classList.remove('show'), 120));
+    input.addEventListener('keydown', (e) => {
+      if (!list.classList.contains('show') || !currentIds.length) {
+        if (e.key === 'ArrowDown') { paint(); }
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setActive(Math.min(currentIds.length - 1, activeIdx + 1));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setActive(Math.max(0, activeIdx - 1));
+      } else if (e.key === 'Enter') {
+        if (activeIdx >= 0) {
+          e.preventDefault();
+          pick(currentIds[activeIdx]);
+        }
+      } else if (e.key === 'Escape') {
+        list.classList.remove('show');
+      }
+    });
+    list.addEventListener('mousedown', (e) => {
+      // mousedown (not click) so we beat the input's blur handler.
+      const item = e.target.closest('.ac-item');
+      if (!item) return;
+      e.preventDefault();
+      pick(+item.dataset.id);
+    });
+  }
+
+  attachAutocomplete('morphA', 'acA');
+  attachAutocomplete('morphB', 'acB');
+
+  // ---- Trainer gate ---------------------------------------------
+  // Trainer name autocomplete uses a separate, dynamically-loaded
+  // suggestion source (saves dir listing). Picks resolve to a
+  // GET /load → seenFusions hydration → unlock the dex grid.
+  let _trainerNames = [];
+  async function loadTrainerNames() {
+    try {
+      const r = await fetch('/save-names');
+      if (!r.ok) return [];
+      const list = await r.json();
+      return Array.isArray(list) ? list : [];
+    } catch { return []; }
+  }
+  function attachTrainerAutocomplete() {
+    const input = document.getElementById('trainerInput');
+    const list = document.getElementById('acTrainer');
+    let activeIdx = -1;
+    let current = [];
+    function paint() {
+      const q = input.value.trim().toLowerCase();
+      const matches = _trainerNames.filter((n) => !q || n.toLowerCase().includes(q));
+      current = matches.slice(0, 30);
+      activeIdx = -1;
+      if (!current.length) { list.classList.remove('show'); list.innerHTML = ''; return; }
+      list.innerHTML = current.map((nm) =>
+        `<li class="ac-item" role="option" data-name="${escapeHtml(nm)}">` +
+          `<span>${highlight(nm, input.value)}</span>` +
+        `</li>`
+      ).join('');
+      list.classList.add('show');
+    }
+    input.addEventListener('focus', paint);
+    input.addEventListener('input', paint);
+    input.addEventListener('blur', () => setTimeout(() => list.classList.remove('show'), 120));
+    input.addEventListener('keydown', (e) => {
+      if (!list.classList.contains('show') || !current.length) return;
+      const items = list.querySelectorAll('.ac-item');
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        activeIdx = Math.min(current.length - 1, activeIdx + 1);
+        items.forEach((el, i) => el.classList.toggle('active', i === activeIdx));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        activeIdx = Math.max(0, activeIdx - 1);
+        items.forEach((el, i) => el.classList.toggle('active', i === activeIdx));
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const pick = activeIdx >= 0 ? current[activeIdx] : input.value.trim();
+        if (pick) { input.value = pick; list.classList.remove('show'); attemptLogin(); }
+      } else if (e.key === 'Escape') {
+        list.classList.remove('show');
+      }
+    });
+    list.addEventListener('mousedown', (e) => {
+      const item = e.target.closest('.ac-item');
+      if (!item) return;
+      e.preventDefault();
+      input.value = item.dataset.name;
+      list.classList.remove('show');
+      attemptLogin();
+    });
+  }
+
+  async function attemptLogin() {
+    const name = document.getElementById('trainerInput').value.trim();
+    const errEl = document.getElementById('trainerErr');
+    const btn = document.getElementById('trainerGo');
+    errEl.style.display = 'none';
+    if (!name) { errEl.textContent = 'Pick a trainer name.'; errEl.style.display = ''; return; }
+    btn.disabled = true;
+    try {
+      const r = await fetch('/load?name=' + encodeURIComponent(name));
+      if (r.status === 404) {
+        errEl.textContent = `No saves found for "${name}".`;
+        errEl.style.display = '';
+        return;
+      }
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      seenFusions = new Set();
+      // Prefer seenFusions (everything battled with) — matches the
+      // in-app pokédex semantics. Fall back to captured-only if
+      // missing on legacy saves.
+      if (data && data.seenFusions && typeof data.seenFusions === 'object') {
+        for (const key of Object.keys(data.seenFusions)) seenFusions.add(key);
+      } else if (Array.isArray(data && data.captured)) {
+        for (const c of data.captured) {
+          if (c && c.speciesA != null && c.speciesB != null) {
+            seenFusions.add(`${c.speciesA}-${c.speciesB}`);
+          }
+        }
+      }
+      trainerName = name;
+      localStorage.setItem(TRAINER_LS_KEY, name);
+      showDexUi();
+    } catch (e) {
+      errEl.textContent = 'Load failed: ' + (e && e.message ? e.message : e);
+      errEl.style.display = '';
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function showDexUi() {
+    document.getElementById('trainerGate').style.display = 'none';
+    document.getElementById('trainerBar').style.display = '';
+    document.getElementById('dexUi').style.display = '';
+    document.getElementById('trainerNameBar').textContent = trainerName || '';
+    render();
+  }
+  function showTrainerGate() {
+    document.getElementById('trainerGate').style.display = '';
+    document.getElementById('trainerBar').style.display = 'none';
+    document.getElementById('dexUi').style.display = 'none';
+    document.getElementById('trainerInput').focus();
+  }
+
+  document.getElementById('trainerGo').addEventListener('click', attemptLogin);
+  document.getElementById('trainerSwitch').addEventListener('click', () => {
+    localStorage.removeItem(TRAINER_LS_KEY);
+    trainerName = null;
+    seenFusions = new Set();
+    document.getElementById('trainerInput').value = '';
+    // Strip everything from the hash so the gate doesn't auto-login
+    // back to the trainer that was just dismissed.
+    history.replaceState(null, '', '#');
+    showTrainerGate();
+  });
+  attachTrainerAutocomplete();
+
+  // Boot the trainer gate before the dex inits — names list loads
+  // first, then auto-login if we have a trainer in the URL hash
+  // (deep link), falling back to localStorage. Hash wins so a
+  // shared link can override the locally-remembered trainer.
+  (async () => {
+    _trainerNames = await loadTrainerNames();
+    const fromHash = readHash().t;
+    const remembered = localStorage.getItem(TRAINER_LS_KEY);
+    const auto = fromHash || remembered;
+    if (auto) {
+      document.getElementById('trainerInput').value = auto;
+      await attemptLogin();
+    } else {
+      showTrainerGate();
+    }
+  })();
+
+  // Wire inputs (autocomplete handler already calls render on input).
+  // Keep this for any non-autocomplete-driven changes (paste, etc.).
+  document.getElementById('swapBtn').addEventListener('click', () => {
+    const ai = document.getElementById('morphA');
+    const bi = document.getElementById('morphB');
+    const tmp = ai.value;
+    ai.value = bi.value;
+    bi.value = tmp;
+    render();
+  });
+
+  init();
+</script>
+</body>
+</html>
