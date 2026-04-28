@@ -23,7 +23,12 @@
   const STORE_ICONS = 'icons';
   const STORE_VARIANTS = 'variants';
   const SPRITE_SIZE = 96;
-  const SHEET_COLS = 10;
+  // Autogen sheets are 960×4896 → 10 cols × 51 rows. Custom (hand-
+  // drawn) sheets pack denser — typically 1920×2784 → 20 cols × 29
+  // rows. Both use 96×96 cells, but the column count differs, so
+  // crops compute `cols = bitmap.width / SPRITE_SIZE` per-sheet rather
+  // than relying on a single constant.
+  const SHEET_COLS_AUTOGEN = 10;
   const ALPHA_MIN = 8;
   // Sheets are huge ImageBitmaps (~18 MB decoded each). We only need
   // a tiny cache because bulk download processes them sequentially and
@@ -161,8 +166,8 @@
   // 96×96 if the cell is fully transparent (which shouldn't happen for
   // autogen but matches the legacy behaviour).
   async function cropAutogenSprite(bitmap, index) {
-    const col = index % SHEET_COLS;
-    const row = Math.floor(index / SHEET_COLS);
+    const col = index % SHEET_COLS_AUTOGEN;
+    const row = Math.floor(index / SHEET_COLS_AUTOGEN);
     const { blob } = await scanAndCrop(
       bitmap, col * SPRITE_SIZE, row * SPRITE_SIZE, SPRITE_SIZE, SPRITE_SIZE
     );
@@ -181,9 +186,14 @@
   // version: blank cells in a custom sheet are EXPECTED (artists only
   // fill in some fusions), and we MUST drop them so the per-cell
   // variant list reflects which variants are actually drawn.
+  // Custom sheets use a different column count from autogen (typically
+  // 20 cols × 29 rows for a 1920×2784 sheet vs autogen's 10 × 51), so
+  // we derive cols from the bitmap width.
   async function cropCustomSpriteIfFilled(bitmap, index) {
-    const col = index % SHEET_COLS;
-    const row = Math.floor(index / SHEET_COLS);
+    const cols = Math.max(1, Math.floor(bitmap.width / SPRITE_SIZE));
+    const col = index % cols;
+    const row = Math.floor(index / cols);
+    if ((row + 1) * SPRITE_SIZE > bitmap.height) return null;
     const { blob } = await scanAndCrop(
       bitmap, col * SPRITE_SIZE, row * SPRITE_SIZE, SPRITE_SIZE, SPRITE_SIZE
     );
@@ -281,7 +291,12 @@
   // Prefetch tracking — sheet is "done" only when every crop in
   // [indexFrom..indexTo] has been written to IDB.
   const DOWNLOADED_KEY = 'cc.spritesDownloaded';
-  const CUSTOM_DONE_KEY = 'cc.spritesCustomDone';
+  // Bumped from `cc.spritesCustomDone` after the cell-layout fix
+  // (custom sheets are 20 cols × 29 rows, not 10 × 29). With the new
+  // key, any user who downloaded under the broken layout will see
+  // custom as "0/150 done" and can trigger a fresh download — pass 2
+  // will overwrite their corrupt slots with correct ones.
+  const CUSTOM_DONE_KEY = 'cc.spritesCustomDone.v2';
 
   function getDownloadedSheets() {
     try {

@@ -240,6 +240,39 @@ def save_backup():
     return jsonify({"ok": True, "saved": path.name})
 
 
+@app.route("/load")
+def load_backup():
+    """Return the most-recent saved backup for `?name=X`.
+
+    Save files are named `<name>_<millis>.json` (see /save above), so the
+    most recent is the one with the highest numeric suffix. Falls back
+    to mtime ordering if any file's name doesn't match the pattern (e.g.
+    a manual upload). 404 when no save exists for that name.
+    """
+    name = (request.args.get("name") or "").strip()
+    if not name or not _SAFE_NAME_RE.fullmatch(name):
+        abort(400)
+    saves_dir = ROOT / "saves"
+    if not saves_dir.is_dir():
+        abort(404)
+    candidates = []
+    for p in saves_dir.glob(f"{name}_*.json"):
+        m = re.match(rf"^{re.escape(name)}_(\d+)\.json$", p.name)
+        if m:
+            candidates.append((int(m.group(1)), p))
+        else:
+            candidates.append((int(p.stat().st_mtime * 1000), p))
+    if not candidates:
+        abort(404)
+    candidates.sort(key=lambda t: t[0], reverse=True)
+    latest = candidates[0][1]
+    resp = send_from_directory(saves_dir, latest.name,
+                                mimetype="application/json")
+    # No HTTP cache — saves are the user's data and can change at any time.
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.route("/creature-evolutions")
 def creature_evolutions():
     # Map of species idx (string) -> list of forward evolutions, each

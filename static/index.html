@@ -47,11 +47,13 @@
   }
   #welcome h2 { margin: 0 0 10px; font-size: 20px; }
   #welcome p { margin: 0 0 18px; color: var(--ui-muted); }
-  #welcomeStart {
+  #welcomeStart, #welcomeCreatures, #welcomeDone {
     padding: 12px 24px; font-size: 15px;
     cursor: pointer; width: 100%;
   }
-  #welcomeStart:disabled { cursor: wait; }
+  #welcomeStart:disabled,
+  #welcomeCreatures:disabled,
+  #welcomeDone:disabled { cursor: wait; }
   #welcomeStatus { margin-top: 10px; font-size: 12px; color: var(--ui-muted);
                    min-height: 14px; }
 
@@ -131,7 +133,7 @@
 
   /* Vaporwave + Neon: glowing accents — CTA buttons and active controls
      pick up a soft neon halo via text-shadow + box-shadow. */
-  html[data-theme="vaporwave"] #welcomeStart,
+  html[data-theme="vaporwave"] #welcomeStart, #welcomeCreatures, #welcomeDone,
   html[data-theme="vaporwave"] #downloadBtn,
   html[data-theme="vaporwave"] #appDataBtn,
   html[data-theme="vaporwave"] #poiCardDirections,
@@ -139,7 +141,7 @@
   html[data-theme="vaporwave"] button.close,
   html[data-theme="vaporwave"] #transitClose,
   html[data-theme="vaporwave"] #savedRoutesClose,
-  html[data-theme="neon"] #welcomeStart,
+  html[data-theme="neon"] #welcomeStart, #welcomeCreatures, #welcomeDone,
   html[data-theme="neon"] #downloadBtn,
   html[data-theme="neon"] #appDataBtn,
   html[data-theme="neon"] #poiCardDirections,
@@ -284,7 +286,7 @@
       inset  2px  2px 0 #808080,
       inset -2px -2px 0 #dfdfdf !important;
   }
-  html[data-theme="win95"] #welcomeStart,
+  html[data-theme="win95"] #welcomeStart, #welcomeCreatures, #welcomeDone,
   html[data-theme="win95"] #downloadBtn,
   html[data-theme="win95"] #appDataBtn,
   html[data-theme="win95"] #poiCardDirections,
@@ -359,7 +361,7 @@
     color: #000;
     font-family: inherit;
   }
-  html[data-theme="macos9"] #welcomeStart,
+  html[data-theme="macos9"] #welcomeStart, #welcomeCreatures, #welcomeDone,
   html[data-theme="macos9"] #downloadBtn,
   html[data-theme="macos9"] #appDataBtn,
   html[data-theme="macos9"] #poiCardDirections,
@@ -550,7 +552,7 @@
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.35), 0 2px 4px rgba(0,0,0,0.35) !important;
     font-family: inherit; font-weight: 600;
   }
-  html[data-theme="sims"] #welcomeStart,
+  html[data-theme="sims"] #welcomeStart, #welcomeCreatures, #welcomeDone,
   html[data-theme="sims"] #downloadBtn,
   html[data-theme="sims"] #appDataBtn,
   html[data-theme="sims"] #poiCardDirections,
@@ -663,7 +665,7 @@
       inset 0 -1px 0 rgba(40,20,8,0.45),
       0 2px 4px rgba(40,20,8,0.5) !important;
   }
-  html[data-theme="wood"] #welcomeStart,
+  html[data-theme="wood"] #welcomeStart, #welcomeCreatures, #welcomeDone,
   html[data-theme="wood"] #downloadBtn,
   html[data-theme="wood"] #appDataBtn,
   html[data-theme="wood"] #poiCardDirections,
@@ -733,7 +735,7 @@
   html[data-theme="metal"] button:active:not(:disabled) {
     background: linear-gradient(to bottom, #808080 0%, #a0a0a0 50%, #c0c0c0 100%) !important;
   }
-  html[data-theme="metal"] #welcomeStart,
+  html[data-theme="metal"] #welcomeStart, #welcomeCreatures, #welcomeDone,
   html[data-theme="metal"] #downloadBtn,
   html[data-theme="metal"] #appDataBtn,
   html[data-theme="metal"] #poiCardDirections,
@@ -851,7 +853,7 @@
       0 0 8px rgba(0,221,255,0.4) !important;
     text-shadow: 0 0 6px rgba(0,221,255,0.8);
   }
-  html[data-theme="tron"] #welcomeStart,
+  html[data-theme="tron"] #welcomeStart, #welcomeCreatures, #welcomeDone,
   html[data-theme="tron"] #downloadBtn,
   html[data-theme="tron"] #appDataBtn,
   html[data-theme="tron"] #poiCardDirections,
@@ -1073,7 +1075,7 @@
     letter-spacing: 0.1em;
     animation: backrooms-buzz 4s infinite;
   }
-  html[data-theme="backrooms"] #welcomeStart,
+  html[data-theme="backrooms"] #welcomeStart, #welcomeCreatures, #welcomeDone,
   html[data-theme="backrooms"] #downloadBtn,
   html[data-theme="backrooms"] #appDataBtn,
   html[data-theme="backrooms"] #poiCardDirections,
@@ -1163,7 +1165,7 @@
   }
 
   /* Buttons — secondary (neutral) and primary (accent CTA). */
-  #welcomeStart,
+  #welcomeStart, #welcomeCreatures, #welcomeDone,
   #downloadBtn,
   #appDataBtn,
   #poiCardDirections,
@@ -1177,6 +1179,8 @@
     border-radius: var(--ui-radius);
   }
   #welcomeStart:hover:not(:disabled),
+  #welcomeCreatures:hover:not(:disabled),
+  #welcomeDone:hover:not(:disabled),
   #downloadBtn:hover,
   #appDataBtn:hover,
   #poiCardDirections:hover,
@@ -1187,12 +1191,14 @@
     background: var(--ui-accent-border);
   }
   #welcomeStart:disabled,
+  #welcomeCreatures:disabled,
+  #welcomeDone:disabled,
   #routingGo:disabled {
     background: var(--ui-hover);
     color: var(--ui-muted);
     border-color: var(--ui-border);
   }
-  html[data-theme="medieval"] #welcomeStart,
+  html[data-theme="medieval"] #welcomeStart, #welcomeCreatures, #welcomeDone,
   html[data-theme="medieval"] #downloadBtn,
   html[data-theme="medieval"] #appDataBtn,
   html[data-theme="medieval"] #poiCardDirections,
@@ -1220,6 +1226,7 @@
   #exportBtn,
   #importBtn,
   #saveBtn,
+  #loadBtn,
   #spritesDownloadBtn,
   #spritesClearBtn {
     background: var(--ui-input-bg);
@@ -1231,6 +1238,7 @@
   #exportBtn:hover,
   #importBtn:hover,
   #saveBtn:hover,
+  #loadBtn:hover,
   #spritesDownloadBtn:hover,
   #spritesClearBtn:hover { background: var(--ui-hover); }
   /* "Done" buttons in transit + settings panels carry inline-style
@@ -2478,6 +2486,41 @@
 </script>
 </head>
 <body>
+<!-- Refresh button — pure HTML + inline onclick so it works even when
+     the JS has thrown an error during init. Targets ONLY the small
+     app-shell entries in APP_CACHE — `/`, manifest, icon.svg, the
+     vendor maplibre files, and trip-planner.js. The bulky downloaded
+     `/fonts/*` and `/icons/*` are LEFT ALONE because the SW serves
+     them only from cache without an X-Download header (zero-network
+     rule); wiping them would leave the next reload with no icons or
+     labels until the user manually re-downloads.
+     Fires the deletes without awaiting so an iOS PWA hang on
+     caches.delete can't stall the reload; reload runs on a 150ms
+     timeout so in-flight deletes can land before unload. 44×44 tap
+     target meets Apple's HIG min so iOS taps register reliably. -->
+<div id="emergencyRefreshHolder" class="maplibregl-ctrl maplibregl-ctrl-group"
+     style="position: fixed;
+            bottom: max(10px, env(safe-area-inset-bottom));
+            right: max(50px, calc(env(safe-area-inset-right) + 50px));
+            z-index: 999999;
+            background: #fff; border-radius: 6px;
+            box-shadow: 0 0 0 2px rgba(0,0,0,0.1);">
+  <button id="emergencyRefresh"
+          onclick="try{caches.open('app-v1').then(function(c){['/','/manifest.webmanifest','/static/icon.svg','/static/trip-planner.js','/static/vendor/maplibre-gl.css','/static/vendor/maplibre-gl.js'].forEach(function(u){c.delete(u)})})}catch(_){}setTimeout(function(){location.reload()},150);"
+          type="button"
+          title="Refresh app (clears stale code, keeps icons/fonts/maps)"
+          aria-label="Refresh app"
+          style="display: flex; align-items: center; justify-content: center;
+                 width: 44px; height: 44px; padding: 0;
+                 border: 0; background: transparent; color: #333;
+                 cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0.1);
+                 touch-action: manipulation;">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"
+         style="display:block;pointer-events:none">
+      <path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10H17.6A5.99 5.99 0 0 1 12 18a6 6 0 1 1 4.22-10.22L13 11h7V4z"/>
+    </svg>
+  </button>
+</div>
 <div id="map"></div>
 <div id="search">
   <input id="searchInput" type="search" placeholder="search (downloaded regions)"
@@ -2745,6 +2788,7 @@
         <button id="exportBtn" type="button" style="padding: 6px 10px; font-size: 13px;">Export</button>
         <button id="importBtn" type="button" style="padding: 6px 10px; font-size: 13px;">Import</button>
         <button id="saveBtn" type="button" style="padding: 6px 10px; font-size: 13px;">Save</button>
+        <button id="loadBtn" type="button" style="padding: 6px 10px; font-size: 13px;">Load</button>
         <input type="file" id="importFile" accept=".json,application/json" style="display:none">
       </span>
     </div>
@@ -2773,10 +2817,22 @@
 <div id="welcome">
   <div class="card">
     <h2>Welcome!</h2>
-    <p>Before you start, the app needs to download a small one-time bundle:
-       fonts, POI icons, and a low-zoom world map (~8&nbsp;MB total). Without
-       it the map won't render labels or low-zoom tiles.</p>
+    <p id="welcomeStep1Desc">Step 1 of 3: download app data — fonts, POI
+       icons, and a low-zoom world map (~8&nbsp;MB). The map won't render
+       labels or low-zoom tiles without it.</p>
     <button id="welcomeStart">↓ Download app data</button>
+    <p id="welcomeStep2Desc" hidden>Step 2 of 3: download creature data —
+       Pokémon sprites and species info (~150&nbsp;MB autogen + ~150&nbsp;MB
+       hand-drawn). Without it wild creatures show as red dots and the
+       pokédex is blank.</p>
+    <button id="welcomeCreatures" hidden>↓ Download creature data</button>
+    <p id="welcomeStep3Desc" hidden>Step 3 of 3: download map data for your
+       area. Pan and zoom the map to your region, then tap the
+       <b>↓&nbsp;save current view</b> button at the bottom of the screen.
+       This grabs offline tiles, POIs, walking paths, and transit so the
+       app works without internet. You can repeat this for any region you
+       visit.</p>
+    <button id="welcomeDone" hidden>Got it!</button>
     <div id="welcomeStatus"></div>
   </div>
 </div>
@@ -2806,7 +2862,7 @@
 // a user-visible change (new features, data format upgrades, etc.). Shown
 // at the bottom of the settings panel so it's easy to read off during
 // support / bug reports.
-const APP_VERSION = 'v0.1.0';
+const APP_VERSION = 'v0.2.0';
 {
   const el = document.getElementById('versionBadge');
   if (el) el.textContent = APP_VERSION;
@@ -3523,33 +3579,6 @@ function fmtDate(ts) {
       ]
     },
   });
-  class RefreshControl {
-    onAdd() {
-      const c = document.createElement('div');
-      c.className = 'maplibregl-ctrl maplibregl-ctrl-group';
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.title = 'refresh app (keeps saved maps)';
-      b.setAttribute('aria-label', 'refresh app');
-      b.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style="display:block;margin:auto"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10H17.6A5.99 5.99 0 0 1 12 18a6 6 0 1 1 4.22-10.22L13 11h7V4z"/></svg>`;
-      b.onclick = async () => {
-        b.disabled = true;
-        const reg = await navigator.serviceWorker.ready;
-        try { await reg.update(); } catch {}
-        const onMsg = (e) => {
-          if (e.data && e.data.type === 'appShellRefreshed') {
-            navigator.serviceWorker.removeEventListener('message', onMsg);
-            location.reload();
-          }
-        };
-        navigator.serviceWorker.addEventListener('message', onMsg);
-        reg.active.postMessage({ type: 'refreshAppShell' });
-      };
-      c.appendChild(b);
-      return c;
-    }
-    onRemove() {}
-  }
   let tempPin = null;
   function isLngLatInView(lng, lat) {
     const p = map.project([lng, lat]);
@@ -3619,7 +3648,6 @@ function fmtDate(ts) {
     onRemove() {}
   }
   map.addControl(new PinControl(), 'bottom-right');
-  map.addControl(new RefreshControl(), 'bottom-right');
 
   const TRANSIT_TILE_LAYERS = {
     rail: 'rail-mainline',
@@ -4162,36 +4190,54 @@ function fmtDate(ts) {
   };
 
   const registeredIconNames = new Set();
+  // Tolerant addImage: hasImage() can race with a concurrent registration
+  // (TOCTOU between our check and our addImage), and addImage throws
+  // synchronously on a dup. We swallow that one specific throw — every
+  // other failure still bubbles. Without this, a single dup would kill
+  // the whole Promise.all in loadAllIcons and leave POI/pokémon/ball
+  // icons unregistered until the next refresh.
+  function safeAddImage(name, data, opts) {
+    if (map.hasImage(name)) return true;
+    try { map.addImage(name, data, opts); registeredIconNames.add(name); return true; }
+    catch { return map.hasImage(name); }
+  }
   async function registerIconFromSvg(name, svgText) {
     if (map.hasImage(name)) return true;
     try {
       const { data, pixelRatio } = await svgToImageData(svgText, 24, 2);
-      map.addImage(name, data, { pixelRatio, sdf: true });
-      registeredIconNames.add(name);
-      if (name.includes('-')) {
-        const us = name.replace(/-/g, '_');
-        if (!map.hasImage(us)) { map.addImage(us, data, { pixelRatio, sdf: true }); registeredIconNames.add(us); }
-      }
+      const opts = { pixelRatio, sdf: true };
+      safeAddImage(name, data, opts);
+      if (name.includes('-')) safeAddImage(name.replace(/-/g, '_'), data, opts);
       const aliases = ICON_ALIAS_MAP[name];
-      if (aliases) {
-        for (const a of aliases) {
-          if (!map.hasImage(a)) { map.addImage(a, data, { pixelRatio, sdf: true }); registeredIconNames.add(a); }
-        }
-      }
+      if (aliases) for (const a of aliases) safeAddImage(a, data, opts);
       return true;
     } catch { return false; }
   }
 
-  async function loadIcon(name, opts = {}) {
-    if (map.hasImage(name)) return true;
-    try {
-      const headers = opts.download ? { 'X-Download': '1' } : {};
-      const res = await fetch(`/icons/${encodeURIComponent(name)}.svg`, { headers });
-      if (!res.ok || res.status === 204) return false;
-      const svg = await res.text();
-      if (!svg) return false;
-      return registerIconFromSvg(name, svg);
-    } catch { return false; }
+  // Per-icon in-flight promise cache. loadAllIcons fires once on
+  // map.on('load') AND once when the user clicks Download App Data; if
+  // both fire near each other the same icon ends up registered twice
+  // and addImage throws "An image named X already exists", killing
+  // the chain (so pokémon/pokéball/POI icons silently disappear).
+  // Sharing the in-flight promise per name eliminates the race.
+  const _iconPromises = new Map();
+  function loadIcon(name, opts = {}) {
+    if (map.hasImage(name)) return Promise.resolve(true);
+    const existing = _iconPromises.get(name);
+    if (existing) return existing;
+    const p = (async () => {
+      try {
+        const headers = opts.download ? { 'X-Download': '1' } : {};
+        const res = await fetch(`/icons/${encodeURIComponent(name)}.svg`, { headers });
+        if (!res.ok || res.status === 204) return false;
+        const svg = await res.text();
+        if (!svg) return false;
+        return registerIconFromSvg(name, svg);
+      } catch { return false; }
+      finally { _iconPromises.delete(name); }
+    })();
+    _iconPromises.set(name, p);
+    return p;
   }
 
   const DEFAULT_MARKER_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 15 15"><path d="M7.5 1C5.42 1 3 2.29 3 5.57C3 7.79 6.46 12.71 7.5 14C8.42 12.71 12 7.91 12 5.57C12 2.29 9.58 1 7.5 1Z" fill="#555" stroke="#fff" stroke-width="0.6" stroke-linejoin="round"/></svg>`;
@@ -4207,6 +4253,11 @@ function fmtDate(ts) {
 
   let availableIconNames = [];
   async function loadAllIcons(opts = {}) {
+    // No top-level dedup here on purpose: the two callers have
+    // different opts (map.on('load') without download, the welcome
+    // step with download:true) and sharing one in-flight promise
+    // would lose the download intent. Per-icon dedup in loadIcon()
+    // is what actually prevents the duplicate-addImage race.
     try {
       const res = await fetch('/iconslist', opts.download ? { headers: { 'X-Download': '1' } } : undefined);
       if (!res.ok) return 0;
@@ -4493,9 +4544,17 @@ function fmtDate(ts) {
       alert('Save failed: ' + (e && e.message ? e.message : e));
     }
   }
-  async function importData(file) {
-    const text = await file.text();
-    const data = JSON.parse(text);
+  async function importData(fileOrData) {
+    // Accepts either a File/Blob (from the Import button) or an already-
+    // parsed JSON object (from the Load-from-server button). Keeps the
+    // merge logic single-sourced regardless of where the payload came
+    // from.
+    let data;
+    if (fileOrData && typeof fileOrData.text === 'function') {
+      data = JSON.parse(await fileOrData.text());
+    } else {
+      data = fileOrData;
+    }
     let favAdded = 0, favSkipped = 0, regAdded = 0;
     if (Array.isArray(data.favorites)) {
       const existing = new Set(favorites.map(f => f.id));
@@ -4645,9 +4704,29 @@ function fmtDate(ts) {
       `${creaturesAdded} creature(s) (${creaturesSkipped} skipped)`
     );
   }
+  async function loadFromServer() {
+    const name = (localStorage.getItem('cc.backupName') || '').trim();
+    if (!name) {
+      alert('Enter a Name in the field below first — Load fetches the most recent save with that name.');
+      return;
+    }
+    try {
+      const resp = await fetch(`/load?name=${encodeURIComponent(name)}`);
+      if (resp.status === 404) {
+        alert(`No saves found on the server for "${name}".`);
+        return;
+      }
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      await importData(data);
+    } catch (e) {
+      alert('Load failed: ' + (e && e.message ? e.message : e));
+    }
+  }
   document.getElementById('exportBtn').onclick = () => exportData();
   document.getElementById('importBtn').onclick = () => document.getElementById('importFile').click();
   document.getElementById('saveBtn').onclick = () => saveToServer();
+  document.getElementById('loadBtn').onclick = () => loadFromServer();
   document.getElementById('importFile').addEventListener('change', async (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
@@ -8925,11 +9004,40 @@ function fmtDate(ts) {
   // subsequent visits even if the user somehow clears tile cache later.
   const welcomeEl = document.getElementById('welcome');
   const welcomeStart = document.getElementById('welcomeStart');
+  const welcomeCreatures = document.getElementById('welcomeCreatures');
+  const welcomeDone = document.getElementById('welcomeDone');
+  const welcomeStep1Desc = document.getElementById('welcomeStep1Desc');
+  const welcomeStep2Desc = document.getElementById('welcomeStep2Desc');
+  const welcomeStep3Desc = document.getElementById('welcomeStep3Desc');
   const welcomeStatus = document.getElementById('welcomeStatus');
   if (welcomeEl && welcomeStart && !localStorage.getItem('cc.welcomeSeen')) {
+    // Resume-after-reload: step 1 reloads the page so freshly-cached
+    // fonts/icons are picked up. On the reload, app-data flags are set,
+    // so we skip step 1 and start at step 2.
+    const appDataDone = localStorage.getItem('cc.fontsDownloaded') === '1'
+      && localStorage.getItem('cc.iconsDownloaded') === '1'
+      && localStorage.getItem('cc.baseMapDownloaded') === '1';
     welcomeEl.classList.add('show');
-    // Mirror the shared status element's text into our overlay while the
-    // background downloader writes to it.
+
+    function showStep2() {
+      welcomeStart.hidden = true;
+      welcomeStep1Desc.hidden = true;
+      welcomeStep2Desc.hidden = false;
+      welcomeCreatures.hidden = false;
+      welcomeStatus.textContent = '';
+    }
+    function showStep3() {
+      welcomeCreatures.hidden = true;
+      welcomeStep2Desc.hidden = true;
+      welcomeStep3Desc.hidden = false;
+      welcomeDone.hidden = false;
+      welcomeStatus.textContent = '';
+    }
+
+    if (appDataDone) showStep2();
+
+    // STEP 1 — app data. Mirror the shared status element while the
+    // existing app-data flow runs in the background.
     const statusEl = document.getElementById('status');
     const mirror = () => { welcomeStatus.textContent = statusEl.textContent; };
     const mo = new MutationObserver(mirror);
@@ -8939,12 +9047,64 @@ function fmtDate(ts) {
       mo.observe(statusEl, { childList: true, characterData: true, subtree: true });
       window.addEventListener('cc:app-data-ready', () => {
         mo.disconnect();
-        localStorage.setItem('cc.welcomeSeen', '1');
         welcomeStatus.textContent = 'Reloading…';
+        // Reload so fonts/icons cached in this pass take effect; the
+        // welcome card reopens automatically and resumes at step 2.
         setTimeout(() => location.reload(), 400);
       }, { once: true });
-      // Reuse the existing app-data flow.
       document.getElementById('appDataBtn').click();
+    };
+
+    // STEP 2 — creature data. Calls Sprites.bulkDownload directly so
+    // we can mirror its progress into welcomeStatus without going
+    // through the Settings panel's confirm() dialog.
+    welcomeCreatures.onclick = async () => {
+      if (typeof window.Sprites === 'undefined') {
+        welcomeStatus.textContent = 'sprite module not loaded — refresh and retry';
+        return;
+      }
+      welcomeCreatures.disabled = true;
+      welcomeCreatures.textContent = 'Downloading…';
+      try {
+        if (window.Species && typeof window.Species.ensureLoaded === 'function') {
+          welcomeStatus.textContent = 'fetching metadata…';
+          try { await window.Species.ensureLoaded(); } catch {}
+        }
+        if (navigator.storage && navigator.storage.persist) {
+          try { await navigator.storage.persist(); } catch {}
+        }
+        await window.Sprites.bulkDownload({
+          sheetFrom: 1, sheetTo: 150, indexFrom: 1, indexTo: 150,
+          onProgress: (p) => {
+            const { sheetsDone, sheetsTotal, currentSheet, phase,
+                    customSpeciesDone, customSpeciesTotal,
+                    customVariantNum, customVariantTotal } = p;
+            if (phase === 'repairing') {
+              welcomeStatus.textContent = 'repairing legacy crops…';
+            } else if (phase === 'custom-fetching' || phase === 'custom-done' || phase === 'custom-skipped') {
+              const vt = customVariantTotal != null
+                ? ` (variant ${customVariantNum}/${customVariantTotal})` : '';
+              welcomeStatus.textContent =
+                `hand-drawn ${customSpeciesDone}/${customSpeciesTotal}` +
+                ` — species ${currentSheet}${vt}`;
+            } else {
+              welcomeStatus.textContent =
+                `autogen ${sheetsDone}/${sheetsTotal} — sheet ${currentSheet}`;
+            }
+          },
+        });
+        showStep3();
+      } catch (e) {
+        welcomeStatus.textContent = `error: ${e && e.message ? e.message : e}`;
+        welcomeCreatures.disabled = false;
+        welcomeCreatures.textContent = '↓ Download creature data';
+      }
+    };
+
+    // STEP 3 — close welcome, set the seen flag.
+    welcomeDone.onclick = () => {
+      localStorage.setItem('cc.welcomeSeen', '1');
+      welcomeEl.classList.remove('show');
     };
   }
 
