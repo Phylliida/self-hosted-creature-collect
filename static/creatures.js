@@ -1203,7 +1203,12 @@
         flex-direction: column;
         width: calc(100% - 40px); max-width: 360px;
         padding: 18px 20px 14px;
-        max-height: 85vh; overflow-y: auto;
+        /* Fixed height (not max-height) so every sub-view — pokédex
+           grid, fusion detail, inventory list, etc. — occupies the
+           same vertical footprint. Without this, switching from
+           pokédex to fusion-detail collapsed the sheet to fit the
+           shorter inner content. */
+        height: 85vh; overflow-y: auto;
         /* Lock the horizontal axis — iOS will otherwise rubber-band
            this container sideways when a horizontal gesture starts
            inside it (especially near the edges), shifting the entire
@@ -1442,12 +1447,11 @@
         position: relative;
         overflow: hidden;
         /* flex column so the track between header (.detail-back) and
-           footer (.actions) takes the remaining height. flex:1 inside
-           the .sheet (which is also a flex column) makes the view
-           fill the panel height up to .sheet's max. */
+           footer (.actions) takes the remaining height. The parent
+           .sheet is now a fixed-height 85vh flex column, so flex:1
+           fills it identically across pokédex / fusion / detail. */
         flex-direction: column;
         flex: 1 1 auto;
-        min-height: 60vh;
         /* Claim horizontal pan so iOS doesn't rubber-band the
            parent .sheet during the first few pixels of a swipe
            (before our touchmove handler decides to claim it). */
