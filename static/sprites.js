@@ -45,6 +45,7 @@
   // In-memory cache of the per-cell variant index map: `${a}-${b}` ->
   // number of custom variants. Filled on first call after IDB is open.
   let _variantCountCache = null;
+  let _variantCountPromise = null;
 
   function openDb() {
     if (_dbPromise) return _dbPromise;
@@ -209,24 +210,34 @@
 
   // Load (and cache) the in-memory `${a}-${b}` -> custom-variant-count
   // map. Populated from the `variants` IDB store on first access.
-  async function loadVariantCounts() {
-    if (_variantCountCache) return _variantCountCache;
-    const map = new Map();
-    const db = await openDb();
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_VARIANTS, 'readonly');
-      const req = tx.objectStore(STORE_VARIANTS).openCursor();
-      req.onsuccess = () => {
-        const cur = req.result;
-        if (!cur) { resolve(); return; }
-        const v = cur.value;
-        if (Array.isArray(v) && v.length > 0) map.set(cur.key, v.length);
-        cur.continue();
-      };
-      req.onerror = () => reject(req.error);
-    });
-    _variantCountCache = map;
-    return map;
+  // Concurrent callers share one in-flight cursor walk — without this,
+  // every spawn marker on screen kicks off its own walk through up to
+  // 22,500 variant entries, and iOS Safari (which serializes IDB
+  // transactions) bogs down for seconds before the cache is finally
+  // populated. With dedup, the walk runs exactly once per page load.
+  function loadVariantCounts() {
+    if (_variantCountCache) return Promise.resolve(_variantCountCache);
+    if (_variantCountPromise) return _variantCountPromise;
+    _variantCountPromise = (async () => {
+      const map = new Map();
+      const db = await openDb();
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_VARIANTS, 'readonly');
+        const req = tx.objectStore(STORE_VARIANTS).openCursor();
+        req.onsuccess = () => {
+          const cur = req.result;
+          if (!cur) { resolve(); return; }
+          const v = cur.value;
+          if (Array.isArray(v) && v.length > 0) map.set(cur.key, v.length);
+          cur.continue();
+        };
+        req.onerror = () => reject(req.error);
+      });
+      _variantCountCache = map;
+      return map;
+    })();
+    _variantCountPromise.finally(() => { _variantCountPromise = null; });
+    return _variantCountPromise;
   }
 
   async function getCellVariantCount(a, b) {
