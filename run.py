@@ -305,6 +305,44 @@ def sprite_credit(a, b):
 _CREDITS_BUNDLE_CACHE = None
 
 
+# SPLIT_NAMES table from data/InfiniteFusion/.../SplitNames.rb. Each
+# entry is [prefix, suffix] indexed by national-dex number; the canonical
+# fusion-name algorithm picks prefix from head, suffix from body.
+# Parsed once, cached in process memory.
+_SPLIT_NAMES_CACHE = None
+_SPLIT_NAMES_RE = re.compile(r'\[\s*"((?:[^"\\]|\\.)*)"\s*,\s*"((?:[^"\\]|\\.)*)"\s*\]')
+
+
+def _load_split_names():
+    global _SPLIT_NAMES_CACHE
+    if _SPLIT_NAMES_CACHE is not None:
+        return _SPLIT_NAMES_CACHE
+    path = (ROOT / "data" / "InfiniteFusion" / "Data"
+            / "Scripts" / "052_InfiniteFusion" / "Fusion" / "SplitNames.rb")
+    out = []
+    if path.is_file():
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for m in _SPLIT_NAMES_RE.finditer(text):
+            out.append([m.group(1), m.group(2)])
+    _SPLIT_NAMES_CACHE = out
+    return out
+
+
+@app.route("/sprite-split-names")
+def sprite_split_names():
+    """Return SPLIT_NAMES as a JSON array of [prefix, suffix] pairs
+    indexed by national-dex number (index 0 is the unused "" entry).
+    Used client-side to build canonical fusion names.
+    """
+    body = json.dumps(_load_split_names(), ensure_ascii=False,
+                      separators=(",", ":")).encode("utf-8")
+    body = gzip.compress(body, compresslevel=6)
+    resp = Response(body, mimetype="application/json")
+    resp.headers["Content-Encoding"] = "gzip"
+    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return resp
+
+
 @app.route("/sprite-credits-bundle")
 def sprite_credits_bundle():
     """Bundle of all sprite credits for fusions where both species

@@ -589,7 +589,17 @@
     return set;
   }
 
+  // Default display name for a fusion. Prefers the canonical fused
+  // name from SPLIT_NAMES (e.g. "Jigglyish") when the table is loaded,
+  // falling back to "A × B" while names are still downloading or for
+  // species outside the table's range. Nicknames take priority over
+  // this everywhere they're checked, so user-authored renames are
+  // preserved.
   function fusionName(a, b) {
+    if (global.Sprites && global.Sprites.getFusedName) {
+      const fused = global.Sprites.getFusedName(a, b);
+      if (fused) return fused;
+    }
     if (global.Species) {
       return `${global.Species.nameFor(a)} × ${global.Species.nameFor(b)}`;
     }
@@ -1556,9 +1566,25 @@
         display: flex; align-items: center; justify-content: center;
         gap: 8px; margin: 0 0 4px;
       }
+      /* When a canonical fused name is present we stack the rows
+         vertically: fused name on top, "A × B" species pair below. */
+      #creatureInventory .detail-name-row:has(.detail-fused-name) {
+        flex-direction: column; gap: 2px;
+      }
       #creatureInventory .detail-name {
         font-size: 18px; font-weight: 600;
         word-break: break-word; text-align: center;
+      }
+      #creatureInventory .detail-fused-name {
+        font-size: 20px; font-weight: 700;
+        word-break: break-word; text-align: center;
+        color: var(--ui-text, #111);
+      }
+      /* When the fused name is the primary, the species pair becomes
+         a secondary subtitle. */
+      #creatureInventory .detail-name.detail-name-sub {
+        font-size: 13px; font-weight: 500;
+        color: var(--ui-muted, #666);
       }
       #creatureInventory .icon-btn {
         padding: 4px 8px; font-size: 13px; cursor: pointer;
@@ -1968,11 +1994,23 @@
       #creatureInventory .pokedex-card .pokedex-name {
         font-size: 11px; text-align: center; line-height: 1.2;
         word-break: break-word;
-        /* Reserve 2 lines so virtualizer can assume uniform card
-           height regardless of name length. */
-        height: 2.4em;
+        font-weight: 600;
+        /* Reserve 1 line for the canonical fused name; the bases
+           line lives in .pokedex-bases below. Together they keep the
+           card uniform height for the virtualizer. */
+        height: 1.2em;
         display: -webkit-box;
-        -webkit-line-clamp: 2;
+        -webkit-line-clamp: 1;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+      #creatureInventory .pokedex-card .pokedex-bases {
+        font-size: 10px; text-align: center; line-height: 1.1;
+        color: var(--ui-muted, #888);
+        word-break: break-word;
+        height: 1.1em;
+        display: -webkit-box;
+        -webkit-line-clamp: 1;
         -webkit-box-orient: vertical;
         overflow: hidden;
       }
@@ -3506,6 +3544,10 @@
     const nameA = global.Species ? global.Species.nameFor(a) : `#${a}`;
     const nameB = global.Species ? global.Species.nameFor(b) : `#${b}`;
     const display = `${nameA} × ${nameB}`;
+    // Canonical fused name (e.g. "Jigglyish") — null when SPLIT_NAMES
+    // isn't loaded yet; header falls back to "A × B" alone.
+    const fusedName = (global.Sprites && global.Sprites.getFusedName)
+      ? global.Sprites.getFusedName(a, b) : null;
     const typesHtml = typeChipsHtml(fusionTypesFor(a, b));
 
     // All captures of this fusion, newest first.
@@ -3517,9 +3559,12 @@
     let capturedHtml = '';
     if (myCaptures.length) {
       const nicks = readNicknames();
+      // Default name = canonical fused name (e.g. "Jigglyish") when
+      // SPLIT_NAMES is loaded, else the "A × B" pair.
+      const defaultRowName = fusedName || display;
       capturedHtml = `<div class="fusion-section-label">Captured (${myCaptures.length})</div>`
         + myCaptures.map((cap) => {
-          const nm = nicks[cap.id] || display;
+          const nm = nicks[cap.id] || defaultRowName;
           const date = cap.caughtAt && cap.caughtAt.timestamp
             ? new Date(cap.caughtAt.timestamp).toLocaleDateString()
             : '';
@@ -3567,7 +3612,8 @@
         <img class="detail-art-img" alt="" style="display:none">
       </div>
       <div class="detail-name-row">
-        <div class="detail-name">
+        ${fusedName ? `<div class="detail-fused-name">${escapeHtml(fusedName)}</div>` : ''}
+        <div class="detail-name${fusedName ? ' detail-name-sub' : ''}">
           <span class="species-link" data-side="A">${escapeHtml(nameA)}</span>
           <span> × </span>
           <span class="species-link" data-side="B">${escapeHtml(nameB)}</span>
@@ -3814,19 +3860,26 @@
       items: entries,
       cols: 3,
       rowGap: 8,
-      cardHeight: 150,
+      cardHeight: 162,
       initialScrollTop: (_topPokedex && _topPokedex.view === 'pokedex') ? _topPokedex.scrollY : 0,
       makeCardEl(entry) {
-        const display = global.Species
+        const bases = global.Species
           ? `${global.Species.nameFor(entry.a)} × ${global.Species.nameFor(entry.b)}`
           : `#${entry.a} × #${entry.b}`;
+        // Canonical fused name (e.g. "Jigglyish") falls back to the
+        // bases pair when SPLIT_NAMES isn't loaded yet.
+        const fused = (global.Sprites && global.Sprites.getFusedName)
+          ? global.Sprites.getFusedName(entry.a, entry.b) : null;
+        const primary = fused || bases;
+        const subline = fused ? bases : '';
         const card = document.createElement('div');
         card.className = 'pokedex-card';
         card.dataset.key = entry.key;
         card.innerHTML =
           (entry.caught ? '<span class="caught-badge" title="caught">✓</span>' : '')
           + `<div class="pokedex-art"><img alt=""></div>`
-          + `<div class="pokedex-name">${escapeHtml(display)}</div>`;
+          + `<div class="pokedex-name">${escapeHtml(primary)}</div>`
+          + `<div class="pokedex-bases">${escapeHtml(subline)}</div>`;
         return card;
       },
       loadSpriteFor(card, entry) {
@@ -5351,6 +5404,12 @@
     // captures (and seedFusions[key].variants) on first load with
     // this code. Idempotent via localStorage flag.
     migrateLegacyCaptureVariants().catch(() => {});
+    // Pre-warm SPLIT_NAMES into memory so synchronous `getFusedName`
+    // returns the proper canonical name on first paint. No-op when
+    // the table isn't downloaded yet — display falls back to "A × B".
+    if (global.Sprites && global.Sprites.ensureSplitNamesLoaded) {
+      global.Sprites.ensureSplitNamesLoaded().catch(() => {});
+    }
     _installedMap = map;
     const ctrl = new CreatureBallControl();
     map.addControl(ctrl, 'bottom-right');
