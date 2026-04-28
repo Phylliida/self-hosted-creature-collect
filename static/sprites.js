@@ -55,6 +55,20 @@
   function _incInflight() { _inflightSpriteReads++; }
   function _decInflight() { if (_inflightSpriteReads > 0) _inflightSpriteReads--; }
 
+  // Diagnostic error log surfaced via the Settings badge. Capped so a
+  // looping failure can't blow up memory; a global counter still
+  // increments past the cap.
+  function _logSpriteError(where, err) {
+    if (typeof window === 'undefined') return;
+    window._spriteDiag = window._spriteDiag || {};
+    window._spriteDiag.errorCount = (window._spriteDiag.errorCount || 0) + 1;
+    window._spriteDiag.errors = window._spriteDiag.errors || [];
+    if (window._spriteDiag.errors.length < 10) {
+      const msg = (err && err.message) ? err.message : String(err);
+      window._spriteDiag.errors.push(`${where}: ${msg}`);
+    }
+  }
+
   function openDb() {
     if (_dbPromise) return _dbPromise;
     _dbPromise = new Promise((resolve, reject) => {
@@ -216,41 +230,214 @@
     return `${a}-${b}`;
   }
 
-  // Load (and cache) the in-memory `${a}-${b}` -> custom-variant-count
-  // map. Populated from the `variants` IDB store on first access.
-  // Concurrent callers share one in-flight cursor walk — without this,
-  // every spawn marker on screen kicks off its own walk through up to
-  // 22,500 variant entries, and iOS Safari (which serializes IDB
-  // transactions) bogs down for seconds before the cache is finally
-  // populated. With dedup, the walk runs exactly once per page load.
-  function loadVariantCounts() {
-    if (_variantCountCache) return Promise.resolve(_variantCountCache);
-    if (_variantCountPromise) return _variantCountPromise;
-    _variantCountPromise = (async () => {
-      const map = new Map();
-      const db = await openDb();
-      await new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_VARIANTS, 'readonly');
-        const req = tx.objectStore(STORE_VARIANTS).openCursor();
-        req.onsuccess = () => {
-          const cur = req.result;
-          if (!cur) { resolve(); return; }
-          const v = cur.value;
-          if (Array.isArray(v) && v.length > 0) map.set(cur.key, v.length);
-          cur.continue();
-        };
-        req.onerror = () => reject(req.error);
+  // Variant counts are read from a SINGLE compact summary blob in
+  // IDB — `Uint8Array(150 * 150) = 22 500 bytes` indexed by
+  // `(a-1) * 150 + (b-1)`. One IDB get = a few milliseconds even on
+  // iOS PWA, vs. the previous 67-second walk of ~17 600 entries.
+  // The summary is written at the end of bulkDownload pass 2; if
+  // a user hasn't downloaded under this scheme yet, we fall back to
+  // a per-cell lookup (slow first miss, cached after) so existing
+  // sprites still render.
+  const VARIANT_SUMMARY_KEY = '__summary__';
+  const SPECIES_MAX_DIM = 150;
+  let _variantSummaryLoaded = false;
+  const _variantInflight = new Map();  // key -> Promise<number>
+
+  function _summaryIndex(a, b) {
+    if (a < 1 || a > SPECIES_MAX_DIM || b < 1 || b > SPECIES_MAX_DIM) return -1;
+    return (a - 1) * SPECIES_MAX_DIM + (b - 1);
+  }
+
+  // Read the compact summary blob ONCE per session. After it lands,
+  // every getCellVariantCount becomes an O(1) Map lookup.
+  // Concurrent callers share one in-flight read.
+  let _variantSummaryPromise = null;
+  function _ensureVariantSummary() {
+    if (_variantSummaryLoaded) return Promise.resolve();
+    if (_variantSummaryPromise) return _variantSummaryPromise;
+    _variantSummaryPromise = (async () => {
+      const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
+      let db;
+      try { db = await openDb(); }
+      catch (e) { _logSpriteError('ensureVariantSummary/openDb', e); _variantSummaryLoaded = true; return; }
+      const blob = await new Promise((resolve) => {
+        try {
+          const tx = db.transaction(STORE_VARIANTS, 'readonly');
+          const r = tx.objectStore(STORE_VARIANTS).get(VARIANT_SUMMARY_KEY);
+          r.onsuccess = () => resolve(r.result || null);
+          r.onerror = () => { _logSpriteError('ensureVariantSummary/get', r.error); resolve(null); };
+        } catch (e) { _logSpriteError('ensureVariantSummary/setup', e); resolve(null); }
       });
-      _variantCountCache = map;
-      return map;
+      const cache = _variantCountCache || (_variantCountCache = new Map());
+      if (blob && blob.byteLength === SPECIES_MAX_DIM * SPECIES_MAX_DIM) {
+        const arr = new Uint8Array(blob);
+        for (let a = 1; a <= SPECIES_MAX_DIM; a++) {
+          for (let b = 1; b <= SPECIES_MAX_DIM; b++) {
+            const c = arr[(a - 1) * SPECIES_MAX_DIM + (b - 1)];
+            if (c > 0) cache.set(`${a}-${b}`, c);
+          }
+        }
+      }
+      _variantSummaryLoaded = true;
+      if (typeof window !== 'undefined') {
+        window._spriteDiag = window._spriteDiag || {};
+        window._spriteDiag.variantSummaryMs = (typeof performance !== 'undefined')
+          ? performance.now() - t0 : 0;
+        window._spriteDiag.variantSummaryHadBlob = !!blob;
+        window._spriteDiag.variantsCount = cache.size;
+      }
     })();
-    _variantCountPromise.finally(() => { _variantCountPromise = null; });
-    return _variantCountPromise;
+    _variantSummaryPromise.finally(() => { _variantSummaryPromise = null; });
+    return _variantSummaryPromise;
+  }
+
+  // Build + persist the summary blob. Called at end of bulkDownload
+  // pass 2 — walks the per-cell entries currently in IDB, packs
+  // counts into a Uint8Array, writes it under VARIANT_SUMMARY_KEY.
+  // Idempotent: safe to call again to refresh.
+  async function _writeVariantSummary() {
+    let db;
+    try { db = await openDb(); }
+    catch (e) { _logSpriteError('writeVariantSummary/openDb', e); return; }
+    // Read existing per-cell entries via cursor (one-time cost,
+    // user already paid for the download).
+    const arr = new Uint8Array(SPECIES_MAX_DIM * SPECIES_MAX_DIM);
+    await new Promise((resolve) => {
+      try {
+        const tx = db.transaction(STORE_VARIANTS, 'readonly');
+        const cur = tx.objectStore(STORE_VARIANTS).openCursor();
+        cur.onsuccess = () => {
+          const c = cur.result;
+          if (!c) { resolve(); return; }
+          const key = c.key;
+          if (typeof key === 'string' && key !== VARIANT_SUMMARY_KEY) {
+            const dash = key.indexOf('-');
+            if (dash > 0) {
+              const a = +key.slice(0, dash);
+              const b = +key.slice(dash + 1);
+              const idx = _summaryIndex(a, b);
+              const v = c.value;
+              if (idx >= 0 && Array.isArray(v) && v.length > 0) {
+                arr[idx] = Math.min(255, v.length);
+              }
+            }
+          }
+          c.continue();
+        };
+        cur.onerror = () => { _logSpriteError('writeVariantSummary/cursor', cur.error); resolve(); };
+      } catch (e) { _logSpriteError('writeVariantSummary/setup', e); resolve(); }
+    });
+    await new Promise((resolve) => {
+      try {
+        const tx = db.transaction(STORE_VARIANTS, 'readwrite');
+        tx.objectStore(STORE_VARIANTS).put(arr.buffer, VARIANT_SUMMARY_KEY);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => { _logSpriteError('writeVariantSummary/put', tx.error); resolve(); };
+      } catch (e) { _logSpriteError('writeVariantSummary/putSetup', e); resolve(); }
+    });
+    _variantSummaryLoaded = true;  // we just wrote it; cache is authoritative
+  }
+
+  async function _readVariantCount(key) {
+    let db;
+    try { db = await openDb(); }
+    catch (e) { _logSpriteError('readVariantCount/openDb', e); return 0; }
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(STORE_VARIANTS, 'readonly');
+        const r = tx.objectStore(STORE_VARIANTS).get(key);
+        r.onsuccess = () => {
+          const v = r.result;
+          resolve((Array.isArray(v) && v.length > 0) ? v.length : 0);
+        };
+        r.onerror = () => { _logSpriteError(`readVariantCount/${key}`, r.error); resolve(0); };
+      } catch (e) {
+        _logSpriteError(`readVariantCount/tx/${key}`, e);
+        resolve(0);
+      }
+    });
   }
 
   async function getCellVariantCount(a, b) {
-    const map = await loadVariantCounts();
-    return map.get(`${a}-${b}`) || 0;
+    // Fast path — summary already loaded, just check the in-memory map.
+    await _ensureVariantSummary();
+    const key = `${a}-${b}`;
+    const cache = _variantCountCache || (_variantCountCache = new Map());
+    if (cache.has(key)) return cache.get(key);
+    // Slow fallback: summary missing or this cell wasn't in it. Look
+    // up the per-cell entry directly. Future visits hit cache.
+    if (_variantInflight.has(key)) return _variantInflight.get(key);
+    const p = _readVariantCount(key);
+    _variantInflight.set(key, p);
+    try {
+      const count = await p;
+      cache.set(key, count);
+      return count;
+    } finally {
+      _variantInflight.delete(key);
+    }
+  }
+
+  // Batch: fetch counts for many (a, b) cells. With the summary
+  // loaded, every cell hits cache → no IDB transaction at all.
+  // Without the summary, falls back to a single pipelined transaction
+  // over the uncached cells.
+  async function getCellVariantCountsBatch(cells) {
+    await _ensureVariantSummary();
+    const cache = _variantCountCache || (_variantCountCache = new Map());
+    const result = new Map();
+    const need = [];
+    for (const [a, b] of cells) {
+      const key = `${a}-${b}`;
+      if (cache.has(key)) result.set(key, cache.get(key));
+      else need.push(key);
+    }
+    if (!need.length) return result;
+    const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
+    let db;
+    try { db = await openDb(); }
+    catch (e) {
+      _logSpriteError('getCellVariantCountsBatch/openDb', e);
+      for (const k of need) { cache.set(k, 0); result.set(k, 0); }
+      return result;
+    }
+    const counts = await new Promise((resolve) => {
+      try {
+        const tx = db.transaction(STORE_VARIANTS, 'readonly');
+        const store = tx.objectStore(STORE_VARIANTS);
+        const out = new Array(need.length);
+        let pending = need.length;
+        need.forEach((k, i) => {
+          const r = store.get(k);
+          r.onsuccess = () => {
+            const v = r.result;
+            out[i] = (Array.isArray(v) && v.length > 0) ? v.length : 0;
+            if (--pending === 0) resolve(out);
+          };
+          r.onerror = () => { out[i] = 0; if (--pending === 0) resolve(out); };
+        });
+        tx.onerror = () => {
+          _logSpriteError('getCellVariantCountsBatch/tx', tx.error);
+          for (let i = 0; i < need.length; i++) if (out[i] === undefined) out[i] = 0;
+          resolve(out);
+        };
+      } catch (e) {
+        _logSpriteError('getCellVariantCountsBatch/setup', e);
+        resolve(need.map(() => 0));
+      }
+    });
+    for (let i = 0; i < need.length; i++) {
+      cache.set(need[i], counts[i]);
+      result.set(need[i], counts[i]);
+    }
+    if (typeof window !== 'undefined') {
+      window._spriteDiag = window._spriteDiag || {};
+      window._spriteDiag.lastVariantBatch = need.length;
+      window._spriteDiag.lastVariantBatchMs = (typeof performance !== 'undefined')
+        ? performance.now() - t0 : 0;
+      window._spriteDiag.variantsCount = cache.size;
+    }
+    return result;
   }
 
   function _bumpVariantCacheEntry(key, count) {
@@ -265,6 +452,7 @@
     _incInflight();
     let cached;
     try { cached = await idbGet(key); }
+    catch (e) { _logSpriteError(`getSpriteBlob/${key}`, e); cached = null; }
     finally { _decInflight(); }
     if (cached) {
       // Self-heal: legacy autogen v1 crops were stored as full 96×96 PNGs
@@ -305,7 +493,16 @@
   //   per-call getSpriteBlob is still the right place for that).
   async function getSpriteBlobsBatch(requests) {
     if (!requests || !requests.length) return [];
-    const db = await openDb();
+    let db;
+    try { db = await openDb(); }
+    catch (e) { _logSpriteError('getSpriteBlobsBatch/openDb', e); return requests.map((r, i) => ({ key: r.key != null ? r.key : i, blob: null })); }
+    // Diagnostic — per-batch timing + size.
+    const tBatch = (typeof performance !== 'undefined') ? performance.now() : 0;
+    if (typeof window !== 'undefined') {
+      window._spriteDiag = window._spriteDiag || {};
+      window._spriteDiag.lastBatchSize = requests.length;
+      window._spriteDiag.batchCount = (window._spriteDiag.batchCount || 0) + 1;
+    }
     // Each entry in the batch counts as one in-flight read so the
     // debug badge reflects the true scope of work, not just one
     // "transaction".
@@ -323,7 +520,13 @@
         r.onsuccess = () => {
           results[i] = { key: req.key != null ? req.key : key, blob: r.result || null };
           _decInflight();
-          if (--pending === 0) resolve(results);
+          if (--pending === 0) {
+            if (typeof window !== 'undefined' && window._spriteDiag) {
+              window._spriteDiag.lastBatchMs = (typeof performance !== 'undefined')
+                ? performance.now() - tBatch : 0;
+            }
+            resolve(results);
+          }
         };
         r.onerror = () => {
           results[i] = { key: req.key != null ? req.key : key, blob: null };
@@ -335,7 +538,16 @@
         // If the whole transaction blows up, drain any remaining
         // counts so the badge can return to zero.
         for (let i = 0; i < pending; i++) _decInflight();
-        reject(tx.error);
+        _logSpriteError('getSpriteBlobsBatch/tx', tx.error);
+        // Don't reject — return null blobs so callers can fall back
+        // gracefully to per-marker getSpriteBlob (which has its own
+        // error handling).
+        for (let i = 0; i < requests.length; i++) {
+          if (results[i] === undefined) {
+            results[i] = { key: requests[i].key != null ? requests[i].key : i, blob: null };
+          }
+        }
+        resolve(results);
       };
     });
   }
@@ -673,6 +885,12 @@
         customSpeciesDone: customDone.size, customSpeciesTotal: totalCustom,
       });
     }
+
+    // Pass 2 fully done — write the compact 22.5KB summary blob so
+    // future loads can skip the per-cell IDB walk entirely (one
+    // get vs. ~17 600 entries was 67 seconds on iOS).
+    try { await _writeVariantSummary(); }
+    catch (e) { _logSpriteError('bulkDownload/writeVariantSummary', e); }
 
     return { cancelled: false };
   }

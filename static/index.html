@@ -2814,6 +2814,7 @@
       <span id="spriteInflightBadge" title="creature sprite IDB reads currently in flight (should stay near 0 except briefly when new spawns enter view)"></span>
       <span id="memBadge" title="estimated live JS heap used by map data"></span>
     </div>
+    <div id="startupPhases" style="margin-top: 6px; font-size: 11px; color: var(--ui-muted); line-height: 1.5; font-family: monospace;"></div>
     <div class="actions"><button class="close" id="settingsClose">Done</button></div>
   </div>
 </div>
@@ -3133,7 +3134,13 @@ async function deleteScheduleByRegion(regionId) {
 const WALK_DB_NAME = 'cc.walk.v5';
 function openWalkDB() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(WALK_DB_NAME, 1);
+    // Bumped to v2 to trigger onupgradeneeded for users whose v1 DB
+    // was created without the `regions` store (older code path
+    // didn't create it in upgrade, leaving the DB technically v1
+    // but missing the store — saveWalkGraph would then throw
+    // "'regions' is not a known object store name"). The contains
+    // check below makes the upgrade idempotent.
+    const req = indexedDB.open(WALK_DB_NAME, 2);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains('regions')) {
@@ -3290,6 +3297,11 @@ function fmtDate(ts) {
 }
 
 (async () => {
+  // Anchor for all relative startup timings — every other timestamp
+  // we capture (firstMapIdle, firstSpawnMarker, etc.) is reported as
+  // a delta from this so you can see the gaps between phases.
+  window._startupPhases = window._startupPhases || {};
+  window._startupPhases.scriptStartedAt = performance.now();
   if (!('serviceWorker' in navigator)) {
     document.getElementById('status').textContent =
       'ServiceWorker unavailable — cannot run in offline-only mode on this browser.';
@@ -3339,8 +3351,14 @@ function fmtDate(ts) {
   // the transformRequest hook below can serve fonts synchronously
   // for the very first tile fetches. Empty on a fresh install
   // (user hasn't downloaded yet) — the welcome step covers that.
+  // Phase timings captured into window._startupPhases so the
+  // diagnostic badge in Settings can display them on iOS where
+  // there's no console output.
+  window._startupPhases = window._startupPhases || {};
   if (window.AppData && window.AppData.preloadFontBlobUrls) {
+    const t0 = performance.now();
     try { await window.AppData.preloadFontBlobUrls(); } catch {}
+    window._startupPhases.fontPreload = performance.now() - t0;
   }
 
   const map = new maplibregl.Map({
@@ -4141,6 +4159,21 @@ function fmtDate(ts) {
   let lastKnownPos = null;
   geolocate.on('geolocate', (e) => {
     lastKnownPos = { lng: e.coords.longitude, lat: e.coords.latitude };
+    window._startupPhases = window._startupPhases || {};
+    if (window._startupPhases.firstGpsFix == null) {
+      window._startupPhases.firstGpsFix = performance.now();
+    }
+  });
+  // Map "idle" fires when the map has finished loading + rendering
+  // tiles for the current view. This is a meaningful "user can see
+  // the world" milestone, distinct from `load` (style ready) or
+  // first paint.
+  let _idleTimedAlready = false;
+  map.on('idle', () => {
+    if (_idleTimedAlready) return;
+    _idleTimedAlready = true;
+    window._startupPhases = window._startupPhases || {};
+    window._startupPhases.firstMapIdle = performance.now();
   });
 
 
@@ -4224,6 +4257,10 @@ function fmtDate(ts) {
   };
 
   const registeredIconNames = new Set();
+  // Diagnostic counters surfaced via the Settings badge so we can
+  // see whether addImage is silently failing.
+  window._addImageStats = { tried: 0, succeeded: 0, threw: 0, postCheckFail: 0,
+                             firstError: null };
   // Tolerant addImage: hasImage() can race with a concurrent registration
   // (TOCTOU between our check and our addImage), and addImage throws
   // synchronously on a dup. We swallow that one specific throw — every
@@ -4232,8 +4269,24 @@ function fmtDate(ts) {
   // icons unregistered until the next refresh.
   function safeAddImage(name, data, opts) {
     if (map.hasImage(name)) return true;
-    try { map.addImage(name, data, opts); registeredIconNames.add(name); return true; }
-    catch { return map.hasImage(name); }
+    window._addImageStats.tried++;
+    try {
+      map.addImage(name, data, opts);
+      const ok = map.hasImage(name);
+      if (ok) {
+        registeredIconNames.add(name);
+        window._addImageStats.succeeded++;
+        return true;
+      }
+      window._addImageStats.postCheckFail++;
+      return false;
+    } catch (e) {
+      window._addImageStats.threw++;
+      if (!window._addImageStats.firstError) {
+        window._addImageStats.firstError = (e && e.message) ? e.message : String(e);
+      }
+      return map.hasImage(name);
+    }
   }
   async function registerIconFromSvg(name, svgText) {
     if (map.hasImage(name)) return true;
@@ -4261,15 +4314,22 @@ function fmtDate(ts) {
     if (existing) return existing;
     const p = (async () => {
       try {
-        // IDB-first via the AppData module — durable across iOS PWA
-        // SW Cache evictions. Returns null when the user hasn't
-        // bulk-downloaded icons yet; caller falls back to placeholder.
-        if (!global.AppData) return false;
-        const blob = await global.AppData.getIconBlob(name);
-        if (!blob) return false;
-        const svg = await blob.text();
-        if (!svg) return false;
-        return registerIconFromSvg(name, svg);
+        // IDB-first via AppData. The icons store holds PRE-RASTERIZED
+        // RGBA pixel buffers (v2 schema), so loadIcon now skips the
+        // ~5-15ms svgToImageData decode that used to happen here per
+        // icon. Just deserialize bytes and addImage. Falls through to
+        // false when the icon isn't present OR is in the legacy SVG
+        // format — caller leaves it unregistered and the missing-data
+        // banner prompts re-download.
+        if (!window.AppData) return false;
+        const ras = await window.AppData.getIconImageData(name);
+        if (!ras) return false;
+        const opts = { pixelRatio: ras.pixelRatio, sdf: true };
+        safeAddImage(name, ras, opts);
+        if (name.includes('-')) safeAddImage(name.replace(/-/g, '_'), ras, opts);
+        const aliases = ICON_ALIAS_MAP[name];
+        if (aliases) for (const a of aliases) safeAddImage(a, ras, opts);
+        return true;
       } catch { return false; }
       finally { _iconPromises.delete(name); }
     })();
@@ -4290,26 +4350,63 @@ function fmtDate(ts) {
 
   let availableIconNames = [];
   async function loadAllIcons() {
-    // Reads the list of cached icon names from IDB (via AppData).
-    // The actual download into IDB is the responsibility of the
-    // appDataBtn handler (or welcome step 1) — this function only
-    // populates MapLibre with what's already on disk. Per-icon
-    // dedup in loadIcon() prevents the duplicate-addImage race.
+    // Pulls every cached icon name from IDB, then issues ONE batch
+    // read (single transaction, all gets pipelined) instead of one
+    // transaction per icon. Each icon's bytes are deserialized into
+    // an RGBA buffer and registered with MapLibre via safeAddImage,
+    // including the underscore variant + any aliases.
+    window._loadAllIconsDiag = window._loadAllIconsDiag || {};
+    const diag = window._loadAllIconsDiag;
     try {
-      if (!global.AppData) return 0;
-      const names = await global.AppData.iconNames();
-      if (!names || !names.length) return 0;
+      if (!window.AppData) { diag.bail = 'no AppData'; return 0; }
+      diag.gotAppData = true;
+      const names = await window.AppData.iconNames();
+      diag.namesLen = names ? names.length : 0;
+      if (!names || !names.length) { diag.bail = 'empty names'; return 0; }
       availableIconNames = names;
+      diag.beforeBatch = true;
+      const batch = await window.AppData.getIconImageDataBatch(names);
+      diag.batchSize = batch ? batch.size : -1;
       let loaded = 0;
-      await Promise.all(names.map(async (n) => { if (await loadIcon(n)) loaded++; }));
+      for (const name of names) {
+        const ras = batch.get(name);
+        if (!ras) continue;
+        // Wrap the raw RGBA buffer in an ImageData object — that's the
+        // most reliably-accepted input shape for map.addImage across
+        // MapLibre versions. Plain `{width, height, data}` works in
+        // recent versions but ImageData skips any duck-typing
+        // ambiguity. Need a Uint8ClampedArray view (ImageData
+        // constructor strictly requires that type).
+        const clamped = new Uint8ClampedArray(
+          ras.data.buffer, ras.data.byteOffset, ras.data.byteLength);
+        const imageData = new ImageData(clamped, ras.width, ras.height);
+        const opts = { pixelRatio: ras.pixelRatio, sdf: true };
+        if (safeAddImage(name, imageData, opts)) loaded++;
+        if (name.includes('-')) safeAddImage(name.replace(/-/g, '_'), imageData, opts);
+        const aliases = ICON_ALIAS_MAP[name];
+        if (aliases) for (const a of aliases) safeAddImage(a, imageData, opts);
+      }
+      diag.loopDone = loaded;
       if (loaded) map.triggerRepaint();
       return loaded;
-    } catch { return 0; }
+    } catch (e) {
+      diag.threw = (e && e.message) ? e.message : String(e);
+      return 0;
+    }
   }
 
   map.on('load', async () => {
+    const tLoad = performance.now();
+    window._startupPhases = window._startupPhases || {};
+    window._startupPhases.mapLoadFiredAt = performance.now();
+    const tDefault = performance.now();
     await registerDefaultMarker();
-    await loadAllIcons();
+    window._startupPhases.registerDefaultMarker = performance.now() - tDefault;
+    const tIcons = performance.now();
+    const iconsLoaded = await loadAllIcons();
+    window._startupPhases.loadAllIcons = performance.now() - tIcons;
+    window._startupPhases.iconsRegistered = iconsLoaded;
+    window._startupPhases.mapLoadHandlerSoFar = performance.now() - tLoad;
     // Building-pokéstops layer: render the small dot icon at the
     // centroid of every building polygon, but only at z17+ where
     // the user is close enough to actually interact. Inserted below
@@ -7916,12 +8013,86 @@ function fmtDate(ts) {
   function updateSpriteInflightBadge() {
     const el = document.getElementById('spriteInflightBadge');
     if (!el) return;
-    if (!window.Sprites || typeof window.Sprites.getInflightCount !== 'function') {
-      el.textContent = '';
-      return;
+    const parts = [];
+    if (window.Sprites && typeof window.Sprites.getInflightCount === 'function') {
+      parts.push(`sprite reads: ${window.Sprites.getInflightCount()}`);
     }
-    const n = window.Sprites.getInflightCount();
-    el.textContent = `sprite reads in flight: ${n}`;
+    // Map.listImages() includes everything currently registered (POI
+    // icons, default markers, etc.). Compare against IDB count to
+    // diagnose registration failures — if IDB has 150 and map has
+    // only 2, loadAllIcons isn't finding/registering them.
+    try {
+      const mapCount = (typeof map !== 'undefined' && map.listImages)
+        ? map.listImages().length : 0;
+      parts.push(`map imgs: ${mapCount}`);
+    } catch {}
+    if (window.AppData && window.AppData.iconNames) {
+      window.AppData.iconNames().then((ns) => {
+        el.textContent = parts.concat(`IDB icons: ${(ns || []).length}`).join(' · ');
+      }).catch(() => {
+        el.textContent = parts.join(' · ');
+      });
+    } else {
+      el.textContent = parts.join(' · ');
+    }
+    // Startup phase timings — captured into window._startupPhases
+    // by the load path. Surface them here since console.log isn't
+    // reachable in iOS PWA without remote Safari Web Inspector.
+    // Absolute markers are reported as deltas-since-script-start so
+    // you can see the GAPS between phases (where the unmeasured
+    // time is hiding).
+    const pEl = document.getElementById('startupPhases');
+    if (pEl) {
+      const ph = window._startupPhases || {};
+      const t0 = ph.scriptStartedAt || 0;
+      const dur = (v) => v == null ? '—' : `${Math.round(v)}ms`;
+      const at  = (v) => v == null ? '—' : `+${Math.round(v - t0)}ms`;
+      const ds = window._iconDecodeStats || {};
+      const ai = window._addImageStats || {};
+      const ld = window._loadAllIconsDiag || {};
+      const lines = [
+        `[durations]`,
+        `  fontPreload   : ${dur(ph.fontPreload)}`,
+        `  defaultMarker : ${dur(ph.registerDefaultMarker)}`,
+        `  loadAllIcons  : ${dur(ph.loadAllIcons)} (reg ${ph.iconsRegistered ?? '—'})`,
+        `  loadHandler   : ${dur(ph.mapLoadHandlerSoFar)}`,
+        `[absolute @+ms-since-script-start]`,
+        `  mapLoadFired   : ${at(ph.mapLoadFiredAt)}`,
+        `  firstMapIdle   : ${at(ph.firstMapIdle)}`,
+        `  firstGpsFix    : ${at(ph.firstGpsFix)}`,
+        `  firstSpawnMrkr : ${at(ph.firstSpawnMarker)}`,
+        `  now            : ${at(performance.now())}`,
+        `[icon decode]`,
+        `  decoded ${ds.decoded ?? '—'}/${ds.requested ?? '—'} ` +
+          `nulls=${ds.nullCount ?? '—'} firstByte=${ds.firstByteSample ?? '—'}`,
+        `[addImage]`,
+        `  tried=${ai.tried ?? 0} ok=${ai.succeeded ?? 0} ` +
+          `threw=${ai.threw ?? 0} postFail=${ai.postCheckFail ?? 0}`,
+        `  err: ${ai.firstError ?? '—'}`,
+        `[loadAllIcons trace]`,
+        `  appdata=${ld.gotAppData ? 'y' : 'n'} ` +
+          `names=${ld.namesLen ?? '—'} ` +
+          `beforeBatch=${ld.beforeBatch ? 'y' : 'n'} ` +
+          `batch=${ld.batchSize ?? '—'} ` +
+          `loop=${ld.loopDone ?? '—'}`,
+        `  bail: ${ld.bail ?? '—'}  threw: ${ld.threw ?? '—'}`,
+      ];
+      const sd = window._spriteDiag || {};
+      lines.push(
+        `[sprites]`,
+        `  loadVariantCounts: ${dur(sd.loadVariantCountsMs)} (n=${sd.variantsCount ?? '—'})`,
+        `  batches: ${sd.batchCount ?? 0}, last batch ${sd.lastBatchSize ?? '—'} in ${dur(sd.lastBatchMs)}`,
+        `  firstSpriteInstall: ${at(sd.firstSpriteInstallAt)}`,
+        `  firstSpriteVisible: ${at(sd.firstSpriteVisibleAt)}`,
+        `[sprite errors]`,
+        `  count: ${sd.errorCount ?? 0}`,
+      );
+      if (sd.errors && sd.errors.length) {
+        for (const e of sd.errors) lines.push(`  • ${e}`);
+      }
+      pEl.textContent = lines.join('\n');
+      pEl.style.whiteSpace = 'pre';
+    }
   }
   setInterval(() => {
     const panel = document.getElementById('settingsPanel');
