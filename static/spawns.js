@@ -162,15 +162,36 @@
     'ROCK', 'GHOST', 'DRAGON', 'DARK', 'STEEL', 'FAIRY',
   ];
 
+  // Deterministic Fisher-Yates shuffle of TYPES seeded by `cycleIdx`.
+  // Returns a fresh permutation per cycle so every cycle visits every
+  // type exactly once. Same input → same permutation for all users.
+  function shuffledTypesForCycle(cycleIdx) {
+    const arr = TYPES.slice();
+    const rng = getxor4069((cycleIdx ^ WEEKLY_SALT) | 0);
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+    }
+    return arr;
+  }
+
   function currentWeather(nowMs) {
     const now = nowMs == null ? Date.now() : nowMs;
     const dayIdx = Math.floor(now / DAY_MS);
     const weekIdx = Math.floor(now / WEEK_MS);
     const dailyRng = getxor4069((dayIdx ^ DAILY_SALT) | 0);
-    const weeklyRng = getxor4069((weekIdx ^ WEEKLY_SALT) | 0);
+    // Weekly type cycles through a deterministic shuffled permutation
+    // of TYPES — every TYPES.length weeks we exhaust the list, then
+    // re-shuffle (cycleIdx bumps, new permutation). Guarantees every
+    // type comes up once per cycle without back-to-back-week
+    // repetition skew that pure hashing produces.
+    const cycleLen = TYPES.length;
+    const cycleIdx = Math.floor(weekIdx / cycleLen);
+    const weekInCycle = goodMod(weekIdx, cycleLen);
+    const weeklyPerm = shuffledTypesForCycle(cycleIdx);
     return {
       daily: TYPES[Math.floor(dailyRng() * TYPES.length)],
-      weekly: TYPES[Math.floor(weeklyRng() * TYPES.length)],
+      weekly: weeklyPerm[weekInCycle],
     };
   }
 

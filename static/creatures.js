@@ -952,7 +952,17 @@
     gridEl.querySelectorAll('.family-cell').forEach((cell) => {
       const a = +cell.dataset.a;
       const b = +cell.dataset.b;
-      global.Sprites.getDefaultSpriteUrl(a, b).then((url) => {
+      // Match what the user has actually seen so the family-tree
+      // mosaic shows their unlocked variants — falls back to the
+      // abstract default picker (custom v0 / autogen) for fusions
+      // they haven't seen yet (those render as silhouettes).
+      const v = pickPreferredSeenVariant(a, b);
+      const p = (typeof v === 'number')
+        ? global.Sprites.getSpriteUrl(a, b, v)
+        : (v === null
+            ? global.Sprites.getSpriteUrl(a, b, null)
+            : global.Sprites.getDefaultSpriteUrl(a, b));
+      p.then((url) => {
         if (!url) return;
         const img = cell.querySelector('img');
         if (!img) { URL.revokeObjectURL(url); return; }
@@ -1300,10 +1310,23 @@
         border-radius: var(--ui-radius, 8px);
       }
       #creatureInventory .pokedex-search-row {
-        display: flex; gap: 6px;
+        display: flex; gap: 6px; align-items: stretch;
       }
       #creatureInventory .pokedex-search-row input {
         flex: 1; min-width: 0;
+      }
+      #creatureInventory .pokedex-swap-btn {
+        flex: 0 0 auto;
+        padding: 0 8px;
+        font-size: 16px; line-height: 1;
+        background: var(--ui-bg, #fff);
+        color: var(--ui-text, #111);
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
+        border-radius: var(--ui-radius, 8px);
+        cursor: pointer; font-family: inherit;
+      }
+      #creatureInventory .pokedex-swap-btn:hover {
+        background: var(--ui-hover, rgba(0,0,0,0.04));
       }
       /* "Type: Either: [▾]  First: [▾]  Second: [▾]" row. Wraps onto
          multiple lines on narrow viewports — sheet width is 360px
@@ -1463,7 +1486,10 @@
       }
       #creatureInventory .nav-arrow {
         position: absolute;
-        top: 50%;
+        /* Align vertically with the center of .detail-art (140px tall
+           with 4px top margin), sitting under the back button row
+           (~30px button + 6px margin = 36px). 36 + 4 + 70 = 110px. */
+        top: 110px;
         transform: translateY(-50%);
         z-index: 4;
         background: var(--ui-bg, rgba(255,255,255,0.85));
@@ -2529,6 +2555,8 @@
           </div>
           <div class="search-row pokedex-search-row">
             <input id="pokedexSearchA" type="search" placeholder="Search first species" autocomplete="off">
+            <button id="pokedexSwap" class="pokedex-swap-btn" type="button"
+                    aria-label="swap first and second species" title="swap species">⇄</button>
             <input id="pokedexSearchB" type="search" placeholder="Search second species" autocomplete="off">
           </div>
           <div class="type-filter-row">
@@ -2899,6 +2927,15 @@
     pokedexSearchAny.addEventListener('input', renderPokedex);
     pokedexSearchA.addEventListener('input', renderPokedex);
     pokedexSearchB.addEventListener('input', renderPokedex);
+    const pokedexSwap = panel.querySelector('#pokedexSwap');
+    if (pokedexSwap) {
+      pokedexSwap.addEventListener('click', () => {
+        const a = pokedexSearchA.value;
+        pokedexSearchA.value = pokedexSearchB.value;
+        pokedexSearchB.value = a;
+        renderPokedex();
+      });
+    }
 
     document.body.appendChild(panel);
     return panel;
