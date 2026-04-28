@@ -4181,47 +4181,74 @@
     }
   }
 
+  // Wire an already-fetched blob into a marker record. Extracted so
+  // both the single-marker path (loadMarkerSprite) and the bulk path
+  // (addMarkersBatch) can share the DOM-update + URL-lifecycle code.
+  function installSpriteBlob(record, blob) {
+    if (!blob) return;
+    if (!_markers.has(record.spawn.id) || _markers.get(record.spawn.id) !== record) return;
+    const el = record.marker.getElement();
+    const img = el.querySelector('img.creature-sprite');
+    if (!img) return;
+    const url = URL.createObjectURL(blob);
+    img.onload = () => { el.classList.add('creature-marker-ready'); };
+    record.objectUrl = url;
+    img.src = url;
+  }
+
   function loadMarkerSprite(record) {
     if (!global.Sprites) return;
-    const { marker, spawn } = record;
-    const el = marker.getElement();
+    const { spawn } = record;
     resolveSpawnVariant(spawn)
       .then((variant) => {
-        // Cache the resolved variant on the record so the battle screen
-        // and the capture flow don't have to re-resolve from IDB.
         record.variant = variant;
         if (!_markers.has(spawn.id) || _markers.get(spawn.id) !== record) return null;
-        return global.Sprites.getSpriteUrl(spawn.speciesA, spawn.speciesB, variant);
+        return global.Sprites.getSpriteBlob(spawn.speciesA, spawn.speciesB, variant);
       })
-      .then((url) => {
-        // No cached sprite (user hasn't run the bulk download yet). Keep
-        // the placeholder dot; never fetch on-demand.
-        if (url == null) return;
-        if (!_markers.has(spawn.id) || _markers.get(spawn.id) !== record) {
-          URL.revokeObjectURL(url);
-          return;
-        }
-        const img = el.querySelector('img.creature-sprite');
-        if (!img) { URL.revokeObjectURL(url); return; }
-        // Keep the URL alive on the record (revoked in removeMarker)
-        // so the battle screen can reuse it for instant display when
-        // the user taps the creature — no IDB round-trip, no flash.
-        img.onload = () => { el.classList.add('creature-marker-ready'); };
-        record.objectUrl = url;
-        img.src = url;
-      })
+      .then((blob) => { installSpriteBlob(record, blob); })
       .catch(() => { /* leave the placeholder dot showing */ });
   }
 
   function addMarker(spawn) {
-    if (!_overlayMap || !global.maplibregl) return;
+    if (!_overlayMap || !global.maplibregl) return null;
     const el = makeMarkerElement(spawn);
     const marker = new global.maplibregl.Marker({ element: el, anchor: 'center' })
       .setLngLat([spawn.lng, spawn.lat])
       .addTo(_overlayMap);
     const record = { marker, objectUrl: null, spawn, firstShownAt: Date.now() };
     _markers.set(spawn.id, record);
-    loadMarkerSprite(record);
+    return record;
+  }
+
+  // Bulk add: place all markers in a single layout pass, then resolve
+  // every variant + fetch every sprite blob in ONE IDB transaction
+  // (Sprites.getSpriteBlobsBatch). On iOS Safari this turns ~50 separate
+  // serialized transactions into one pipelined one — pokémon icons
+  // appear in a single frame instead of staggering over seconds.
+  async function addMarkersBatch(spawns) {
+    if (!spawns.length) return;
+    const records = [];
+    for (const s of spawns) {
+      const rec = addMarker(s);
+      if (rec) records.push({ rec, spawn: s });
+    }
+    if (!global.Sprites || !global.Sprites.getSpriteBlobsBatch) {
+      // Fallback to per-marker async loads if the batch API isn't
+      // available for any reason.
+      for (const { rec } of records) loadMarkerSprite(rec);
+      return;
+    }
+    const variants = await Promise.all(
+      records.map(({ spawn }) => resolveSpawnVariant(spawn).catch(() => null))
+    );
+    const requests = records.map(({ spawn }, i) => ({
+      a: spawn.speciesA, b: spawn.speciesB, variant: variants[i], key: spawn.id,
+    }));
+    records.forEach((r, i) => { r.rec.variant = variants[i]; });
+    const results = await global.Sprites.getSpriteBlobsBatch(requests);
+    for (let i = 0; i < records.length; i++) {
+      installSpriteBlob(records[i].rec, results[i].blob);
+    }
   }
 
   function removeMarker(id) {
@@ -4292,9 +4319,10 @@
         soonestRemovableAt = removableAt;
       }
     }
-    for (const s of within) {
-      if (!_markers.has(s.id)) addMarker(s);
-    }
+    // Bulk-fetch sprites for any spawns we don't yet have markers for —
+    // single IDB transaction instead of one per marker.
+    const newSpawns = within.filter((s) => !_markers.has(s.id));
+    if (newSpawns.length) addMarkersBatch(newSpawns);
     if (soonestRemovableAt !== Infinity) {
       // Re-run after the soonest TTL-protected marker becomes
       // removable. Bypasses dedupe by zeroing _lastRefreshAt before
