@@ -240,10 +240,13 @@
   // sprites still render.
   const VARIANT_SUMMARY_KEY = '__summary__';
   const CREDITS_BUNDLE_KEY = '__credits__';
+  const SPLIT_NAMES_KEY = '__splitnames__';
   const SPECIES_MAX_DIM = 150;
   let _variantSummaryLoaded = false;
   let _creditsBundleCache = null;
   let _creditsBundlePromise = null;
+  let _splitNamesCache = null;
+  let _splitNamesPromise = null;
   const _variantInflight = new Map();  // key -> Promise<number>
 
   function _summaryIndex(a, b) {
@@ -315,7 +318,8 @@
           const key = c.key;
           if (typeof key === 'string'
               && key !== VARIANT_SUMMARY_KEY
-              && key !== CREDITS_BUNDLE_KEY) {
+              && key !== CREDITS_BUNDLE_KEY
+              && key !== SPLIT_NAMES_KEY) {
             const dash = key.indexOf('-');
             if (dash > 0) {
               const a = +key.slice(0, dash);
@@ -376,6 +380,80 @@
     } catch (e) {
       _logSpriteError('downloadCreditsBundle', e);
     }
+  }
+
+  // Load SPLIT_NAMES (national-dex-indexed [prefix, suffix] pairs)
+  // from IDB. Concurrent callers share one in-flight read.
+  function _ensureSplitNames() {
+    if (_splitNamesCache) return Promise.resolve(_splitNamesCache);
+    if (_splitNamesPromise) return _splitNamesPromise;
+    _splitNamesPromise = (async () => {
+      try {
+        const stored = await varGet(SPLIT_NAMES_KEY);
+        _splitNamesCache = Array.isArray(stored) ? stored : null;
+      } catch (e) {
+        _logSpriteError('ensureSplitNames/get', e);
+        _splitNamesCache = null;
+      }
+      return _splitNamesCache;
+    })();
+    _splitNamesPromise.finally(() => { _splitNamesPromise = null; });
+    return _splitNamesPromise;
+  }
+
+  async function _downloadSplitNames() {
+    try {
+      const r = await fetch('/sprite-split-names');
+      if (!r.ok) return;
+      const arr = await r.json();
+      if (!Array.isArray(arr)) return;
+      await varPut(SPLIT_NAMES_KEY, arr);
+      _splitNamesCache = arr;
+    } catch (e) {
+      _logSpriteError('downloadSplitNames', e);
+    }
+  }
+
+  // Apply Pokémon Infinite Fusion's canonical name algorithm:
+  //   prefix = SPLIT_NAMES[head][0]
+  //   suffix = SPLIT_NAMES[body][1]
+  //   if prefix's last char == suffix's first char (case-insensitive),
+  //     drop the trailing letter from prefix
+  //   if prefix ends in a space, capitalize suffix's first letter
+  //   return prefix + suffix
+  // Returns null when the table isn't loaded yet or either id is out
+  // of range.
+  function _applyFusionName(table, headId, bodyId) {
+    if (!Array.isArray(table)) return null;
+    const head = table[headId];
+    const body = table[bodyId];
+    if (!head || !body) return null;
+    let prefix = head[0];
+    let suffix = body[1];
+    if (typeof prefix !== 'string' || typeof suffix !== 'string') return null;
+    if (prefix.length && suffix.length
+        && prefix[prefix.length - 1].toLowerCase() === suffix[0].toLowerCase()) {
+      prefix = prefix.slice(0, -1);
+    }
+    if (prefix.endsWith(' ') && suffix.length) {
+      suffix = suffix[0].toUpperCase() + suffix.slice(1);
+    }
+    return prefix + suffix;
+  }
+
+  // Sync access — returns null if SPLIT_NAMES isn't loaded yet. Pair
+  // with `ensureSplitNamesLoaded()` (or the welcome-flow download) so
+  // the table is in memory before render. `a` is head, `b` is body
+  // (matches the cell convention used everywhere else in the app).
+  function getFusedName(a, b) {
+    return _applyFusionName(_splitNamesCache, a, b);
+  }
+  async function getFusedNameAsync(a, b) {
+    const tbl = await _ensureSplitNames();
+    return _applyFusionName(tbl, a, b);
+  }
+  async function ensureSplitNamesLoaded() {
+    return _ensureSplitNames();
   }
 
   // Resolve slot → suffix → artist for one cell. Slot is the index
@@ -770,6 +848,11 @@
       const c = await varGet(CREDITS_BUNDLE_KEY);
       creditsReady = !!(c && typeof c === 'object' && Object.keys(c).length > 0);
     } catch { creditsReady = false; }
+    let namesReady = false;
+    try {
+      const n = await varGet(SPLIT_NAMES_KEY);
+      namesReady = Array.isArray(n) && n.length > 1;
+    } catch { namesReady = false; }
     return {
       sheetsComplete,
       sheetsTotal: sheetTo - sheetFrom + 1,
@@ -778,6 +861,7 @@
       customSpeciesDone: customDone.size,
       customSpeciesTotal: SPECIES_MAX,
       creditsReady,
+      namesReady,
     };
   }
 
@@ -996,6 +1080,11 @@
     try { await _downloadCreditsBundle(); }
     catch (e) { _logSpriteError('bulkDownload/credits', e); }
 
+    // SPLIT_NAMES table for canonical fusion-name building. Tiny
+    // (~10KB gzipped) but stored in IDB so it's available offline.
+    try { await _downloadSplitNames(); }
+    catch (e) { _logSpriteError('bulkDownload/splitNames', e); }
+
     return { cancelled: false };
   }
 
@@ -1005,6 +1094,7 @@
     _variantCountCache = null;
     _variantSummaryLoaded = false;
     _creditsBundleCache = null;
+    _splitNamesCache = null;
     const db = await openDb();
     return new Promise((resolve, reject) => {
       const tx = db.transaction([STORE_ICONS, STORE_VARIANTS], 'readwrite');
@@ -1025,5 +1115,9 @@
     rebuildVariantSummary: _writeVariantSummary,
     getSpriteCreditForSlot,
     downloadCreditsBundle: _downloadCreditsBundle,
+    getFusedName,
+    getFusedNameAsync,
+    ensureSplitNamesLoaded,
+    downloadSplitNames: _downloadSplitNames,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

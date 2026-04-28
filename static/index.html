@@ -9597,15 +9597,16 @@ function fmtDate(ts) {
           ? ` · hand-drawn ready`
           : '';
       const creditsTail = s.creditsReady ? ' · credits ready' : '';
+      const namesTail = s.namesReady ? ' · names ready' : '';
       if (s.iconsPresent === 0) {
         spritesStatus.textContent = 'not downloaded';
       } else if (s.iconsPresent === s.iconsTotal && s.customSpeciesDone === s.customSpeciesTotal) {
-        spritesStatus.textContent = `all ${s.iconsTotal} sprites ready · hand-drawn ready` + creditsTail;
+        spritesStatus.textContent = `all ${s.iconsTotal} sprites ready · hand-drawn ready` + creditsTail + namesTail;
       } else {
         spritesStatus.textContent =
           `${s.iconsPresent}/${s.iconsTotal} sprites ` +
           `· ${s.sheetsComplete.size}/${s.sheetsTotal} sheets complete` +
-          customTail + creditsTail;
+          customTail + creditsTail + namesTail;
       }
     } catch (e) {
       spritesStatus.textContent = `status error: ${e && e.message ? e.message : e}`;
@@ -9635,12 +9636,16 @@ function fmtDate(ts) {
         try { await window.Species.ensureLoaded(); } catch {}
       }
       if (iconsRemaining === 0 && customRemaining === 0) {
-        // Sprites are complete but the credits bundle is a separate
-        // payload added later — fetch it on its own if missing,
-        // without forcing a full re-download.
+        // Sprites are complete but the credits + names bundles are
+        // separate payloads added later — fetch each on its own if
+        // missing, without forcing a full re-download.
         if (!pre.creditsReady && window.Sprites.downloadCreditsBundle) {
           spritesStatus.textContent = 'fetching credits…';
           try { await window.Sprites.downloadCreditsBundle(); } catch {}
+        }
+        if (!pre.namesReady && window.Sprites.downloadSplitNames) {
+          spritesStatus.textContent = 'fetching names…';
+          try { await window.Sprites.downloadSplitNames(); } catch {}
         }
         updateSpritesStatus();
         return;
