@@ -899,6 +899,7 @@
     localStorage.removeItem(DOWNLOADED_KEY);
     localStorage.removeItem(CUSTOM_DONE_KEY);
     _variantCountCache = null;
+    _variantSummaryLoaded = false;
     const db = await openDb();
     return new Promise((resolve, reject) => {
       const tx = db.transaction([STORE_ICONS, STORE_VARIANTS], 'readwrite');
@@ -912,9 +913,10 @@
   global.Sprites = {
     getSpriteUrl, getSpriteBlob, getSpriteBlobsBatch,
     getDefaultSpriteUrl, getDefaultSpriteBlob,
-    getCellVariantCount,
+    getCellVariantCount, getCellVariantCountsBatch,
     bulkDownload, getDownloadedSheets, getDownloadStatus, deleteAllSprites,
     getCustomManifest,
     getInflightCount,
+    rebuildVariantSummary: _writeVariantSummary,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

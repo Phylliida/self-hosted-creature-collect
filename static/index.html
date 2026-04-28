@@ -2511,9 +2511,9 @@
      target meets Apple's HIG min so iOS taps register reliably. -->
 <div id="emergencyRefreshHolder" class="maplibregl-ctrl maplibregl-ctrl-group"
      style="position: fixed;
-            bottom: max(10px, env(safe-area-inset-bottom));
+            bottom: max(18px, calc(env(safe-area-inset-bottom) + 8px));
             right: max(10px, env(safe-area-inset-right));
-            z-index: 999999;">
+            z-index: 5;">
   <button id="emergencyRefresh"
           onclick="try{caches.open('app-v1').then(function(c){['/','/manifest.webmanifest','/static/icon.svg','/static/trip-planner.js','/static/vendor/maplibre-gl.css','/static/vendor/maplibre-gl.js'].forEach(function(u){c.delete(u)})})}catch(_){}setTimeout(function(){location.reload()},150);"
           type="button"
@@ -8080,8 +8080,11 @@ function fmtDate(ts) {
       const sd = window._spriteDiag || {};
       lines.push(
         `[sprites]`,
-        `  loadVariantCounts: ${dur(sd.loadVariantCountsMs)} (n=${sd.variantsCount ?? '—'})`,
-        `  batches: ${sd.batchCount ?? 0}, last batch ${sd.lastBatchSize ?? '—'} in ${dur(sd.lastBatchMs)}`,
+        `  variantSummary: ${dur(sd.variantSummaryMs)} ` +
+          `hadBlob=${sd.variantSummaryHadBlob === undefined ? '—' : (sd.variantSummaryHadBlob ? 'y' : 'n')} ` +
+          `cached=${sd.variantsCount ?? '—'}`,
+        `  variantBatch: last ${sd.lastVariantBatch ?? '—'} in ${dur(sd.lastVariantBatchMs)}`,
+        `  spriteBatches: ${sd.batchCount ?? 0}, last ${sd.lastBatchSize ?? '—'} in ${dur(sd.lastBatchMs)}`,
         `  firstSpriteInstall: ${at(sd.firstSpriteInstallAt)}`,
         `  firstSpriteVisible: ${at(sd.firstSpriteVisibleAt)}`,
         `[sprite errors]`,
