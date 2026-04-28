@@ -157,6 +157,17 @@ def index():
     return resp
 
 
+@app.route("/dex")
+def dex():
+    # Standalone art browser — separate page, fetches sprite sheets
+    # live on demand. Not part of the main app's no-network rule;
+    # this is a developer-facing tool for browsing the full sprite
+    # catalog (autogen + every custom variant per fusion).
+    resp = send_from_directory("static", "dex.html")
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return resp
+
+
 @app.route("/sw.js")
 def sw():
     resp = send_from_directory("static", "sw.js", mimetype="application/javascript")
@@ -238,6 +249,74 @@ def save_backup():
                    encoding="utf-8")
     tmp.replace(path)
     return jsonify({"ok": True, "saved": path.name})
+
+
+# Lazy-loaded sprite-credits index. Sourced from upstream Pokémon
+# Infinite Fusion's Sprite_Credits.csv. Keyed by (a, b) fusion ints
+# → { variant_letter or "": artist_name }. Loaded once on first
+# request, cached in process memory (~10 MB for ~227 k rows).
+_SPRITE_CREDITS_CACHE = None
+_CREDIT_KEY_RE = re.compile(r"^(\d+)([a-z]?)$")
+
+
+def _load_sprite_credits():
+    global _SPRITE_CREDITS_CACHE
+    if _SPRITE_CREDITS_CACHE is not None:
+        return _SPRITE_CREDITS_CACHE
+    path = (ROOT / "data" / "InfiniteFusion" / "Data"
+            / "sprites" / "Sprite_Credits.csv")
+    out = {}
+    if path.is_file():
+        with path.open(encoding="utf-8", errors="replace") as f:
+            for raw in f:
+                parts = raw.rstrip("\r\n").split(",")
+                if len(parts) < 2:
+                    continue
+                key = parts[0].strip()
+                artist = parts[1].strip()
+                if not key or not artist or "." not in key:
+                    continue
+                a_str, rest = key.split(".", 1)
+                if not a_str.isdigit():
+                    continue
+                m = _CREDIT_KEY_RE.match(rest)
+                if not m:
+                    continue
+                a = int(a_str)
+                b = int(m.group(1))
+                variant = m.group(2)
+                d = out.setdefault((a, b), {})
+                # Don't clobber if multiple rows exist; first wins.
+                d.setdefault(variant, artist)
+    _SPRITE_CREDITS_CACHE = out
+    return out
+
+
+@app.route("/sprite-credit/<int:a>/<int:b>")
+def sprite_credit(a, b):
+    """Return { variant_suffix: artist_name } for one (a, b) fusion.
+    Empty string key is the base sheet's artist; letter keys are the
+    alt variants. Returns {} when nothing is on file for the pair.
+    """
+    creds = _load_sprite_credits()
+    return jsonify(creds.get((a, b), {}))
+
+
+@app.route("/save-names")
+def save_names():
+    """Return the unique trainer names with at least one save on disk.
+    Used by /dex (the standalone art browser) to gate the page on a
+    trainer login + populate the trainer-name autocomplete.
+    """
+    saves_dir = ROOT / "saves"
+    if not saves_dir.is_dir():
+        return jsonify([])
+    names = set()
+    for p in saves_dir.glob("*_*.json"):
+        m = re.match(r"^(.+)_\d+\.json$", p.name)
+        if m and _SAFE_NAME_RE.fullmatch(m.group(1)):
+            names.add(m.group(1))
+    return jsonify(sorted(names))
 
 
 @app.route("/load")
@@ -357,6 +436,58 @@ def _send_custom_sheet(species, suffix):
     resp = send_from_directory(path.parent, path.name, mimetype="image/png")
     resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     return resp
+
+
+# Single-cell PNG crop — used by /dex's "open just this cell in a
+# new tab" click. Pillow loads the sheet, crops the 96×96 region, and
+# the response is cached aggressively (sheet contents are immutable
+# from the user's perspective). Two layouts: autogen sheets are 10
+# cols × 51 rows; custom sheets are 20 cols × 29 rows.
+def _crop_sprite_cell(path, index, cols, cell_size=96):
+    if not path.is_file():
+        abort(404)
+    try:
+        from PIL import Image
+    except ImportError:
+        abort(503, description="Pillow not installed; run `pip install pillow`")
+    col = index % cols
+    row = index // cols
+    with Image.open(path) as img:
+        if (col + 1) * cell_size > img.width or (row + 1) * cell_size > img.height:
+            abort(404)
+        cell = img.crop((col * cell_size, row * cell_size,
+                         (col + 1) * cell_size, (row + 1) * cell_size))
+        buf = BytesIO()
+        cell.save(buf, format="PNG")
+    resp = Response(buf.getvalue(), mimetype="image/png")
+    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return resp
+
+
+@app.route("/sprite-cell-auto/<int:a>/<int:b>")
+def sprite_cell_auto(a, b):
+    return _crop_sprite_cell(
+        ROOT / "data" / "Battlers" / "spritesheets_autogen" / f"{b}.png",
+        a, cols=10,
+    )
+
+
+@app.route("/sprite-cell-custom/<int:a>/<int:b>")
+def sprite_cell_custom_base(a, b):
+    return _crop_sprite_cell(
+        ROOT / "data" / "Battlers" / "spritesheets_custom" / str(b) / f"{b}.png",
+        a, cols=20,
+    )
+
+
+@app.route("/sprite-cell-custom/<int:a>/<int:b>/<variant>")
+def sprite_cell_custom_variant(a, b, variant):
+    if not _CUSTOM_VARIANT_RE.fullmatch(variant or ""):
+        abort(400)
+    return _crop_sprite_cell(
+        ROOT / "data" / "Battlers" / "spritesheets_custom" / str(b) / f"{b}{variant}.png",
+        a, cols=20,
+    )
 
 
 @app.route("/creature-sprite-custom-manifest")

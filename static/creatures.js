@@ -599,7 +599,7 @@
   //   }
   function virtualizeGrid(opts) {
     const { scrollEl, gridEl, items, cols, rowGap,
-            makeCardEl, loadSpriteFor } = opts;
+            makeCardEl, loadSpriteFor, initialScrollTop } = opts;
 
     // Tear down any previous virtualization on this grid before starting
     // a new one (filter / sort changes re-enter renderPokedex etc.).
@@ -688,14 +688,29 @@
       requestAnimationFrame(() => { pending = false; recomputeWindow(); });
     }
     scrollEl.addEventListener('scroll', scheduleUpdate, { passive: true });
+    // Restore the caller's scroll position BEFORE the first
+    // recomputeWindow so it renders the correct visible row band on
+    // the first paint — avoids a 1-frame flash of "scrolled to top"
+    // before settling. The full grid height is already set above so
+    // assigning scrollTop is valid.
+    if (initialScrollTop != null && initialScrollTop > 0) {
+      scrollEl.scrollTop = initialScrollTop;
+    }
     recomputeWindow();
     // Safety net: when the panel just became visible synchronously,
     // ancestor display/styles may not be fully computed yet, so the
     // first recomputeWindow's offsetParent check can bail and leave
     // the grid blank until the user scrolls. A second pass on the
     // next animation frame fixes that without anyone needing to
-    // touch the wheel.
-    requestAnimationFrame(recomputeWindow);
+    // touch the wheel. Re-applies scrollTop in case display was none
+    // during the first attempt (which would have clamped it to 0).
+    requestAnimationFrame(() => {
+      if (initialScrollTop != null && initialScrollTop > 0
+          && scrollEl.scrollTop !== initialScrollTop) {
+        scrollEl.scrollTop = initialScrollTop;
+      }
+      recomputeWindow();
+    });
 
     gridEl._virtCleanup = () => {
       scrollEl.removeEventListener('scroll', scheduleUpdate);
@@ -1303,6 +1318,49 @@
       #creatureInventory .tags-back:hover {
         color: var(--ui-accent, #888);
       }
+      /* Sub-view sibling navigation arrows. Floated to the corners
+         of the .detail-view / .fusion-view scroll container so they
+         stay reachable while content scrolls. Hidden when the view
+         doesn't have a list (no parent grid context). */
+      #creatureInventory .detail-view,
+      #creatureInventory .fusion-view {
+        position: relative;
+        overflow: hidden;
+      }
+      #creatureInventory .nav-arrow {
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+        z-index: 4;
+        background: var(--ui-bg, rgba(255,255,255,0.85));
+        color: var(--ui-text, #111);
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
+        border-radius: 50%;
+        width: 36px; height: 36px; padding: 0;
+        font-size: 22px; line-height: 1;
+        cursor: pointer; font-family: inherit;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+      }
+      #creatureInventory .nav-arrow.show { display: inline-flex; }
+      #creatureInventory .nav-arrow:hover { background: var(--ui-hover, rgba(0,0,0,0.04)); }
+      #creatureInventory .nav-arrow:disabled { opacity: 0.3; cursor: not-allowed; }
+      #creatureInventory .nav-prev { left: 6px; }
+      #creatureInventory .nav-next { right: 6px; }
+      /* Sliding transition for sibling navigation. The body div is
+         transformed; an absolutely-positioned clone of the previous
+         body slides off in the opposite direction. */
+      #creatureInventory .detail-body,
+      #creatureInventory .fusion-body { will-change: transform; }
+      #creatureInventory .nav-snapshot {
+        position: absolute;
+        top: 0; left: 0; right: 0;
+        z-index: 2;
+        pointer-events: none;
+      }
+      #creatureInventory .nav-anim { transition: transform 340ms cubic-bezier(0.25, 0.46, 0.45, 0.94); }
       #creatureInventory .detail-art {
         width: 140px; height: 140px; margin: 4px auto 12px;
         display: flex; align-items: center; justify-content: center;
@@ -2228,11 +2286,15 @@
         </div>
         <div class="detail-view">
           <button class="detail-back" type="button" aria-label="back">←</button>
+          <button class="nav-arrow nav-prev" type="button" aria-label="previous">‹</button>
+          <button class="nav-arrow nav-next" type="button" aria-label="next">›</button>
           <div class="detail-body"></div>
           <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
         <div class="fusion-view">
           <button class="fusion-back" type="button" aria-label="back">←</button>
+          <button class="nav-arrow nav-prev" type="button" aria-label="previous">‹</button>
+          <button class="nav-arrow nav-next" type="button" aria-label="next">›</button>
           <div class="fusion-body"></div>
           <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
@@ -2360,7 +2422,12 @@
     const openFromTarget = (target) => {
       const card = target.closest && target.closest('.creature-card');
       const id = card && card.getAttribute('data-id');
-      if (id) showDetail(id);
+      if (!id) return;
+      // Pass the inventory's current rendered list + clicked index so
+      // the detail sub-view can offer arrow/swipe navigation through
+      // siblings in the same filtered + sorted order.
+      const idx = _lastInventoryItems.findIndex((it) => it.id === id);
+      showDetail(id, _lastInventoryItems, idx >= 0 ? idx : null);
     };
     listEl.addEventListener('click', (e) => openFromTarget(e.target));
     listEl.addEventListener('keydown', (e) => {
@@ -2373,6 +2440,53 @@
     panel.querySelector('.detail-back').addEventListener('click', popView);
     panel.querySelector('.pokedex-back').addEventListener('click', popView);
     panel.querySelector('.fusion-back').addEventListener('click', popView);
+    // Sibling-navigation arrow buttons (one pair per sub-view).
+    panel.querySelectorAll('.detail-view .nav-prev, .fusion-view .nav-prev')
+      .forEach((b) => b.addEventListener('click', () => navigateSibling(-1)));
+    panel.querySelectorAll('.detail-view .nav-next, .fusion-view .nav-next')
+      .forEach((b) => b.addEventListener('click', () => navigateSibling(1)));
+
+    // Arrow-key + swipe navigation through sibling entries while
+    // viewing a detail or fusion sub-view. Keys listen at window
+    // level (so they fire even when no input is focused), gated by
+    // panel-visibility + correct sub-view. Swipe listens on the
+    // sub-view containers only — not the parent grid views.
+    window.addEventListener('keydown', (e) => {
+      if (!panel.classList.contains('show')) return;
+      const top = _viewStack[_viewStack.length - 1];
+      if (!top || !Array.isArray(top.list)) return;
+      // Don't hijack arrows from inputs / textareas (search box, etc.).
+      const tag = (e.target && e.target.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.key === 'ArrowRight') { e.preventDefault(); navigateSibling(1); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); navigateSibling(-1); }
+    });
+    // Swipe gesture: track horizontal touch travel; if it crosses
+    // SWIPE_THRESHOLD without significant vertical drift, navigate.
+    // Vertical scrolling within the sub-view stays unaffected.
+    const SWIPE_THRESHOLD = 60;
+    function attachSwipe(viewEl) {
+      let startX = 0, startY = 0, tracking = false;
+      viewEl.addEventListener('touchstart', (e) => {
+        if (e.touches.length !== 1) { tracking = false; return; }
+        startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
+        tracking = true;
+      }, { passive: true });
+      viewEl.addEventListener('touchend', (e) => {
+        if (!tracking) return;
+        tracking = false;
+        const t = e.changedTouches[0];
+        if (!t) return;
+        const dx = t.clientX - startX;
+        const dy = t.clientY - startY;
+        if (Math.abs(dx) < SWIPE_THRESHOLD) return;
+        if (Math.abs(dy) > Math.abs(dx) * 0.7) return;  // mostly vertical → ignore
+        navigateSibling(dx < 0 ? 1 : -1);
+      }, { passive: true });
+    }
+    attachSwipe(panel.querySelector('.detail-view'));
+    attachSwipe(panel.querySelector('.fusion-view'));
     panel.querySelector('.candy-back').addEventListener('click', popView);
     panel.querySelector('.bag-back').addEventListener('click', popView);
     panel.querySelector('.tags-back').addEventListener('click', popView);
@@ -2392,7 +2506,11 @@
       const dash = key.indexOf('-');
       const a = +key.slice(0, dash);
       const b = +key.slice(dash + 1);
-      showFusionView(a, b);
+      // Pass the currently-rendered list + clicked index so the
+      // fusion sub-view can offer arrow/swipe navigation to its
+      // siblings in the same filtered + sorted order.
+      const idx = _lastPokedexEntries.findIndex((e) => e.a === a && e.b === b);
+      showFusionView(a, b, _lastPokedexEntries, idx >= 0 ? idx : null);
     });
 
     const pokedexSortBy = panel.querySelector('#pokedexSortBy');
@@ -2464,6 +2582,13 @@
   // cleared (back to [browse]) when the panel is opened from outside,
   // so a fresh tap of the creature-ball gives a fresh start.
   let _viewStack = [{ view: 'browse' }];
+  // Most recently rendered list/grid contents — populated by
+  // renderPokedex / renderList, consumed by card click handlers
+  // when entering a sub-view so the sub-view can offer left/right
+  // arrow + swipe navigation through adjacent entries in the
+  // same order the user just saw.
+  let _lastPokedexEntries = [];
+  let _lastInventoryItems = [];
 
   function applyTopView() {
     const panel = ensurePanel();
@@ -2491,11 +2616,13 @@
         }
         renderDetail(creature);
         panel.querySelector('.detail-view').classList.add('show');
+        _updateNavArrows();
         return;
       }
       case 'fusion':
         renderFusionView(top.a, top.b);
         panel.querySelector('.fusion-view').classList.add('show');
+        _updateNavArrows();
         return;
       case 'pokedex': {
         const opts = top.opts || {};
@@ -2524,7 +2651,22 @@
     }
   }
 
+  // Capture the scroll position of the panel's scroll container into
+  // the current top stack entry so it can be restored when the user
+  // pops back to it. The panel uses a single .sheet element as the
+  // scrolling container for every view — capturing/restoring its
+  // scrollTop in the entry preserves "where I was" for inventory and
+  // pokedex (and any sub-view that scrolls).
+  function _captureCurrentScroll() {
+    const panel = document.getElementById('creatureInventory');
+    if (!panel) return;
+    const sheet = panel.querySelector('.sheet');
+    const top = _viewStack[_viewStack.length - 1];
+    if (sheet && top) top.scrollY = sheet.scrollTop;
+  }
+
   function pushView(state) {
+    _captureCurrentScroll();
     _viewStack.push(state);
     applyTopView();
   }
@@ -2544,12 +2686,145 @@
     applyTopView();
   }
 
-  function showDetail(id) {
-    pushView({ view: 'detail', id });
+  function showDetail(id, list, idx) {
+    const state = { view: 'detail', id };
+    if (Array.isArray(list) && typeof idx === 'number') {
+      state.list = list;
+      state.idx = idx;
+    }
+    pushView(state);
   }
 
-  function showFusionView(a, b) {
-    pushView({ view: 'fusion', a, b });
+  function showFusionView(a, b, list, idx) {
+    const state = { view: 'fusion', a, b };
+    if (Array.isArray(list) && typeof idx === 'number') {
+      state.list = list;
+      state.idx = idx;
+    }
+    pushView(state);
+  }
+
+  // Per-view layout constants (mirrored from the virtualizeGrid
+  // call sites). Used to keep the parent's scroll position in sync
+  // with the sibling we navigated to, so popping back lands the
+  // grid scrolled to that creature's row instead of where we
+  // started.
+  const VIEW_GRID_LAYOUT = {
+    pokedex: { cols: 3, rowPitch: 158 },  // cardHeight 150 + rowGap 8
+    browse:  { cols: 3, rowPitch: 186 },  // cardHeight 178 + rowGap 8
+  };
+
+  function _updateParentScrollForSibling(parentView, idx) {
+    const layout = VIEW_GRID_LAYOUT[parentView];
+    if (!layout) return;
+    // Find the parent stack entry — the one BELOW this sub-view.
+    for (let i = _viewStack.length - 2; i >= 0; i--) {
+      const e = _viewStack[i];
+      if (e.view === parentView) {
+        const row = Math.floor(idx / layout.cols);
+        // Place the row a couple rows from the top of the visible
+        // area when popping back (looks better than sticking it
+        // under the header).
+        const target = Math.max(0, row * layout.rowPitch - layout.rowPitch);
+        e.scrollY = target;
+        return;
+      }
+    }
+  }
+
+  function _viewSelector(viewName) {
+    if (viewName === 'detail') return '.detail-view';
+    if (viewName === 'fusion') return '.fusion-view';
+    return null;
+  }
+  function _bodySelector(viewName) {
+    if (viewName === 'detail') return '.detail-body';
+    if (viewName === 'fusion') return '.fusion-body';
+    return null;
+  }
+
+  let _navAnimating = false;
+
+  // Step the current sub-view through its sibling list with a
+  // sliding transition. Replaces the top stack entry in place; the
+  // parent's scroll position is recomputed so popping back lands
+  // on the row of whichever sibling we ended on. Clamps at ends.
+  function navigateSibling(delta) {
+    if (_navAnimating) return;
+    const top = _viewStack[_viewStack.length - 1];
+    if (!top || !Array.isArray(top.list) || typeof top.idx !== 'number') return;
+    const newIdx = top.idx + delta;
+    if (newIdx < 0 || newIdx >= top.list.length) return;
+    const sibling = top.list[newIdx];
+    if (!sibling) return;
+    const panel = document.getElementById('creatureInventory');
+    const viewSel = _viewSelector(top.view);
+    const bodySel = _bodySelector(top.view);
+    const view = panel && viewSel && panel.querySelector(viewSel);
+    const body = panel && bodySel && panel.querySelector(bodySel);
+    if (!view || !body) return;
+
+    _navAnimating = true;
+    // Snapshot the current body content as an absolute-positioned
+    // clone that slides off in the direction matching the swipe.
+    const snapshot = body.cloneNode(true);
+    snapshot.classList.add('nav-snapshot');
+    snapshot.style.transform = 'translateX(0)';
+    view.appendChild(snapshot);
+
+    // Apply the new state and re-render the body in place.
+    const parentViewForScroll =
+      top.view === 'detail' ? 'browse' :
+      top.view === 'fusion' ? 'pokedex' : null;
+    if (top.view === 'detail') { top.id = sibling.id; top.idx = newIdx; }
+    else if (top.view === 'fusion') { top.a = sibling.a; top.b = sibling.b; top.idx = newIdx; }
+    else { _navAnimating = false; snapshot.remove(); return; }
+    top.scrollY = 0;
+    if (parentViewForScroll) _updateParentScrollForSibling(parentViewForScroll, newIdx);
+    applyTopView();
+
+    // Position the new body off-screen on the side it's coming from,
+    // then animate both clone + new body to translateX(±100%) and 0
+    // in parallel.
+    const incoming = body;  // applyTopView re-rendered this in place
+    incoming.style.transition = 'none';
+    incoming.style.transform = `translateX(${delta > 0 ? '100%' : '-100%'})`;
+    // Force a layout flush before adding the transition class.
+    void incoming.offsetWidth;
+    incoming.classList.add('nav-anim');
+    snapshot.classList.add('nav-anim');
+    requestAnimationFrame(() => {
+      incoming.style.transition = '';
+      incoming.style.transform = 'translateX(0)';
+      snapshot.style.transform = `translateX(${delta > 0 ? '-100%' : '100%'})`;
+    });
+    setTimeout(() => {
+      snapshot.remove();
+      incoming.classList.remove('nav-anim');
+      incoming.style.transform = '';
+      _navAnimating = false;
+      _updateNavArrows();
+    }, 360);
+  }
+
+  // Toggle visibility + disabled state of the in-view nav arrows
+  // based on whether the current sub-view has a sibling list and
+  // where we are in it.
+  function _updateNavArrows() {
+    const panel = document.getElementById('creatureInventory');
+    if (!panel) return;
+    const top = _viewStack[_viewStack.length - 1];
+    const viewSel = top && _viewSelector(top.view);
+    if (!viewSel) return;
+    const view = panel.querySelector(viewSel);
+    if (!view) return;
+    const prev = view.querySelector('.nav-prev');
+    const next = view.querySelector('.nav-next');
+    const hasList = top && Array.isArray(top.list) && typeof top.idx === 'number';
+    [prev, next].forEach((b) => { if (b) b.classList.toggle('show', !!hasList); });
+    if (!hasList) return;
+    if (prev) prev.disabled = top.idx <= 0;
+    if (next) next.disabled = top.idx >= top.list.length - 1;
   }
 
   function showPokedex(opts) {
@@ -3030,6 +3305,12 @@
     }
 
     const sheet = panel.querySelector('.sheet');
+    const _topPokedex = _viewStack[_viewStack.length - 1];
+    // Cache the current pokédex render's filtered + sorted entries
+    // so a card click can pass the list (and index) into the fusion
+    // sub-view, enabling left/right arrow + swipe navigation through
+    // adjacent entries in the SAME order the user just saw.
+    _lastPokedexEntries = entries;
     virtualizeGrid({
       scrollEl: sheet,
       gridEl: grid,
@@ -3037,6 +3318,7 @@
       cols: 3,
       rowGap: 8,
       cardHeight: 150,
+      initialScrollTop: (_topPokedex && _topPokedex.view === 'pokedex') ? _topPokedex.scrollY : 0,
       makeCardEl(entry) {
         const display = global.Species
           ? `${global.Species.nameFor(entry.a)} × ${global.Species.nameFor(entry.b)}`
@@ -3484,12 +3766,18 @@
       return;
     }
     const sheet = listEl.closest('.sheet');
+    const _topBrowse = _viewStack[_viewStack.length - 1];
+    // Cache the inventory's currently-rendered list so a card click
+    // can pass it (and the clicked index) into the detail sub-view
+    // for left/right arrow + swipe navigation.
+    _lastInventoryItems = items;
     virtualizeGrid({
       scrollEl: sheet,
       gridEl: listEl,
       items,
       cols: 3,
       rowGap: 8,
+      initialScrollTop: (_topBrowse && _topBrowse.view === 'browse') ? _topBrowse.scrollY : 0,
       cardHeight: 178,
       makeCardEl(c) {
         const card = document.createElement('div');
