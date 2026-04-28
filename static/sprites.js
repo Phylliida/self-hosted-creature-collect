@@ -239,8 +239,11 @@
   // a per-cell lookup (slow first miss, cached after) so existing
   // sprites still render.
   const VARIANT_SUMMARY_KEY = '__summary__';
+  const CREDITS_BUNDLE_KEY = '__credits__';
   const SPECIES_MAX_DIM = 150;
   let _variantSummaryLoaded = false;
+  let _creditsBundleCache = null;
+  let _creditsBundlePromise = null;
   const _variantInflight = new Map();  // key -> Promise<number>
 
   function _summaryIndex(a, b) {
@@ -310,7 +313,9 @@
           const c = cur.result;
           if (!c) { resolve(); return; }
           const key = c.key;
-          if (typeof key === 'string' && key !== VARIANT_SUMMARY_KEY) {
+          if (typeof key === 'string'
+              && key !== VARIANT_SUMMARY_KEY
+              && key !== CREDITS_BUNDLE_KEY) {
             const dash = key.indexOf('-');
             if (dash > 0) {
               const a = +key.slice(0, dash);
@@ -336,6 +341,86 @@
       } catch (e) { _logSpriteError('writeVariantSummary/putSetup', e); resolve(); }
     });
     _variantSummaryLoaded = true;  // we just wrote it; cache is authoritative
+  }
+
+  // Load the sprite-credits bundle into memory from IDB. Single
+  // ~580KB JSON object keyed `${a}-${b}` → { variantSuffix: artist }.
+  // Concurrent callers share one in-flight read.
+  function _ensureCreditsBundle() {
+    if (_creditsBundleCache) return Promise.resolve(_creditsBundleCache);
+    if (_creditsBundlePromise) return _creditsBundlePromise;
+    _creditsBundlePromise = (async () => {
+      try {
+        const stored = await varGet(CREDITS_BUNDLE_KEY);
+        _creditsBundleCache = stored || {};
+      } catch (e) {
+        _logSpriteError('ensureCreditsBundle/get', e);
+        _creditsBundleCache = {};
+      }
+      return _creditsBundleCache;
+    })();
+    _creditsBundlePromise.finally(() => { _creditsBundlePromise = null; });
+    return _creditsBundlePromise;
+  }
+
+  // Fetches the credits bundle from the server and writes it to IDB
+  // under CREDITS_BUNDLE_KEY. Called as part of bulkDownload's pass 2
+  // finalization. Idempotent — re-fetching just overwrites.
+  async function _downloadCreditsBundle() {
+    try {
+      const r = await fetch('/sprite-credits-bundle');
+      if (!r.ok) return;
+      const bundle = await r.json();
+      await varPut(CREDITS_BUNDLE_KEY, bundle);
+      _creditsBundleCache = bundle;
+    } catch (e) {
+      _logSpriteError('downloadCreditsBundle', e);
+    }
+  }
+
+  // Resolve slot → suffix → artist for one cell. Slot is the index
+  // into the variants store entry for (a, b). Needs the manifest
+  // (suffix list per species, from AppData) to map manifest index
+  // back to suffix. Returns null when any link in the chain is
+  // missing — e.g. credits bundle not downloaded yet, or fusion
+  // out of the 1-150 covered range.
+  function _bumpCreditDiag(reason) {
+    if (typeof window === 'undefined') return;
+    window._creditDiag = window._creditDiag || { calls: 0, hits: 0, reasons: {} };
+    window._creditDiag.reasons[reason] = (window._creditDiag.reasons[reason] || 0) + 1;
+  }
+  async function getSpriteCreditForSlot(a, b, slot) {
+    if (typeof window !== 'undefined') {
+      window._creditDiag = window._creditDiag || { calls: 0, hits: 0, reasons: {} };
+      window._creditDiag.calls++;
+    }
+    if (typeof slot !== 'number' || slot < 0) { _bumpCreditDiag('badSlot'); return null; }
+    const bundle = await _ensureCreditsBundle();
+    if (!bundle || Object.keys(bundle).length === 0) { _bumpCreditDiag('noBundle'); return null; }
+    const cellCredits = bundle[`${a}-${b}`];
+    if (!cellCredits) { _bumpCreditDiag('noCellInBundle'); return null; }
+    // Variants store entry for the cell — array of manifest indices
+    // (one per non-blank slot).
+    let cellVariants = null;
+    try { cellVariants = await varGet(`${a}-${b}`); }
+    catch { cellVariants = null; }
+    if (!Array.isArray(cellVariants)) { _bumpCreditDiag('noVariantsArr'); return null; }
+    if (slot >= cellVariants.length) { _bumpCreditDiag('slotOutOfRange'); return null; }
+    const manifestIdx = cellVariants[slot];
+    // The variant suffix manifest lives in this module (Sprites),
+    // not AppData (which holds POI icons + fonts). Call the local
+    // function directly.
+    let manifest;
+    try { manifest = await getCustomManifest(); }
+    catch { _bumpCreditDiag('manifestThrew'); return null; }
+    const suffixes = manifest && manifest[String(b)];
+    if (!Array.isArray(suffixes)) { _bumpCreditDiag('noSpeciesInManifest'); return null; }
+    if (manifestIdx >= suffixes.length) { _bumpCreditDiag('manifestIdxOutOfRange'); return null; }
+    const suffix = suffixes[manifestIdx];
+    const artist = cellCredits[suffix];
+    if (!artist) { _bumpCreditDiag('noArtistForSuffix'); return null; }
+    if (typeof window !== 'undefined') window._creditDiag.hits++;
+    return artist;
   }
 
   async function _readVariantCount(key) {
@@ -678,6 +763,13 @@
       if (count === neededPerSheet) sheetsComplete.add(b);
     }
     const customDone = getCustomDoneSpecies();
+    // Credits-bundle presence: peek at the variants store. Cheap
+    // single-key get; populated once during bulkDownload's pass 2.
+    let creditsReady = false;
+    try {
+      const c = await varGet(CREDITS_BUNDLE_KEY);
+      creditsReady = !!(c && typeof c === 'object' && Object.keys(c).length > 0);
+    } catch { creditsReady = false; }
     return {
       sheetsComplete,
       sheetsTotal: sheetTo - sheetFrom + 1,
@@ -685,6 +777,7 @@
       iconsTotal: (sheetTo - sheetFrom + 1) * neededPerSheet,
       customSpeciesDone: customDone.size,
       customSpeciesTotal: SPECIES_MAX,
+      creditsReady,
     };
   }
 
@@ -892,6 +985,17 @@
     try { await _writeVariantSummary(); }
     catch (e) { _logSpriteError('bulkDownload/writeVariantSummary', e); }
 
+    // Fetch + cache the sprite credits bundle. ~150KB gzipped from
+    // /sprite-credits-bundle; stored in the variants store so it's
+    // available offline. Used by the fusion view to show "art by X".
+    onProgress({
+      sheetsDone: finished, sheetsTotal: totalSheets,
+      currentSheet: 0, indexInSheet: 0, phase: 'credits',
+      customSpeciesDone: customDone.size, customSpeciesTotal: totalCustom,
+    });
+    try { await _downloadCreditsBundle(); }
+    catch (e) { _logSpriteError('bulkDownload/credits', e); }
+
     return { cancelled: false };
   }
 
@@ -900,6 +1004,7 @@
     localStorage.removeItem(CUSTOM_DONE_KEY);
     _variantCountCache = null;
     _variantSummaryLoaded = false;
+    _creditsBundleCache = null;
     const db = await openDb();
     return new Promise((resolve, reject) => {
       const tx = db.transaction([STORE_ICONS, STORE_VARIANTS], 'readwrite');
@@ -918,5 +1023,7 @@
     getCustomManifest,
     getInflightCount,
     rebuildVariantSummary: _writeVariantSummary,
+    getSpriteCreditForSlot,
+    downloadCreditsBundle: _downloadCreditsBundle,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

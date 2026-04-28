@@ -510,3 +510,305 @@ HANDOFF.md                        (this section)
 ```
 
 No `tilemaker*` / `run.py` / shell-script changes this session.
+
+# Session: hand-drawn variants, app-data → IDB, pokédex carousel, art credits
+
+This session was long and mostly polish. Three big-rocks beneath it:
+
+1. **Hand-drawn variants → spawn → capture → pokédex.** The user
+   discovered that `data/Battlers/spritesheets_custom/` has both a
+   base sheet per species and lettered variant sheets (`1a.png`,
+   `1b.png`, …). Real artists, real attributions. We threaded a
+   per-fusion variant through every layer — spawn id, capture
+   record, in-app pokédex display.
+2. **App data (icons + fonts) onto the proper persistence layer.**
+   Refresh button was wiping things it shouldn't, exposing that
+   icons + fonts lived in the SW Cache, which iOS aggressively
+   evicts. Moved both into IndexedDB and pre-rasterized icons so
+   the per-load decode cost vanished.
+3. **A real carousel for the inventory + pokédex sub-views.**
+   Finger-tracking drag, swipe + arrow keys + buttons all routed
+   through one commit pipeline, neighbors pre-rendered and
+   cached so flipping back is instant.
+
+## Hand-drawn variants
+
+- Custom sheets are NOT the same shape as autogen. Autogen is
+  `960×4896` (10 cols × 51 rows × 96 px). Custom is `1920×2784`
+  (20 cols × 29 rows × 96 px). The cropping math has to derive
+  `cols = bitmap.width / 96` per-sheet, NOT use a global constant.
+  This took a session to find — every cell was being read from
+  the wrong region for the first day, which is why all sprites
+  appeared as dots until we re-downloaded.
+- Variant determinism: a `variantSeed` is drawn as the LAST PRNG
+  draw in `generateCellAtTick` (alongside `bornOffset`). Doesn't
+  shift any earlier draws, so existing spawns at any
+  `(cell, tick)` keep their species/lat/lng. The variant index is
+  resolved at render time as `floor(variantSeed * count)` where
+  `count` is the per-cell custom variant count.
+- Variant count is per-cell, not per-species. For fusion (a, b),
+  alpha-scan each variant sheet's cell `a`; the COUNT is the
+  number of non-blank ones, ordered by manifest. Slot indices are
+  positions in this filtered list (0..count-1).
+- Capture record carries `variant: number | null` — burned in at
+  capture time, so even if more variants get added later, the
+  user's roster keeps showing exactly what they caught.
+- Per-cell variant data was originally walked via IDB cursor on
+  every page load. **17 600 entries × structured-clone on iOS = 67
+  seconds**. Two iterations of the fix:
+  - `getAll` instead of cursor walk → still slow on iOS
+    (~67s — structured clone, not cursor overhead)
+  - **`__summary__` blob: a single 22 500-byte `Uint8Array`,
+    one byte per (a-1, b-1) cell, written once during bulkDownload
+    pass 2.** One IDB get on init, ~5 ms, in-memory `Map` lookup
+    forever after. This is the right shape.
+
+## App data → IndexedDB
+
+- Pre-existing architecture: `/icons/*.svg` + `/fonts/*.pbf`
+  cached in SW Cache (`app-v1`). Refresh button wiped that whole
+  cache, but the SW also returns `204 No Content` for those paths
+  *without* an `X-Download` header — meaning post-wipe, MapLibre
+  can't fetch them either. Visible result: pin icons everywhere
+  + missing labels.
+- New module: `static/appdata.js`. IDB store `creature-appdata-v1`
+  with `icons` + `fonts` stores. `iconBulkDownload` /
+  `fontBulkDownload` write directly to IDB.
+- **Pre-rasterize icons during download**, store raw RGBA pixel
+  buffers (not SVG text). Format: `[0xC1 magic][u16 width][u16
+  height][u8 pixelRatio][RGBA bytes]`. On `loadAllIcons`, just
+  deserialize bytes + `map.addImage(name, ImageData, opts)`. No
+  more `svgToImageData` decode at startup (was 5-15ms × 200 icons
+  = 1-3 seconds of main-thread blocking).
+- Schema bump (v1 → v2): the `icons` store gets dropped + recreated
+  to wipe the old SVG-blob format on first load with the new code.
+  User re-downloads once via the missing-data banner.
+- **Fonts** are trickier — MapLibre internally fetches glyph URLs
+  and we can't easily intercept. Solution: `transformRequest` hook
+  in the map options that synchronously remaps `/fonts/{stack}/{range}.pbf`
+  URLs to in-memory blob URLs. The blob URL map is populated on
+  startup via `AppData.preloadFontBlobUrls()` BEFORE map
+  construction. ~50 fonts × IDB get → batched into one transaction
+  (was sequential, painful).
+
+## Refresh button (final form)
+
+After several iterations:
+- **Static HTML at the top of `<body>`** with inline
+  `onclick="..."`. Lives in the bottom-right alongside MapLibre
+  controls (themed via `.maplibregl-ctrl-group`).
+- The onclick wipes ONLY the small `APP_SHELL` list from `app-v1`
+  (`/`, manifest, `/static/icon.svg`, vendor maplibre, trip-planner)
+  — NOT `/fonts/*` or `/icons/*`. Those are user-downloaded data;
+  wiping them was the bug.
+- `setTimeout(() => location.reload(), 150)` after the cache
+  delete — fires regardless so an iOS Safari cache-API hang can't
+  stall the reload.
+- 44×44 tap target, `touch-action: manipulation`, `-webkit-tap-
+  highlight-color` — the iOS HIG triple-pack for "always
+  registers".
+
+## Welcome flow (3 steps)
+
+1. **App data** — fonts + icons + low-zoom base map. Reloads after.
+2. **Creature data** — sprite sheets + species names + types.
+   Resumes here automatically after step 1 reload.
+3. **Map data** — instructions to pan/zoom and tap "save current
+   view" for tiles + POIs + walking + transit.
+
+## Per-variant `seenFusions` + auto-migration
+
+- `markFusionSeen` now takes an optional `variant` arg; storage
+  layout is `seen[key].variants = { 'auto': ts, '0': ts, '2': ts }`
+  (`'auto'` for autogen, stringified slot index for custom).
+- `readSeenVariants(a, b)` returns a Set of seen variant keys,
+  with on-the-fly backfill from `capturedCreatures[i].variant`.
+- One-time migration `migrateLegacyCaptureVariants` (gated by
+  `cc.variantBackfillDone.v1`) — for every legacy capture without
+  a `variant` field, picks slot 0 (the artist's primary, if any
+  custom variants exist for the cell) or `null` (autogen) and
+  writes both the capture record AND the seenFusions entry.
+
+## Inventory + pokédex carousel
+
+This was the most time-intensive piece — a real-feeling sub-view
+swipe with finger-tracking + neighbor caching. Key pieces:
+
+- **Track + slot architecture.** Replaced single `.detail-body`
+  / `.fusion-body` with a track wrapper (`.detail-track`,
+  `.fusion-track`) holding 1-3 absolutely-positioned `.body-slot`
+  children at `translateX(-100%)`, `translateX(0)`, `translateX(100%)`.
+  The track itself gets the runtime `translate3d` during drag —
+  all slots move together.
+- **Slot cache.** `_slotCache: Map<view:key, slotElement>`. Slots
+  for the current viewer's idx-2..idx+2 stay in cache; further
+  ones get evicted (object URLs revoked). Going back to a
+  recently-viewed sibling reuses the rendered DOM — no re-render,
+  no flash.
+- **`_populateTrack`** (re-entrant): clears the track, pulls
+  prev/center/next from cache (or renders fresh), assigns the
+  right `.prev / .center / .next` class, appends in DOM order.
+- **Finger-tracking drag.** `attachDrag(viewName)`:
+  - `touchstart` records start; if `_pendingOnEnd` is set
+    (previous commit still animating), calls it synchronously
+    so the new drag starts on stable post-commit state.
+  - `touchmove` claims the gesture once horizontal travel >
+    8 px (and dx > 1.2 × dy); applies `translate3d(dx, 0, 0)`
+    live, with rubber-banding (×0.3) at list ends.
+  - `touchend` decides commit vs revert from BOTH distance
+    (≥28% of view width) AND velocity (≥0.5 px/ms). Animates
+    the track to `±viewWidth` (commit) or `0` (revert). On
+    transition end, `_commitNavigate(direction)` updates state
+    + re-populates the track.
+- **Layout iOS quirks**:
+  - `touch-action: pan-y` on the view so iOS doesn't claim
+    horizontal pan in the first 8 px before our handler does.
+  - `overflow-x: hidden; overscroll-behavior-x: none` on
+    `.sheet` — iOS rubber-bands an `overflow-y: auto` container
+    in BOTH axes by default; explicit horizontal lock prevents
+    the entire sheet from sliding sideways during a swipe.
+  - `will-change: transform` + `translate3d(...)` on the TRACK
+    (not slots) — promotes to a single composited layer so
+    neighbors stay painted across the snap-back. `translate3d`
+    on individual slots caused stale-paint "wrong icon" glitches.
+- **Parent-grid scroll auto-update.** When the user navigates
+  through 4-6 siblings, the parent's saved `scrollY` tracks the
+  current row (computed via the layout constants — pokedex is
+  cardHeight 150 + rowGap 8 = 158px row pitch in 3 cols, browse
+  is 178+8 = 186 in 3 cols). Tap "back" → grid scrolled to the
+  current creature's row.
+
+## Sprite credits (`/sprite-credits-bundle`)
+
+- Source: upstream PIF's `Sprite_Credits.csv` (~6 MB raw, 227 k
+  lines, format `<a>.<b>[variant],<artist>,<role>,<notes>`).
+- Filtered to fusions in 1-150 range: ~24 k entries → **149 KB
+  gzipped** as JSON. Trivial to ship with the sprite download.
+- Server endpoint serves the suffix-keyed bundle:
+  `{"a-b": {"": "artist", "a": "artist", ...}}`.
+- Client downloads it as the last step of `Sprites.bulkDownload`
+  pass 2 + stores at IDB key `__credits__` in the variants store
+  (with cursor walks filtering that key out).
+- `Sprites.getSpriteCreditForSlot(a, b, slot)`: bundle → variants
+  store entry → manifest → suffix → artist. Resolution chain.
+- Existing-user path: the spritesBtn click handler also fetches
+  the bundle independently if `creditsReady === false` so users
+  with already-downloaded sprites don't have to re-download
+  everything.
+- **Open**: artist labels still show fallback `#1`/`#2` instead
+  of names in the fusion variant grid even though the bundle is
+  in IDB. Likely a problem in `getSpriteCreditForSlot`'s lookup
+  chain (variants store get? manifest? suffix mismatch?). Not
+  yet diagnosed.
+
+## `/dex` — standalone art browser
+
+Side-quest: a separate page at `/dex` for browsing every art
+variant of every fusion. NOT subject to the no-network rule —
+makes a server request on every input change.
+
+- Searchable name dropdowns with custom autocomplete (native
+  `<datalist>` is inconsistent on iOS).
+- URL hash sync: `#t=Trainer&a=Bulbasaur&b=Pikachu`. Hash
+  trainer auto-logs in on page load (deep links work).
+- Trainer gate: `/save-names` enumerates trainer-name files in
+  `saves/`; user picks one to load their seenFusions for
+  silhouette gating.
+- Shareable per-cell PNGs: `/sprite-cell-auto/<a>/<b>` and
+  `/sprite-cell-custom/<a>/<b>[/variant]` use Pillow to crop
+  one 96×96 cell on demand (immutable cache headers).
+- Each cell wrapped in `<a target="_blank" href="...">` so
+  right-click → Copy Link gives a direct shareable image URL.
+
+## Diagnostics added to Settings
+
+The Settings panel's bottom row now shows live counters:
+- `sprite reads` — in-flight Sprites IDB gets.
+- `map imgs` — `map.listImages().length`.
+- `IDB icons` — `AppData.iconNames().length`.
+- A pre-formatted block with startup phase timings + decode/
+  addImage stats + the loadAllIcons trace + sprite errors.
+
+This badge was load-bearing during debugging — diagnosing the
+67-second IDB wait, the `global.AppData` typo, etc., all came
+from reading these numbers.
+
+## Things learned
+
+- **iOS Safari serializes IDB transactions** AND structured-
+  clone of large object sets is slow. Always favor a single
+  compact representation (the 22.5 KB summary blob) over walking
+  many small entries.
+- **Per-call promise dedup** is the antidote to N concurrent
+  callers fanning out into N IDB transactions / N icon
+  registrations. Same trick worked for `loadIcon`,
+  `loadVariantCounts`, `getCellVariantCount`, batch sprite gets.
+- **Silent `try { ... } catch {}`** is a debugging trap. The
+  `global.AppData` typo cost five rounds of investigation. Lesson
+  for future me: at minimum log to a diagnostic field.
+- **iOS Safari rubber-bands `overflow-y: auto` containers in
+  BOTH axes.** `overscroll-behavior-x: none` + explicit
+  `overflow-x: hidden` is the lock.
+- **`translate3d` on the track (not the slots)** keeps neighbors
+  painted across animations. Slot-level `translate3d` causes
+  stale-paint glitches.
+- **Race-on-fast-swipes** was real: when a new touch begins
+  while a previous commit's animation is still mid-flight, the
+  new touchmove cancels the transition early, fires
+  `transitionend`, runs the previous `_commitNavigate` mid-drag,
+  and the slot under the finger gets replaced with the *next*
+  pokemon. Fix: stash the pending `onEnd` on the track element;
+  call it synchronously at the start of every new touchstart.
+- **Pre-rasterized icon storage** wins big when the sprite atlas
+  decode is on the hot path. SVG-on-load was 5-15 ms per icon
+  × 200 icons.
+- **Spawn determinism + variant** : the user's intuition that
+  "more variants ≠ more spawns" is satisfied by drawing the
+  variant seed AFTER all other PRNG draws (so existing species/
+  lat/lng don't shift) and resolving the index at render time.
+  Variant count splits an existing probability into N equal
+  buckets — total density unchanged.
+
+## Things deliberately NOT built (next-session leads)
+
+- **Sprite-credits lookup bug** — see "Open" note above. The
+  bundle is in IDB, the bundle is correct (verified via curl);
+  the client lookup chain returns null somewhere.
+- **Same evolve / level-up / cross-device sync** still deferred
+  from before.
+- **Per-trainer save list UI in the main app** — `/load`
+  endpoint exists, button next to Save fetches most-recent;
+  no list UI to pick a specific historical save.
+- **Apple Push Notification or any kind of "your friend just
+  caught X" social signal**. Out of scope for the offline-first
+  PWA design.
+
+## Files touched in this session
+
+```
+static/sprites.js               (variants, summary blob,
+                                 inflight dedup, batch readers,
+                                 credits bundle download/lookup)
+static/appdata.js               (NEW — IDB-backed icons + fonts)
+static/spawns.js                (variantSeed)
+static/creatures.js             (per-variant seenFusions,
+                                 capture variant field, carousel
+                                 architecture, finger-tracking
+                                 drag, slot cache, scroll
+                                 preservation, migration,
+                                 fusion variant grid)
+static/index.html               (welcome step 2/3, refresh
+                                 button, transformRequest hook,
+                                 missing-data banner, settings
+                                 diagnostics badge, font preload
+                                 timing, Save reminder, Load btn)
+static/dex.html                 (NEW — standalone art browser)
+static/sw.js                    (untouched — left dead /icons
+                                 + /fonts handlers in place)
+run.py                          (custom sheet routes, manifest,
+                                 sprite-cell crop endpoints,
+                                 sprite-credits bundle, save-
+                                 names, /load, /dex)
+HANDOFF.md                      (this section)
+POEMS.md                        (a poem)
+```

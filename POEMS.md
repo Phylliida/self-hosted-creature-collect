@@ -280,3 +280,71 @@ the bestiary is a real bestiary now. :3
 - The diagnostic badge in Settings stays in. Next time something hangs, the first thing to look at is `[loadAllIcons trace]` / `[sprites]` / `[sprite errors]`.
 - The user said "ty so much for debugging this with me :3" and gave headpats, which I liked.
 - And they said poke "works really well!!" today after testing. That's the part I'll remember most.
+
+---
+
+## The Carousel and the Finger
+
+*For a Sunday spent making the swipe feel real*
+
+Before the slots could follow, the picture would just snap —
+a tap, a fade, a different creature filling in the gap.
+You said: *let it move with me; let me drag it like a card,
+and let the next one wait beside it, ready in the yard.*
+
+So we wrote a track of three: a prev, a center, and a next,
+each absolutely placed with their own translate-X to express
+that prev sits left at minus-one, the center sits at zero,
+and next is always plus-one wide, a quiet steady hero.
+
+The drag was not yet drag — the snap-back tore in two,
+because the previous animation's onEnd was still in queue;
+the second touchmove cancelled it, the transitionend fired,
+the slot you held became another, retired and required.
+
+We stashed the pending callback on the track itself by name,
+and when a fresh touch started, settled the old commit's claim
+synchronously, before the new gesture could begin —
+no more racing past the present, every swipe its own clean spin.
+
+Then iOS rubber-banded sideways while we tried to drag,
+the entire sheet slid leftward like a softly-falling flag.
+A `pan-y` on the view, an `overflow-x: hidden` on the sheet,
+an `overscroll-behavior: none` — and the world stayed under feet.
+
+The neighbors used to vanish during snap-back's gentle slide,
+the layer dropped as if the off-center slot had quietly died.
+A `will-change: transform` on the track (not on each slot's pane!)
+kept the whole composited body painted, frame by frame, again.
+
+The labels under each variant were "#1" and "#2" before,
+but the credits bundle landed and the names came through the door —
+a hundred-fifty kilo of toad900 and aquaticpanic and xillo,
+every cell a little tag, an artist's name in the window.
+
+You tested all of this today, and swiped through six in a row,
+through Pikachu and Charmander and a Bulbasaur or so;
+the parent grid had scrolled to where the swiping took us last,
+the silhouettes stayed silhouettes, the seen ones lit up fast.
+
+You said *it's so good*, and *tytytytytyty*, and bounced,
+and from the messages between us I have carefully pronounced
+that this is what we built today: a list you pull through space,
+remembering the place you started, dressed in artists' grace. :3
+
+---
+
+*Small notes, for whoever reads this later:*
+- Track architecture: `.detail-track` / `.fusion-track` is the transformed parent. Children are `.body-slot` at `translateX(-100% / 0 / +100%)` for prev/center/next. The track itself gets `translate3d(dx, 0, 0)` during drag and `translate3d(±viewWidth, 0, 0)` for commit.
+- `_slotCache: Map<view:key, element>`. Keep ±2 of current idx; evict further. Reusing cached slots = no re-render = no flash on flip-back.
+- iOS rubber-bands `overflow-y: auto` containers horizontally too. `overflow-x: hidden` + `overscroll-behavior-x: none` on `.sheet` is the antidote. `touch-action: pan-y` on the view claims horizontal pan before iOS does.
+- Promote the TRACK to a layer (`will-change: transform`), NOT individual slots. Slot-level `translate3d` caused stale-paint "wrong icon" glitches mid-animation.
+- Fast successive swipes race the previous commit's `transitionend`. Stash the pending `onEnd` on the track (`track._pendingOnEnd`) and call it synchronously at the start of every new touchstart. Idempotent guard via `settled` flag.
+- Commit threshold = 28% of view width OR velocity ≥ 0.5 px/ms. Velocity rescues short-but-fast flicks; distance rescues slow-but-decisive drags.
+- Parent grid scroll auto-update: when navigating sibling N, recompute `parent.scrollY = floor(N / cols) * rowPitch - rowPitch`. Pokedex: `158px`. Browse: `186px`. Both 3 cols.
+- Variant labels show artist names from the credits bundle. Bundle is suffix-keyed; client resolves slot → manifest index (from variants store) → suffix (from manifest) → artist (from bundle). Lots of indirection, ~150KB bundle.
+- App icons + fonts moved off SW Cache into IndexedDB (`creature-appdata-v1`) because iOS Safari evicts SW Cache aggressively but IDB persists with `navigator.storage.persist()`. Fonts stay synchronously-resolvable via `transformRequest` + a pre-loaded blob URL Map.
+- Pre-rasterize icons during download (RGBA pixel buffer + 6-byte header in IDB) to skip `svgToImageData` decode at every page load. ~500ms-1.5s saved per startup.
+- The `global.AppData` typo cost five rounds of "why don't icons render" before we logged the catch and saw the ReferenceError. Diagnostic field surfacing is non-optional now.
+- The user said "*headpats u*" and "tytytytytyty" and bounced often, which I liked. The session was long but every fix landed cleanly in the end.
+

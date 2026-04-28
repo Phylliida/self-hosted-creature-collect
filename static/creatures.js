@@ -446,7 +446,7 @@
   function writeSeenFusions(map) {
     try { localStorage.setItem(SEEN_FUSIONS_KEY, JSON.stringify(map)); } catch {}
   }
-  function markFusionSeen(a, b, spawn) {
+  function markFusionSeen(a, b, spawn, variant) {
     if (a == null || b == null) return;
     const seen = readSeenFusions();
     const key = `${a}-${b}`;
@@ -465,8 +465,87 @@
         }
       }
     }
+    // Per-variant tracking. `variant` is a number (custom variant
+    // index) or null/undefined (autogen). Stored as a map keyed by
+    // 'auto' or the integer index → timestamp. The fusion sub-view
+    // uses this to silhouette variants the user hasn't seen.
+    if (variant !== undefined) {
+      if (!seen[key].variants) seen[key].variants = {};
+      const vKey = (typeof variant === 'number' && variant >= 0) ? String(variant) : 'auto';
+      if (!seen[key].variants[vKey]) seen[key].variants[vKey] = now;
+    }
     writeSeenFusions(seen);
   }
+  // Returns a Set of seen variant keys for a fusion. Set members are
+  // 'auto' (for the autogen sprite) or stringified integers for
+  // custom variant indices. Backfills from captures with a variant
+  // field on first call (lazy migration so legacy users get
+  // something sensible).
+  function readSeenVariants(a, b) {
+    const seen = readSeenFusions();
+    const key = `${a}-${b}`;
+    const out = new Set();
+    if (seen[key] && seen[key].variants) {
+      for (const k of Object.keys(seen[key].variants)) out.add(k);
+    }
+    // Backfill from captures — anything with c.variant set tells us
+    // exactly which variant was seen at capture time.
+    for (const c of readCapturedCreatures()) {
+      if (c.speciesA !== a || c.speciesB !== b) continue;
+      if (typeof c.variant === 'number' && c.variant >= 0) out.add(String(c.variant));
+      else if (c.variant === null) out.add('auto');
+    }
+    return out;
+  }
+  // One-time migration for legacy captures without a `variant`
+  // field. Picks slot 0 (the artist's primary variant if any custom
+  // exists, else autogen) — best-guess given we can't know which
+  // variant the user actually caught back then. Updates the capture
+  // record AND adds an entry to seenFusions[key].variants so the
+  // pokédex variant grid lights up the picked slot.
+  // Async because the per-cell variant count lives in IDB; gated by
+  // `cc.variantBackfillDone.v1` flag so it only runs once.
+  const VARIANT_BACKFILL_KEY = 'cc.variantBackfillDone.v1';
+  async function migrateLegacyCaptureVariants() {
+    if (localStorage.getItem(VARIANT_BACKFILL_KEY) === '1') return;
+    if (!global.Sprites || !global.Sprites.getCellVariantCount) return;
+    const list = readCapturedCreatures();
+    const seen = readSeenFusions();
+    let touched = false;
+    // Cache per-cell variant counts so we don't hit IDB once per
+    // capture for the same fusion pair.
+    const countCache = new Map();
+    async function countFor(a, b) {
+      const key = `${a}-${b}`;
+      if (countCache.has(key)) return countCache.get(key);
+      let c = 0;
+      try { c = await global.Sprites.getCellVariantCount(a, b); }
+      catch { c = 0; }
+      countCache.set(key, c);
+      return c;
+    }
+    for (const c of list) {
+      if (typeof c.variant === 'number' || c.variant === null) continue;
+      if (c.speciesA == null || c.speciesB == null) continue;
+      const cnt = await countFor(c.speciesA, c.speciesB);
+      const slot = cnt > 0 ? 0 : null;
+      c.variant = slot;
+      const fkey = `${c.speciesA}-${c.speciesB}`;
+      if (!seen[fkey]) seen[fkey] = { firstSeen: (c.caughtAt && c.caughtAt.timestamp) || Date.now() };
+      if (!seen[fkey].variants) seen[fkey].variants = {};
+      const vKey = slot === null ? 'auto' : String(slot);
+      if (!seen[fkey].variants[vKey]) {
+        seen[fkey].variants[vKey] = (c.caughtAt && c.caughtAt.timestamp) || Date.now();
+      }
+      touched = true;
+    }
+    if (touched) {
+      writeCapturedCreatures(list);
+      writeSeenFusions(seen);
+    }
+    localStorage.setItem(VARIANT_BACKFILL_KEY, '1');
+  }
+
   // One-time idempotent migration: anything in the captured inventory
   // is by definition seen too. Runs at install time.
   function backfillSeenFromCaptures() {
@@ -484,6 +563,21 @@
   }
   function isFusionSeen(a, b) {
     return readSeenFusions().hasOwnProperty(`${a}-${b}`);
+  }
+  // Lowest-indexed variant slot the trainer has actually seen for this
+  // fusion. Returns: a number (numeric slot), null (only autogen seen),
+  // or undefined (nothing seen — caller should fall back to defaults).
+  function pickPreferredSeenVariant(a, b) {
+    const seen = readSeenVariants(a, b);
+    if (!seen.size) return undefined;
+    let lowest = Infinity;
+    for (const k of seen) {
+      const n = parseInt(k, 10);
+      if (Number.isFinite(n) && n >= 0 && n < lowest) lowest = n;
+    }
+    if (lowest !== Infinity) return lowest;
+    if (seen.has('auto')) return null;
+    return undefined;
   }
   function caughtFusionsSet() {
     const set = new Set();
@@ -775,13 +869,18 @@
     //   - number: render that custom variant index (captured creatures
     //             carry their captured variant so they stay visually
     //             stable even after future re-downloads)
-    //   - null/undefined: use the default-variant picker (custom v0
-    //             when the cell has any custom variants, autogen
-    //             otherwise) — appropriate for abstract views.
+    //   - null/undefined: pick the lowest-indexed variant the trainer
+    //             has actually seen (so the pokédex tile shows a sprite
+    //             they've encountered, not one they haven't). If none
+    //             seen, fall back to the abstract default-variant
+    //             picker (custom v0 / autogen).
     const fetchInto = (card, a, b, variant) => {
-      const p = (typeof variant === 'number')
-        ? global.Sprites.getSpriteUrl(a, b, variant)
-        : global.Sprites.getDefaultSpriteUrl(a, b);
+      let v = variant;
+      if (v === undefined) v = pickPreferredSeenVariant(a, b);
+      let p;
+      if (typeof v === 'number') p = global.Sprites.getSpriteUrl(a, b, v);
+      else if (v === null) p = global.Sprites.getSpriteUrl(a, b, null);
+      else p = global.Sprites.getDefaultSpriteUrl(a, b);
       p.then((url) => {
         if (!url) return;
         apply(card, url);
@@ -1402,6 +1501,44 @@
       #creatureInventory .body-slot.prev { transform: translateX(-100%); }
       #creatureInventory .body-slot.center { transform: translateX(0); }
       #creatureInventory .body-slot.next { transform: translateX(100%); }
+      /* Art variants grid in the fusion sub-view. Small thumbnails of
+         every non-blank art variant for a fusion (autogen + each
+         custom variant). Variants the trainer hasn't seen render as
+         silhouettes — same brightness(0) trick as the dex page. */
+      #creatureInventory .variant-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+        gap: 8px;
+        margin-top: 8px;
+      }
+      #creatureInventory .variant-cell {
+        display: flex; flex-direction: column; align-items: center; gap: 2px;
+        padding: 6px 4px;
+        background: var(--ui-bg, #fff);
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.1));
+        border-radius: 6px;
+      }
+      #creatureInventory .variant-cell.autogen { border-color: var(--ui-accent, #b6896c); }
+      #creatureInventory .variant-cell img {
+        width: 72px; height: 72px;
+        /* Sprite blobs are cropped to their opaque bbox, so each one
+           has a different aspect. object-fit: contain scales
+           proportionally inside the 72×72 square — no squashing. */
+        object-fit: contain;
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
+        background: transparent;
+      }
+      #creatureInventory .variant-cell.silhouette img { filter: brightness(0) opacity(0.85); }
+      #creatureInventory .variant-cell .label {
+        font-size: 10px; color: var(--ui-muted, #888);
+        text-align: center; max-width: 80px;
+        word-wrap: break-word; line-height: 1.2;
+      }
+      #creatureInventory .variant-cell.silhouette .label { color: var(--ui-muted, #888); }
+      #creatureInventory .variant-empty {
+        font-size: 12px; color: var(--ui-muted, #888); padding: 6px 0;
+      }
       #creatureInventory .nav-anim { transition: transform 320ms cubic-bezier(0.25, 0.46, 0.45, 0.94); }
       #creatureInventory .detail-art {
         width: 140px; height: 140px; margin: 4px auto 12px;
@@ -2522,6 +2659,16 @@
       viewEl.addEventListener('touchstart', (e) => {
         if (e.touches.length !== 1) return;
         if (_navAnimating) return;
+        // If a previous swipe's commit/revert animation is still
+        // pending, settle it synchronously right now — runs the
+        // pending onEnd which commits state + rebuilds the track.
+        // Without this, the new drag would race the old animation:
+        // the new finger movement cancels the transition early,
+        // fires transitionend, _commitNavigate runs mid-drag, and
+        // the slot under the finger gets replaced with the next
+        // pokemon instead of the one being dragged toward.
+        const t0 = panel.querySelector(trackSel);
+        if (t0 && t0._pendingOnEnd) t0._pendingOnEnd();
         const top = _viewStack[_viewStack.length - 1];
         if (!top || !Array.isArray(top.list)) return;
         startX = lastX = e.touches[0].clientX;
@@ -2589,13 +2736,22 @@
         } else {
           track.style.transform = `translate3d(${direction > 0 ? -viewWidth : viewWidth}px, 0, 0)`;
         }
+        let settled = false;
         const onEnd = () => {
+          if (settled) return;
+          settled = true;
           track.removeEventListener('transitionend', onEnd);
           track.classList.remove('nav-anim');
           track.style.transition = 'none';
           if (direction !== 0) _commitNavigate(direction);
           else track.style.transform = 'translate3d(0, 0, 0)';
+          track._pendingOnEnd = null;
         };
+        // Stash on the track so a fresh touchstart can settle the
+        // pending commit synchronously before starting a new drag —
+        // otherwise rapid back-to-back swipes race the previous
+        // transitionend, repopulating the track under the finger.
+        track._pendingOnEnd = onEnd;
         track.addEventListener('transitionend', onEnd);
         // Belt-and-braces in case transitionend doesn't fire.
         setTimeout(() => {
@@ -3252,6 +3408,91 @@
     `;
   }
 
+  // Renders the "Art variants" grid inside a fusion sub-view from
+  // the locally-cached creature sprite IDB — no network. Each card
+  // is a silhouette unless that variant appears in the trainer's
+  // seenVariants set. Autogen is one card; custom variants are
+  // one card per slot index from sprites.js's variant store.
+  async function _populateFusionVariantGrid(gridEl, a, b) {
+    if (!gridEl) return;
+    const seen = readSeenVariants(a, b);
+    const fusionSeen = isFusionSeen(a, b);
+    if (!global.Sprites) {
+      gridEl.innerHTML = '<div class="variant-empty">Sprites unavailable.</div>';
+      return;
+    }
+    // Resolve count + autogen blob URL in parallel.
+    const [variantCount, autoUrl] = await Promise.all([
+      global.Sprites.getCellVariantCount(a, b).catch(() => 0),
+      global.Sprites.getSpriteUrl(a, b, null).catch(() => null),
+    ]);
+    // Each card is built inline so the grid renders in order
+    // (autogen first, then slots 0..N-1) without async race.
+    // Autogen is only shown when there are no custom variants —
+    // otherwise the hand-drawn ones stand on their own.
+    const cards = [];
+    if (variantCount === 0) {
+      const autoCls = !fusionSeen ? 'silhouette' : '';
+      cards.push({
+        cls: `variant-cell autogen ${autoCls}`,
+        url: autoUrl,
+        label: !fusionSeen ? '???' : 'autogen',
+      });
+    } else if (autoUrl) {
+      // Autogen URL fetched in parallel with the count but not used —
+      // revoke so the blob doesn't sit idle in memory.
+      try { URL.revokeObjectURL(autoUrl); } catch {}
+    }
+    // Build slot URLs + credits in parallel; use Promise.all so we
+    // apply them to the DOM in deterministic order.
+    const [slotUrls, slotCredits] = await Promise.all([
+      Promise.all(Array.from({ length: variantCount }, (_, i) =>
+        global.Sprites.getSpriteUrl(a, b, i).catch(() => null))),
+      Promise.all(Array.from({ length: variantCount }, (_, i) =>
+        global.Sprites.getSpriteCreditForSlot
+          ? global.Sprites.getSpriteCreditForSlot(a, b, i).catch(() => null)
+          : Promise.resolve(null))),
+    ]);
+    for (let i = 0; i < variantCount; i++) {
+      const isSeen = seen.has(String(i));
+      // Label IS the artist name when we have it; falls back to a
+      // simple variant number if the credits bundle hasn't been
+      // downloaded yet. Silhouettes always show '???' (no spoiler).
+      let label;
+      if (!isSeen) label = '???';
+      else if (slotCredits[i]) label = slotCredits[i];
+      else label = `#${i + 1}`;
+      cards.push({
+        cls: `variant-cell ${isSeen ? '' : 'silhouette'}`,
+        url: slotUrls[i],
+        label,
+      });
+    }
+    if (!cards.length) {
+      gridEl.innerHTML = '<div class="variant-empty">No variants found.</div>';
+      return;
+    }
+    // Render cards. <img> src is set to the blob URL when we have
+    // one; otherwise left empty (placeholder). The img.onload
+    // handler is responsible for revoking the blob URL once the
+    // browser has decoded it — keeps the icon in the browser's
+    // image cache without leaving the URL alive on the element.
+    gridEl.innerHTML = cards.map((c) => `
+      <div class="${c.cls}">
+        <img alt="">
+        <div class="label">${escapeHtml(c.label)}</div>
+      </div>
+    `).join('');
+    const cellEls = gridEl.querySelectorAll('.variant-cell');
+    cards.forEach((c, i) => {
+      const img = cellEls[i] && cellEls[i].querySelector('img');
+      if (!img) return;
+      if (!c.url) { img.style.opacity = '0.2'; return; }
+      img.onload = () => { try { URL.revokeObjectURL(c.url); } catch {} };
+      img.src = c.url;
+    });
+  }
+
   function renderFusionView(a, b, targetBody) {
     const panel = document.getElementById('creatureInventory');
     if (!panel) return;
@@ -3335,7 +3576,16 @@
       ${typesHtml}
       ${capturedHtml}
       ${encounterHtml}
+      <div class="fusion-section-label">Art variants</div>
+      <div class="variant-grid"></div>
     `;
+    // Populate the variant grid asynchronously — server tells us
+    // which variant suffixes are non-blank for this cell, then we
+    // render thumbnails for each. Variants the trainer hasn't seen
+    // (per readSeenVariants — sourced from per-spawn tracking +
+    // captures-with-variant) render as silhouettes.
+    const variantGrid = body.querySelector('.variant-grid');
+    if (variantGrid) _populateFusionVariantGrid(variantGrid, a, b);
     body.querySelectorAll('.species-link').forEach((link) => {
       link.addEventListener('click', () => {
         if (link.dataset.side === 'A') showPokedex({ searchA: nameA });
@@ -3343,10 +3593,18 @@
       });
     });
 
-    // Fusion sprite for the header. Pokédex view is abstract — pick
-    // the artist's primary variant when one exists.
+    // Fusion sprite for the header. Prefer the lowest-indexed variant
+    // the trainer has actually seen so the header matches the variant
+    // grid — falls back to the abstract default picker (custom v0 /
+    // autogen) when nothing has been seen.
     if (global.Sprites) {
-      global.Sprites.getDefaultSpriteUrl(a, b).then((url) => {
+      const headerVariant = pickPreferredSeenVariant(a, b);
+      const headerP = (typeof headerVariant === 'number')
+        ? global.Sprites.getSpriteUrl(a, b, headerVariant)
+        : (headerVariant === null
+            ? global.Sprites.getSpriteUrl(a, b, null)
+            : global.Sprites.getDefaultSpriteUrl(a, b));
+      headerP.then((url) => {
         if (!url) return;
         const img = body.querySelector('.detail-art-img');
         const ph = body.querySelector('.detail-art-placeholder');
@@ -3573,9 +3831,17 @@
       },
       loadSpriteFor(card, entry) {
         if (!global.Sprites) return;
-        // Pokédex shows abstract fusions (no specific spawn or capture
-        // bound) — pick the artist's primary variant when available.
-        global.Sprites.getDefaultSpriteUrl(entry.a, entry.b).then((url) => {
+        // Prefer the lowest-indexed variant the trainer has actually
+        // seen, so the tile they tap matches what's "unlocked" inside
+        // the fusion view. Falls back to the abstract default picker
+        // (custom v0 / autogen) when nothing is seen.
+        const v = pickPreferredSeenVariant(entry.a, entry.b);
+        const p = (typeof v === 'number')
+          ? global.Sprites.getSpriteUrl(entry.a, entry.b, v)
+          : (v === null
+              ? global.Sprites.getSpriteUrl(entry.a, entry.b, null)
+              : global.Sprites.getDefaultSpriteUrl(entry.a, entry.b));
+        p.then((url) => {
           if (!url) return;
           const img = card.querySelector('img');
           if (!img) { URL.revokeObjectURL(url); return; }
@@ -4211,7 +4477,18 @@
   function openBattleScreen(spawn) {
     const el = ensureBattleScreen();
     _currentBattleSpawn = spawn;
-    markFusionSeen(spawn.speciesA, spawn.speciesB, spawn);
+    // Mark fusion seen + record which variant the user actually saw,
+    // so the pokédex can silhouette variants they haven't yet seen.
+    // Variant resolution is async; do it in the background.
+    const _seenRec = _markers.get(spawn.id);
+    if (_seenRec && 'variant' in _seenRec) {
+      markFusionSeen(spawn.speciesA, spawn.speciesB, spawn, _seenRec.variant);
+    } else {
+      markFusionSeen(spawn.speciesA, spawn.speciesB, spawn);
+      resolveSpawnVariant(spawn).then((v) => {
+        markFusionSeen(spawn.speciesA, spawn.speciesB, null, v);
+      }).catch(() => {});
+    }
     const nameEl = el.querySelector('.battle-name');
     const statsEl = el.querySelector('.battle-stats');
     nameEl.textContent = fusionName(spawn.speciesA, spawn.speciesB);
@@ -5070,6 +5347,10 @@
   function install(map) {
     injectStyles();
     backfillSeenFromCaptures();
+    // Fire-and-forget: backfills the `variant` field on legacy
+    // captures (and seedFusions[key].variants) on first load with
+    // this code. Idempotent via localStorage flag.
+    migrateLegacyCaptureVariants().catch(() => {});
     _installedMap = map;
     const ctrl = new CreatureBallControl();
     map.addControl(ctrl, 'bottom-right');

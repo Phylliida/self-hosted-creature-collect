@@ -302,6 +302,35 @@ def sprite_credit(a, b):
     return jsonify(creds.get((a, b), {}))
 
 
+_CREDITS_BUNDLE_CACHE = None
+
+
+@app.route("/sprite-credits-bundle")
+def sprite_credits_bundle():
+    """Bundle of all sprite credits for fusions where both species
+    are in [1, 150]. Suffix-keyed so the client can resolve a slot
+    index → suffix via its own variants/manifest data.
+    Output shape: {"a-b": {"": "artist", "a": "artist", ...}, ...}.
+    Roughly ~580 KB raw, ~150 KB gzipped.
+    """
+    global _CREDITS_BUNDLE_CACHE
+    if _CREDITS_BUNDLE_CACHE is None:
+        creds = _load_sprite_credits()
+        out = {}
+        for (a, b), variants in creds.items():
+            if 1 <= a <= 150 and 1 <= b <= 150:
+                out[f"{a}-{b}"] = variants
+        _CREDITS_BUNDLE_CACHE = out
+    body = gzip.compress(
+        json.dumps(_CREDITS_BUNDLE_CACHE, separators=(",", ":"), ensure_ascii=False).encode("utf-8"),
+        compresslevel=6,
+    )
+    resp = Response(body, mimetype="application/json")
+    resp.headers["Content-Encoding"] = "gzip"
+    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return resp
+
+
 @app.route("/save-names")
 def save_names():
     """Return the unique trainer names with at least one save on disk.
