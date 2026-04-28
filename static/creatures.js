@@ -1041,6 +1041,136 @@
     })[ch]);
   }
 
+  // Custom species-name autocomplete — same pattern as /dex (datalist
+  // is unreliable on iOS; this also lets us substring-highlight). Two-
+  // pass match: prefix hits first, then "contains". Picks fire `input`
+  // on the underlying <input> so the existing search→render listener
+  // handles the actual filtering.
+  // `getAllowed` (optional): function returning a Set of species ids
+  // that the autocomplete should be limited to. Re-invoked on every
+  // keystroke so newly-seen / captured species appear without remount.
+  // null/omit → suggest from the full species list.
+  const _SPECIES_AC_MAX = 30;
+  function _seenSpeciesIds(slot) {
+    const seen = readSeenFusions();
+    const out = new Set();
+    for (const key of Object.keys(seen)) {
+      const dash = key.indexOf('-');
+      if (dash < 0) continue;
+      const a = +key.slice(0, dash);
+      const b = +key.slice(dash + 1);
+      if (slot === 'a') { out.add(a); }
+      else if (slot === 'b') { out.add(b); }
+      else { out.add(a); out.add(b); }
+    }
+    return out;
+  }
+  function _capturedSpeciesIds(slot) {
+    const out = new Set();
+    for (const c of readCapturedCreatures()) {
+      if (typeof c.speciesA !== 'number' || typeof c.speciesB !== 'number') continue;
+      if (slot === 'a') { out.add(c.speciesA); }
+      else if (slot === 'b') { out.add(c.speciesB); }
+      else { out.add(c.speciesA); out.add(c.speciesB); }
+    }
+    return out;
+  }
+  function attachSpeciesAutocomplete(input, list, getAllowed) {
+    if (!input || !list) return;
+    let activeIdx = -1;
+    let current = [];   // array of { id, name }
+
+    function buildSuggestions(q) {
+      if (!q || !global.Species || !global.Species.allSpecies) return [];
+      const ql = q.trim().toLowerCase();
+      if (!ql) return [];
+      const all = global.Species.allSpecies();
+      const allowed = (typeof getAllowed === 'function') ? getAllowed() : null;
+      const prefix = [];
+      const contains = [];
+      for (let i = 0; i < all.length; i++) {
+        const s = all[i];
+        if (allowed && !allowed.has(s.id)) continue;
+        const lower = s.name.toLowerCase();
+        if (lower.startsWith(ql)) prefix.push(s);
+        else if (lower.includes(ql)) contains.push(s);
+        if (prefix.length + contains.length >= _SPECIES_AC_MAX * 2) break;
+      }
+      return prefix.concat(contains).slice(0, _SPECIES_AC_MAX);
+    }
+    function highlight(name, q) {
+      const ql = (q || '').trim();
+      if (!ql) return escapeHtml(name);
+      const lower = name.toLowerCase();
+      const i = lower.indexOf(ql.toLowerCase());
+      if (i < 0) return escapeHtml(name);
+      return escapeHtml(name.slice(0, i))
+        + `<mark>${escapeHtml(name.slice(i, i + ql.length))}</mark>`
+        + escapeHtml(name.slice(i + ql.length));
+    }
+    function paint() {
+      current = buildSuggestions(input.value);
+      activeIdx = -1;
+      if (!current.length) {
+        list.classList.remove('show');
+        list.innerHTML = '';
+        return;
+      }
+      list.innerHTML = current.map((s) =>
+        `<li class="ac-item" role="option" data-id="${s.id}" data-name="${escapeHtml(s.name)}">`
+        + `<span class="nm">${highlight(s.name, input.value)}</span>`
+        + `<span class="id">#${s.id}</span>`
+        + `</li>`
+      ).join('');
+      list.classList.add('show');
+    }
+    function pick(name) {
+      input.value = name;
+      list.classList.remove('show');
+      list.innerHTML = '';
+      // Fire `input` so the existing renderPokedex listener re-runs.
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    function setActive(idx) {
+      const items = list.querySelectorAll('.ac-item');
+      items.forEach((el, i) => el.classList.toggle('active', i === idx));
+      const el = items[idx];
+      if (el) el.scrollIntoView({ block: 'nearest' });
+      activeIdx = idx;
+    }
+    input.addEventListener('input', paint);
+    input.addEventListener('focus', paint);
+    // Delay hide so a tap on a suggestion fires before blur.
+    input.addEventListener('blur', () => setTimeout(() => list.classList.remove('show'), 120));
+    input.addEventListener('keydown', (e) => {
+      if (!list.classList.contains('show') || !current.length) {
+        if (e.key === 'ArrowDown') paint();
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setActive(Math.min(current.length - 1, activeIdx + 1));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setActive(Math.max(0, activeIdx - 1));
+      } else if (e.key === 'Enter') {
+        if (activeIdx >= 0) {
+          e.preventDefault();
+          pick(current[activeIdx].name);
+        }
+      } else if (e.key === 'Escape') {
+        list.classList.remove('show');
+      }
+    });
+    // mousedown beats blur, so the pick fires before the list hides.
+    list.addEventListener('mousedown', (e) => {
+      const item = e.target.closest('.ac-item');
+      if (!item) return;
+      e.preventDefault();
+      pick(item.dataset.name);
+    });
+  }
+
   // Nicknames are keyed by creature id and stored as a JSON map so a
   // single entry can be cleared ("reset to species name") by deleting the
   // key without disturbing the others.
@@ -1314,6 +1444,56 @@
       }
       #creatureInventory .pokedex-search-row input {
         flex: 1; min-width: 0;
+      }
+      /* Custom autocomplete popup — same pattern as /dex (datalist
+         behaves inconsistently on iOS, and we want substring
+         highlighting). The .ac-field wrapper provides the relative
+         anchor; the .ac-list is absolutely positioned underneath. */
+      #creatureInventory .ac-field {
+        position: relative;
+        flex: 1; min-width: 0;
+        display: flex;
+      }
+      #creatureInventory .ac-field input {
+        width: 100%;
+      }
+      #creatureInventory .ac-list {
+        position: absolute;
+        top: 100%; left: 0; right: 0;
+        max-height: 220px; overflow-y: auto;
+        margin: 2px 0 0; padding: 0;
+        background: var(--ui-bg, #fff);
+        color: var(--ui-text, #111);
+        border: 1px solid var(--ui-border, var(--ui-hairline, rgba(0,0,0,0.15)));
+        border-radius: var(--ui-radius, 8px);
+        box-shadow: var(--ui-shadow, 0 2px 8px rgba(0,0,0,0.2));
+        list-style: none;
+        z-index: 6;
+        display: none;
+      }
+      #creatureInventory .ac-list.show { display: block; }
+      #creatureInventory .ac-item {
+        padding: 6px 10px; font-size: 13px; cursor: pointer;
+        display: flex; justify-content: space-between; gap: 12px;
+        color: var(--ui-text, #111);
+      }
+      #creatureInventory .ac-item .id {
+        color: var(--ui-muted, #888);
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 12px;
+      }
+      #creatureInventory .ac-item:hover,
+      #creatureInventory .ac-item.active {
+        background: var(--ui-hover, rgba(0,0,0,0.06));
+      }
+      /* <mark> tints the matched substring with a translucent accent
+         so it reads on every theme (medieval / terminal / blueprint /
+         win95) rather than the fixed yellow /dex uses. */
+      #creatureInventory .ac-item mark {
+        background: color-mix(in srgb, var(--ui-accent, #3b7fdf) 28%, transparent);
+        color: inherit;
+        padding: 0;
+        border-radius: 2px;
       }
       #creatureInventory .pokedex-swap-btn {
         flex: 0 0 auto;
@@ -2507,9 +2687,23 @@
           <div class="search-row">
             <input id="creatureSearch" type="search" placeholder="Search by name" autocomplete="off">
           </div>
+          <div class="search-row">
+            <div class="ac-field">
+              <input id="creatureSearchAny" type="search" placeholder="Species" autocomplete="off">
+              <ul class="ac-list" id="creatureAcAny" role="listbox"></ul>
+            </div>
+          </div>
           <div class="search-row pokedex-search-row">
-            <input id="creatureSearchA" type="search" placeholder="Search first species" autocomplete="off">
-            <input id="creatureSearchB" type="search" placeholder="Search second species" autocomplete="off">
+            <div class="ac-field">
+              <input id="creatureSearchA" type="search" placeholder="First Species" autocomplete="off">
+              <ul class="ac-list" id="creatureAcA" role="listbox"></ul>
+            </div>
+            <button id="creatureSwap" class="pokedex-swap-btn" type="button"
+                    aria-label="swap first and second species" title="swap species">⇄</button>
+            <div class="ac-field">
+              <input id="creatureSearchB" type="search" placeholder="Second Species" autocomplete="off">
+              <ul class="ac-list" id="creatureAcB" role="listbox"></ul>
+            </div>
           </div>
           <div class="type-filter-row">
             <label class="type-pair"><span>Either:</span>${typeFilterSelectHtml('creatureFilterType')}</label>
@@ -2551,13 +2745,22 @@
             <div class="pokedex-stats"></div>
           </div>
           <div class="search-row">
-            <input id="pokedexSearchAny" type="search" placeholder="Search species" autocomplete="off">
+            <div class="ac-field">
+              <input id="pokedexSearchAny" type="search" placeholder="Species" autocomplete="off">
+              <ul class="ac-list" id="pokedexAcAny" role="listbox"></ul>
+            </div>
           </div>
           <div class="search-row pokedex-search-row">
-            <input id="pokedexSearchA" type="search" placeholder="Search first species" autocomplete="off">
+            <div class="ac-field">
+              <input id="pokedexSearchA" type="search" placeholder="First Species" autocomplete="off">
+              <ul class="ac-list" id="pokedexAcA" role="listbox"></ul>
+            </div>
             <button id="pokedexSwap" class="pokedex-swap-btn" type="button"
                     aria-label="swap first and second species" title="swap species">⇄</button>
-            <input id="pokedexSearchB" type="search" placeholder="Search second species" autocomplete="off">
+            <div class="ac-field">
+              <input id="pokedexSearchB" type="search" placeholder="Second Species" autocomplete="off">
+              <ul class="ac-list" id="pokedexAcB" role="listbox"></ul>
+            </div>
           </div>
           <div class="type-filter-row">
             <label class="type-pair"><span>Either:</span>${typeFilterSelectHtml('pokedexFilterType')}</label>
@@ -2631,10 +2834,30 @@
     // Inventory's per-species name searches and type filters (mirror
     // the Pokédex set). Type filters persist via localStorage; the
     // species-name searches are session-only (cleared on every open()).
+    const invSearchAny = panel.querySelector('#creatureSearchAny');
     const invSearchA = panel.querySelector('#creatureSearchA');
     const invSearchB = panel.querySelector('#creatureSearchB');
+    if (invSearchAny) invSearchAny.addEventListener('input', () => renderList(listEl));
     if (invSearchA) invSearchA.addEventListener('input', () => renderList(listEl));
     if (invSearchB) invSearchB.addEventListener('input', () => renderList(listEl));
+    if (invSearchAny) attachSpeciesAutocomplete(invSearchAny,
+      panel.querySelector('#creatureAcAny'),
+      () => _capturedSpeciesIds('any'));
+    if (invSearchA) attachSpeciesAutocomplete(invSearchA,
+      panel.querySelector('#creatureAcA'),
+      () => _capturedSpeciesIds('a'));
+    if (invSearchB) attachSpeciesAutocomplete(invSearchB,
+      panel.querySelector('#creatureAcB'),
+      () => _capturedSpeciesIds('b'));
+    const invSwap = panel.querySelector('#creatureSwap');
+    if (invSwap && invSearchA && invSearchB) {
+      invSwap.addEventListener('click', () => {
+        const a = invSearchA.value;
+        invSearchA.value = invSearchB.value;
+        invSearchB.value = a;
+        renderList(listEl);
+      });
+    }
     const invFilterType = panel.querySelector('#creatureFilterType');
     const invFilterTypeA = panel.querySelector('#creatureFilterTypeA');
     const invFilterTypeB = panel.querySelector('#creatureFilterTypeB');
@@ -2927,6 +3150,12 @@
     pokedexSearchAny.addEventListener('input', renderPokedex);
     pokedexSearchA.addEventListener('input', renderPokedex);
     pokedexSearchB.addEventListener('input', renderPokedex);
+    attachSpeciesAutocomplete(pokedexSearchAny, panel.querySelector('#pokedexAcAny'),
+      () => _seenSpeciesIds('any'));
+    attachSpeciesAutocomplete(pokedexSearchA, panel.querySelector('#pokedexAcA'),
+      () => _seenSpeciesIds('a'));
+    attachSpeciesAutocomplete(pokedexSearchB, panel.querySelector('#pokedexAcB'),
+      () => _seenSpeciesIds('b'));
     const pokedexSwap = panel.querySelector('#pokedexSwap');
     if (pokedexSwap) {
       pokedexSwap.addEventListener('click', () => {
@@ -3752,6 +3981,7 @@
   ];
   const INV_FILTER_SELECTORS = [
     '#creatureSearch',
+    '#creatureSearchAny',
     '#creatureSearchA',
     '#creatureSearchB',
     '#creatureFilterType',
@@ -4332,14 +4562,19 @@
       });
     }
     // Per-species name searches.
+    const sAny = (panel && panel.querySelector('#creatureSearchAny') || {}).value || '';
     const sa = (panel && panel.querySelector('#creatureSearchA') || {}).value || '';
     const sb = (panel && panel.querySelector('#creatureSearchB') || {}).value || '';
+    const qAny = sAny.trim().toLowerCase();
     const qA = sa.trim().toLowerCase();
     const qB = sb.trim().toLowerCase();
-    if (qA || qB) {
+    if (qAny || qA || qB) {
       const nameOfLower = (idx) => global.Species
         ? global.Species.nameFor(idx).toLowerCase()
         : `#${idx}`;
+      if (qAny) items = items.filter((c) =>
+        (c.speciesA != null && nameOfLower(c.speciesA).includes(qAny))
+        || (c.speciesB != null && nameOfLower(c.speciesB).includes(qAny)));
       if (qA) items = items.filter((c) => c.speciesA != null && nameOfLower(c.speciesA).includes(qA));
       if (qB) items = items.filter((c) => c.speciesB != null && nameOfLower(c.speciesB).includes(qB));
     }
@@ -4430,6 +4665,8 @@
     const panel = ensurePanel();
     const search = panel.querySelector('#creatureSearch');
     if (search) search.value = '';
+    const searchAny = panel.querySelector('#creatureSearchAny');
+    if (searchAny) searchAny.value = '';
     const searchA = panel.querySelector('#creatureSearchA');
     if (searchA) searchA.value = '';
     const searchB = panel.querySelector('#creatureSearchB');

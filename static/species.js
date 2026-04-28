@@ -198,9 +198,23 @@
     return out;
   }
 
+  // Enumerate every loaded species as { id, name } in dex order.
+  // Returns [] until the names list is populated. Used for autocomplete
+  // datalists in pokédex search.
+  function allSpecies() {
+    if (!_names || !_names.length) return [];
+    const out = [];
+    for (let i = 0; i < _names.length; i++) {
+      if (!_names[i]) continue;
+      out.push({ id: i + 1, name: titleCase(_names[i]) });
+    }
+    return out;
+  }
+
   global.Species = {
     nameFor, typesFor, fusionTypesFor,
     evolutionsFor, fusionEvolutionsFor, familyOf,
+    allSpecies,
     ensureLoaded,
   };
   // Intentionally no auto-fetch. ensureLoaded() is invoked from the
