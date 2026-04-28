@@ -1095,6 +1095,12 @@
         width: calc(100% - 40px); max-width: 360px;
         padding: 18px 20px 14px;
         max-height: 85vh; overflow-y: auto;
+        /* Lock the horizontal axis — iOS will otherwise rubber-band
+           this container sideways when a horizontal gesture starts
+           inside it (especially near the edges), shifting the entire
+           sheet a few px during our drag. */
+        overflow-x: hidden;
+        overscroll-behavior-x: none;
         background: var(--ui-bg, #fff);
         color: var(--ui-text, #111);
         border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
@@ -1333,6 +1339,10 @@
         flex-direction: column;
         flex: 1 1 auto;
         min-height: 60vh;
+        /* Claim horizontal pan so iOS doesn't rubber-band the
+           parent .sheet during the first few pixels of a swipe
+           (before our touchmove handler decides to claim it). */
+        touch-action: pan-y;
       }
       #creatureInventory .detail-view.show,
       #creatureInventory .fusion-view.show {
@@ -1373,8 +1383,14 @@
         flex: 1 1 auto;
         min-height: 0;
         overflow: visible;
+        /* Promote the track to a single composited layer that
+           contains all its slots — keeps neighbors painted
+           continuously while we animate translateX, so they don't
+           drop out mid-snap-back. The runtime transform applied via
+           JS uses translate3d (see _setTrackTransform) which
+           preserves the layer. */
         will-change: transform;
-        touch-action: pan-y;  /* allow vertical scroll, claim horizontal */
+        touch-action: pan-y;
       }
       #creatureInventory .body-slot {
         position: absolute;
@@ -2541,7 +2557,7 @@
           applied = dx * 0.3;
         }
         track.style.transition = 'none';
-        track.style.transform = `translateX(${applied}px)`;
+        track.style.transform = `translate3d(${applied}px, 0, 0)`;
         lastX = t.clientX;
         lastT = performance.now();
       }, { passive: false });
@@ -2569,16 +2585,16 @@
         track.classList.add('nav-anim');
         track.style.transition = '';
         if (direction === 0) {
-          track.style.transform = 'translateX(0)';
+          track.style.transform = 'translate3d(0, 0, 0)';
         } else {
-          track.style.transform = `translateX(${direction > 0 ? -viewWidth : viewWidth}px)`;
+          track.style.transform = `translate3d(${direction > 0 ? -viewWidth : viewWidth}px, 0, 0)`;
         }
         const onEnd = () => {
           track.removeEventListener('transitionend', onEnd);
           track.classList.remove('nav-anim');
           track.style.transition = 'none';
           if (direction !== 0) _commitNavigate(direction);
-          else track.style.transform = 'translateX(0)';
+          else track.style.transform = 'translate3d(0, 0, 0)';
         };
         track.addEventListener('transitionend', onEnd);
         // Belt-and-braces in case transitionend doesn't fire.
@@ -2593,7 +2609,7 @@
         if (track) {
           track.classList.add('nav-anim');
           track.style.transition = '';
-          track.style.transform = 'translateX(0)';
+          track.style.transform = 'translate3d(0, 0, 0)';
           setTimeout(() => {
             track.classList.remove('nav-anim');
             track.style.transition = 'none';
@@ -2937,7 +2953,7 @@
     if (!track) return;
     track.innerHTML = '';
     track.style.transition = 'none';
-    track.style.transform = 'translateX(0)';
+    track.style.transform = 'translate3d(0, 0, 0)';
     const list = Array.isArray(top.list) ? top.list : null;
     const idx = typeof top.idx === 'number' ? top.idx : null;
     // Center slot — always present. Built from the current top state
@@ -3014,7 +3030,7 @@
     const viewWidth = view.offsetWidth || 320;
     track.style.transition = '';
     track.classList.add('nav-anim');
-    track.style.transform = `translateX(${delta > 0 ? -viewWidth : viewWidth}px)`;
+    track.style.transform = `translate3d(${delta > 0 ? -viewWidth : viewWidth}px, 0, 0)`;
     const onEnd = () => {
       track.removeEventListener('transitionend', onEnd);
       track.classList.remove('nav-anim');
