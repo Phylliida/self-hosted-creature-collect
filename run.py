@@ -93,7 +93,139 @@ ROOT = pathlib.Path(__file__).parent
 DATA_DIR = ROOT / "data"
 SCHEDULE_PATH = DATA_DIR / "schedule.sqlite"
 
-app = Flask(__name__, static_folder="static")
+# static_folder=None: we register our own /static/<path> handler so we
+# can stamp SCRIPT_VERSION constants in served JS / HTML with the
+# file's mtime. Stops the user having to bump version strings by hand.
+app = Flask(__name__, static_folder=None)
+
+
+# Files tracked by the version-stamping system. JS files have a
+# `SCRIPT_VERSION = '...'` constant the server replaces on serve;
+# HTML files get a tiny registration <script> injected after <head>.
+_TRACKED_JS = {
+    "creatures.js", "sprites.js", "appdata.js",
+    "species.js", "spawns.js", "trip-planner.js",
+}
+_TRACKED_HTML = {"index.html", "dex.html"}
+# Authoritative list (ordered) of every file the version system tracks.
+# Used both to build the HTML-injected `_serverScriptVersions` map and
+# by the /script-versions fallback endpoint.
+_SCRIPT_VERSION_FILES = [
+    "creatures.js", "sprites.js", "appdata.js",
+    "species.js", "spawns.js", "trip-planner.js", "sw.js",
+    "index.html", "dex.html",
+]
+# Capture the declaration keyword (group 1) so we can preserve it
+# during substitution — strict-mode JS rejects bare assignment to an
+# undeclared identifier, so dropping the `const` would break every
+# script's IIFE.
+_SCRIPT_VERSION_RE = re.compile(
+    r"""((?:const|let|var)\s+)SCRIPT_VERSION\s*=\s*['"]([^'"]+)['"]"""
+)
+_HEAD_TAG_RE = re.compile(r"<head\b[^>]*>", re.IGNORECASE)
+
+
+def _file_version(path):
+    """Compact UTC mtime string — minute precision is plenty for
+    catching stale browser caches and stays stable across page loads
+    that happen seconds apart."""
+    try:
+        ts = path.stat().st_mtime
+    except OSError:
+        return "unknown"
+    return time.strftime("%Y-%m-%d %H:%M", time.gmtime(ts))
+
+
+def _stamp_js(content, version):
+    """Replace the first `<keyword> SCRIPT_VERSION = '...'` declaration
+    with the given version string. Preserves the leading `const` /
+    `let` / `var` keyword (group 1) so strict-mode JS doesn't choke
+    on an undeclared identifier. Idempotent: re-stamping rewrites
+    the same value."""
+    return _SCRIPT_VERSION_RE.sub(
+        lambda m: f"{m.group(1)}SCRIPT_VERSION = '{version}'",
+        content, count=1,
+    )
+
+
+def _all_tracked_versions():
+    """Snapshot mtime-version for every tracked file. Used to bake
+    the server's "expected" versions into HTML so the client can
+    detect stale-cache mismatches without a follow-up network call."""
+    out = {}
+    for n in _SCRIPT_VERSION_FILES:
+        p = ROOT / "static" / n
+        if p.is_file():
+            out[n] = _file_version(p)
+    return out
+
+
+def _stamp_html(content, name, version):
+    """Inject a tiny registration <script> right after the opening
+    <head> tag. Carries:
+      - this HTML's own version → window._scriptVersions[name]
+      - the full server-side version map for every tracked file
+        → window._serverScriptVersions
+    The pre-baked map means the Settings diagnostic can compare
+    loaded-vs-server versions with zero network requests at runtime —
+    the comparison happens entirely from data shipped with the page.
+    No-op if the file has no <head> (the script is prepended so the
+    registration still runs)."""
+    server_map = _all_tracked_versions()
+    server_map_json = json.dumps(server_map, separators=(",", ":"))
+    snippet = (
+        f'<script>'
+        f'window._scriptVersions=window._scriptVersions||{{}};'
+        f'window._scriptVersions["{name}"]="{version}";'
+        f'window._serverScriptVersions={server_map_json};'
+        f'</script>'
+    )
+    m = _HEAD_TAG_RE.search(content)
+    if not m:
+        return snippet + content
+    insert_at = m.end()
+    return content[:insert_at] + snippet + content[insert_at:]
+
+
+def _serve_stamped(path, name):
+    """Read `path`, stamp it as JS or HTML, return a Flask Response.
+    Caller is responsible for picking a path inside static/."""
+    if not path.is_file():
+        abort(404)
+    version = _file_version(path)
+    text = path.read_text(encoding="utf-8")
+    if name in _TRACKED_JS or name == "sw.js":
+        body = _stamp_js(text, version)
+        resp = Response(body, mimetype="application/javascript")
+    elif name in _TRACKED_HTML:
+        body = _stamp_html(text, name, version)
+        resp = Response(body, mimetype="text/html")
+    else:
+        # Caller asked us to stamp something we don't know how to
+        # handle — return raw bytes to be safe.
+        return send_from_directory(str(path.parent), path.name)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.route("/static/<path:fname>")
+def serve_static(fname):
+    """Replaces Flask's auto-static handler so we can stamp tracked
+    files with the file mtime. Untracked files (sprites, fonts, vendor
+    bundles, etc.) fall through to send_from_directory unchanged."""
+    static_root = (ROOT / "static").resolve()
+    path = (static_root / fname).resolve()
+    # Path-traversal defense: ensure the resolved path is inside
+    # static/ before opening it.
+    try:
+        path.relative_to(static_root)
+    except ValueError:
+        abort(404)
+    if fname in _TRACKED_JS or fname in _TRACKED_HTML:
+        return _serve_stamped(path, fname)
+    if not path.is_file():
+        abort(404)
+    return send_from_directory(str(static_root), fname)
 
 
 @contextlib.contextmanager
@@ -152,7 +284,7 @@ def _download_timing_log(resp):
 
 @app.route("/")
 def index():
-    resp = send_from_directory("static", "index.html")
+    resp = _serve_stamped(ROOT / "static" / "index.html", "index.html")
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return resp
 
@@ -163,14 +295,14 @@ def dex():
     # live on demand. Not part of the main app's no-network rule;
     # this is a developer-facing tool for browsing the full sprite
     # catalog (autogen + every custom variant per fusion).
-    resp = send_from_directory("static", "dex.html")
+    resp = _serve_stamped(ROOT / "static" / "dex.html", "dex.html")
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return resp
 
 
 @app.route("/sw.js")
 def sw():
-    resp = send_from_directory("static", "sw.js", mimetype="application/javascript")
+    resp = _serve_stamped(ROOT / "static" / "sw.js", "sw.js")
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return resp
 
@@ -341,6 +473,16 @@ def sprite_split_names():
     resp.headers["Content-Encoding"] = "gzip"
     resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     return resp
+
+
+@app.route("/script-versions")
+def script_versions():
+    """Fallback: return the live mtime-based version map. The HTML
+    page already has this data baked in via _stamp_html, so the
+    Settings diagnostic doesn't need to hit this endpoint at runtime
+    (zero-network rule). Kept around for ad-hoc debugging — e.g.
+    `curl http://host/script-versions` from another machine."""
+    return jsonify(_all_tracked_versions())
 
 
 @app.route("/sprite-credits-bundle")

@@ -21,6 +21,10 @@
 (function (global) {
   'use strict';
 
+  const SCRIPT_VERSION = 'auto';  // server stamps with mtime on serve
+  global._scriptVersions = global._scriptVersions || {};
+  global._scriptVersions['appdata.js'] = SCRIPT_VERSION;
+
   const DB_NAME = 'creature-appdata-v1';
   // v2 bumped from v1: icon entries changed from raw SVG text blobs to
   // pre-rasterized RGBA pixel blobs (skip the runtime SVG decode that

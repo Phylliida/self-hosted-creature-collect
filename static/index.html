@@ -8073,6 +8073,43 @@ function fmtDate(ts) {
   // otherwise just look like 0 by the time you glance at it. Only
   // visible while the Settings panel is open (no point polling
   // otherwise), and bails fast if the sprites module isn't loaded.
+  // The server bakes `window._serverScriptVersions` into the HTML on
+  // serve (see _stamp_html in run.py) and stamps each .js file's
+  // SCRIPT_VERSION constant with its mtime. The IIFEs push their
+  // stamped version into window._scriptVersions when they run, so
+  // loaded-vs-server comparison happens entirely from data shipped
+  // with the page — zero runtime network calls.
+  // sw.js is the one exception: it runs in a separate context, so
+  // the page can't read its globals directly. We postMessage it once
+  // on load to grab its SCRIPT_VERSION — that's in-process IPC, not
+  // a network request, so it still respects the zero-network rule.
+  let _swVersionFetchPromise = null;
+  function _refreshSwLoadedVersion() {
+    if (_swVersionFetchPromise) return _swVersionFetchPromise;
+    _swVersionFetchPromise = new Promise((resolve) => {
+      const sw = navigator.serviceWorker;
+      if (!sw || !sw.controller) { resolve(); return; }
+      const ch = new MessageChannel();
+      let done = false;
+      const finish = (v) => {
+        if (done) return; done = true;
+        if (v) {
+          window._scriptVersions = window._scriptVersions || {};
+          window._scriptVersions['sw.js'] = v;
+        }
+        resolve();
+      };
+      ch.port1.onmessage = (e) => finish(e.data && e.data.version);
+      try { sw.controller.postMessage({ type: 'getVersion' }, [ch.port2]); }
+      catch { finish(); }
+      // Bail after 1s if the SW never responds (e.g. it's still
+      // installing or uses a different message protocol).
+      setTimeout(() => finish(), 1000);
+    });
+    return _swVersionFetchPromise;
+  }
+  _refreshSwLoadedVersion();
+
   function updateSpriteInflightBadge() {
     const el = document.getElementById('spriteInflightBadge');
     if (!el) return;
@@ -8163,6 +8200,25 @@ function fmtDate(ts) {
       );
       if (cd.reasons) {
         for (const [k, v] of Object.entries(cd.reasons)) lines.push(`  • ${k}: ${v}`);
+      }
+      // Script versions — each .js file declares its own SCRIPT_VERSION
+      // and pushes it into window._scriptVersions on load. The server
+      // parses the same constants from disk via /script-versions.
+      // Mismatch = browser cached an older copy of that file, which
+      // is the "out-of-sync on Android" bug we're chasing.
+      const lv = window._scriptVersions || {};
+      const sv = window._serverScriptVersions || {};
+      const versionKeys = Array.from(new Set([
+        ...Object.keys(lv), ...Object.keys(sv),
+      ])).sort();
+      if (versionKeys.length) {
+        lines.push(`[script versions]`);
+        for (const k of versionKeys) {
+          const loaded = lv[k] || '—';
+          const server = sv[k] || '—';
+          const stale = loaded !== '—' && server !== '—' && loaded !== server;
+          lines.push(`  ${k.padEnd(18)} loaded=${loaded}  server=${server}${stale ? '  ⚠ STALE' : ''}`);
+        }
       }
       pEl.textContent = lines.join('\n');
       pEl.style.whiteSpace = 'pre';
