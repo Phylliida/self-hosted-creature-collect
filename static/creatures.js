@@ -1863,6 +1863,12 @@
         font-size: 12px; font-weight: 500;
         color: var(--ui-muted, #666);
       }
+      /* Below-image species-pair row in the fusion view (when a
+         fused name is the primary title above the image). */
+      #creatureInventory .detail-species-row {
+        text-align: center;
+        margin: -4px 0 8px;
+      }
       #creatureInventory .icon-btn {
         padding: 4px 8px; font-size: 13px; cursor: pointer;
         background: transparent;
@@ -4235,19 +4241,28 @@
       }
     }
 
+    // Layout: fused name → image → species pair (links). When the
+    // canonical name isn't available yet (SPLIT_NAMES still loading)
+    // the species pair stands in as the primary title above the
+    // image instead. The species links are rendered with the same
+    // markup either way so the click handler below picks them up
+    // regardless of their position.
+    const speciesPairHtml = `
+      <div class="detail-name${fusedName ? ' detail-name-sub' : ''}">
+        <span class="species-link" data-side="A">${escapeHtml(nameA)}</span>
+        <span> × </span>
+        <span class="species-link" data-side="B">${escapeHtml(nameB)}</span>
+      </div>
+    `;
     body.innerHTML = `
       <div class="detail-name-row">
-        ${fusedName ? `<div class="detail-fused-name">${escapeHtml(fusedName)}</div>` : ''}
-        <div class="detail-name${fusedName ? ' detail-name-sub' : ''}">
-          <span class="species-link" data-side="A">${escapeHtml(nameA)}</span>
-          <span> × </span>
-          <span class="species-link" data-side="B">${escapeHtml(nameB)}</span>
-        </div>
+        ${fusedName ? `<div class="detail-fused-name">${escapeHtml(fusedName)}</div>` : speciesPairHtml}
       </div>
       <div class="detail-art">
         <span class="detail-art-placeholder" aria-hidden="true">•</span>
         <img class="detail-art-img" alt="" style="display:none">
       </div>
+      ${fusedName ? `<div class="detail-species-row">${speciesPairHtml}</div>` : ''}
       ${typesHtml}
       ${capturedHtml}
       ${encounterHtml}
@@ -4755,6 +4770,27 @@
     }
   }
 
+  // Rebuild ONLY the name-row's view-mode HTML in place, without
+  // re-rendering the rest of the detail body. Lets save/reset/Esc
+  // exit edit mode without re-fetching the sprite blob.
+  function _exitRenameMode(c) {
+    const panel = document.getElementById('creatureInventory');
+    if (!panel) return;
+    const row = panel.querySelector('.detail-name-row');
+    if (!row) return;
+    const fresh = findCreature(c.id) || c;
+    const name = readNicknames()[fresh.id] || fresh.name;
+    row.dataset.mode = 'view';
+    row.innerHTML = `<div class="detail-name detail-name-clickable" role="button" tabindex="0" title="tap to rename">${escapeHtml(name)}</div>`;
+    const nameEl = row.querySelector('.detail-name-clickable');
+    if (nameEl) {
+      nameEl.addEventListener('click', () => enterRenameMode(fresh));
+      nameEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); enterRenameMode(fresh); }
+      });
+    }
+  }
+
   function enterRenameMode(c) {
     const panel = document.getElementById('creatureInventory');
     if (!panel) return;
@@ -4787,17 +4823,17 @@
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       writeNickname(c.id, input.value);
-      renderDetail(c);
+      _exitRenameMode(c);
     });
     row.querySelector('.rename-reset').addEventListener('click', () => {
       writeNickname(c.id, '');
-      renderDetail(c);
+      _exitRenameMode(c);
     });
     // Esc still backs out without saving (keyboard ergonomics) —
     // there's no visible Cancel button per the new design, but
     // unintentional taps deserve a graceful exit on desktop.
     input.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') { e.preventDefault(); renderDetail(c); }
+      if (e.key === 'Escape') { e.preventDefault(); _exitRenameMode(c); }
     });
   }
 
