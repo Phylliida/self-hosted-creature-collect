@@ -471,6 +471,12 @@
         if (poiApi && poiApi.findNearestNamedPoi) {
           seen[key].poi = poiApi.findNearestNamedPoi(spawn.lat, spawn.lng) || null;
         }
+        // City + country come from the already-loaded vector tile
+        // `place` source — pure local lookup, no network. Stored
+        // once on first sighting alongside the POI.
+        if (poiApi && poiApi.findNearestPlace) {
+          seen[key].place = poiApi.findNearestPlace(spawn.lat, spawn.lng) || null;
+        }
       }
     }
     // Per-variant tracking. `variant` is a number (custom variant
@@ -1882,12 +1888,22 @@
       }
       #creatureInventory .detail-stats {
         display: flex; justify-content: center; gap: 8px;
-        font-size: 13px; margin: 0 0 14px;
+        font-size: 13px; margin: 6px 0 5px;
       }
       #creatureInventory .detail-stats .sep { opacity: 0.5; }
       #creatureInventory .detail-caught {
         text-align: center; font-size: 12px;
-        color: var(--ui-muted, #666); margin: 0 0 8px;
+        color: var(--ui-muted, #666); margin: 0 0 6px;
+      }
+      #creatureInventory .detail-caught-where {
+        font-size: 11px;
+        margin-top: 1px;
+        opacity: 0.85;
+      }
+      #creatureInventory .detail-caught-place {
+        font-size: 11px;
+        margin-top: 1px;
+        opacity: 0.7;
       }
       #creatureInventory .detail-caught-clickable,
       #creatureInventory .fusion-encounter-clickable {
@@ -4227,9 +4243,20 @@
         : (seen.lat != null
             ? `${seen.lat.toFixed(5)}, ${seen.lng.toFixed(5)}`
             : '');
+      // City, Country line — assembled from whichever of the two
+      // were resolvable at encounter time. Older encounters predating
+      // the place capture have no `seen.place`, so this stays empty
+      // for them (graceful degradation, no backfill needed).
+      const placeBits = [];
+      if (seen.place) {
+        if (seen.place.city) placeBits.push(seen.place.city);
+        if (seen.place.country) placeBits.push(seen.place.country);
+      }
+      const placeStr = placeBits.join(', ');
       const lines = [];
       if (when) lines.push(`<div>First encountered ${escapeHtml(when)}</div>`);
       if (where) lines.push(`<div class="row-meta">${escapeHtml(where)}</div>`);
+      if (placeStr) lines.push(`<div class="row-meta">${escapeHtml(placeStr)}</div>`);
       if (lines.length) {
         encounterClickable = seen.lat != null && seen.lng != null;
         const cls = `fusion-encounter${encounterClickable ? ' fusion-encounter-clickable' : ''}`;
@@ -4254,6 +4281,24 @@
         <span class="species-link" data-side="B">${escapeHtml(nameB)}</span>
       </div>
     `;
+    // Family tree: shown only when there's at least one row/column
+    // beyond the current fusion. Lives here in the pokédex entry
+    // (used to be on the captured-detail view) since the family
+    // mosaic is fundamentally about the fusion species pair.
+    let familyHtml = '';
+    let famA = null, famB = null;
+    if (global.Species && global.Species.familyOf) {
+      famA = global.Species.familyOf(a);
+      famB = global.Species.familyOf(b);
+      if (famA.length > 1 || famB.length > 1) {
+        familyHtml = `<div class="detail-family">
+          <button class="family-toggle" type="button" aria-expanded="false">
+            View family tree (${famA.length}×${famB.length})
+          </button>
+          <div class="family-grid" hidden></div>
+        </div>`;
+      }
+    }
     body.innerHTML = `
       <div class="detail-name-row">
         ${fusedName ? `<div class="detail-fused-name">${escapeHtml(fusedName)}</div>` : speciesPairHtml}
@@ -4266,6 +4311,7 @@
       ${typesHtml}
       ${capturedHtml}
       ${encounterHtml}
+      ${familyHtml}
       <div class="fusion-section-label">Art variants</div>
       <div class="variant-grid"></div>
     `;
@@ -4282,6 +4328,32 @@
         else showPokedex({ searchB: nameB });
       });
     });
+
+    // Family-tree expand/collapse: lazy-renders the grid on first
+    // expand so we don't pay for it on entries the user never
+    // unfolds.
+    if (famA && famB && famHasContent(famA, famB)) {
+      const toggle = body.querySelector('.family-toggle');
+      const grid = body.querySelector('.family-grid');
+      if (toggle && grid) {
+        toggle.addEventListener('click', () => {
+          const expanded = toggle.getAttribute('aria-expanded') === 'true';
+          if (expanded) {
+            grid.hidden = true;
+            toggle.setAttribute('aria-expanded', 'false');
+            toggle.textContent = `View family tree (${famA.length}×${famB.length})`;
+          } else {
+            if (!grid.dataset.rendered) {
+              renderFamilyGrid(grid, famA, famB, a, b);
+              grid.dataset.rendered = '1';
+            }
+            grid.hidden = false;
+            toggle.setAttribute('aria-expanded', 'true');
+            toggle.textContent = 'Hide family tree';
+          }
+        });
+      }
+    }
 
     // Fusion sprite for the header. Prefer the lowest-indexed variant
     // the trainer has actually seen so the header matches the variant
@@ -4593,21 +4665,42 @@
     let caughtLine = '';
     let caughtClickable = false;
     if (c.caughtAt) {
-      const when = c.caughtAt.timestamp
-        ? new Date(c.caughtAt.timestamp).toLocaleDateString()
-        : '';
+      // Date + time-of-day on a single line. toLocaleDateString gives
+      // the locale's date format; toLocaleTimeString trimmed to
+      // hour:minute for compactness (seconds noise on a date stamp).
+      let when = '';
+      if (c.caughtAt.timestamp) {
+        const d = new Date(c.caughtAt.timestamp);
+        const datePart = d.toLocaleDateString();
+        const timePart = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        when = `${datePart} ${timePart}`;
+      }
       const where = c.caughtAt.poi && c.caughtAt.poi.name
         ? `${c.caughtAt.poi.name} (${Math.round(c.caughtAt.poi.distanceM)} m away)`
         : `${c.caughtAt.lat.toFixed(5)}, ${c.caughtAt.lng.toFixed(5)}`;
-      const parts = [];
-      if (where) parts.push(escapeHtml(where));
-      if (when) parts.push(escapeHtml(when));
+      // City, Country line — only present on captures from after
+      // the place-capture change. Older captures keep their two-line
+      // format (where · when) without an extra place line.
+      const placeBits = [];
+      if (c.caughtAt.place) {
+        if (c.caughtAt.place.city) placeBits.push(c.caughtAt.place.city);
+        if (c.caughtAt.place.country) placeBits.push(c.caughtAt.place.country);
+      }
+      const placeStr = placeBits.join(', ');
       caughtClickable = c.caughtAt.lat != null && c.caughtAt.lng != null;
       const cls = `detail-caught${caughtClickable ? ' detail-caught-clickable' : ''}`;
       const attrs = caughtClickable
         ? ` role="button" tabindex="0" title="show on map"`
         : '';
-      caughtLine = `<div class="${cls}"${attrs}>Caught at ${parts.join(' · ')}</div>`;
+      // Three-line layout:
+      //   1. "<date> · <time>"
+      //   2. "<POI/coords>"
+      //   3. "<City>, <Country>"  (when known)
+      caughtLine = `<div class="${cls}"${attrs}>`
+        + escapeHtml(when)
+        + (where ? `<div class="detail-caught-where">${escapeHtml(where)}</div>` : '')
+        + (placeStr ? `<div class="detail-caught-place">${escapeHtml(placeStr)}</div>` : '')
+        + `</div>`;
     }
     const typesHtml = (c.speciesA != null && c.speciesB != null)
       ? typeChipsHtml(fusionTypesFor(c.speciesA, c.speciesB))
@@ -4637,22 +4730,6 @@
         </div>`;
       }
     }
-    let familyHtml = '';
-    let famA = null, famB = null;
-    if (c.speciesA != null && c.speciesB != null
-        && global.Species && global.Species.familyOf) {
-      famA = global.Species.familyOf(c.speciesA);
-      famB = global.Species.familyOf(c.speciesB);
-      // Only show the toggle if there's more than one cell to display.
-      if (famA.length > 1 || famB.length > 1) {
-        familyHtml = `<div class="detail-family">
-          <button class="family-toggle" type="button" aria-expanded="false">
-            View family tree (${famA.length}×${famB.length})
-          </button>
-          <div class="family-grid" hidden></div>
-        </div>`;
-      }
-    }
     const pokedexLinkHtml = (c.speciesA != null && c.speciesB != null)
       ? `<button class="detail-pokedex-link" type="button">View dex entry →</button>`
       : '';
@@ -4672,7 +4749,6 @@
       ${candyTallyHtml(c.speciesA, c.speciesB)}
       ${detailTagsHtml(c)}
       ${evosHtml}
-      ${familyHtml}
     `;
     const pokedexLink = body.querySelector('.detail-pokedex-link');
     if (pokedexLink) {
@@ -4687,28 +4763,6 @@
         caughtEl.addEventListener('click', fly);
         caughtEl.addEventListener('keydown', (e) => {
           if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fly(); }
-        });
-      }
-    }
-    if (famA && famB && famHasContent(famA, famB)) {
-      const toggle = body.querySelector('.family-toggle');
-      const grid = body.querySelector('.family-grid');
-      if (toggle && grid) {
-        toggle.addEventListener('click', () => {
-          const expanded = toggle.getAttribute('aria-expanded') === 'true';
-          if (expanded) {
-            grid.hidden = true;
-            toggle.setAttribute('aria-expanded', 'false');
-            toggle.textContent = `View family tree (${famA.length}×${famB.length})`;
-          } else {
-            if (!grid.dataset.rendered) {
-              renderFamilyGrid(grid, famA, famB, c.speciesA, c.speciesB);
-              grid.dataset.rendered = '1';
-            }
-            grid.hidden = false;
-            toggle.setAttribute('aria-expanded', 'true');
-            toggle.textContent = 'Hide family tree';
-          }
         });
       }
     }
@@ -5357,6 +5411,11 @@
     const poi = (poiApi && poiApi.findNearestNamedPoi)
       ? poiApi.findNearestNamedPoi(spawn.lat, spawn.lng)
       : null;
+    // City + country at capture time, same source as the encounter
+    // info (POI address tags first, vector-tile place layer second).
+    const place = (poiApi && poiApi.findNearestPlace)
+      ? poiApi.findNearestPlace(spawn.lat, spawn.lng)
+      : null;
     // Capture the variant the player saw at the moment of catching,
     // so the inventory always shows that exact sprite even if the
     // per-cell variant table later changes (e.g., new artist sheets).
@@ -5378,6 +5437,7 @@
         lat: spawn.lat,
         lng: spawn.lng,
         poi: poi || null,
+        place: place || null,
       },
     };
     const list = readCapturedCreatures();
