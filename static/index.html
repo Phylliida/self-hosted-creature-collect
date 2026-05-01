@@ -133,16 +133,24 @@
     border: none !important;
     color: var(--ui-text, #111) !important;
     box-shadow: none !important;
-    font-size: 22px;
+    /* 8-direction stroke in the panel's bg color — keeps the glyph
+       readable against content that scrolls behind it (this button
+       is sticky/absolute, so anything in the panel can pass under
+       it). !important defeats any theme-specific text-shadow. */
+    text-shadow:
+      -1px -1px 0 var(--ui-bg, #fff), 0 -1px 0 var(--ui-bg, #fff),  1px -1px 0 var(--ui-bg, #fff),
+      -1px  0   0 var(--ui-bg, #fff),                                1px  0   0 var(--ui-bg, #fff),
+      -1px  1px 0 var(--ui-bg, #fff), 0  1px 0 var(--ui-bg, #fff),  1px  1px 0 var(--ui-bg, #fff) !important;
+    font-size: 26px;
     line-height: 1;
     cursor: pointer;
     box-sizing: border-box;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 25px;
-    height: 25px;
-    min-height: 25px;
+    width: 30px;
+    height: 30px;
+    min-height: 30px;
     flex-shrink: 0;
     /* 2px bottom padding nudges the × glyph up ~1px to compensate
        for its natural sub-baseline offset (× sits high in its
