@@ -3198,10 +3198,16 @@
     panel.querySelector('.bag-view').classList.remove('show');
     panel.querySelector('.tags-view').classList.remove('show');
     switch (top.view) {
-      case 'browse':
+      case 'browse': {
         panel.querySelector('.browse-view').style.display = '';
+        // Restore the saved scroll before render — renderList uses
+        // live sheet.scrollTop for in-view re-renders, so the sheet
+        // must already hold the right value when re-entering.
+        const sheet = panel.querySelector('.sheet');
+        if (sheet) sheet.scrollTop = (top.scrollY || 0);
         renderList(panel.querySelector('.creature-list'));
         return;
+      }
       case 'detail': {
         const creature = findCreature(top.id);
         if (!creature) {
@@ -3242,6 +3248,11 @@
         if (sa)   sa.value   = opts.searchA   || '';
         if (sb)   sb.value   = opts.searchB   || '';
         panel.querySelector('.pokedex-view').classList.add('show');
+        // Restore the navigation-saved scroll position before
+        // renderPokedex runs — the renderer now uses live sheet
+        // scrollTop, so the sheet must already hold the right value.
+        const sheet = panel.querySelector('.sheet');
+        if (sheet) sheet.scrollTop = (top.scrollY || 0);
         renderPokedex();
         return;
       }
@@ -3838,13 +3849,26 @@
           const date = cap.caughtAt && cap.caughtAt.timestamp
             ? new Date(cap.caughtAt.timestamp).toLocaleDateString()
             : '';
-          const meta = [];
-          if (cap.level != null) meta.push(`Lv ${cap.level}`);
-          if (cap.sizeM != null) meta.push(formatSize(cap.sizeM));
-          if (date) meta.push(date);
+          // Variant attribution: starts as "autogen" (when null) or
+          // "#N" (when a numeric custom slot). For numeric slots we
+          // async-resolve the artist credit below and swap the text
+          // in place once the credits bundle returns the name.
+          let variantLabel = '';
+          if (cap.variant === null) variantLabel = 'autogen';
+          else if (typeof cap.variant === 'number') variantLabel = `#${cap.variant + 1}`;
+          // Ordered HTML chunks joined by " · " separators. Each chunk
+          // is fully escaped so user-controlled text can't sneak in.
+          const chunks = [];
+          if (cap.level != null) chunks.push(escapeHtml(`Lv ${cap.level}`));
+          if (cap.sizeM != null) chunks.push(escapeHtml(formatSize(cap.sizeM)));
+          if (variantLabel) {
+            const vAttr = (typeof cap.variant === 'number') ? cap.variant : '';
+            chunks.push(`<span class="row-variant" data-variant="${vAttr}">${escapeHtml(variantLabel)}</span>`);
+          }
+          if (date) chunks.push(escapeHtml(date));
           return `<div class="fusion-caught-row" data-id="${escapeHtml(cap.id)}" role="button" tabindex="0">
             <div class="row-name">${escapeHtml(nm)}</div>
-            <div class="row-meta">${escapeHtml(meta.join(' · '))}</div>
+            <div class="row-meta">${chunks.join(' · ')}</div>
           </div>`;
         }).join('');
     }
@@ -3957,6 +3981,21 @@
         }
       });
     });
+
+    // Async-resolve artist credit for each numeric variant in the
+    // captures list. Falls back to the "#N" placeholder text already
+    // rendered when the credits bundle has nothing on file.
+    if (global.Sprites && global.Sprites.getSpriteCreditForSlot) {
+      body.querySelectorAll('.row-variant').forEach((span) => {
+        const v = span.dataset.variant;
+        if (v === '' || v == null) return;  // autogen — leave as-is
+        const slot = parseInt(v, 10);
+        if (!Number.isFinite(slot) || slot < 0) return;
+        global.Sprites.getSpriteCreditForSlot(a, b, slot)
+          .then((artist) => { if (artist) span.textContent = artist; })
+          .catch(() => {});
+      });
+    }
   }
 
   // Toggle a `filter-active` class on each filter control whose value
@@ -4119,11 +4158,12 @@
     }
 
     const sheet = panel.querySelector('.sheet');
-    const _topPokedex = _viewStack[_viewStack.length - 1];
-    // Cache the current pokédex render's filtered + sorted entries
-    // so a card click can pass the list (and index) into the fusion
-    // sub-view, enabling left/right arrow + swipe navigation through
-    // adjacent entries in the SAME order the user just saw.
+    // Use the live sheet scrollTop so in-view re-renders (tag chip
+    // toggles, search input, sort change, etc.) preserve the user's
+    // current position instead of snapping back to the view-stack's
+    // navigation snapshot. The stack's scrollY is applied to the
+    // sheet in applyTopView's 'pokedex' case before the first render,
+    // so the live value is already correct on re-entry.
     _lastPokedexEntries = entries;
     virtualizeGrid({
       scrollEl: sheet,
@@ -4132,7 +4172,7 @@
       cols: 3,
       rowGap: 8,
       cardHeight: 162,
-      initialScrollTop: (_topPokedex && _topPokedex.view === 'pokedex') ? _topPokedex.scrollY : 0,
+      initialScrollTop: sheet ? sheet.scrollTop : 0,
       makeCardEl(entry) {
         const bases = global.Species
           ? `${global.Species.nameFor(entry.a)} × ${global.Species.nameFor(entry.b)}`
@@ -4600,10 +4640,11 @@
       return;
     }
     const sheet = listEl.closest('.sheet');
-    const _topBrowse = _viewStack[_viewStack.length - 1];
-    // Cache the inventory's currently-rendered list so a card click
-    // can pass it (and the clicked index) into the detail sub-view
-    // for left/right arrow + swipe navigation.
+    // Live sheet scrollTop preserves the user's position across
+    // in-view re-renders (filter chip toggles, sort change, search
+    // input). The view-stack's saved scrollY is applied to the sheet
+    // in applyTopView's 'browse' case before the first render so the
+    // live value is already correct on re-entry from a sub-view.
     _lastInventoryItems = items;
     virtualizeGrid({
       scrollEl: sheet,
@@ -4611,7 +4652,7 @@
       items,
       cols: 3,
       rowGap: 8,
-      initialScrollTop: (_topBrowse && _topBrowse.view === 'browse') ? _topBrowse.scrollY : 0,
+      initialScrollTop: sheet ? sheet.scrollTop : 0,
       cardHeight: 178,
       makeCardEl(c) {
         const card = document.createElement('div');
