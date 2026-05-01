@@ -7099,6 +7099,59 @@ function fmtDate(ts) {
       if (distanceM > maxMeters) return null;
       return { name: best.name, lat: best.lat, lng: best.lng, distanceM };
     },
+    // Nearest city + country for a lat/lng. Uses POI address tags
+    // first (addr:city, addr:country are present on many POIs and
+    // are always loaded into allPois), then falls back to the
+    // vector-tile `place` source layer for whatever the POI scan
+    // missed. Pure local lookup — no network. Returns
+    // { city, country } with whichever resolved; null if neither.
+    findNearestPlace(lat, lng) {
+      const out = { city: null, country: null };
+      // Pass 1: scan POIs within ~10km. Many tagged POIs carry
+      // `addr:city` / `addr:country`; nearest hit per field wins.
+      let bestCityKm = Infinity, bestCountryKm = Infinity;
+      for (const p of allPois) {
+        if (!p || !p.props) continue;
+        const km = haversineKm(lat, lng, p.lat, p.lng);
+        if (km > 10) continue;
+        const c = p.props['addr:city'];
+        if (c && km < bestCityKm) { bestCityKm = km; out.city = c; }
+        const cc = p.props['addr:country'];
+        if (cc && km < bestCountryKm) { bestCountryKm = km; out.country = cc; }
+        if (out.city && out.country) break;
+      }
+      // Pass 2: vector-tile `place` source — picks up city/country
+      // labels even outside POI coverage (e.g. natural-feature
+      // areas, regions with sparse POI tagging).
+      if ((!out.city || !out.country)
+          && typeof map !== 'undefined' && map && map.querySourceFeatures) {
+        const pickName = (props) => props['name:latin'] || props.name || props.name_int || null;
+        for (const sourceId of ['local', 'base']) {
+          let features = [];
+          try {
+            features = map.querySourceFeatures(sourceId, { sourceLayer: 'place' }) || [];
+          } catch { continue; }
+          for (const f of features) {
+            const g = f.geometry;
+            if (!g || g.type !== 'Point') continue;
+            const [fLng, fLat] = g.coordinates;
+            const km = haversineKm(lat, lng, fLat, fLng);
+            const cls = f.properties && f.properties.class;
+            if (!out.city
+                && (cls === 'city' || cls === 'town' || cls === 'village')
+                && km < bestCityKm) {
+              bestCityKm = km;
+              out.city = pickName(f.properties);
+            } else if (!out.country && cls === 'country' && km < bestCountryKm) {
+              bestCountryKm = km;
+              out.country = pickName(f.properties);
+            }
+          }
+          if (out.city && out.country) break;
+        }
+      }
+      return (out.city || out.country) ? out : null;
+    },
   };
 
   const searchInput = document.getElementById('searchInput');
