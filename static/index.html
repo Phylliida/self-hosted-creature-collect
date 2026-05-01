@@ -108,6 +108,62 @@
     border-radius: var(--ui-radius);
   }
 
+  /* ============================================================
+     Shared close-X button styling. Minimal look: just the × glyph,
+     no bubble, no border, no themed accent — used across every
+     modal/panel (inventory, settings, directions, routing, POI
+     card). Each panel adds its own positioning rules below; this
+     is the single source of truth for the visual.
+
+     Per-panel selectors are listed explicitly so the rule has
+     enough specificity (id + 2 classes + 1 element = 0,1,2,1) to
+     win over each panel's local `button.close` styling
+     (0,1,1,1). One rule, one place to edit. */
+  #creatureInventory button.close.cc-x-btn,
+  #settingsPanel button.close.cc-x-btn,
+  #directionsPanel button.close.cc-x-btn,
+  #routingPanel button.close.cc-x-btn,
+  #poiCard button.close.cc-x-btn {
+    /* !important on the visual resets to defeat per-theme overrides
+       like `html[data-theme="win95"] button.close { background: ...
+       !important }` — without this the close X picks up each
+       theme's accented button styling (red bubble + white glyph),
+       defeating the minimal-look intent. */
+    background: transparent !important;
+    border: none !important;
+    color: var(--ui-text, #111) !important;
+    box-shadow: none !important;
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 25px;
+    height: 25px;
+    min-height: 25px;
+    flex-shrink: 0;
+    /* 2px bottom padding nudges the × glyph up ~1px to compensate
+       for its natural sub-baseline offset (× sits high in its
+       em-box, leaving extra empty space below that throws off
+       align-items: center). */
+    padding: 0 0 2px 0;
+    font-family: inherit;
+    z-index: 5;
+  }
+  /* Subtle hover affordance: dim the glyph slightly. No background
+     pop because the button is borderless and the bg would look
+     orphaned without one. */
+  #creatureInventory button.close.cc-x-btn:hover,
+  #settingsPanel button.close.cc-x-btn:hover,
+  #directionsPanel button.close.cc-x-btn:hover,
+  #routingPanel button.close.cc-x-btn:hover,
+  #poiCard button.close.cc-x-btn:hover {
+    color: var(--ui-muted, #888) !important;
+    background: transparent !important;
+  }
+
   /* Medieval-only DECORATION (serif body, small-caps headings). Other
      themes inherit from the rest of the page. */
   html[data-theme="medieval"] body {
@@ -1431,7 +1487,10 @@
   }
   #directionsPanel .step { border-top-color: var(--ui-hairline); }
   #directionsPanel .step .dist { color: var(--ui-muted); }
-  #directionsPanel button.close,
+  /* The .top-ctrls minimize/save buttons keep the bare/no-border
+     look — they're context-control glyphs, not panel-dismiss. The
+     close X is handled separately below to match the inventory X
+     styling (bordered bubble, theme bg). */
   #directionsPanel .top-ctrls button {
     background: none !important;
     color: var(--ui-muted) !important;
@@ -1724,10 +1783,11 @@
     transition: opacity 150ms ease;
   }
   #poiCard.show { opacity: 1; pointer-events: auto; }
-  #poiCardClose {
-    position: absolute; top: 2px; right: 6px;
-    background: none; border: none; font-size: 26px;
-    line-height: 1; cursor: pointer; color: var(--ui-muted); padding: 4px 8px;
+  /* POI card X — only positioning; visual comes from .cc-x-btn. */
+  #poiCard button.close.cc-x-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
   }
   #poiCardName { font-size: 15px; font-weight: 600; }
   #poiCardMeta { font-size: 12px; color: var(--ui-muted); margin-top: 2px; }
@@ -1838,31 +1898,12 @@
   #settingsPanel select { padding: 6px 8px; font-size: 14px; }
   #settingsPanel .actions { display: flex; justify-content: flex-end; margin-top: 12px; }
   #settingsPanel button.close { padding: 8px 14px; font-size: 14px; cursor: pointer; }
-  /* Top-right X close on the settings sheet — absolute-positioned so
-     it doesn't disturb the existing block layout (flex column collapsed
-     the theme grid). Stays at the corner; doesn't follow scroll. */
-  #settingsPanel .settings-x {
+  /* Settings X — only positioning; visual comes from .cc-x-btn. */
+  #settingsPanel button.close.cc-x-btn {
     position: absolute;
     top: 8px;
     right: 8px;
-    z-index: 5;
-    background: var(--ui-bg, #fff);
-    border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
-    border-radius: var(--ui-radius, 8px);
-    font-size: 16px;
-    line-height: 1;
-    cursor: pointer;
-    color: var(--ui-text, #111);
-    box-sizing: border-box;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 25px;
-    height: 25px;
-    padding: 0;
-    font-family: inherit;
   }
-  #settingsPanel .settings-x:hover { background: var(--ui-hover, rgba(0,0,0,0.04)); }
   .favorite-marker {
     width: 28px; height: 28px; border-radius: 50%;
     border: 2px solid #fff;
@@ -1978,7 +2019,8 @@
   #routingPanel.show { display: block; }
   #routingPanel .header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   #routingPanel .header h3 { flex: 1; margin: 0; font-size: 15px; }
-  #routingPanel .close { background: none; border: none; font-size: 22px; line-height: 1; cursor: pointer; color: var(--ui-muted); padding: 0 4px; }
+  /* Routing X sits in the header flex row alongside the h3 + Saved
+     button — no positioning needed; visual comes from .cc-x-btn. */
   #routingPanel .endpoints { display: flex; gap: 6px; align-items: center; }
   #routingPanel .endpoints .stack { flex: 1; display: flex; flex-direction: column; gap: 4px; }
   #routingPanel .endpoint {
@@ -2037,7 +2079,12 @@
     display: flex; flex-wrap: wrap; gap: 10px;
   }
   #directionsPanel .summary-breakdown .part { white-space: nowrap; }
-  #directionsPanel button.close { position: absolute; top: 4px; right: 6px; font-size: 22px; cursor: pointer; padding: 4px 6px; line-height: 1; }
+  /* Directions X — only positioning; visual comes from .cc-x-btn. */
+  #directionsPanel button.close.cc-x-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+  }
   #directionsPanel .top-ctrls {
     position: absolute; top: 4px; right: 38px;
     display: flex; gap: 2px;
@@ -2612,7 +2659,7 @@
   <button id="pinConfirmBtn" class="primary">Confirm</button>
 </div>
 <div id="poiCard">
-  <button id="poiCardClose" aria-label="close">×</button>
+  <button class="close cc-x-btn" id="poiCardClose" aria-label="close">×</button>
   <button id="poiCardDirectionsTop" type="button" aria-label="directions" title="directions"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="display:block;margin:auto"><path d="M19 15l-6 6-1.4-1.4 3.6-3.6H4V6h2v8h9.2l-3.6-3.6L13 9l6 6z"/></svg></button>
   <button id="poiCardFav" aria-label="favorite">☆</button>
   <div id="poiCardName"></div>
@@ -2625,7 +2672,7 @@
   <div class="header">
     <h3>Route</h3>
     <button type="button" class="saved-btn" id="routingViewSaved" title="view saved routes">Saved</button>
-    <button class="close" id="routingClose" aria-label="close">×</button>
+    <button class="close cc-x-btn" id="routingClose" aria-label="close">×</button>
   </div>
   <div class="endpoints">
     <div class="stack">
@@ -2663,7 +2710,7 @@
     <button type="button" id="directionsSave" title="save this route" aria-label="save">💾</button>
     <button type="button" id="directionsMinimize" title="minimize" aria-label="minimize">▼</button>
   </div>
-  <button class="close" id="directionsClose" aria-label="close">×</button>
+  <button class="close cc-x-btn" id="directionsClose" aria-label="close">×</button>
   <div class="summary" id="directionsSummary"></div>
   <div id="directionsSteps"></div>
 </div>
@@ -2704,7 +2751,7 @@
 </div>
 <div id="settingsPanel">
   <div class="sheet">
-    <button class="close settings-x" id="settingsXClose" type="button" aria-label="close">×</button>
+    <button class="close cc-x-btn" id="settingsXClose" type="button" aria-label="close">×</button>
     <h3>Settings</h3>
     <div class="row theme-row">
       <label>Theme</label>

@@ -1369,24 +1369,36 @@
         border-radius: var(--ui-radius, 8px);
         box-shadow: 0 8px 24px rgba(0,0,0,0.25);
       }
-      #creatureInventory .inventory-x {
-        /* Sticky to the sheet's top-right corner. Negative margins
-           collapse its layout footprint so it sits in the corner
-           without pushing content down. Box-model is matched 1:1 to
-           .candy-link / .pokedex-link so the three buttons read as a
-           single right-side action cluster. The × glyph is small at
-           12px but stays recognizable in context. */
+      /* Sticky corner-cluster buttons: the close X and the back-to-
+         top arrow. Both share the same shape, theming, and sticky-
+         corner footprint trick (zero layout cost via negative bottom
+         margin) so they read as a unified right-edge action cluster.
+         Only the horizontal margin and visibility differ. */
+      /* Inventory X + scroll-top: shared sticky-corner positioning.
+         Visual styling for the X comes from the global .cc-x-btn
+         rule (in index.html); the scroll-top isn't a close button
+         so it carries its own visual styling below. flex-shrink: 0
+         pins both against the column flex container that would
+         otherwise compress their heights. */
+      #creatureInventory .inventory-x,
+      #creatureInventory .scroll-top-btn {
         position: sticky;
         top: 0;
         align-self: flex-end;
-        /* Top margin 0 (was -8px) so the X sits at the sheet's
-           padding-top, the same Y as the .browse-header that follows
-           — visually a three-button row with Candy/Dex. Bottom margin
-           matches the X's height (25px) so it still contributes zero
-           to the column's layout (next sibling starts at the same
-           Y as if the X weren't there). */
+        flex-shrink: 0;
+      }
+      /* Inventory X — only positioning. Negative right margin pushes
+         it 8px past the sheet's content edge so it hugs the corner;
+         negative bottom margin matches its height (25px) so it
+         contributes zero vertical space to the column flow. */
+      #creatureInventory .inventory-x {
         margin: 0 -8px -25px 0;
-        z-index: 5;
+      }
+      /* Scroll-top button — visual matches the X but doesn't carry
+         .cc-x-btn (it isn't a close button). Same 25×25 bordered
+         bubble + theme-aware colors. Hidden until .show is added. */
+      #creatureInventory .scroll-top-btn {
+        display: none;
         background: var(--ui-bg, #fff);
         border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
         border-radius: var(--ui-radius, 8px);
@@ -1394,21 +1406,22 @@
         line-height: 1;
         cursor: pointer;
         color: var(--ui-text, #111);
-        /* Explicit border-box dimensions so the *box* shrinks by 4px
-           in each direction (20→16 tall, 30→26 wide) without changing
-           the 16px × glyph. inline-flex centers the glyph as it
-           lightly overflows the smaller content area; × has no
-           ascender/descender so the slight overflow is invisible. */
         box-sizing: border-box;
-        display: inline-flex;
         align-items: center;
         justify-content: center;
         width: 25px;
         height: 25px;
+        min-height: 25px;
         padding: 0;
         font-family: inherit;
+        z-index: 5;
+        /* 30px right margin leaves room for the X (25px wide + 8px
+           offset + small gap) to its right. -25px bottom margin
+           matches the height so it contributes zero vertical space. */
+        margin: 0 30px -25px 0;
       }
-      #creatureInventory .inventory-x:hover {
+      #creatureInventory .scroll-top-btn.show { display: inline-flex; }
+      #creatureInventory .scroll-top-btn:hover {
         background: var(--ui-hover, rgba(0,0,0,0.04));
       }
       #creatureInventory h3 { margin: 0 0 14px; font-size: 16px; }
@@ -2167,6 +2180,29 @@
         font-size: 12px; color: var(--ui-muted, #666);
         text-align: center; margin: 6px 0 12px;
       }
+      /* Pokédex title row: back button on the left, "Pokédex"
+         heading centered. Grid 1fr|auto|1fr keeps the title at the
+         row's true center regardless of the back button's width
+         (the right 1fr column is intentionally empty as a
+         counter-balance). The h3 inherits the 16px font from the
+         shared #creatureInventory h3 rule, matching the "Pokémon"
+         title in the inventory header. */
+      #creatureInventory .pokedex-title-row {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        align-items: center;
+        margin-bottom: 6px;
+      }
+      #creatureInventory .pokedex-title-row .pokedex-back {
+        /* Override the shared back-button margin so it sits flush
+           in the grid cell rather than bleeding 4px left. */
+        margin: 0;
+        justify-self: start;
+      }
+      #creatureInventory .pokedex-title {
+        margin: 0;
+        text-align: center;
+      }
       #creatureInventory .pokedex-stats {
         text-align: center;
         font-size: 12px; color: var(--ui-muted, #666);
@@ -2306,10 +2342,22 @@
         border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
         border-radius: var(--ui-radius, 8px);
         color: var(--ui-text, #111);
-        padding: 4px 10px;
-        font-size: 12px;
+        /* Square-ish padding around the 16×16 icon. */
+        padding: 4px 5px 2px 5px;
         cursor: pointer;
         font-family: inherit;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 1;
+      }
+      #creatureInventory .pokedex-link svg,
+      #creatureInventory .candy-link svg,
+      #creatureInventory .bag-link svg,
+      #creatureInventory .tags-link svg {
+        display: block;
+        width: 16px;
+        height: 16px;
       }
       #creatureInventory .pokedex-link:hover,
       #creatureInventory .candy-link:hover,
@@ -2678,14 +2726,38 @@
     panel.id = 'creatureInventory';
     panel.innerHTML = `
       <div class="sheet">
-        <button class="close inventory-x" type="button" aria-label="close">×</button>
+        <button class="scroll-top-btn" type="button" aria-label="scroll to top" title="scroll to top">↑</button>
+        <button class="close cc-x-btn inventory-x" type="button" aria-label="close">×</button>
         <div class="browse-view">
           <div class="browse-header">
-            <h3>Creatures</h3>
-            <button class="tags-link" type="button">Tags</button>
-            <button class="bag-link" type="button">Bag</button>
-            <button class="candy-link" type="button">Candy</button>
-            <button class="pokedex-link" type="button">Dex</button>
+            <h3>Pokémon</h3>
+            <button class="tags-link" type="button" aria-label="tags" title="Tags">
+              <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+                <path d="M21 13l-9 9-9-9V3h9z"/>
+                <circle cx="7.5" cy="7.5" r="1.5"/>
+              </svg>
+            </button>
+            <button class="bag-link" type="button" aria-label="bag" title="Bag">
+              <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+                <path d="M5 8h14l-1 12H6z"/>
+                <path d="M9 8V6a3 3 0 0 1 6 0v2"/>
+              </svg>
+            </button>
+            <button class="candy-link" type="button" aria-label="candy" title="Candy">
+              <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+                <ellipse cx="12" cy="12" rx="5" ry="4"/>
+                <path d="M7 12 L3 9 L3 15 Z"/>
+                <path d="M17 12 L21 9 L21 15 Z"/>
+              </svg>
+            </button>
+            <button class="pokedex-link" type="button" aria-label="pokédex" title="Pokédex">
+              <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="16" rx="2"/>
+                <circle cx="8" cy="9" r="2"/>
+                <line x1="3" y1="14" x2="21" y2="14"/>
+                <line x1="6" y1="17" x2="14" y2="17"/>
+              </svg>
+            </button>
           </div>
           <div class="weather-bar"></div>
           <button class="save-reminder" type="button"></button>
@@ -2745,7 +2817,10 @@
           <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
         <div class="pokedex-view">
-          <button class="pokedex-back" type="button" aria-label="back">←</button>
+          <div class="pokedex-title-row">
+            <button class="pokedex-back" type="button" aria-label="back">←</button>
+            <h3 class="pokedex-title">Pokédex</h3>
+          </div>
           <div class="pokedex-stats"></div>
           <div class="search-row">
             <div class="ac-field">
@@ -2808,6 +2883,30 @@
     panel.querySelectorAll('button.close').forEach((btn) => {
       btn.addEventListener('click', hide);
     });
+
+    // Back-to-top button — appears in the corner cluster (left of
+    // the X) when the sheet is scrolled past 200px AND the current
+    // view is the inventory list or pokédex grid. Other views are
+    // either short (candy/bag/tags) or have their own navigation
+    // (detail/fusion).
+    const scrollTopBtn = panel.querySelector('.scroll-top-btn');
+    const sheetEl = panel.querySelector('.sheet');
+    if (scrollTopBtn && sheetEl) {
+      const updateBtn = () => {
+        const top = _viewStack[_viewStack.length - 1];
+        const scrollableView = top && (top.view === 'browse' || top.view === 'pokedex');
+        const shouldShow = scrollableView && sheetEl.scrollTop > 200;
+        scrollTopBtn.classList.toggle('show', shouldShow);
+      };
+      sheetEl.addEventListener('scroll', updateBtn, { passive: true });
+      // Re-check on view changes — switching from pokédex to a
+      // detail view should hide the button immediately, not wait
+      // for the next scroll event.
+      panel.addEventListener('cc-view-changed', updateBtn);
+      scrollTopBtn.addEventListener('click', () => {
+        sheetEl.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+    }
 
     const browseView = panel.querySelector('.browse-view');
     const detailView = panel.querySelector('.detail-view');
@@ -3193,6 +3292,9 @@
   function applyTopView() {
     const panel = ensurePanel();
     const top = _viewStack[_viewStack.length - 1] || { view: 'browse' };
+    // Notify view-aware UI (back-to-top button, etc.) that the active
+    // view changed so they can re-evaluate their visibility.
+    panel.dispatchEvent(new CustomEvent('cc-view-changed'));
     panel.querySelector('.browse-view').style.display = 'none';
     panel.querySelector('.detail-view').classList.remove('show');
     panel.querySelector('.pokedex-view').classList.remove('show');
