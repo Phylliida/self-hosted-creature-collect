@@ -1583,18 +1583,27 @@
         gap: 8px;
       }
       #creatureInventory .creature-card {
-        display: flex; flex-direction: column; align-items: center; gap: 6px;
-        padding: 10px 6px;
+        display: flex; flex-direction: column; align-items: center;
+        /* Pin art at top, stats at bottom; the name floats between
+           them. With a fixed card height + justify-content:
+           space-between, short names no longer leave a slab of
+           empty whitespace under their text — the gap is split
+           between art→name and name→stats so it reads balanced.
+           Asymmetric vertical padding (10px top / 6px bottom)
+           tightens the gap below the stats line. */
+        justify-content: space-between;
+        gap: 0;
+        padding: 10px 6px 6px;
         background: var(--ui-hover, rgba(0,0,0,0.04));
         border-radius: var(--ui-radius, 8px);
         cursor: pointer;
         border: 1px solid transparent;
         transition: transform 0.08s ease, border-color 0.08s ease;
-        /* Hardcoded to match virtualizeGrid({ cardHeight: 178 }) — keeps
+        /* Hardcoded to match virtualizeGrid({ cardHeight: 145 }) — keeps
            the row pitch correct without dynamic measurement. Excess
            content is clipped (rare; happens only on unusually wide
            screens or large fonts). */
-        height: 178px;
+        height: 145px;
         box-sizing: border-box;
         overflow: hidden;
       }
@@ -1621,15 +1630,20 @@
       #creatureInventory .creature-card .name {
         font-size: 13px; text-align: center; line-height: 1.2;
         word-break: break-word;
-        /* Always reserve 2 lines so card heights are uniform — the
-           virtualizer measures one card and assumes that height for
-           every row. Without this, long fusion names wrap to 2 lines
-           and overlap the next row. */
-        height: 2.4em;
+        /* Cap at 2 lines so very long names truncate, but let
+           single-line names take only 1.2em — combined with
+           justify-content: space-between on the card, the spare
+           vertical space splits into balanced gaps above and below
+           the name rather than piling up under it. */
+        max-height: 2.4em;
         display: -webkit-box;
         -webkit-line-clamp: 2;
         -webkit-box-orient: vertical;
         overflow: hidden;
+        /* Bias the name a touch lower so the gap above it reads
+           larger than the gap below — the stats line below feels
+           "anchored" to the name, while the art breathes a bit. */
+        margin-top: 5px;
       }
       #creatureInventory .creature-card .stats {
         display: flex; justify-content: center; gap: 6px;
@@ -2310,12 +2324,46 @@
       #creatureInventory .pokedex-card .pokedex-bases {
         font-size: 10px; text-align: center; line-height: 1.1;
         color: var(--ui-muted, #888);
-        word-break: break-word;
         height: 1.1em;
-        display: -webkit-box;
-        -webkit-line-clamp: 1;
-        -webkit-box-orient: vertical;
+        /* Flex layout: first species (.bn-a) and × stay full-width;
+           second species (.bn-b) shrinks with ellipsis when the line
+           overflows. Result: "Squirtle × Bulbasaur" → "Squirtle ×
+           Bulba…" when narrow. */
+        display: flex;
+        justify-content: center;
+        align-items: baseline;
+        max-width: 100%;
         overflow: hidden;
+      }
+      #creatureInventory .pokedex-card .pokedex-bases .bn-a,
+      #creatureInventory .pokedex-card .pokedex-bases .bn-x {
+        flex-shrink: 0;
+        white-space: nowrap;
+      }
+      #creatureInventory .pokedex-card .pokedex-bases .bn-b {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
+      }
+      /* Same truncation when the bases pair is the primary (i.e.
+         the canonical fused name isn't loaded yet). */
+      #creatureInventory .pokedex-card .pokedex-name.pokedex-name-bases {
+        display: flex;
+        justify-content: center;
+        align-items: baseline;
+        max-width: 100%;
+      }
+      #creatureInventory .pokedex-card .pokedex-name.pokedex-name-bases .bn-a,
+      #creatureInventory .pokedex-card .pokedex-name.pokedex-name-bases .bn-x {
+        flex-shrink: 0;
+        white-space: nowrap;
+      }
+      #creatureInventory .pokedex-card .pokedex-name.pokedex-name-bases .bn-b {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
       }
       #creatureInventory .pokedex-card .caught-badge {
         position: absolute; top: 4px; right: 4px;
@@ -3664,7 +3712,7 @@
   // started.
   const VIEW_GRID_LAYOUT = {
     pokedex: { cols: 3, rowPitch: 158 },  // cardHeight 150 + rowGap 8
-    browse:  { cols: 3, rowPitch: 186 },  // cardHeight 178 + rowGap 8
+    browse:  { cols: 3, rowPitch: 153 },  // cardHeight 145 + rowGap 8
   };
 
   function _updateParentScrollForSibling(parentView, idx) {
@@ -4596,23 +4644,31 @@
       cardHeight: 162,
       initialScrollTop: sheet ? sheet.scrollTop : 0,
       makeCardEl(entry) {
-        const bases = global.Species
-          ? `${global.Species.nameFor(entry.a)} × ${global.Species.nameFor(entry.b)}`
-          : `#${entry.a} × #${entry.b}`;
+        const baseAName = global.Species ? global.Species.nameFor(entry.a) : `#${entry.a}`;
+        const baseBName = global.Species ? global.Species.nameFor(entry.b) : `#${entry.b}`;
+        // Bases rendered as 3 inline-flex spans so .bn-a (first
+        // species) can ellipsize while .bn-x (×) and .bn-b (second
+        // species) stay fully visible — see .pokedex-bases CSS.
+        const basesHtml =
+          `<span class="bn-a">${escapeHtml(baseAName)}</span>`
+          + `<span class="bn-x"> × </span>`
+          + `<span class="bn-b">${escapeHtml(baseBName)}</span>`;
         // Canonical fused name (e.g. "Jigglyish") falls back to the
         // bases pair when SPLIT_NAMES isn't loaded yet.
         const fused = (global.Sprites && global.Sprites.getFusedName)
           ? global.Sprites.getFusedName(entry.a, entry.b) : null;
-        const primary = fused || bases;
-        const subline = fused ? bases : '';
         const card = document.createElement('div');
         card.className = 'pokedex-card';
         card.dataset.key = entry.key;
+        const primaryHtml = fused
+          ? `<div class="pokedex-name">${escapeHtml(fused)}</div>`
+            + `<div class="pokedex-bases">${basesHtml}</div>`
+          : `<div class="pokedex-name pokedex-name-bases">${basesHtml}</div>`
+            + `<div class="pokedex-bases"></div>`;
         card.innerHTML =
           (entry.caught ? '<span class="caught-badge" title="caught">✓</span>' : '')
           + `<div class="pokedex-art"><img alt=""></div>`
-          + `<div class="pokedex-name">${escapeHtml(primary)}</div>`
-          + `<div class="pokedex-bases">${escapeHtml(subline)}</div>`;
+          + primaryHtml;
         return card;
       },
       loadSpriteFor(card, entry) {
@@ -4659,9 +4715,11 @@
           (i ? '<span class="sep">·</span>' : '') + `<span>${escapeHtml(s)}</span>`
         ).join('')}</div>`
       : '';
-    const speciesLine = nick
-      ? `<div class="detail-species">Species: ${escapeHtml(c.name)}</div>`
-      : '';
+    // The species name was previously shown as a "Species: ..." line
+    // when a nickname was set — but the species pair below the image
+    // (clickable links) already conveys the same info less obtrusively,
+    // so we drop this line entirely.
+    const speciesLine = '';
     let caughtLine = '';
     let caughtClickable = false;
     if (c.caughtAt) {
@@ -5091,7 +5149,7 @@
       cols: 3,
       rowGap: 8,
       initialScrollTop: sheet ? sheet.scrollTop : 0,
-      cardHeight: 178,
+      cardHeight: 145,
       makeCardEl(c) {
         const card = document.createElement('div');
         card.className = 'creature-card';
