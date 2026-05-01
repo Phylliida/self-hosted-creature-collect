@@ -1640,6 +1640,15 @@
         padding: 4px 8px;
         margin: 0 0 6px -4px;
         font-family: inherit;
+        /* In flex-column parents (.detail-view / .fusion-view) the
+           button stretches to full container width by default, and
+           the browser default text-align center on the button puts
+           the back arrow in the visual middle. text-align: left
+           keeps the full-width hit target while moving the icon
+           back to the top-left corner — matches the candy/bag/tags
+           layout where the button sits as a natural-width inline
+           element in a display:block container. */
+        text-align: left;
       }
       #creatureInventory .detail-back:hover,
       #creatureInventory .pokedex-back:hover,
@@ -2158,22 +2167,10 @@
         font-size: 12px; color: var(--ui-muted, #666);
         text-align: center; margin: 6px 0 12px;
       }
-      #creatureInventory .pokedex-header {
-        display: flex; align-items: center; gap: 8px;
-        margin-bottom: 10px;
-      }
       #creatureInventory .pokedex-stats {
-        flex: 1; text-align: center;
+        text-align: center;
         font-size: 12px; color: var(--ui-muted, #666);
-        /* Align the text's vertical center with the sticky X button.
-           The header row is taller than the X (back button is ~30px,
-           X is 25px), so by default flex-center would put this text
-           ~3px below the X. Pinning to the row top + matching the X's
-           25px height + line-height puts the text center at the same
-           Y as the X center. */
-        align-self: flex-start;
-        height: 25px;
-        line-height: 25px;
+        margin: 0 0 10px;
       }
       #creatureInventory .pokedex-stats b {
         color: var(--ui-text, #111);
@@ -2748,10 +2745,8 @@
           <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
         <div class="pokedex-view">
-          <div class="pokedex-header">
-            <button class="pokedex-back" type="button" aria-label="back">←</button>
-            <div class="pokedex-stats"></div>
-          </div>
+          <button class="pokedex-back" type="button" aria-label="back">←</button>
+          <div class="pokedex-stats"></div>
           <div class="search-row">
             <div class="ac-field">
               <input id="pokedexSearchAny" type="search" placeholder="Species" autocomplete="off">
