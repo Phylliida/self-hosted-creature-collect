@@ -1654,20 +1654,34 @@
         background: none;
         border: none;
         color: var(--ui-text, #111);
+        /* 8-direction stroke in the panel's bg color so the ← stays
+           readable when content scrolls under the sticky button —
+           same trick used by the X and scroll-top arrow. */
+        text-shadow:
+          -1px -1px 0 var(--ui-bg, #fff), 0 -1px 0 var(--ui-bg, #fff),  1px -1px 0 var(--ui-bg, #fff),
+          -1px  0   0 var(--ui-bg, #fff),                                1px  0   0 var(--ui-bg, #fff),
+          -1px  1px 0 var(--ui-bg, #fff), 0  1px 0 var(--ui-bg, #fff),  1px  1px 0 var(--ui-bg, #fff);
         font-size: 22px;
         line-height: 1;
         cursor: pointer;
-        /* Explicit 30×30 box matches the close-X and scroll-top
-           sizes — inline-flex centers the ← inside. Padding 0 so
-           the box dimensions are exact (no extra padding-driven
-           growth past 30px). */
+        /* Sticky in the top-left corner of the .sheet (matches the
+           top-right X / scroll-top arrow). Negative bottom margin
+           collapses the layout footprint to zero so the title sits
+           at the same Y as the back button (the back floats over
+           the title's left edge — short titles never collide). */
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        align-self: flex-start;
         display: inline-flex;
         align-items: center;
         justify-content: center;
         width: 30px;
         height: 30px;
+        min-height: 30px;
+        flex-shrink: 0;
         padding: 0;
-        margin: 0 0 6px -4px;
+        margin: 0 0 -30px -4px;
         font-family: inherit;
         /* In flex-column parents (.detail-view / .fusion-view) the
            button stretches to full container width by default, and
@@ -1818,28 +1832,35 @@
       #creatureInventory .detail-art img {
         width: 100%; height: 100%; object-fit: contain; display: block;
       }
+      /* Sits at the very top of the detail/fusion view, in the
+         same Y slot as "Pokémon"/"Pokédex" h3 in their views.
+         min-height matches the back-button height (30) so vertical
+         alignment is identical across views. */
       #creatureInventory .detail-name-row {
         display: flex; align-items: center; justify-content: center;
-        gap: 8px; margin: 0 0 4px;
+        gap: 8px; margin: 0 0 6px;
+        min-height: 30px;
       }
       /* When a canonical fused name is present we stack the rows
          vertically: fused name on top, "A × B" species pair below. */
       #creatureInventory .detail-name-row:has(.detail-fused-name) {
         flex-direction: column; gap: 2px;
       }
+      /* Match #creatureInventory h3 sizing (16px) so this header
+         reads identical to "Pokémon" / "Pokédex". */
       #creatureInventory .detail-name {
-        font-size: 18px; font-weight: 600;
+        font-size: 16px; font-weight: 700;
         word-break: break-word; text-align: center;
       }
       #creatureInventory .detail-fused-name {
-        font-size: 20px; font-weight: 700;
+        font-size: 16px; font-weight: 700;
         word-break: break-word; text-align: center;
         color: var(--ui-text, #111);
       }
       /* When the fused name is the primary, the species pair becomes
          a secondary subtitle. */
       #creatureInventory .detail-name.detail-name-sub {
-        font-size: 13px; font-weight: 500;
+        font-size: 12px; font-weight: 500;
         color: var(--ui-muted, #666);
       }
       #creatureInventory .icon-btn {
@@ -1986,9 +2007,9 @@
         filter: brightness(0);
       }
       #creatureInventory .pokedex-view { display: none; }
-      #creatureInventory .pokedex-view.show { display: block; }
+      #creatureInventory .pokedex-view.show { display: flex; flex-direction: column; }
       #creatureInventory .candy-view { display: none; }
-      #creatureInventory .candy-view.show { display: block; }
+      #creatureInventory .candy-view.show { display: flex; flex-direction: column; }
       #creatureInventory .candy-title {
         font-size: 16px; font-weight: 600;
         text-align: center; margin: 0 0 4px;
@@ -2024,7 +2045,7 @@
         font-size: 13px;
       }
       #creatureInventory .bag-view { display: none; }
-      #creatureInventory .bag-view.show { display: block; }
+      #creatureInventory .bag-view.show { display: flex; flex-direction: column; }
       #creatureInventory .bag-title {
         font-size: 16px; font-weight: 600;
         text-align: center; margin: 0 0 4px;
@@ -2071,7 +2092,7 @@
         font-size: 13px;
       }
       #creatureInventory .tags-view { display: none; }
-      #creatureInventory .tags-view.show { display: block; }
+      #creatureInventory .tags-view.show { display: flex; flex-direction: column; }
       #creatureInventory .tags-title {
         font-size: 16px; font-weight: 600;
         text-align: center; margin: 0 0 4px;
@@ -2196,32 +2217,20 @@
         font-size: 12px; color: var(--ui-muted, #666);
         text-align: center; margin: 6px 0 12px;
       }
-      /* Sub-view title rows: back button on the left, title
-         centered. Grid 1fr|auto|1fr keeps the title at the row's
-         true center regardless of the back button's width (the
-         right 1fr column is intentionally empty as a counter-
-         balance). All sub-views (pokédex, candy, bag, tags) share
-         this layout so their titles sit at the same Y position as
-         the "Pokémon" header in the browse view. */
-      #creatureInventory .pokedex-title-row,
-      #creatureInventory .subview-title-row {
-        display: grid;
-        grid-template-columns: 1fr auto 1fr;
-        align-items: center;
-        margin-bottom: 6px;
-      }
-      #creatureInventory .pokedex-title-row .pokedex-back,
-      #creatureInventory .subview-title-row .candy-back,
-      #creatureInventory .subview-title-row .bag-back,
-      #creatureInventory .subview-title-row .tags-back {
-        /* Override the shared back-button margin so each sits
-           flush in its grid cell rather than bleeding 4px left. */
-        margin: 0;
-        justify-self: start;
-      }
+      /* Sub-view titles: full-width centered headings. The back
+         button floats sticky in the top-left corner via its own
+         rule (with -30px bottom margin to collapse layout space),
+         so titles sit at the same Y as the back button without
+         needing a grid wrapper. min-height matches the back
+         button's 30px so vertical alignment is identical to the
+         "Pokémon" header in the browse view. */
       #creatureInventory .pokedex-title,
       #creatureInventory .subview-title {
-        margin: 0;
+        margin: 0 0 6px;
+        min-height: 30px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         text-align: center;
       }
       #creatureInventory .pokedex-stats {
@@ -2451,15 +2460,63 @@
       }
       #creatureInventory .rename-form {
         display: flex; gap: 6px; justify-content: center;
-        flex-wrap: wrap; margin: 0 0 8px;
+        align-items: center;
+        flex-wrap: nowrap;
       }
+      /* Bordered input matching the rest of the panel's text fields,
+         but typographically tuned to the title (16px bold centered)
+         so the inline edit reads as the title becoming editable.
+         outline:none + matching focus border kills the browser's
+         default focus ring (which on most platforms paints a thicker
+         second border on top of ours when focused). */
       #creatureInventory .rename-form input {
-        flex: 1; min-width: 0; max-width: 220px;
-        padding: 6px 10px; font-size: 14px;
+        flex: 1; min-width: 0; max-width: 170px;
+        padding: 4px 8px;
+        font-size: 16px;
+        font-weight: 700;
+        text-align: center;
         background: var(--ui-bg, #fff);
         color: var(--ui-text, #111);
         border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
         border-radius: var(--ui-radius, 8px);
+        font-family: inherit;
+        outline: none;
+      }
+      #creatureInventory .rename-form input:focus,
+      #creatureInventory .rename-form input:focus-visible {
+        outline: none;
+        border-color: var(--ui-border, rgba(0,0,0,0.15));
+        box-shadow: none;
+      }
+      /* SVG icon buttons inside the rename form — small square hits
+         next to the input, matching the minimal style of the rest
+         of the panel's icon buttons. */
+      #creatureInventory .rename-form .icon-btn {
+        flex-shrink: 0;
+        padding: 4px 5px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 1;
+      }
+      #creatureInventory .rename-form .icon-btn svg {
+        display: block;
+        width: 18px;
+        height: 18px;
+      }
+      /* Clickable name in view mode — subtle hover affordance so the
+         user knows the title is interactive. No underline / button
+         styling so it stays clean as a header. */
+      #creatureInventory .detail-name-clickable {
+        cursor: pointer;
+        border-radius: var(--ui-radius, 8px);
+        padding: 0 6px;
+        transition: background 120ms ease;
+      }
+      #creatureInventory .detail-name-clickable:hover,
+      #creatureInventory .detail-name-clickable:focus-visible {
+        background: var(--ui-hover, rgba(0,0,0,0.06));
+        outline: none;
       }
       .creature-marker {
         width: var(--creature-marker-size, ${MARKER_SIZE_PX}px);
@@ -2853,10 +2910,8 @@
           <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
         <div class="pokedex-view">
-          <div class="pokedex-title-row">
-            <button class="pokedex-back" type="button" aria-label="back">←</button>
-            <h3 class="pokedex-title">Pokédex</h3>
-          </div>
+          <button class="pokedex-back" type="button" aria-label="back">←</button>
+          <h3 class="pokedex-title">Pokédex</h3>
           <div class="pokedex-stats"></div>
           <div class="search-row">
             <div class="ac-field">
@@ -2894,29 +2949,22 @@
             <button class="dir" type="button" id="pokedexSortDir" aria-label="toggle sort direction"></button>
           </div>
           <div class="pokedex-grid"></div>
-          <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
         <div class="candy-view">
-          <div class="subview-title-row">
-            <button class="candy-back" type="button" aria-label="back">←</button>
-            <h3 class="subview-title">Candy</h3>
-          </div>
+          <button class="candy-back" type="button" aria-label="back">←</button>
+          <h3 class="subview-title">Candy</h3>
           <div class="candy-body"></div>
           <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
         <div class="bag-view">
-          <div class="subview-title-row">
-            <button class="bag-back" type="button" aria-label="back">←</button>
-            <h3 class="subview-title">Bag</h3>
-          </div>
+          <button class="bag-back" type="button" aria-label="back">←</button>
+          <h3 class="subview-title">Bag</h3>
           <div class="bag-body"></div>
           <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
         <div class="tags-view">
-          <div class="subview-title-row">
-            <button class="tags-back" type="button" aria-label="back">←</button>
-            <h3 class="subview-title">Tags</h3>
-          </div>
+          <button class="tags-back" type="button" aria-label="back">←</button>
+          <h3 class="subview-title">Tags</h3>
           <div class="tags-body"></div>
           <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
@@ -3350,6 +3398,9 @@
     switch (top.view) {
       case 'browse': {
         panel.querySelector('.browse-view').style.display = '';
+        // Rehydrate filter state captured before the user navigated
+        // away (no-op on first entry — top.filters is undefined).
+        if (top.filters) _applyInventoryFilters(panel, top.filters);
         // Restore the saved scroll before render — renderList uses
         // live sheet.scrollTop for in-view re-renders, so the sheet
         // must already hold the right value when re-entering.
@@ -3391,12 +3442,21 @@
         return;
       case 'pokedex': {
         const opts = top.opts || {};
-        const sAny = panel.querySelector('#pokedexSearchAny');
-        const sa = panel.querySelector('#pokedexSearchA');
-        const sb = panel.querySelector('#pokedexSearchB');
-        if (sAny) sAny.value = opts.searchAny || '';
-        if (sa)   sa.value   = opts.searchA   || '';
-        if (sb)   sb.value   = opts.searchB   || '';
+        // Filter rehydration order:
+        //   1. If we captured filters on a previous push (back-nav)
+        //      → restore them verbatim.
+        //   2. Otherwise this is a fresh push — seed the search
+        //      inputs from the showPokedex(opts) initial state.
+        if (top.filters) {
+          _applyPokedexFilters(panel, top.filters);
+        } else {
+          const sAny = panel.querySelector('#pokedexSearchAny');
+          const sa = panel.querySelector('#pokedexSearchA');
+          const sb = panel.querySelector('#pokedexSearchB');
+          if (sAny) sAny.value = opts.searchAny || '';
+          if (sa)   sa.value   = opts.searchA   || '';
+          if (sb)   sb.value   = opts.searchB   || '';
+        }
         panel.querySelector('.pokedex-view').classList.add('show');
         // Restore the navigation-saved scroll position before
         // renderPokedex runs — the renderer now uses live sheet
@@ -3435,8 +3495,109 @@
     if (sheet && top) top.scrollY = sheet.scrollTop;
   }
 
+  // Capture/apply pairs for the pokédex and inventory filter state.
+  // Each pushView() snapshots the current top entry's filters into
+  // its own stack entry; popping back into a captured pokédex /
+  // browse entry rehydrates those filters before render — so the
+  // user navigating back through the history sees each view's
+  // filters as they were when they navigated AWAY from it.
+  // Type filters / sort / tags persist via localStorage at run-time,
+  // so the snapshot writes those keys on apply (the entry being
+  // restored is the user's "current" filter state).
+  function _capturePokedexFilters(panel) {
+    return {
+      searchAny: (panel.querySelector('#pokedexSearchAny') || {}).value || '',
+      searchA: (panel.querySelector('#pokedexSearchA') || {}).value || '',
+      searchB: (panel.querySelector('#pokedexSearchB') || {}).value || '',
+      filterType: localStorage.getItem('cc.pokedexFilterType') || '',
+      filterTypeA: localStorage.getItem('cc.pokedexFilterTypeA') || '',
+      filterTypeB: localStorage.getItem('cc.pokedexFilterTypeB') || '',
+      sortBy: localStorage.getItem('cc.pokedexSortBy') || '',
+      sortDir: localStorage.getItem('cc.pokedexSortDir') || '',
+      tags: localStorage.getItem('cc.pokedexTagFilter') || '',
+    };
+  }
+  function _applyPokedexFilters(panel, f) {
+    if (!f) return;
+    const sAny = panel.querySelector('#pokedexSearchAny');
+    if (sAny) sAny.value = f.searchAny || '';
+    const sa = panel.querySelector('#pokedexSearchA');
+    if (sa) sa.value = f.searchA || '';
+    const sb = panel.querySelector('#pokedexSearchB');
+    if (sb) sb.value = f.searchB || '';
+    localStorage.setItem('cc.pokedexFilterType', f.filterType || '');
+    localStorage.setItem('cc.pokedexFilterTypeA', f.filterTypeA || '');
+    localStorage.setItem('cc.pokedexFilterTypeB', f.filterTypeB || '');
+    if (f.sortBy) localStorage.setItem('cc.pokedexSortBy', f.sortBy);
+    if (f.sortDir) localStorage.setItem('cc.pokedexSortDir', f.sortDir);
+    localStorage.setItem('cc.pokedexTagFilter', f.tags || '');
+    // Sync DOM selects so they reflect the restored values, and
+    // re-apply the type-color background trick so a select set
+    // back to "any" loses its themed color and one set to a type
+    // re-paints to that type's chip color.
+    const ft = panel.querySelector('#pokedexFilterType');
+    if (ft) { ft.value = f.filterType || ''; applyTypeSelectColor(ft); }
+    const fta = panel.querySelector('#pokedexFilterTypeA');
+    if (fta) { fta.value = f.filterTypeA || ''; applyTypeSelectColor(fta); }
+    const ftb = panel.querySelector('#pokedexFilterTypeB');
+    if (ftb) { ftb.value = f.filterTypeB || ''; applyTypeSelectColor(ftb); }
+    const sortBy = panel.querySelector('#pokedexSortBy');
+    if (sortBy && f.sortBy) sortBy.value = f.sortBy;
+  }
+  function _captureInventoryFilters(panel) {
+    return {
+      search: (panel.querySelector('#creatureSearch') || {}).value || '',
+      searchAny: (panel.querySelector('#creatureSearchAny') || {}).value || '',
+      searchA: (panel.querySelector('#creatureSearchA') || {}).value || '',
+      searchB: (panel.querySelector('#creatureSearchB') || {}).value || '',
+      filterType: localStorage.getItem('cc.invFilterType') || '',
+      filterTypeA: localStorage.getItem('cc.invFilterTypeA') || '',
+      filterTypeB: localStorage.getItem('cc.invFilterTypeB') || '',
+      sortBy: localStorage.getItem('cc.creatureSortBy') || '',
+      sortDir: localStorage.getItem('cc.creatureSortDir') || '',
+      tags: localStorage.getItem('cc.invTagFilter') || '',
+    };
+  }
+  function _applyInventoryFilters(panel, f) {
+    if (!f) return;
+    const s = panel.querySelector('#creatureSearch');
+    if (s) s.value = f.search || '';
+    const sAny = panel.querySelector('#creatureSearchAny');
+    if (sAny) sAny.value = f.searchAny || '';
+    const sa = panel.querySelector('#creatureSearchA');
+    if (sa) sa.value = f.searchA || '';
+    const sb = panel.querySelector('#creatureSearchB');
+    if (sb) sb.value = f.searchB || '';
+    localStorage.setItem('cc.invFilterType', f.filterType || '');
+    localStorage.setItem('cc.invFilterTypeA', f.filterTypeA || '');
+    localStorage.setItem('cc.invFilterTypeB', f.filterTypeB || '');
+    if (f.sortBy) localStorage.setItem('cc.creatureSortBy', f.sortBy);
+    if (f.sortDir) localStorage.setItem('cc.creatureSortDir', f.sortDir);
+    localStorage.setItem('cc.invTagFilter', f.tags || '');
+    const ft = panel.querySelector('#creatureFilterType');
+    if (ft) { ft.value = f.filterType || ''; applyTypeSelectColor(ft); }
+    const fta = panel.querySelector('#creatureFilterTypeA');
+    if (fta) { fta.value = f.filterTypeA || ''; applyTypeSelectColor(fta); }
+    const ftb = panel.querySelector('#creatureFilterTypeB');
+    if (ftb) { ftb.value = f.filterTypeB || ''; applyTypeSelectColor(ftb); }
+    const sortBy = panel.querySelector('#creatureSortBy');
+    if (sortBy && f.sortBy) sortBy.value = f.sortBy;
+  }
+  function _captureCurrentFilters() {
+    const panel = document.getElementById('creatureInventory');
+    if (!panel) return;
+    const top = _viewStack[_viewStack.length - 1];
+    if (!top) return;
+    if (top.view === 'pokedex') {
+      top.filters = _capturePokedexFilters(panel);
+    } else if (top.view === 'browse') {
+      top.filters = _captureInventoryFilters(panel);
+    }
+  }
+
   function pushView(state) {
     _captureCurrentScroll();
+    _captureCurrentFilters();
     _viewStack.push(state);
     applyTopView();
   }
@@ -3692,7 +3853,36 @@
   }
 
   function showPokedex(opts) {
-    pushView({ view: 'pokedex', opts: opts || null });
+    // When called with a search seed (species-link click from a
+    // fusion entry), embed a CLEARED filter snapshot directly in
+    // the new entry — type / sort / tag filters from the previous
+    // pokédex would otherwise carry over via localStorage and
+    // mask the user's intent ("show me all fusions of THIS
+    // species"). The previous pokédex's filters are still saved
+    // on its own stack entry by pushView's _captureCurrentFilters
+    // call, so back-navigation restores them.
+    const o = opts || {};
+    const isSpeciesClick = (o.searchAny || o.searchA || o.searchB);
+    if (isSpeciesClick) {
+      pushView({
+        view: 'pokedex',
+        opts: o,
+        filters: {
+          searchAny: o.searchAny || '',
+          searchA: o.searchA || '',
+          searchB: o.searchB || '',
+          filterType: '',
+          filterTypeA: '',
+          filterTypeB: '',
+          // sort/tags use empty so _applyPokedexFilters wipes them.
+          sortBy: localStorage.getItem('cc.pokedexSortBy') || '',
+          sortDir: localStorage.getItem('cc.pokedexSortDir') || '',
+          tags: '',
+        },
+      });
+    } else {
+      pushView({ view: 'pokedex', opts: o });
+    }
   }
 
   function showCandy() {
@@ -4046,10 +4236,6 @@
     }
 
     body.innerHTML = `
-      <div class="detail-art">
-        <span class="detail-art-placeholder" aria-hidden="true">•</span>
-        <img class="detail-art-img" alt="" style="display:none">
-      </div>
       <div class="detail-name-row">
         ${fusedName ? `<div class="detail-fused-name">${escapeHtml(fusedName)}</div>` : ''}
         <div class="detail-name${fusedName ? ' detail-name-sub' : ''}">
@@ -4057,6 +4243,10 @@
           <span> × </span>
           <span class="species-link" data-side="B">${escapeHtml(nameB)}</span>
         </div>
+      </div>
+      <div class="detail-art">
+        <span class="detail-art-placeholder" aria-hidden="true">•</span>
+        <img class="detail-art-img" alt="" style="display:none">
       </div>
       ${typesHtml}
       ${capturedHtml}
@@ -4452,13 +4642,12 @@
       ? `<button class="detail-pokedex-link" type="button">View dex entry →</button>`
       : '';
     body.innerHTML = `
+      <div class="detail-name-row" data-mode="view">
+        <div class="detail-name detail-name-clickable" role="button" tabindex="0" title="tap to rename">${escapeHtml(name)}</div>
+      </div>
       <div class="detail-art">
         <span class="detail-art-placeholder" aria-hidden="true">${escapeHtml(c.emoji || '•')}</span>
         <img class="detail-art-img" alt="" style="display:none">
-      </div>
-      <div class="detail-name-row" data-mode="view">
-        <div class="detail-name">${escapeHtml(name)}</div>
-        <button class="icon-btn rename-edit" type="button" aria-label="rename" title="rename">✎</button>
       </div>
       ${pokedexLinkHtml}
       ${speciesLine}
@@ -4526,9 +4715,13 @@
         });
       }
     }
-    body.querySelector('.rename-edit').addEventListener('click', () => {
-      enterRenameMode(c);
-    });
+    const nameEl = body.querySelector('.detail-name-clickable');
+    if (nameEl) {
+      nameEl.addEventListener('click', () => enterRenameMode(c));
+      nameEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); enterRenameMode(c); }
+      });
+    }
     body.querySelectorAll('.detail-tag-chip').forEach((chip) => {
       chip.addEventListener('click', () => {
         const tag = chip.dataset.tag;
@@ -4569,12 +4762,22 @@
     if (!row || row.dataset.mode === 'edit') return;
     const current = readNicknames()[c.id] || c.name;
     row.dataset.mode = 'edit';
+    // Reset = circular-arrow undo glyph; Save = checkmark glyph.
+    // Both use stroke="currentColor" so they pick up theming.
     row.innerHTML = `
       <form class="rename-form">
+        <button class="icon-btn rename-reset" type="button" aria-label="reset to species name" title="reset to species name">
+          <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+            <path d="M3 12a9 9 0 1 0 3-6.7"/>
+            <polyline points="3 3 3 9 9 9"/>
+          </svg>
+        </button>
         <input type="text" maxlength="40" value="${escapeHtml(current)}" aria-label="nickname">
-        <button class="icon-btn rename-save" type="submit">Save</button>
-        <button class="icon-btn rename-cancel" type="button">Cancel</button>
-        <button class="icon-btn rename-reset" type="button" title="reset to species name">Reset</button>
+        <button class="icon-btn rename-save" type="submit" aria-label="save" title="save">
+          <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+            <polyline points="5 12 10 17 19 7"/>
+          </svg>
+        </button>
       </form>
     `;
     const form = row.querySelector('form');
@@ -4586,13 +4789,13 @@
       writeNickname(c.id, input.value);
       renderDetail(c);
     });
-    row.querySelector('.rename-cancel').addEventListener('click', () => {
-      renderDetail(c);
-    });
     row.querySelector('.rename-reset').addEventListener('click', () => {
       writeNickname(c.id, '');
       renderDetail(c);
     });
+    // Esc still backs out without saving (keyboard ergonomics) —
+    // there's no visible Cancel button per the new design, but
+    // unintentional taps deserve a graceful exit on desktop.
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') { e.preventDefault(); renderDetail(c); }
     });
