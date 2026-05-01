@@ -1389,40 +1389,47 @@
       }
       /* Inventory X — only positioning. Negative right margin pushes
          it 8px past the sheet's content edge so it hugs the corner;
-         negative bottom margin matches its height (25px) so it
+         negative bottom margin matches its height (30px) so it
          contributes zero vertical space to the column flow. */
       #creatureInventory .inventory-x {
-        margin: 0 -8px -25px 0;
+        margin: 0 -8px -30px 0;
       }
-      /* Scroll-top button — visual matches the X but doesn't carry
-         .cc-x-btn (it isn't a close button). Same 25×25 bordered
-         bubble + theme-aware colors. Hidden until .show is added. */
+      /* Scroll-top button — minimal: just the ↑ glyph, no border or
+         background bubble (matching the close-X minimal look). 25×25
+         hit area for tap reliability; the visible arrow is the only
+         thing rendered. The 8-direction text-shadow in the sheet's
+         bg color keeps the glyph readable when content scrolls
+         underneath (this button is sticky-positioned). Hidden until
+         .show is added. */
       #creatureInventory .scroll-top-btn {
         display: none;
-        background: var(--ui-bg, #fff);
-        border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
-        border-radius: var(--ui-radius, 8px);
-        font-size: 16px;
+        background: transparent;
+        border: none;
+        font-size: 22px;
         line-height: 1;
         cursor: pointer;
         color: var(--ui-text, #111);
+        text-shadow:
+          -1px -1px 0 var(--ui-bg, #fff), 0 -1px 0 var(--ui-bg, #fff),  1px -1px 0 var(--ui-bg, #fff),
+          -1px  0   0 var(--ui-bg, #fff),                                1px  0   0 var(--ui-bg, #fff),
+          -1px  1px 0 var(--ui-bg, #fff), 0  1px 0 var(--ui-bg, #fff),  1px  1px 0 var(--ui-bg, #fff);
         box-sizing: border-box;
         align-items: center;
         justify-content: center;
-        width: 25px;
-        height: 25px;
-        min-height: 25px;
+        width: 30px;
+        height: 30px;
+        min-height: 30px;
         padding: 0;
         font-family: inherit;
         z-index: 5;
-        /* 30px right margin leaves room for the X (25px wide + 8px
-           offset + small gap) to its right. -25px bottom margin
+        /* 35px right margin leaves room for the X (30px wide + 8px
+           offset + small gap) to its right. -30px bottom margin
            matches the height so it contributes zero vertical space. */
-        margin: 0 30px -25px 0;
+        margin: 0 35px -30px 0;
       }
       #creatureInventory .scroll-top-btn.show { display: inline-flex; }
       #creatureInventory .scroll-top-btn:hover {
-        background: var(--ui-hover, rgba(0,0,0,0.04));
+        color: var(--ui-muted, #888);
       }
       #creatureInventory h3 { margin: 0 0 14px; font-size: 16px; }
       #creatureInventory .sort-row {
@@ -1650,7 +1657,16 @@
         font-size: 22px;
         line-height: 1;
         cursor: pointer;
-        padding: 4px 8px;
+        /* Explicit 30×30 box matches the close-X and scroll-top
+           sizes — inline-flex centers the ← inside. Padding 0 so
+           the box dimensions are exact (no extra padding-driven
+           growth past 30px). */
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        padding: 0;
         margin: 0 0 6px -4px;
         font-family: inherit;
         /* In flex-column parents (.detail-view / .fusion-view) the
@@ -2180,26 +2196,31 @@
         font-size: 12px; color: var(--ui-muted, #666);
         text-align: center; margin: 6px 0 12px;
       }
-      /* Pokédex title row: back button on the left, "Pokédex"
-         heading centered. Grid 1fr|auto|1fr keeps the title at the
-         row's true center regardless of the back button's width
-         (the right 1fr column is intentionally empty as a
-         counter-balance). The h3 inherits the 16px font from the
-         shared #creatureInventory h3 rule, matching the "Pokémon"
-         title in the inventory header. */
-      #creatureInventory .pokedex-title-row {
+      /* Sub-view title rows: back button on the left, title
+         centered. Grid 1fr|auto|1fr keeps the title at the row's
+         true center regardless of the back button's width (the
+         right 1fr column is intentionally empty as a counter-
+         balance). All sub-views (pokédex, candy, bag, tags) share
+         this layout so their titles sit at the same Y position as
+         the "Pokémon" header in the browse view. */
+      #creatureInventory .pokedex-title-row,
+      #creatureInventory .subview-title-row {
         display: grid;
         grid-template-columns: 1fr auto 1fr;
         align-items: center;
         margin-bottom: 6px;
       }
-      #creatureInventory .pokedex-title-row .pokedex-back {
-        /* Override the shared back-button margin so it sits flush
-           in the grid cell rather than bleeding 4px left. */
+      #creatureInventory .pokedex-title-row .pokedex-back,
+      #creatureInventory .subview-title-row .candy-back,
+      #creatureInventory .subview-title-row .bag-back,
+      #creatureInventory .subview-title-row .tags-back {
+        /* Override the shared back-button margin so each sits
+           flush in its grid cell rather than bleeding 4px left. */
         margin: 0;
         justify-self: start;
       }
-      #creatureInventory .pokedex-title {
+      #creatureInventory .pokedex-title,
+      #creatureInventory .subview-title {
         margin: 0;
         text-align: center;
       }
@@ -2323,17 +2344,30 @@
       #creatureInventory .species-link:hover {
         color: var(--ui-accent, #888);
       }
+      /* Browse header: centered "Pokémon" title. The sticky X
+         overlays the right corner, but "Pokémon" is short enough
+         to comfortably sit centered without colliding.
+         min-height matches the .pokedex-title-row's natural height
+         (driven by the back button's 22px font + 4px+4px vertical
+         padding ≈ 30px) so the title sits at the same Y position
+         as "Pokédex" — without the height match, this row was
+         shorter and the title appeared a few px higher than the
+         pokédex title in its grid row. */
       #creatureInventory .browse-header {
-        display: flex; align-items: center; gap: 8px;
-        margin: 0 0 14px;
-        /* Leave room for the sticky X button which sits at the
-           sheet's top-right corner. The +8px on top of the X's own
-           ~20px footprint gives the same gap between Dex and X as
-           between Candy and Dex (8px), keeping the right-side action
-           cluster evenly spaced. */
-        padding-right: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 30px;
+        margin: 0 0 6px;
       }
-      #creatureInventory .browse-header h3 { margin: 0; flex: 1; }
+      #creatureInventory .browse-header h3 { margin: 0; }
+      /* Action icon row — centered on its own line below the
+         "Pokémon" title. Tags / Bag / Candy / Pokédex. */
+      #creatureInventory .header-actions {
+        display: flex; gap: 6px;
+        justify-content: center;
+        margin: 0 0 8px;
+      }
       #creatureInventory .pokedex-link,
       #creatureInventory .candy-link,
       #creatureInventory .bag-link,
@@ -2356,8 +2390,8 @@
       #creatureInventory .bag-link svg,
       #creatureInventory .tags-link svg {
         display: block;
-        width: 16px;
-        height: 16px;
+        width: 21px;
+        height: 21px;
       }
       #creatureInventory .pokedex-link:hover,
       #creatureInventory .candy-link:hover,
@@ -2370,6 +2404,7 @@
       }
       #creatureInventory .weather-row {
         display: flex; align-items: center;
+        justify-content: center;
         gap: 6px;
         font-size: 12px;
         color: var(--ui-muted, #666);
@@ -2731,34 +2766,36 @@
         <div class="browse-view">
           <div class="browse-header">
             <h3>Pokémon</h3>
-            <button class="tags-link" type="button" aria-label="tags" title="Tags">
-              <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
-                <path d="M21 13l-9 9-9-9V3h9z"/>
-                <circle cx="7.5" cy="7.5" r="1.5"/>
-              </svg>
-            </button>
-            <button class="bag-link" type="button" aria-label="bag" title="Bag">
-              <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
-                <path d="M5 8h14l-1 12H6z"/>
-                <path d="M9 8V6a3 3 0 0 1 6 0v2"/>
-              </svg>
-            </button>
-            <button class="candy-link" type="button" aria-label="candy" title="Candy">
-              <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
-                <ellipse cx="12" cy="12" rx="5" ry="4"/>
-                <path d="M7 12 L3 9 L3 15 Z"/>
-                <path d="M17 12 L21 9 L21 15 Z"/>
-              </svg>
-            </button>
-            <button class="pokedex-link" type="button" aria-label="pokédex" title="Pokédex">
-              <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
-                <rect x="3" y="4" width="18" height="16" rx="2"/>
-                <circle cx="8" cy="9" r="2"/>
-                <line x1="3" y1="14" x2="21" y2="14"/>
-                <line x1="6" y1="17" x2="14" y2="17"/>
-              </svg>
-            </button>
           </div>
+          <div class="header-actions">
+            <button class="tags-link" type="button" aria-label="tags" title="Tags">
+                <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+                  <path d="M21 13l-9 9-9-9V3h9z"/>
+                  <circle cx="7.5" cy="7.5" r="1.5"/>
+                </svg>
+              </button>
+              <button class="bag-link" type="button" aria-label="bag" title="Bag">
+                <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+                  <path d="M5 8h14l-1 12H6z"/>
+                  <path d="M9 8V6a3 3 0 0 1 6 0v2"/>
+                </svg>
+              </button>
+              <button class="candy-link" type="button" aria-label="candy" title="Candy">
+                <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+                  <ellipse cx="12" cy="12" rx="5" ry="4"/>
+                  <path d="M7 12 L3 9 L3 15 Z"/>
+                  <path d="M17 12 L21 9 L21 15 Z"/>
+                </svg>
+              </button>
+              <button class="pokedex-link" type="button" aria-label="pokédex" title="Pokédex">
+                <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+                  <rect x="3" y="4" width="18" height="16" rx="2"/>
+                  <circle cx="8" cy="9" r="2"/>
+                  <line x1="3" y1="14" x2="21" y2="14"/>
+                  <line x1="6" y1="17" x2="14" y2="17"/>
+                </svg>
+              </button>
+            </div>
           <div class="weather-bar"></div>
           <button class="save-reminder" type="button"></button>
           <div class="search-row">
@@ -2800,7 +2837,6 @@
             <button class="dir" type="button" id="creatureSortDir" aria-label="toggle sort direction"></button>
           </div>
           <div class="creature-list"></div>
-          <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
         <div class="detail-view">
           <button class="detail-back" type="button" aria-label="back">←</button>
@@ -2861,17 +2897,26 @@
           <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
         <div class="candy-view">
-          <button class="candy-back" type="button" aria-label="back">←</button>
+          <div class="subview-title-row">
+            <button class="candy-back" type="button" aria-label="back">←</button>
+            <h3 class="subview-title">Candy</h3>
+          </div>
           <div class="candy-body"></div>
           <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
         <div class="bag-view">
-          <button class="bag-back" type="button" aria-label="back">←</button>
+          <div class="subview-title-row">
+            <button class="bag-back" type="button" aria-label="back">←</button>
+            <h3 class="subview-title">Bag</h3>
+          </div>
           <div class="bag-body"></div>
           <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
         <div class="tags-view">
-          <button class="tags-back" type="button" aria-label="back">←</button>
+          <div class="subview-title-row">
+            <button class="tags-back" type="button" aria-label="back">←</button>
+            <h3 class="subview-title">Tags</h3>
+          </div>
           <div class="tags-body"></div>
           <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
@@ -3691,7 +3736,6 @@
       </div>
     `).join('');
     body.innerHTML = `
-      <div class="tags-title">Tags</div>
       <div class="tags-subtitle">${escapeHtml(subtitle)}</div>
       <button class="tags-create" type="button">+ Create new tag</button>
       <div class="tags-list">${builtinRows}${userRows}</div>
@@ -3753,7 +3797,6 @@
       });
     if (!entries.length) {
       body.innerHTML = `
-        <div class="bag-title">Bag</div>
         <div class="bag-empty">Bag is empty.</div>
       `;
       return;
@@ -3777,7 +3820,6 @@
       `;
     }).join('');
     body.innerHTML = `
-      <div class="bag-title">Bag</div>
       <div class="bag-subtitle">${escapeHtml(subtitle)}</div>
       <div class="bag-list">${rows}</div>
     `;
@@ -3814,7 +3856,6 @@
       : '';
     if (!entries.length) {
       body.innerHTML = `
-        <div class="candy-title">Candy</div>
         <div class="candy-empty">No candy yet — catch some creatures to earn family candy!</div>
       `;
       return;
@@ -3826,7 +3867,6 @@
       </div>
     `).join('');
     body.innerHTML = `
-      <div class="candy-title">Candy</div>
       <div class="candy-subtitle">${escapeHtml(subtitle)}</div>
       <div class="candy-list">${rows}</div>
     `;
