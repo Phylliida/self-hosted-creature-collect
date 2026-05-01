@@ -15,6 +15,10 @@
 (function (global) {
   'use strict';
 
+  const SCRIPT_VERSION = 'auto';  // server stamps with mtime on serve
+  global._scriptVersions = global._scriptVersions || {};
+  global._scriptVersions['spawns.js'] = SCRIPT_VERSION;
+
   // --- Brent xor4096 PRNG (verbatim) ---
   function XorGen(seed) {
     var me = this;

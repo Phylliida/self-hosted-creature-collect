@@ -16,6 +16,10 @@
 (function (global) {
   'use strict';
 
+  const SCRIPT_VERSION = 'auto';  // server stamps with mtime on serve
+  global._scriptVersions = global._scriptVersions || {};
+  global._scriptVersions['species.js'] = SCRIPT_VERSION;
+
   const NAMES_KEY = 'cc.speciesNames';
   const TYPES_KEY = 'cc.speciesTypes';
   const EVOS_KEY  = 'cc.speciesEvolutions';

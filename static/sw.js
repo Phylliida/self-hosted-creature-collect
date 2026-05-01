@@ -1,3 +1,4 @@
+const SCRIPT_VERSION = 'auto';  // server stamps with mtime on serve
 const APP_CACHE = 'app-v1';
 const TILES_CACHE = 'tiles-v1';
 
@@ -95,7 +96,14 @@ self.addEventListener('fetch', (e) => {
 
 self.addEventListener('message', (e) => {
   const msg = e.data || {};
-  if (msg.type === 'download') {
+  if (msg.type === 'getVersion') {
+    // Page asks the running SW for its SCRIPT_VERSION (which the
+    // server stamped at serve time, same as the page-context .js
+    // files). The page replies via the MessageChannel port it
+    // attached on send. In-process IPC — not a network request.
+    const port = e.ports && e.ports[0];
+    if (port) port.postMessage({ version: SCRIPT_VERSION });
+  } else if (msg.type === 'download') {
     e.waitUntil(downloadRegion(msg, e.source));
   } else if (msg.type === 'deleteTiles') {
     e.waitUntil(deleteTiles(msg.urls));

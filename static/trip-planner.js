@@ -45,6 +45,10 @@
 (function (global) {
   'use strict';
 
+  const SCRIPT_VERSION = 'auto';  // server stamps with mtime on serve
+  global._scriptVersions = global._scriptVersions || {};
+  global._scriptVersions['trip-planner.js'] = SCRIPT_VERSION;
+
   function create(deps) {
     const { MinHeap } = deps;
 

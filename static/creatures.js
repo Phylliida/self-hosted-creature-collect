@@ -11,6 +11,14 @@
 (function (global) {
   'use strict';
 
+  // The 'auto' placeholder is rewritten by the server on every serve
+  // with the file's mtime — see run.py's _stamp_js / _serve_stamped.
+  // Settings compares this runtime value against /script-versions so
+  // a stale browser cache surfaces as a visible mismatch.
+  const SCRIPT_VERSION = 'auto';
+  global._scriptVersions = global._scriptVersions || {};
+  global._scriptVersions['creatures.js'] = SCRIPT_VERSION;
+
   const STORAGE_KEY = 'cc.creatureMode';
   const CAPTURED_KEY = 'cc.capturedCreatures';
   const CAUGHT_SPAWNS_KEY = 'cc.caughtSpawnIds';
@@ -5178,7 +5186,11 @@
       { transform: 'translateX(-50%) scale(1)', opacity: 1 },
     ];
     const arc = ball.animate(arcFrames,
-      { duration: 650, easing: 'cubic-bezier(0.4, 0.1, 0.5, 1)', fill: 'forwards' });
+      // y1 raised from 0.1 → 0.22 so the ball kicks off the hand a
+      // touch faster at the start of the arc — no hang at the launch
+      // moment. End of the curve is unchanged so the landing-into-
+      // suck-in handoff still reads smooth.
+      { duration: 650, easing: 'cubic-bezier(0.4, 0.22, 0.5, 1)', fill: 'forwards' });
     await arc.finished.catch(() => {});
 
     // Stage 1: suck-in. Creature shrinks + fades, silhouette flash

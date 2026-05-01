@@ -18,6 +18,10 @@
 (function (global) {
   'use strict';
 
+  const SCRIPT_VERSION = 'auto';  // server stamps with mtime on serve
+  global._scriptVersions = global._scriptVersions || {};
+  global._scriptVersions['sprites.js'] = SCRIPT_VERSION;
+
   const DB_NAME = 'creature-sprites-v1';
   const DB_VERSION = 2;
   const STORE_ICONS = 'icons';
