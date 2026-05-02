@@ -37,7 +37,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
+          # No `cache: 'npm'` — that option requires a package-lock.json
+          # to already exist in the repo to derive a cache key, and ours
+          # is gitignored / generated fresh on each run. Skipping the
+          # cache costs ~30s on first install; not worth the friction.
 
       # `npm ci` if there's a lock file (faster, reproducible);
       # otherwise fall back to `npm install` so the first run works
