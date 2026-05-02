@@ -1,6 +1,12 @@
 CreatureCollect\.ipa
 fonts/
 data/
+# …but DO commit data/BundledData/ — it's pure static data generated
+# by build-bundled-data.py and small (~135 MB), so checking it in
+# means consumers can fetch directly from GitHub instead of needing
+# the heavy upstream sources (InfiniteFusion, mbtiles, etc.) to
+# regenerate it themselves.
+!data/BundledData/
 osmpbf/
 icons/
 landcover/
