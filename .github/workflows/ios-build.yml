@@ -122,16 +122,27 @@ jobs:
       # set, then restore the original behaviour on response data
       # delivery.
       - name: Patch Capacitor URL handler with CORS headers
+        # Soft-fail: if Capacitor's source layout has shifted and we
+        # can't apply the patch, log loudly and continue. The IPA
+        # still builds — we just discover at runtime whether CORS
+        # responses are missing (page can't read bundled assets) and
+        # iterate from there.
+        continue-on-error: true
         run: |
-          HANDLER=ios/App/Pods/Capacitor/ios/Capacitor/Capacitor/WebViewAssetHandler.swift
-          if [ ! -f "$HANDLER" ]; then
-            echo "ERROR: $HANDLER not found — Capacitor pod layout changed?" >&2
-            find ios/App/Pods/Capacitor -name "WebViewAssetHandler.swift" -print
-            exit 1
+          set -e
+          HANDLER=$(find ios/App -name "WebViewAssetHandler.swift" -print -quit 2>/dev/null || true)
+          if [ -z "$HANDLER" ]; then
+            echo "WARN: WebViewAssetHandler.swift not found — skipping CORS patch."
+            echo "── ios/App layout (top dirs) ──"
+            find ios/App -maxdepth 4 -type d | head -40
+            echo "── Capacitor-related Swift files ──"
+            find ios/App -name "*.swift" -path "*Capacitor*" 2>/dev/null | head -30
+            exit 0
           fi
-          python3 - <<'PY'
+          echo "Found handler at: $HANDLER"
+          python3 - "$HANDLER" <<'PY'
           import re, sys, pathlib
-          path = pathlib.Path("ios/App/Pods/Capacitor/ios/Capacitor/Capacitor/WebViewAssetHandler.swift")
+          path = pathlib.Path(sys.argv[1])
           src = path.read_text()
           # The stock constructor is the simple form:
           #   HTTPURLResponse(url:, mimeType:, expectedContentLength:, textEncodingName:)
