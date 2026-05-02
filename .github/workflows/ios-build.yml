@@ -110,6 +110,59 @@ jobs:
           cd ios/App
           pod install --repo-update
 
+      # Patch Capacitor's WKURLSchemeHandler to set CORS headers on
+      # responses. Why: in this app's setup, the page loads from
+      # https://poke.phylliidaassets.org (server.url mode) and the
+      # bundled data lives in the IPA's webDir, accessed via
+      # capacitor://localhost/bundled-data/... — that's cross-origin,
+      # and Capacitor 6's stock handler doesn't add CORS headers,
+      # so the page can't read the responses. We rewrite the
+      # HTTPURLResponse construction in WebViewAssetHandler.swift to
+      # use the headerFields constructor with Access-Control-Allow-*
+      # set, then restore the original behaviour on response data
+      # delivery.
+      - name: Patch Capacitor URL handler with CORS headers
+        run: |
+          HANDLER=ios/App/Pods/Capacitor/ios/Capacitor/Capacitor/WebViewAssetHandler.swift
+          if [ ! -f "$HANDLER" ]; then
+            echo "ERROR: $HANDLER not found — Capacitor pod layout changed?" >&2
+            find ios/App/Pods/Capacitor -name "WebViewAssetHandler.swift" -print
+            exit 1
+          fi
+          python3 - <<'PY'
+          import re, sys, pathlib
+          path = pathlib.Path("ios/App/Pods/Capacitor/ios/Capacitor/Capacitor/WebViewAssetHandler.swift")
+          src = path.read_text()
+          # The stock constructor is the simple form:
+          #   HTTPURLResponse(url:, mimeType:, expectedContentLength:, textEncodingName:)
+          # Swap to the headerFields form so we can include CORS headers.
+          new_call = (
+              'HTTPURLResponse(\n'
+              '            url: localUrl,\n'
+              '            statusCode: 200,\n'
+              '            httpVersion: nil,\n'
+              '            headerFields: [\n'
+              '                "Content-Type": mimeType,\n'
+              '                "Content-Length": "\\(data.count)",\n'
+              '                "Access-Control-Allow-Origin": "*",\n'
+              '                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",\n'
+              '                "Access-Control-Allow-Headers": "*"\n'
+              '            ]\n'
+              '        )!'
+          )
+          patched, n = re.subn(
+              r'HTTPURLResponse\(\s*url:\s*localUrl,\s*mimeType:\s*mimeType,'
+              r'\s*expectedContentLength:\s*data\.count,\s*textEncodingName:\s*nil\s*\)',
+              new_call, src, flags=re.DOTALL,
+          )
+          if n != 1:
+              print(f"WARNING: expected 1 match, found {n}; printing file:", file=sys.stderr)
+              print(src, file=sys.stderr)
+              sys.exit(1)
+          path.write_text(patched)
+          print("CORS patch applied to WebViewAssetHandler.swift")
+          PY
+
       # Unsigned Release build — the three CODE_SIGN_* overrides tell
       # xcodebuild to skip signing entirely (otherwise it tries to
       # find a developer certificate in the keychain and fails on a
