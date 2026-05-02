@@ -3014,6 +3014,60 @@
       }
       return _origFetch(input, init);
     };
+
+    // Geolocation bridge: WKWebView's built-in navigator.geolocation
+    // is unreliable across iOS versions and Android WebView's needs
+    // explicit WebChromeClient wiring. The @capacitor/geolocation
+    // plugin wraps CoreLocation / FusedLocationProvider directly and
+    // handles the system permission prompt. We monkey-patch
+    // navigator.geolocation here so MapLibre's GeolocateControl,
+    // creatures.js's distance tracker, and the existing permission-
+    // priming call all flow through the plugin without code changes.
+    //
+    // The plugin's watchPosition is async (returns Promise<string>);
+    // the standard browser API is sync (returns numeric ID). Bridge
+    // by handing out a sync placeholder ID immediately and forwarding
+    // clearWatch to the real ID once the promise resolves.
+    const Geo = window.Capacitor.Plugins && window.Capacitor.Plugins.Geolocation;
+    if (Geo) {
+      const watches = new Map();
+      let nextId = 1;
+      const shim = {
+        getCurrentPosition(success, error, opts) {
+          Geo.getCurrentPosition(opts || {})
+            .then((pos) => success && success(pos))
+            .catch((err) => error && error(err));
+        },
+        watchPosition(success, error, opts) {
+          const id = nextId++;
+          const entry = { realId: null, cleared: false };
+          watches.set(id, entry);
+          Geo.watchPosition(opts || {}, (pos, err) => {
+            if (err) { error && error(err); return; }
+            if (pos) success && success(pos);
+          }).then((realId) => {
+            entry.realId = realId;
+            if (entry.cleared) Geo.clearWatch({ id: realId });
+          }).catch((err) => error && error(err));
+          return id;
+        },
+        clearWatch(id) {
+          const entry = watches.get(id);
+          if (!entry) return;
+          entry.cleared = true;
+          if (entry.realId) Geo.clearWatch({ id: entry.realId });
+          watches.delete(id);
+        },
+      };
+      try {
+        Object.defineProperty(navigator, 'geolocation', {
+          value: shim, configurable: true,
+        });
+      } catch {
+        // Older WebViews may not allow redefining; best-effort.
+        navigator.geolocation = shim;
+      }
+    }
   }
 </script>
 <script src="/static/vendor/maplibre-gl.js"></script>
