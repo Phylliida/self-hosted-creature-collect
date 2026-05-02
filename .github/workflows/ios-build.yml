@@ -64,6 +64,23 @@ jobs:
           fi
           npx cap sync ios
 
+      # iOS WKWebView only enables Service Workers for domains
+      # listed in WKAppBoundDomains in Info.plist. Without this,
+      # `navigator.serviceWorker.register(...)` silently rejects
+      # with "service worker unavailable" inside the wrapped app.
+      # Patch the freshly-generated Info.plist to add the live
+      # domain. Up to 10 domains supported per Apple's limits.
+      - name: Patch Info.plist with WKAppBoundDomains
+        run: |
+          PLIST=ios/App/App/Info.plist
+          # Idempotent: delete the key if it already exists, then
+          # re-add it. Re-runs of cap sync ios won't break this.
+          /usr/libexec/PlistBuddy -c "Delete :WKAppBoundDomains" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :WKAppBoundDomains array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :WKAppBoundDomains:0 string poke.phylliidaassets.org" "$PLIST"
+          echo "── Info.plist after patching ──"
+          /usr/libexec/PlistBuddy -c "Print :WKAppBoundDomains" "$PLIST"
+
       # Capacitor's iOS template uses CocoaPods; macos-14 runner has
       # cocoapods preinstalled. `pod install` produces the .xcworkspace
       # we hand to xcodebuild below.

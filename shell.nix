@@ -38,6 +38,13 @@
 }:
 
 let
+  # iLoader — Linux iOS sideloader (nab138/iloader on GitHub),
+  # pulled in via flake. Requires flakes enabled in your nix config:
+  #   nix.settings.experimental-features = [ "nix-command" "flakes" ];
+  # To pin a specific revision (recommended once it's working), use
+  #   "github:nab138/iloader/<commit-sha>"
+  iloader = (builtins.getFlake "github:nab138/iloader").packages.${pkgs.system}.default;
+
   # Pin to a recent, stable Android API level + build-tools. Bump
   # together with Capacitor major version updates.
   androidPlatformVersion = "34";
@@ -83,6 +90,15 @@ pkgs.mkShell {
     #    AltServer-Linux / SideStore later — IPA build still needs a Mac)
     libimobiledevice
     ifuse
+
+    # ── iLoader — sideloads IPAs onto a connected iPhone. Built
+    #    via Nix from the upstream flake, so no NixOS dynamic-
+    #    linking workaround is needed (steam-run/nix-ld).
+    iloader
+
+    # ── GitHub CLI (used by install-ipa.sh to fetch the latest
+    #    workflow artifact). One-time: `gh auth login`.
+    gh
   ];
 
   shellHook = ''
