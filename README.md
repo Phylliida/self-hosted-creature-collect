@@ -275,6 +275,119 @@ from the home-screen icon (not from Safari) — this is what keeps offline tiles
 from being evicted by iOS after ~7 days.
 
 
+# Native app wrapper (Capacitor)
+
+The Flask + `static/` PWA is the source of truth for the app. To
+distribute it as a native Android / iOS app — and to unlock native
+APIs the browser can't reach (background step counter, notifications,
+better persistent storage) — there's a thin **Capacitor** wrapper
+configured at the repo root.
+
+The wrapper does **not** touch the existing PWA. The browser-PWA
+install path keeps working unchanged for anyone who prefers it.
+
+### What's in the wrapper
+
+- **`package.json`** — declares Capacitor deps (`@capacitor/core`,
+  `cli`, `android`, `ios`).
+- **`capacitor.config.json`** — uses `server.url` mode, so the wrapped
+  app loads `https://poke.phylliidaassets.org` directly in a WebView.
+  The native app behaves like "browser pinned to your URL" with the
+  option to wire native plugins later. Change `server.url` if you
+  self-host elsewhere.
+- **`shell.nix`** already has the full Android toolchain (Node, JDK
+  17, Android SDK API 34, `adb`, `gradle`, `libimobiledevice`).
+
+### One-time system-level requirements
+
+`shell.nix` covers the dev toolchain. Two things have to live
+system-wide because they're daemons / kernel-level:
+
+```nix
+# /etc/nixos/configuration.nix
+services.usbmuxd.enable = true;
+users.users.<you>.extraGroups = [ "usbmuxd" ];
+```
+
+Then `sudo nixos-rebuild switch` and replug your phone. `usbmuxd` is
+needed for `libimobiledevice` to find an iPhone over USB; the Android
+toolchain doesn't depend on it.
+
+### First-time bootstrap
+
+From inside the dev shell (`nix-shell` / direnv):
+
+```bash
+npm install                # one-time, installs Capacitor
+npx cap add android        # one-time, generates the android/ project
+```
+
+That `android/` directory is gitignored — it's a real Android Studio
+project that wraps the web app.
+
+### Build + install Android APK
+
+```bash
+npx cap sync android       # after any web/code change (no-op for server.url mode)
+cd android && ./gradlew assembleDebug
+adb install app/build/outputs/apk/debug/app-debug.apk
+```
+
+`adb` finds the phone over USB (debugging must be enabled on the
+phone — Settings → Developer options → USB debugging). The APK is
+unsigned-debug, so re-installs prompt for a "trust" tap on the phone.
+
+For an installable release APK, you'd add a signing config to
+`android/app/build.gradle` and run `./gradlew assembleRelease`.
+
+### iOS — needs a Mac somewhere
+
+The IPA *build* step (Xcode + signing) requires macOS. Linux-only
+options ranked by friction:
+
+1. **GitHub Actions free macOS runner** — push code, GHA runs
+   `xcodebuild`, downloads the `.ipa`. ~zero cost, ~5 min build cycle.
+2. **Cloud Mac** (MacStadium, MacInCloud, AWS EC2 Mac) — SSH in, run
+   `npx cap sync ios && xcodebuild`. ~$20-100/month.
+3. **Borrow / buy a used Mac mini** — even a 2018 model handles it.
+
+To install the resulting IPA on your iPhone from Linux, use
+**SideStore** (preferred over vanilla AltStore for cross-platform
+support) or **AltServer-Linux**. Both:
+
+- Use a (burner) Apple ID to sign the IPA with a 7-day free
+  developer profile.
+- Install onto the phone via USB the first time, then auto-refresh
+  the signing weekly while the daemon runs (SideStore does this
+  over a local WireGuard tunnel; AltServer needs same Wi-Fi).
+- Free Apple ID limit: 3 sideloaded apps at a time, 7-day expiry.
+  Upgrading to the Apple Developer Program ($99/yr) lifts both and
+  unlocks TestFlight (clean invites for friends).
+
+Both AltServer-Linux and SideStore ship as glibc-linked binaries that
+don't run directly on NixOS. Wrap them with `steam-run` for one-off
+use, or enable `programs.nix-ld` in configuration.nix for permanent
+support.
+
+### Adding native plugins (future)
+
+When you want to wire a native API into the JS, install the matching
+Capacitor plugin and feature-detect at runtime:
+
+```js
+if (window.Capacitor) {
+  // Native: real step counter / background GPS / etc.
+} else {
+  // Web: existing GPS-distance fallback
+}
+```
+
+This keeps both the native and PWA paths working from the same
+codebase. Anything with no web equivalent (real local notifications
+when the app is closed, background tracking) just gets gated behind
+the `Capacitor` check.
+
+
 # Download pokemon files
 
 https://hackmd.io/@PIF-Tech/AltDownloadGuide#Download

@@ -5,3 +5,10 @@ icons/
 landcover/
 .direnv/
 saves/
+
+# Capacitor / Node tooling — generated, don't commit.
+node_modules/
+android/
+ios/
+.gradle/
+*.iml
