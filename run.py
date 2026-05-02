@@ -250,6 +250,33 @@ def _download_timing_start():
 
 
 @app.after_request
+def _cors_for_capacitor(resp):
+    # The Capacitor-bundled iOS/Android app loads from
+    # capacitor://localhost (iOS) or https://localhost (Android) and
+    # cross-origins to this Flask backend for /save, /load,
+    # /save-names, /poi, /walk-graph, etc. Allow * here since these
+    # are user-data endpoints that already accept any caller (no
+    # auth) — same trust model as the existing self-hosted PWA. If
+    # auth gets added later, switch this to an explicit allowlist
+    # of capacitor://localhost + https://localhost.
+    origin = request.headers.get("Origin", "")
+    if origin.startswith("capacitor://") or origin.startswith("https://localhost") \
+            or origin.startswith("http://localhost"):
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Download"
+        resp.headers["Vary"] = "Origin"
+    return resp
+
+
+@app.route("/<path:_>", methods=["OPTIONS"])
+def _cors_preflight(_):
+    # Empty 204 with the headers _cors_for_capacitor adds — handles
+    # the preflight for any cross-origin POST (e.g. /save).
+    return ("", 204)
+
+
+@app.after_request
 def _no_http_cache_for_js(resp):
     # Tell Safari not to HTTP-cache our own JS. The service-worker Cache API
     # already holds a canonical copy, so the browser HTTP cache is pure
@@ -1363,6 +1390,40 @@ def tile(z, x, y):
         return Response(status=204)
     resp = Response(best, mimetype="application/x-protobuf")
     resp.headers["Content-Encoding"] = "gzip"
+    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return resp
+
+
+@app.route("/bundled-data/<path:fname>")
+def bundled_data(fname):
+    """Serve files from data/BundledData/. This directory is the
+    output of build-bundled-data.py and contains a self-contained
+    snapshot of every static asset the client needs (sprites, eggs,
+    species metadata, credits, manifest, icons, fonts, low-zoom
+    tiles). Bundled into the iOS / Android wrapper IPA at build
+    time, so the same /bundled-data/* URLs work both in the web
+    PWA (served from Flask) and the native app (served from the
+    WebView's local origin).
+
+    Path-traversal defense: resolve the requested path inside
+    BundledData and verify it stays within. Tile .pbf files in
+    BundledData are stored gzipped (extracted as-is from mbtiles)
+    so set the encoding header for those.
+    """
+    base = (ROOT / "data" / "BundledData").resolve()
+    path = (base / fname).resolve()
+    try:
+        path.relative_to(base)
+    except ValueError:
+        abort(404)
+    if not path.is_file():
+        abort(404)
+    # Tile .pbf bytes are pre-gzipped; the rest are plain.
+    is_tile = fname.startswith("tiles/") and fname.endswith(".pbf")
+    resp = send_from_directory(path.parent, path.name)
+    if is_tile:
+        resp.headers["Content-Encoding"] = "gzip"
+        resp.mimetype = "application/x-protobuf"
     resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     return resp
 

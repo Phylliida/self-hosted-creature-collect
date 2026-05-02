@@ -20,6 +20,12 @@
   global._scriptVersions = global._scriptVersions || {};
   global._scriptVersions['species.js'] = SCRIPT_VERSION;
 
+  // BundledData base URL — set by the inline <script> in index.html
+  // (window.CC_BUNDLED_DATA_BASE). Defaults to the same-origin
+  // /bundled-data Flask route when no override is in place.
+  const BUNDLED_BASE = (global.CC_BUNDLED_DATA_BASE || '/bundled-data')
+    .replace(/\/$/, '');
+
   const NAMES_KEY = 'cc.speciesNames';
   const TYPES_KEY = 'cc.speciesTypes';
   const EVOS_KEY  = 'cc.speciesEvolutions';
@@ -51,7 +57,7 @@
       const tasks = [];
       if (namesNeeded) tasks.push((async () => {
         try {
-          const resp = await fetch('/creature-names');
+          const resp = await fetch(`${BUNDLED_BASE}/species-names.json`);
           if (!resp.ok) return;
           const list = await resp.json();
           if (Array.isArray(list) && list.length) {
@@ -62,7 +68,7 @@
       })());
       if (typesNeeded) tasks.push((async () => {
         try {
-          const resp = await fetch('/creature-types');
+          const resp = await fetch(`${BUNDLED_BASE}/species-types.json`);
           if (!resp.ok) return;
           const map = await resp.json();
           if (map && typeof map === 'object') {
@@ -73,7 +79,7 @@
       })());
       if (evosNeeded) tasks.push((async () => {
         try {
-          const resp = await fetch('/creature-evolutions');
+          const resp = await fetch(`${BUNDLED_BASE}/species-evolutions.json`);
           if (!resp.ok) return;
           const map = await resp.json();
           if (map && typeof map === 'object') {

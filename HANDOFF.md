@@ -812,3 +812,312 @@ run.py                          (custom sheet routes, manifest,
 HANDOFF.md                      (this section)
 POEMS.md                        (a poem)
 ```
+
+---
+
+# Session handoff (2026-05-01 / 2026-05-02)
+
+Two-day session covering UI polish, native-app wrapper bootstrapping,
+and a major data-bundling effort. Three poems added to `POEMS.md`:
+**The Names We Carry**, **The Quietening**, **Five Pixels Off the
+Floor**. Read those for the human-shaped narrative; this section is
+the working notes.
+
+## What landed
+
+### Day 1 polish (in chronological-ish order)
+
+- **Silhouette transparency fix** — `.variant-cell.silhouette img`
+  needed `background: transparent` because `filter: brightness(0)`
+  blackens the entire rendered img *including* its CSS bg, turning
+  silhouettes into solid black squares.
+- **Hide autogen card** when custom variants exist for a fusion
+  (with revoke of the unused blob URL fetched in parallel).
+- **Pokédex tile / fusion header / family tree** all use
+  `pickPreferredSeenVariant(a, b)` — picks the lowest-indexed seen
+  variant slot, falls back to autogen.
+- **SPLIT_NAMES canonical fusion-name algorithm** — parses
+  `data/InfiniteFusion/Data/Scripts/052_InfiniteFusion/Fusion/SplitNames.rb`,
+  served via `/sprite-split-names`, baked into `Sprites.getFusedName`.
+  Algorithm: `prefix(head) + suffix(body)`, drop seam letter on
+  match, capitalize after space (`Mr. Chu`). Pre-warmed on boot so
+  the sync `getFusedName` works on first paint.
+- **Family tree picker** routed through `pickPreferredSeenVariant`
+  too (silhouettes for unseen).
+- **Weekly type theme** = Fisher-Yates shuffled permutation of
+  `TYPES`, seeded by cycle index. Every 18 weeks visits every type
+  exactly once; new permutation on next cycle.
+- **`⇄ swap` button** between First/Second species inputs in
+  pokédex search.
+- **Custom species autocomplete popup** ported from `/dex` (datalist
+  is unreliable on iOS). Per-slot scoping: pokédex inputs suggest
+  only seen species in that slot; inventory inputs suggest only
+  captured. Theme-aware `<mark>` via `color-mix`.
+- **Scroll position bug** — virtualizer was reading
+  `_topPokedex.scrollY` (only updated on `pushView`) for in-view
+  re-renders, snapping back to the saved nav scroll. Fix: read live
+  `sheet.scrollTop` for re-renders, apply saved `scrollY` to sheet
+  in `applyTopView` before first render. Same fix applied to inventory.
+- **Captured-row artist credit** rendered async after row paint
+  (variant span gets text swapped from "#N" to artist name).
+- **Refresh button** preserves maplibre vendor (then later reverted
+  to wipe everything; the user changed their mind).
+- **Pokeball throw arc** easing tweak: `cubic-bezier(0.4, 0.22, 0.5, 1)`
+  for snappier launch (y1 0.1→0.22).
+- **Back button left-aligned** via `text-align: left` (flex column
+  was stretching the button + browser default `text-align: center`
+  put the ← in the middle).
+- **Floating ↑ scroll-to-top** sticky button next to the X. Visible
+  only when `sheet.scrollTop > 200` AND on browse/pokedex views.
+- **Unified all close-X buttons** under shared `.cc-x-btn` class —
+  inventory, settings, directions, routing, POI card. Single rule
+  in `index.html` with multi-panel selector list. `!important` on
+  visual resets to defeat per-theme overrides. **8-direction
+  text-shadow stroke in `var(--ui-bg)`** so the glyph stays readable
+  against scrolling content. Same trick on the back buttons + ↑.
+- **Minimal X look** (no border, no bubble) replaced the previous
+  bordered-bubble after the user changed their mind on aesthetics.
+- **Action icons** (Tags / Bag / Candy / Pokédex Dex) → minimal
+  stroke-only SVGs with `stroke="currentColor"`. Candy made
+  vertically symmetric (twist wrappers mirror across the midline).
+- **Settings toggle** for icons-vs-text labels on the action row
+  (default text). `localStorage['cc.actionButtonsAsIcons']`,
+  re-render via `cc-action-buttons-style-changed` event.
+- **Pokémon header** centered with `min-height: 30` to match the
+  Pokédex back-button row's natural height.
+- **Done buttons removed** from browse-view and pokedex-view
+  footers (the floating X handles closing).
+- **Floating sticky back buttons** with the same glow text-shadow
+  as the X. Sub-views converted to `display: flex; flex-direction:
+  column` so flex-self positioning works the same way as in `.sheet`.
+- **Filter snapshots in view stack** — `pushView` captures filter
+  state into the top entry before push; pop restores. `applyType-
+SelectColor` runs after each select assignment to keep chip-color
+  in sync.
+- **Species-link click clears type/tag filters** for the new
+  pokédex entry while preserving the sort. Previous filters survive
+  on the underlying stack entry.
+- **Inline rename** — tap `.detail-name` to enter edit mode (replaces
+  innerHTML with a `<form>` containing reset/save SVG icons).
+  Save/reset/Esc call `_exitRenameMode` which rebuilds ONLY the
+  name-row (avoids re-fetching the sprite blob from IDB on every
+  save).
+- **Place lookup** for encounter info — `findNearestPlace(lat, lng)`
+  in index.html. Two-pass: POI `addr:city` / `addr:country` tags
+  within ~10km, then vector-tile `place` source layer fallback.
+  Stored on `seen[key].place` and `caughtAt.place`. Pure local —
+  no network.
+- **Three-line caught block** — date+time / POI / city, country.
+- **Family tree moved** from captured-detail view to pokédex entry
+  (where the per-fusion mosaic actually belongs).
+- **Pokémon name truncation** in pokédex tiles — split bases line
+  into 3 spans (`bn-a`/`bn-x`/`bn-b`); first species + × pinned
+  (`flex-shrink: 0`), second species ellipsizes
+  (`text-overflow: ellipsis`).
+- **Detail card spacing iteration** — converged at card height 145px,
+  margin-bottom 6px on `.detail-stats`, padding `10px 6px 6px` on
+  `.creature-card`. The pixel-tweak rhythm of "1 more px / nvm 6
+  was good" was the iterative shape.
+
+### Day 2 — bundling + native wrapper
+
+- **Script versioning** — server stamps `SCRIPT_VERSION = 'auto'`
+  with file mtime on serve via `_stamp_js`/`_stamp_html`. HTML pages
+  get a `<script>window._serverScriptVersions={…}</script>` injected
+  after `<head>` so client compares loaded vs server with zero
+  runtime fetches. SW version comes via one postMessage on load.
+  Settings `[script versions]` block flags `⚠ STALE`.
+- **Capacitor wrapper bootstrap**:
+  - `package.json` + `capacitor.config.json` (server.url mode →
+    `https://poke.phylliidaassets.org`)
+  - `shell.nix` extended with Node, JDK 17, Android SDK API 34,
+    `adb`, `gradle`, `libimobiledevice`, `gh`, `ruby`, `pillow`,
+    plus `iloader` from a flake (`builtins.getFlake "github:nab138/iloader"`)
+  - `.envrc` exports `NIX_CONFIG="extra-experimental-features =
+    nix-command flakes"` so flakes are scoped to this project
+  - `.github/workflows/ios-build.yml` builds an unsigned IPA on a
+    free macOS runner. Patches `Info.plist` with `WKAppBoundDomains`
+    after `cap add ios` so Service Workers register inside the
+    WKWebView. `capacitor.config.json` also carries
+    `ios.limitsNavigationsToAppBoundDomains: true` (both pieces are
+    required — the Info.plist key alone doesn't enable SW).
+  - `install-ipa.sh` — gh-CLI based downloader + optional
+    AltServer-Linux sideload wrapper (steam-run for the NixOS
+    dynamic-linking gotcha)
+  - README updated with a "Native app wrapper (Capacitor)" section
+- **`build-bundled-data.py`** — generates `data/BundledData/`
+  (~135 MB, 2350 files). Reads everything from
+  `data/InfiniteFusion/`, no longer needs `data/Battlers/`:
+  - `extract-pif-dat.rb` (Ruby) decodes Marshal binaries (`species.dat`)
+    into JSON via stub `GameData::*` classes
+  - Cropped autogen sheets (1..150 partners, 0-indexed:
+    `(MAX_SPECIES // cols) + 1` rows because cell 0 is empty)
+  - Cropped custom variant sheets, same indexing
+  - Eggs sprite sheet (1600×2560, species N at cell N)
+  - `species-{names,types,evolutions}.json`, `split-names.json`,
+    `credits.json`, `manifest.json`
+  - `icons/` + `fonts/` copied with `icons-list.json` +
+    `fonts-list.json` listing files (since static hosts can't
+    enumerate dirs)
+  - `tiles/<z>/<x>/<y>.pbf` extracted from `data/*.mbtiles` for
+    z0..z5 (the same range the runtime "Download App Data" prefetches)
+- **`.gitignore` tweak** — `data/*` + `!data/BundledData/` so the
+  bundle is committed to git for static hosting (GitHub Pages,
+  jsdelivr, raw.github). User has pushed the bundle.
+- **Server `/bundled-data/<path>` route** — serves
+  `data/BundledData/` as static files. Tile .pbf gets
+  `Content-Encoding: gzip` (mbtiles stores them pre-gzipped).
+- **Client switched to `/bundled-data/*` URLs** — `sprites.js`,
+  `species.js`, `appdata.js`. URL base is configurable via inline
+  `<script>` in `index.html` setting `window.CC_BUNDLED_DATA_BASE`
+  (default `/bundled-data`). To switch to GitHub/jsdelivr hosting,
+  change that one line. Both jsdelivr.net and
+  raw.githubusercontent.com send CORS headers for public repos so
+  the cross-origin fetch should "just work".
+- **`appDataBtn` extended** to also call `Sprites.bulkDownload`
+  after fonts/icons/base-map. (The old separate Settings
+  "↓ download" sprite button is still there but redundant for new
+  users.)
+
+## What remains
+
+### Right where we stopped
+The two-button → one-button merge is **half done**. `appDataBtn`
+now does everything, but:
+1. **Welcome flow** still has the 3-step structure with a separate
+   `welcomeCreatures` button (Step 2). Should collapse to 2 steps:
+   step 1 (combined download) → step 2 (was step 3, save view).
+   Also: the `location.reload()` after step 1 might be removable
+   since `map.setStyle(map.getStyle())` already refreshes fonts.
+2. **Settings `spritesDownloadBtn`** is now redundant. Either hide
+   it or rename to "↓ re-download creature data" (keep
+   `spritesClearBtn` for testing).
+
+### Capacitor next moves
+3. **Switch IPA to bundled-assets mode** — currently the Capacitor
+   config uses `server.url` (loads from production URL in a
+   WebView). To make the native app work fully offline, switch to
+   bundled mode:
+   - `capacitor.config.json`: drop `server.url`, set `webDir` to a
+     directory that contains `static/* + data/BundledData/*`
+   - GH Actions: pre-build step copies/symlinks the bundle into
+     that directory before `cap sync ios`
+   - Client `BUNDLED_BASE` should resolve to a relative path in
+     bundled mode (the inline `<script>` could feature-detect
+     `window.Capacitor` and switch URLs)
+
+### Hosting the bundle from GitHub
+4. The user wants to point `CC_BUNDLED_DATA_BASE` at a CDN URL
+   (probably jsdelivr) so their Flask backend doesn't need
+   `data/BundledData/` on disk. Try:
+   ```js
+   window.CC_BUNDLED_DATA_BASE =
+     'https://cdn.jsdelivr.net/gh/USER/REPO@main/data/BundledData';
+   ```
+   Verify CORS works in production. If it does, the Flask
+   `/bundled-data/<path>` route can become a no-op (or stay as a
+   fallback for self-hosted users).
+
+### Daycare feature (the original ask)
+5. Two-slot daycare. While in: walk distance generates candy.
+   After 5-10km walked: an egg. Egg fusion species = uniformly:
+   - 2/3 chance from `{A×B, A×D, C×B, C×D}` (slot-preserving)
+   - 1/3 chance from one of `B×{A..D}, {A..D}×A, {A..D}×C, D×{A..D}`
+     (slot-swap mutation)
+   Distance source: foreground GPS for now (web). Native: real
+   pedometer once Capacitor + plugin lands. UX:
+   - One-time placement + retrieval flow
+   - Live progress bar to next egg
+   - Notification when ready (real on native, in-app on web)
+   - Egg sprite uses `eggs.png` from BundledData (cell N for
+     species N) when available; falls back to `egg-default.png`.
+
+### Outstanding bug
+6. **Partner-on-Android variant issue** — `DEBUGGING.md` documents
+   two theories and the data-collection path. Partner hasn't
+   tested yet (was at work / not home when last discussed). When
+   they do, the Settings `[script versions]` block + `[sprites]
+cached=` count tells us which theory is right. Fix code is
+   sketched in `DEBUGGING.md` (the fix for theory 2 is to also
+   null `rec.objectUrl` after `URL.revokeObjectURL` in
+   `removeMarker`, and add an `img.onerror` fallback in
+   `openBattleScreen` that refetches from IDB).
+
+## Things to remember
+- **iOS WKWebView Service Workers require BOTH** `WKAppBoundDomains`
+  in Info.plist AND `limitsNavigationsToAppBoundDomains: true` in
+  the WKWebView config. Capacitor 6's iOS plugin sets the latter
+  when you add the capacitor.config flag — but you must also patch
+  Info.plist (workflow does this with `PlistBuddy`).
+- **App-Bound Domains hard-cap at 10**. Add only canonical hostnames.
+- **AltServer-Linux + NixOS**: the binary is glibc-linked and
+  doesn't run from `/nix/store/`. The community `iloader` flake
+  (github:nab138/iloader) ships a properly patched binary. Wrap
+  with `steam-run` if you fall back to vanilla AltServer-Linux.
+- **`builtins.getFlake` in shell.nix** requires flakes enabled.
+  `.envrc` does this per-project via `NIX_CONFIG`.
+- **mbtiles tile_data is gzipped on disk**. The `/tiles` and
+  `/bundled-data/tiles/` routes both set `Content-Encoding: gzip`
+  so MapLibre can decode it.
+- **PIF sprite sheets are 0-indexed** — cell 0 is empty, species N
+  is at cell N. `MAX_SPECIES=150` needs 151 cells = ceil(151/cols)
+  rows. The crop math is `(MAX_SPECIES // cols) + 1`, NOT
+  `ceil(MAX_SPECIES / cols)`.
+- **Capacitor `server.url` mode** = WebView pinned to the URL.
+  Pure-JS updates ship via Refresh (no IPA rebuild). Native plugin
+  additions still require an IPA rebuild.
+- **The user is on a daily walk to Sage Days** with their husband,
+  catching fusions on the way. Polish work in this session is
+  shaped by that ritual: a daily-use app should feel quiet, fast,
+  and consistent. The pixel-tweak conversations
+  (`5px less / 1 more px / nvm 6 was good`) are a kind of intimate
+  iteration — let them happen, take the small steps seriously.
+
+## File touch summary (this session)
+
+```
+.envrc                         (NIX_CONFIG flakes enable)
+.github/workflows/ios-build.yml (NEW — unsigned IPA build,
+                                 WKAppBoundDomains patch)
+.gitignore                     (data/* + !data/BundledData/,
+                                 ignore Capacitor generated dirs)
+build-bundled-data.py          (NEW — generates data/BundledData)
+extract-pif-dat.rb             (NEW — Ruby Marshal → JSON)
+install-ipa.sh                 (NEW — gh-CLI artifact downloader
+                                 + optional AltServer sideload)
+package.json                   (NEW — Capacitor deps)
+capacitor.config.json          (NEW — server.url + iOS App-Bound)
+shell.nix                      (Node + JDK 17 + Android SDK +
+                                 libimobiledevice + gh + ruby +
+                                 pillow + iloader flake)
+README.md                      (Native wrapper section)
+HANDOFF.md                     (this section)
+POEMS.md                       (3 new poems)
+DEBUGGING.md                   (NEW — partner Android var bug)
+run.py                         (script-version stamping,
+                                 /bundled-data/<path> route,
+                                 SplitNames + credits-bundle
+                                 endpoints)
+static/index.html              (cc-x-btn shared rule, action icons,
+                                 daycare-prep place lookup,
+                                 CC_BUNDLED_DATA_BASE config,
+                                 appDataBtn extended with sprite
+                                 download, 3 new poems' worth of
+                                 polish)
+static/creatures.js            (rename inline UI, family tree
+                                 moved, caught block 3 lines,
+                                 spacing iteration, name
+                                 truncation, scroll-top button,
+                                 filter snapshot in stack)
+static/sprites.js              (BUNDLED_BASE constant, sheet URL
+                                 helpers, fused name algorithm,
+                                 sprite credits + split-names URLs
+                                 swapped to bundled paths)
+static/species.js              (bundled paths + allSpecies helper)
+static/appdata.js              (bundled paths for icons + fonts +
+                                 listing JSONs)
+static/sw.js                   (script-version constant +
+                                 ball SVGs in APP_SHELL)
+data/BundledData/              (NEW — 134 MB, 2350 files,
+                                 committed to git for hosting)
+```

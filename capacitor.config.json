@@ -1,13 +1,11 @@
 {
   "appId": "org.phylliidaassets.creaturecollect",
   "appName": "Creature Collect",
-  "webDir": "static",
-  "server": {
-    "url": "https://poke.phylliidaassets.org",
-    "cleartext": false,
-    "androidScheme": "https"
-  },
+  "webDir": "dist",
   "ios": {
     "limitsNavigationsToAppBoundDomains": true
+  },
+  "server": {
+    "androidScheme": "https"
   }
 }
