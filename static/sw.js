@@ -112,11 +112,16 @@ self.addEventListener('message', (e) => {
   }
 });
 
-async function downloadRegion({ bbox, minZoom, maxZoom, extraUrls = [], id, workers = 6 }, client) {
+async function downloadRegion({ bbox, minZoom, maxZoom, extraUrls = [], id, workers = 6, apiBase = '' }, client) {
+  // `apiBase` lets the IPA (Capacitor mode) point tile/extra fetches
+  // at the live Flask backend instead of the local capacitor://localhost
+  // origin, which only ships z0..z5. The cache key stays as the
+  // ORIGINAL relative URL so MapLibre's same-origin tile requests
+  // still match against TILES_CACHE on subsequent reads.
   const tiles = tileUrls(bbox, minZoom, maxZoom);
   const queue = [
-    ...tiles.map(u => ({ url: u, cacheName: TILES_CACHE })),
-    ...extraUrls.map(u => ({ url: u, cacheName: APP_CACHE }))
+    ...tiles.map(u => ({ fetchUrl: apiBase + u, cacheKey: u, cacheName: TILES_CACHE })),
+    ...extraUrls.map(u => ({ fetchUrl: apiBase + u, cacheKey: u, cacheName: APP_CACHE }))
   ];
   const total = queue.length;
   let done = 0, failed = 0;
@@ -127,10 +132,10 @@ async function downloadRegion({ bbox, minZoom, maxZoom, extraUrls = [], id, work
     while (queue.length) {
       const item = queue.pop();
       try {
-        const res = await fetch(item.url, { headers: { 'X-Download': '1' } });
+        const res = await fetch(item.fetchUrl, { headers: { 'X-Download': '1' } });
         if (res.ok && res.status !== 204) {
           const cache = await caches.open(item.cacheName);
-          await cache.put(item.url, res.clone());
+          await cache.put(item.cacheKey, res.clone());
         } else if (res.status !== 204 && !res.ok) {
           failed++;
         }

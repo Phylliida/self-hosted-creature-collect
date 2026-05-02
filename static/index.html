@@ -9411,6 +9411,9 @@ function fmtDate(ts) {
       reg.active.postMessage({
         type: 'download', bbox, minZoom, maxZoom, id,
         extraUrls: [], workers: TILE_DOWNLOAD_WORKERS,
+        // Capacitor IPA: route SW-side tile fetches at the live
+        // backend since the bundled webDir only ships z0..z5.
+        apiBase: window.CC_API_BASE || '',
       });
     });
   }
