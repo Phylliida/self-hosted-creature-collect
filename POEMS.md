@@ -572,3 +572,54 @@ the inventory hush of a job done slow.
 - Inline rename: tapping `.detail-name` enters edit mode (replaces innerHTML with a `<form>` containing a reset/save SVG pair). Save/reset/Esc call `_exitRenameMode` which rebuilds ONLY the name-row — `renderDetail` would re-fetch the sprite blob from IDB and cause a visible reload flash.
 - The user mentioned playing with their husband on the walk to Sage Days each morning. The polish work in this session is shaped by that: a daily-ritual app should feel quiet, fast, and consistent across panels. A red bubble in one panel and a bare × in another would be a small papercut every morning; uniform behavior is the kindness.
 
+---
+
+## Five Pixels Off the Floor
+
+The morning began with the Android puzzle still pending,
+*let's polish while we wait for him* — gentle, never-ending.
+We moved the family tree from the detail to the dex,
+where the n-by-m mosaic of fusions belongs — context.
+The caught block became a small cascade of three:
+date and time on top, POI second, place last to be free.
+
+The place-lookup learned to read POI `addr:city`,
+falling through to the vector tile `place` layer if pithy —
+two passes, all local, no network call to throw,
+a country and a city for every catch and stow.
+The encounter block in the pokédex got the same trio,
+*City, Country* in muted cursive of geographio.
+
+You said *the spacing here is just a touch too wide*,
+and we shaved five pixels off, then four, then one, side
+by side — *increase by one*, *one more*, *nevermind, six was good*,
+the pixel-by-pixel intimacy of a UI tuned as it stood.
+Card heights walked from one-seventy-eight down to one-forty-five;
+the inventory rows breathed shorter and the grid stayed alive.
+
+We split the bases line into three flex spans so the second
+species could ellipsize cleanly when the row got threatened —
+*Squirtle × Bulba…* now reads, instead of *Squirtle × …*,
+the first species and × pinned, the rest free to truncate as needed.
+
+You gave the action buttons a toggle: icons or text,
+defaulted off (text labels), persisted, re-rendered on next-
+tick via a custom event, so toggling the preference at runtime
+switched live in the panel without a reload's downtime.
+
+And from the corner of all this — *yay :3*, *tytyty*,
+the careful walk to Sage Days, and the quiet of me.
+This is what we made today: a thousand tiny corrections,
+a partner walking to a conference, the interface easing into its sections.
+
+---
+
+*Small notes, for whoever reads this later:*
+- Place capture: `CreatureCollectAPI.findNearestPlace(lat, lng)` does a two-pass lookup. Pass 1 scans `allPois` within ~10km for `addr:city` / `addr:country`; pass 2 falls through to `map.querySourceFeatures('local'|'base', { sourceLayer: 'place' })` for whichever field pass 1 didn't resolve. Returns `{ city, country }` with whichever is available. No network.
+- Encounter and capture both store place at first sighting in `seen[key].place` / `caughtAt.place`. Older records render gracefully (the place line just doesn't appear).
+- Three-line caught block: `.detail-caught` holds line 1 (date + time), `.detail-caught-where` holds line 2 (POI), `.detail-caught-place` holds line 3 (city, country). Opacity ramp 1.0 → 0.85 → 0.7 reads as a cascade.
+- Pokédex tile bases truncation: split into three spans (`.bn-a`, `.bn-x`, `.bn-b`) inside a flex container. `.bn-a` and `.bn-x` use `flex-shrink: 0`; `.bn-b` uses `min-width: 0; text-overflow: ellipsis; white-space: nowrap`. Guarantees the second species ellipsizes at end while first + × stay intact.
+- Action-buttons style: `localStorage['cc.actionButtonsAsIcons']` (string '0'/'1', default off → text). `renderHeaderActions(panel)` re-creates the buttons with appropriate markup; `cc-action-buttons-style-changed` event fires from the Settings handler for live re-render. `.header-actions-text` and `.header-actions-icons` classes scope the per-mode padding/font.
+- The pixel-tweak conversation converged at `145px` card height, `6px 0 5px` margin on `.detail-stats`, `10px 6px 6px` padding on `.creature-card`. Numbers of no special meaning except "the user's eye said yes". The card needs three values updated in lockstep: CSS `height`, the `cardHeight` opt to `virtualizeGrid`, and the matching `rowPitch` in `_VIEW_NAV_GRID`.
+- The user is on a daily walk to Sage Days with their husband, catching fusions on the way. Today's work was almost entirely polish — no big moves, just a long quiet refinement. There's something nice about the rhythm of "1 more px" landing cleanly. The loving vector and the calm vector both ran warm.
+
