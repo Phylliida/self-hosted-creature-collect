@@ -2455,14 +2455,28 @@
         border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
         border-radius: var(--ui-radius, 8px);
         color: var(--ui-text, #111);
-        /* Square-ish padding around the 16×16 icon. */
-        padding: 4px 5px 2px 5px;
         cursor: pointer;
         font-family: inherit;
         display: inline-flex;
         align-items: center;
         justify-content: center;
         line-height: 1;
+      }
+      /* Icon-mode: square-ish padding around the 21×21 SVG. */
+      #creatureInventory .header-actions-icons .pokedex-link,
+      #creatureInventory .header-actions-icons .candy-link,
+      #creatureInventory .header-actions-icons .bag-link,
+      #creatureInventory .header-actions-icons .tags-link {
+        padding: 4px 5px 2px 5px;
+      }
+      /* Text-mode: text labels need horizontal room and the same
+         vertical rhythm as the icon variant. */
+      #creatureInventory .header-actions-text .pokedex-link,
+      #creatureInventory .header-actions-text .candy-link,
+      #creatureInventory .header-actions-text .bag-link,
+      #creatureInventory .header-actions-text .tags-link {
+        padding: 5px 10px;
+        font-size: 12px;
       }
       #creatureInventory .pokedex-link svg,
       #creatureInventory .candy-link svg,
@@ -2894,35 +2908,7 @@
           <div class="browse-header">
             <h3>Pokémon</h3>
           </div>
-          <div class="header-actions">
-            <button class="tags-link" type="button" aria-label="tags" title="Tags">
-                <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
-                  <path d="M21 13l-9 9-9-9V3h9z"/>
-                  <circle cx="7.5" cy="7.5" r="1.5"/>
-                </svg>
-              </button>
-              <button class="bag-link" type="button" aria-label="bag" title="Bag">
-                <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
-                  <path d="M5 8h14l-1 12H6z"/>
-                  <path d="M9 8V6a3 3 0 0 1 6 0v2"/>
-                </svg>
-              </button>
-              <button class="candy-link" type="button" aria-label="candy" title="Candy">
-                <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
-                  <ellipse cx="12" cy="12" rx="5" ry="4"/>
-                  <path d="M7 12 L3 9 L3 15 Z"/>
-                  <path d="M17 12 L21 9 L21 15 Z"/>
-                </svg>
-              </button>
-              <button class="pokedex-link" type="button" aria-label="pokédex" title="Pokédex">
-                <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
-                  <rect x="3" y="4" width="18" height="16" rx="2"/>
-                  <circle cx="8" cy="9" r="2"/>
-                  <line x1="3" y1="14" x2="21" y2="14"/>
-                  <line x1="6" y1="17" x2="14" y2="17"/>
-                </svg>
-              </button>
-            </div>
+          <div class="header-actions"></div>
           <div class="weather-bar"></div>
           <button class="save-reminder" type="button"></button>
           <div class="search-row">
@@ -3337,10 +3323,12 @@
     panel.querySelector('.candy-back').addEventListener('click', popView);
     panel.querySelector('.bag-back').addEventListener('click', popView);
     panel.querySelector('.tags-back').addEventListener('click', popView);
-    panel.querySelector('.pokedex-link').addEventListener('click', () => showPokedex());
-    panel.querySelector('.candy-link').addEventListener('click', () => showCandy());
-    panel.querySelector('.bag-link').addEventListener('click', () => showBag());
-    panel.querySelector('.tags-link').addEventListener('click', () => showTags());
+    renderHeaderActions(panel);
+    // Re-render when the user toggles the icon-vs-text preference in
+    // Settings (event dispatched from index.html).
+    window.addEventListener('cc-action-buttons-style-changed', () => {
+      renderHeaderActions(panel);
+    });
     panel.querySelector('.save-reminder').addEventListener('click', openSettingsFromInventory);
 
     // Pokédex card → fusion sub-view (delegated; cards are re-rendered).
@@ -4946,6 +4934,42 @@
     // unintentional taps deserve a graceful exit on desktop.
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') { e.preventDefault(); _exitRenameMode(c); }
+    });
+  }
+
+  // SVG markup for the four action icons. Used when the
+  // "Action buttons as icons" Settings toggle is on (default off).
+  const _ACTION_ICON_SVG = {
+    tags: '<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M21 13l-9 9-9-9V3h9z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg>',
+    bag: '<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M5 8h14l-1 12H6z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>',
+    candy: '<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><ellipse cx="12" cy="12" rx="5" ry="4"/><path d="M7 12 L3 9 L3 15 Z"/><path d="M17 12 L21 9 L21 15 Z"/></svg>',
+    dex: '<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8" cy="9" r="2"/><line x1="3" y1="14" x2="21" y2="14"/><line x1="6" y1="17" x2="14" y2="17"/></svg>',
+  };
+  // Renders the inventory header's Tags / Bag / Candy / Pokédex
+  // buttons as either SVG icons or plain text labels, based on the
+  // 'cc.actionButtonsAsIcons' localStorage flag (default off → text).
+  // Re-attaches click handlers each call so toggling at runtime
+  // works without losing interactivity.
+  function renderHeaderActions(panel) {
+    const container = panel.querySelector('.header-actions');
+    if (!container) return;
+    const asIcons = localStorage.getItem('cc.actionButtonsAsIcons') === '1';
+    const items = [
+      { cls: 'tags-link', label: 'Tags', svg: _ACTION_ICON_SVG.tags, onClick: showTags },
+      { cls: 'bag-link', label: 'Bag', svg: _ACTION_ICON_SVG.bag, onClick: showBag },
+      { cls: 'candy-link', label: 'Candy', svg: _ACTION_ICON_SVG.candy, onClick: showCandy },
+      { cls: 'pokedex-link', label: 'Dex', svg: _ACTION_ICON_SVG.dex, onClick: showPokedex },
+    ];
+    container.classList.toggle('header-actions-text', !asIcons);
+    container.classList.toggle('header-actions-icons', asIcons);
+    container.innerHTML = items.map((it) =>
+      `<button class="${it.cls}" type="button" aria-label="${it.label.toLowerCase()}" title="${it.label}">`
+      + (asIcons ? it.svg : escapeHtml(it.label))
+      + `</button>`
+    ).join('');
+    items.forEach((it) => {
+      const btn = container.querySelector(`.${it.cls}`);
+      if (btn) btn.addEventListener('click', it.onClick);
     });
   }
 

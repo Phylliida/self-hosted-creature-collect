@@ -1,0 +1,19 @@
+{
+  "name": "creature-collect",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Capacitor wrapper for the self-hosted creature-collect PWA. The Flask + static/ web app is the source of truth; this just adds native iOS / Android targets that load the same site in a WebView, with the option to wire in native plugins (step counter, background geolocation, notifications) over time.",
+  "scripts": {
+    "cap:sync": "cap sync",
+    "cap:open:android": "cap open android",
+    "cap:open:ios": "cap open ios"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.0.0",
+    "@capacitor/core": "^6.0.0",
+    "@capacitor/ios": "^6.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.0.0"
+  }
+}

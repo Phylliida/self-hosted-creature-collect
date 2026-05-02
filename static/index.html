@@ -2859,6 +2859,10 @@
       <label for="creatureModeToggle">Creature mode</label>
       <input type="checkbox" id="creatureModeToggle" checked>
     </div>
+    <div class="row">
+      <label for="actionIconsToggle">Action buttons as icons</label>
+      <input type="checkbox" id="actionIconsToggle">
+    </div>
     <div class="settings-subsection">
       <h4 class="settings-subsection-title">
         Visibility
@@ -9637,6 +9641,20 @@ function fmtDate(ts) {
       // Cooldown overlays are creature-mode-only, so toggle drops or
       // restores the whole set as the mode flips.
       try { refreshCooldownOverlays(); } catch {}
+    });
+  }
+
+  // Action-buttons style: text (default) vs icons. Persisted under
+  // cc.actionButtonsAsIcons; creatures.js reads it on each render
+  // and listens for the cc-action-buttons-style-changed event so
+  // toggling takes effect without a reload.
+  const actionIconsToggle = document.getElementById('actionIconsToggle');
+  if (actionIconsToggle) {
+    actionIconsToggle.checked = localStorage.getItem('cc.actionButtonsAsIcons') === '1';
+    actionIconsToggle.addEventListener('change', () => {
+      localStorage.setItem('cc.actionButtonsAsIcons',
+        actionIconsToggle.checked ? '1' : '0');
+      window.dispatchEvent(new CustomEvent('cc-action-buttons-style-changed'));
     });
   }
 
