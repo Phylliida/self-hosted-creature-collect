@@ -1,0 +1,119 @@
+# Build an unsigned iOS IPA on a free macOS runner. The output is
+# uploaded as a workflow artifact you download to your Linux box,
+# then sideload onto your iPhone via SideStore (or AltServer-Linux).
+#
+# Sideloading tools re-sign the IPA with your Apple ID at install
+# time, so we don't need a paid Apple Developer account or any signing
+# secrets in the repo. CODE_SIGNING_ALLOWED=NO + manual Payload/
+# zipping gives us a fully unsigned IPA that SideStore is happy with.
+#
+# Trigger: manual (workflow_dispatch) so you control when builds
+# happen — and a path-filtered push so deploys to main of relevant
+# files build automatically. Adjust to taste.
+
+name: Build iOS IPA (unsigned, for sideloading)
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - 'static/**'
+      - 'capacitor.config.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/ios-build.yml'
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # `npm ci` if there's a lock file (faster, reproducible);
+      # otherwise fall back to `npm install` so the first run works
+      # before we've committed a lock.
+      - name: Install JS deps
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      # The ios/ directory is gitignored — generate it fresh from
+      # capacitor.config.json on every build. Idempotent: if it
+      # already existed (cached?) cap add re-uses; otherwise it
+      # scaffolds a clean Xcode project.
+      - name: Add iOS platform
+        run: |
+          if [ ! -d ios ]; then
+            npx cap add ios
+          fi
+          npx cap sync ios
+
+      # Capacitor's iOS template uses CocoaPods; macos-14 runner has
+      # cocoapods preinstalled. `pod install` produces the .xcworkspace
+      # we hand to xcodebuild below.
+      - name: pod install
+        run: |
+          cd ios/App
+          pod install --repo-update
+
+      # Unsigned Release build — the three CODE_SIGN_* overrides tell
+      # xcodebuild to skip signing entirely (otherwise it tries to
+      # find a developer certificate in the keychain and fails on a
+      # fresh runner).
+      - name: Build .app (unsigned)
+        run: |
+          cd ios/App
+          xcodebuild \
+            -workspace App.xcworkspace \
+            -scheme App \
+            -sdk iphoneos \
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      # Manual IPA assembly: an IPA is just a Zip with a Payload/
+      # directory at the root containing the .app bundle. Skipping
+      # xcodebuild's archive/export pipeline avoids the whole
+      # provisioning-profile question for unsigned builds.
+      - name: Package .app into .ipa
+        run: |
+          APP_PATH=$(find ios/App/build -name "App.app" -type d | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "Could not find App.app under ios/App/build/"
+            echo "Tree dump for debugging:"
+            find ios/App/build -name "*.app" -type d
+            exit 1
+          fi
+          echo "Found .app at: $APP_PATH"
+          APP_DIR=$(dirname "$APP_PATH")
+          cd "$APP_DIR"
+          mkdir -p Payload
+          cp -r App.app Payload/
+          zip -qr "$GITHUB_WORKSPACE/CreatureCollect.ipa" Payload
+          ls -la "$GITHUB_WORKSPACE/CreatureCollect.ipa"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CreatureCollect-ipa
+          path: CreatureCollect.ipa
+          # Keep for two weeks — long enough for slow weekends, short
+          # enough that the artifact storage stays small.
+          retention-days: 14
+          if-no-files-found: error
