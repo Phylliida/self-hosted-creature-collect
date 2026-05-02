@@ -3,7 +3,7 @@
   "appName": "Creature Collect",
   "webDir": "dist",
   "ios": {
-    "limitsNavigationsToAppBoundDomains": true
+    "limitsNavigationsToAppBoundDomains": false
   },
   "server": {
     "androidScheme": "https"
