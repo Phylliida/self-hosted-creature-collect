@@ -6,7 +6,7 @@
     "limitsNavigationsToAppBoundDomains": true
   },
   "server": {
-    "androidScheme": "https",
-    "iosScheme": "https"
+    "url": "https://poke.phylliidaassets.org",
+    "androidScheme": "https"
   }
 }

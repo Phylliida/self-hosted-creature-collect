@@ -3611,24 +3611,38 @@ function fmtDate(ts) {
   // a delta from this so you can see the gaps between phases.
   window._startupPhases = window._startupPhases || {};
   window._startupPhases.scriptStartedAt = performance.now();
-  if (!('serviceWorker' in navigator)) {
-    document.getElementById('status').textContent =
-      'ServiceWorker unavailable — cannot run in offline-only mode on this browser.';
-    return;
-  }
 
-  let reg = await navigator.serviceWorker.getRegistration('/');
-  if (!reg) reg = await navigator.serviceWorker.register('/sw.js');
-  await navigator.serviceWorker.ready;
-  const hadController = !!navigator.serviceWorker.controller;
-  if (!hadController) {
+  // Service Worker is required by the web/PWA build for offline tile
+  // caching, but in the Capacitor IPA the bundled webDir already
+  // contains everything (including z0..z5 base tiles), and WKWebView
+  // forbids SW registration on its custom `capacitor://` scheme. So
+  // we tolerate SW failure here: the rest of the app still loads,
+  // map tiles still render from local files, and only region-extend
+  // downloads (which use SW.downloadRegion) are unavailable. Mark
+  // window.CC_SW_AVAILABLE so downstream code can skip SW-dependent
+  // features when needed.
+  window.CC_SW_AVAILABLE = false;
+  if ('serviceWorker' in navigator) {
+    try {
+      let reg = await navigator.serviceWorker.getRegistration('/');
+      if (!reg) reg = await navigator.serviceWorker.register('/sw.js');
+      await navigator.serviceWorker.ready;
+      window.CC_SW_AVAILABLE = true;
+    } catch (e) {
+      console.warn('[sw] registration failed; continuing without:', e && e.message);
+    }
+  }
+  const hadController = !!(navigator.serviceWorker && navigator.serviceWorker.controller);
+  if (window.CC_SW_AVAILABLE && !hadController) {
     await new Promise(resolve => {
       navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true });
     });
   }
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (hadController) location.reload();
-  });
+  if (navigator.serviceWorker) {
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (hadController) location.reload();
+    });
+  }
 
   const viewKey = 'cc.view.v1';
   const savedView = (() => {
@@ -7666,8 +7680,10 @@ function fmtDate(ts) {
       const r = list.find(x => x.id === id);
       if (!r) return;
       if (!confirm('delete this map?')) return;
-      const reg = await navigator.serviceWorker.ready;
-      reg.active.postMessage({ type: 'deleteTiles', urls: r.urls });
+      if (window.CC_SW_AVAILABLE) {
+        const reg = await navigator.serviceWorker.ready;
+        reg.active.postMessage({ type: 'deleteTiles', urls: r.urls });
+      }
       await deletePoisByRegion(id);
       await deleteScheduleByRegion(id);
       await deleteWalkGraphByRegion(id);
@@ -8955,6 +8971,15 @@ function fmtDate(ts) {
   }
 
   async function prefetchBaseMap(statusEl) {
+    // Without an SW we can't pre-warm the tile cache. In Capacitor
+    // (the only no-SW path), z0..z5 tiles ship in the bundle and
+    // MapLibre fetches them directly from local files, so there's
+    // nothing to do — mark as ready and exit.
+    if (!window.CC_SW_AVAILABLE) {
+      if (statusEl) statusEl.textContent = 'base map ready (bundled)';
+      localStorage.setItem('cc.baseMapDownloaded', '1');
+      return;
+    }
     const id = crypto.randomUUID();
     const reg = await navigator.serviceWorker.ready;
     await new Promise((resolve) => {
@@ -9525,6 +9550,29 @@ function fmtDate(ts) {
     await fetchAndSaveHousenumbers(id, bbox);
     // Force re-parse on next z16+ zoom so the new data is picked up.
     hnRegions = [];
+
+    // No-SW mode (Capacitor IPA): the SW.downloadRegion path is the
+    // only thing that fetches + caches map tiles. Without it we can
+    // still save the POI/walk/housenumber data above, but we can't
+    // grab tiles for the region. Bail out with an explanation rather
+    // than hanging on serviceWorker.ready.
+    if (!window.CC_SW_AVAILABLE) {
+      status.textContent = `${isRefresh ? 'refreshed' : 'saved'} ${poiCount} POIs · tile download unavailable in this build`;
+      const list = loadRegions();
+      const existing = list.find(x => x.id === id);
+      const record = {
+        id, createdAt: Date.now(), bbox, minZoom, maxZoom,
+        tileCount: 0, urls: [], poiCount,
+      };
+      if (existing) Object.assign(existing, record);
+      else list.push(record);
+      saveRegions(list);
+      invalidateRegionSizes(id);
+      renderRegions();
+      updateAppDataLabel();
+      requestPersistent();
+      return;
+    }
 
     const reg = await navigator.serviceWorker.ready;
     await new Promise((resolve) => {
