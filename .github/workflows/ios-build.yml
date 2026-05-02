@@ -73,28 +73,33 @@ jobs:
           fi
           npx cap sync ios
 
-      # Patch Info.plist with NSLocationWhenInUseUsageDescription —
-      # required by @capacitor/geolocation. Without it, the first
-      # call to getCurrentPosition crashes the app with "missing
-      # usage description" on iOS.
+      # Patch Info.plist with two iOS-required keys:
       #
-      # We previously also set WKAppBoundDomains here. That was
-      # needed when the WebView loaded from server.url
-      # (poke.phylliidaassets.org) — App-Bound Domains was the only
-      # way to enable Service Workers for that origin. In bundled
-      # mode the WebView loads from capacitor://localhost (its
-      # local scheme), which is exempt from App-Bound restrictions
-      # entirely, so we drop both the plist entry AND the
-      # `limitsNavigationsToAppBoundDomains` config in
-      # capacitor.config.json. With limits off, SWs register
-      # unconditionally on the local origin — same behavior as
-      # Capacitor without any of this plumbing.
-      - name: Patch Info.plist (Location)
+      # 1. WKAppBoundDomains — iOS WKWebView only exposes
+      #    `navigator.serviceWorker` for documents whose origin
+      #    matches an entry here. In bundled mode the page is
+      #    served from `capacitor://localhost`, so we need
+      #    "localhost" in the list. (When we previously used
+      #    `server.url`, the entry was `poke.phylliidaassets.org`
+      #    instead — different mode, different domain.) Combined
+      #    with `limitsNavigationsToAppBoundDomains: true` in
+      #    capacitor.config.json, this is what flips the SW API on.
+      #
+      # 2. NSLocationWhenInUseUsageDescription — required by
+      #    @capacitor/geolocation. Without it the first
+      #    getCurrentPosition call crashes with "missing usage
+      #    description".
+      - name: Patch Info.plist (App-Bound Domains + Location)
         run: |
           PLIST=ios/App/App/Info.plist
+          /usr/libexec/PlistBuddy -c "Delete :WKAppBoundDomains" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :WKAppBoundDomains array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :WKAppBoundDomains:0 string localhost" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :WKAppBoundDomains:1 string poke.phylliidaassets.org" "$PLIST"
           /usr/libexec/PlistBuddy -c "Delete :NSLocationWhenInUseUsageDescription" "$PLIST" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :NSLocationWhenInUseUsageDescription string 'Show your position on the map and detect nearby creatures while walking.'" "$PLIST"
           echo "── Info.plist after patching ──"
+          /usr/libexec/PlistBuddy -c "Print :WKAppBoundDomains" "$PLIST"
           /usr/libexec/PlistBuddy -c "Print :NSLocationWhenInUseUsageDescription" "$PLIST"
 
       # Capacitor's iOS template uses CocoaPods; macos-14 runner has

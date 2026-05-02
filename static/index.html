@@ -2599,6 +2599,108 @@
 </script>
 </head>
 <body>
+<!-- On-screen error console. Captures uncaught errors, unhandled
+     promise rejections, console.error calls, and SW registration
+     failures, then renders them as a fixed-position overlay at the
+     top of the page. Lets us debug issues on iOS where dev tools
+     aren't accessible. Tap "×" to dismiss; tap a row to expand its
+     stack. Set `localStorage.cc.debugConsoleHidden=1` to suppress. -->
+<div id="cc-debug-console" style="position:fixed;top:0;left:0;right:0;
+     z-index:99999;background:#1a1a1a;color:#ff8a80;font:11px/1.3
+     ui-monospace,monospace;padding:6px 28px 6px 8px;max-height:50vh;
+     overflow-y:auto;display:none;box-shadow:0 2px 8px rgba(0,0,0,0.5);
+     white-space:pre-wrap;word-break:break-word;"></div>
+<button id="cc-debug-close" style="position:fixed;top:2px;right:4px;
+     z-index:100000;background:transparent;color:#fff;border:none;
+     font-size:18px;line-height:1;padding:2px 6px;display:none;
+     cursor:pointer;">×</button>
+<script>
+(function () {
+  if (localStorage.getItem('cc.debugConsoleHidden') === '1') return;
+  var box = document.getElementById('cc-debug-console');
+  var closeBtn = document.getElementById('cc-debug-close');
+  var entries = [];
+  var MAX = 50;
+  function render() {
+    if (!entries.length) {
+      box.style.display = 'none';
+      closeBtn.style.display = 'none';
+      return;
+    }
+    box.style.display = 'block';
+    closeBtn.style.display = 'block';
+    box.textContent = entries.join('\n──────────\n');
+  }
+  function add(label, msg, stack) {
+    var line = '[' + label + '] ' + msg;
+    if (stack) line += '\n' + String(stack).split('\n').slice(0, 4).join('\n');
+    entries.push(line);
+    if (entries.length > MAX) entries = entries.slice(-MAX);
+    render();
+  }
+  closeBtn.onclick = function () {
+    entries = [];
+    render();
+  };
+  // Tap-to-hide-permanently: long-press the close button.
+  var pressT;
+  closeBtn.addEventListener('touchstart', function () {
+    pressT = setTimeout(function () {
+      if (confirm('Hide debug console permanently? (clears localStorage.cc.debugConsoleHidden to undo)')) {
+        localStorage.setItem('cc.debugConsoleHidden', '1');
+        box.remove();
+        closeBtn.remove();
+      }
+    }, 800);
+  });
+  closeBtn.addEventListener('touchend', function () { clearTimeout(pressT); });
+  window.addEventListener('error', function (e) {
+    add('error', (e.message || 'unknown') + ' @ ' + (e.filename || '?') + ':' + (e.lineno || '?'),
+        e.error && e.error.stack);
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e.reason || {};
+    add('promise', r.message || String(r), r.stack);
+  });
+  var origErr = console.error.bind(console);
+  console.error = function () {
+    var args = Array.prototype.slice.call(arguments);
+    add('console', args.map(function (a) {
+      if (a && a.message) return a.message;
+      try { return typeof a === 'string' ? a : JSON.stringify(a); }
+      catch { return String(a); }
+    }).join(' '));
+    origErr.apply(console, args);
+  };
+  // Service worker registration is awaited inside an async IIFE further
+  // below; if it rejects, unhandledrejection above will catch it. We
+  // also listen for in-flight SW errors here.
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('error', function (e) {
+      add('sw-event', e.message || 'service worker error');
+    });
+    navigator.serviceWorker.addEventListener('messageerror', function (e) {
+      add('sw-msgerr', 'message decode failed');
+    });
+    // Visibility check: report SW state shortly after load so we can
+    // see whether it actually registered or silently no-op'd.
+    setTimeout(function () {
+      navigator.serviceWorker.getRegistration('/').then(function (reg) {
+        if (!reg) {
+          add('sw-state', 'no registration after 3s — register failed?');
+        } else {
+          var sw = reg.active || reg.waiting || reg.installing;
+          add('sw-state', 'reg ok · scope=' + reg.scope + ' · state=' + (sw ? sw.state : 'none'));
+        }
+      }).catch(function (e) {
+        add('sw-state', 'getRegistration threw: ' + (e && e.message));
+      });
+    }, 3000);
+  } else {
+    add('sw-state', 'serviceWorker not in navigator');
+  }
+})();
+</script>
 <!-- Refresh button — pure HTML + inline onclick so it works even when
      the JS has thrown an error during init. Targets ONLY the small
      app-shell entries in APP_CACHE — `/`, manifest, icon.svg, the
