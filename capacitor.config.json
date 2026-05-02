@@ -6,6 +6,7 @@
     "limitsNavigationsToAppBoundDomains": true
   },
   "server": {
-    "androidScheme": "https"
+    "androidScheme": "https",
+    "iosScheme": "https"
   }
 }
