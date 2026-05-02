@@ -69,12 +69,14 @@ pkgs.mkShell {
     # ── Python / Flask web app side ────────────────────────────
     python3
     python3Packages.flask
+    python3Packages.pillow      # image cropping for build-bundled-data.py
     python3Packages.shapely
     python3Packages.pyosmium
     tilemaker
     cloudflared
     git
     osmium-tool
+    ruby                        # extract-pif-dat.rb (Marshal binary → JSON)
 
     # ── Capacitor / Node toolchain ─────────────────────────────
     nodejs_20
