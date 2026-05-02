@@ -19,6 +19,8 @@ on:
     branches: [main]
     paths:
       - 'static/**'
+      - 'data/BundledData/**'
+      - 'scripts/build-capacitor.sh'
       - 'capacitor.config.json'
       - 'package.json'
       - 'package-lock.json'
@@ -52,6 +54,13 @@ jobs:
           else
             npm install
           fi
+
+      # Compose the Capacitor webDir (`dist/`) by combining the
+      # static frontend with the BundledData payload. Capacitor reads
+      # from this directory, so the IPA ships with all sprites, low-
+      # zoom tiles, fonts, icons, and species metadata baked in.
+      - name: Build Capacitor webDir
+        run: bash scripts/build-capacitor.sh
 
       # The ios/ directory is gitignored — generate it fresh from
       # capacitor.config.json on every build. Idempotent: if it

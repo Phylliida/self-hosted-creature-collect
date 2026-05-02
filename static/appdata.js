@@ -25,6 +25,11 @@
   global._scriptVersions = global._scriptVersions || {};
   global._scriptVersions['appdata.js'] = SCRIPT_VERSION;
 
+  // BundledData base — icons + fonts (and their listing JSONs) live
+  // under this prefix. See index.html for the override mechanism.
+  const BUNDLED_BASE = (global.CC_BUNDLED_DATA_BASE || '/bundled-data')
+    .replace(/\/$/, '');
+
   const DB_NAME = 'creature-appdata-v1';
   // v2 bumped from v1: icon entries changed from raw SVG text blobs to
   // pre-rasterized RGBA pixel blobs (skip the runtime SVG decode that
@@ -226,7 +231,7 @@
     const headers = { 'X-Download': '1' };
     let listResp;
     try {
-      listResp = await fetch('/iconslist', { headers });
+      listResp = await fetch(`${BUNDLED_BASE}/icons-list.json`, { headers });
     } catch { return { loaded: 0, total: 0, cancelled: false }; }
     if (!listResp.ok) return { loaded: 0, total: 0, cancelled: false };
     const { files = [] } = await listResp.json();
@@ -239,7 +244,7 @@
       if (signal && signal.aborted) return { loaded, total, cancelled: true };
       if (have.has(name)) continue;
       try {
-        const r = await fetch(`/icons/${encodeURIComponent(name)}.svg`, { headers });
+        const r = await fetch(`${BUNDLED_BASE}/icons/${encodeURIComponent(name)}.svg`, { headers });
         if (!r.ok) continue;
         const svg = await r.text();
         // Rasterize NOW (once, during download) instead of every page
@@ -336,12 +341,17 @@
     const onProgress = opts.onProgress || (() => {});
     const signal = opts.signal;
     const headers = { 'X-Download': '1' };
+    // BundledData ships ONE listing JSON keyed by stack name
+    // (instead of the per-stack /fontslist/<stack> endpoint), so
+    // fetch once and index in. Falls back to empty list if the
+    // requested stack isn't in the bundle.
     let listResp;
     try {
-      listResp = await fetch(`/fontslist/${encodeURIComponent(stack)}`, { headers });
+      listResp = await fetch(`${BUNDLED_BASE}/fonts-list.json`, { headers });
     } catch { return { loaded: 0, total: 0, cancelled: false }; }
     if (!listResp.ok) return { loaded: 0, total: 0, cancelled: false };
-    const { files = [] } = await listResp.json();
+    const allStacks = await listResp.json();
+    const files = (allStacks && allStacks[stack]) || [];
     const have = new Set(await fontKeys());
     let loaded = 0;
     for (const k of have) if (k.startsWith(stack + '/')) loaded++;
@@ -353,7 +363,9 @@
       const key = `${stack}/${range}`;
       if (have.has(key)) continue;
       try {
-        const r = await fetch(`/fonts/${encodeURIComponent(stack)}/${fname}`, { headers });
+        const r = await fetch(
+          `${BUNDLED_BASE}/fonts/${encodeURIComponent(stack)}/${fname}`,
+          { headers });
         if (!r.ok) continue;
         const blob = await r.blob();
         await fontPut(key, blob);

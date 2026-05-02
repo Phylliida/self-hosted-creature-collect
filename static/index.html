@@ -58,12 +58,11 @@
   }
   #welcome h2 { margin: 0 0 10px; font-size: 20px; }
   #welcome p { margin: 0 0 18px; color: var(--ui-muted); }
-  #welcomeStart, #welcomeCreatures, #welcomeDone {
+  #welcomeStart, #welcomeDone {
     padding: 12px 24px; font-size: 15px;
     cursor: pointer; width: 100%;
   }
   #welcomeStart:disabled,
-  #welcomeCreatures:disabled,
   #welcomeDone:disabled { cursor: wait; }
   #welcomeStatus { margin-top: 10px; font-size: 12px; color: var(--ui-muted);
                    min-height: 14px; }
@@ -208,7 +207,7 @@
 
   /* Vaporwave + Neon: glowing accents — CTA buttons and active controls
      pick up a soft neon halo via text-shadow + box-shadow. */
-  html[data-theme="vaporwave"] #welcomeStart, #welcomeCreatures, #welcomeDone,
+  html[data-theme="vaporwave"] #welcomeStart, #welcomeDone,
   html[data-theme="vaporwave"] #downloadBtn,
   html[data-theme="vaporwave"] #appDataBtn,
   html[data-theme="vaporwave"] #poiCardDirections,
@@ -217,7 +216,7 @@
   html[data-theme="vaporwave"] button.close,
   html[data-theme="vaporwave"] #transitClose,
   html[data-theme="vaporwave"] #savedRoutesClose,
-  html[data-theme="neon"] #welcomeStart, #welcomeCreatures, #welcomeDone,
+  html[data-theme="neon"] #welcomeStart, #welcomeDone,
   html[data-theme="neon"] #downloadBtn,
   html[data-theme="neon"] #appDataBtn,
   html[data-theme="neon"] #poiCardDirections,
@@ -363,7 +362,7 @@
       inset  2px  2px 0 #808080,
       inset -2px -2px 0 #dfdfdf !important;
   }
-  html[data-theme="win95"] #welcomeStart, #welcomeCreatures, #welcomeDone,
+  html[data-theme="win95"] #welcomeStart, #welcomeDone,
   html[data-theme="win95"] #downloadBtn,
   html[data-theme="win95"] #appDataBtn,
   html[data-theme="win95"] #poiCardDirections,
@@ -439,7 +438,7 @@
     color: #000;
     font-family: inherit;
   }
-  html[data-theme="macos9"] #welcomeStart, #welcomeCreatures, #welcomeDone,
+  html[data-theme="macos9"] #welcomeStart, #welcomeDone,
   html[data-theme="macos9"] #downloadBtn,
   html[data-theme="macos9"] #appDataBtn,
   html[data-theme="macos9"] #poiCardDirections,
@@ -631,7 +630,7 @@
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.35), 0 2px 4px rgba(0,0,0,0.35) !important;
     font-family: inherit; font-weight: 600;
   }
-  html[data-theme="sims"] #welcomeStart, #welcomeCreatures, #welcomeDone,
+  html[data-theme="sims"] #welcomeStart, #welcomeDone,
   html[data-theme="sims"] #downloadBtn,
   html[data-theme="sims"] #appDataBtn,
   html[data-theme="sims"] #poiCardDirections,
@@ -745,7 +744,7 @@
       inset 0 -1px 0 rgba(40,20,8,0.45),
       0 2px 4px rgba(40,20,8,0.5) !important;
   }
-  html[data-theme="wood"] #welcomeStart, #welcomeCreatures, #welcomeDone,
+  html[data-theme="wood"] #welcomeStart, #welcomeDone,
   html[data-theme="wood"] #downloadBtn,
   html[data-theme="wood"] #appDataBtn,
   html[data-theme="wood"] #poiCardDirections,
@@ -816,7 +815,7 @@
   html[data-theme="metal"] button:active:not(:disabled) {
     background: linear-gradient(to bottom, #808080 0%, #a0a0a0 50%, #c0c0c0 100%) !important;
   }
-  html[data-theme="metal"] #welcomeStart, #welcomeCreatures, #welcomeDone,
+  html[data-theme="metal"] #welcomeStart, #welcomeDone,
   html[data-theme="metal"] #downloadBtn,
   html[data-theme="metal"] #appDataBtn,
   html[data-theme="metal"] #poiCardDirections,
@@ -935,7 +934,7 @@
       0 0 8px rgba(0,221,255,0.4) !important;
     text-shadow: 0 0 6px rgba(0,221,255,0.8);
   }
-  html[data-theme="tron"] #welcomeStart, #welcomeCreatures, #welcomeDone,
+  html[data-theme="tron"] #welcomeStart, #welcomeDone,
   html[data-theme="tron"] #downloadBtn,
   html[data-theme="tron"] #appDataBtn,
   html[data-theme="tron"] #poiCardDirections,
@@ -1158,7 +1157,7 @@
     letter-spacing: 0.1em;
     animation: backrooms-buzz 4s infinite;
   }
-  html[data-theme="backrooms"] #welcomeStart, #welcomeCreatures, #welcomeDone,
+  html[data-theme="backrooms"] #welcomeStart, #welcomeDone,
   html[data-theme="backrooms"] #downloadBtn,
   html[data-theme="backrooms"] #appDataBtn,
   html[data-theme="backrooms"] #poiCardDirections,
@@ -1249,7 +1248,7 @@
   }
 
   /* Buttons — secondary (neutral) and primary (accent CTA). */
-  #welcomeStart, #welcomeCreatures, #welcomeDone,
+  #welcomeStart, #welcomeDone,
   #downloadBtn,
   #appDataBtn,
   #poiCardDirections,
@@ -1264,7 +1263,6 @@
     border-radius: var(--ui-radius);
   }
   #welcomeStart:hover:not(:disabled),
-  #welcomeCreatures:hover:not(:disabled),
   #welcomeDone:hover:not(:disabled),
   #downloadBtn:hover,
   #appDataBtn:hover,
@@ -1277,7 +1275,6 @@
     background: var(--ui-accent-border);
   }
   #welcomeStart:disabled,
-  #welcomeCreatures:disabled,
   #welcomeDone:disabled,
   #routingGo:disabled,
   #poiCardCollect:disabled {
@@ -1289,7 +1286,7 @@
   /* Disabled state should NOT inherit the hover accent color when
      the user re-hovers a still-cooling-down stop. */
   #poiCardCollect:disabled:hover { background: var(--ui-hover); }
-  html[data-theme="medieval"] #welcomeStart, #welcomeCreatures, #welcomeDone,
+  html[data-theme="medieval"] #welcomeStart, #welcomeDone,
   html[data-theme="medieval"] #downloadBtn,
   html[data-theme="medieval"] #appDataBtn,
   html[data-theme="medieval"] #poiCardDirections,
@@ -1319,7 +1316,6 @@
   #importBtn,
   #saveBtn,
   #loadBtn,
-  #spritesDownloadBtn,
   #spritesClearBtn {
     background: var(--ui-input-bg);
     color: var(--ui-text);
@@ -1331,7 +1327,6 @@
   #importBtn:hover,
   #saveBtn:hover,
   #loadBtn:hover,
-  #spritesDownloadBtn:hover,
   #spritesClearBtn:hover { background: var(--ui-hover); }
   /* "Done" buttons in transit + settings panels carry inline-style
      backgrounds from the markup — force the CTA look. */
@@ -2892,12 +2887,13 @@
       </div>
     </div>
     <div class="row">
-      <label>Creature sprites</label>
+      <label>App data</label>
       <span>
-        <button id="spritesDownloadBtn" type="button" style="padding: 6px 10px; font-size: 13px;">↓ download</button>
-        <button id="spritesClearBtn" type="button" style="padding: 6px 10px; font-size: 13px; margin-left: 4px;">clear</button>
+        <button id="appDataBtn" type="button" style="padding: 6px 10px; font-size: 13px;">↓ app data</button>
+        <button id="spritesClearBtn" type="button" style="padding: 6px 10px; font-size: 13px; margin-left: 4px;">clear sprites</button>
       </span>
     </div>
+    <div id="appDataStatus" style="font-size: 11px; color: var(--ui-muted); margin: -4px 0 6px;"></div>
     <div id="spritesStatus" style="font-size: 11px; color: var(--ui-muted); margin: -4px 0 6px;"></div>
     <div class="row backup-row">
       <label for="backupName">Backup</label>
@@ -2941,16 +2937,12 @@
 <div id="welcome">
   <div class="card">
     <h2>Welcome!</h2>
-    <p id="welcomeStep1Desc">Step 1 of 3: download app data — fonts, POI
-       icons, and a low-zoom world map (~8&nbsp;MB). The map won't render
-       labels or low-zoom tiles without it.</p>
+    <p id="welcomeStep1Desc">Step 1 of 2: download app data — fonts, POI
+       icons, low-zoom world map, and creature sprites + species info
+       (~300&nbsp;MB total). Without this the map shows no labels and
+       wild creatures show as red dots.</p>
     <button id="welcomeStart">↓ Download app data</button>
-    <p id="welcomeStep2Desc" hidden>Step 2 of 3: download creature data —
-       Pokémon sprites and species info (~150&nbsp;MB autogen + ~150&nbsp;MB
-       hand-drawn). Without it wild creatures show as red dots and the
-       pokédex is blank.</p>
-    <button id="welcomeCreatures" hidden>↓ Download creature data</button>
-    <p id="welcomeStep3Desc" hidden>Step 3 of 3: download map data for your
+    <p id="welcomeStep3Desc" hidden>Step 2 of 2: download map data for your
        area. Pan and zoom the map to your region, then tap the
        <b>↓&nbsp;save current view</b> button at the bottom of the screen.
        This grabs offline tiles, POIs, walking paths, and transit so the
@@ -2966,7 +2958,6 @@
     <div style="margin-top: 8px;">
       <label>max zoom <input id="zMax" type="number" min="1" max="14" value="14" style="width: 40px;"></label>
       <button id="downloadBtn">↓ save current view</button>
-      <button id="appDataBtn">↓ app data</button>
       <div id="status"></div>
       <div id="storage" style="font-size: 11px; color: var(--ui-muted); margin-top: 2px;"></div>
       <div id="poiStat" style="font-size: 11px; color: var(--ui-muted);"></div>
@@ -2975,6 +2966,56 @@
     </div>
   </details>
 </div>
+<script>
+  // Base URL for the static "BundledData" tree generated by
+  // build-bundled-data.py — sprites, eggs, species metadata, credits,
+  // manifest, icons, fonts, low-zoom tiles. Read by sprites.js,
+  // species.js, and appdata.js when constructing fetch URLs.
+  //
+  // Default '/bundled-data' is the same-origin Flask route. To host
+  // the bundle on a CDN (so the Flask backend doesn't need
+  // data/BundledData/ on disk), point this at a CDN URL — e.g.:
+  //   window.CC_BUNDLED_DATA_BASE =
+  //     'https://cdn.jsdelivr.net/gh/USER/REPO@main/data/BundledData';
+  // jsdelivr (and raw.githubusercontent.com) both send CORS headers
+  // for public repos, so the cross-origin fetch works without changes.
+  // Trailing slash is stripped at use-site.
+  window.CC_BUNDLED_DATA_BASE = '/bundled-data';
+
+  // Capacitor (iOS/Android wrapper) detection. When the page is
+  // loaded from the bundled webDir (capacitor://localhost on iOS,
+  // https://localhost on Android) instead of the Flask backend, all
+  // static assets — sprites, fonts, icons, low-zoom tiles, the
+  // service worker, the JS bundles — load from local files. The
+  // bundled-data path stays absolute ('/bundled-data') because the
+  // build script (scripts/build-capacitor.sh) puts BundledData at
+  // the webDir root.
+  //
+  // Backend endpoints (/save, /load, /save-names, /poi, /walk-graph,
+  // /housenumbers, /routes, /schedule, /sprite-credit/...) don't
+  // exist in the bundle — they live on the user's Flask server.
+  // We install a fetch interceptor that prefixes those calls with
+  // CC_API_BASE so they reach the live server. Local paths
+  // (/static, /sw.js, /bundled-data, /icons, /fonts) pass through.
+  if (window.Capacitor) {
+    const API_BASE = 'https://poke.phylliidaassets.org';
+    window.CC_API_BASE = API_BASE;
+    const LOCAL_PREFIXES = ['/static/', '/bundled-data/', '/sw.js',
+                            '/icons/', '/fonts/', '/manifest'];
+    const _origFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      const url = typeof input === 'string' ? input
+                : (input && input.url) ? input.url : '';
+      if (url && url[0] === '/' && url[1] !== '/'
+          && !LOCAL_PREFIXES.some((p) => url.startsWith(p))) {
+        const rewritten = API_BASE + url;
+        if (typeof input === 'string') return _origFetch(rewritten, init);
+        return _origFetch(new Request(rewritten, input), init);
+      }
+      return _origFetch(input, init);
+    };
+  }
+</script>
 <script src="/static/vendor/maplibre-gl.js"></script>
 <script src="/static/trip-planner.js"></script>
 <script src="/static/spawns.js"></script>
@@ -9419,7 +9460,7 @@ function fmtDate(ts) {
   document.getElementById('appDataBtn').onclick = async () => {
     if (!checkWifiGate()) return;
     const btn = document.getElementById('appDataBtn');
-    const status = document.getElementById('status');
+    const status = document.getElementById('appDataStatus');
     btn.disabled = true;
 
     // Fonts → IDB (via AppData). Replaces the per-URL fetch + SW
@@ -9453,6 +9494,46 @@ function fmtDate(ts) {
     await loadAllIcons();
 
     await prefetchBaseMap(status);
+
+    // Creature data — sprites + variants + credits + names + manifest.
+    // Used to live behind a separate Settings "Download Sprite Data"
+    // button, but now that everything's served from /bundled-data/
+    // it's cheap to chain inline. The sprite module skips work that's
+    // already complete, so this is fast on re-clicks.
+    if (typeof window.Sprites !== 'undefined') {
+      status.textContent = 'fetching species metadata…';
+      try {
+        if (window.Species && typeof window.Species.ensureLoaded === 'function') {
+          await window.Species.ensureLoaded();
+        }
+      } catch {}
+      try {
+        await window.Sprites.bulkDownload({
+          sheetFrom: 1, sheetTo: 150, indexFrom: 1, indexTo: 150,
+          onProgress: (p) => {
+            const { sheetsDone, sheetsTotal, currentSheet, phase,
+                    customSpeciesDone, customSpeciesTotal,
+                    customVariantNum, customVariantTotal } = p;
+            if (phase === 'repairing') {
+              status.textContent = 'repairing legacy crops…';
+            } else if (phase === 'custom-fetching' || phase === 'custom-done' || phase === 'custom-skipped') {
+              const vt = customVariantTotal != null
+                ? ` (variant ${customVariantNum}/${customVariantTotal})` : '';
+              status.textContent =
+                `hand-drawn ${customSpeciesDone}/${customSpeciesTotal}` +
+                ` — species ${currentSheet}${vt}`;
+            } else if (phase === 'credits' || phase === 'splitnames') {
+              status.textContent = `fetching ${phase}…`;
+            } else {
+              status.textContent =
+                `autogen sprites ${sheetsDone}/${sheetsTotal}`;
+            }
+          },
+        });
+      } catch (e) {
+        status.textContent = `sprite error: ${e && e.message ? e.message : e}`;
+      }
+    }
 
     updateAppDataLabel();
     requestPersistent();
@@ -9493,22 +9574,19 @@ function fmtDate(ts) {
   });
   checkAppDataPresent();
 
-  // First-run welcome overlay: prompts for the one-time app-data download,
-  // then reloads so every style layer picks up the newly-cached fonts and
-  // tiles. Set cc.welcomeSeen once a download completes so we don't block
-  // subsequent visits even if the user somehow clears tile cache later.
+  // First-run welcome overlay: prompts for the one-time combined
+  // download (fonts + icons + low-zoom tiles + sprites), then asks
+  // the user to save offline tiles for their area. Set cc.welcomeSeen
+  // once both steps complete so we don't block subsequent visits.
   const welcomeEl = document.getElementById('welcome');
   const welcomeStart = document.getElementById('welcomeStart');
-  const welcomeCreatures = document.getElementById('welcomeCreatures');
   const welcomeDone = document.getElementById('welcomeDone');
   const welcomeStep1Desc = document.getElementById('welcomeStep1Desc');
-  const welcomeStep2Desc = document.getElementById('welcomeStep2Desc');
   const welcomeStep3Desc = document.getElementById('welcomeStep3Desc');
   const welcomeStatus = document.getElementById('welcomeStatus');
   if (welcomeEl && welcomeStart && !localStorage.getItem('cc.welcomeSeen')) {
-    // Resume-after-reload: step 1 reloads the page so freshly-cached
-    // fonts/icons are picked up. On the reload, app-data flags are set,
-    // so we skip step 1 and start at step 2.
+    // If the user got partway through last time and we have all of
+    // fonts + icons + tiles + sprites already, skip step 1 entirely.
     const appDataDone = localStorage.getItem('cc.fontsDownloaded') === '1'
       && localStorage.getItem('cc.iconsDownloaded') === '1'
       && localStorage.getItem('cc.baseMapDownloaded') === '1';
@@ -9517,13 +9595,6 @@ function fmtDate(ts) {
     function showStep2() {
       welcomeStart.hidden = true;
       welcomeStep1Desc.hidden = true;
-      welcomeStep2Desc.hidden = false;
-      welcomeCreatures.hidden = false;
-      welcomeStatus.textContent = '';
-    }
-    function showStep3() {
-      welcomeCreatures.hidden = true;
-      welcomeStep2Desc.hidden = true;
       welcomeStep3Desc.hidden = false;
       welcomeDone.hidden = false;
       welcomeStatus.textContent = '';
@@ -9531,72 +9602,28 @@ function fmtDate(ts) {
 
     if (appDataDone) showStep2();
 
-    // STEP 1 — app data. Mirror the shared status element while the
-    // existing app-data flow runs in the background.
-    const statusEl = document.getElementById('status');
+    // STEP 1 — combined app data + creature data. appDataBtn handles
+    // fonts → icons → low-zoom tiles → sprites in one chain and fires
+    // `cc:app-data-ready` when done. Mirror the appDataStatus element
+    // into welcomeStatus while it runs.
+    const statusEl = document.getElementById('appDataStatus');
     const mirror = () => { welcomeStatus.textContent = statusEl.textContent; };
     const mo = new MutationObserver(mirror);
     welcomeStart.onclick = () => {
       welcomeStart.disabled = true;
       welcomeStart.textContent = 'Downloading…';
+      if (navigator.storage && navigator.storage.persist) {
+        try { navigator.storage.persist(); } catch {}
+      }
       mo.observe(statusEl, { childList: true, characterData: true, subtree: true });
       window.addEventListener('cc:app-data-ready', () => {
         mo.disconnect();
-        welcomeStatus.textContent = 'Reloading…';
-        // Reload so fonts/icons cached in this pass take effect; the
-        // welcome card reopens automatically and resumes at step 2.
-        setTimeout(() => location.reload(), 400);
+        showStep2();
       }, { once: true });
       document.getElementById('appDataBtn').click();
     };
 
-    // STEP 2 — creature data. Calls Sprites.bulkDownload directly so
-    // we can mirror its progress into welcomeStatus without going
-    // through the Settings panel's confirm() dialog.
-    welcomeCreatures.onclick = async () => {
-      if (typeof window.Sprites === 'undefined') {
-        welcomeStatus.textContent = 'sprite module not loaded — refresh and retry';
-        return;
-      }
-      welcomeCreatures.disabled = true;
-      welcomeCreatures.textContent = 'Downloading…';
-      try {
-        if (window.Species && typeof window.Species.ensureLoaded === 'function') {
-          welcomeStatus.textContent = 'fetching metadata…';
-          try { await window.Species.ensureLoaded(); } catch {}
-        }
-        if (navigator.storage && navigator.storage.persist) {
-          try { await navigator.storage.persist(); } catch {}
-        }
-        await window.Sprites.bulkDownload({
-          sheetFrom: 1, sheetTo: 150, indexFrom: 1, indexTo: 150,
-          onProgress: (p) => {
-            const { sheetsDone, sheetsTotal, currentSheet, phase,
-                    customSpeciesDone, customSpeciesTotal,
-                    customVariantNum, customVariantTotal } = p;
-            if (phase === 'repairing') {
-              welcomeStatus.textContent = 'repairing legacy crops…';
-            } else if (phase === 'custom-fetching' || phase === 'custom-done' || phase === 'custom-skipped') {
-              const vt = customVariantTotal != null
-                ? ` (variant ${customVariantNum}/${customVariantTotal})` : '';
-              welcomeStatus.textContent =
-                `hand-drawn ${customSpeciesDone}/${customSpeciesTotal}` +
-                ` — species ${currentSheet}${vt}`;
-            } else {
-              welcomeStatus.textContent =
-                `autogen ${sheetsDone}/${sheetsTotal} — sheet ${currentSheet}`;
-            }
-          },
-        });
-        showStep3();
-      } catch (e) {
-        welcomeStatus.textContent = `error: ${e && e.message ? e.message : e}`;
-        welcomeCreatures.disabled = false;
-        welcomeCreatures.textContent = '↓ Download creature data';
-      }
-    };
-
-    // STEP 3 — close welcome, set the seen flag.
+    // STEP 2 — close welcome, set the seen flag.
     welcomeDone.onclick = () => {
       localStorage.setItem('cc.welcomeSeen', '1');
       welcomeEl.classList.remove('show');
@@ -9752,14 +9779,13 @@ function fmtDate(ts) {
   }
   updateBackupStatus();
 
-  // Creature sprite bulk download: fetches all 150 fusion sheets, crops
-  // every (a, b) pair for a, b in [1,150] into the IDB icon cache, and
-  // tracks progress in localStorage so a refresh resumes cleanly.
-  const spritesBtn = document.getElementById('spritesDownloadBtn');
+  // Creature sprite status display + clear-cache button. The bulk
+  // download itself now lives in the `appDataBtn` flow above; this
+  // section just surfaces what's already cached and lets the user
+  // wipe it for testing.
   const spritesClearBtn = document.getElementById('spritesClearBtn');
   const spritesStatus = document.getElementById('spritesStatus');
   const SPRITE_SHEETS = 150;
-  let _spriteDlAbort = null;
 
   async function updateSpritesStatus(extra) {
     if (!spritesStatus) return;
@@ -9795,109 +9821,13 @@ function fmtDate(ts) {
     }
   }
   updateSpritesStatus();
-
-  if (spritesBtn) {
-    spritesBtn.addEventListener('click', async () => {
-      if (typeof window.Sprites === 'undefined') return;
-      if (_spriteDlAbort) {
-        _spriteDlAbort.abort();
-        return;
-      }
-      const pre = await window.Sprites.getDownloadStatus({
-        sheetFrom: 1, sheetTo: SPRITE_SHEETS, indexFrom: 1, indexTo: 150,
-      });
-      const sheetsRemaining = pre.sheetsTotal - pre.sheetsComplete.size;
-      const iconsRemaining = pre.iconsTotal - pre.iconsPresent;
-      const customRemaining = (pre.customSpeciesTotal || 0) - (pre.customSpeciesDone || 0);
-      // Always pump metadata (names + types) on a Download click, even
-      // when sprites are already complete — users who downloaded before
-      // /creature-types existed need this to populate the types list
-      // without re-fetching every sheet.
-      if (window.Species && typeof window.Species.ensureLoaded === 'function') {
-        spritesStatus.textContent = 'fetching metadata…';
-        try { await window.Species.ensureLoaded(); } catch {}
-      }
-      if (iconsRemaining === 0 && customRemaining === 0) {
-        // Sprites are complete but the credits + names bundles are
-        // separate payloads added later — fetch each on its own if
-        // missing, without forcing a full re-download.
-        if (!pre.creditsReady && window.Sprites.downloadCreditsBundle) {
-          spritesStatus.textContent = 'fetching credits…';
-          try { await window.Sprites.downloadCreditsBundle(); } catch {}
-        }
-        if (!pre.namesReady && window.Sprites.downloadSplitNames) {
-          spritesStatus.textContent = 'fetching names…';
-          try { await window.Sprites.downloadSplitNames(); } catch {}
-        }
-        updateSpritesStatus();
-        return;
-      }
-      // Build a confirmation message that surfaces both phases. The
-      // ~1.5 MB/sheet autogen estimate stays; hand-drawn averages ~7
-      // variants/species at ~150 KB/variant, so ~1 MB/species.
-      const parts = [];
-      if (iconsRemaining > 0) {
-        parts.push(`${iconsRemaining} autogen sprite${iconsRemaining === 1 ? '' : 's'} ` +
-          `across ${sheetsRemaining} sheet${sheetsRemaining === 1 ? '' : 's'} ` +
-          `(~${Math.round(sheetsRemaining * 1.5)} MB)`);
-      }
-      if (customRemaining > 0) {
-        parts.push(`${customRemaining} hand-drawn species (~${Math.round(customRemaining * 1)} MB)`);
-      }
-      const ok = confirm(`${parts.join(' + ')}. Use WiFi. Continue?`);
-      if (!ok) return;
-      if (navigator.storage && navigator.storage.persist) {
-        try { await navigator.storage.persist(); } catch {}
-      }
-      _spriteDlAbort = new AbortController();
-      spritesBtn.textContent = 'cancel';
-      try {
-        const result = await window.Sprites.bulkDownload({
-          sheetFrom: 1, sheetTo: SPRITE_SHEETS,
-          indexFrom: 1, indexTo: 150,
-          signal: _spriteDlAbort.signal,
-          onProgress: (p) => {
-            const { sheetsDone, sheetsTotal, currentSheet, indexInSheet, phase,
-                    customSpeciesDone, customSpeciesTotal,
-                    customVariant, customVariantNum, customVariantTotal } = p;
-            if (phase === 'repairing') {
-              spritesStatus.textContent = `repairing legacy crops (${indexInSheet} scanned)`;
-              return;
-            }
-            if (phase === 'custom-fetching' || phase === 'custom-done' || phase === 'custom-skipped') {
-              const v = customVariant === '' ? '(base)' : customVariant ? `'${customVariant}'` : '';
-              const variantTag = (customVariantTotal != null)
-                ? ` variant ${customVariantNum}/${customVariantTotal}${v ? ' ' + v : ''}`
-                : '';
-              spritesStatus.textContent =
-                `hand-drawn ${customSpeciesDone}/${customSpeciesTotal} — species ${currentSheet}${variantTag}`;
-              return;
-            }
-            const tag = phase === 'fetching' ? 'fetching'
-              : phase === 'cropping' ? 'cropping'
-              : 'done';
-            spritesStatus.textContent =
-              `${sheetsDone}/${sheetsTotal} — ${tag} sheet ${currentSheet}`;
-          },
-        });
-        if (result.cancelled) updateSpritesStatus('cancelled');
-        else updateSpritesStatus();
-      } catch (e) {
-        updateSpritesStatus(`error: ${e && e.message ? e.message : e}`);
-      } finally {
-        _spriteDlAbort = null;
-        spritesBtn.textContent = '↓ download';
-      }
-    });
-  }
+  // Refresh the sprite-cache summary whenever the appDataBtn flow
+  // declares it's done — keeps the line in sync without polling.
+  window.addEventListener('cc:app-data-ready', () => updateSpritesStatus());
 
   if (spritesClearBtn) {
     spritesClearBtn.addEventListener('click', async () => {
       if (typeof window.Sprites === 'undefined') return;
-      if (_spriteDlAbort) {
-        _spriteDlAbort.abort();
-        return;
-      }
       if (!confirm('Delete all cached creature sprites?')) return;
       try {
         await window.Sprites.deleteAllSprites();

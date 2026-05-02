@@ -401,9 +401,10 @@ def build_eggs_sheet() -> tuple[int, int]:
 
 
 def copy_app_data() -> tuple[int, int]:
-    """Copy icons/ + fonts/ into BundledData/. These are the same
-    files the /icons and /fonts endpoints serve at runtime — bundling
-    them in eliminates the post-install "Download App Data" step.
+    """Copy icons/ + fonts/ into BundledData/. Also writes two
+    listing JSONs (icons-list.json + fonts-list.json) so static
+    hosts (GitHub Pages, jsdelivr, etc.) — which can't enumerate
+    directories — let the client know what's available.
     Returns (icon_count, font_glyph_count)."""
     icon_count = 0
     font_count = 0
@@ -416,7 +417,10 @@ def copy_app_data() -> tuple[int, int]:
         # and editor backup files; keep only SVGs and obvious siblings.
         shutil.copytree(ICONS_SRC, dst,
                         ignore=shutil.ignore_patterns(".*", "*.bak", "*~"))
-        icon_count = sum(1 for _ in dst.rglob("*.svg"))
+        svg_files = sorted(p.name for p in dst.glob("*.svg"))
+        icon_count = len(svg_files)
+        # Listing mirrors the /iconslist endpoint shape: {"files": [...]}.
+        write_json(OUT_DIR / "icons-list.json", {"files": svg_files})
     else:
         print(f"  ⚠ no icons directory at {ICONS_SRC}, skipping")
 
@@ -426,7 +430,15 @@ def copy_app_data() -> tuple[int, int]:
             shutil.rmtree(dst)
         shutil.copytree(FONTS_SRC, dst,
                         ignore=shutil.ignore_patterns(".*", "*.bak", "*~"))
-        font_count = sum(1 for _ in dst.rglob("*.pbf"))
+        # Per-stack listing keyed by stack name. Mirrors what
+        # /fontslist/<stack> returns at runtime, just one combined
+        # file (small, and the runtime usually only needs one stack).
+        stacks: dict[str, list[str]] = {}
+        for stack_dir in sorted(p for p in dst.iterdir() if p.is_dir()):
+            files = sorted(p.name for p in stack_dir.glob("*.pbf"))
+            stacks[stack_dir.name] = files
+            font_count += len(files)
+        write_json(OUT_DIR / "fonts-list.json", stacks)
     else:
         print(f"  ⚠ no fonts directory at {FONTS_SRC}, skipping")
 

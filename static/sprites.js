@@ -22,6 +22,21 @@
   global._scriptVersions = global._scriptVersions || {};
   global._scriptVersions['sprites.js'] = SCRIPT_VERSION;
 
+  // BundledData base — set by inline <script> in index.html. Sprite
+  // sheets, credits, split-names, and the variant manifest all live
+  // under this prefix (see build-bundled-data.py).
+  const BUNDLED_BASE = (global.CC_BUNDLED_DATA_BASE || '/bundled-data')
+    .replace(/\/$/, '');
+  // URL helpers — all sheet fetches funnel through these so the
+  // _sheetCache keys match what we actually fetch.
+  function _autogenSheetUrl(head) {
+    return `${BUNDLED_BASE}/sprites/${head}/autogen/${head}.png`;
+  }
+  function _customSheetUrl(head, variant) {
+    const fname = variant ? `${head}${variant}.png` : `${head}.png`;
+    return `${BUNDLED_BASE}/sprites/${head}/custom/${fname}`;
+  }
+
   const DB_NAME = 'creature-sprites-v1';
   const DB_VERSION = 2;
   const STORE_ICONS = 'icons';
@@ -138,13 +153,10 @@
   }
 
   function getSheetBitmap(sheetIdx) {
-    return fetchAndDecode(`/creature-sprite/${sheetIdx}`);
+    return fetchAndDecode(_autogenSheetUrl(sheetIdx));
   }
   function getCustomSheetBitmap(species, variant) {
-    const url = variant
-      ? `/creature-sprite-custom/${species}/${variant}`
-      : `/creature-sprite-custom/${species}`;
-    return fetchAndDecode(url);
+    return fetchAndDecode(_customSheetUrl(species, variant));
   }
 
   function makeCanvas(w, h) {
@@ -376,7 +388,7 @@
   // finalization. Idempotent — re-fetching just overwrites.
   async function _downloadCreditsBundle() {
     try {
-      const r = await fetch('/sprite-credits-bundle');
+      const r = await fetch(`${BUNDLED_BASE}/credits.json`);
       if (!r.ok) return;
       const bundle = await r.json();
       await varPut(CREDITS_BUNDLE_KEY, bundle);
@@ -407,7 +419,7 @@
 
   async function _downloadSplitNames() {
     try {
-      const r = await fetch('/sprite-split-names');
+      const r = await fetch(`${BUNDLED_BASE}/split-names.json`);
       if (!r.ok) return;
       const arr = await r.json();
       if (!Array.isArray(arr)) return;
@@ -779,7 +791,7 @@
     if (_customManifest) return _customManifest;
     if (_customManifestPromise) return _customManifestPromise;
     _customManifestPromise = (async () => {
-      const resp = await fetch('/creature-sprite-custom-manifest');
+      const resp = await fetch(`${BUNDLED_BASE}/manifest.json`);
       if (!resp.ok) throw new Error(`manifest: HTTP ${resp.status}`);
       _customManifest = await resp.json();
       return _customManifest;
@@ -949,7 +961,7 @@
       for (let a = indexFrom; a <= indexTo; a++) {
         if (signal && signal.aborted) {
           if (bmp && bmp.close) bmp.close();
-          _sheetCache.delete(`/creature-sprite/${b}`);
+          _sheetCache.delete(_autogenSheetUrl(b));
           return { cancelled: true };
         }
         const key = autogenKey(a, b);
@@ -966,7 +978,7 @@
         }
       }
 
-      _sheetCache.delete(`/creature-sprite/${b}`);
+      _sheetCache.delete(_autogenSheetUrl(b));
       if (bmp && bmp.close) bmp.close();
 
       markSheetDownloaded(b);
@@ -1042,10 +1054,7 @@
           await idbPut(customKey(a, b, slot), blob);
         }
 
-        const url = variantSuffix
-          ? `/creature-sprite-custom/${b}/${variantSuffix}`
-          : `/creature-sprite-custom/${b}`;
-        _sheetCache.delete(url);
+        _sheetCache.delete(_customSheetUrl(b, variantSuffix));
         if (bmp && bmp.close) bmp.close();
       }
 
