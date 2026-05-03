@@ -36,3 +36,42 @@ if added > 0
 else
   puts "No changes needed"
 end
+
+# Ensure `public` is a *folder reference* (lastKnownFileType=folder)
+# rather than a *group*. Capacitor 6's iOS template should add it as a
+# folder reference, but we've observed builds where it ends up as a
+# group — the visible symptom is that top-level webDir files (e.g.
+# /bundled-data/icons-list.json) bundle correctly, but anything in a
+# subdirectory (/bundled-data/icons/cafe.svg) silently drops out of
+# the .app. We rebuild the reference to be sure.
+puts ""
+puts "── verifying public folder reference ──"
+existing = group.children.select do |c|
+  (c.respond_to?(:path) && c.path == 'public') ||
+  (c.respond_to?(:name) && c.display_name == 'public')
+end
+public_ref = nil
+existing.each do |c|
+  if c.is_a?(Xcodeproj::Project::Object::PBXFileReference) &&
+     c.last_known_file_type == 'folder'
+    puts "  found correct folder reference for public — leaving as-is"
+    public_ref = c
+  else
+    puts "  removing public ref of wrong type: #{c.class}"
+    target.resources_build_phase.files.dup.each do |bf|
+      target.resources_build_phase.remove_build_file(bf) if bf.file_ref == c
+    end
+    c.remove_from_project
+  end
+end
+unless public_ref
+  puts "  adding public as a folder reference"
+  ref = group.new_reference('public')
+  ref.last_known_file_type = 'folder'
+  ref.source_tree = '<group>'
+  target.resources_build_phase.add_file_reference(ref)
+  public_ref = ref
+end
+
+project.save
+puts "Saved #{PROJECT_PATH}"

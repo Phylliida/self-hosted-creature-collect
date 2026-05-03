@@ -3796,14 +3796,50 @@ function fmtDate(ts) {
   // only — adds ~1-2s to first launch in the IPA, negligible after
   // (IDB persists, the bulk-download skip-if-cached check is fast).
   if (window.Capacitor && window.AppData && window.AppData.iconBulkDownload) {
+    // Probe: try several paths for the same icon to narrow down
+    // where the file actually lives in the IPA bundle. The build
+    // script writes icons to BOTH dist/bundled-data/icons/ and
+    // dist/icons/ (top-level alias). If one path 200s and the other
+    // 404s, that tells us which copy survived `cap sync`. Compare
+    // against /bundled-data/icons-list.json (a sibling we KNOW works)
+    // to confirm the listing dir itself is reachable.
+    try {
+      const paths = [
+        '/bundled-data/icons/aerialway.svg',         // SVG in subdir named "icons"
+        '/icons/aerialway.svg',                       // SVG at top-level "icons"
+        '/bundled-data/sprites/1/autogen/1.png',      // PNG in deep subdir (works)
+        '/bundled-data/fonts/KlokanTech%20Noto%20Sans%20Regular/0-255.pbf', // pbf in subdir
+        '/bundled-data/icons/cafe.svg',              // another SVG to confirm not name-specific
+      ];
+      const results = await Promise.all(paths.map((p) =>
+        fetch(p)
+          .then((r) => `${r.status}`)
+          .catch((e) => `err:${(e && e.message) || String(e)}`)
+      ));
+      const summary = paths.map((p, i) => `${p}=${results[i]}`).join(' | ');
+      window._iconProbe = summary;
+      console.error('[icon-probe]', summary);
+    } catch (e) { console.error('[icon-probe err]', e); }
     const t0 = performance.now();
     try {
       const r = await window.AppData.iconBulkDownload({ onProgress: () => {} });
       // Surface the result to the debug overlay so we can see on first
       // launch whether IDB actually got populated. Without this we're
-      // flying blind when POIs render as poi-default fallbacks.
+      // flying blind when POIs render as poi-default fallbacks. The
+      // per-stage `fail` counts say WHICH step is breaking when
+      // loaded < total.
+      const f = r.fail || {};
       console.error('[startup-iconBulkDownload]',
-        `loaded=${r.loaded}/${r.total} cancelled=${!!r.cancelled}`);
+        `loaded=${r.loaded}/${r.total}`,
+        `cancelled=${!!r.cancelled}`,
+        `listFetch=${f.listFetch ?? 'ok'}`,
+        `listJson=${f.listJson ?? 'ok'}`,
+        `svgFetch=${f.svgFetch ?? 0}`,
+        `svgFetchHttp=${f.svgFetchHttp ?? 0}`,
+        `rasterize=${f.rasterize ?? 0}`,
+        `idbPut=${f.idbPut ?? 0}`,
+        `firstRasterErr=${f.firstRasterErr ?? '-'}`,
+        `firstPutErr=${f.firstPutErr ?? '-'}`);
     } catch (e) { console.error('[startup-iconBulkDownload err]', e); }
     window._startupPhases.iconBulkDownload = performance.now() - t0;
   }
@@ -8698,6 +8734,26 @@ function fmtDate(ts) {
           `loop=${ld.loopDone ?? '—'}`,
         `  bail: ${ld.bail ?? '—'}  threw: ${ld.threw ?? '—'}`,
       ];
+      // iconBulkDownload per-stage failure breakdown — set by
+      // appdata.js iconBulkDownload via window._iconDownloadFail.
+      // Says WHICH step is dropping icons when IDB ends up empty
+      // (listFetch/listJson at top, then per-icon counts).
+      const idf = window._iconDownloadFail;
+      if (idf) lines.push(
+        `[iconBulkDownload fail]`,
+        `  listFetch=${idf.listFetch ?? 'ok'} ` +
+          `listJson=${idf.listJson ?? 'ok'}`,
+        `  svgFetch=${idf.svgFetch ?? 0} ` +
+          `svgFetchHttp=${idf.svgFetchHttp ?? 0} ` +
+          `rasterize=${idf.rasterize ?? 0} ` +
+          `idbPut=${idf.idbPut ?? 0}`,
+        `  firstSvgStatus=${idf.firstSvgStatus ?? '—'} ` +
+          `url=${idf.firstSvgUrl ?? '—'}`,
+        `  rasterErr: ${idf.firstRasterErr ?? '—'}`,
+        `  putErr: ${idf.firstPutErr ?? '—'}`);
+      if (window._iconProbe) lines.push(
+        `[icon-probe paths]`,
+        `  ${window._iconProbe}`);
       const sd = window._spriteDiag || {};
       lines.push(
         `[sprites]`,

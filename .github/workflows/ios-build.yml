@@ -114,6 +114,29 @@ jobs:
           fi
           npx cap sync ios
 
+      # Debug: confirm subdirectory contents survived `cap sync`. We've
+      # observed icons/ and fonts/ being missing from the IPA at runtime
+      # while sprites/ works. Print file counts so we can see whether
+      # the loss happens at cap-sync time or later (xcodebuild).
+      - name: Debug — public folder after cap sync
+        run: |
+          echo "── ios/App/App/public top level ──"
+          ls -la ios/App/App/public/ | head -20
+          echo "── ios/App/App/public/bundled-data top level ──"
+          ls -la ios/App/App/public/bundled-data/ | head -20
+          echo "── file counts per subdir ──"
+          for d in icons fonts sprites tiles; do
+            n=$(find "ios/App/App/public/bundled-data/$d" -type f 2>/dev/null | wc -l)
+            echo "  bundled-data/$d: $n files"
+          done
+          for d in icons fonts tiles; do
+            n=$(find "ios/App/App/public/$d" -type f 2>/dev/null | wc -l)
+            echo "  /$d (alias): $n files"
+          done
+          echo "── all .svg files under public ──"
+          find ios/App/App/public -name "*.svg" | head -20
+          echo "  total .svg: $(find ios/App/App/public -name "*.svg" | wc -l)"
+
       # Wire in the local HTTP-server architecture. Why: Apple gates
       # `navigator.serviceWorker.register()` behind an HTTP/HTTPS
       # scheme + secure context. Custom schemes like `capacitor://`
@@ -222,6 +245,32 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             build
+
+      # Debug: report what survived xcodebuild into App.app/public/.
+      # If something is in ios/App/App/public/<x>/ at sync time but
+      # not in App.app/public/<x>/ at build time, xcodebuild's resource
+      # processing dropped it.
+      - name: Debug — App.app contents after xcodebuild
+        run: |
+          APP_PATH=$(find ios/App/build -name "App.app" -type d | head -1)
+          echo "App.app: $APP_PATH"
+          if [ -z "$APP_PATH" ]; then exit 0; fi
+          echo "── App.app/public top level ──"
+          ls -la "$APP_PATH/public/" | head -20
+          echo "── App.app/public/bundled-data ──"
+          ls -la "$APP_PATH/public/bundled-data/" 2>/dev/null | head -20
+          echo "── file counts per subdir in App.app/public/bundled-data ──"
+          for d in icons fonts sprites tiles; do
+            n=$(find "$APP_PATH/public/bundled-data/$d" -type f 2>/dev/null | wc -l)
+            echo "  bundled-data/$d: $n files"
+          done
+          for d in icons fonts tiles; do
+            n=$(find "$APP_PATH/public/$d" -type f 2>/dev/null | wc -l)
+            echo "  /$d (alias): $n files"
+          done
+          echo "── all .svg files in App.app ──"
+          find "$APP_PATH" -name "*.svg" | head -20
+          echo "  total .svg: $(find "$APP_PATH" -name "*.svg" | wc -l)"
 
       # Manual IPA assembly: an IPA is just a Zip with a Payload/
       # directory at the root containing the .app bundle. Skipping
