@@ -136,6 +136,14 @@ import GCDWebServer
                !isDir.boolValue {
                 let resp = GCDWebServerFileResponse(file: resolved)
                 resp?.cacheControlMaxAge = 0  // mtime-stamped versions handle caching
+                // GCDWebServer's mimeType inference doesn't know .pbf
+                // (vector tile protobuf), defaulting to application/
+                // octet-stream — MapLibre is fussy and prefers an
+                // explicit type. Override for the file extensions we
+                // actually serve as something other than the default.
+                if resolved.hasSuffix(".pbf") {
+                    resp?.contentType = "application/x-protobuf"
+                }
                 return resp ?? GCDWebServerErrorResponse(statusCode: 500)
             }
         }
