@@ -2971,6 +2971,10 @@
       <label for="actionIconsToggle">Action buttons as icons</label>
       <input type="checkbox" id="actionIconsToggle">
     </div>
+    <div class="row" id="memBadgeRow" style="display:none">
+      <label for="memBadgeToggle">Memory footprint badge</label>
+      <input type="checkbox" id="memBadgeToggle">
+    </div>
     <div class="settings-subsection">
       <h4 class="settings-subsection-title">
         Visibility
@@ -3215,44 +3219,58 @@
       }
     }
 
-    // Memory footprint badge — bottom-left, always-on, non-selectable,
-    // over everything. We don't have Instruments on Linux/iOS so this
-    // is the only practical signal for "is memory growing as I scroll
+    // Memory footprint badge — bottom-left, non-selectable, over
+    // everything. We don't have Instruments on Linux/iOS so this is
+    // the only practical signal for "is memory growing as I scroll
     // captured pokes / browse the dex". phys_footprint is what iOS
     // uses for memory-limit kills (the OOM-relevant number); RSS is
     // shown alongside for context. Polled at 500ms — single mach
-    // syscall, ~free.
+    // syscall, ~free. Toggled via Settings → "Memory footprint badge"
+    // (cc.memBadge); default on so it's visible without digging.
     const Mem = window.Capacitor.Plugins && window.Capacitor.Plugins.MemoryProbe;
     if (Mem) {
-      const badge = document.createElement('div');
-      badge.id = 'cc-mem-badge';
-      badge.style.cssText =
-        'position:fixed;bottom:4px;left:4px;z-index:2147483647;'
-        + 'pointer-events:none;user-select:none;-webkit-user-select:none;'
-        + 'font:10px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;'
-        + 'color:#fff;text-shadow:0 0 3px #000,0 0 3px #000,0 0 3px #000;'
-        + 'padding:2px 4px;';
-      badge.textContent = 'mem …';
-      const attach = () => document.body && document.body.appendChild(badge);
-      if (document.body) attach();
-      else document.addEventListener('DOMContentLoaded', attach, { once: true });
-      // Track peak so we can see whether a scroll spiked footprint
-      // even if it then settled back down (WebKit's image cache can
-      // grow during a scroll and drop after).
+      let badge = null;
+      let pollHandle = null;
       let peakMB = 0;
-      setInterval(async () => {
-        try {
-          const r = await Mem.getFootprint();
-          const mb  = r.physFootprint / (1024 * 1024);
-          const rss = r.residentSize  / (1024 * 1024);
-          if (mb > peakMB) peakMB = mb;
-          badge.textContent =
-            `mem ${mb.toFixed(1)}M  peak ${peakMB.toFixed(1)}M  rss ${rss.toFixed(1)}M`;
-          window._lastMem = r;
-        } catch (e) {
-          badge.textContent = 'mem err: ' + (e && e.message ? e.message : e);
+      window._setMemBadge = function (visible) {
+        if (visible && !badge) {
+          badge = document.createElement('div');
+          badge.id = 'cc-mem-badge';
+          badge.style.cssText =
+            'position:fixed;bottom:14px;left:4px;z-index:2147483647;'
+            + 'pointer-events:none;user-select:none;-webkit-user-select:none;'
+            + 'font:10px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;'
+            + 'color:#fff;text-shadow:0 0 3px #000,0 0 3px #000,0 0 3px #000;'
+            + 'padding:2px 4px;';
+          badge.textContent = 'mem …';
+          const attach = () => document.body && document.body.appendChild(badge);
+          if (document.body) attach();
+          else document.addEventListener('DOMContentLoaded', attach, { once: true });
+          // Track peak so we can see whether a scroll spiked footprint
+          // even if it then settled back down (WebKit's image cache
+          // can grow during a scroll and drop after).
+          pollHandle = setInterval(async () => {
+            try {
+              const r = await Mem.getFootprint();
+              const mb  = r.physFootprint / (1024 * 1024);
+              const rss = r.residentSize  / (1024 * 1024);
+              if (mb > peakMB) peakMB = mb;
+              badge.textContent =
+                `mem ${mb.toFixed(1)}M  peak ${peakMB.toFixed(1)}M  rss ${rss.toFixed(1)}M`;
+              window._lastMem = r;
+            } catch (e) {
+              badge.textContent = 'mem err: ' + (e && e.message ? e.message : e);
+            }
+          }, 500);
+        } else if (!visible && badge) {
+          clearInterval(pollHandle);
+          pollHandle = null;
+          badge.remove();
+          badge = null;
         }
-      }, 500);
+      };
+      // Default on. Settings handler will update at runtime.
+      if (localStorage.getItem('cc.memBadge') !== '0') window._setMemBadge(true);
     }
   }
 </script>
@@ -10084,6 +10102,22 @@ function fmtDate(ts) {
       localStorage.setItem('cc.actionButtonsAsIcons',
         actionIconsToggle.checked ? '1' : '0');
       window.dispatchEvent(new CustomEvent('cc-action-buttons-style-changed'));
+    });
+  }
+
+  // Memory footprint badge toggle. Row is hidden by default in HTML;
+  // we only reveal it when the MemoryProbe plugin is present (iOS
+  // Capacitor build). _setMemBadge is defined in the Capacitor block
+  // above when the plugin is available.
+  const memBadgeRow = document.getElementById('memBadgeRow');
+  const memBadgeToggle = document.getElementById('memBadgeToggle');
+  if (memBadgeRow && memBadgeToggle && typeof window._setMemBadge === 'function') {
+    memBadgeRow.style.display = '';
+    memBadgeToggle.checked = localStorage.getItem('cc.memBadge') !== '0';
+    memBadgeToggle.addEventListener('change', () => {
+      const on = memBadgeToggle.checked;
+      localStorage.setItem('cc.memBadge', on ? '1' : '0');
+      window._setMemBadge(on);
     });
   }
 

@@ -61,8 +61,26 @@ console.error('[live-update] script-tag executing');
   }
 
   function loadInstalled() {
-    try { return JSON.parse(localStorage.getItem(VERSION_MAP_KEY) || '{}'); }
-    catch { return {}; }
+    let stored;
+    try { stored = JSON.parse(localStorage.getItem(VERSION_MAP_KEY) || 'null'); }
+    catch { stored = null; }
+    if (stored && typeof stored === 'object' && Object.keys(stored).length) {
+      return stored;
+    }
+    // Empty / missing — seed from what the page was actually loaded
+    // with. Build-capacitor.sh stamps the bundled HTML with
+    // `_serverScriptVersions` so the IPA knows what versions it
+    // shipped with. Without this seed, the first launch after a
+    // fresh install would see `installed = {}` vs server's full map,
+    // conclude every file is stale, download all of them, and reload
+    // — even when bundled and server are at the same versions.
+    const seed = global._serverScriptVersions;
+    if (seed && typeof seed === 'object' && Object.keys(seed).length) {
+      log(`seeding installed versions from page (${Object.keys(seed).length} files)`);
+      try { localStorage.setItem(VERSION_MAP_KEY, JSON.stringify(seed)); } catch {}
+      return seed;
+    }
+    return {};
   }
 
   /// Resolve a tracked filename (as it appears in /script-versions)
