@@ -134,8 +134,21 @@ async function downloadRegion({ bbox, minZoom, maxZoom, extraUrls = [], id, work
       try {
         const res = await fetch(item.fetchUrl, { headers: { 'X-Download': '1' } });
         if (res.ok && res.status !== 204) {
+          // The browser already decoded the body per Content-Encoding
+          // when we awaited fetch(). If we cache the response with
+          // its original headers, the browser will try to decode the
+          // body AGAIN when respondWith serves the cached entry,
+          // producing garbage. Build a clean response with the
+          // decoded body and stripped encoding/length headers.
+          const body = await res.clone().arrayBuffer();
+          const headers = new Headers(res.headers);
+          headers.delete('Content-Encoding');
+          headers.delete('Content-Length');
+          const cleaned = new Response(body, {
+            status: res.status, statusText: res.statusText, headers,
+          });
           const cache = await caches.open(item.cacheName);
-          await cache.put(item.cacheKey, res.clone());
+          await cache.put(item.cacheKey, cleaned);
         } else if (res.status !== 204 && !res.ok) {
           failed++;
         }

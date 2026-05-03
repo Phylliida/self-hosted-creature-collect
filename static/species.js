@@ -227,7 +227,14 @@
     allSpecies,
     ensureLoaded,
   };
-  // Intentionally no auto-fetch. ensureLoaded() is invoked from the
-  // sprite bulk-download flow so network requests only happen on an
-  // explicit user action.
+  // Intentionally no auto-fetch in web mode — ensureLoaded() is
+  // invoked from the sprite bulk-download flow so network requests
+  // only happen on an explicit user action. In the Capacitor IPA
+  // there's no network involved (BUNDLED_BASE points at local
+  // capacitor://localhost files), so kick the load off automatically
+  // — the welcome card is bypassed and the user shouldn't have to
+  // tap anything for bundled data to be ready.
+  if (typeof global !== 'undefined' && global.Capacitor) {
+    ensureLoaded().catch(() => {});
+  }
 })(typeof window !== 'undefined' ? window : globalThis);

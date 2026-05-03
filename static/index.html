@@ -2999,7 +2999,7 @@
         <input type="checkbox" id="renderHousenumbersToggle">
       </div>
     </div>
-    <div class="row">
+    <div class="row" id="appDataRow">
       <label>App data</label>
       <span>
         <button id="appDataBtn" type="button" style="padding: 6px 10px; font-size: 13px;">↓ app data</button>
@@ -3008,6 +3008,14 @@
     </div>
     <div id="appDataStatus" style="font-size: 11px; color: var(--ui-muted); margin: -4px 0 6px;"></div>
     <div id="spritesStatus" style="font-size: 11px; color: var(--ui-muted); margin: -4px 0 6px;"></div>
+    <style>
+      /* Capacitor IPA bundles all app data — hide the download UI
+         entirely (the missing-banner JS bypass is in checkAppDataPresent,
+         the welcome-card bypass is in the welcome-overlay code). */
+      html.cc-bundled #appDataRow,
+      html.cc-bundled #appDataStatus,
+      html.cc-bundled #appDataMissing { display: none !important; }
+    </style>
     <div class="row backup-row">
       <label for="backupName">Backup</label>
       <input type="text" id="backupName" placeholder="trainer name" maxlength="40" autocomplete="off">
@@ -3115,6 +3123,13 @@
   if (window.Capacitor) {
     window.CC_API_BASE = 'https://poke.phylliidaassets.org';
     window.CC_BUNDLED_DATA_BASE = 'capacitor://localhost/bundled-data';
+
+    // Marker class used by CSS to hide the "↓ app data" download UI
+    // (Settings row + missing-data banner). Everything's bundled in
+    // the IPA — there's nothing to download. JS bypasses for the
+    // welcome card and missing-banner check live elsewhere; the
+    // class handles the visual surface.
+    document.documentElement.classList.add('cc-bundled');
 
     // Geolocation bridge: WKWebView's built-in navigator.geolocation
     // is unreliable across iOS versions and Android WebView's needs
