@@ -3797,8 +3797,14 @@ function fmtDate(ts) {
   // (IDB persists, the bulk-download skip-if-cached check is fast).
   if (window.Capacitor && window.AppData && window.AppData.iconBulkDownload) {
     const t0 = performance.now();
-    try { await window.AppData.iconBulkDownload({ onProgress: () => {} }); }
-    catch (e) { console.error('[startup-iconBulkDownload]', e); }
+    try {
+      const r = await window.AppData.iconBulkDownload({ onProgress: () => {} });
+      // Surface the result to the debug overlay so we can see on first
+      // launch whether IDB actually got populated. Without this we're
+      // flying blind when POIs render as poi-default fallbacks.
+      console.error('[startup-iconBulkDownload]',
+        `loaded=${r.loaded}/${r.total} cancelled=${!!r.cancelled}`);
+    } catch (e) { console.error('[startup-iconBulkDownload err]', e); }
     window._startupPhases.iconBulkDownload = performance.now() - t0;
   }
 
@@ -4889,9 +4895,15 @@ function fmtDate(ts) {
       }
       diag.loopDone = loaded;
       if (loaded) map.triggerRepaint();
+      console.error('[loadAllIcons]',
+        `names=${diag.namesLen} batch=${diag.batchSize} registered=${loaded}`,
+        `addImage tried=${(window._addImageStats||{}).tried}`,
+        `succeeded=${(window._addImageStats||{}).succeeded}`,
+        `threw=${(window._addImageStats||{}).threw}`);
       return loaded;
     } catch (e) {
       diag.threw = (e && e.message) ? e.message : String(e);
+      console.error('[loadAllIcons threw]', diag.threw);
       return 0;
     }
   }
