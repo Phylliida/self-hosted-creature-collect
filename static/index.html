@@ -3122,7 +3122,17 @@
   // no fetch interceptor needed.
   if (window.Capacitor) {
     window.CC_API_BASE = 'https://poke.phylliidaassets.org';
-    window.CC_BUNDLED_DATA_BASE = 'capacitor://localhost/bundled-data';
+    // CC_BUNDLED_DATA_BASE is pre-set by a WKUserScript injected by
+    // our patched Capacitor framework (see ios-build.yml) — it points
+    // at a `_capacitor_file_/<bundle-path>/bundled-data` URL that the
+    // Capacitor URL handler will actually serve cross-origin to this
+    // server.url-loaded page. Don't clobber it; only fall back to the
+    // naive value if the patch wasn't applied (lets us notice the
+    // failure as Load failed in the debug overlay rather than mystery
+    // empty fetches).
+    if (!window.CC_BUNDLED_DATA_BASE) {
+      window.CC_BUNDLED_DATA_BASE = 'capacitor://localhost/bundled-data';
+    }
 
     // Marker class used by CSS to hide the "↓ app data" download UI
     // (Settings row + missing-data banner). Everything's bundled in
