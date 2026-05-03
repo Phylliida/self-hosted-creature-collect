@@ -27,18 +27,18 @@
   // under this prefix (see build-bundled-data.py).
   const BUNDLED_BASE = (global.CC_BUNDLED_DATA_BASE || '/bundled-data')
     .replace(/\/$/, '');
-  // URL helpers. Autogen sprites are pre-cropped per-cell at build
-  // time (see crop_individual_autogen_sprites in build-bundled-data.py),
-  // so the runtime fetches one tiny PNG per fusion instead of decoding
-  // a 1.5 MB sheet and cropping in JS. Custom variants are still
-  // sheet-based for now — phase 2 will pre-crop them too.
-  function _autogenSpriteUrl(head, body) {
-    return `${BUNDLED_BASE}/sprites/${head}/autogen/${body}.png`;
+  // URL helpers. Sprites ship as per-head sheets (one PNG per head
+  // species containing all 150 fusion partners in a 10×16 grid for
+  // autogen, and one PNG per (head, variant_suffix) for customs in a
+  // 20×8 grid). Runtime fetches the sheet once per head, decodes it,
+  // and crops individual cells on demand — see lazyCropAndStore
+  // below. Cropped per-fusion blobs are cached in IDB so subsequent
+  // app launches skip the decode + crop entirely.
+  function _autogenSheetUrl(head) {
+    return `${BUNDLED_BASE}/sprites/${head}/autogen/${head}.png`;
   }
-  function _customSpriteUrl(head, body, variantSuffix) {
-    const fname = variantSuffix
-      ? `${body}_${variantSuffix}.png`
-      : `${body}.png`;
+  function _customSheetUrl(head, variantSuffix) {
+    const fname = variantSuffix ? `${head}${variantSuffix}.png` : `${head}.png`;
     return `${BUNDLED_BASE}/sprites/${head}/custom/${fname}`;
   }
 
@@ -47,12 +47,18 @@
   const STORE_ICONS = 'icons';
   const STORE_VARIANTS = 'variants';
   const SPRITE_SIZE = 96;
-  // Sprites are pre-cropped per-cell at build time
-  // (build-bundled-data.py → crop_individual_{autogen,custom}_sprites)
-  // so the runtime no longer alpha-scans sheets. ALPHA_MIN remains
-  // here for the legacy migration helper (retrimStoredBlob) which
-  // re-trims any 96×96 PNGs left behind by the pre-v2 cropper.
+  // Autogen sheets are 10 cols × N rows (typically 10×51 upstream;
+  // we ship cropped 10×16 covering the first 150 partners). Custom
+  // sheets are 20 cols × N rows (20×8 cropped). Both 96×96 cells.
+  const SHEET_COLS_AUTOGEN = 10;
+  const SHEET_COLS_CUSTOM = 20;
+  // ALPHA_MIN: pixels with alpha > this are considered opaque.
+  // Used for tight-bbox cropping AND for the legacy retrim helper.
   const ALPHA_MIN = 8;
+  // Decoded sheets are huge ImageBitmaps (~5–18 MB each). Keep a
+  // small LRU so a pokédex view bouncing between heads doesn't
+  // re-decode the same sheet repeatedly.
+  const MAX_SHEET_CACHE = 8;
   const SPECIES_MAX = 150;
 
   let _dbPromise = null;
@@ -117,6 +123,39 @@
   const varGet  = (key)        => _idbReq(STORE_VARIANTS, 'readonly',  (s) => s.get(key));
   const varPut  = (key, value) => _idbReq(STORE_VARIANTS, 'readwrite', (s) => s.put(value, key));
 
+  // LRU of decoded sheet ImageBitmaps. Keyed by URL. Used by both
+  // bulk download and lazy-crop on render. Eviction is FIFO via the
+  // Map insertion order — touch a key to push it to the back of the
+  // LRU on cache hit.
+  const _sheetCache = new Map();
+  const _sheetPromises = new Map();
+  async function fetchAndDecodeSheet(url) {
+    if (_sheetCache.has(url)) {
+      const bmp = _sheetCache.get(url);
+      _sheetCache.delete(url);
+      _sheetCache.set(url, bmp);
+      return bmp;
+    }
+    if (_sheetPromises.has(url)) return _sheetPromises.get(url);
+    const p = (async () => {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`${url}: HTTP ${resp.status}`);
+      const blob = await resp.blob();
+      const bmp = await createImageBitmap(blob);
+      _sheetCache.set(url, bmp);
+      while (_sheetCache.size > MAX_SHEET_CACHE) {
+        const firstKey = _sheetCache.keys().next().value;
+        const old = _sheetCache.get(firstKey);
+        _sheetCache.delete(firstKey);
+        if (old && old.close) old.close();
+      }
+      return bmp;
+    })();
+    _sheetPromises.set(url, p);
+    try { return await p; }
+    finally { _sheetPromises.delete(url); }
+  }
+
   function makeCanvas(w, h) {
     if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(w, h);
     const c = document.createElement('canvas');
@@ -157,6 +196,38 @@
     out.getContext('2d').drawImage(scan, minX, minY, cw, ch, 0, 0, cw, ch);
     const blob = await canvasToBlob(out);
     return { bbox: { minX, minY, maxX, maxY }, blob };
+  }
+
+  // Crop a single autogen cell from the head's sheet. Falls back to
+  // the untrimmed 96×96 if the cell is fully transparent (rare for
+  // autogen — every body has art — but keeps the API total).
+  async function cropAutogenCell(bitmap, body) {
+    const col = body % SHEET_COLS_AUTOGEN;
+    const row = Math.floor(body / SHEET_COLS_AUTOGEN);
+    const { blob } = await scanAndCrop(
+      bitmap, col * SPRITE_SIZE, row * SPRITE_SIZE, SPRITE_SIZE, SPRITE_SIZE
+    );
+    if (blob) return blob;
+    const fallback = makeCanvas(SPRITE_SIZE, SPRITE_SIZE);
+    fallback.getContext('2d').drawImage(
+      bitmap, col * SPRITE_SIZE, row * SPRITE_SIZE, SPRITE_SIZE, SPRITE_SIZE,
+      0, 0, SPRITE_SIZE, SPRITE_SIZE
+    );
+    return canvasToBlob(fallback);
+  }
+
+  // Crop a single custom cell. Returns null when the cell is blank —
+  // the caller should fall back to autogen for that fusion. Cell
+  // existence is also pre-recorded in cells.json so the renderer
+  // never asks for a known-blank cell unless it really wants to.
+  async function cropCustomCell(bitmap, body) {
+    const col = body % SHEET_COLS_CUSTOM;
+    const row = Math.floor(body / SHEET_COLS_CUSTOM);
+    if ((row + 1) * SPRITE_SIZE > bitmap.height) return null;
+    const { blob } = await scanAndCrop(
+      bitmap, col * SPRITE_SIZE, row * SPRITE_SIZE, SPRITE_SIZE, SPRITE_SIZE
+    );
+    return blob;  // null if blank
   }
 
   function customKey(a, b, variantIdx) {
@@ -568,7 +639,39 @@
       }
       return cached;
     }
-    return null;
+    // Lazy-crop fallback: IDB miss. Fetch the appropriate sheet,
+    // crop the cell, write it back to IDB so the next render is
+    // instant. Local-bundle reads (capacitor:// in IPA) take ~1ms;
+    // network reads (web) take longer first time but subsequent
+    // sprites for the same head share the cached ImageBitmap.
+    try {
+      const blob = isCustom
+        ? await lazyCropCustom(a, b, variant)
+        : await lazyCropAutogen(a, b);
+      if (blob) idbPut(key, blob).catch(() => {});
+      return blob;
+    } catch (e) {
+      _logSpriteError(`getSpriteBlob/lazyCrop/${key}`, e);
+      return null;
+    }
+  }
+
+  async function lazyCropAutogen(a, b) {
+    const bmp = await fetchAndDecodeSheet(_autogenSheetUrl(b));
+    return cropAutogenCell(bmp, a);
+  }
+
+  async function lazyCropCustom(a, b, slot) {
+    const cells = await getCells().catch(() => null);
+    const variantIndices = cells && cells[`${a}-${b}`];
+    if (!variantIndices || slot >= variantIndices.length) return null;
+    const variantIndex = variantIndices[slot];
+    const manifest = await getCustomManifest().catch(() => null);
+    const suffixes = manifest && manifest[String(b)];
+    if (!suffixes || variantIndex >= suffixes.length) return null;
+    const suffix = suffixes[variantIndex];
+    const bmp = await fetchAndDecodeSheet(_customSheetUrl(b, suffix));
+    return cropCustomCell(bmp, a);
   }
 
   async function getSpriteUrl(a, b, variant) {
@@ -885,10 +988,11 @@
     const customDone = getCustomDoneSpecies();
     const totalCustom = Math.min(SPECIES_MAX, sheetTo);
 
-    // Each "sheet" here is one head species. Pre-cropped per-cell
-    // PNGs live at sprites/<head>/autogen/<body>.png, so we just
-    // fetch each missing cell as its own file and stuff the blob
-    // into IDB. No more 1.5 MB sheet decode + canvas crop.
+    // Each "sheet" here is one head species — its autogen PNG
+    // (10×16 cells of 96px). Fetch the sheet once, decode to an
+    // ImageBitmap, then crop every cell into IDB. The decoded
+    // sheet is auto-evicted from _sheetCache after MAX_SHEET_CACHE
+    // others land, so memory stays bounded during a 150-sheet run.
     for (let b = sheetFrom; b <= sheetTo; b++) {
       if (signal && signal.aborted) return { cancelled: true };
       if (sheetComplete.has(b)) continue;
@@ -899,21 +1003,23 @@
         customSpeciesDone: customDone.size, customSpeciesTotal: totalCustom,
       });
 
+      let bmp;
+      try { bmp = await fetchAndDecodeSheet(_autogenSheetUrl(b)); }
+      catch (e) { _logSpriteError(`bulkDownload/sheet/${b}`, e); finished++; continue; }
+
       for (let a = indexFrom; a <= indexTo; a++) {
         if (signal && signal.aborted) return { cancelled: true };
         const key = autogenKey(a, b);
         if (have.has(key)) continue;
         try {
-          const resp = await fetch(_autogenSpriteUrl(b, a));
-          if (!resp.ok) continue;
-          const blob = await resp.blob();
+          const blob = await cropAutogenCell(bmp, a);
           await idbPut(key, blob);
           have.add(key);
-        } catch { /* skip; user can re-run */ }
+        } catch { /* keep going */ }
         if (a % 20 === 0) {
           onProgress({
             sheetsDone: finished, sheetsTotal: totalSheets,
-            currentSheet: b, indexInSheet: a, phase: 'fetching',
+            currentSheet: b, indexInSheet: a, phase: 'cropping',
             customSpeciesDone: customDone.size, customSpeciesTotal: totalCustom,
           });
         }
@@ -976,38 +1082,46 @@
         continue;
       }
 
-      onProgress({
-        sheetsDone: finished, sheetsTotal: totalSheets,
-        currentSheet: b, indexInSheet: 0, phase: 'custom-fetching',
-        customSpeciesDone: customDone.size, customSpeciesTotal: totalCustom,
-        customVariantNum: 0, customVariantTotal: variants.length,
-      });
-
-      let cellNum = 0;
+      // Group by variant_index so we decode each sheet exactly once
+      // per head, not once per (cell × variant_index).
+      const byVariant = new Map();  // variant_index -> [body, slot]
       for (const [a, variantIndices] of headCells) {
-        if (signal && signal.aborted) return { cancelled: true };
         for (let slot = 0; slot < variantIndices.length; slot++) {
-          if (signal && signal.aborted) return { cancelled: true };
-          const variantIndex = variantIndices[slot];
-          const suffix = variants[variantIndex];
-          if (suffix === undefined) continue;  // manifest/cells mismatch
-          try {
-            const resp = await fetch(_customSpriteUrl(b, a, suffix));
-            if (!resp.ok) continue;
-            const blob = await resp.blob();
-            await idbPut(customKey(a, b, slot), blob);
-          } catch { /* skip; user can re-run */ }
+          const vi = variantIndices[slot];
+          if (!byVariant.has(vi)) byVariant.set(vi, []);
+          byVariant.get(vi).push([a, slot]);
         }
+      }
+
+      let processedVariants = 0;
+      for (const [vi, cellList] of byVariant) {
+        if (signal && signal.aborted) return { cancelled: true };
+        const suffix = variants[vi];
+        if (suffix === undefined) continue;
+        onProgress({
+          sheetsDone: finished, sheetsTotal: totalSheets,
+          currentSheet: b, indexInSheet: 0, phase: 'custom-fetching',
+          customSpeciesDone: customDone.size, customSpeciesTotal: totalCustom,
+          customVariant: suffix, customVariantNum: processedVariants + 1,
+          customVariantTotal: byVariant.size,
+        });
+        let bmp;
+        try { bmp = await fetchAndDecodeSheet(_customSheetUrl(b, suffix)); }
+        catch { processedVariants++; continue; }
+        for (const [a, slot] of cellList) {
+          if (signal && signal.aborted) return { cancelled: true };
+          try {
+            const blob = await cropCustomCell(bmp, a);
+            if (blob) await idbPut(customKey(a, b, slot), blob);
+          } catch { /* skip */ }
+        }
+        processedVariants++;
+      }
+
+      // Write the per-cell variant table — runtime varGet expects this.
+      for (const [a, variantIndices] of headCells) {
         await varPut(`${a}-${b}`, variantIndices);
         _bumpVariantCacheEntry(`${a}-${b}`, variantIndices.length);
-        cellNum++;
-        if (cellNum % 10 === 0) {
-          onProgress({
-            sheetsDone: finished, sheetsTotal: totalSheets,
-            currentSheet: b, indexInSheet: cellNum, phase: 'custom-fetching',
-            customSpeciesDone: customDone.size, customSpeciesTotal: totalCustom,
-          });
-        }
       }
 
       markCustomDone(b);
