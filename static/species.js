@@ -54,39 +54,43 @@
     if (!namesNeeded && !typesNeeded && !evosNeeded) return Promise.resolve();
     if (_loadPromise) return _loadPromise;
     _loadPromise = (async () => {
+      // Explicit fetch helper that logs errors via console.error so
+      // they reach the on-screen debug overlay (silent fall-back was
+      // hiding real bundle/CORS failures during IPA debugging).
+      async function _fetchJson(url, label) {
+        try {
+          const resp = await fetch(url);
+          if (!resp.ok) {
+            console.error(`Species ${label}: HTTP ${resp.status} ${url}`);
+            return null;
+          }
+          return await resp.json();
+        } catch (e) {
+          console.error(`Species ${label} fetch threw: ${e && e.message ? e.message : e} (${url})`);
+          return null;
+        }
+      }
       const tasks = [];
       if (namesNeeded) tasks.push((async () => {
-        try {
-          const resp = await fetch(`${BUNDLED_BASE}/species-names.json`);
-          if (!resp.ok) return;
-          const list = await resp.json();
-          if (Array.isArray(list) && list.length) {
-            _names = list;
-            try { localStorage.setItem(NAMES_KEY, JSON.stringify(list)); } catch {}
-          }
-        } catch { /* fall back to "#N" */ }
+        const list = await _fetchJson(`${BUNDLED_BASE}/species-names.json`, 'names');
+        if (Array.isArray(list) && list.length) {
+          _names = list;
+          try { localStorage.setItem(NAMES_KEY, JSON.stringify(list)); } catch {}
+        }
       })());
       if (typesNeeded) tasks.push((async () => {
-        try {
-          const resp = await fetch(`${BUNDLED_BASE}/species-types.json`);
-          if (!resp.ok) return;
-          const map = await resp.json();
-          if (map && typeof map === 'object') {
-            _types = map;
-            try { localStorage.setItem(TYPES_KEY, JSON.stringify(map)); } catch {}
-          }
-        } catch { /* types just won't render */ }
+        const map = await _fetchJson(`${BUNDLED_BASE}/species-types.json`, 'types');
+        if (map && typeof map === 'object') {
+          _types = map;
+          try { localStorage.setItem(TYPES_KEY, JSON.stringify(map)); } catch {}
+        }
       })());
       if (evosNeeded) tasks.push((async () => {
-        try {
-          const resp = await fetch(`${BUNDLED_BASE}/species-evolutions.json`);
-          if (!resp.ok) return;
-          const map = await resp.json();
-          if (map && typeof map === 'object') {
-            _evos = map;
-            try { localStorage.setItem(EVOS_KEY, JSON.stringify(map)); } catch {}
-          }
-        } catch { /* evolutions just won't render */ }
+        const map = await _fetchJson(`${BUNDLED_BASE}/species-evolutions.json`, 'evolutions');
+        if (map && typeof map === 'object') {
+          _evos = map;
+          try { localStorage.setItem(EVOS_KEY, JSON.stringify(map)); } catch {}
+        }
       })());
       await Promise.all(tasks);
       _loadPromise = null;

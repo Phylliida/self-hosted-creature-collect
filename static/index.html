@@ -4477,6 +4477,23 @@ function fmtDate(ts) {
   // transitions BACKGROUND → ACTIVE_LOCK as normal, recentering on
   // demand. Patch self-clears after one fix so it doesn't intercept
   // future button-driven transitions.
+  // Surface MapLibre's internal errors (tile fetch failures, source
+  // load problems, etc.) to the on-screen debug console. Throttled
+  // so a broken tile that re-requests on every pan doesn't flood
+  // the overlay.
+  {
+    let _lastMlErrLog = 0;
+    map.on('error', (e) => {
+      const now = Date.now();
+      if (now - _lastMlErrLog < 1000) return;
+      _lastMlErrLog = now;
+      const msg = e && e.error && e.error.message ? e.error.message : 'unknown';
+      const src = e && e.sourceId ? ` (source=${e.sourceId})` : '';
+      const url = e && e.error && e.error.url ? ` url=${e.error.url}` : '';
+      console.error(`MapLibre: ${msg}${src}${url}`);
+    });
+  }
+
   map.on('load', () => {
     // Apply cooldown coloring to the POI layer for any entries
     // preserved from previous sessions via localStorage.

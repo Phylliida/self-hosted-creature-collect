@@ -4982,11 +4982,29 @@
       && global.Species.typesFor
       && (global.Species.typesFor(1) || []).length > 0;
     if (!typesLoaded) {
-      bar.innerHTML = `<div class="weather-warning">
-        <b>No creature data downloaded.</b><br>
-        Wild spawns will not appear until you tap
-        <b>↓ download</b> next to "Creature sprites" in Settings.
-      </div>`;
+      // Species data isn't in memory yet. Kick off the load and
+      // re-render once it's ready — runs both in the IPA (auto-
+      // loaded from bundled JSON) and the web PWA (after the user
+      // taps the download button). Show a quiet "loading…" hint
+      // until then; only fall back to the heavy "no data" warning
+      // if the load actually fails or takes more than 8 seconds.
+      bar.innerHTML = `<div class="weather-warning weather-loading">Loading creature data…</div>`;
+      if (global.Species && global.Species.ensureLoaded && !bar._cc_loadingHooked) {
+        bar._cc_loadingHooked = true;
+        const fail = setTimeout(() => {
+          if ((global.Species.typesFor(1) || []).length === 0) {
+            bar.innerHTML = `<div class="weather-warning">
+              <b>No creature data available.</b><br>
+              Try refreshing the app.
+            </div>`;
+          }
+        }, 8000);
+        global.Species.ensureLoaded().finally(() => {
+          clearTimeout(fail);
+          bar._cc_loadingHooked = false;
+          renderWeatherBar();
+        });
+      }
       return;
     }
     const w = (global.Spawns && global.Spawns.currentWeather)

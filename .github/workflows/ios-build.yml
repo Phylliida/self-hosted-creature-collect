@@ -62,14 +62,64 @@ jobs:
       - name: Build Capacitor webDir
         run: bash scripts/build-capacitor.sh
 
-      # NOTE: no CORS patch step. Capacitor 6.2.1's WebViewAssetHandler
-      # already sets `Access-Control-Allow-Origin: <serverUrl>` on
-      # responses whenever the request scheme (capacitor://) differs
-      # from the configured server.url scheme (https://). Since our
-      # config has `server.url = "https://poke.phylliidaassets.org"`,
-      # the ACAO it emits exactly matches the page's Origin and the
-      # cross-scheme fetch from page-from-server to bundled-data-in-
-      # IPA is allowed by the browser without further work.
+      # Patch Capacitor's WKURLSchemeHandler to set
+      # `Access-Control-Allow-Origin: *` on every response. The stock
+      # behaviour only sets ACAO when serverUrl scheme differs from
+      # request scheme, AND uses serverUrl.absoluteString as the value
+      # — strict-match CORS that's been failing for our `https://` →
+      # `capacitor://` cross-scheme fetches with "Load failed". `*`
+      # is universally permissive and avoids any string-equality
+      # gotchas with trailing slashes / port numbers.
+      #
+      # Patches node_modules BEFORE `cap add ios` runs `pod install`,
+      # since Capacitor's pod uses :path => '../../node_modules/...'
+      # and CocoaPods compiles directly from that source tree.
+      - name: Patch Capacitor URL handler with permissive CORS
+        run: |
+          set -e
+          HANDLER=node_modules/@capacitor/ios/Capacitor/Capacitor/WebViewAssetHandler.swift
+          if [ ! -f "$HANDLER" ]; then
+            echo "ERROR: $HANDLER not found" >&2
+            find node_modules/@capacitor/ios -name "*.swift" | head -10 >&2
+            exit 1
+          fi
+          python3 - <<'PY'
+          import re, sys, pathlib
+          path = pathlib.Path("node_modules/@capacitor/ios/Capacitor/Capacitor/WebViewAssetHandler.swift")
+          src = path.read_text()
+          # The stock handler builds a `headers` dict like:
+          #   var headers =  [
+          #       "Content-Type": mimeType,
+          #       "Cache-Control": "no-cache"
+          #   ]
+          # then conditionally adds CORS via `if isUsingLiveReload`.
+          # Replace the dict literal to include permissive CORS up
+          # front, so the conditional doesn't matter.
+          old = (
+              'var headers =  [\n'
+              '                "Content-Type": mimeType,\n'
+              '                "Cache-Control": "no-cache"\n'
+              '            ]'
+          )
+          new = (
+              'var headers =  [\n'
+              '                "Content-Type": mimeType,\n'
+              '                "Cache-Control": "no-cache",\n'
+              '                "Access-Control-Allow-Origin": "*",\n'
+              '                "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS, TRACE",\n'
+              '                "Access-Control-Allow-Headers": "*"\n'
+              '            ]'
+          )
+          if old not in src:
+              print("WARN: expected headers dict literal not found — Capacitor source shape changed.", file=sys.stderr)
+              print("── relevant snippet ──", file=sys.stderr)
+              for i, line in enumerate(src.split("\n"), 1):
+                  if "headers" in line.lower() or "mimeType" in line:
+                      print(f"  L{i}: {line}", file=sys.stderr)
+              sys.exit(1)
+          path.write_text(src.replace(old, new, 1))
+          print("CORS patch applied: Access-Control-Allow-Origin set to '*' for all bundled-asset responses")
+          PY
 
       # The ios/ directory is gitignored — generate it fresh from
       # capacitor.config.json on every build. Idempotent: if it
