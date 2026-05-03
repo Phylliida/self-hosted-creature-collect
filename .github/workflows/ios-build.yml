@@ -21,6 +21,7 @@ on:
       - 'static/**'
       - 'data/BundledData/**'
       - 'scripts/build-capacitor.sh'
+      - 'ios-overrides/**'
       - 'capacitor.config.json'
       - 'package.json'
       - 'package-lock.json'
@@ -62,108 +63,6 @@ jobs:
       - name: Build Capacitor webDir
         run: bash scripts/build-capacitor.sh
 
-      # Patch Capacitor's iOS framework with two changes that make
-      # bundled assets accessible cross-origin to the page (which
-      # loads from server.url = poke.phylliidaassets.org):
-      #
-      # 1. WebViewAssetHandler.swift — set permissive
-      #    `Access-Control-Allow-Origin: *` on every response. The
-      #    stock behaviour only sets ACAO when serverUrl scheme
-      #    differs from request scheme, AND uses
-      #    serverUrl.absoluteString as the value — strict-match CORS
-      #    that's been failing in our setup with "Load failed".
-      #
-      # 2. CAPBridgeViewController.swift — inject a WKUserScript
-      #    that sets `window.CC_BUNDLED_DATA_BASE` to a
-      #    `_capacitor_file_/<bundle-path>/bundled-data` URL. That's
-      #    the ONLY URL pattern the Capacitor URL handler serves
-      #    when serverUrl is configured — generic webDir routing
-      #    (`capacitor://localhost/bundled-data/X`) gets a 404. Our
-      #    JS modules read CC_BUNDLED_DATA_BASE for every fetch, so
-      #    overriding it here from native code redirects every
-      #    bundled-asset request through the supported pattern.
-      #
-      # Patches node_modules BEFORE `cap add ios` runs `pod install`,
-      # since Capacitor's pod uses :path => '../../node_modules/...'
-      # and CocoaPods compiles directly from that source tree.
-      - name: Patch Capacitor framework (CORS + bundle URL injection)
-        run: |
-          set -e
-          CAPDIR=node_modules/@capacitor/ios/Capacitor/Capacitor
-          HANDLER=$CAPDIR/WebViewAssetHandler.swift
-          BRIDGEVC=$CAPDIR/CAPBridgeViewController.swift
-          for f in "$HANDLER" "$BRIDGEVC"; do
-            if [ ! -f "$f" ]; then
-              echo "ERROR: $f not found" >&2
-              find node_modules/@capacitor/ios -name "*.swift" | head -10 >&2
-              exit 1
-            fi
-          done
-          python3 - <<'PY'
-          import sys, pathlib
-
-          # ── Patch 1: WebViewAssetHandler — universal CORS ──
-          handler = pathlib.Path("node_modules/@capacitor/ios/Capacitor/Capacitor/WebViewAssetHandler.swift")
-          src = handler.read_text()
-          old_headers = (
-              'var headers =  [\n'
-              '                "Content-Type": mimeType,\n'
-              '                "Cache-Control": "no-cache"\n'
-              '            ]'
-          )
-          new_headers = (
-              'var headers =  [\n'
-              '                "Content-Type": mimeType,\n'
-              '                "Cache-Control": "no-cache",\n'
-              '                "Access-Control-Allow-Origin": "*",\n'
-              '                "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS, TRACE",\n'
-              '                "Access-Control-Allow-Headers": "*"\n'
-              '            ]'
-          )
-          if old_headers not in src:
-              print("ERROR: headers dict not found in WebViewAssetHandler.swift", file=sys.stderr)
-              sys.exit(1)
-          handler.write_text(src.replace(old_headers, new_headers, 1))
-          print("CORS patch: ACAO=* applied to WebViewAssetHandler.swift")
-
-          # ── Patch 2: CAPBridgeViewController — inject CC_BUNDLED_DATA_BASE ──
-          bridgevc = pathlib.Path("node_modules/@capacitor/ios/Capacitor/Capacitor/CAPBridgeViewController.swift")
-          src = bridgevc.read_text()
-          # Anchor: the line that wires up the user content controller.
-          # Insert the injection block right after it so the script is
-          # registered before the page begins loading.
-          anchor = "webConfig.userContentController = delegationHandler.contentController"
-          insertion = anchor + (
-              '\n        // [creature-collect patch] Inject\n'
-              '        // window.CC_BUNDLED_DATA_BASE pointing at the IPA-bundled\n'
-              '        // webDir contents via Capacitor\'s _capacitor_file_ URL\n'
-              '        // pattern. That is the only path WebViewAssetHandler serves\n'
-              '        // when serverURL is set. Page-side modules (sprites.js,\n'
-              '        // species.js, appdata.js) read this constant for every\n'
-              '        // fetch — overriding it here from native code transparently\n'
-              '        // routes them through the supported pattern.\n'
-              '        if let bundlePath = Bundle.main.path(forResource: "public", ofType: nil) {\n'
-              '            let scheme = configuration.localURL.scheme ?? InstanceDescriptorDefaults.scheme\n'
-              '            let host = configuration.localURL.host ?? InstanceDescriptorDefaults.hostname\n'
-              '            let url = "\\(scheme)://\\(host)/_capacitor_file_\\(bundlePath)/bundled-data"\n'
-              '            let escapedUrl = url\n'
-              '                .replacingOccurrences(of: "\\\\", with: "\\\\\\\\")\n'
-              '                .replacingOccurrences(of: "\\\'", with: "\\\\\\\'")\n'
-              '            let script = "window.CC_BUNDLED_DATA_BASE = \\\'\\(escapedUrl)\\\';"\n'
-              '            let userScript = WKUserScript(source: script, injectionTime: .atDocumentStart, forMainFrameOnly: true)\n'
-              '            delegationHandler.contentController.addUserScript(userScript)\n'
-              '        }'
-          )
-          if anchor not in src:
-              print("ERROR: anchor not found in CAPBridgeViewController.swift", file=sys.stderr)
-              sys.exit(1)
-          if src.count(anchor) > 1:
-              print(f"ERROR: anchor matches {src.count(anchor)} times — too ambiguous", file=sys.stderr)
-              sys.exit(1)
-          bridgevc.write_text(src.replace(anchor, insertion, 1))
-          print("Bundle-URL injection patch applied to CAPBridgeViewController.swift")
-          PY
-
       # The ios/ directory is gitignored — generate it fresh from
       # capacitor.config.json on every build. Idempotent: if it
       # already existed (cached?) cap add re-uses; otherwise it
@@ -175,41 +74,91 @@ jobs:
           fi
           npx cap sync ios
 
-      # Patch Info.plist with two iOS-required keys:
+      # Wire in the local HTTP-server architecture. Why: Apple gates
+      # `navigator.serviceWorker.register()` behind an HTTP/HTTPS
+      # scheme + secure context. Custom schemes like `capacitor://`
+      # don't qualify, so SW silently rejects in pure-bundled mode.
+      # We bypass by embedding GCDWebServer (Objective-C, well-tested
+      # CocoaPod) and pointing the WebView at `http://localhost:<port>`
+      # — Apple treats localhost as potentially trustworthy regardless
+      # of HTTPS, so SW works AND every fetch is same-origin (no CORS
+      # gymnastics for bundled assets).
       #
-      # 1. WKAppBoundDomains — iOS WKWebView only exposes
-      #    `navigator.serviceWorker` for documents whose origin
-      #    matches an entry here. In bundled mode the page is
-      #    served from `capacitor://localhost`, so we need
-      #    "localhost" in the list. (When we previously used
-      #    `server.url`, the entry was `poke.phylliidaassets.org`
-      #    instead — different mode, different domain.) Combined
-      #    with `limitsNavigationsToAppBoundDomains: true` in
-      #    capacitor.config.json, this is what flips the SW API on.
+      # ios-overrides/LocalServer.swift   — GCDWebServer wrapper that
+      #   serves files from App.app/public/ with an optional liveDir
+      #   override (for live-update flow).
+      # ios-overrides/AppBridgeViewController.swift — CAPBridgeViewController
+      #   subclass; in instanceDescriptor() it boots LocalServer and
+      #   sets descriptor.serverURL to the http://localhost:<port>/ URL.
+      # ios-overrides/inject-into-xcodeproj.rb — adds both Swift files
+      #   to the App target so xcodebuild compiles them.
+      - name: Inject local-server Swift files + Podfile entry
+        run: |
+          set -e
+          # Copy Swift overrides into the freshly-scaffolded iOS project.
+          cp ios-overrides/LocalServer.swift             ios/App/App/LocalServer.swift
+          cp ios-overrides/AppBridgeViewController.swift ios/App/App/AppBridgeViewController.swift
+
+          # Point Main.storyboard at our subclass instead of stock CAPBridgeViewController.
+          STORYBOARD=ios/App/App/Base.lproj/Main.storyboard
+          # macos `sed -i` requires '' for in-place. Match the customClass + customModule pair.
+          sed -i '' \
+            -e 's|customClass="CAPBridgeViewController" customModule="Capacitor"|customClass="AppBridgeViewController"|' \
+            "$STORYBOARD"
+          echo "── storyboard after patching ──"
+          grep -E 'customClass=' "$STORYBOARD" || true
+
+          # Add GCDWebServer pod to the Capacitor-generated Podfile.
+          # Inserted before the `target 'App' do` block ends. Idempotent.
+          PODFILE=ios/App/Podfile
+          if ! grep -q "pod 'GCDWebServer'" "$PODFILE"; then
+            python3 - <<'PY'
+          import re, pathlib
+          p = pathlib.Path("ios/App/Podfile")
+          src = p.read_text()
+          # Insert inside the `target 'App' do ... end` block, right before the matching `end`.
+          # Use a non-greedy match for the block body.
+          m = re.search(r"(target ['\"]App['\"] do\b.*?)(\n\s*end\b)", src, re.DOTALL)
+          if not m:
+              raise SystemExit("ERROR: target 'App' do … end block not found in Podfile")
+          insertion = "\n  pod 'GCDWebServer', '~> 3.5'"
+          src = src[:m.end(1)] + insertion + src[m.end(1):]
+          p.write_text(src)
+          print("Added GCDWebServer pod to Podfile")
+          PY
+          else
+            echo "GCDWebServer already in Podfile"
+          fi
+
+          # Add Swift files to App.xcodeproj. xcodeproj gem ships with CocoaPods.
+          ruby ios-overrides/inject-into-xcodeproj.rb
+
+      # Patch Info.plist:
+      #
+      # 1. WKAppBoundDomains — needed for SW registration in WKWebView.
+      #    Page now loads from http://localhost:<port>, so add
+      #    "localhost" as an app-bound domain. Combined with
+      #    `limitsNavigationsToAppBoundDomains: true` this exposes the
+      #    SW API.
       #
       # 2. NSLocationWhenInUseUsageDescription — required by
-      #    @capacitor/geolocation. Without it the first
-      #    getCurrentPosition call crashes with "missing usage
-      #    description".
+      #    @capacitor/geolocation; first call crashes without it.
       - name: Patch Info.plist (App-Bound Domains + Location)
         run: |
           PLIST=ios/App/App/Info.plist
           /usr/libexec/PlistBuddy -c "Delete :WKAppBoundDomains" "$PLIST" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :WKAppBoundDomains array" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :WKAppBoundDomains:0 string localhost" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :WKAppBoundDomains:1 string poke.phylliidaassets.org" "$PLIST"
           /usr/libexec/PlistBuddy -c "Delete :NSLocationWhenInUseUsageDescription" "$PLIST" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :NSLocationWhenInUseUsageDescription string 'Show your position on the map and detect nearby creatures while walking.'" "$PLIST"
           echo "── Info.plist after patching ──"
           /usr/libexec/PlistBuddy -c "Print :WKAppBoundDomains" "$PLIST"
           /usr/libexec/PlistBuddy -c "Print :NSLocationWhenInUseUsageDescription" "$PLIST"
 
-      # Capacitor's iOS template uses CocoaPods; macos-14 runner has
-      # cocoapods preinstalled. `pod install` produces the .xcworkspace
-      # we hand to xcodebuild below. (cap sync ios above already runs
-      # pod install once, but we re-run here to ensure the workspace
-      # is fully populated for the xcodebuild step.)
-      - name: pod install
+      # Re-run pod install so the GCDWebServer pod is actually
+      # downloaded and the App.xcworkspace is regenerated. (cap sync
+      # already ran pod install once before our Podfile edit.)
+      - name: pod install (with GCDWebServer)
         run: |
           cd ios/App
           pod install --repo-update
