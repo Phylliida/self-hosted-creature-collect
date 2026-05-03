@@ -37,10 +37,14 @@ Outputs (under data/BundledData/):
   cells.json               {"<body>-<head>": [variant_index, ...]}
                            — which (body, head) fusions have non-blank
                            custom art under which variant indices.
-  sprites/<head>/autogen/<body>.png            one tight-bbox PNG per
-                                               fusion, alpha-trimmed
-  sprites/<head>/custom/<body>[_<variant>].png same, only present when
-                                               the cell isn't fully blank
+                           Pre-computed at build so the runtime can
+                           skip its old alpha-scan on first launch.
+  sprites/<head>/autogen/<head>.png         autogen sheet cropped to
+                                            first 150 partners
+                                            (10 cols × 16 rows of 96px)
+  sprites/<head>/custom/<head>[v].png       custom variant sheets,
+                                            similarly cropped
+                                            (20 cols × 8 rows)
 
 Run:
   nix-shell  (to get python3 + pillow)
@@ -171,32 +175,24 @@ def trim_alpha(img: "Image.Image"):
     return bbox, img.crop(bbox)
 
 
-def crop_individual_autogen_sprites(head: int) -> int:
-    """For the autogen sheet of `head`, crop each cell 1..MAX_SPECIES
-    into its own PNG at sprites/<head>/autogen/<body>.png. Each sprite
-    is alpha-trimmed to its bounding box (same logic the runtime used
-    to do at download time). Cells with no opaque pixels fall back to
-    the full 96×96 cell so the runtime always finds *something* under
-    the URL — matches the legacy in-JS fallback behaviour. Returns
-    count of files written."""
-    src = AUTOGEN_SHEETS_DIR / f"{head}.png"
-    if not src.is_file():
-        return 0
-    sheet = Image.open(src).convert("RGBA")
-    out_dir = OUT_DIR / "sprites" / str(head) / "autogen"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    written = 0
+def alpha_scan_custom_sheet(sheet_path: Path, cols: int, max_height: int) -> list[int]:
+    """Open a custom variant sheet and return the list of body indices
+    (1..MAX_SPECIES) whose 96×96 cell has any opaque pixel above
+    ALPHA_MIN. Used to populate cells.json so the runtime can pick a
+    variant slot for each fusion without alpha-scanning at startup."""
+    sheet = Image.open(sheet_path).convert("RGBA")
+    bodies: list[int] = []
     for body in range(1, MAX_SPECIES + 1):
-        col = body % AUTOGEN_COLS
-        row = body // AUTOGEN_COLS
-        cell = sheet.crop((col * CELL_PX, row * CELL_PX,
-                           (col + 1) * CELL_PX, (row + 1) * CELL_PX))
-        _, trimmed = trim_alpha(cell)
-        if trimmed is None:
-            trimmed = cell  # fully blank; ship the empty 96×96 anyway
-        trimmed.save(out_dir / f"{body}.png", optimize=True)
-        written += 1
-    return written
+        col = body % cols
+        row = body // cols
+        x0, y0 = col * CELL_PX, row * CELL_PX
+        x1, y1 = x0 + CELL_PX, y0 + CELL_PX
+        if x1 > sheet.width or y1 > sheet.height or y1 > max_height:
+            continue
+        bbox, _ = trim_alpha(sheet.crop((x0, y0, x1, y1)))
+        if bbox is not None:
+            bodies.append(body)
+    return bodies
 
 
 def build_split_names() -> list:
@@ -360,39 +356,33 @@ def build_species_evolutions() -> dict:
     return out
 
 
-def crop_individual_custom_sprites(head: int) -> tuple[list[str], dict[str, list[int]]]:
-    """For `head`'s custom variant sheets, crop each cell into
-    sprites/<head>/custom/<body>.png (base) or
-    sprites/<head>/custom/<body>_<variant>.png. Skips fully-blank
-    cells entirely — the existence map (returned `cells_for_head`)
-    tells the runtime which (body, variant_index) pairs actually
-    have art, replacing the runtime alpha-scan that PASS 2 of
-    Sprites.bulkDownload used to do.
+def process_custom_head(head: int) -> tuple[list[str], dict[str, list[int]]]:
+    """Crop each variant sheet for `head` to MAX_SPECIES rows, save to
+    BundledData/sprites/<head>/custom/<head>[v].png, and alpha-scan
+    every cell to record which (body, variant_index) pairs have art.
 
-    Returns:
-      suffixes — variant suffixes in canonical (length, lex) order.
-                 "" comes first; index in this list is the
-                 `variant_index` referenced by `cells_for_head`.
-      cells_for_head — { "<body>": [variant_index, ...] } for cells
-                       where the trim_alpha cropped area was non-empty.
-                       Indices are sorted ascending."""
+    Sheets stay sheet-shaped (one PNG per variant per head) so the
+    bundle file count stays modest. The runtime fetches the sheet
+    once per (head, variant), uses CSS background-position / canvas
+    crop on demand for individual cells, and reads cells.json instead
+    of alpha-scanning at startup.
+
+    Returns (suffixes, cells_for_head) — same shape as before."""
     custom_src = CUSTOM_SHEETS_DIR / str(head)
     if not custom_src.is_dir():
         return [], {}
 
-    # Discover variant sheets for this head, then sort by canonical
-    # variant order ("", "a", ..., "aa", ...) so the index assigned
-    # below matches what the runtime expects from manifest[head].
     sheets: list[tuple[str, Path]] = []
     for sheet_path in sorted(custom_src.iterdir()):
         m = CUSTOM_FILENAME_RE.match(sheet_path.name)
         if not m:
             continue
         if int(m.group(1)) != head:
-            continue  # stray file from another head — skip
+            continue
         sheets.append((m.group(2), sheet_path))
     if not sheets:
         return [], {}
+    # Canonical (length, lex) order so variant_index is stable.
     sheets.sort(key=lambda p: (len(p[0]), p[0]))
 
     suffixes = [s for s, _ in sheets]
@@ -401,19 +391,10 @@ def crop_individual_custom_sprites(head: int) -> tuple[list[str], dict[str, list
     cells_for_head: dict[str, list[int]] = {}
 
     for variant_index, (suffix, sheet_path) in enumerate(sheets):
-        sheet = Image.open(sheet_path).convert("RGBA")
-        for body in range(1, MAX_SPECIES + 1):
-            col = body % CUSTOM_COLS
-            row = body // CUSTOM_COLS
-            x0, y0 = col * CELL_PX, row * CELL_PX
-            x1, y1 = x0 + CELL_PX, y0 + CELL_PX
-            if x1 > sheet.width or y1 > sheet.height:
-                continue  # cell outside the cropped sheet
-            _, trimmed = trim_alpha(sheet.crop((x0, y0, x1, y1)))
-            if trimmed is None:
-                continue  # fully blank cell — no art for this fusion
-            fname = f"{body}.png" if not suffix else f"{body}_{suffix}.png"
-            trimmed.save(out_dir / fname, optimize=True)
+        # Ship the sheet itself, cropped to first MAX_SPECIES partners.
+        crop_sheet(sheet_path, out_dir / sheet_path.name, CUSTOM_HEIGHT_NEEDED)
+        # Alpha-scan to populate cells.json.
+        for body in alpha_scan_custom_sheet(sheet_path, CUSTOM_COLS, CUSTOM_HEIGHT_NEEDED):
             cells_for_head.setdefault(str(body), []).append(variant_index)
 
     for k in cells_for_head:
@@ -422,21 +403,31 @@ def crop_individual_custom_sprites(head: int) -> tuple[list[str], dict[str, list
 
 
 def build_sprites_and_manifest() -> tuple[dict, dict]:
-    """Pre-crop autogen + custom sprites per head species into
-    BundledData/sprites/<head>/{autogen,custom}/<body>[_<variant>].png.
+    """Crop autogen + custom sprite sheets per head species into
+    BundledData/sprites/<head>/{autogen,custom}/<head>[v].png. Each
+    sheet contains the first MAX_SPECIES partners' worth of cells in
+    a fixed grid (10×16 autogen, 20×8 custom). Runtime renders an
+    individual cell via CSS / canvas crop against the sheet URL.
 
     Returns (manifest, cells):
-      manifest = {"<head>": [variant_suffix, ...]} (unchanged shape;
-                 sorted "" < "a" < "b" < ... < "aa" < ...)
+      manifest = {"<head>": [variant_suffix, ...]}
       cells    = {"<body>-<head>": [variant_index, ...]} listing which
                  (body, head) fusions have non-blank custom art for
-                 which variants. Replaces the old alpha-scan PASS 2."""
+                 which variants — saves the runtime an alpha-scan."""
     manifest: dict[str, list[str]] = {}
     cells: dict[str, list[int]] = {}
 
     for head in range(1, MAX_SPECIES + 1):
-        crop_individual_autogen_sprites(head)
-        suffixes, cells_for_head = crop_individual_custom_sprites(head)
+        # Autogen: just crop the source sheet down to the first
+        # MAX_SPECIES rows. No per-cell decomposition.
+        autogen_src = AUTOGEN_SHEETS_DIR / f"{head}.png"
+        if autogen_src.is_file():
+            dst_dir = OUT_DIR / "sprites" / str(head) / "autogen"
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            crop_sheet(autogen_src, dst_dir / f"{head}.png", AUTOGEN_HEIGHT_NEEDED)
+
+        # Custom variants: crop sheets, alpha-scan for cells.json.
+        suffixes, cells_for_head = process_custom_head(head)
         if suffixes:
             manifest[str(head)] = suffixes
         for body_str, variant_indices in cells_for_head.items():

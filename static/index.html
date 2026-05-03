@@ -3132,13 +3132,26 @@
           const id = nextId++;
           const entry = { realId: null, cleared: false };
           watches.set(id, entry);
-          Geo.watchPosition(opts || {}, (pos, err) => {
-            if (err) { error && error(err); return; }
-            if (pos) success && success(pos);
-          }).then((realId) => {
-            entry.realId = realId;
-            if (entry.cleared) Geo.clearWatch({ id: realId });
-          }).catch((err) => error && error(err));
+          // Capacitor's Geo.watchPosition return type varies between
+          // plugin versions: some return Promise<CallbackID>, some
+          // return the CallbackID synchronously. Defensive handling
+          // for both shapes.
+          let result;
+          try {
+            result = Geo.watchPosition(opts || {}, (pos, err) => {
+              if (err) { error && error(err); return; }
+              if (pos) success && success(pos);
+            });
+          } catch (e) { error && error(e); return id; }
+          if (result && typeof result.then === 'function') {
+            result.then((realId) => {
+              entry.realId = realId;
+              if (entry.cleared) Geo.clearWatch({ id: realId });
+            }).catch((err) => error && error(err));
+          } else if (result != null) {
+            entry.realId = result;
+            if (entry.cleared) Geo.clearWatch({ id: result });
+          }
           return id;
         },
         clearWatch(id) {
