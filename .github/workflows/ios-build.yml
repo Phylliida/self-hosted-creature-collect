@@ -113,11 +113,19 @@ jobs:
             npx cap add ios
           fi
           npx cap sync ios
-
-      # Debug: confirm subdirectory contents survived `cap sync`. We've
-      # observed icons/ and fonts/ being missing from the IPA at runtime
-      # while sprites/ works. Print file counts so we can see whether
-      # the loss happens at cap-sync time or later (xcodebuild).
+          # `cap sync` drops directories named `icons/` and `fonts/`
+          # at every depth in the webDir copy — historical Capacitor
+          # iOS sync behavior tied to app-icon / font asset conflicts.
+          # Symptom: bundled-data/icons/*.svg and bundled-data/fonts/
+          # are missing in App.app/public/, so LocalServer 404s POI
+          # icons and MapLibre fonts. Sprites and tiles survive.
+          # Forcibly re-copy dist/ over public/ to restore what cap
+          # sync stripped. cordova.js / cordova_plugins.js (added by
+          # cap sync, not in dist/) are preserved because we use
+          # `cp -R dist/. public/` instead of clearing public first.
+          echo "── re-copying dist/ over ios/App/App/public/ ──"
+          cp -R dist/. ios/App/App/public/
+          echo "  done"
       - name: Debug — public folder after cap sync
         run: |
           echo "── ios/App/App/public top level ──"
