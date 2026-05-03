@@ -1418,11 +1418,13 @@ def bundled_data(fname):
         abort(404)
     if not path.is_file():
         abort(404)
-    # Tile .pbf bytes are pre-gzipped; the rest are plain.
+    # Bundled tile .pbf files are decompressed at build time
+    # (build-bundled-data.py → bundle_base_map_tiles) so the raw
+    # bytes are valid protobuf — no Content-Encoding needed. Set the
+    # MIME type so MapLibre recognises the response.
     is_tile = fname.startswith("tiles/") and fname.endswith(".pbf")
     resp = send_from_directory(path.parent, path.name)
     if is_tile:
-        resp.headers["Content-Encoding"] = "gzip"
         resp.mimetype = "application/x-protobuf"
     resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     return resp
