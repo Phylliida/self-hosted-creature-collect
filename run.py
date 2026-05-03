@@ -105,6 +105,7 @@ app = Flask(__name__, static_folder=None)
 _TRACKED_JS = {
     "creatures.js", "sprites.js", "appdata.js",
     "species.js", "spawns.js", "trip-planner.js",
+    "live-update.js",
 }
 _TRACKED_HTML = {"index.html", "dex.html"}
 # Authoritative list (ordered) of every file the version system tracks.
@@ -112,7 +113,7 @@ _TRACKED_HTML = {"index.html", "dex.html"}
 # by the /script-versions fallback endpoint.
 _SCRIPT_VERSION_FILES = [
     "creatures.js", "sprites.js", "appdata.js",
-    "species.js", "spawns.js", "trip-planner.js", "sw.js",
+    "species.js", "spawns.js", "trip-planner.js", "live-update.js", "sw.js",
     "index.html", "dex.html",
 ]
 # Capture the declaration keyword (group 1) so we can preserve it
