@@ -31,9 +31,15 @@ console.error('[live-update] script-tag executing');
   global._scriptVersions = global._scriptVersions || {};
   global._scriptVersions['live-update.js'] = SCRIPT_VERSION;
 
-  const VERSION_MAP_KEY = 'cc.installedVersions';
-  const ACTIVE_DIR_KEY  = 'cc.activeLiveDir';
-  const RECENT_FAIL_KEY = 'cc.lastUpdateFailedAt';
+  const VERSION_MAP_KEY  = 'cc.installedVersions';
+  const ACTIVE_DIR_KEY   = 'cc.activeLiveDir';
+  const RECENT_FAIL_KEY  = 'cc.lastUpdateFailedAt';
+  // Set by the in-page refresh button (pure-HTML inline onclick) to
+  // request a one-shot update check on the next launch. Without this
+  // flag, the check is skipped entirely — no /script-versions fetch,
+  // no data usage. The flag is consumed (cleared) at the start of the
+  // check so a failed update doesn't loop on every subsequent launch.
+  const REFRESH_REQ_KEY  = 'cc.refreshRequested';
 
   if (!global.Capacitor) return;
 
@@ -115,7 +121,26 @@ console.error('[live-update] script-tag executing');
     return t > 0 && (Date.now() - t) < 15 * 60 * 1000;
   }
 
-  async function checkForUpdates() {
+  /// True if the user pressed refresh on the previous load. Consumes
+  /// the flag so this returns true at most once per refresh press.
+  function consumeRefreshRequest() {
+    try {
+      if (localStorage.getItem(REFRESH_REQ_KEY) !== '1') return false;
+      localStorage.removeItem(REFRESH_REQ_KEY);
+      return true;
+    } catch { return false; }
+  }
+
+  async function checkForUpdates(opts) {
+    const force = !!(opts && opts.force);
+    // Gate: only run when explicitly requested. Either the page-side
+    // refresh button has set cc.refreshRequested, or some caller
+    // invoked CCLiveUpdate.check({force:true}) directly. Default
+    // launches do nothing — zero data.
+    if (!force && !consumeRefreshRequest()) {
+      log('no refresh request; skipping check');
+      return;
+    }
     log('check started');
     const p = plugins();
     if (!p) { warn('plugins not available; skipping'); return; }
@@ -189,14 +214,17 @@ console.error('[live-update] script-tag executing');
     localStorage.setItem(RECENT_FAIL_KEY, String(Date.now()));
   }
 
-  // Defer the check so it doesn't block first paint. Most of the
-  // time there's nothing to download and this is a single HTTP call
-  // + a JSON compare, so 2 seconds after load is plenty.
+  // Defer the gate-check so it doesn't block first paint. The check
+  // is a no-op (no network) unless the refresh flag is set, so this
+  // wakes up briefly on every launch but only burns data when the
+  // user actually pressed refresh on the previous load.
   if (document.readyState === 'complete') {
     setTimeout(checkForUpdates, 2000);
   } else {
     window.addEventListener('load', () => setTimeout(checkForUpdates, 2000), { once: true });
   }
 
+  // Expose a manual trigger. Pass {force:true} from a console / dev
+  // tool to bypass the refresh-flag gate without touching localStorage.
   global.CCLiveUpdate = { check: checkForUpdates };
 })(typeof window !== 'undefined' ? window : globalThis);
