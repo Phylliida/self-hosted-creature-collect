@@ -150,20 +150,46 @@ async function downloadRegion({ bbox, minZoom, maxZoom, extraUrls = [], id, work
   let cachePuts = 0;
   let putErrors = 0;
   let firstSampleUrl = null;
+  let gunzipped = 0;       // count of tiles we had to decompress manually
+  let firstSampleMagic = '';
+
+  // WebKit's SW fetch doesn't reliably auto-decompress Content-
+  // Encoding: gzip responses (window-context fetches do). Without
+  // detection, we'd cache raw gzipped bytes that MapLibre can't
+  // parse → "Load failed (source=local)" with blank tiles. Detect
+  // the gzip magic (0x1F 0x8B) and run the body through
+  // DecompressionStream when present.
+  async function readDecompressed(res) {
+    const buf = await res.clone().arrayBuffer();
+    if (buf.byteLength < 2) return buf;
+    const view = new Uint8Array(buf, 0, 2);
+    if (view[0] !== 0x1f || view[1] !== 0x8b) return buf;
+    if (typeof DecompressionStream === 'undefined') return buf;
+    try {
+      const stream = new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'));
+      const out = await new Response(stream).arrayBuffer();
+      gunzipped++;
+      return out;
+    } catch {
+      return buf;  // give up, cache the gzipped bytes (likely wrong but at least non-empty)
+    }
+  }
   const workerPool = Array(workers).fill(0).map(async () => {
     while (queue.length) {
       const item = queue.pop();
       try {
         const res = await fetch(item.fetchUrl, { headers: { 'X-Download': '1' } });
         if (res.ok && res.status !== 204) {
-          // The browser already decoded the body per Content-Encoding
-          // when we awaited fetch(). If we cache the response with
-          // its original headers, the browser will try to decode the
-          // body AGAIN when respondWith serves the cached entry,
-          // producing garbage. Build a clean response with the
-          // decoded body and stripped encoding/length headers.
-          const body = await res.clone().arrayBuffer();
+          // Read the body with explicit gzip detection (some browsers
+          // skip auto-decompression in SW context) AND strip the
+          // Content-Encoding header so the browser doesn't try to
+          // decompress AGAIN when the cached entry is served back.
+          const body = await readDecompressed(res);
           bodyBytes += body.byteLength;
+          if (!firstSampleMagic && body.byteLength >= 2) {
+            const v = new Uint8Array(body, 0, 2);
+            firstSampleMagic = `${v[0].toString(16).padStart(2,'0')}${v[1].toString(16).padStart(2,'0')}`;
+          }
           const headers = new Headers(res.headers);
           headers.delete('Content-Encoding');
           headers.delete('Content-Length');
@@ -211,6 +237,7 @@ async function downloadRegion({ bbox, minZoom, maxZoom, extraUrls = [], id, work
       type: 'done', id, done, total, failed,
       urls: tiles, bodyBytes, cachePuts, putErrors,
       sampleUrl: firstSampleUrl, sampleVerify: sampleVerifyStatus,
+      gunzipped, firstMagic: firstSampleMagic,
     });
   }
 }

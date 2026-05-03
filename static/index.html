@@ -9687,6 +9687,8 @@ function fmtDate(ts) {
             ` bodyBytes=${e.data.bodyBytes}` +
             ` cachePuts=${e.data.cachePuts}` +
             ` putErrors=${e.data.putErrors}` +
+            ` gunzipped=${e.data.gunzipped || 0}` +
+            ` magic=${e.data.firstMagic || 'n/a'}` +
             ` sample=${e.data.sampleUrl || 'none'}` +
             ` verify=${e.data.sampleVerify || 'n/a'}`
           );
