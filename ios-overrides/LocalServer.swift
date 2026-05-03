@@ -62,17 +62,43 @@ import GCDWebServer
             return self?.handle(req) ?? GCDWebServerErrorResponse(statusCode: 500)
         }
 
-        // BindToLocalhost so the server is unreachable from outside
-        // the device (no NSLocalNetworkUsageDescription required).
-        // Port 0 lets the OS pick a free port — read it back via .port.
-        try server.start(options: [
-            GCDWebServerOption_Port: 0,
-            GCDWebServerOption_BindToLocalhost: true,
-            GCDWebServerOption_AutomaticallySuspendInBackground: false,
-        ])
+        // Persist the port across launches. The Service Worker's
+        // TILES_CACHE keys responses by full URL (including port), so
+        // a fresh port every launch would invalidate every cached
+        // tile from prior sessions and break "save current view".
+        // Strategy: try the saved port first; on bind failure, fall
+        // back to OS-assigned (port 0) and persist whatever we got.
+        let savedPort = UserDefaults.standard.integer(forKey: "cc.localServer.port")
+        let portsToTry: [UInt] = savedPort > 0
+            ? [UInt(savedPort), 0]
+            : [0]
+        var lastError: Error?
+        var bound = false
+        for port in portsToTry {
+            do {
+                try server.start(options: [
+                    GCDWebServerOption_Port: port,
+                    GCDWebServerOption_BindToLocalhost: true,
+                    GCDWebServerOption_AutomaticallySuspendInBackground: false,
+                ])
+                bound = true
+                break
+            } catch {
+                lastError = error
+                NSLog("[LocalServer] port \(port) failed: \(error); trying next")
+            }
+        }
+        if !bound {
+            throw lastError ?? NSError(domain: "LocalServer", code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "no port available"])
+        }
         guard let url = server.serverURL else {
-            throw NSError(domain: "LocalServer", code: 2,
-                          userInfo: [NSLocalizedDescriptionKey: "Server started but no URL"])
+            throw NSError(domain: "LocalServer", code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "Server started but no URL"])
+        }
+        let actualPort = Int(server.port)
+        if actualPort != savedPort {
+            UserDefaults.standard.set(actualPort, forKey: "cc.localServer.port")
         }
         NSLog("[LocalServer] listening at \(url.absoluteString)")
         return url

@@ -63,6 +63,46 @@ jobs:
       - name: Build Capacitor webDir
         run: bash scripts/build-capacitor.sh
 
+      # Patch Capacitor's framework source in node_modules BEFORE
+      # `cap add ios` (which kicks off pod install). The pod uses
+      # `:path => '../../node_modules/@capacitor/ios'`, so anything
+      # we change here ends up in the compiled framework.
+      #
+      # Currently disables WebViewDelegationHandler's auto-reload on
+      # web-content-process termination. iOS kills the process under
+      # memory pressure; default Capacitor reloads from origin, which
+      # wipes the user's map view, in-flight downloads, etc. Skipping
+      # the reload leaves a stale render in place — the user can
+      # interact normally; the next navigation triggers fresh code.
+      - name: Patch Capacitor framework (disable memory-reload)
+        run: |
+          set -e
+          DELHAND=node_modules/@capacitor/ios/Capacitor/Capacitor/WebViewDelegationHandler.swift
+          if [ ! -f "$DELHAND" ]; then
+            echo "ERROR: $DELHAND not found" >&2
+            exit 1
+          fi
+          python3 - <<'PY'
+          import pathlib, sys
+          p = pathlib.Path("node_modules/@capacitor/ios/Capacitor/Capacitor/WebViewDelegationHandler.swift")
+          src = p.read_text()
+          old = ("open func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {\n"
+                 "        webView.reload()\n"
+                 "    }")
+          new = ("open func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {\n"
+                 "        // [creature-collect patch] auto-reload disabled.\n"
+                 "        // iOS kills the web content process under memory\n"
+                 "        // pressure; reloading from origin wipes the user's\n"
+                 "        // map view + in-flight state. Leave the (stale)\n"
+                 "        // render in place; the user can refresh manually.\n"
+                 "    }")
+          if old not in src:
+              print("ERROR: stock terminate handler not found", file=sys.stderr)
+              sys.exit(1)
+          p.write_text(src.replace(old, new, 1))
+          print("Patched WebViewDelegationHandler: terminate handler is now a no-op")
+          PY
+
       # The ios/ directory is gitignored — generate it fresh from
       # capacitor.config.json on every build. Idempotent: if it
       # already existed (cached?) cap add re-uses; otherwise it

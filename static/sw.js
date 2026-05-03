@@ -142,6 +142,14 @@ async function downloadRegion({ bbox, minZoom, maxZoom, extraUrls = [], id, work
   // Worker count chosen by the main thread: 6 on mobile (iOS backgrounds the
   // SW aggressively, high concurrency stalls) and 60 on desktop (modern
   // browsers handle 50+ parallel connections comfortably, ~10x throughput).
+  // Debug counters surfaced in the 'done' message so the page can
+  // log them. Helps diagnose "downloaded but tiles don't render"
+  // — distinguishes between "fetches failed", "cache.put failed",
+  // and "everything cached but later lookup misses".
+  let bodyBytes = 0;
+  let cachePuts = 0;
+  let putErrors = 0;
+  let firstSampleUrl = null;
   const workerPool = Array(workers).fill(0).map(async () => {
     while (queue.length) {
       const item = queue.pop();
@@ -155,14 +163,23 @@ async function downloadRegion({ bbox, minZoom, maxZoom, extraUrls = [], id, work
           // producing garbage. Build a clean response with the
           // decoded body and stripped encoding/length headers.
           const body = await res.clone().arrayBuffer();
+          bodyBytes += body.byteLength;
           const headers = new Headers(res.headers);
           headers.delete('Content-Encoding');
           headers.delete('Content-Length');
           const cleaned = new Response(body, {
             status: res.status, statusText: res.statusText, headers,
           });
-          const cache = await caches.open(item.cacheName);
-          await cache.put(item.cacheKey, cleaned);
+          try {
+            const cache = await caches.open(item.cacheName);
+            await cache.put(item.cacheKey, cleaned);
+            cachePuts++;
+            if (firstSampleUrl == null && item.cacheName === TILES_CACHE) {
+              firstSampleUrl = item.cacheKey;
+            }
+          } catch (e) {
+            putErrors++;
+          }
         } else if (res.status !== 204 && !res.ok) {
           failed++;
         }
@@ -174,7 +191,28 @@ async function downloadRegion({ bbox, minZoom, maxZoom, extraUrls = [], id, work
     }
   });
   await Promise.all(workerPool);
-  if (client) client.postMessage({ type: 'done', id, done, total, failed, urls: tiles });
+  // Verify a sample cached entry actually round-trips — catches the
+  // "stored but unreadable" failure mode (e.g. opaque cross-origin
+  // response, port mismatch between the cacheKey resolution and
+  // MapLibre's later fetch).
+  let sampleVerifyStatus = 'n/a';
+  if (firstSampleUrl) {
+    try {
+      const c = await caches.open(TILES_CACHE);
+      const probeUrl = new URL(firstSampleUrl, self.location.href).toString();
+      const hit = await c.match(probeUrl);
+      sampleVerifyStatus = hit ? `hit(${(await hit.clone().blob()).size}B)` : 'miss';
+    } catch (e) {
+      sampleVerifyStatus = 'err:' + (e && e.message ? e.message : e);
+    }
+  }
+  if (client) {
+    client.postMessage({
+      type: 'done', id, done, total, failed,
+      urls: tiles, bodyBytes, cachePuts, putErrors,
+      sampleUrl: firstSampleUrl, sampleVerify: sampleVerifyStatus,
+    });
+  }
 }
 
 async function deleteTiles(urls) {
