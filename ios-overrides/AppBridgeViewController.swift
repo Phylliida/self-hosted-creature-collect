@@ -25,4 +25,14 @@ class AppBridgeViewController: CAPBridgeViewController {
         }
         return descriptor
     }
+
+    /// Register our custom in-app plugin. capacitorDidLoad runs after
+    /// the bridge is created (so `bridge` is non-nil) but before the
+    /// WebView begins loading, which is the right window for plugin
+    /// registration — the plugin's JS proxy gets injected into the
+    /// page's Capacitor.Plugins map automatically.
+    override open func capacitorDidLoad() {
+        super.capacitorDidLoad()
+        bridge?.registerPluginInstance(BundleAccessPlugin())
+    }
 }

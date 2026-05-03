@@ -26,7 +26,7 @@ import GCDWebServer
 
     private let server = GCDWebServer()
     private var bundleDir: URL?
-    private var liveDir: URL?
+    @objc private(set) var liveDir: URL?
 
     /// Start the server. Idempotent — calling start() twice returns
     /// the same URL. Throws if the bundled `public/` folder can't be

@@ -98,6 +98,7 @@ jobs:
           # Copy Swift overrides into the freshly-scaffolded iOS project.
           cp ios-overrides/LocalServer.swift             ios/App/App/LocalServer.swift
           cp ios-overrides/AppBridgeViewController.swift ios/App/App/AppBridgeViewController.swift
+          cp ios-overrides/BundleAccessPlugin.swift      ios/App/App/BundleAccessPlugin.swift
 
           # Point Main.storyboard at our subclass instead of stock CAPBridgeViewController.
           STORYBOARD=ios/App/App/Base.lproj/Main.storyboard

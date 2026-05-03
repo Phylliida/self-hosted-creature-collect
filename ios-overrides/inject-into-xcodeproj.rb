@@ -8,7 +8,7 @@ require 'xcodeproj'
 PROJECT_PATH = 'ios/App/App.xcodeproj'
 APP_GROUP = 'App'  # the source-file group inside the project
 TARGET = 'App'     # the build target
-NEW_FILES = ['LocalServer.swift', 'AppBridgeViewController.swift']
+NEW_FILES = ['LocalServer.swift', 'AppBridgeViewController.swift', 'BundleAccessPlugin.swift']
 
 project = Xcodeproj::Project.open(PROJECT_PATH)
 
