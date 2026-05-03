@@ -3142,6 +3142,12 @@
     // the IPA — there's nothing to download.
     document.documentElement.classList.add('cc-bundled');
 
+    // Icon preload was previously deferred here via window.addEventListener
+    // ('load', ...) but timing-raced map.on('load') — by the time icons
+    // landed in IDB, MapLibre had already cached "icon missing → use
+    // fallback". Now done inline in the main IIFE before the map is
+    // constructed (search "iconBulkDownload" further down).
+
     // Geolocation bridge: WKWebView's built-in navigator.geolocation
     // is unreliable across iOS versions and Android WebView's needs
     // explicit WebChromeClient wiring. The @capacitor/geolocation
@@ -3207,6 +3213,46 @@
         // Older WebViews may not allow redefining; best-effort.
         navigator.geolocation = shim;
       }
+    }
+
+    // Memory footprint badge — bottom-left, always-on, non-selectable,
+    // over everything. We don't have Instruments on Linux/iOS so this
+    // is the only practical signal for "is memory growing as I scroll
+    // captured pokes / browse the dex". phys_footprint is what iOS
+    // uses for memory-limit kills (the OOM-relevant number); RSS is
+    // shown alongside for context. Polled at 500ms — single mach
+    // syscall, ~free.
+    const Mem = window.Capacitor.Plugins && window.Capacitor.Plugins.MemoryProbe;
+    if (Mem) {
+      const badge = document.createElement('div');
+      badge.id = 'cc-mem-badge';
+      badge.style.cssText =
+        'position:fixed;bottom:4px;left:4px;z-index:2147483647;'
+        + 'pointer-events:none;user-select:none;-webkit-user-select:none;'
+        + 'font:10px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;'
+        + 'color:#fff;text-shadow:0 0 3px #000,0 0 3px #000,0 0 3px #000;'
+        + 'padding:2px 4px;';
+      badge.textContent = 'mem …';
+      const attach = () => document.body && document.body.appendChild(badge);
+      if (document.body) attach();
+      else document.addEventListener('DOMContentLoaded', attach, { once: true });
+      // Track peak so we can see whether a scroll spiked footprint
+      // even if it then settled back down (WebKit's image cache can
+      // grow during a scroll and drop after).
+      let peakMB = 0;
+      setInterval(async () => {
+        try {
+          const r = await Mem.getFootprint();
+          const mb  = r.physFootprint / (1024 * 1024);
+          const rss = r.residentSize  / (1024 * 1024);
+          if (mb > peakMB) peakMB = mb;
+          badge.textContent =
+            `mem ${mb.toFixed(1)}M  peak ${peakMB.toFixed(1)}M  rss ${rss.toFixed(1)}M`;
+          window._lastMem = r;
+        } catch (e) {
+          badge.textContent = 'mem err: ' + (e && e.message ? e.message : e);
+        }
+      }, 500);
     }
   }
 </script>
@@ -3723,6 +3769,21 @@ function fmtDate(ts) {
     window._startupPhases.fontPreload = performance.now() - t0;
   }
 
+  // Capacitor IPA: also pre-download icons from the bundled
+  // /bundled-data/icons/ tree into IDB BEFORE the map runs
+  // loadAllIcons. Otherwise map.on('load') reads an empty IDB,
+  // registers nothing, MapLibre fires styleimagemissing for every
+  // POI icon, marks them as fallback, and a later iconBulkDownload
+  // populating IDB doesn't trigger a re-render. Local-disk reads
+  // only — adds ~1-2s to first launch in the IPA, negligible after
+  // (IDB persists, the bulk-download skip-if-cached check is fast).
+  if (window.Capacitor && window.AppData && window.AppData.iconBulkDownload) {
+    const t0 = performance.now();
+    try { await window.AppData.iconBulkDownload({ onProgress: () => {} }); }
+    catch (e) { console.error('[startup-iconBulkDownload]', e); }
+    window._startupPhases.iconBulkDownload = performance.now() - t0;
+  }
+
   const map = new maplibregl.Map({
     container: 'map',
     hash: true,
@@ -3755,7 +3816,15 @@ function fmtDate(ts) {
         // beyond the ones currently on screen. Without it the cache grows
         // unbounded as you pan/zoom — aggressive on iOS. 32 is plenty for
         // smooth panning; evicted tiles re-parse quickly from the SW cache.
-        base:  { type: 'vector', tiles: [location.origin + '/tiles/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 5,  maxTileCacheSize: 32 },
+        //
+        // Both sources share the SAME tile URL and SAME maxzoom — base
+        // used to be capped at z5 as a "low-detail" optimization, but
+        // that broke MapLibre's tile-pyramid fallback: when local
+        // returned 404 for an uncached z14 tile, base couldn't supply
+        // a parent because base only goes to z5 (over-zoom limit ≈ 5
+        // levels). Setting both to maxzoom 14 lets MapLibre walk the
+        // parent chain: missing z14 → try z13 → … → bundled z5 → render.
+        base:  { type: 'vector', tiles: [location.origin + '/tiles/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 14, maxTileCacheSize: 32 },
         local: { type: 'vector', tiles: [location.origin + '/tiles/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 14, maxTileCacheSize: 64 },
         'bus-routes': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
         'route-stops': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
@@ -4808,6 +4877,12 @@ function fmtDate(ts) {
       return 0;
     }
   }
+  // Expose for the Capacitor startup hook in the inline <script>
+  // earlier in this file, which kicks off iconBulkDownload at app
+  // launch (since the user-facing "↓ app data" button is hidden in
+  // bundled-mode IPAs) and needs to re-register icons with MapLibre
+  // once IDB is populated.
+  window._loadAllIcons = loadAllIcons;
 
   map.on('load', async () => {
     const tLoad = performance.now();

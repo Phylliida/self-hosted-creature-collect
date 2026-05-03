@@ -1121,3 +1121,286 @@ static/sw.js                   (script-version constant +
 data/BundledData/              (NEW — 134 MB, 2350 files,
                                  committed to git for hosting)
 ```
+
+---
+
+# Session handoff (2026-05-02 → 2026-05-03)
+
+Long session — IPA architecture, native plugin, live updates, lots of debugging.
+Started from "let's bundle the data into the IPA" and arc'd through several wrong turns
+before landing on a working architecture. **App now launches, geolocation works,
+spawns + tile rendering both work**. Two known issues remaining (POI icons render as
+dummies on first launch, sprites lazy-load instead of eager).
+
+## What works
+- IPA launches without network, page served from in-app GCDWebServer at `http://localhost:<port>/`
+- Service Worker registers cleanly (localhost = secure context, http = scheme allowed)
+- Bundled z0–z5 tiles render via LocalServer reading `App.app/public/tiles/`
+- Region downloads (z6+) cache via SW, render correctly inside the bbox
+- Tile-pyramid fallback works: missing high-zoom tiles render as over-zoomed bundled z5 (blurry but visible)
+- Pokemon spawning, geolocation, save/load, all backend endpoints (CORS-allowed for `http://localhost`)
+- Phase 3 live-update flow: page checks `/script-versions`, downloads diffs to `Library/CCLiveUpdates/v-<version>/`, calls native plugin to swap LocalServer's read directory, reloads
+
+## Architecture (now-working)
+
+**`capacitor.config.json`**: no `server.url`. `webDir: "dist"`. `limitsNavigationsToAppBoundDomains: true`.
+
+**Workflow patches Capacitor framework source in `node_modules/@capacitor/ios/.../Capacitor/`** before `cap add ios`:
+- `WebViewDelegationHandler.swift` — `webViewWebContentProcessDidTerminate` → no-op (was `webView.reload()`; killed in-flight state on memory pressure)
+
+**`ios-overrides/`** (new directory, committed to repo, copied into `ios/App/App/` by workflow):
+- `LocalServer.swift` — wraps GCDWebServer (CocoaPod). Serves files from
+  `Bundle.main.path(forResource: "public", ...)` with optional liveDir override
+  (under `Library/CCLiveUpdates/`). **Persists port via `UserDefaults["cc.localServer.port"]`**
+  so SW cache entries (keyed by full URL incl. port) survive across launches.
+  Sets `application/x-protobuf` Content-Type for `.pbf` files.
+- `AppBridgeViewController.swift` — `CAPBridgeViewController` subclass.
+  In `instanceDescriptor()` boots LocalServer + sets `descriptor.serverURL`.
+  In `capacitorDidLoad()` registers `BundleAccessPlugin` via
+  `bridge?.registerPluginInstance(...)`.
+- `BundleAccessPlugin.swift` — exposes `getLiveDir`, `setLiveDir`, `clearLiveDir`,
+  `getLiveDirRoot` to JS via `Capacitor.Plugins.BundleAccess`. Wired up via
+  `CAPBridgedPlugin` conformance + manual `registerPluginInstance` (no `.m` macro
+  file or capacitor.config packageClassList entry needed).
+- `inject-into-xcodeproj.rb` — uses CocoaPods' bundled `xcodeproj` Ruby gem to
+  add the three Swift files to the App target.
+
+**Workflow** (`.github/workflows/ios-build.yml`):
+1. Checkout / Setup Node / Install JS deps
+2. Build Capacitor webDir (`scripts/build-capacitor.sh` → `dist/`)
+3. **Patch Capacitor framework** (memory-reload disable) — patches
+   `node_modules/@capacitor/ios/.../WebViewDelegationHandler.swift` BEFORE pod install
+4. `npx cap add ios && npx cap sync ios`
+5. **Inject local-server Swift files + Podfile entry**:
+   - copies the three Swift files into `ios/App/App/`
+   - sed-patches `Main.storyboard` `customClass` from `CAPBridgeViewController`
+     to `AppBridgeViewController`
+   - inserts `pod 'GCDWebServer', '~> 3.5'` into the Capacitor-generated Podfile
+   - runs the Ruby xcodeproj injector
+6. Patch Info.plist (`WKAppBoundDomains: ["localhost"]`,
+   `NSLocationWhenInUseUsageDescription`)
+7. `pod install` (downloads GCDWebServer)
+8. `xcodebuild` unsigned + manual IPA assembly
+
+**Page-side Capacitor block** (`static/index.html`):
+- `window.CC_API_BASE = "https://poke.phylliidaassets.org"` — for cross-origin
+  fetches to backend endpoints (/save, /load, /poi, /walk-graph, etc.)
+- `document.documentElement.classList.add('cc-bundled')` — CSS hides the
+  `↓ app data` row + missing-banner
+- `window.fetch` interceptor: paths in `LOCAL_PREFIXES` pass through,
+  everything else gets prefixed with `CC_API_BASE`
+- Geolocation shim: monkey-patches `navigator.geolocation` to call through
+  to `Capacitor.Plugins.Geolocation` (handles both Promise + sync return shapes)
+- `iconBulkDownload` awaited in IIFE BEFORE map construction (silently
+  rasterizes ~200 SVGs from local bundle into IDB so MapLibre's loadAllIcons
+  has something to register from). **Currently still broken** — see "Open issues" below.
+
+**Service Worker** (`static/sw.js`):
+- `IS_CAPACITOR = self.location.hostname === 'localhost'` — SW detects mode
+- `_missResponse(req)`: in capacitor mode, falls through to `fetch(req)`
+  (LocalServer serves bundled file). **Translates non-200 LocalServer responses
+  to 204** so MapLibre's tile-pyramid parent fallback kicks in (this was the
+  fix for "only one specific zoom renders" — 404 marks tile as failed in
+  MapLibre, 204 marks it as intentionally empty + look up parent chain).
+- `downloadRegion` accepts `apiBase` from page-side, prepends to fetch URLs
+  but caches under original relative key. **Manually decompresses gzipped
+  responses via `DecompressionStream`** in case the browser doesn't auto-decompress
+  in SW context (turns out it does in WebKit, but the safety net is harmless).
+  Strips `Content-Encoding`/`Content-Length` headers from cached responses
+  to prevent the "decoded body + gzip header → double-decompress garbage" bug.
+
+**Map style** (`static/index.html`):
+- Both `base` and `local` sources now have `maxzoom: 14` (was 5/14). Same
+  URL, MapLibre dedups fetches. This restored the parent fallback chain —
+  previously `base.maxzoom: 5` capped the over-zoom limit at z10, and missing
+  tiles past that had no fallback.
+- `transformRequest` simplified: drops the cross-scheme rewriting that was
+  needed in our brief stint with `server.url + capacitor:// data` (didn't work
+  due to WebKit cross-scheme fetch block — see "Wrong turns" below).
+
+## Live-update flow
+
+1. Page loads from LocalServer. `static/live-update.js` runs (script-tag at
+   bottom of index.html).
+2. After 2-second defer, fetches `https://poke.phylliidaassets.org/script-versions`
+   (CORS-allowed via Flask's `_cors_for_capacitor` after_request hook).
+3. Compares with `localStorage.cc.installedVersions`. If anything differs,
+   downloads ALL tracked files (avoids version skew) into a fresh
+   `<Library>/CCLiveUpdates/v-<tag>/<file>` via `@capacitor/filesystem`
+   `writeFile({recursive: true})`.
+4. `Capacitor.Plugins.BundleAccess.setLiveDir({path})` — LocalServer starts
+   reading from there in preference to the bundled webDir. Persists across
+   launches via UserDefaults.
+5. `localStorage.setItem('cc.installedVersions', ...)` and `location.reload()`.
+6. New code runs on the reload.
+
+15-minute backoff after failures (`cc.lastUpdateFailedAt`) so a broken
+server response doesn't reload-loop. The emergency-refresh button (↻ at
+bottom-right of map) clears `cc.installedVersions` + `cc.lastUpdateFailedAt`
+to force a fresh download cycle.
+
+## Other tooling
+
+**Pre-cropped sprites in build script** (`build-bundled-data.py`):
+- Considered, partially implemented (~22.5k autogen + ~24.5k custom files),
+  then **reverted** because the file-count tax made iLoader sideloading
+  ~10× slower. Now back to per-head sheet output (~750 sheet PNGs).
+- `cells.json` still produced via alpha-scan — replaces the runtime
+  PASS 2 alpha-scan in `Sprites.bulkDownload`; PASS 2 now just decodes
+  each variant sheet once and crops the known-good cells per cells.json.
+- Bundled tiles **decompressed at build time** (`bundle_base_map_tiles`
+  detects gzip magic + `gzip.decompress`) so LocalServer can serve them
+  raw — Capacitor's URL handler doesn't set `Content-Encoding: gzip`.
+  Flask's `/bundled-data/tiles/` route also dropped the gzip header to
+  match.
+
+**SW.intercept changes for sheet-based sprites**: lazy-crop fallback in
+`getSpriteBlob` — IDB miss → fetch sheet (cached after first decode) →
+canvas-crop → store IDB → return. So sprites work whether or not bulk
+download has run.
+
+## Open issues
+
+### POI icons render as dummies (incomplete)
+First-launch UX in IPA: POI icons show as default placeholders. My latest
+attempt was to `await iconBulkDownload` in the main IIFE before the map is
+constructed. **User reports this didn't fix it** — debugging interrupted by
+context limit.
+
+Possible causes to investigate:
+1. `iconBulkDownload` failing silently (errors caught + skipped) — wrap with
+   logging that surfaces to debug overlay
+2. `_loadAllIcons` reading empty `availableIconNames` cache (already
+   invalidated via `_iconNamesCache = null;` in `iconBulkDownload`, but
+   double-check)
+3. `safeAddImage` rejecting RGBA buffers (pixel format mismatch?)
+4. MapLibre's `styleimagemissing` handler caching "missing" verdict and
+   not re-rendering when `addImage` lands later
+5. Icon names registered != names referenced in style (alias map issue)
+
+Diagnostic ideas:
+- Log `iconBulkDownload` return value (`{loaded, total}`) at the await site
+- Log `loadAllIcons` return value (count of registered icons)
+- After bulk download, dump `Object.keys(map.style._sprite._images)` (or
+  similar internal) to see what's actually in MapLibre's image registry
+- Test what icon name a POI is requesting (via styleimagemissing event)
+
+### Sprites lazy-load (by design but rough UX)
+User noticed: "pokemon are red dots until i click on them and then always
+loaded even after refresh". The IDB-cached version persists across launches
+(working as designed), but first render of each unique fusion shows the
+default red marker until the user interacts.
+
+Fix would be to pre-warm visible spawns on map idle: walk the visible
+spawn list, call `getSpriteBlob` for each, update markers. Not done yet.
+
+## Wrong turns (so future-me knows what NOT to try)
+
+1. **Cross-scheme fetch from `https://` page to `capacitor://` URL handler**:
+   tried with `server.url` mode + `capacitor://localhost/_capacitor_file_/<path>`
+   patched-injection. WebKit blocks `fetch()` to custom schemes from web origins
+   regardless of CORS headers. `<img src>` works (no CORS check), `fetch()` doesn't.
+   Took several rounds of patching `WebViewAssetHandler.swift` (CORS headers) +
+   `CAPBridgeViewController.swift` (WKUserScript-injected `CC_BUNDLED_DATA_BASE`)
+   before realizing the fundamental restriction.
+
+2. **`iosScheme: "https"`**: WebKit reserves https; Capacitor silently falls
+   back to `capacitor` scheme. Doesn't work.
+
+3. **`limitsNavigationsToAppBoundDomains: false` + bundled mode**: SW won't
+   register without an App-Bound entry that matches the page origin. Needed
+   `["localhost"]` in WKAppBoundDomains.
+
+4. **Per-cell pre-cropped sprites**: 47k tiny PNG files killed iLoader signing
+   speed. Reverted to per-head sheets (cells.json provides alpha-scan info
+   without needing per-cell files).
+
+## File touch summary (this session)
+
+```
+.github/workflows/ios-build.yml  (drop server.url-mode patches; add
+                                  patch-Capacitor-memory-reload step;
+                                  add inject-Swift-files step;
+                                  add ios-overrides/** to triggers)
+capacitor.config.json            (drop server.url; webDir=dist;
+                                  limitsNavigationsToAppBoundDomains true)
+package.json                     (added @capacitor/filesystem)
+scripts/build-capacitor.sh       (creates dist/ from static/ + BundledData)
+ios-overrides/                   (NEW directory, all 4 files committed)
+  LocalServer.swift              (GCDWebServer wrapper; persists port;
+                                  liveDir override; .pbf MIME type)
+  AppBridgeViewController.swift  (boots LocalServer; registers plugin)
+  BundleAccessPlugin.swift       (JS-callable getLiveDir/setLiveDir)
+  inject-into-xcodeproj.rb       (xcodeproj gem to add files to target)
+build-bundled-data.py            (decompress tiles at build time;
+                                  cells.json alpha-scan; reverted to
+                                  sheet-based sprite output)
+run.py                           (CORS for http://localhost origin;
+                                  drop Content-Encoding gzip from
+                                  /bundled-data/tiles/; live-update.js
+                                  in _TRACKED_JS + _SCRIPT_VERSION_FILES)
+static/index.html                (Capacitor block: drop fetch interceptor's
+                                  cross-scheme stuff, add cc-bundled class,
+                                  add geolocation shim, add startup
+                                  iconBulkDownload await; on-screen debug
+                                  overlay; map.on('error') logger; tile-probe
+                                  diagnostic; both sources maxzoom 14;
+                                  drop transformRequest cross-scheme rewrite;
+                                  refresh button now clears cc.installedVersions;
+                                  expose loadAllIcons via window._loadAllIcons;
+                                  live-update.js script tag)
+static/sw.js                     (IS_CAPACITOR detection; _missResponse
+                                  translates LocalServer non-200 → 204;
+                                  downloadRegion: apiBase plumbing,
+                                  DecompressionStream gzip detection,
+                                  strip Content-Encoding for cache.put,
+                                  diagnostic counters in 'done' message)
+static/sprites.js                (sheet-based revert; lazy-crop fallback
+                                  in getSpriteBlob)
+static/species.js                (auto-load ensureLoaded in Capacitor mode)
+static/live-update.js            (NEW — Phase 3 live-update flow)
+static/creatures.js              (renderWeatherBar shows "Loading..." while
+                                  Species loads instead of "no creature data")
+data/BundledData/                (regenerated multiple times — sheet
+                                  sprites, decompressed tiles, cells.json)
+HANDOFF.md                       (this section)
+```
+
+## Things to remember
+
+- **Capacitor's WKURLSchemeHandler does NOT serve arbitrary webDir paths
+  when `server.url` is set** — only `_capacitor_file_<path>` and
+  `_capacitor_http_<path>`. We landed on bundled mode + LocalServer because
+  of this.
+- **WebKit blocks fetch() to custom schemes from `https://` page origins**.
+  `<img src>` is exempt (no CORS check); fetch() requires same-origin or
+  CORS-allowed http(s).
+- **localhost is a "potentially trustworthy" origin** even over plain http,
+  so SW.register() works at `http://localhost:<port>/...`. This is why
+  embedding GCDWebServer + pointing serverURL at it solves the SW gap.
+- **`@objc` and `private(set)` are mutually exclusive in Swift** — caused
+  a build failure on `liveDir`; dropped `@objc` since BundleAccessPlugin
+  reads it via Swift not Obj-C.
+- **GCDWebServer with port 0 picks a NEW random port each launch** — SW
+  cache keys include port → cached tiles invalidate every launch. Persist
+  the chosen port in UserDefaults to keep the cache useful.
+- **MapLibre treats 404 vs 204 differently for tile fetches**. 404 → tile
+  marked as failed, no parent fallback. 204 → tile is intentionally empty,
+  walk the parent chain. SW.intercept must translate LocalServer's 404 to 204.
+- **MapLibre's source `maxzoom` caps the over-zoom range** (~5 levels above
+  maxzoom). Setting both `base` and `local` to the same maxzoom prevents the
+  blank-zone gap when high-zoom tiles aren't cached.
+- **Capacitor 6 plugin auto-registration uses `capacitor.config.json`'s
+  `packageClassList` (read at runtime from the iOS bundle)**. Manually
+  registering via `bridge.registerPluginInstance(...)` in `capacitorDidLoad`
+  works without modifying that JSON or shipping a `CAP_PLUGIN(...)` macro
+  in a `.m` file.
+- **The on-screen debug overlay is at `top: 200px`** so it doesn't sit
+  under the iPhone's Dynamic Island / notch. `localStorage.cc.debugConsoleHidden=1`
+  hides permanently if needed.
+
+```
+Final state of repo: TWO commits ahead of working IPA, POI icons broken on first launch
+Daily ritual: walk to Sage Days continues, IPA mostly usable but icon situation
+needs another session
+```
