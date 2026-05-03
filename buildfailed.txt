@@ -1,0 +1,52 @@
+  
+Command line invocation:
+    /Applications/Xcode_15.4.app/Contents/Developer/usr/bin/xcodebuild -workspace App.xcworkspace -scheme App -sdk iphoneos -configuration Release -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= build
+User defaults from command line:
+    IDEDerivedDataPathOverride = /Users/runner/work/self-hosted-creature-collect/self-hosted-creature-collect/ios/App/build
+    IDEPackageSupportUseBuiltinSCM = YES
+Build settings from command line:
+    CODE_SIGN_IDENTITY = 
+    CODE_SIGNING_ALLOWED = NO
+    CODE_SIGNING_REQUIRED = NO
+    SDKROOT = iphoneos17.5
+--- xcodebuild: WARNING: Using the first of multiple matching destinations:
+{ platform:iOS, id:dvtdevice-DVTiPhonePlaceholder-iphoneos:placeholder, name:Any iOS Device }
+{ platform:macOS, arch:arm64, variant:Designed for [iPad,iPhone], id:0000FE00-DF03711ECBB768A2, name:My Mac }
+{ platform:iOS Simulator, id:dvtdevice-DVTiOSDeviceSimulatorPlaceholder-iphonesimulator:placeholder, name:Any iOS Simulator Device }
+{ platform:visionOS Simulator, variant:Designed for [iPad,iPhone], id:3C7ECF0D-5702-4C8E-8810-A24B95D3D276, OS:1.2, name:Apple Vision Pro }
+{ platform:visionOS Simulator, variant:Designed for [iPad,iPhone], id:1B02E9CC-BB07-4409-BF26-06D9893B2923, OS:2.1, name:Apple Vision Pro }
+{ platform:visionOS Simulator, variant:Designed for [iPad,iPhone], id:2D1C9910-9E2B-455B-95BE-BD4DF048B8D0, OS:2.2, name:Apple Vision Pro }
+{ platform:iOS Simulator, id:BCAE16D3-D72C-4414-BDAF-80145DC0BACE, OS:17.0.1, name:iPad (10th generation) }
+{ platform:iOS Simulator, id:BCAE16D3-D72C-4414-BDAF-80145DC0BACE, OS:17.0.1, name:iPad (10th generation) }
+{ platform:iOS Simulator, id:7FFD76FE-2A47-4218-AD81-FA9DCE4FA042, OS:17.2, name:iPad (10th generation) }
+{ platform:iOS Simulator, id:7FFD76FE-2A47-4218-AD81-FA9DCE4FA042, OS:17.2, name:iPad (10th generation) }
+{ platform:iOS Simulator, id:304E58F0-C041-445D-9A01-80F7DD7EFBEC, OS:17.4, name:iPad (10th generation) }
+{ platform:iOS Simulator, id:304E58F0-C041-445D-9A01-80F7DD7EFBEC, OS:17.4, name:iPad (10th generation) }
+{ platform:iOS Simulator, id:DB2F2970-A594-4D85-887A-EDD8A5E927A8, OS:17.5, name:iPad (10th generation) }
+{ platform:iOS Simulator, id:DB2F2970-A594-4D85-887A-EDD8A5E927A8, OS:17.5, name:iPad (10th generation) }
+{ platform:iOS Simulator, id:BE3838F9-F4EC-488F-8F7A-7863023E7A6E, OS:18.1, name:iPad (10th generation) }
+{ platform:iOS Simulator, id:BE3838F9-F4EC-488F-8F7A-7863023E7A6E, OS:18.1, name:iPad (10th generation) }
+{ platform:iOS Simulator, id:1C33D425-1763-4398-9E9E-13C99886FB45, OS:18.2, name:iPad (10th generation) }
+{ platform:iOS Simulator, id:1C33D425-1763-4398-9E9E-13C99886FB45, OS:18.2, name:iPad (10th generation) }
+{ platform:iOS Simulator, id:A4C4C60C-2199-4BF9-B129-BCB7CCF25B51, OS:17.0.1, name:iPad Air (5th generation) }
+{ platform:iOS Simulator, id:A4C4C60C-2199-4BF9-B129-BCB7CCF25B51, OS:17.0.1, name:iPad Air (5th generation) }
+{ platform:iOS Simulator, id:A9B37A50-451F-44FC-B9F1-1C4E6955531D, OS:17.2, name:iPad Air (5th generation) }
+{ platform:iOS Simulator, id:A9B37A50-451F-44FC-B9F1-1C4E6955531D, OS:17.2, name:iPad Air (5th generation) }
+{ platform:iOS Simulator, id:AE499924-F674-48FB-AA20-F1DBEEF0DFCF, OS:17.4, name:iPad Air (5th generation) }
+{ platform:iOS Simulator, id:AE499924-F674-48FB-AA20-F1DBEEF0DFCF, OS:17.4, name:iPad Air (5th generation) }
+{ platform:iOS Simulator, id:0256F410-5F95-4B53-9557-AAFB18FC500E, OS:17.4, name:iPad Air 11-inch (M2) }
+    @objc private(set) var liveDir: URL?
+                           ^
+LinkStoryboards (in target 'App' from project 'App')
+    cd /Users/runner/work/self-hosted-creature-collect/self-hosted-creature-collect/ios/App
+    /Applications/Xcode_15.4.app/Contents/Developer/usr/bin/ibtool --errors --warnings --notices --module App --target-device iphone --target-device ipad --minimum-deployment-target 13.0 --output-format human-readable-text --link /Users/runner/work/self-hosted-creature-collect/self-hosted-creature-collect/ios/App/build/Build/Products/Release-iphoneos/App.app /Users/runner/work/self-hosted-creature-collect/self-hosted-creature-collect/ios/App/build/Build/Intermediates.noindex/App.build/Release-iphoneos/App.build/Base.lproj/LaunchScreen.storyboardc /Users/runner/work/self-hosted-creature-collect/self-hosted-creature-collect/ios/App/build/Build/Intermediates.noindex/App.build/Release-iphoneos/App.build/Base.lproj/Main.storyboardc
+ProcessInfoPlistFile /Users/runner/work/self-hosted-creature-collect/self-hosted-creature-collect/ios/App/build/Build/Products/Release-iphoneos/App.app/Info.plist /Users/runner/work/self-hosted-creature-collect/self-hosted-creature-collect/ios/App/App/Info.plist (in target 'App' from project 'App')
+    cd /Users/runner/work/self-hosted-creature-collect/self-hosted-creature-collect/ios/App
+    builtin-infoPlistUtility /Users/runner/work/self-hosted-creature-collect/self-hosted-creature-collect/ios/App/App/Info.plist -producttype com.apple.product-type.application -genpkginfo /Users/runner/work/self-hosted-creature-collect/self-hosted-creature-collect/ios/App/build/Build/Products/Release-iphoneos/App.app/PkgInfo -expandbuildsettings -format binary -platform iphoneos -additionalcontentfile /Users/runner/work/self-hosted-creature-collect/self-hosted-creature-collect/ios/App/build/Build/Intermediates.noindex/App.build/Release-iphoneos/App.build/Base.lproj/LaunchScreen-SBPartialInfo.plist -additionalcontentfile /Users/runner/work/self-hosted-creature-collect/self-hosted-creature-collect/ios/App/build/Build/Intermediates.noindex/App.build/Release-iphoneos/App.build/Base.lproj/Main-SBPartialInfo.plist -additionalcontentfile /Users/runner/work/self-hosted-creature-collect/self-hosted-creature-collect/ios/App/build/Build/Intermediates.noindex/App.build/Release-iphoneos/App.build/assetcatalog_generated_i
+** BUILD FAILED **
+The following build commands failed:
+	CompileSwift normal arm64 (in target 'App' from project 'App')
+	SwiftCompile normal arm64 Compiling\ AppDelegate.swift,\ LocalServer.swift,\ AppBridgeViewController.swift,\ BundleAccessPlugin.swift,\ GeneratedAssetSymbols.swift /Users/runner/work/self-hosted-creature-collect/self-hosted-creature-collect/ios/App/App/AppDelegate.swift /Users/runner/work/self-hosted-creature-collect/self-hosted-creature-collect/ios/App/App/LocalServer.swift /Users/runner/work/self-hosted-creature-collect/self-hosted-creature-collect/ios/App/App/AppBridgeViewController.swift /Users/runner/work/self-hosted-creature-collect/self-hosted-creature-collect/ios/App/App/BundleAccessPlugin.swift /Users/runner/work/self-hosted-creature-collect/self-hosted-creature-collect/ios/App/build/Build/Intermediates.noindex/App.build/Release-iphoneos/App.build/DerivedSources/GeneratedAssetSymbols.swift (in target 'App' from project 'App')
+(2 failures)
+warning: Run script build phase '[CP] Embed Pods Frameworks' will be run during every build because it does not specify any outputs. To address this warning, either add output dependencies to the script phase, or configure it to run in every build by unchecking "Based on dependency analysis" in the script phase. (in target 'App' from project 'App')
+Error: Process completed with exit code 65.
