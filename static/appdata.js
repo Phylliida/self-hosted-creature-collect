@@ -229,40 +229,80 @@
     const onProgress = opts.onProgress || (() => {});
     const signal = opts.signal;
     const headers = { 'X-Download': '1' };
+    // Track per-stage failure counts so callers (the on-screen debug
+    // overlay) can see WHICH stage is failing when icons don't land in
+    // IDB. Silent catch was masking the actual failure mode.
+    const fail = { listFetch: null, listJson: null, svgFetch: 0, svgFetchHttp: 0,
+                   rasterize: 0, idbPut: 0, firstRasterErr: null, firstPutErr: null,
+                   firstSvgStatus: null, firstSvgUrl: null };
     let listResp;
     try {
       listResp = await fetch(`${BUNDLED_BASE}/icons-list.json`, { headers });
-    } catch { return { loaded: 0, total: 0, cancelled: false }; }
-    if (!listResp.ok) return { loaded: 0, total: 0, cancelled: false };
-    const { files = [] } = await listResp.json();
+    } catch (e) {
+      fail.listFetch = (e && e.message) || String(e);
+      window._iconDownloadFail = fail;
+      return { loaded: 0, total: 0, cancelled: false, fail };
+    }
+    if (!listResp.ok) {
+      fail.listFetch = `HTTP ${listResp.status}`;
+      window._iconDownloadFail = fail;
+      return { loaded: 0, total: 0, cancelled: false, fail };
+    }
+    let files = [];
+    try {
+      ({ files = [] } = await listResp.json());
+    } catch (e) {
+      fail.listJson = (e && e.message) || String(e);
+      window._iconDownloadFail = fail;
+      return { loaded: 0, total: 0, cancelled: false, fail };
+    }
     const names = files.map((f) => f.replace(/\.svg$/, ''));
     const have = new Set(await iconKeys());
     let loaded = have.size;
     const total = names.length;
     onProgress({ loaded, total });
     for (const name of names) {
-      if (signal && signal.aborted) return { loaded, total, cancelled: true };
+      if (signal && signal.aborted) {
+        window._iconDownloadFail = fail;
+        return { loaded, total, cancelled: true, fail };
+      }
       if (have.has(name)) continue;
+      let r;
+      const svgUrl = `${BUNDLED_BASE}/icons/${encodeURIComponent(name)}.svg`;
       try {
-        const r = await fetch(`${BUNDLED_BASE}/icons/${encodeURIComponent(name)}.svg`, { headers });
-        if (!r.ok) continue;
-        const svg = await r.text();
-        // Rasterize NOW (once, during download) instead of every page
-        // load — this is the whole point of the v2 schema bump.
-        // ~5-15ms per icon × ~150 icons = ~1-2 extra seconds added to
-        // the one-time download in exchange for ~500-1500ms faster
-        // every subsequent startup.
-        const ras = await _rasterizeSvg(svg);
-        if (!ras) continue;
-        await iconPut(name, _serializeIcon(ras));
-        have.add(name);
-        loaded++;
-        if (loaded % 5 === 0) onProgress({ loaded, total });
-      } catch { /* keep going */ }
+        r = await fetch(svgUrl, { headers });
+      } catch { fail.svgFetch++; continue; }
+      if (!r.ok) {
+        fail.svgFetchHttp++;
+        if (fail.firstSvgStatus == null) {
+          fail.firstSvgStatus = r.status;
+          fail.firstSvgUrl = svgUrl;
+        }
+        continue;
+      }
+      const svg = await r.text();
+      let ras;
+      try { ras = await _rasterizeSvg(svg); }
+      catch (e) {
+        fail.rasterize++;
+        if (!fail.firstRasterErr) fail.firstRasterErr = (e && e.message) || String(e);
+        continue;
+      }
+      if (!ras) { fail.rasterize++; continue; }
+      try { await iconPut(name, _serializeIcon(ras)); }
+      catch (e) {
+        fail.idbPut++;
+        if (!fail.firstPutErr) fail.firstPutErr = (e && e.message) || String(e);
+        continue;
+      }
+      have.add(name);
+      loaded++;
+      if (loaded % 5 === 0) onProgress({ loaded, total });
     }
     _iconNamesCache = null;  // force re-read on next iconNames()
     onProgress({ loaded, total });
-    return { loaded, total, cancelled: false };
+    window._iconDownloadFail = fail;
+    return { loaded, total, cancelled: false, fail };
   }
 
   // --- Fonts ---
