@@ -535,22 +535,35 @@ def bundle_base_map_tiles() -> int:
     are the same tiles the runtime "Download App Data" button
     prefetches via the SW; bundling them drops that step.
 
-    The tile_data column in mbtiles is already gzipped (matches what
-    /tiles serves with Content-Encoding: gzip), so the bundled .pbf
-    files can be a drop-in replacement — assuming the serving layer
-    sets the same Content-Encoding header, or the URL convention is
-    "the file IS gzipped" (which Capacitor's local server can do).
+    The tile_data column in mbtiles is gzipped on disk. Capacitor's
+    WKURLSchemeHandler serves bundled files as raw bytes without
+    setting `Content-Encoding: gzip`, so MapLibre would receive
+    gzip bytes and fail to parse. We decompress at build time so the
+    bundled .pbf is plain protobuf — works the same whether served
+    by Flask (which now also returns raw, see run.py) or Capacitor.
+    The size hit is ~3x larger on disk but tiles are small enough
+    (~5–15 KB each) that the total stays manageable.
 
     Multiple .mbtiles files may overlap (per-region downloads). For
-    each (z, x, y) we keep the LARGEST tile, matching the existing
-    /tiles selection rule in run.py.
+    each (z, x, y) we keep the LARGEST raw-data tile.
     Returns the number of tiles written."""
     mbtiles_paths = sorted(DATA_DIR.glob("*.mbtiles"))
     if not mbtiles_paths:
         print(f"  ⚠ no .mbtiles files in {DATA_DIR}, skipping base-map tiles")
         return 0
 
-    # (z, x, y) → biggest tile_data seen across all mbtiles.
+    import gzip as _gzip
+    def _decompress(data: bytes) -> bytes:
+        # mbtiles tiles can be gzip, raw protobuf, or other encodings.
+        # Detect gzip by magic bytes (1f 8b) and decompress; otherwise
+        # pass through unchanged.
+        if len(data) >= 2 and data[0] == 0x1f and data[1] == 0x8b:
+            try:
+                return _gzip.decompress(data)
+            except OSError:
+                return data
+        return data
+
     best: dict[tuple[int, int, int], bytes] = {}
     for path in mbtiles_paths:
         with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
@@ -560,11 +573,11 @@ def bundle_base_map_tiles() -> int:
                 (BASE_MAP_MAX_ZOOM,),
             )
             for z, x, y_tms, data in cur:
-                # mbtiles stores Y in TMS order; the URL uses XYZ.
                 y = (1 << z) - 1 - y_tms
                 key = (z, x, y)
-                if key not in best or len(data) > len(best[key]):
-                    best[key] = bytes(data)
+                raw = _decompress(bytes(data))
+                if key not in best or len(raw) > len(best[key]):
+                    best[key] = raw
 
     out_root = OUT_DIR / "tiles"
     for (z, x, y), data in best.items():

@@ -2662,15 +2662,26 @@
     var r = e.reason || {};
     add('promise', r.message || String(r), r.stack);
   });
+  // Noise filters: messages we expect during normal use that
+  // shouldn't paint the on-screen overlay. Still passed through to
+  // the real console for dev-tools inspection.
+  var SUPPRESS = [
+    /^Load failed\b/,         // Safari <img> failed to load (we self-heal)
+    /^TypeError: Load failed/,
+  ];
   var origErr = console.error.bind(console);
   console.error = function () {
     var args = Array.prototype.slice.call(arguments);
-    add('console', args.map(function (a) {
+    var text = args.map(function (a) {
       if (a && a.message) return a.message;
       try { return typeof a === 'string' ? a : JSON.stringify(a); }
       catch { return String(a); }
-    }).join(' '));
+    }).join(' ');
     origErr.apply(console, args);
+    for (var i = 0; i < SUPPRESS.length; i++) {
+      if (SUPPRESS[i].test(text)) return;
+    }
+    add('console', text);
   };
   // Service worker registration is awaited inside an async IIFE further
   // below; if it rejects, unhandledrejection above will catch it. We
@@ -9785,6 +9796,9 @@ function fmtDate(ts) {
   async function checkAppDataPresent() {
     if (!appDataMissingEl || !window.AppData) return;
     if (!localStorage.getItem('cc.welcomeSeen')) return;  // welcome handles it
+    // Capacitor IPA: everything is bundled, IDB starts empty and
+    // populates lazily on render — never show the missing banner.
+    if (window.Capacitor) { appDataMissingEl.classList.remove('show'); return; }
     try {
       const s = await window.AppData.getDownloadStatus();
       if (s.icons === 0 || s.fonts === 0) appDataMissingEl.classList.add('show');
@@ -9810,6 +9824,17 @@ function fmtDate(ts) {
   // download (fonts + icons + low-zoom tiles + sprites), then asks
   // the user to save offline tiles for their area. Set cc.welcomeSeen
   // once both steps complete so we don't block subsequent visits.
+  //
+  // Capacitor IPA bypass: the bundle ships with everything pre-baked
+  // (sprites, fonts, icons, base-map tiles, all metadata), so there's
+  // nothing to download. Stamp every progress flag and skip straight
+  // to the seen-state.
+  if (window.Capacitor) {
+    localStorage.setItem('cc.fontsDownloaded', '1');
+    localStorage.setItem('cc.iconsDownloaded', '1');
+    localStorage.setItem('cc.baseMapDownloaded', '1');
+    localStorage.setItem('cc.welcomeSeen', '1');
+  }
   const welcomeEl = document.getElementById('welcome');
   const welcomeStart = document.getElementById('welcomeStart');
   const welcomeDone = document.getElementById('welcomeDone');
