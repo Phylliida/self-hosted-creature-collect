@@ -3093,55 +3093,53 @@
   // manifest, icons, fonts, low-zoom tiles. Read by sprites.js,
   // species.js, and appdata.js when constructing fetch URLs.
   //
-  // Default '/bundled-data' is the same-origin Flask route. To host
-  // the bundle on a CDN (so the Flask backend doesn't need
-  // data/BundledData/ on disk), point this at a CDN URL — e.g.:
-  //   window.CC_BUNDLED_DATA_BASE =
-  //     'https://cdn.jsdelivr.net/gh/USER/REPO@main/data/BundledData';
-  // jsdelivr (and raw.githubusercontent.com) both send CORS headers
-  // for public repos, so the cross-origin fetch works without changes.
+  // Default '/bundled-data' is the same-origin route. On the Flask
+  // backend that's `@app.route("/bundled-data/...")`. In the
+  // Capacitor IPA the page is served by an in-app HTTP server (see
+  // AppBridgeViewController.swift / LocalServer.swift) that reads
+  // from the IPA's bundled `App.app/public/` folder, so the same
+  // relative path resolves to local files with no CORS or scheme
+  // gymnastics. To host the bundle on a CDN, override this at runtime
+  // — e.g. `window.CC_BUNDLED_DATA_BASE = 'https://cdn.../...';`.
   // Trailing slash is stripped at use-site.
   window.CC_BUNDLED_DATA_BASE = '/bundled-data';
 
-  // Capacitor (iOS/Android wrapper) detection. The page itself is
-  // loaded from the live server (capacitor.config.json server.url =
-  // poke.phylliidaassets.org) so SW registration works (https origin
-  // satisfies Apple's "must be HTTP/HTTPS" gate) and updates ship
-  // by refreshing the page — no IPA rebuild needed.
+  // Capacitor (iOS/Android wrapper) detection. The page is served
+  // from an in-app HTTP server (LocalServer.swift) on
+  // http://localhost:<random-port>/. Apple treats localhost as
+  // a potentially-trustworthy origin so Service Workers register
+  // cleanly. Bundled assets are same-origin (the same HTTP server
+  // serves them from App.app/public/), so plain `/bundled-data/X`
+  // relative paths Just Work — no scheme rewrites, no CORS hacks.
   //
-  // What's bundled in the IPA: sprites + fonts + icons + low-zoom
-  // tiles + JSON metadata. Those live in dist/bundled-data/ inside
-  // the IPA's webDir, served by Capacitor's WKURLSchemeHandler at
-  // capacitor://localhost/bundled-data/... — cross-origin to the
-  // page, but Capacitor's URL handler sets Access-Control-Allow-
-  // Origin: * (we patch the framework in the workflow if it doesn't
-  // by default) so cross-origin fetches succeed.
-  //
-  // Backend endpoints (/save, /load, /poi, /walk-graph, etc.) are
-  // same-origin since the page lives on poke.phylliidaassets.org —
-  // no fetch interceptor needed.
+  // CC_API_BASE points at the live Flask backend so endpoints like
+  // /save, /load, /poi, /walk-graph (which DON'T live in the bundle)
+  // can be reached via cross-origin fetch. Flask's `_cors_for_capacitor`
+  // hook in run.py allows the http://localhost origin.
   if (window.Capacitor) {
     window.CC_API_BASE = 'https://poke.phylliidaassets.org';
-    // CC_BUNDLED_DATA_BASE is pre-set by a WKUserScript injected by
-    // our patched Capacitor framework (see ios-build.yml) — it points
-    // at a `_capacitor_file_/<bundle-path>/bundled-data` URL that the
-    // Capacitor URL handler will actually serve cross-origin to this
-    // server.url-loaded page. Don't clobber it; only fall back to the
-    // naive value if the patch wasn't applied (lets us notice the
-    // failure as Load failed in the debug overlay rather than mystery
-    // empty fetches).
-    const _bundlePresetBy = window.CC_BUNDLED_DATA_BASE
-      ? 'native (WKUserScript)' : 'fallback (patch missed?)';
-    if (!window.CC_BUNDLED_DATA_BASE) {
-      window.CC_BUNDLED_DATA_BASE = 'capacitor://localhost/bundled-data';
-    }
-    console.error(`[CC_BUNDLED_DATA_BASE ${_bundlePresetBy}] ${window.CC_BUNDLED_DATA_BASE}`);
+
+    // Cross-origin fetch interceptor for backend endpoints. Anything
+    // that isn't bundled and isn't the local app shell gets routed
+    // to the live server. Local prefixes pass through unchanged.
+    const LOCAL_PREFIXES = ['/static/', '/bundled-data/', '/sw.js',
+                            '/icons/', '/fonts/', '/manifest', '/tiles/'];
+    const _origFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      const url = typeof input === 'string' ? input
+                : (input && input.url) ? input.url : '';
+      if (url && url[0] === '/' && url[1] !== '/'
+          && !LOCAL_PREFIXES.some((p) => url.startsWith(p))) {
+        const rewritten = window.CC_API_BASE + url;
+        if (typeof input === 'string') return _origFetch(rewritten, init);
+        return _origFetch(new Request(rewritten, input), init);
+      }
+      return _origFetch(input, init);
+    };
 
     // Marker class used by CSS to hide the "↓ app data" download UI
     // (Settings row + missing-data banner). Everything's bundled in
-    // the IPA — there's nothing to download. JS bypasses for the
-    // welcome card and missing-banner check live elsewhere; the
-    // class handles the visual surface.
+    // the IPA — there's nothing to download.
     document.documentElement.classList.add('cc-bundled');
 
     // Geolocation bridge: WKWebView's built-in navigator.geolocation
@@ -3732,55 +3730,15 @@ function fmtDate(ts) {
     // wide bar that expands into the visible area.
     attributionControl: { compact: true },
     // Sync hook — MapLibre calls this for every glyph/tile fetch.
-    //
-    // In Capacitor mode (page from server, data bundled in IPA): font
-    // pbfs and base-map tiles are routed to capacitor://localhost/
-    // bundled-data/... so they come straight from the IPA's bundle
-    // instead of the network.
-    //
-    // In web mode: fonts are served by IDB blob URLs (preloaded by
-    // AppData.preloadFontBlobUrls). Falls through to the original URL
-    // when no blob URL is cached; the SW handles tile caching.
+    // Web mode: prefer IDB-cached font blob URLs (preloaded by
+    // AppData.preloadFontBlobUrls) to skip an HTTP roundtrip per
+    // range. Capacitor mode: skip IDB entirely; LocalServer serves
+    // /fonts/X same-origin from the bundle, the SW caches it.
     transformRequest: (url, resourceType) => {
-      const bundle = window.CC_BUNDLED_DATA_BASE;
-      const inCapacitor = !!window.Capacitor;
-      // One-shot logging — print the FIRST input/output of each
-      // routed-via-bundle category so we can inspect actual URLs in
-      // the debug overlay without flooding it.
-      const _logOnce = (cat, src, dst) => {
-        window._mlTransformLogged = window._mlTransformLogged || {};
-        if (window._mlTransformLogged[cat]) return;
-        window._mlTransformLogged[cat] = true;
-        console.error(`[map.transformRequest ${cat}]\n  in : ${src}\n  out: ${dst}`);
-      };
-      // Fonts: in Capacitor route /fonts/X to bundled-data/fonts/X
-      // (no IDB needed — bundle has them). Otherwise look up the
-      // IDB-backed blob URL.
-      if (resourceType === 'Glyphs' || /\/fonts\/[^?#]+\.pbf/.test(url)) {
-        if (inCapacitor && bundle) {
-          const m = url.match(/\/fonts\/([^?#]+)/);
-          if (m) {
-            const out = `${bundle}/fonts/${m[1]}`;
-            _logOnce('font', url, out);
-            return { url: out };
-          }
-        }
-        if (window.AppData) {
-          const blobUrl = window.AppData.fontBlobUrlFor(url);
-          if (blobUrl) return { url: blobUrl };
-        }
-      }
-      // Tiles: route only z0..z5 ('base' source URLs) to bundled
-      // data in Capacitor. Higher zooms stay on the server origin
-      // so the SW can fetch + cache them on demand.
-      if (inCapacitor && bundle && /\/tiles\/(\d+)\//.test(url)) {
-        const z = parseInt(url.match(/\/tiles\/(\d+)\//)[1], 10);
-        if (z <= 5) {
-          const tail = url.replace(/^.*\/tiles\//, '/tiles/');
-          const out = `${bundle}${tail}`;
-          _logOnce('tile', url, out);
-          return { url: out };
-        }
+      if ((resourceType === 'Glyphs' || /\/fonts\/[^?#]+\.pbf/.test(url))
+          && !window.Capacitor && window.AppData) {
+        const blobUrl = window.AppData.fontBlobUrlFor(url);
+        if (blobUrl) return { url: blobUrl };
       }
       return { url };
     },

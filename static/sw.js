@@ -38,6 +38,20 @@ self.addEventListener('activate', (e) => {
   e.waitUntil(self.clients.claim());
 });
 
+// Capacitor IPA = page served by LocalServer.swift on
+// http://localhost:<port>. In that mode, bundled assets (tiles
+// z0..z5, fonts, icons, sprites, etc.) live in the IPA's webDir
+// and are served by LocalServer when MapLibre / <img> fetches the
+// path — so the SW must fall through to network on cache miss
+// (the "network" goes to LocalServer, instantaneous, no Wi-Fi).
+// In the web PWA the SW returns 204 on miss to honour the
+// no-automatic-network-requests rule (user explicitly downloads
+// via the welcome flow).
+const IS_CAPACITOR = self.location.hostname === 'localhost';
+function _missResponse(req) {
+  return IS_CAPACITOR ? fetch(req) : new Response(null, { status: 204 });
+}
+
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (url.origin === location.origin && url.pathname.startsWith('/tiles/')) {
@@ -45,7 +59,7 @@ self.addEventListener('fetch', (e) => {
     e.respondWith(
       caches.open(TILES_CACHE)
         .then(c => c.match(e.request))
-        .then(hit => hit || new Response(null, { status: 204 }))
+        .then(hit => hit || _missResponse(e.request))
     );
     return;
   }
@@ -87,7 +101,7 @@ self.addEventListener('fetch', (e) => {
     e.respondWith(
       caches.open(APP_CACHE)
         .then(c => c.match(e.request))
-        .then(hit => hit || new Response(null, { status: 204 }))
+        .then(hit => hit || _missResponse(e.request))
     );
     return;
   }
