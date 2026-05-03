@@ -357,17 +357,35 @@
   // Load the sprite-credits bundle into memory from IDB. Single
   // ~580KB JSON object keyed `${a}-${b}` → { variantSuffix: artist }.
   // Concurrent callers share one in-flight read.
+  //
+  // Capacitor (IPA) bonus: same pattern as _ensureSplitNames —
+  // bulkDownload is the only path that seeds IDB, but the IPA hides
+  // the download UI, so on a fresh install IDB stays empty and
+  // creature credits never appear. Falls through to the bundled
+  // credits.json (served locally by LocalServer, no network) when
+  // IDB is empty. Web mode leaves IDB-only so the zero-data rule
+  // holds — credits are nice-to-have, not load-bearing for render.
   function _ensureCreditsBundle() {
     if (_creditsBundleCache) return Promise.resolve(_creditsBundleCache);
     if (_creditsBundlePromise) return _creditsBundlePromise;
     _creditsBundlePromise = (async () => {
       try {
         const stored = await varGet(CREDITS_BUNDLE_KEY);
-        _creditsBundleCache = stored || {};
+        _creditsBundleCache = stored || null;
       } catch (e) {
         _logSpriteError('ensureCreditsBundle/get', e);
-        _creditsBundleCache = {};
+        _creditsBundleCache = null;
       }
+      if (!_creditsBundleCache && typeof window !== 'undefined' && window.Capacitor) {
+        try {
+          await _downloadCreditsBundle();
+        } catch (e) {
+          _logSpriteError('ensureCreditsBundle/bundledFallback', e);
+        }
+      }
+      // Normalize to {} so sync consumers can `.${a}-${b}` without
+      // null-checking the cache itself.
+      if (!_creditsBundleCache) _creditsBundleCache = {};
       return _creditsBundleCache;
     })();
     _creditsBundlePromise.finally(() => { _creditsBundlePromise = null; });
@@ -391,6 +409,14 @@
 
   // Load SPLIT_NAMES (national-dex-indexed [prefix, suffix] pairs)
   // from IDB. Concurrent callers share one in-flight read.
+  //
+  // Capacitor (IPA) bonus: if IDB is empty, fall through to the
+  // bundled split-names.json served by LocalServer. The IPA hides the
+  // "Download app data" UI entirely, so without this fallback the
+  // table is never populated and every fusion renders as "A × B".
+  // The fetch is local (no network) so the zero-data rule isn't
+  // violated. On the web build we DON'T auto-fetch — the user must
+  // run an explicit bulkDownload to seed IDB, preserving the rule.
   function _ensureSplitNames() {
     if (_splitNamesCache) return Promise.resolve(_splitNamesCache);
     if (_splitNamesPromise) return _splitNamesPromise;
@@ -401,6 +427,13 @@
       } catch (e) {
         _logSpriteError('ensureSplitNames/get', e);
         _splitNamesCache = null;
+      }
+      if (!_splitNamesCache && typeof window !== 'undefined' && window.Capacitor) {
+        try {
+          await _downloadSplitNames();
+        } catch (e) {
+          _logSpriteError('ensureSplitNames/bundledFallback', e);
+        }
       }
       return _splitNamesCache;
     })();
@@ -693,7 +726,10 @@
   //   with blob === null for entries that aren't in IDB. Does NOT
   //   handle the legacy-padded-PNG self-heal path (rare, and the
   //   per-call getSpriteBlob is still the right place for that).
-  async function getSpriteBlobsBatch(requests) {
+  /// Read-only batched IDB lookup. Returns one `{key, blob}` per
+  /// request; blob is null on miss. Does NOT lazy-crop. The public
+  /// `getSpriteBlobsBatch` wraps this to add lazy-crop fallback.
+  async function _idbBlobsBatch(requests) {
     if (!requests || !requests.length) return [];
     let db;
     try { db = await openDb(); }
@@ -752,6 +788,38 @@
         resolve(results);
       };
     });
+  }
+
+  /// Public batched lookup. Reads everything in one IDB transaction
+  /// (fast path for warm cache), then for any misses falls through to
+  /// the lazy-crop pipeline so sprites that haven't been touched yet
+  /// still get materialized from the bundled sheet. Without this
+  /// fallback, map markers for never-rendered fusions stayed as the
+  /// red placeholder dot until the user tapped one (which goes through
+  /// the single-call `getSpriteBlob` path) — the click would lazy-crop
+  /// + persist to IDB, then the next reload would see it.
+  async function getSpriteBlobsBatch(requests) {
+    const results = await _idbBlobsBatch(requests);
+    // Find misses, run them through the single-call path which already
+    // knows how to fetch the sheet, crop the cell, and write to IDB.
+    // Done in parallel — typical viewport miss-set is small (≤ a few
+    // dozen) and each lazy-crop is a separate transaction anyway.
+    const missJobs = [];
+    for (let i = 0; i < requests.length; i++) {
+      if (results[i] && results[i].blob == null) {
+        const req = requests[i];
+        missJobs.push(
+          getSpriteBlob(req.a, req.b, req.variant)
+            .then((blob) => { if (blob) results[i].blob = blob; })
+            .catch((e) => {
+              _logSpriteError(
+                `getSpriteBlobsBatch/lazyCrop/${req.a}-${req.b}/v${req.variant}`, e);
+            })
+        );
+      }
+    }
+    if (missJobs.length) await Promise.all(missJobs);
+    return results;
   }
 
   function getInflightCount() { return _inflightSpriteReads; }
