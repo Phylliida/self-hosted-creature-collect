@@ -46,12 +46,14 @@ import GCDWebServer
         bundleDir = URL(fileURLWithPath: bundlePath, isDirectory: true)
 
         // Restore any previously-set live dir from prior session.
-        if let saved = UserDefaults.standard.string(forKey: "cc.localServer.liveDir") {
-            let url = URL(fileURLWithPath: saved, isDirectory: true)
-            if FileManager.default.fileExists(atPath: url.path) {
-                liveDir = url
-            }
-        }
+        // Stored value is a path RELATIVE to Library/ (e.g.
+        // "CCLiveUpdates/v-2026_05_03_12_00"). iOS rotates the data
+        // container UUID across some launches (OS updates, restore
+        // from backup) — an absolute path stored at write time would
+        // point into a now-stale container and silently fail the
+        // fileExists check, falling back to bundle-only and making
+        // refreshes appear to "not stick" across app kills.
+        liveDir = resolveSavedLiveDir()
 
         // Single catch-all handler. We use processBlock (sync) rather
         // than asyncProcessBlock since file lookup + GCDWebServerFileResponse
@@ -105,15 +107,86 @@ import GCDWebServer
     }
 
     /// Update the liveDir override and persist for next launch. Pass
-    /// nil to clear.
+    /// nil to clear. `path` is the absolute path the JS side just
+    /// wrote files to; we keep that as the in-memory URL but persist
+    /// only the Library-relative portion so the next launch re-resolves
+    /// against whatever the current data container UUID happens to be.
     @objc func setLiveDir(_ path: String?) {
         if let path = path {
             liveDir = URL(fileURLWithPath: path, isDirectory: true)
-            UserDefaults.standard.set(path, forKey: "cc.localServer.liveDir")
+            if let rel = libraryRelativePath(path) {
+                UserDefaults.standard.set(rel, forKey: "cc.localServer.liveDirRel")
+            } else {
+                NSLog("[LocalServer] setLiveDir: path not under Library/, persistence skipped: \(path)")
+                UserDefaults.standard.removeObject(forKey: "cc.localServer.liveDirRel")
+            }
+            // Drop any stale absolute-path entry from the old scheme.
+            UserDefaults.standard.removeObject(forKey: "cc.localServer.liveDir")
         } else {
             liveDir = nil
+            UserDefaults.standard.removeObject(forKey: "cc.localServer.liveDirRel")
             UserDefaults.standard.removeObject(forKey: "cc.localServer.liveDir")
         }
+    }
+
+    /// Resolve the saved live-dir reference into an absolute URL using
+    /// the *current* Library directory. Returns nil if nothing is
+    /// saved, or the resolved path no longer exists on disk.
+    private func resolveSavedLiveDir() -> URL? {
+        guard let lib = FileManager.default
+            .urls(for: .libraryDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        let defaults = UserDefaults.standard
+
+        // Preferred: relative-path entry written by the current code.
+        if let rel = defaults.string(forKey: "cc.localServer.liveDirRel") {
+            let url = lib.appendingPathComponent(rel, isDirectory: true)
+            if FileManager.default.fileExists(atPath: url.path) {
+                return url
+            }
+            // Stale (deleted manually, or never-existed). Clear it.
+            defaults.removeObject(forKey: "cc.localServer.liveDirRel")
+            return nil
+        }
+
+        // Migration: older builds wrote an absolute path. If the
+        // CCLiveUpdates suffix still exists under the *current*
+        // Library, adopt it and rewrite the entry as relative.
+        if let abs = defaults.string(forKey: "cc.localServer.liveDir") {
+            defaults.removeObject(forKey: "cc.localServer.liveDir")
+            if let rel = extractCCLiveUpdatesSuffix(abs) {
+                let url = lib.appendingPathComponent(rel, isDirectory: true)
+                if FileManager.default.fileExists(atPath: url.path) {
+                    defaults.set(rel, forKey: "cc.localServer.liveDirRel")
+                    return url
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Convert an absolute path into one relative to Library/, or nil
+    /// if it isn't under Library/ at all.
+    private func libraryRelativePath(_ absolute: String) -> String? {
+        guard let lib = FileManager.default
+            .urls(for: .libraryDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        let libPath = lib.standardizedFileURL.path
+        let absStd = URL(fileURLWithPath: absolute).standardizedFileURL.path
+        let prefix = libPath.hasSuffix("/") ? libPath : libPath + "/"
+        guard absStd.hasPrefix(prefix) else { return nil }
+        return String(absStd.dropFirst(prefix.count))
+    }
+
+    /// Migration helper: pull the "CCLiveUpdates/..." suffix out of an
+    /// absolute path that may have been written under a now-stale data
+    /// container UUID. Returns nil if the marker isn't present.
+    private func extractCCLiveUpdatesSuffix(_ absolute: String) -> String? {
+        let marker = "/CCLiveUpdates/"
+        guard let range = absolute.range(of: marker) else { return nil }
+        return String(absolute[range.lowerBound...].dropFirst())  // drop leading /
     }
 
     private func handle(_ req: GCDWebServerRequest) -> GCDWebServerResponse {
