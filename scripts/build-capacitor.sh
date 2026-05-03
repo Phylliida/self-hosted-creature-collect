@@ -65,6 +65,60 @@ cp -R data/BundledData/. "$DIST/bundled-data/"
 [ -d data/BundledData/fonts ] && cp -R data/BundledData/fonts "$DIST/fonts"
 [ -d data/BundledData/tiles ] && cp -R data/BundledData/tiles "$DIST/tiles"
 
+# Stamp tracked JS / HTML files with mtime versions, mirroring what
+# run.py does at serve time. Without this, the bundled index.html has
+# no `window._serverScriptVersions`, the bundled JS files all have
+# literal `SCRIPT_VERSION = 'auto'`, and live-update.js's first-launch
+# check sees `cc.installedVersions = {}` vs `latest = {…real values…}`,
+# concludes everything is stale, downloads everything, and reloads —
+# even when bundled and server are at the same versions. Stamping at
+# build time gives the page real versions to seed from.
+python3 - <<PY
+import json, pathlib, re, time
+DIST = pathlib.Path("$DIST")
+STATIC_SRC = pathlib.Path("static")
+TRACKED_JS = {
+    "creatures.js", "sprites.js", "appdata.js",
+    "species.js", "spawns.js", "trip-planner.js",
+    "live-update.js", "sw.js",
+}
+TRACKED_HTML = {"index.html", "dex.html"}
+ALL_FILES = sorted(TRACKED_JS | TRACKED_HTML)
+SV_RE = re.compile(r"""((?:const|let|var)\s+)SCRIPT_VERSION\s*=\s*['"]([^'"]+)['"]""")
+HEAD_RE = re.compile(r"<head\b[^>]*>", re.IGNORECASE)
+def vfor(p):
+    try: return time.strftime("%Y-%m-%d %H:%M", time.gmtime(p.stat().st_mtime))
+    except OSError: return "unknown"
+versions = {n: vfor(STATIC_SRC / n) for n in ALL_FILES if (STATIC_SRC / n).is_file()}
+versions_json = json.dumps(versions, separators=(",", ":"))
+def stamp_js(text, ver):
+    return SV_RE.sub(lambda m: f"{m.group(1)}SCRIPT_VERSION = '{ver}'", text, count=1)
+def stamp_html(text, name, ver):
+    snippet = (
+        f'<script>window._scriptVersions=window._scriptVersions||{{}};'
+        f'window._scriptVersions["{name}"]="{ver}";'
+        f'window._serverScriptVersions={versions_json};</script>'
+    )
+    m = HEAD_RE.search(text)
+    if not m: return snippet + text
+    return text[:m.end()] + snippet + text[m.end():]
+# Stamp every dist copy of every tracked file. Both the root-level
+# entry copies (dist/index.html, dist/sw.js) and the /static/ duplicates.
+to_stamp = []
+for n in ALL_FILES:
+    to_stamp.append((DIST / n, n))           # root copy (only if it exists)
+    to_stamp.append((DIST / "static" / n, n)) # /static/ copy
+count = 0
+for path, name in to_stamp:
+    if not path.is_file(): continue
+    text = path.read_text(encoding="utf-8")
+    ver = versions.get(name, "unknown")
+    out = stamp_js(text, ver) if name in TRACKED_JS else stamp_html(text, name, ver)
+    path.write_text(out, encoding="utf-8")
+    count += 1
+print(f"  - stamped {count} file copies with {len(versions)} version entries")
+PY
+
 echo "Built $(du -sh "$DIST" | cut -f1) at $DIST/"
 echo "  - $(find "$DIST/static" -type f 2>/dev/null | wc -l) static files"
 echo "  - $(find "$DIST/bundled-data" -type f 2>/dev/null | wc -l) bundled-data files"
