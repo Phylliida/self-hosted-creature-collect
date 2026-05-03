@@ -41,15 +41,23 @@ self.addEventListener('activate', (e) => {
 // Capacitor IPA = page served by LocalServer.swift on
 // http://localhost:<port>. In that mode, bundled assets (tiles
 // z0..z5, fonts, icons, sprites, etc.) live in the IPA's webDir
-// and are served by LocalServer when MapLibre / <img> fetches the
-// path — so the SW must fall through to network on cache miss
-// (the "network" goes to LocalServer, instantaneous, no Wi-Fi).
-// In the web PWA the SW returns 204 on miss to honour the
-// no-automatic-network-requests rule (user explicitly downloads
-// via the welcome flow).
+// and are served by LocalServer when the SW falls through to
+// network on cache miss. In the web PWA, return 204 on miss to
+// honour the no-automatic-network-requests rule.
 const IS_CAPACITOR = self.location.hostname === 'localhost';
-function _missResponse(req) {
-  return IS_CAPACITOR ? fetch(req) : new Response(null, { status: 204 });
+async function _missResponse(req) {
+  if (!IS_CAPACITOR) return new Response(null, { status: 204 });
+  // Capacitor: try LocalServer (bundled file). Crucially, MapLibre
+  // treats a 404 as "tile FAILED to load" (no parent fallback) but
+  // treats 204 as "tile is intentionally empty" (parent fallback
+  // chain kicks in). We want the latter for missing high-zoom tiles
+  // so the bundled z5 base layer over-zooms into the gap. Translate
+  // any non-200 LocalServer response to 204.
+  try {
+    const res = await fetch(req);
+    if (res.status === 200) return res;
+  } catch { /* network error → treat as miss */ }
+  return new Response(null, { status: 204 });
 }
 
 self.addEventListener('fetch', (e) => {

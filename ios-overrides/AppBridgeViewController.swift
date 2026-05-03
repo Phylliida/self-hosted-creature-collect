@@ -34,5 +34,6 @@ class AppBridgeViewController: CAPBridgeViewController {
     override open func capacitorDidLoad() {
         super.capacitorDidLoad()
         bridge?.registerPluginInstance(BundleAccessPlugin())
+        bridge?.registerPluginInstance(MemoryProbePlugin())
     }
 }
