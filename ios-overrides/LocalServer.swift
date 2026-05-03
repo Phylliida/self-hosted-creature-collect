@@ -26,7 +26,11 @@ import GCDWebServer
 
     private let server = GCDWebServer()
     private var bundleDir: URL?
-    @objc private(set) var liveDir: URL?
+    // Read-public, write-private: BundleAccessPlugin reads `.path`
+    // off this for getLiveDir() but mutation flows through setLiveDir
+    // so the UserDefaults persistence stays in one place. No @objc —
+    // private(set) can't coexist with @objc property exposure.
+    private(set) var liveDir: URL?
 
     /// Start the server. Idempotent — calling start() twice returns
     /// the same URL. Throws if the bundled `public/` folder can't be
