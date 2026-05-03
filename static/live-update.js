@@ -18,6 +18,12 @@
 // available. Errors are surfaced via console.error → debug overlay
 // but never throw — startup must continue regardless of update state.
 
+// Marker logged BEFORE any logic runs so we can tell if the script
+// is even being parsed/executed. If you don't see this in the
+// debug overlay on launch, the file isn't being served by
+// LocalServer (or isn't in any bundled version of webDir).
+console.error('[live-update] script-tag executing');
+
 (function (global) {
   'use strict';
 
@@ -31,8 +37,11 @@
 
   if (!global.Capacitor) return;
 
-  function log(msg) { console.log('[live-update]', msg); }
-  function warn(msg, err) { console.warn('[live-update]', msg, err || ''); }
+  // console.error so the on-screen debug overlay surfaces these.
+  // Phase 3 is new + finicky enough that silent operation isn't
+  // useful — better to see the flow on every launch.
+  function log(msg) { console.error('[live-update]', msg); }
+  function warn(msg, err) { console.error('[live-update]', msg, err || ''); }
 
   /// Returns { Filesystem, BundleAccess } or null if either is missing.
   function plugins() {
@@ -89,6 +98,7 @@
   }
 
   async function checkForUpdates() {
+    log('check started');
     const p = plugins();
     if (!p) { warn('plugins not available; skipping'); return; }
     if (recentlyFailed()) { log('recent failure; skipping check'); return; }
