@@ -3016,6 +3016,17 @@
         <button id="spritesClearBtn" type="button" style="padding: 6px 10px; font-size: 13px; margin-left: 4px;">clear sprites</button>
       </span>
     </div>
+    <!-- TEMP: one-shot migration for users whose captures were saved as
+         autogen back when the bundled cells.json fallback wasn't wired
+         up. Promotes any capture with variant=null to variant=0 (the
+         artist's primary) when the cell actually has custom variants,
+         and marks that variant as seen so the pokédex reflects it.
+         Idempotent. Remove once the user has clicked once. -->
+    <div class="row" id="remarkCustomArtRow">
+      <label>Re-mark custom art (one-shot)</label>
+      <button id="remarkCustomArtBtn" type="button" style="padding: 6px 10px; font-size: 13px;">run</button>
+    </div>
+    <div id="remarkCustomArtStatus" style="font-size: 11px; color: var(--ui-muted); margin: -4px 0 6px;"></div>
     <div id="appDataStatus" style="font-size: 11px; color: var(--ui-muted); margin: -4px 0 6px;"></div>
     <div id="spritesStatus" style="font-size: 11px; color: var(--ui-muted); margin: -4px 0 6px;"></div>
     <style>
@@ -10362,6 +10373,30 @@ function fmtDate(ts) {
         updateSpritesStatus();
       } catch (e) {
         updateSpritesStatus(`error: ${e && e.message ? e.message : e}`);
+      }
+    });
+  }
+
+  // TEMP: one-shot migration button — see the corresponding HTML
+  // comment in the settings panel above. Idempotent.
+  const remarkCustomArtBtn = document.getElementById('remarkCustomArtBtn');
+  const remarkCustomArtStatus = document.getElementById('remarkCustomArtStatus');
+  if (remarkCustomArtBtn && remarkCustomArtStatus) {
+    remarkCustomArtBtn.addEventListener('click', async () => {
+      if (!window.Creatures || !window.Creatures.remarkAutogenCapturesWithCustomArt) {
+        remarkCustomArtStatus.textContent = 'Creatures module not loaded yet';
+        return;
+      }
+      remarkCustomArtBtn.disabled = true;
+      remarkCustomArtStatus.textContent = 'scanning…';
+      try {
+        const r = await window.Creatures.remarkAutogenCapturesWithCustomArt();
+        remarkCustomArtStatus.textContent =
+          `scanned ${r.scanned} autogen capture(s); promoted ${r.promoted} to custom`;
+      } catch (e) {
+        remarkCustomArtStatus.textContent = `error: ${e && e.message ? e.message : e}`;
+      } finally {
+        remarkCustomArtBtn.disabled = false;
       }
     });
   }
