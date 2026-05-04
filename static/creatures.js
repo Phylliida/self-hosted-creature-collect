@@ -7057,55 +7057,81 @@
   // splits the polyline (don't draw a line connecting "where I left
   // off yesterday" to "where I opened the app this morning").
   const DAYCARE_PATH_BREAK_MS = 60000;
-  let _daycareBubbleEl = null;
+  // MapLibre IControl wrapper for the bubble — this joins the same
+  // bottom-right cluster as the navigation / geolocate / creature-mode
+  // controls (no fragile fixed-position math). After addControl we
+  // reorder our DOM node to the top of the cluster so it sits ABOVE
+  // the geolocate button, per the user's request.
+  let _daycareBubbleCtrl = null;
   // Day key whose path is currently overlaid on the map. Null when
   // the overlay is hidden. Tracked module-side so the `style.load`
   // hook (theme switches reload the entire MapLibre style and drop
   // every custom source/layer) can re-add the polyline transparently.
   let _activeDaycareDayKey = null;
 
+  class _DaycareBubbleControl {
+    onAdd(map) {
+      this._map = map;
+      const container = document.createElement('div');
+      container.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+      container.style.display = 'none';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'cc-daycare-bubble-btn';
+      btn.title = 'Hide route overlay';
+      btn.setAttribute('aria-label', 'Hide route overlay');
+      // Match the visual size of the other maplibregl-ctrl buttons
+      // (29 × 29). The SVG is centered via flex so it lines up with
+      // the navigation/geolocate icons in the same cluster.
+      btn.style.cssText =
+        'display: flex; align-items: center; justify-content: center;'
+        + ' background: transparent; border: none; cursor: pointer;'
+        + ' width: 29px; height: 29px; padding: 0;';
+      btn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18"'
+        + ' stroke="currentColor" stroke-width="2" fill="none"'
+        + ' stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">'
+        + '<rect x="3" y="5" width="18" height="16" rx="2"/>'
+        + '<line x1="16" y1="2" x2="16" y2="6"/>'
+        + '<line x1="8" y1="2" x2="8" y2="6"/>'
+        + '<line x1="3" y1="10" x2="21" y2="10"/>'
+        + '</svg>';
+      btn.addEventListener('click', _clearDaycarePathOverlay);
+      container.appendChild(btn);
+      this._container = container;
+      return container;
+    }
+    onRemove() {
+      if (this._container && this._container.parentNode) {
+        this._container.parentNode.removeChild(this._container);
+      }
+      this._map = null;
+    }
+  }
+
   function _ensureDaycareBubble() {
-    if (_daycareBubbleEl) return _daycareBubbleEl;
-    const el = document.createElement('button');
-    el.id = 'cc-daycare-bubble';
-    el.type = 'button';
-    el.title = 'Hide route overlay';
-    el.setAttribute('aria-label', 'Hide route overlay');
-    el.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20"'
-      + ' stroke="currentColor" stroke-width="2" fill="none"'
-      + ' stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">'
-      + '<rect x="3" y="5" width="18" height="16" rx="2"/>'
-      + '<line x1="16" y1="2" x2="16" y2="6"/>'
-      + '<line x1="8" y1="2" x2="8" y2="6"/>'
-      + '<line x1="3" y1="10" x2="21" y2="10"/>'
-      + '</svg>';
-    // Sit above the GeolocateControl (the "tap to center on me"
-    // button) and the NavigationControl, both of which anchor in
-    // maplibregl's bottom-right cluster (~10–130 px from the bottom
-    // depending on what controls are added). 150 px clears them
-    // with a comfortable visual gap and keeps it within thumb reach.
-    el.style.cssText = [
-      'position: fixed',
-      'bottom: max(150px, calc(env(safe-area-inset-bottom) + 140px))',
-      'right: max(10px, env(safe-area-inset-right))',
-      'z-index: 5',
-      'width: 44px', 'height: 44px',
-      'border-radius: 50%',
-      'background: var(--ui-bg, #fff)',
-      'color: var(--ui-text, #111)',
-      'border: 1px solid var(--ui-border, rgba(0,0,0,0.15))',
-      'box-shadow: 0 2px 6px rgba(0,0,0,0.18)',
-      'display: none',
-      'align-items: center', 'justify-content: center',
-      'cursor: pointer',
-      '-webkit-tap-highlight-color: rgba(0,0,0,0.1)',
-      'touch-action: manipulation',
-      'padding: 0',
-    ].join(';') + ';';
-    el.addEventListener('click', _clearDaycarePathOverlay);
-    document.body.appendChild(el);
-    _daycareBubbleEl = el;
-    return el;
+    if (_daycareBubbleCtrl) return _daycareBubbleCtrl;
+    if (!_installedMap) return null;
+    _daycareBubbleCtrl = new _DaycareBubbleControl();
+    _installedMap.addControl(_daycareBubbleCtrl, 'bottom-right');
+    // MapLibre appends new controls at the BOTTOM of the cluster
+    // (visually closest to the corner). Move our element to the top
+    // of the bottom-right cluster so it sits above the geolocate
+    // (and nav) buttons. One-shot DOM reorder; subsequent show/hide
+    // toggles only flip display so the position sticks.
+    try {
+      const cluster = _installedMap.getContainer()
+        .querySelector('.maplibregl-ctrl-bottom-right');
+      if (cluster && _daycareBubbleCtrl._container && cluster.firstChild) {
+        cluster.insertBefore(_daycareBubbleCtrl._container, cluster.firstChild);
+      }
+    } catch { /* best-effort */ }
+    return _daycareBubbleCtrl;
+  }
+  function _setDaycareBubbleVisible(visible) {
+    const ctrl = _ensureDaycareBubble();
+    if (ctrl && ctrl._container) {
+      ctrl._container.style.display = visible ? '' : 'none';
+    }
   }
 
   // Split a flat array of {lat,lng,t} fixes into per-session line
@@ -7184,7 +7210,7 @@
     // Close the inventory panel so the route is visible, then surface
     // the calendar bubble that lets the user dismiss the overlay.
     hide();
-    _ensureDaycareBubble().style.display = 'flex';
+    _setDaycareBubbleVisible(true);
   }
 
   function _clearDaycarePathOverlay() {
@@ -7194,7 +7220,7 @@
       if (map.getLayer(DAYCARE_LAYER_ID)) map.removeLayer(DAYCARE_LAYER_ID);
       if (map.getSource(DAYCARE_SOURCE_ID)) map.removeSource(DAYCARE_SOURCE_ID);
     }
-    if (_daycareBubbleEl) _daycareBubbleEl.style.display = 'none';
+    _setDaycareBubbleVisible(false);
   }
 
   function install(map) {
