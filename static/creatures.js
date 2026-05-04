@@ -57,6 +57,24 @@
   const TAGS_KEY = 'cc.tags.v1';
   const TAG_MAX_LEN = 8;
   const LAST_SAVE_KEY = 'cc.lastSaveAt';
+
+  // Daycare distance tracker. Per-day "meters travelled" summary
+  // and full GPS path are both persisted to IDB (creature-tracker-v1)
+  // so the data is durable across SW cache evictions, included in
+  // the user's export/import flow, and not bound by the localStorage
+  // size budget. Local date keys (YYYY-MM-DD) so a midnight bucket
+  // flip matches the user's actual day boundary, not UTC. Distances
+  // accumulate ONLY while the app is open and the GPS watch is
+  // delivering fixes — backgrounding/standby produces no data
+  // (geolocation suspends), and we drop segments with large time
+  // gaps so the next foreground fix isn't credited as travel.
+  // Legacy localStorage key for the summary; read once on init for
+  // migration to IDB, then dropped.
+  const DAYCARE_LEGACY_LS_KEY = 'cc.daycareDistance.v1';
+  // GPS-jitter / outlier filters for the distance accumulator.
+  const DAYCARE_DIST_MIN_M     = 3;     // ignore < 3 m segments (jitter floor)
+  const DAYCARE_DIST_MAX_GAP_MS = 60000;// drop segments after a >60 s gap
+  const DAYCARE_DIST_MAX_SPEED  = 50;   // m/s (~180 km/h) — drop teleports
   const SAVE_REMINDER_DAYS = 7;
 
   // Item catalog. Bag is stored as a flat `{ <key>: <count> }` map (same
@@ -1718,6 +1736,7 @@
       #creatureInventory .pokedex-back,
       #creatureInventory .fusion-back,
       #creatureInventory .candy-back,
+      #creatureInventory .daycare-back,
       #creatureInventory .bag-back,
       #creatureInventory .tags-back {
         background: none;
@@ -1766,6 +1785,7 @@
       #creatureInventory .pokedex-back:hover,
       #creatureInventory .fusion-back:hover,
       #creatureInventory .candy-back:hover,
+      #creatureInventory .daycare-back:hover,
       #creatureInventory .bag-back:hover,
       #creatureInventory .tags-back:hover {
         color: var(--ui-accent, #888);
@@ -2128,6 +2148,138 @@
         text-align: center;
         color: var(--ui-muted, #666);
         font-size: 13px;
+      }
+      #creatureInventory .daycare-view { display: none; }
+      #creatureInventory .daycare-view.show { display: flex; flex-direction: column; }
+      #creatureInventory .daycare-today {
+        display: flex; flex-direction: column; align-items: center;
+        padding: 12px 10px 14px;
+        margin: 0 0 10px;
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+        border: 1px solid var(--ui-hairline, rgba(0,0,0,0.08));
+        border-radius: var(--ui-radius, 8px);
+      }
+      #creatureInventory .daycare-today-label {
+        font-size: 11px; color: var(--ui-muted, #666);
+        text-transform: uppercase; letter-spacing: 0.06em;
+      }
+      #creatureInventory .daycare-today-value {
+        font-size: 26px; font-weight: 700;
+        color: var(--ui-text, #111);
+        font-variant-numeric: tabular-nums;
+        margin-top: 2px;
+      }
+      #creatureInventory .daycare-cal-header {
+        display: flex; align-items: center; justify-content: space-between;
+        margin: 4px 0 6px;
+      }
+      #creatureInventory .daycare-cal-title {
+        font-size: 14px; font-weight: 600;
+        color: var(--ui-text, #111);
+      }
+      #creatureInventory .daycare-cal-nav {
+        background: none; border: none;
+        color: var(--ui-text, #111);
+        font-size: 18px; line-height: 1;
+        padding: 4px 10px; cursor: pointer;
+        border-radius: var(--ui-radius, 8px);
+      }
+      #creatureInventory .daycare-cal-nav:hover {
+        background: var(--ui-hover, rgba(0,0,0,0.06));
+      }
+      #creatureInventory .daycare-cal-nav:disabled {
+        opacity: 0.35; cursor: default;
+      }
+      #creatureInventory .daycare-cal-grid {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        gap: 3px;
+      }
+      #creatureInventory .daycare-cal-dow {
+        text-align: center;
+        font-size: 10px;
+        color: var(--ui-muted, #666);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        padding: 2px 0;
+      }
+      #creatureInventory .daycare-cal-cell {
+        position: relative;
+        aspect-ratio: 1 / 1;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        font-size: 11px;
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+        border: 1px solid var(--ui-hairline, rgba(0,0,0,0.08));
+        border-radius: 6px;
+        color: var(--ui-text, #111);
+      }
+      #creatureInventory .daycare-cal-cell.empty {
+        background: transparent;
+        border-color: transparent;
+      }
+      #creatureInventory .daycare-cal-cell.future {
+        opacity: 0.3;
+      }
+      #creatureInventory .daycare-cal-cell.has-data {
+        cursor: pointer;
+      }
+      #creatureInventory .daycare-cal-cell.today {
+        outline: 2px solid var(--ui-accent, #888);
+        outline-offset: -2px;
+      }
+      #creatureInventory .daycare-cal-cell.selected {
+        background: var(--ui-accent, #888);
+        color: var(--ui-bg, #fff);
+      }
+      #creatureInventory .daycare-cal-day {
+        font-weight: 600;
+        font-size: 13px;
+        line-height: 1;
+      }
+      #creatureInventory .daycare-cal-dist {
+        font-size: 9px;
+        margin-top: 2px;
+        font-variant-numeric: tabular-nums;
+        opacity: 0.85;
+      }
+      #creatureInventory .daycare-detail {
+        margin-top: 12px;
+        padding: 10px;
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+        border: 1px solid var(--ui-hairline, rgba(0,0,0,0.08));
+        border-radius: var(--ui-radius, 8px);
+        font-size: 13px;
+      }
+      #creatureInventory .daycare-detail-title {
+        font-weight: 600; margin-bottom: 4px;
+      }
+      #creatureInventory .daycare-detail-empty {
+        color: var(--ui-muted, #666); font-style: italic;
+      }
+      #creatureInventory .daycare-empty {
+        padding: 20px 8px; text-align: center;
+        color: var(--ui-muted, #666); font-size: 13px;
+      }
+      #creatureInventory .daycare-show-on-map {
+        display: block;
+        width: 100%;
+        margin-top: 14px;
+        padding: 10px 12px;
+        background: var(--ui-accent, #888);
+        color: var(--ui-bg, #fff);
+        border: none;
+        border-radius: var(--ui-radius, 8px);
+        font-family: inherit;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      #creatureInventory .daycare-show-on-map:hover {
+        filter: brightness(1.05);
+      }
+      #creatureInventory .daycare-show-on-map:active {
+        filter: brightness(0.95);
       }
       #creatureInventory .bag-view { display: none; }
       #creatureInventory .bag-view.show { display: flex; flex-direction: column; }
@@ -2498,6 +2650,7 @@
       }
       #creatureInventory .pokedex-link,
       #creatureInventory .candy-link,
+      #creatureInventory .daycare-link,
       #creatureInventory .bag-link,
       #creatureInventory .tags-link {
         background: transparent;
@@ -2514,6 +2667,7 @@
       /* Icon-mode: square-ish padding around the 21×21 SVG. */
       #creatureInventory .header-actions-icons .pokedex-link,
       #creatureInventory .header-actions-icons .candy-link,
+      #creatureInventory .header-actions-icons .daycare-link,
       #creatureInventory .header-actions-icons .bag-link,
       #creatureInventory .header-actions-icons .tags-link {
         padding: 4px 5px 2px 5px;
@@ -2522,6 +2676,7 @@
          vertical rhythm as the icon variant. */
       #creatureInventory .header-actions-text .pokedex-link,
       #creatureInventory .header-actions-text .candy-link,
+      #creatureInventory .header-actions-text .daycare-link,
       #creatureInventory .header-actions-text .bag-link,
       #creatureInventory .header-actions-text .tags-link {
         padding: 5px 10px;
@@ -2529,6 +2684,7 @@
       }
       #creatureInventory .pokedex-link svg,
       #creatureInventory .candy-link svg,
+      #creatureInventory .daycare-link svg,
       #creatureInventory .bag-link svg,
       #creatureInventory .tags-link svg {
         display: block;
@@ -2537,6 +2693,7 @@
       }
       #creatureInventory .pokedex-link:hover,
       #creatureInventory .candy-link:hover,
+      #creatureInventory .daycare-link:hover,
       #creatureInventory .bag-link:hover,
       #creatureInventory .tags-link:hover {
         background: var(--ui-hover, rgba(0,0,0,0.04));
@@ -3061,6 +3218,11 @@
           <div class="candy-body"></div>
           <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
+        <div class="daycare-view">
+          <button class="daycare-back" type="button" aria-label="back">←</button>
+          <h3 class="subview-title">Daycare</h3>
+          <div class="daycare-body"></div>
+        </div>
         <div class="bag-view">
           <button class="bag-back" type="button" aria-label="back">←</button>
           <h3 class="subview-title">Bag</h3>
@@ -3370,6 +3532,7 @@
     attachDrag('detail');
     attachDrag('fusion');
     panel.querySelector('.candy-back').addEventListener('click', popView);
+    panel.querySelector('.daycare-back').addEventListener('click', popView);
     panel.querySelector('.bag-back').addEventListener('click', popView);
     panel.querySelector('.tags-back').addEventListener('click', popView);
     renderHeaderActions(panel);
@@ -3500,6 +3663,7 @@
     panel.querySelector('.pokedex-view').classList.remove('show');
     panel.querySelector('.fusion-view').classList.remove('show');
     panel.querySelector('.candy-view').classList.remove('show');
+    panel.querySelector('.daycare-view').classList.remove('show');
     panel.querySelector('.bag-view').classList.remove('show');
     panel.querySelector('.tags-view').classList.remove('show');
     switch (top.view) {
@@ -3576,6 +3740,10 @@
       case 'candy':
         renderCandy();
         panel.querySelector('.candy-view').classList.add('show');
+        return;
+      case 'daycare':
+        renderDaycare(top.opts || {});
+        panel.querySelector('.daycare-view').classList.add('show');
         return;
       case 'bag':
         renderBag();
@@ -3996,6 +4164,10 @@
     pushView({ view: 'candy' });
   }
 
+  function showDaycare() {
+    pushView({ view: 'daycare' });
+  }
+
   function showBag() {
     pushView({ view: 'bag' });
   }
@@ -4167,6 +4339,156 @@
       <div class="candy-subtitle">${escapeHtml(subtitle)}</div>
       <div class="candy-list">${rows}</div>
     `;
+  }
+
+  // === Daycare view ===
+  // Top: today's distance number (large).
+  // Middle: month-grid calendar with prev/next navigation. Cells show
+  //   the day-of-month and (when > 0) that day's distance below.
+  //   Today is outlined; past days with data are clickable; future
+  //   days are dimmed.
+  // Bottom: detail block for the selected (or today's) day.
+  // Display state lives in `_daycareCalState` so navigation between
+  // months survives transient re-renders. Click handlers are wired
+  // imperatively after innerHTML so they survive layout passes.
+  let _daycareCalState = null;  // { y, m, selDay } — y/m = displayed month
+  function _formatMeters(m) {
+    if (!m || m <= 0) return '0';
+    if (m < 1000) return `${Math.round(m)} m`;
+    return `${(m / 1000).toFixed(2)} km`;
+  }
+  function _formatMetersShort(m) {
+    if (!m || m <= 0) return '';
+    if (m < 1000) return `${Math.round(m)}m`;
+    if (m < 10000) return `${(m / 1000).toFixed(1)}k`;
+    return `${Math.round(m / 1000)}k`;
+  }
+  function _padDayKey(y, m, d) {
+    return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  }
+  function renderDaycare(opts) {
+    const panel = document.getElementById('creatureInventory');
+    if (!panel) return;
+    const body = panel.querySelector('.daycare-body');
+    if (!body) return;
+    // Make sure the IDB → in-memory cache is warm before we paint.
+    // First paint may show 0 m if this is the very first daycare
+    // open in the session; we re-render once the load resolves.
+    let map = readDaycareDistances();
+    if (!_summaryCache) {
+      _ensureSummaryLoaded().then(() => {
+        // Only re-render if the user is still on the daycare view.
+        const top = _viewStack[_viewStack.length - 1];
+        if (top && top.view === 'daycare') renderDaycare(opts);
+      }).catch(() => {});
+    }
+    const today = new Date();
+    if (!_daycareCalState) {
+      _daycareCalState = {
+        y: today.getFullYear(),
+        m: today.getMonth(),
+        selDay: _localDayKey(today),
+      };
+    }
+    const todayMeters = map[_localDayKey(today)] || 0;
+    const { y, m, selDay } = _daycareCalState;
+    const monthName = new Date(y, m, 1).toLocaleString(undefined,
+      { month: 'long', year: 'numeric' });
+    const firstDow = new Date(y, m, 1).getDay();   // 0 = Sun
+    const daysInMonth = new Date(y, m + 1, 0).getDate();
+    // Disable next-month nav when we're already on the current month
+    // (no future days to look at).
+    const onCurrentMonth = (y === today.getFullYear() && m === today.getMonth());
+    const dowLabels = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+    const dowHtml = dowLabels.map((d) =>
+      `<div class="daycare-cal-dow">${d}</div>`).join('');
+    const cells = [];
+    for (let i = 0; i < firstDow; i++) {
+      cells.push('<div class="daycare-cal-cell empty"></div>');
+    }
+    for (let d = 1; d <= daysInMonth; d++) {
+      const key = _padDayKey(y, m, d);
+      const meters = map[key] || 0;
+      const isToday = (key === _localDayKey(today));
+      const isFuture = (
+        y > today.getFullYear()
+        || (y === today.getFullYear() && m > today.getMonth())
+        || (y === today.getFullYear() && m === today.getMonth()
+            && d > today.getDate())
+      );
+      const isSelected = (key === selDay);
+      const cls = ['daycare-cal-cell'];
+      if (isToday) cls.push('today');
+      if (isFuture) cls.push('future');
+      // Any past or current day is selectable — even 0 m days, since
+      // the user wants to see "no travel recorded" for those too.
+      // Future days stay non-clickable (nothing to display yet).
+      if (!isFuture) cls.push('has-data');
+      if (isSelected) cls.push('selected');
+      const distText = meters > 0 ? _formatMetersShort(meters) : '';
+      cells.push(
+        `<div class="${cls.join(' ')}" data-day-key="${key}">`
+        + `<span class="daycare-cal-day">${d}</span>`
+        + (distText ? `<span class="daycare-cal-dist">${distText}</span>` : '')
+        + `</div>`
+      );
+    }
+    const selMeters = map[selDay] || 0;
+    const selDate = (() => {
+      const parts = selDay.split('-').map(Number);
+      const d = new Date(parts[0], parts[1] - 1, parts[2]);
+      return d.toLocaleDateString(undefined,
+        { weekday: 'short', month: 'short', day: 'numeric' });
+    })();
+    const detailHtml = selMeters > 0
+      ? `<div class="daycare-detail-title">${escapeHtml(selDate)}</div>`
+        + `<div>${_formatMeters(selMeters)}</div>`
+      : `<div class="daycare-detail-title">${escapeHtml(selDate)}</div>`
+        + `<div class="daycare-detail-empty">no travel recorded</div>`;
+    body.innerHTML = `
+      <div class="daycare-today">
+        <span class="daycare-today-label">Today</span>
+        <span class="daycare-today-value">${_formatMeters(todayMeters)}</span>
+      </div>
+      <div class="daycare-cal-header">
+        <button class="daycare-cal-nav" type="button" data-nav="prev"
+                aria-label="previous month">‹</button>
+        <span class="daycare-cal-title">${escapeHtml(monthName)}</span>
+        <button class="daycare-cal-nav" type="button" data-nav="next"
+                ${onCurrentMonth ? 'disabled' : ''}
+                aria-label="next month">›</button>
+      </div>
+      <div class="daycare-cal-grid">${dowHtml}${cells.join('')}</div>
+      <div class="daycare-detail">${detailHtml}</div>
+      <button class="daycare-show-on-map" type="button">Show on map</button>
+    `;
+    body.querySelectorAll('.daycare-cal-nav').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (btn.disabled) return;
+        const dir = btn.dataset.nav === 'prev' ? -1 : 1;
+        let ny = _daycareCalState.y;
+        let nm = _daycareCalState.m + dir;
+        if (nm < 0) { nm = 11; ny--; }
+        if (nm > 11) { nm = 0; ny++; }
+        _daycareCalState.y = ny;
+        _daycareCalState.m = nm;
+        renderDaycare(opts);
+      });
+    });
+    body.querySelectorAll('.daycare-cal-cell.has-data').forEach((cell) => {
+      cell.addEventListener('click', () => {
+        _daycareCalState.selDay = cell.dataset.dayKey;
+        renderDaycare(opts);
+      });
+    });
+    const showBtn = body.querySelector('.daycare-show-on-map');
+    if (showBtn) {
+      showBtn.addEventListener('click', () => {
+        showDaycarePathOnMap(_daycareCalState.selDay).catch((e) => {
+          console.error('showDaycarePathOnMap failed', e);
+        });
+      });
+    }
   }
 
   // Renders the "Art variants" grid inside a fusion sub-view from
@@ -4992,6 +5314,7 @@
     tags: '<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M21 13l-9 9-9-9V3h9z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg>',
     bag: '<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M5 8h14l-1 12H6z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>',
     candy: '<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><ellipse cx="12" cy="12" rx="5" ry="4"/><path d="M7 12 L3 9 L3 15 Z"/><path d="M17 12 L21 9 L21 15 Z"/></svg>',
+    daycare: '<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="9" r="3"/><path d="M5 21c0-3.5 3-6 7-6s7 2.5 7 6"/></svg>',
     dex: '<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8" cy="9" r="2"/><line x1="3" y1="14" x2="21" y2="14"/><line x1="6" y1="17" x2="14" y2="17"/></svg>',
   };
   // Renders the inventory header's Tags / Bag / Candy / Pokédex
@@ -5007,6 +5330,7 @@
       { cls: 'tags-link', label: 'Tags', svg: _ACTION_ICON_SVG.tags, onClick: showTags },
       { cls: 'bag-link', label: 'Bag', svg: _ACTION_ICON_SVG.bag, onClick: showBag },
       { cls: 'candy-link', label: 'Candy', svg: _ACTION_ICON_SVG.candy, onClick: showCandy },
+      { cls: 'daycare-link', label: 'Daycare', svg: _ACTION_ICON_SVG.daycare, onClick: showDaycare },
       { cls: 'pokedex-link', label: 'Dex', svg: _ACTION_ICON_SVG.dex, onClick: showPokedex },
     ];
     container.classList.toggle('header-actions-text', !asIcons);
@@ -5359,6 +5683,408 @@
     const a = Math.sin(dLat / 2) ** 2
       + Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.sin(dLng / 2) ** 2;
     return 2 * R * Math.asin(Math.sqrt(a));
+  }
+
+  // === Daycare distance tracker ===
+  // All data lives in IDB (creature-tracker-v1):
+  //   * `summary` store — { dayKey -> meters }, one record per day.
+  //     In-memory cache (`_summaryCache`) holds the full map so the
+  //     UI can read totals synchronously after init.
+  //   * `paths` store — { dayKey -> [{lat,lng,t}, ...] }. Larger,
+  //     queried only when a calendar day is opened.
+  // We treat `summary` as a derived cache over `paths` — they can't
+  // get out of sync as long as every accepted-distance segment also
+  // pushes the arrival point onto the path. Distance only counts
+  // segments that pass jitter/gap/speed filters; the path captures
+  // every delivered fix INCLUDING those filtered out, so a stationary
+  // session still records "I was here" pinpoints.
+  let _distAnchorLat = null;
+  let _distAnchorLng = null;
+  let _distAnchorAt = 0;
+
+  function _localDayKey(d) {
+    const dt = (d instanceof Date) ? d : new Date(d || Date.now());
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, '0');
+    const day = String(dt.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
+  // --- IDB schema for tracker ---
+  // bumped to v2 to add the `summary` store alongside the original
+  // `paths` store. The upgrade only adds the new store; existing
+  // path records are untouched.
+  const TRACKER_DB = 'creature-tracker-v1';
+  const TRACKER_DB_VERSION = 2;
+  const TRACKER_STORE = 'paths';
+  const TRACKER_SUMMARY_STORE = 'summary';
+  // Hard cap so a misbehaving GPS (or a multi-day foreground session)
+  // can't grow a single day's record without bound. ~20 k points at
+  // 3 m granularity covers ~60 km of walking with healthy headroom.
+  const PATH_MAX_POINTS_PER_DAY = 20000;
+
+  let _trackerDbPromise = null;
+  function _openTrackerDb() {
+    if (_trackerDbPromise) return _trackerDbPromise;
+    _trackerDbPromise = new Promise((resolve, reject) => {
+      const req = indexedDB.open(TRACKER_DB, TRACKER_DB_VERSION);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(TRACKER_STORE)) {
+          db.createObjectStore(TRACKER_STORE);
+        }
+        if (!db.objectStoreNames.contains(TRACKER_SUMMARY_STORE)) {
+          db.createObjectStore(TRACKER_SUMMARY_STORE);
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return _trackerDbPromise;
+  }
+  async function _idbGetPath(dayKey) {
+    try {
+      const db = await _openTrackerDb();
+      return await new Promise((resolve) => {
+        const tx = db.transaction(TRACKER_STORE, 'readonly');
+        const r = tx.objectStore(TRACKER_STORE).get(dayKey);
+        r.onsuccess = () => resolve(Array.isArray(r.result) ? r.result : []);
+        r.onerror = () => resolve([]);
+      });
+    } catch { return []; }
+  }
+  async function _idbPutPath(dayKey, points) {
+    try {
+      const db = await _openTrackerDb();
+      return await new Promise((resolve) => {
+        const tx = db.transaction(TRACKER_STORE, 'readwrite');
+        tx.objectStore(TRACKER_STORE).put(points, dayKey);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      });
+    } catch { /* swallow — best-effort persistence */ }
+  }
+
+  // Read every entry in the summary store as a plain { day -> meters }
+  // map. Used at init (to seed the in-memory cache) and by the
+  // export flow (to bundle the user's full daycare history).
+  async function _idbGetAllSummary() {
+    try {
+      const db = await _openTrackerDb();
+      return await new Promise((resolve) => {
+        const tx = db.transaction(TRACKER_SUMMARY_STORE, 'readonly');
+        const out = {};
+        const cur = tx.objectStore(TRACKER_SUMMARY_STORE).openCursor();
+        cur.onsuccess = () => {
+          const c = cur.result;
+          if (!c) { resolve(out); return; }
+          if (typeof c.key === 'string' && typeof c.value === 'number') {
+            out[c.key] = c.value;
+          }
+          c.continue();
+        };
+        cur.onerror = () => resolve(out);
+      });
+    } catch { return {}; }
+  }
+  async function _idbPutSummary(dayKey, meters) {
+    try {
+      const db = await _openTrackerDb();
+      return await new Promise((resolve) => {
+        const tx = db.transaction(TRACKER_SUMMARY_STORE, 'readwrite');
+        tx.objectStore(TRACKER_SUMMARY_STORE).put(meters, dayKey);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      });
+    } catch { /* best-effort */ }
+  }
+  async function _idbBulkPutSummary(map) {
+    try {
+      const db = await _openTrackerDb();
+      return await new Promise((resolve) => {
+        const tx = db.transaction(TRACKER_SUMMARY_STORE, 'readwrite');
+        const store = tx.objectStore(TRACKER_SUMMARY_STORE);
+        for (const k of Object.keys(map)) {
+          const v = map[k];
+          if (typeof v === 'number' && v > 0) store.put(v, k);
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      });
+    } catch { /* best-effort */ }
+  }
+  async function _idbBulkPutPaths(map) {
+    try {
+      const db = await _openTrackerDb();
+      return await new Promise((resolve) => {
+        const tx = db.transaction(TRACKER_STORE, 'readwrite');
+        const store = tx.objectStore(TRACKER_STORE);
+        for (const k of Object.keys(map)) {
+          const v = map[k];
+          if (Array.isArray(v) && v.length) store.put(v, k);
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      });
+    } catch { /* best-effort */ }
+  }
+  async function _idbGetAllPaths() {
+    try {
+      const db = await _openTrackerDb();
+      return await new Promise((resolve) => {
+        const tx = db.transaction(TRACKER_STORE, 'readonly');
+        const out = {};
+        const cur = tx.objectStore(TRACKER_STORE).openCursor();
+        cur.onsuccess = () => {
+          const c = cur.result;
+          if (!c) { resolve(out); return; }
+          if (typeof c.key === 'string' && Array.isArray(c.value)) {
+            out[c.key] = c.value;
+          }
+          c.continue();
+        };
+        cur.onerror = () => resolve(out);
+      });
+    } catch { return {}; }
+  }
+
+  // In-memory summary cache: { dayKey -> meters }. Populated lazily
+  // on first read (one IDB cursor walk + a one-time legacy-LS
+  // migration), kept in sync with IDB by the accumulator.
+  let _summaryCache = null;
+  let _summaryLoadPromise = null;
+  function _ensureSummaryLoaded() {
+    if (_summaryCache) return Promise.resolve(_summaryCache);
+    if (_summaryLoadPromise) return _summaryLoadPromise;
+    _summaryLoadPromise = (async () => {
+      const fromIdb = await _idbGetAllSummary();
+      // One-shot migration: pull the legacy localStorage map into IDB
+      // and clear the LS entry so we don't keep two copies.
+      try {
+        const raw = localStorage.getItem(DAYCARE_LEGACY_LS_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') {
+            const merged = {};
+            for (const k of Object.keys(parsed)) {
+              const v = parsed[k];
+              if (typeof v === 'number' && v > 0) {
+                // IDB wins on conflict (it's the authoritative store
+                // going forward), but pick legacy if IDB is missing.
+                merged[k] = (typeof fromIdb[k] === 'number') ? fromIdb[k] : v;
+              }
+            }
+            await _idbBulkPutSummary(merged);
+            for (const k of Object.keys(merged)) fromIdb[k] = merged[k];
+            localStorage.removeItem(DAYCARE_LEGACY_LS_KEY);
+          }
+        }
+      } catch { /* swallow */ }
+      _summaryCache = fromIdb;
+      _summaryLoadPromise = null;
+      return _summaryCache;
+    })();
+    return _summaryLoadPromise;
+  }
+
+  // Synchronous read — returns an empty map if the cache hasn't been
+  // populated yet. Callers that care about freshness should await
+  // `_ensureSummaryLoaded()` first (the daycare view does).
+  function readDaycareDistances() {
+    return _summaryCache ? Object.assign({}, _summaryCache) : {};
+  }
+  function getDaycareTodayMeters() {
+    if (!_summaryCache) return 0;
+    return _summaryCache[_localDayKey()] || 0;
+  }
+
+  // In-memory mirror of today's path. Loaded once on first append,
+  // appended to in place by every accepted fix, and flushed back to
+  // IDB on a debounce so we don't write 100s of KB on every GPS tick.
+  let _currentPathDay = null;
+  let _currentPathPoints = [];
+  let _currentPathLoaded = false;
+  let _pathDirty = false;
+  let _pathFlushTimer = null;
+  const PATH_FLUSH_DEBOUNCE_MS = 5000;
+
+  function _scheduleFlush() {
+    if (_pathFlushTimer != null) return;
+    _pathFlushTimer = setTimeout(() => {
+      _pathFlushTimer = null;
+      if (_pathDirty && _currentPathDay) {
+        const day = _currentPathDay;
+        const snapshot = _currentPathPoints.slice();
+        _pathDirty = false;
+        _idbPutPath(day, snapshot).catch(() => {});
+      }
+    }, PATH_FLUSH_DEBOUNCE_MS);
+  }
+
+  // Synchronous flush helper for visibilitychange / pagehide. We
+  // can't await IDB during pagehide on iOS Safari, but firing the
+  // put without await still has a high chance of landing — IDB
+  // queues the transaction before the page suspends.
+  function _flushPathNow() {
+    if (_pathFlushTimer != null) {
+      clearTimeout(_pathFlushTimer);
+      _pathFlushTimer = null;
+    }
+    if (_pathDirty && _currentPathDay) {
+      const day = _currentPathDay;
+      const snapshot = _currentPathPoints.slice();
+      _pathDirty = false;
+      _idbPutPath(day, snapshot).catch(() => {});
+    }
+  }
+
+  let _pathHandlersInstalled = false;
+  function _installPathFlushHandlers() {
+    if (_pathHandlersInstalled) return;
+    _pathHandlersInstalled = true;
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') _flushPathNow();
+      });
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('pagehide', _flushPathNow);
+    }
+  }
+
+  // Append one fix to today's in-memory path. Fire-and-forget — the
+  // caller is the geolocation handler and shouldn't await IDB.
+  function _appendPathPoint(lat, lng, ts) {
+    const day = _localDayKey(ts);
+    if (_currentPathDay === day && _currentPathLoaded) {
+      if (_currentPathPoints.length >= PATH_MAX_POINTS_PER_DAY) return;
+      _currentPathPoints.push({ lat, lng, t: ts });
+      _pathDirty = true;
+      _scheduleFlush();
+      return;
+    }
+    // First call OR midnight rollover: load (or swap) the day's path
+    // before appending. Subsequent calls in the same day take the
+    // synchronous fast path above.
+    (async () => {
+      // Flush the outgoing day before we overwrite our in-memory
+      // pointer — otherwise points captured right at midnight could
+      // be lost.
+      if (_currentPathDay && _currentPathDay !== day && _pathDirty) {
+        await _idbPutPath(_currentPathDay, _currentPathPoints.slice());
+        _pathDirty = false;
+      }
+      const existing = await _idbGetPath(day);
+      _currentPathDay = day;
+      _currentPathPoints = existing;
+      _currentPathLoaded = true;
+      if (_currentPathPoints.length < PATH_MAX_POINTS_PER_DAY) {
+        _currentPathPoints.push({ lat, lng, t: ts });
+        _pathDirty = true;
+        _scheduleFlush();
+      }
+      _installPathFlushHandlers();
+    })().catch(() => {});
+  }
+
+  // Public read API for future path-rendering UI. Today's record
+  // returns the in-memory snapshot (so the data is fresh even between
+  // debounced flushes); past days come from IDB.
+  async function getDaycarePath(dayKey) {
+    if (!dayKey) dayKey = _localDayKey();
+    if (_currentPathDay === dayKey && _currentPathLoaded) {
+      return _currentPathPoints.slice();
+    }
+    return _idbGetPath(dayKey);
+  }
+
+  // Export the entire daycare history (summary + every per-day path)
+  // as a plain JSON-safe object so the backup payload can ship it.
+  // Today's path is flushed to IDB before snapshotting so the export
+  // includes any in-memory points not yet written. Excluded from
+  // export only when the user has never recorded any travel — the
+  // settings round-trip should otherwise be lossless.
+  async function exportDaycareData() {
+    _flushPathNow();
+    const [summary, paths] = await Promise.all([
+      _idbGetAllSummary(),
+      _idbGetAllPaths(),
+    ]);
+    return { v: 1, summary, paths };
+  }
+  // Merge an exportDaycareData payload into local IDB. Strategy:
+  //   - summary: per-day MAX (so a re-import is idempotent and merging
+  //     two devices keeps the higher distance — an arbitrary but
+  //     consistent rule that won't double-count walks already
+  //     reflected on both devices).
+  //   - paths: incoming wins for days that don't already have a local
+  //     path; otherwise kept as-is (avoid stitching two GPS streams
+  //     into a chimera). Future improvement: timestamp-merge.
+  async function importDaycareData(data) {
+    if (!data || typeof data !== 'object') return { merged: 0 };
+    let merged = 0;
+    if (data.summary && typeof data.summary === 'object') {
+      await _ensureSummaryLoaded();
+      const incoming = data.summary;
+      const toWrite = {};
+      for (const k of Object.keys(incoming)) {
+        const v = Number(incoming[k]) || 0;
+        if (v <= 0) continue;
+        const local = (_summaryCache && _summaryCache[k]) || 0;
+        if (v > local) {
+          toWrite[k] = v;
+          if (!_summaryCache) _summaryCache = {};
+          _summaryCache[k] = v;
+          merged++;
+        }
+      }
+      if (Object.keys(toWrite).length) await _idbBulkPutSummary(toWrite);
+    }
+    if (data.paths && typeof data.paths === 'object') {
+      const local = await _idbGetAllPaths();
+      const toWrite = {};
+      for (const k of Object.keys(data.paths)) {
+        const v = data.paths[k];
+        if (Array.isArray(v) && v.length && !(local[k] && local[k].length)) {
+          toWrite[k] = v;
+        }
+      }
+      if (Object.keys(toWrite).length) await _idbBulkPutPaths(toWrite);
+    }
+    return { merged };
+  }
+
+  // Called from the geolocation watchPosition callback. Always
+  // advances the distance anchor (so jitter doesn't compound over
+  // hours of standing still), records every fix to the path (so the
+  // future route view sees dwell points), but only adds to the day's
+  // distance when the segment passes all three accept filters.
+  function _accumulateDaycareDistance(lat, lng, ts) {
+    _appendPathPoint(lat, lng, ts);
+    if (_distAnchorLat == null) {
+      _distAnchorLat = lat;
+      _distAnchorLng = lng;
+      _distAnchorAt = ts;
+      return;
+    }
+    const dt = ts - _distAnchorAt;
+    const d = metersBetween(_distAnchorLat, _distAnchorLng, lat, lng);
+    _distAnchorLat = lat;
+    _distAnchorLng = lng;
+    _distAnchorAt = ts;
+    if (dt <= 0 || dt > DAYCARE_DIST_MAX_GAP_MS) return;
+    if (d < DAYCARE_DIST_MIN_M) return;
+    if ((d * 1000) / dt > DAYCARE_DIST_MAX_SPEED) return;
+    const k = _localDayKey(ts);
+    // Update the in-memory cache synchronously (so read APIs reflect
+    // the new total immediately), then fire-and-forget the IDB write.
+    // _ensureSummaryLoaded ran on install — if it hasn't completed
+    // yet by the very first fix, we initialize the cache here on the
+    // happy path; the loader will merge in any legacy LS data once
+    // it lands.
+    if (!_summaryCache) _summaryCache = {};
+    _summaryCache[k] = (_summaryCache[k] || 0) + d;
+    _idbPutSummary(k, _summaryCache[k]).catch(() => {});
   }
 
   function makeMarkerElement(spawn) {
@@ -6212,6 +6938,10 @@
         }
         _userLat = pos.coords.latitude;
         _userLng = pos.coords.longitude;
+        // Accumulate trainer travel into today's daycare bucket.
+        // pos.timestamp is preferred over Date.now() because it
+        // reflects when the OS captured the fix (not when JS ran).
+        _accumulateDaycareDistance(_userLat, _userLng, pos.timestamp || Date.now());
         refreshSpawnOverlay();
       },
       () => { /* ignore — user may have denied permission */ },
@@ -6313,6 +7043,160 @@
     hide();
   }
 
+  // === Daycare path overlay ===
+  // Renders the selected day's GPS path as a polyline on top of the
+  // base map (one feature per session segment — segments split where
+  // consecutive fixes are >60 s apart, so backgrounding gaps don't
+  // get joined into long phantom lines). Activated from the Daycare
+  // view's "Show on map" button. A small calendar bubble appears in
+  // the bottom-right (above the refresh button) — tapping it removes
+  // the overlay and the bubble itself.
+  const DAYCARE_SOURCE_ID = 'cc-daycare-path';
+  const DAYCARE_LAYER_ID = 'cc-daycare-path-line';
+  // Anything longer than this is treated as a session break and
+  // splits the polyline (don't draw a line connecting "where I left
+  // off yesterday" to "where I opened the app this morning").
+  const DAYCARE_PATH_BREAK_MS = 60000;
+  let _daycareBubbleEl = null;
+  // Day key whose path is currently overlaid on the map. Null when
+  // the overlay is hidden. Tracked module-side so the `style.load`
+  // hook (theme switches reload the entire MapLibre style and drop
+  // every custom source/layer) can re-add the polyline transparently.
+  let _activeDaycareDayKey = null;
+
+  function _ensureDaycareBubble() {
+    if (_daycareBubbleEl) return _daycareBubbleEl;
+    const el = document.createElement('button');
+    el.id = 'cc-daycare-bubble';
+    el.type = 'button';
+    el.title = 'Hide route overlay';
+    el.setAttribute('aria-label', 'Hide route overlay');
+    el.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20"'
+      + ' stroke="currentColor" stroke-width="2" fill="none"'
+      + ' stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">'
+      + '<rect x="3" y="5" width="18" height="16" rx="2"/>'
+      + '<line x1="16" y1="2" x2="16" y2="6"/>'
+      + '<line x1="8" y1="2" x2="8" y2="6"/>'
+      + '<line x1="3" y1="10" x2="21" y2="10"/>'
+      + '</svg>';
+    // Sit above the GeolocateControl (the "tap to center on me"
+    // button) and the NavigationControl, both of which anchor in
+    // maplibregl's bottom-right cluster (~10–130 px from the bottom
+    // depending on what controls are added). 150 px clears them
+    // with a comfortable visual gap and keeps it within thumb reach.
+    el.style.cssText = [
+      'position: fixed',
+      'bottom: max(150px, calc(env(safe-area-inset-bottom) + 140px))',
+      'right: max(10px, env(safe-area-inset-right))',
+      'z-index: 5',
+      'width: 44px', 'height: 44px',
+      'border-radius: 50%',
+      'background: var(--ui-bg, #fff)',
+      'color: var(--ui-text, #111)',
+      'border: 1px solid var(--ui-border, rgba(0,0,0,0.15))',
+      'box-shadow: 0 2px 6px rgba(0,0,0,0.18)',
+      'display: none',
+      'align-items: center', 'justify-content: center',
+      'cursor: pointer',
+      '-webkit-tap-highlight-color: rgba(0,0,0,0.1)',
+      'touch-action: manipulation',
+      'padding: 0',
+    ].join(';') + ';';
+    el.addEventListener('click', _clearDaycarePathOverlay);
+    document.body.appendChild(el);
+    _daycareBubbleEl = el;
+    return el;
+  }
+
+  // Split a flat array of {lat,lng,t} fixes into per-session line
+  // segments. Returns an array of [[lng,lat], ...] coordinate arrays,
+  // with each segment requiring at least 2 points to be drawable.
+  function _segmentDaycarePoints(points) {
+    const segs = [];
+    let cur = [];
+    let lastT = 0;
+    for (const p of points) {
+      if (cur.length > 0 && (p.t - lastT) > DAYCARE_PATH_BREAK_MS) {
+        if (cur.length >= 2) segs.push(cur);
+        cur = [];
+      }
+      cur.push([p.lng, p.lat]);
+      lastT = p.t;
+    }
+    if (cur.length >= 2) segs.push(cur);
+    return segs;
+  }
+
+  // Pure layer/source side-effect: load the day's path, build the
+  // FeatureCollection, and add (or update) it on the map. No camera
+  // moves, no panel changes, no bubble toggling — those live in
+  // `showDaycarePathOnMap`. Returning the segs lets callers fit the
+  // bounds without re-fetching. Returns null if there's nothing to
+  // draw.
+  async function _renderDaycareLayer(dayKey) {
+    if (!_installedMap || !global.maplibregl) return null;
+    const points = await getDaycarePath(dayKey);
+    const segs = _segmentDaycarePoints(points);
+    if (!segs.length) return null;
+    const map = _installedMap;
+    const fc = {
+      type: 'FeatureCollection',
+      features: segs.map((coords) => ({
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: coords },
+        properties: {},
+      })),
+    };
+    if (map.getSource(DAYCARE_SOURCE_ID)) {
+      map.getSource(DAYCARE_SOURCE_ID).setData(fc);
+    } else {
+      map.addSource(DAYCARE_SOURCE_ID, { type: 'geojson', data: fc });
+      map.addLayer({
+        id: DAYCARE_LAYER_ID,
+        type: 'line',
+        source: DAYCARE_SOURCE_ID,
+        paint: {
+          'line-color': '#3b82f6',
+          'line-width': 4,
+          'line-opacity': 0.85,
+        },
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+      });
+    }
+    return segs;
+  }
+
+  async function showDaycarePathOnMap(dayKey) {
+    if (!_installedMap || !global.maplibregl) return;
+    const day = dayKey || _localDayKey();
+    const segs = await _renderDaycareLayer(day);
+    if (!segs) {
+      alert('No path recorded for this day.');
+      return;
+    }
+    // Auto-fit to the path so the user sees the whole route. We only
+    // do this on a user-initiated show — style-reload re-renders skip
+    // the camera move so the user's current view isn't yanked away.
+    const bounds = new global.maplibregl.LngLatBounds();
+    for (const seg of segs) for (const c of seg) bounds.extend(c);
+    _installedMap.fitBounds(bounds, { padding: 60, duration: 600, maxZoom: 17 });
+    _activeDaycareDayKey = day;
+    // Close the inventory panel so the route is visible, then surface
+    // the calendar bubble that lets the user dismiss the overlay.
+    hide();
+    _ensureDaycareBubble().style.display = 'flex';
+  }
+
+  function _clearDaycarePathOverlay() {
+    _activeDaycareDayKey = null;
+    if (_installedMap) {
+      const map = _installedMap;
+      if (map.getLayer(DAYCARE_LAYER_ID)) map.removeLayer(DAYCARE_LAYER_ID);
+      if (map.getSource(DAYCARE_SOURCE_ID)) map.removeSource(DAYCARE_SOURCE_ID);
+    }
+    if (_daycareBubbleEl) _daycareBubbleEl.style.display = 'none';
+  }
+
   function install(map) {
     injectStyles();
     backfillSeenFromCaptures();
@@ -6320,6 +7204,9 @@
     // captures (and seedFusions[key].variants) on first load with
     // this code. Idempotent via localStorage flag.
     migrateLegacyCaptureVariants().catch(() => {});
+    // Warm the in-memory daycare summary cache + run the legacy
+    // localStorage→IDB migration for the per-day distance map.
+    _ensureSummaryLoaded().catch(() => {});
     // Pre-warm SPLIT_NAMES into memory so synchronous `getFusedName`
     // returns the proper canonical name on first paint. No-op when
     // the table isn't downloaded yet — display falls back to "A × B".
@@ -6327,6 +7214,16 @@
       global.Sprites.ensureSplitNamesLoaded().catch(() => {});
     }
     _installedMap = map;
+    // Theme switches reload the entire MapLibre style, which drops
+    // every custom source/layer (including the daycare path). When
+    // an overlay is active, transparently re-add it after the new
+    // style finishes loading so the user doesn't have to reopen the
+    // calendar and tap "Show on map" again.
+    map.on('style.load', () => {
+      if (_activeDaycareDayKey) {
+        _renderDaycareLayer(_activeDaycareDayKey).catch(() => {});
+      }
+    });
     const ctrl = new CreatureBallControl();
     map.addControl(ctrl, 'bottom-right');
     if (readEnabled()) attachSpawnOverlay(map);
@@ -6358,5 +7255,12 @@
     grantItem, consumeItem, rollCollectibleItem, getItemMeta,
     timeSinceLastSave,
     remarkAutogenCapturesWithCustomArt,  // temp: see fn comment
+    // Daycare distance tracker.
+    getDaycareTodayMeters,
+    getDaycareDistances: readDaycareDistances,
+    ensureDaycareLoaded: _ensureSummaryLoaded,
+    getDaycarePath,
+    exportDaycareData,
+    importDaycareData,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -5207,6 +5207,12 @@ function fmtDate(ts) {
       bag: JSON.parse(localStorage.getItem('cc.bag.v1') || 'null'),
       tags: JSON.parse(localStorage.getItem('cc.tags.v1') || '[]'),
       backupName: localStorage.getItem('cc.backupName') || null,
+      // Daycare history (per-day distance summary + full GPS paths)
+      // lives in IDB rather than localStorage so it can grow past LS
+      // budgets. Pull it via the Creatures API.
+      daycare: (window.Creatures && window.Creatures.exportDaycareData)
+        ? await window.Creatures.exportDaycareData()
+        : null,
     };
   }
 
@@ -5401,6 +5407,13 @@ function fmtDate(ts) {
       localStorage.setItem('cc.backupName', data.backupName);
       const nameInput = document.getElementById('backupName');
       if (nameInput) nameInput.value = data.backupName;
+    }
+    // Daycare: per-day-max merge for the summary; incoming wins for
+    // path days the local device doesn't already have. See
+    // Creatures.importDaycareData for the merge semantics.
+    if (data.daycare && window.Creatures && window.Creatures.importDaycareData) {
+      try { await window.Creatures.importDaycareData(data.daycare); }
+      catch (e) { console.error('importDaycareData failed', e); }
     }
     alert(
       `Imported: ${favAdded} favorite(s) (${favSkipped} skipped), ` +
