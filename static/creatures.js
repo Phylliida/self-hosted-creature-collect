@@ -72,7 +72,12 @@
   // migration to IDB, then dropped.
   const DAYCARE_LEGACY_LS_KEY = 'cc.daycareDistance.v1';
   // GPS-jitter / outlier filters for the distance accumulator.
-  const DAYCARE_DIST_MIN_M     = 3;     // ignore < 3 m segments (jitter floor)
+  // 10 m matches phone GPS drift in open conditions (and what Pokémon
+  // GO uses) — anything smaller is treated as the user standing still
+  // with a wandering dot. These fixes are dropped from BOTH the daily
+  // distance total and the recorded path so the route view stays
+  // clean instead of being a cloud of dwell points.
+  const DAYCARE_DIST_MIN_M     = 10;    // ignore < 10 m segments (jitter floor)
   const DAYCARE_DIST_MAX_GAP_MS = 60000;// drop segments after a >60 s gap
   const DAYCARE_DIST_MAX_SPEED  = 50;   // m/s (~180 km/h) — drop teleports
   const SAVE_REMINDER_DAYS = 7;
@@ -2281,6 +2286,23 @@
       #creatureInventory .daycare-show-on-map:active {
         filter: brightness(0.95);
       }
+      #creatureInventory .daycare-show-all-on-map {
+        display: block;
+        width: 100%;
+        margin-top: 8px;
+        padding: 9px 12px;
+        background: transparent;
+        color: var(--ui-text, #111);
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
+        border-radius: var(--ui-radius, 8px);
+        font-family: inherit;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+      }
+      #creatureInventory .daycare-show-all-on-map:hover {
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+      }
       #creatureInventory .bag-view { display: none; }
       #creatureInventory .bag-view.show { display: flex; flex-direction: column; }
       #creatureInventory .bag-title {
@@ -4461,6 +4483,7 @@
       <div class="daycare-cal-grid">${dowHtml}${cells.join('')}</div>
       <div class="daycare-detail">${detailHtml}</div>
       <button class="daycare-show-on-map" type="button">Show on map</button>
+      <button class="daycare-show-all-on-map" type="button">Show all on map</button>
     `;
     body.querySelectorAll('.daycare-cal-nav').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -4486,6 +4509,14 @@
       showBtn.addEventListener('click', () => {
         showDaycarePathOnMap(_daycareCalState.selDay).catch((e) => {
           console.error('showDaycarePathOnMap failed', e);
+        });
+      });
+    }
+    const showAllBtn = body.querySelector('.daycare-show-all-on-map');
+    if (showAllBtn) {
+      showAllBtn.addEventListener('click', () => {
+        showAllDaycarePathsOnMap().catch((e) => {
+          console.error('showAllDaycarePathsOnMap failed', e);
         });
       });
     }
@@ -5701,6 +5732,13 @@
   let _distAnchorLat = null;
   let _distAnchorLng = null;
   let _distAnchorAt = 0;
+  // Timestamp of the most recent fix delivered, regardless of whether
+  // it was accepted. Lets the gap detector distinguish "the app was
+  // backgrounded for 10 minutes" from "a slow walker hasn't crossed
+  // the 10 m threshold for 30 seconds" — the anchor's age alone
+  // can't tell those two apart since the anchor is held when sub-
+  // threshold movements are rejected.
+  let _lastFixAt = 0;
 
   function _localDayKey(d) {
     const dt = (d instanceof Date) ? d : new Date(d || Date.now());
@@ -6054,37 +6092,54 @@
     return { merged };
   }
 
-  // Called from the geolocation watchPosition callback. Always
-  // advances the distance anchor (so jitter doesn't compound over
-  // hours of standing still), records every fix to the path (so the
-  // future route view sees dwell points), but only adds to the day's
-  // distance when the segment passes all three accept filters.
+  // Called from the geolocation watchPosition callback. The anchor
+  // is HELD across sub-threshold fixes (so jitter doesn't compound
+  // even though no individual segment exceeds the 10 m floor) — only
+  // an accepted fix advances the anchor. Path points are recorded
+  // ONLY for accepted fixes plus session boundaries (first fix and
+  // post-gap resume), so the stored route is a clean polyline rather
+  // than a cloud of dwell points.
   function _accumulateDaycareDistance(lat, lng, ts) {
-    _appendPathPoint(lat, lng, ts);
+    const prevFixAt = _lastFixAt;
+    _lastFixAt = ts;
     if (_distAnchorLat == null) {
+      _distAnchorLat = lat;
+      _distAnchorLng = lng;
+      _distAnchorAt = ts;
+      _appendPathPoint(lat, lng, ts);
+      return;
+    }
+    // Backgrounding gap: a long silence between fixes means the user
+    // probably went elsewhere with the app suspended. Reset the
+    // anchor so we don't credit the teleport as travel, and log a
+    // resume point so the path renderer shows a break here.
+    if (prevFixAt > 0 && (ts - prevFixAt) > DAYCARE_DIST_MAX_GAP_MS) {
+      _distAnchorLat = lat;
+      _distAnchorLng = lng;
+      _distAnchorAt = ts;
+      _appendPathPoint(lat, lng, ts);
+      return;
+    }
+    const d = metersBetween(_distAnchorLat, _distAnchorLng, lat, lng);
+    if (d < DAYCARE_DIST_MIN_M) return;  // jitter — hold the anchor
+    const dt = ts - _distAnchorAt;
+    if (dt <= 0) return;
+    if ((d * 1000) / dt > DAYCARE_DIST_MAX_SPEED) {
+      // Outlier fix: reset anchor here without recording.
       _distAnchorLat = lat;
       _distAnchorLng = lng;
       _distAnchorAt = ts;
       return;
     }
-    const dt = ts - _distAnchorAt;
-    const d = metersBetween(_distAnchorLat, _distAnchorLng, lat, lng);
-    _distAnchorLat = lat;
-    _distAnchorLng = lng;
-    _distAnchorAt = ts;
-    if (dt <= 0 || dt > DAYCARE_DIST_MAX_GAP_MS) return;
-    if (d < DAYCARE_DIST_MIN_M) return;
-    if ((d * 1000) / dt > DAYCARE_DIST_MAX_SPEED) return;
+    // Accept: credit the day, advance anchor, record path.
     const k = _localDayKey(ts);
-    // Update the in-memory cache synchronously (so read APIs reflect
-    // the new total immediately), then fire-and-forget the IDB write.
-    // _ensureSummaryLoaded ran on install — if it hasn't completed
-    // yet by the very first fix, we initialize the cache here on the
-    // happy path; the loader will merge in any legacy LS data once
-    // it lands.
     if (!_summaryCache) _summaryCache = {};
     _summaryCache[k] = (_summaryCache[k] || 0) + d;
     _idbPutSummary(k, _summaryCache[k]).catch(() => {});
+    _distAnchorLat = lat;
+    _distAnchorLng = lng;
+    _distAnchorAt = ts;
+    _appendPathPoint(lat, lng, ts);
   }
 
   function makeMarkerElement(spawn) {
@@ -7063,11 +7118,14 @@
   // reorder our DOM node to the top of the cluster so it sits ABOVE
   // the geolocate button, per the user's request.
   let _daycareBubbleCtrl = null;
-  // Day key whose path is currently overlaid on the map. Null when
-  // the overlay is hidden. Tracked module-side so the `style.load`
-  // hook (theme switches reload the entire MapLibre style and drop
-  // every custom source/layer) can re-add the polyline transparently.
-  let _activeDaycareDayKey = null;
+  // What's currently overlaid on the map.
+  //   null              — nothing
+  //   { dayKey: 'YYYY-MM-DD' }  — one day's route
+  //   { allDays: true } — every recorded day combined
+  // Tracked module-side so the `style.load` hook (theme switches
+  // reload the entire MapLibre style and drop every custom source/
+  // layer) can re-add the polyline transparently.
+  let _activeDaycareOverlay = null;
 
   class _DaycareBubbleControl {
     onAdd(map) {
@@ -7153,24 +7211,45 @@
     return segs;
   }
 
-  // Pure layer/source side-effect: load the day's path, build the
-  // FeatureCollection, and add (or update) it on the map. No camera
-  // moves, no panel changes, no bubble toggling — those live in
-  // `showDaycarePathOnMap`. Returning the segs lets callers fit the
-  // bounds without re-fetching. Returns null if there's nothing to
-  // draw.
-  async function _renderDaycareLayer(dayKey) {
-    if (!_installedMap || !global.maplibregl) return null;
-    const points = await getDaycarePath(dayKey);
-    const segs = _segmentDaycarePoints(points);
-    if (!segs.length) return null;
+  // Pure layer/source side-effect: gather the requested paths, build
+  // the FeatureCollection, and add (or update) it on the map. No
+  // camera moves, no panel/bubble toggling — those live in the
+  // `show…` wrappers. Returns the flat list of segment coord arrays
+  // (each [[lng,lat], ...]) so callers can fit bounds, or null when
+  // there's nothing to draw.
+  // `opts`: { dayKey } for one day | { allDays: true } for everything.
+  async function _renderDaycareLayer(opts) {
+    if (!_installedMap || !global.maplibregl || !opts) return null;
+    /** @type {Array<{ coords: number[][], day: string }>} */
+    const features = [];
+    if (opts.allDays) {
+      const allPaths = await _idbGetAllPaths();
+      // Today's in-memory path may not have been flushed yet — prefer
+      // it when present so "all days" really does mean ALL days
+      // including the one in progress.
+      const today = _localDayKey();
+      if (_currentPathDay === today && _currentPathLoaded
+          && _currentPathPoints.length) {
+        allPaths[today] = _currentPathPoints.slice();
+      }
+      for (const day of Object.keys(allPaths).sort()) {
+        const segs = _segmentDaycarePoints(allPaths[day]);
+        for (const coords of segs) features.push({ coords, day });
+      }
+    } else if (opts.dayKey) {
+      const points = await getDaycarePath(opts.dayKey);
+      for (const coords of _segmentDaycarePoints(points)) {
+        features.push({ coords, day: opts.dayKey });
+      }
+    }
+    if (!features.length) return null;
     const map = _installedMap;
     const fc = {
       type: 'FeatureCollection',
-      features: segs.map((coords) => ({
+      features: features.map(({ coords, day }) => ({
         type: 'Feature',
         geometry: { type: 'LineString', coordinates: coords },
-        properties: {},
+        properties: { day },
       })),
     };
     if (map.getSource(DAYCARE_SOURCE_ID)) {
@@ -7189,32 +7268,42 @@
         layout: { 'line-cap': 'round', 'line-join': 'round' },
       });
     }
-    return segs;
+    return features.map((f) => f.coords);
   }
 
   async function showDaycarePathOnMap(dayKey) {
     if (!_installedMap || !global.maplibregl) return;
     const day = dayKey || _localDayKey();
-    const segs = await _renderDaycareLayer(day);
+    const segs = await _renderDaycareLayer({ dayKey: day });
     if (!segs) {
       alert('No path recorded for this day.');
       return;
     }
-    // Auto-fit to the path so the user sees the whole route. We only
-    // do this on a user-initiated show — style-reload re-renders skip
-    // the camera move so the user's current view isn't yanked away.
     const bounds = new global.maplibregl.LngLatBounds();
     for (const seg of segs) for (const c of seg) bounds.extend(c);
     _installedMap.fitBounds(bounds, { padding: 60, duration: 600, maxZoom: 17 });
-    _activeDaycareDayKey = day;
-    // Close the inventory panel so the route is visible, then surface
-    // the calendar bubble that lets the user dismiss the overlay.
+    _activeDaycareOverlay = { dayKey: day };
+    hide();
+    _setDaycareBubbleVisible(true);
+  }
+
+  async function showAllDaycarePathsOnMap() {
+    if (!_installedMap || !global.maplibregl) return;
+    const segs = await _renderDaycareLayer({ allDays: true });
+    if (!segs) {
+      alert('No paths recorded yet.');
+      return;
+    }
+    const bounds = new global.maplibregl.LngLatBounds();
+    for (const seg of segs) for (const c of seg) bounds.extend(c);
+    _installedMap.fitBounds(bounds, { padding: 60, duration: 600, maxZoom: 17 });
+    _activeDaycareOverlay = { allDays: true };
     hide();
     _setDaycareBubbleVisible(true);
   }
 
   function _clearDaycarePathOverlay() {
-    _activeDaycareDayKey = null;
+    _activeDaycareOverlay = null;
     if (_installedMap) {
       const map = _installedMap;
       if (map.getLayer(DAYCARE_LAYER_ID)) map.removeLayer(DAYCARE_LAYER_ID);
@@ -7246,8 +7335,8 @@
     // style finishes loading so the user doesn't have to reopen the
     // calendar and tap "Show on map" again.
     map.on('style.load', () => {
-      if (_activeDaycareDayKey) {
-        _renderDaycareLayer(_activeDaycareDayKey).catch(() => {});
+      if (_activeDaycareOverlay) {
+        _renderDaycareLayer(_activeDaycareOverlay).catch(() => {});
       }
     });
     const ctrl = new CreatureBallControl();
