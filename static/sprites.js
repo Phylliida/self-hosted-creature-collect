@@ -291,6 +291,30 @@
           }
         }
       }
+      // Capacitor (IPA) fallback: VARIANT_SUMMARY is only ever written
+      // by bulkDownload pass 2, which the IPA doesn't run (welcome
+      // download UI is hidden). Without a fallback, every fusion's
+      // count comes back 0 → resolveSpawnVariant returns null → every
+      // marker uses the autogen path → custom art is invisible AND
+      // the pokédex reports "no custom art available." Populate from
+      // bundled cells.json (the canonical truth, fetched locally via
+      // LocalServer — no network) when the IDB summary is missing or
+      // empty. Web mode unchanged so the zero-data rule holds.
+      if (cache.size === 0 && typeof window !== 'undefined' && window.Capacitor) {
+        try {
+          const cellsMap = await getCells();
+          if (cellsMap && typeof cellsMap === 'object') {
+            for (const key of Object.keys(cellsMap)) {
+              const indices = cellsMap[key];
+              if (Array.isArray(indices) && indices.length > 0) {
+                cache.set(key, indices.length);
+              }
+            }
+          }
+        } catch (e) {
+          _logSpriteError('ensureVariantSummary/cellsFallback', e);
+        }
+      }
       _variantSummaryLoaded = true;
       if (typeof window !== 'undefined') {
         window._spriteDiag = window._spriteDiag || {};

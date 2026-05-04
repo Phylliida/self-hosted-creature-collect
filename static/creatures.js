@@ -560,6 +560,55 @@
     localStorage.setItem(VARIANT_BACKFILL_KEY, '1');
   }
 
+  // Manual migration helper exposed via Settings → "Re-mark custom
+  // art" button. For every capture currently flagged as autogen
+  // (c.variant === null) where the cell now reports custom variants,
+  // promote the capture to slot 0 (the artist's primary) and mark
+  // that variant as seen in seenFusions. Idempotent: re-running does
+  // nothing once every capture is in sync. Temporary — added to clean
+  // up legacy captures created before getCellVariantCount could
+  // consult the bundled cells.json. Safe to remove once the user has
+  // run it. Returns { scanned, promoted } so the button can show a
+  // result count.
+  async function remarkAutogenCapturesWithCustomArt() {
+    if (!global.Sprites || !global.Sprites.getCellVariantCount) {
+      return { scanned: 0, promoted: 0 };
+    }
+    const list = readCapturedCreatures();
+    const seen = readSeenFusions();
+    const countCache = new Map();
+    async function countFor(a, b) {
+      const key = `${a}-${b}`;
+      if (countCache.has(key)) return countCache.get(key);
+      let c = 0;
+      try { c = await global.Sprites.getCellVariantCount(a, b); }
+      catch { c = 0; }
+      countCache.set(key, c);
+      return c;
+    }
+    let scanned = 0, promoted = 0;
+    for (const c of list) {
+      if (c.variant !== null) continue;
+      if (c.speciesA == null || c.speciesB == null) continue;
+      scanned++;
+      const cnt = await countFor(c.speciesA, c.speciesB);
+      if (!cnt || cnt <= 0) continue;
+      c.variant = 0;
+      const fkey = `${c.speciesA}-${c.speciesB}`;
+      if (!seen[fkey]) seen[fkey] = { firstSeen: (c.caughtAt && c.caughtAt.timestamp) || Date.now() };
+      if (!seen[fkey].variants) seen[fkey].variants = {};
+      if (!seen[fkey].variants['0']) {
+        seen[fkey].variants['0'] = (c.caughtAt && c.caughtAt.timestamp) || Date.now();
+      }
+      promoted++;
+    }
+    if (promoted > 0) {
+      writeCapturedCreatures(list);
+      writeSeenFusions(seen);
+    }
+    return { scanned, promoted };
+  }
+
   // One-time idempotent migration: anything in the captured inventory
   // is by definition seen too. Runs at install time.
   function backfillSeenFromCaptures() {
@@ -6308,5 +6357,6 @@
     getCandy: readCandy, getBag: readBag, getTags: readTags,
     grantItem, consumeItem, rollCollectibleItem, getItemMeta,
     timeSinceLastSave,
+    remarkAutogenCapturesWithCustomArt,  // temp: see fn comment
   };
 })(typeof window !== 'undefined' ? window : globalThis);
