@@ -1,0 +1,148 @@
+# Build a debug Android APK on a free Ubuntu runner. The output is
+# uploaded as a workflow artifact you download to your phone (e.g.
+# via Drive / a file share / `adb install`) and sideload directly.
+#
+# A debug APK is unsigned by Android's release rules but ships with
+# Android's standard debug keystore baked into the build, so it
+# installs on any device with "Install unknown apps" enabled — no
+# Google Play account, no signing config, no Capacitor-side native
+# code patches. Significantly simpler than the iOS sideload story
+# because Android's WebView (Chromium) handles `https://localhost`
+# natively for Service Workers — none of the LocalServer / Swift
+# override architecture the iOS build needs.
+#
+# Caveat: live-update.js's BundleAccess plugin is iOS-only Swift,
+# so refresh-button live updates are no-ops on Android. The fallback
+# path is fine — `done()` runs a plain reload + cache clear (since
+# `Capacitor.Plugins.BundleAccess` is undefined). Spouse / Android
+# testers get fresh code by reinstalling the APK each release; a
+# Kotlin port of BundleAccessPlugin is the follow-up if/when that
+# friction matters.
+#
+# Trigger: same shape as ios-build.yml — manual workflow_dispatch
+# plus a path-filtered push to main for relevant changes.
+
+name: Build Android APK (debug, for sideloading)
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - 'static/**'
+      - 'data/BundledData/**'
+      - 'scripts/build-capacitor.sh'
+      - 'capacitor.config.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/android-build.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # `npm ci` if there's a lock file (faster, reproducible);
+      # otherwise fall back to `npm install`. Same pattern as iOS.
+      - name: Install JS deps
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      # Compose dist/ — same script as iOS, identical webDir output.
+      - name: Build Capacitor webDir
+        run: bash scripts/build-capacitor.sh
+
+      # JDK 17 is the current Capacitor 6 / Android Gradle Plugin
+      # baseline. `temurin` is the standard distribution available
+      # on the GitHub-hosted runner.
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # The android/ directory is gitignored — generate it fresh from
+      # capacitor.config.json on every build. cap add scaffolds the
+      # Gradle project; cap sync copies dist/ → assets/public/ and
+      # links plugin native code.
+      - name: Add Android platform
+        run: |
+          if [ ! -d android ]; then
+            npx cap add android
+          fi
+          npx cap sync android
+          # Same icons/fonts directory-dropping bug seen on iOS:
+          # Capacitor's sync silently strips top-level directories
+          # named `icons/` and `fonts/` from the webDir copy. Without
+          # this rsync, bundled-data/icons/*.svg and bundled-data/
+          # fonts/*.pbf disappear from the APK and POI icons +
+          # MapLibre fonts render as blank fallbacks at runtime.
+          # rsync without --delete preserves Capacitor's added
+          # cordova.js / cordova_plugins.js shims.
+          ASSETS_DIR=android/app/src/main/assets/public
+          echo "── re-syncing dist/ → $ASSETS_DIR ──"
+          rsync -a dist/ "$ASSETS_DIR"/
+          echo "  immediate verify after rsync:"
+          for d in icons fonts sprites; do
+            n=$(find "$ASSETS_DIR/bundled-data/$d" -type f 2>/dev/null | wc -l)
+            echo "    bundled-data/$d: $n files"
+          done
+
+      - name: Debug — assets folder after cap sync
+        run: |
+          ASSETS_DIR=android/app/src/main/assets/public
+          echo "── $ASSETS_DIR top level ──"
+          ls -la "$ASSETS_DIR" | head -20
+          echo "── $ASSETS_DIR/bundled-data top level ──"
+          ls -la "$ASSETS_DIR/bundled-data" | head -20
+          echo "── file counts per subdir ──"
+          for d in icons fonts sprites tiles; do
+            n=$(find "$ASSETS_DIR/bundled-data/$d" -type f 2>/dev/null | wc -l)
+            echo "  bundled-data/$d: $n files"
+          done
+          for d in icons fonts tiles; do
+            n=$(find "$ASSETS_DIR/$d" -type f 2>/dev/null | wc -l)
+            echo "  /$d (alias): $n files"
+          done
+          echo "  total .svg: $(find "$ASSETS_DIR" -name '*.svg' | wc -l)"
+
+      # `assembleDebug` produces an unsigned-for-release-but-signed-
+      # with-the-debug-keystore APK at:
+      #   android/app/build/outputs/apk/debug/app-debug.apk
+      # That's the file you sideload.
+      - name: Build debug APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Locate APK
+        id: apk
+        run: |
+          APK=$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)
+          if [ -z "$APK" ]; then
+            echo "no APK produced"
+            exit 1
+          fi
+          echo "path=$APK" >> "$GITHUB_OUTPUT"
+          ls -lh "$APK"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: creature-collect-debug-apk
+          path: ${{ steps.apk.outputs.path }}
+          if-no-files-found: error
