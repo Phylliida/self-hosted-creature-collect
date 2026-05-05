@@ -293,44 +293,27 @@
           }
         }
       }
-      // Capacitor (IPA) fallback: VARIANT_SUMMARY and the per-cell
-      // variant arrays are only ever written by bulkDownload pass 2,
-      // which the IPA doesn't run (welcome download UI is hidden).
-      // Without a fallback:
-      //   * every fusion's count comes back 0 → resolveSpawnVariant
-      //     returns null → markers use the autogen path → custom art
-      //     is invisible AND the pokédex reports "no custom art."
-      //   * getSpriteCreditForSlot reads varGet(`${a}-${b}`) to look
-      //     up the manifest index for a slot and gets nothing → the
-      //     artist-credit UI is empty everywhere.
-      // Populate BOTH the in-memory count cache AND the IDB store
-      // from bundled cells.json (canonical truth, served locally via
-      // LocalServer — no network) so existing code paths that read
-      // either stay correct without further branching. Web mode
-      // unchanged so the zero-data rule holds.
+      // Capacitor (IPA) fallback: VARIANT_SUMMARY isn't written by the
+      // IPA (welcome download UI is hidden, so bulkDownload never runs
+      // pass 2). Populate the in-memory count cache from cells.json,
+      // which is itself stored as a single IDB record at CELLS_KEY by
+      // getCells() — one ~hundred-KB blob instead of thousands of
+      // tiny per-cell rows. The earlier per-row bulk-write took
+      // ~40 s of wall-clock on iOS WebKit and blocked startup; the
+      // single-record path is instant since getCells() either reads
+      // the cached blob from IDB or fetches a single response from
+      // LocalServer. All consumers that need the per-cell variant
+      // array (getSpriteCreditForSlot, etc.) check `_cellsMap` in
+      // memory first via _getCellVariantArr below — no IDB cursor
+      // walks required. Web mode unchanged so the zero-data rule holds.
       if (cache.size === 0 && typeof window !== 'undefined' && window.Capacitor) {
         try {
           const cellsMap = await getCells();
           if (cellsMap && typeof cellsMap === 'object') {
-            const entries = [];
             for (const key of Object.keys(cellsMap)) {
               const indices = cellsMap[key];
               if (Array.isArray(indices) && indices.length > 0) {
                 cache.set(key, indices.length);
-                entries.push([key, indices]);
-              }
-            }
-            if (entries.length) {
-              try {
-                const tx = db.transaction(STORE_VARIANTS, 'readwrite');
-                const store = tx.objectStore(STORE_VARIANTS);
-                for (const [k, v] of entries) store.put(v, k);
-                await new Promise((resolve) => {
-                  tx.oncomplete = () => resolve();
-                  tx.onerror = () => resolve();
-                });
-              } catch (e) {
-                _logSpriteError('ensureVariantSummary/cellsBulkPut', e);
               }
             }
           }
@@ -543,6 +526,27 @@
     return _ensureSplitNames();
   }
 
+  // Per-cell variant indices array. Single source of truth is the
+  // bundled cells.json, kept in memory after first read. This used
+  // to also live as ~15 k separate IDB rows (one per cell), but that
+  // bulk-write took ~40 s on iOS WebKit and blocked startup; the
+  // single CELLS_KEY blob is functionally equivalent and instant.
+  // The varGet() fallback handles users whose IDB was populated by
+  // an older bulkDownload that wrote per-cell rows.
+  async function _getCellVariantArr(a, b) {
+    const key = `${a}-${b}`;
+    if (_cellsMap && Array.isArray(_cellsMap[key])) return _cellsMap[key];
+    try {
+      const map = await getCells();
+      if (map && Array.isArray(map[key])) return map[key];
+    } catch (_) { /* fall through to legacy IDB lookup */ }
+    try {
+      const legacy = await varGet(key);
+      if (Array.isArray(legacy)) return legacy;
+    } catch (_) {}
+    return null;
+  }
+
   // Resolve slot → suffix → artist for one cell. Slot is the index
   // into the variants store entry for (a, b). Needs the manifest
   // (suffix list per species, from AppData) to map manifest index
@@ -564,11 +568,12 @@
     if (!bundle || Object.keys(bundle).length === 0) { _bumpCreditDiag('noBundle'); return null; }
     const cellCredits = bundle[`${a}-${b}`];
     if (!cellCredits) { _bumpCreditDiag('noCellInBundle'); return null; }
-    // Variants store entry for the cell — array of manifest indices
-    // (one per non-blank slot).
-    let cellVariants = null;
-    try { cellVariants = await varGet(`${a}-${b}`); }
-    catch { cellVariants = null; }
+    // Variants array for the cell — array of manifest indices, one
+    // per non-blank slot. Resolved via the in-memory _cellsMap first
+    // (the canonical cells.json now stored as a single IDB record
+    // at CELLS_KEY); falls back to the legacy per-cell IDB entry
+    // for users whose state was created by an older bulkDownload.
+    const cellVariants = await _getCellVariantArr(a, b);
     if (!Array.isArray(cellVariants)) { _bumpCreditDiag('noVariantsArr'); return null; }
     if (slot >= cellVariants.length) { _bumpCreditDiag('slotOutOfRange'); return null; }
     const manifestIdx = cellVariants[slot];
