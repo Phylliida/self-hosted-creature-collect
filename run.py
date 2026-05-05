@@ -10,7 +10,7 @@ import struct
 import sys
 import time
 from io import BytesIO
-from flask import Flask, g, send_from_directory, Response, abort, request, jsonify
+from flask import Flask, g, send_from_directory, Response, abort, redirect, request, jsonify
 
 # array.array native int widths are platform-dependent in theory; all mainstream
 # server platforms have 4-byte int / unsigned int. Fail fast if ever not true.
@@ -501,6 +501,22 @@ def sprite_split_names():
     resp.headers["Content-Encoding"] = "gzip"
     resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     return resp
+
+
+@app.route("/__refresh__")
+def emergency_refresh():
+    """Web-side stub for the IPA's emergency-refresh fallback.
+
+    The refresh button is rendered as `<a href="/__refresh__">` so
+    that even if its onclick JS is broken, the browser's default
+    link navigation still does *something*. In the IPA, LocalServer
+    handles this path natively (clearing any stale liveDir overlay
+    so the bundled code takes over). On the web there's no liveDir
+    overlay to clear — just bounce back to the root so the next
+    request fetches fresh code. Cheap insurance against the user
+    landing on a 404 in the rare case onclick throws on web.
+    """
+    return redirect("/", code=302)
 
 
 @app.route("/script-versions")

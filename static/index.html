@@ -216,6 +216,8 @@
   html[data-theme="vaporwave"] button.close,
   html[data-theme="vaporwave"] #transitClose,
   html[data-theme="vaporwave"] #savedRoutesClose,
+  html[data-theme="vaporwave"] #scheduleClose,
+  html[data-theme="vaporwave"] #remarkCustomArtBtn,
   html[data-theme="neon"] #welcomeStart, #welcomeDone,
   html[data-theme="neon"] #downloadBtn,
   html[data-theme="neon"] #appDataBtn,
@@ -224,7 +226,9 @@
   html[data-theme="neon"] #routingGo,
   html[data-theme="neon"] button.close,
   html[data-theme="neon"] #transitClose,
-  html[data-theme="neon"] #savedRoutesClose {
+  html[data-theme="neon"] #savedRoutesClose,
+  html[data-theme="neon"] #scheduleClose,
+  html[data-theme="neon"] #remarkCustomArtBtn {
     box-shadow: 0 0 10px var(--ui-accent), 0 0 20px rgba(255,113,206,0.3);
     text-shadow: 0 0 6px rgba(255,255,255,0.5);
   }
@@ -370,7 +374,9 @@
   html[data-theme="win95"] #routingGo,
   html[data-theme="win95"] button.close,
   html[data-theme="win95"] #transitClose,
-  html[data-theme="win95"] #savedRoutesClose {
+  html[data-theme="win95"] #savedRoutesClose,
+  html[data-theme="win95"] #scheduleClose,
+  html[data-theme="win95"] #remarkCustomArtBtn {
     color: #000 !important;
     background: #c0c0c0 !important;
   }
@@ -446,7 +452,9 @@
   html[data-theme="macos9"] #routingGo,
   html[data-theme="macos9"] button.close,
   html[data-theme="macos9"] #transitClose,
-  html[data-theme="macos9"] #savedRoutesClose {
+  html[data-theme="macos9"] #savedRoutesClose,
+  html[data-theme="macos9"] #scheduleClose,
+  html[data-theme="macos9"] #remarkCustomArtBtn {
     background: linear-gradient(to bottom, #6a9ed8 0%, #4070b0 50%, #2a4a80 100%);
     color: #ffffff;
     border: 1px solid #1a3060;
@@ -638,7 +646,9 @@
   html[data-theme="sims"] #routingGo,
   html[data-theme="sims"] button.close,
   html[data-theme="sims"] #transitClose,
-  html[data-theme="sims"] #savedRoutesClose {
+  html[data-theme="sims"] #savedRoutesClose,
+  html[data-theme="sims"] #scheduleClose,
+  html[data-theme="sims"] #remarkCustomArtBtn {
     background: linear-gradient(to bottom, #90ff40 0%, #4cff00 50%, #2ac800 100%) !important;
     color: #0a2a5a !important;
     border: 1px solid #206000 !important;
@@ -752,7 +762,9 @@
   html[data-theme="wood"] #routingGo,
   html[data-theme="wood"] button.close,
   html[data-theme="wood"] #transitClose,
-  html[data-theme="wood"] #savedRoutesClose {
+  html[data-theme="wood"] #savedRoutesClose,
+  html[data-theme="wood"] #scheduleClose,
+  html[data-theme="wood"] #remarkCustomArtBtn {
     background: linear-gradient(to bottom, #6a4020 0%, #3a1e08 100%) !important;
     color: #f2deb8 !important;
     border: 1px solid #1a0a02 !important;
@@ -823,7 +835,9 @@
   html[data-theme="metal"] #routingGo,
   html[data-theme="metal"] button.close,
   html[data-theme="metal"] #transitClose,
-  html[data-theme="metal"] #savedRoutesClose {
+  html[data-theme="metal"] #savedRoutesClose,
+  html[data-theme="metal"] #scheduleClose,
+  html[data-theme="metal"] #remarkCustomArtBtn {
     background: linear-gradient(to bottom, #ffc040 0%, #f0a020 50%, #c08010 100%) !important;
     color: #1a1a1a !important;
     border: 1px solid #604000 !important;
@@ -942,7 +956,9 @@
   html[data-theme="tron"] #routingGo,
   html[data-theme="tron"] button.close,
   html[data-theme="tron"] #transitClose,
-  html[data-theme="tron"] #savedRoutesClose {
+  html[data-theme="tron"] #savedRoutesClose,
+  html[data-theme="tron"] #scheduleClose,
+  html[data-theme="tron"] #remarkCustomArtBtn {
     background: #00ddff !important;
     color: #000 !important;
     text-shadow: none !important;
@@ -1165,7 +1181,9 @@
   html[data-theme="backrooms"] #routingGo,
   html[data-theme="backrooms"] button.close,
   html[data-theme="backrooms"] #transitClose,
-  html[data-theme="backrooms"] #savedRoutesClose {
+  html[data-theme="backrooms"] #savedRoutesClose,
+  html[data-theme="backrooms"] #scheduleClose,
+  html[data-theme="backrooms"] #remarkCustomArtBtn {
     /* red exit sign */
     letter-spacing: 0.15em; font-weight: 700;
   }
@@ -1256,7 +1274,9 @@
   #routingGo,
   button.close,
   #transitClose,
-  #savedRoutesClose {
+  #savedRoutesClose,
+  #scheduleClose,
+  #remarkCustomArtBtn {
     background: var(--ui-accent);
     color: var(--ui-accent-text);
     border: 1px solid var(--ui-accent-border);
@@ -1271,7 +1291,9 @@
   #routingGo:hover:not(:disabled),
   button.close:hover,
   #transitClose:hover,
-  #savedRoutesClose:hover {
+  #savedRoutesClose:hover,
+  #scheduleClose:hover,
+  #remarkCustomArtBtn:hover:not(:disabled) {
     background: var(--ui-accent-border);
   }
   #welcomeStart:disabled,
@@ -1294,7 +1316,9 @@
   html[data-theme="medieval"] #routingGo,
   html[data-theme="medieval"] button.close,
   html[data-theme="medieval"] #transitClose,
-  html[data-theme="medieval"] #savedRoutesClose {
+  html[data-theme="medieval"] #savedRoutesClose,
+  html[data-theme="medieval"] #scheduleClose,
+  html[data-theme="medieval"] #remarkCustomArtBtn {
     font-variant: small-caps;
     letter-spacing: 0.08em;
   }
@@ -7193,6 +7217,7 @@ function fmtDate(ts) {
     if (!ep) return '○';
     if (ep.kind === 'my-location') return '📍';
     if (ep.kind === 'fav') return '★';
+    if (ep.kind === 'address') return '🏠';
     return '📌';
   }
   function endpointLabel(ep) {
@@ -7234,9 +7259,20 @@ function fmtDate(ts) {
     }
     const ql = (q || '').trim().toLowerCase();
     if (ql) {
+      // Token-based match against favorite names — same word-order-
+      // independent rule the address search uses, so a query like
+      // "home grandma" matches a favorite named "Grandma's Home"
+      // and "1996 Allison Way" works whether the favorite uses the
+      // directional or not.
+      const qTokens = ql.split(/\s+/).filter(Boolean);
       for (const f of favorites) {
-        const n = (f.name || '').toLowerCase();
-        if (n.includes(ql)) out.push({ kind: 'fav', ...f });
+        if (!f || !f.name) continue;
+        const n = f.name.toLowerCase();
+        let ok = true;
+        for (let i = 0; i < qTokens.length; i++) {
+          if (!n.includes(qTokens[i])) { ok = false; break; }
+        }
+        if (ok) out.push({ kind: 'fav', ...f });
       }
     } else {
       for (const f of favorites.slice(0, 10)) out.push({ kind: 'fav', ...f });
@@ -7253,6 +7289,34 @@ function fmtDate(ts) {
     for (const { p } of poiHits.slice(0, limit)) {
       out.push({ kind: 'poi', name: p.name, lng: p.lng, lat: p.lat,
                  category: p.category, props: p.props });
+    }
+    // Address hits: same token-based match the main search box uses,
+    // so a query like "1996 Allison Way" picks up "1996 South Allison
+    // Way" without the user having to know the directional. Only
+    // run when there's a query — empty query in the trip planner
+    // shows favorites + nearby POIs as starting suggestions, which
+    // is plenty without dumping every address in the region.
+    if (ql) {
+      const qTokens = ql.split(/\s+/).filter(Boolean);
+      if (qTokens.length) {
+        const addrHits = [];
+        for (const a of allAddresses) {
+          let ok = true;
+          for (let i = 0; i < qTokens.length; i++) {
+            if (!a._labelLower.includes(qTokens[i])) { ok = false; break; }
+          }
+          if (!ok) continue;
+          addrHits.push({ a, d: haversineKm(ref.lat, ref.lng, a.lat, a.lng) });
+        }
+        addrHits.sort((x, y) => x.d - y.d);
+        // 20 is a reasonable typeahead cap — wide enough to surface
+        // multiple matches when the query is short, narrow enough
+        // not to dwarf the POI list above.
+        for (const { a } of addrHits.slice(0, 20)) {
+          out.push({ kind: 'address', name: a.label,
+                     lng: a.lng, lat: a.lat });
+        }
+      }
     }
     return out.slice(0, 60);
   }
@@ -7271,8 +7335,12 @@ function fmtDate(ts) {
       dropdown.innerHTML = items.map((it, i) => {
         const icon = endpointIcon(it);
         const label = endpointLabel(it);
-        const meta = it.kind === 'poi' && it.category
-          ? `<span class="meta">${esc(humanize(it.category))}</span>` : '';
+        let meta = '';
+        if (it.kind === 'poi' && it.category) {
+          meta = `<span class="meta">${esc(humanize(it.category))}</span>`;
+        } else if (it.kind === 'address') {
+          meta = `<span class="meta">address</span>`;
+        }
         return `<div class="ep-suggest ${it.kind}" data-idx="${i}">
           <span class="icon">${icon}</span>
           <span>${esc(label)}</span>${meta}
@@ -7920,15 +7988,24 @@ function fmtDate(ts) {
     const parts = [];
     for (let i = start; i <= end; i++) {
       const p = searchMatches[i];
-      // Address rows carry _kind === 'address'; render them with the
-      // formatted "<num> <street>" label as the primary text and a
-      // grey "address" subtitle in the slot where POIs show category.
-      // POI rows fall through to the existing name/category layout.
+      // Per-kind row rendering. Address rows show "<num> <street>"
+      // with a grey "address" subtitle; favorite rows show the
+      // user-given name with a "★ favorite" subtitle so they're
+      // visually distinct from POIs of the same name. POI rows
+      // (default) keep the existing name/category layout.
       if (p._kind === 'address') {
         parts.push(`<div class="poi-result" data-idx="${i}" style="position:absolute;top:${i * ROW_HEIGHT}px;left:0;right:0">
           <div class="info">
             <div class="name">${esc(p.label)}</div>
             <div class="cat">address</div>
+          </div>
+          <div class="dist">${fmtDist(p.dist)}</div>
+        </div>`);
+      } else if (p._kind === 'fav') {
+        parts.push(`<div class="poi-result" data-idx="${i}" style="position:absolute;top:${i * ROW_HEIGHT}px;left:0;right:0">
+          <div class="info">
+            <div class="name">${esc(p.name)}</div>
+            <div class="cat">★ favorite</div>
           </div>
           <div class="dist">${fmtDist(p.dist)}</div>
         </div>`);
@@ -7956,16 +8033,57 @@ function fmtDate(ts) {
       if (qLower && !(p.name && p.name.toLowerCase().includes(qLower))) continue;
       matches.push({ ...p, dist: haversineKm(ref.lat, ref.lng, p.lat, p.lng) });
     }
+    // Favorite (custom-pin) matches: token-based against the user's
+    // chosen name. Same gating as addresses — only when there's a
+    // query AND the type filter is "all" (favorites don't carry a
+    // POI category, so any non-empty filter implicitly excludes
+    // them). Sort the rest by distance later; favorites flow into
+    // the same matches array and end up where they belong relative
+    // to nearby POIs.
+    if (qLower && !filter && Array.isArray(favorites) && favorites.length) {
+      const qTokens = qLower.split(/\s+/).filter(Boolean);
+      for (const f of favorites) {
+        if (!f || !f.name || f.lng == null || f.lat == null) continue;
+        const n = f.name.toLowerCase();
+        let ok = true;
+        for (let i = 0; i < qTokens.length; i++) {
+          if (!n.includes(qTokens[i])) { ok = false; break; }
+        }
+        if (!ok) continue;
+        matches.push({
+          _kind: 'fav',
+          id: f.id, name: f.name,
+          lng: f.lng, lat: f.lat,
+          icon: f.icon, color: f.color,
+          dist: haversineKm(ref.lat, ref.lng, f.lat, f.lng),
+        });
+      }
+    }
     // Address matches: only when the user has actually typed something
     // (no query → don't flood the list with every address in the
     // region) and only when the type filter is "all" (addresses
     // don't carry a POI category, so any non-empty filter implicitly
     // excludes them). _labelLower was pre-computed at hydrate time.
+    //
+    // Match strategy is token-based, not raw substring: split the
+    // query on whitespace and require every token to appear as a
+    // substring of the label, in any order. This makes optional
+    // pieces like cardinal directions ("South", "North") and word
+    // order forgiving — typing "1996 Allison Way" matches the
+    // OSM-canonical "1996 South Allison Way", and "Allison 1996"
+    // works too. Each token check is `String.prototype.includes`
+    // — native and fast — so even ~50 k addresses × 3 tokens each
+    // is a couple of ms per keystroke.
     if (qLower && !filter) {
-      const ADDR_LIMIT = 200;  // cap so an enormous match doesn't stall render
+      const ADDR_LIMIT = 200;
+      const qTokens = qLower.split(/\s+/).filter(Boolean);
       let added = 0;
       for (const a of allAddresses) {
-        if (!a._labelLower.includes(qLower)) continue;
+        let ok = true;
+        for (let i = 0; i < qTokens.length; i++) {
+          if (!a._labelLower.includes(qTokens[i])) { ok = false; break; }
+        }
+        if (!ok) continue;
         matches.push({
           _kind: 'address',
           lng: a.lng, lat: a.lat,
