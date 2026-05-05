@@ -3689,6 +3689,130 @@ async function deleteHousenumbersByRegion(regionId) {
   db.close();
 }
 
+// Addresses (search-only): per-region "<num> <street>" bundle
+// downloaded alongside POIs/walk-graph/housenumbers when the user
+// saves a region. Not used for map rendering — the housenumbers
+// bundle still drives the on-map labels — only as input to the
+// search box, so the user can type "123 Main" and find the matching
+// point. Format mirrors POI/HSNB: one binary blob per region in IDB,
+// hydrated into a flat array of { lng, lat, num, street, label,
+// regionId } records on load.
+const ADDR_DB_NAME = 'cc.addresses.v1';
+function openAddressDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(ADDR_DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('regions')) {
+        db.createObjectStore('regions', { keyPath: 'regionId' });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function saveAddressRegion(regionId, buffer) {
+  const db = await openAddressDB();
+  const tx = db.transaction('regions', 'readwrite');
+  tx.objectStore('regions').put({ regionId, buffer });
+  await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
+  db.close();
+}
+async function loadAllAddressBuffers() {
+  const db = await openAddressDB();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction('regions', 'readonly').objectStore('regions').getAll();
+    req.onsuccess = () => { resolve(req.result); db.close(); };
+    req.onerror = () => reject(req.error);
+  });
+}
+async function deleteAddressesByRegion(regionId) {
+  const db = await openAddressDB();
+  const tx = db.transaction('regions', 'readwrite');
+  tx.objectStore('regions').delete(regionId);
+  await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
+  db.close();
+}
+
+// Mirror of /addresses ADDR header. Two interned string pools
+// (numbers + streets) keep dupe strings to one JS instance per
+// region — same trick POI hydration uses.
+function hydrateAddressRegion(regionId, buffer) {
+  const view = new DataView(buffer);
+  const magic = String.fromCharCode(
+    view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+  if (magic !== 'ADDR') throw new Error('addresses: bad magic ' + magic);
+  const version = view.getUint32(4, true);
+  if (version !== 1) throw new Error('addresses: bad version ' + version);
+  const N = view.getUint32(8, true);
+  const Mn = view.getUint32(12, true);
+  const numStringsByteLen = view.getUint32(16, true);
+  const Ms = view.getUint32(20, true);
+  // streetStringsByteLen at offset 24 — implied by remainder, not
+  // re-read here. Bbox at 32–48 isn't needed at hydrate time (each
+  // record carries its own quantised lng/lat).
+  const bw = view.getFloat32(32, true);
+  const bs = view.getFloat32(36, true);
+  const be = view.getFloat32(40, true);
+  const bn = view.getFloat32(44, true);
+
+  const colStart = 48;
+  const lngQ      = new Uint16Array(buffer, colStart,        N);
+  const latQ      = new Uint16Array(buffer, colStart + 2 * N, N);
+  const numIdx    = new Uint16Array(buffer, colStart + 4 * N, N);
+  const streetIdx = new Uint16Array(buffer, colStart + 6 * N, N);
+
+  const dec = new TextDecoder();
+  let off = colStart + 8 * N;
+  const numPool = new Array(Mn);
+  for (let i = 0; i < Mn; i++) {
+    const len = view.getUint16(off, true);
+    off += 2;
+    numPool[i] = dec.decode(new Uint8Array(buffer, off, len));
+    off += len;
+  }
+  const streetPool = new Array(Ms);
+  for (let i = 0; i < Ms; i++) {
+    const len = view.getUint16(off, true);
+    off += 2;
+    streetPool[i] = dec.decode(new Uint8Array(buffer, off, len));
+    off += len;
+  }
+
+  const lngStep = (be - bw) / 65535;
+  const latStep = (bn - bs) / 65535;
+  const out = new Array(N);
+  for (let i = 0; i < N; i++) {
+    const num = numPool[numIdx[i]];
+    const street = streetPool[streetIdx[i]];
+    out[i] = {
+      lng: bw + lngQ[i] * lngStep,
+      lat: bs + latQ[i] * latStep,
+      num, street,
+      // Pre-compute the lowercased label once at hydration; the
+      // search box does substring tests against this hot path.
+      label: `${num} ${street}`,
+      _labelLower: `${num} ${street}`.toLowerCase(),
+      regionId,
+    };
+  }
+  return out;
+}
+
+async function loadAllAddresses() {
+  const records = await loadAllAddressBuffers();
+  const all = [];
+  for (const rec of records) {
+    if (!rec.buffer) continue;
+    try {
+      for (const a of hydrateAddressRegion(rec.regionId, rec.buffer)) all.push(a);
+    } catch (e) {
+      console.error('addresses hydrate failed:', e);
+    }
+  }
+  return all;
+}
+
 const FAV_DB_NAME = 'cc.favorites.v1';
 function openFavoritesDB() {
   return new Promise((resolve, reject) => {
@@ -7594,6 +7718,10 @@ function fmtDate(ts) {
   map.on('mouseleave', 'route-stop-bubbles', () => { map.getCanvas().style.cursor = ''; });
 
   let allPois = await loadAllPois();
+  // Address records hydrated from each saved region's /addresses
+  // bundle. Used only by the search box, not map rendering — see
+  // hydrateAddressRegion for the record shape.
+  let allAddresses = await loadAllAddresses();
 
   // Hand creatures.js a locally-scoped POI query — the POI array lives
   // inside this IIFE and we don't want to scatter loadAllPois() calls.
@@ -7711,13 +7839,27 @@ function fmtDate(ts) {
     const parts = [];
     for (let i = start; i <= end; i++) {
       const p = searchMatches[i];
-      parts.push(`<div class="poi-result" data-idx="${i}" style="position:absolute;top:${i * ROW_HEIGHT}px;left:0;right:0">
-        <div class="info">
-          <div class="name">${esc(p.name)}</div>
-          ${p.category ? `<div class="cat">${esc(humanize(p.category))}</div>` : ''}
-        </div>
-        <div class="dist">${fmtDist(p.dist)}</div>
-      </div>`);
+      // Address rows carry _kind === 'address'; render them with the
+      // formatted "<num> <street>" label as the primary text and a
+      // grey "address" subtitle in the slot where POIs show category.
+      // POI rows fall through to the existing name/category layout.
+      if (p._kind === 'address') {
+        parts.push(`<div class="poi-result" data-idx="${i}" style="position:absolute;top:${i * ROW_HEIGHT}px;left:0;right:0">
+          <div class="info">
+            <div class="name">${esc(p.label)}</div>
+            <div class="cat">address</div>
+          </div>
+          <div class="dist">${fmtDist(p.dist)}</div>
+        </div>`);
+      } else {
+        parts.push(`<div class="poi-result" data-idx="${i}" style="position:absolute;top:${i * ROW_HEIGHT}px;left:0;right:0">
+          <div class="info">
+            <div class="name">${esc(p.name)}</div>
+            ${p.category ? `<div class="cat">${esc(humanize(p.category))}</div>` : ''}
+          </div>
+          <div class="dist">${fmtDist(p.dist)}</div>
+        </div>`);
+      }
     }
     spacerEl.innerHTML = parts.join('');
   }
@@ -7732,6 +7874,26 @@ function fmtDate(ts) {
       if (filter && p.category !== filter) continue;
       if (qLower && !(p.name && p.name.toLowerCase().includes(qLower))) continue;
       matches.push({ ...p, dist: haversineKm(ref.lat, ref.lng, p.lat, p.lng) });
+    }
+    // Address matches: only when the user has actually typed something
+    // (no query → don't flood the list with every address in the
+    // region) and only when the type filter is "all" (addresses
+    // don't carry a POI category, so any non-empty filter implicitly
+    // excludes them). _labelLower was pre-computed at hydrate time.
+    if (qLower && !filter) {
+      const ADDR_LIMIT = 200;  // cap so an enormous match doesn't stall render
+      let added = 0;
+      for (const a of allAddresses) {
+        if (!a._labelLower.includes(qLower)) continue;
+        matches.push({
+          _kind: 'address',
+          lng: a.lng, lat: a.lat,
+          num: a.num, street: a.street, label: a.label,
+          regionId: a.regionId,
+          dist: haversineKm(ref.lat, ref.lng, a.lat, a.lng),
+        });
+        if (++added >= ADDR_LIMIT) break;
+      }
     }
     matches.sort((a, b) => a.dist - b.dist);
     searchMatches = matches;
@@ -7763,7 +7925,22 @@ function fmtDate(ts) {
     if (!row) return;
     const p = searchMatches[+row.dataset.idx];
     if (!p) return;
-    setSelected(p, { flyTo: true });
+    // Address rows aren't real POIs — they don't have a category,
+    // brand, hours, etc. — but setSelected just needs a {lng, lat,
+    // name, category} shape to drop a marker + open the card. Treat
+    // them as ad-hoc POIs with name="123 Main St" so the existing
+    // poi-card flow (Directions button, save-as-favorite, etc.) Just
+    // Works without separate UI.
+    if (p._kind === 'address') {
+      setSelected({
+        lng: p.lng, lat: p.lat,
+        name: p.label,
+        category: 'address',
+        regionId: p.regionId,
+      }, { flyTo: true });
+    } else {
+      setSelected(p, { flyTo: true });
+    }
     searchInput.value = '';
     searchResults.classList.remove('show');
     searchInput.blur();
@@ -7985,12 +8162,14 @@ function fmtDate(ts) {
       await deleteScheduleByRegion(id);
       await deleteWalkGraphByRegion(id);
       await deleteHousenumbersByRegion(id);
+      await deleteAddressesByRegion(id);
       await rebuildScheduleIndex();
       // Drop the now-stale in-memory walk graph; next routing call re-loads
       // via ensureWalkGraph().
       unloadWalkGraph();
       hnRegions = [];  // force re-parse of remaining regions on next zoom-in
       allPois = allPois.filter(p => p.regionId !== id);
+      allAddresses = allAddresses.filter(a => a.regionId !== id);
       saveRegions(list.filter(x => x.id !== id));
       invalidateRegionSizes(id);
       renderRegions();
@@ -8025,6 +8204,29 @@ function fmtDate(ts) {
       return N;
     } catch (err) {
       console.error('POI fetch failed:', err);
+      return 0;
+    }
+  }
+
+  async function fetchAndSaveAddresses(regionId, bbox) {
+    try {
+      const res = await fetch(`/addresses?bbox=${bbox.join(',')}`,
+        { headers: { 'X-Download': '1' } });
+      if (!res.ok) return 0;
+      const buffer = await res.arrayBuffer();
+      if (buffer.byteLength < 48) return 0;
+      const view = new DataView(buffer);
+      const magic = String.fromCharCode(
+        view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+      if (magic !== 'ADDR') throw new Error('addresses: bad magic ' + magic);
+      const N = view.getUint32(8, true);
+      if (!N) return 0;
+      await saveAddressRegion(regionId, buffer);
+      const hydrated = hydrateAddressRegion(regionId, buffer);
+      for (const a of hydrated) allAddresses.push(a);
+      return N;
+    } catch (err) {
+      console.error('addresses fetch failed:', err);
       return 0;
     }
   }
@@ -9850,6 +10052,7 @@ function fmtDate(ts) {
       // Clean in-memory copies for this region before we re-fetch, so the
       // POI/walk/hn arrays don't end up double-counting the region.
       allPois = allPois.filter(p => p.regionId !== id);
+      allAddresses = allAddresses.filter(a => a.regionId !== id);
       unloadWalkGraph();
       hnRegions = [];
     }
@@ -9867,6 +10070,8 @@ function fmtDate(ts) {
     await fetchAndSaveHousenumbers(id, bbox);
     // Force re-parse on next z16+ zoom so the new data is picked up.
     hnRegions = [];
+    status.textContent = `${verb} addresses…`;
+    await fetchAndSaveAddresses(id, bbox);
 
     // No-SW mode (Capacitor IPA): the SW.downloadRegion path is the
     // only thing that fetches + caches map tiles. Without it we can

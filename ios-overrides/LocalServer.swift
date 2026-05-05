@@ -45,6 +45,17 @@ import GCDWebServer
         }
         bundleDir = URL(fileURLWithPath: bundlePath, isDirectory: true)
 
+        // Detect a fresh IPA install (or any bundle replacement) and
+        // invalidate any stale liveDir from a prior IPA's live-update
+        // session. Without this, the overlay model (liveDir served
+        // first, bundleDir as fallback) means a newly-installed IPA's
+        // bundled code can be MASKED by older files lingering in the
+        // previous installation's liveDir — the user sees a confusing
+        // mix of "reverted" pages alongside genuinely-new ones.
+        // bundle-id.txt is stamped at build time and never live-updated,
+        // so any change between launches means the bundle was replaced.
+        invalidateLiveDirIfBundleChanged()
+
         // Restore any previously-set live dir from prior session.
         // Stored value is a path RELATIVE to Library/ (e.g.
         // "CCLiveUpdates/v-2026_05_03_12_00"). iOS rotates the data
@@ -187,6 +198,53 @@ import GCDWebServer
         let marker = "/CCLiveUpdates/"
         guard let range = absolute.range(of: marker) else { return nil }
         return String(absolute[range.lowerBound...].dropFirst())  // drop leading /
+    }
+
+    /// Read the build-time bundle identifier (one line of ASCII text)
+    /// from `App.app/public/bundle-id.txt`. Returns nil if the file is
+    /// missing — the case for IPAs built before this mechanism existed,
+    /// where we deliberately skip the freshness check rather than
+    /// invalidate liveDir on every launch.
+    private func readBundleId() -> String? {
+        guard let dir = bundleDir else { return nil }
+        let url = dir.appendingPathComponent("bundle-id.txt")
+        guard let data = try? Data(contentsOf: url),
+              let raw = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        let id = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return id.isEmpty ? nil : id
+    }
+
+    /// Compare the on-disk bundle's identifier to whatever we last
+    /// recorded. If they differ, drop every UserDefaults key that
+    /// pointed at the previous bundle's liveDir overlay so this
+    /// launch reads the new bundle directly. Stores the new id only
+    /// after the cleanup so a crash mid-cleanup retries on next
+    /// launch instead of silently leaving the old liveDir active.
+    private func invalidateLiveDirIfBundleChanged() {
+        guard let bid = readBundleId() else { return }
+        let defaults = UserDefaults.standard
+        let lastKey = "cc.localServer.bundleId"
+        let last = defaults.string(forKey: lastKey)
+        if last == bid { return }
+        // Treat any of the following as "bundle changed":
+        //   * `last` exists but differs (steady-state IPA replacement)
+        //   * `last` is nil AND we have a stale liveDir configured
+        //     — this catches the upgrade from an IPA without bundle-id.txt
+        //     to one with it; nil-vs-nonnil isn't really "first launch"
+        //     when there's clearly a previous live-update overlay
+        //     pointing somewhere.
+        let hasLive = defaults.object(forKey: "cc.localServer.liveDirRel") != nil
+            || defaults.object(forKey: "cc.localServer.liveDir") != nil
+        if last != nil || hasLive {
+            defaults.removeObject(forKey: "cc.localServer.liveDirRel")
+            defaults.removeObject(forKey: "cc.localServer.liveDir")
+            NSLog("[LocalServer] bundle changed (\(last ?? "nil") -> \(bid)); cleared liveDir")
+        } else {
+            NSLog("[LocalServer] first launch; recording bundle id \(bid)")
+        }
+        defaults.set(bid, forKey: lastKey)
     }
 
     private func handle(_ req: GCDWebServerRequest) -> GCDWebServerResponse {
