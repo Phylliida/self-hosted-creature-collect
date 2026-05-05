@@ -270,21 +270,166 @@
     return true;
   }
 
-  // Built-in tags are predicate-driven and never stored on a capture
-  // record. They render alongside user tags everywhere (Tags menu,
-  // detail-view picker, inventory filter row) but can't be created,
-  // deleted, or toggled by the user. Add new ones by appending here.
+  // === Daycare slots ===
+  // The user can park up to DAYCARE_SLOT_COUNT captured creatures in
+  // the daycare. State is a flat array stored in localStorage. Each
+  // entry is an object { id, addedAt, distM }:
+  //   id     : capture id (string)
+  //   addedAt: ms-since-epoch when this creature was placed in the
+  //            slot. Resets each time a creature is removed and
+  //            re-added — that's how distance accumulation restarts
+  //            from zero on re-entry, matching the user's mental
+  //            model ("the daycare counter is the distance walked
+  //            *during this stay*, not lifetime in the daycare").
+  //   distM  : meters travelled while this slot was occupied,
+  //            updated by _accumulateDaycareDistance on every
+  //            accepted GPS fix.
+  // Legacy shape was a flat array of capture-id strings. The reader
+  // migrates strings → objects on first read after upgrade so old
+  // saves keep working without a separate migration step.
+  const DAYCARE_SLOTS_KEY = 'cc.daycareSlots.v1';
+  const DAYCARE_SLOT_COUNT = 2;
+
+  function _normalizeSlot(v) {
+    if (typeof v === 'string' && v) {
+      return { id: v, addedAt: Date.now(), distM: 0 };
+    }
+    if (v && typeof v === 'object' && typeof v.id === 'string' && v.id) {
+      return {
+        id: v.id,
+        addedAt: typeof v.addedAt === 'number' ? v.addedAt : Date.now(),
+        distM: typeof v.distM === 'number' && v.distM >= 0 ? v.distM : 0,
+      };
+    }
+    return null;
+  }
+
+  function readDaycareSlots() {
+    try {
+      const raw = localStorage.getItem(DAYCARE_SLOTS_KEY);
+      const arr = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(arr)) return [];
+      const cleaned = [];
+      const seen = new Set();
+      for (const v of arr) {
+        const slot = _normalizeSlot(v);
+        if (!slot || seen.has(slot.id)) continue;
+        seen.add(slot.id);
+        cleaned.push(slot);
+        if (cleaned.length >= DAYCARE_SLOT_COUNT) break;
+      }
+      return cleaned;
+    } catch { return []; }
+  }
+  function writeDaycareSlots(arr) {
+    try {
+      localStorage.setItem(DAYCARE_SLOTS_KEY,
+        JSON.stringify(arr.slice(0, DAYCARE_SLOT_COUNT)));
+    } catch {}
+  }
+  function isInDaycare(id) {
+    if (!id) return false;
+    return readDaycareSlots().some((s) => s.id === id);
+  }
+  function addToDaycare(id) {
+    if (!id) return false;
+    const arr = readDaycareSlots();
+    if (arr.some((s) => s.id === id)) return false;
+    if (arr.length >= DAYCARE_SLOT_COUNT) return false;
+    arr.push({ id, addedAt: Date.now(), distM: 0 });
+    writeDaycareSlots(arr);
+    return true;
+  }
+  function removeFromDaycare(id) {
+    if (!id) return false;
+    const arr = readDaycareSlots();
+    const idx = arr.findIndex((s) => s.id === id);
+    if (idx < 0) return false;
+    arr.splice(idx, 1);
+    writeDaycareSlots(arr);
+    return true;
+  }
+  function toggleDaycare(id) {
+    if (isInDaycare(id)) { removeFromDaycare(id); return false; }
+    return addToDaycare(id);
+  }
+  // Count of slots currently occupied by captures that STILL EXIST.
+  // No release/delete UI exists today, but defensive against future
+  // additions (or manual storage edits): a stale ID shouldn't lock
+  // out new daycare entries by counting toward the limit.
+  function _liveDaycareCount() {
+    const slots = readDaycareSlots();
+    let n = 0;
+    for (const s of slots) if (findCreature(s.id)) n++;
+    return n;
+  }
+
+  // Built-in tags are NOT stored on the capture record — they're
+  // computed from a predicate (or from external state, in the case
+  // of interactive ones like Daycare). They render alongside user
+  // tags everywhere (Tags menu, detail-view picker, inventory filter
+  // row). Schema:
+  //   name        : display label and stable identifier.
+  //   description : copy shown in the Tags menu.
+  //   predicate(c): returns whether the tag is APPLIED to this
+  //                 creature right now. Used for "applied" styling
+  //                 on chips and for filtering.
+  //   visible(c)  : (optional) returns whether the tag should be
+  //                 SHOWN in the detail picker. Defaults to
+  //                 `predicate` — same as the legacy behavior where
+  //                 a non-matching predicate also means the chip is
+  //                 hidden. Override for interactive tags whose
+  //                 displayed condition is different from their
+  //                 applied condition (e.g. Daycare shows a chip
+  //                 even when the creature isn't yet in the daycare,
+  //                 as long as there's a free slot).
+  //   onToggle(c) : (optional) called when the user taps the chip.
+  //                 Implies the chip is interactive (built-ins
+  //                 without onToggle stay read-only).
+  // Add new ones by appending here.
   const BUILTIN_TAGS = [
     {
       name: 'Pure',
       description: 'Same species on both sides (no fusion).',
       predicate: (c) => c && c.speciesA != null && c.speciesA === c.speciesB,
     },
+    {
+      name: 'Daycare',
+      description: 'In the daycare. Tap on a creature\u2019s detail page to add or remove (max 2 at a time).',
+      predicate: (c) => c && c.id != null && isInDaycare(c.id),
+      visible: (c) => {
+        if (!c || c.id == null) return false;
+        // Show the chip when the creature is already in the daycare
+        // (so it can be tapped to remove) OR when there's space for
+        // it (so it can be tapped to add). Hides itself once the
+        // daycare is full and this creature isn't already in it —
+        // exactly the gating the user asked for. _liveDaycareCount
+        // is used (not raw .length) so a stale ID — slot referencing
+        // a deleted capture — doesn't keep the chip hidden.
+        return isInDaycare(c.id) || _liveDaycareCount() < DAYCARE_SLOT_COUNT;
+      },
+      onToggle: (c) => {
+        if (!c || c.id == null) return;
+        toggleDaycare(c.id);
+      },
+    },
   ];
   const BUILTIN_TAG_NAMES = new Set(BUILTIN_TAGS.map((b) => b.name));
   function isBuiltinTag(name) { return BUILTIN_TAG_NAMES.has(name); }
+  function builtinByName(name) {
+    return BUILTIN_TAGS.find((b) => b.name === name) || null;
+  }
   function builtinTagsForCreature(c) {
     return BUILTIN_TAGS.filter((b) => b.predicate(c)).map((b) => b.name);
+  }
+  // Whether a built-in tag's CHIP should appear in the picker for a
+  // given creature. Defaults to the predicate (matches the legacy
+  // "tag only shows when applied" behavior); interactive tags
+  // override `visible` to keep the chip available even when the tag
+  // isn't currently applied.
+  function builtinVisibleForCreature(b, c) {
+    const fn = (typeof b.visible === 'function') ? b.visible : b.predicate;
+    try { return !!fn(c); } catch { return false; }
   }
   // The full set of tags currently on a creature, combining the user-
   // applied stored tags with any built-ins whose predicate matches.
@@ -725,23 +870,33 @@
   // Built-in chips are non-clickable (their applied state comes from
   // a predicate, not user choice). User chips toggle membership.
   function detailTagsHtml(creature) {
-    const matchedBuiltins = builtinTagsForCreature(creature);
+    // Built-ins to show: any whose `visible` (defaulting to predicate)
+    // returns true for this creature. Interactive built-ins (Daycare)
+    // keep their chip in the picker even when not currently applied,
+    // so the user can tap to add.
+    const visibleBuiltins = BUILTIN_TAGS
+      .filter((b) => builtinVisibleForCreature(b, creature))
+      .map((b) => b.name);
     const userTags = readTags().filter((t) => !isBuiltinTag(t));
-    const names = [...matchedBuiltins, ...userTags];
+    const names = [...visibleBuiltins, ...userTags];
     if (!names.length) {
       return `<div class="detail-tags-empty">No tags yet \u2014 create some in the Tags menu.</div>`;
     }
     const applied = new Set(effectiveTagsForCreature(creature));
     const chips = names.map((t) => {
-      const builtin = isBuiltinTag(t);
+      const builtin = builtinByName(t);
+      const isUser = !builtin;
+      const interactive = !!(builtin && typeof builtin.onToggle === 'function');
       const classes = ['detail-tag-chip'];
       if (applied.has(t)) classes.push('applied');
       if (builtin) classes.push('builtin');
-      // Built-in chips intentionally don't carry a data-tag — the
-      // click handler bails on missing data-tag, so it acts as a
-      // visual-only chip without using the browser's disabled style
-      // (which would override our custom appearance).
-      const attrs = builtin ? '' : `data-tag="${escapeHtml(t)}"`;
+      if (interactive) classes.push('interactive');
+      // Read-only built-ins intentionally have no data-tag so the
+      // click handler bails — they're visual-only chips. User tags
+      // and interactive built-ins both carry data-tag and rely on
+      // the dispatch in the click handler to do the right thing.
+      const attrs = (isUser || interactive)
+        ? `data-tag="${escapeHtml(t)}"` : '';
       return `<button class="${classes.join(' ')}" type="button" ${attrs}>${escapeHtml(t)}</button>`;
     }).join('');
     return `<div class="detail-tags">${chips}</div>`;
@@ -2172,6 +2327,69 @@
       }
       #creatureInventory .daycare-view { display: none; }
       #creatureInventory .daycare-view.show { display: flex; flex-direction: column; }
+      #creatureInventory .daycare-slots {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin: 0 0 10px;
+      }
+      #creatureInventory .daycare-slot {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 12px 8px;
+        min-height: 110px;
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+        border: 1px solid var(--ui-hairline, rgba(0,0,0,0.08));
+        border-radius: var(--ui-radius, 8px);
+        cursor: pointer;
+      }
+      #creatureInventory .daycare-slot.daycare-slot-empty {
+        cursor: default;
+        border-style: dashed;
+      }
+      #creatureInventory .daycare-slot-empty-label {
+        font-size: 12px;
+        color: var(--ui-muted, #666);
+        font-style: italic;
+      }
+      #creatureInventory .daycare-slot-art {
+        position: relative;
+        width: 72px;
+        height: 72px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #creatureInventory .daycare-slot-art-placeholder {
+        width: 16px; height: 16px;
+        border-radius: 50%;
+        background: var(--ui-hairline, rgba(0,0,0,0.18));
+      }
+      #creatureInventory .daycare-slot-art-img {
+        max-width: 100%;
+        max-height: 100%;
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
+      }
+      #creatureInventory .daycare-slot-name {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--ui-text, #111);
+        text-align: center;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #creatureInventory .daycare-slot-dist {
+        font-size: 11px;
+        color: var(--ui-muted, #666);
+        font-variant-numeric: tabular-nums;
+        margin-top: 1px;
+      }
       #creatureInventory .daycare-today {
         display: flex; flex-direction: column; align-items: center;
         padding: 12px 10px 14px;
@@ -4492,7 +4710,51 @@
         + `<div>${_formatMeters(selMeters)}</div>`
       : `<div class="daycare-detail-title">${escapeHtml(selDate)}</div>`
         + `<div class="daycare-detail-empty">no travel recorded</div>`;
+    // Daycare slots: render two boxes at the top, each either holding
+    // a captured creature (sprite + name, tap → its detail view) or
+    // empty (placeholder text, hint to add via the Daycare tag on a
+    // creature's detail page). readDaycareSlots is filtered against
+    // currently-existing captures so a slot whose creature was
+    // deleted shows up as empty rather than a dangling reference.
+    const rawSlots = readDaycareSlots();
+    const nickMap = readNicknames();
+    const slotItems = [];
+    for (let i = 0; i < DAYCARE_SLOT_COUNT; i++) {
+      const slot = rawSlots[i] || null;
+      const c = slot ? findCreature(slot.id) : null;
+      slotItems.push(c ? { c, slot } : null);
+    }
+    const slotsHtml = `
+      <div class="daycare-slots">
+        ${slotItems.map((it) => {
+          if (!it) {
+            return `<div class="daycare-slot daycare-slot-empty">`
+              + `<span class="daycare-slot-empty-label">empty</span>`
+              + `</div>`;
+          }
+          const c = it.c;
+          // Same name resolution detail-view uses: nickname overrides
+          // canonical fused name when present.
+          const name = nickMap[c.id] || c.name
+            || fusionName(c.speciesA, c.speciesB);
+          // Distance walked while THIS occupancy lasted. Resets to 0
+          // each time the creature is removed and re-added — see
+          // addToDaycare. Format with the same _formatMeters helper
+          // used by the calendar / today's-distance card.
+          const distLabel = _formatMeters(it.slot.distM || 0);
+          return `<div class="daycare-slot" data-id="${escapeHtml(c.id)}">`
+            + `<div class="daycare-slot-art">`
+            + `<div class="daycare-slot-art-placeholder"></div>`
+            + `<img class="daycare-slot-art-img" alt="" hidden>`
+            + `</div>`
+            + `<div class="daycare-slot-name">${escapeHtml(name)}</div>`
+            + `<div class="daycare-slot-dist">${distLabel}</div>`
+            + `</div>`;
+        }).join('')}
+      </div>
+    `;
     body.innerHTML = `
+      ${slotsHtml}
       <div class="daycare-today">
         <span class="daycare-today-label">Today</span>
         <span class="daycare-today-value">${_formatMeters(todayMeters)}</span>
@@ -4510,6 +4772,34 @@
       <button class="daycare-show-on-map" type="button">Show on map</button>
       <button class="daycare-show-all-on-map" type="button">Show all on map</button>
     `;
+    // Slot click → open the creature's detail. Async sprite hydration
+    // mirrors detail-view's pattern: drop a placeholder, then swap in
+    // the cropped variant once the sprite blob URL resolves. Only
+    // populated slots are clickable (data-id is present).
+    body.querySelectorAll('.daycare-slot[data-id]').forEach((slot) => {
+      slot.addEventListener('click', () => {
+        const id = slot.dataset.id;
+        if (id) showDetail(id);
+      });
+      const id = slot.dataset.id;
+      const c = findCreature(id);
+      if (!c || !global.Sprites || c.speciesA == null || c.speciesB == null) return;
+      const p = (typeof c.variant === 'number')
+        ? global.Sprites.getSpriteUrl(c.speciesA, c.speciesB, c.variant)
+        : global.Sprites.getDefaultSpriteUrl(c.speciesA, c.speciesB);
+      p.then((url) => {
+        if (!url) return;
+        const img = slot.querySelector('.daycare-slot-art-img');
+        const ph = slot.querySelector('.daycare-slot-art-placeholder');
+        if (!img) { URL.revokeObjectURL(url); return; }
+        img.onload = () => {
+          URL.revokeObjectURL(url);
+          if (ph) ph.style.display = 'none';
+          img.removeAttribute('hidden');
+        };
+        img.src = url;
+      });
+    });
     body.querySelectorAll('.daycare-cal-nav').forEach((btn) => {
       btn.addEventListener('click', () => {
         if (btn.disabled) return;
@@ -5268,9 +5558,20 @@
       chip.addEventListener('click', () => {
         const tag = chip.dataset.tag;
         if (!tag) return;
-        toggleCreatureTag(c.id, tag);
-        // Re-render to refresh the chip styling. Re-read the creature
-        // so c.tags reflects the toggle result.
+        // Dispatch: an interactive built-in routes through its
+        // onToggle handler (which is the source-of-truth for that
+        // tag's state — e.g. mutating Daycare slots). User-created
+        // tags fall through to the existing toggleCreatureTag path
+        // which mutates the capture's `tags` array. Read-only
+        // built-ins never reach here because they don't carry a
+        // data-tag attribute.
+        const builtin = builtinByName(tag);
+        if (builtin && typeof builtin.onToggle === 'function') {
+          try { builtin.onToggle(c); } catch (e) { console.error(e); }
+        } else {
+          toggleCreatureTag(c.id, tag);
+        }
+        // Re-render so chip styling reflects the new applied state.
         const fresh = findCreature(c.id);
         if (fresh) renderDetail(fresh);
       });
@@ -6167,6 +6468,18 @@
     if (!_summaryCache) _summaryCache = {};
     _summaryCache[k] = (_summaryCache[k] || 0) + d;
     _idbPutSummary(k, _summaryCache[k]).catch(() => {});
+    // Credit each currently-occupied daycare slot with this segment.
+    // Slot distance accumulates only while a creature is in the slot;
+    // removing + re-adding starts a fresh count (that's why
+    // addToDaycare zeroes distM on entry). One read+write per
+    // accepted segment — accepted segments are gated to ~10 m
+    // jumps, so this writes localStorage once every minute or two
+    // of walking at typical pace, not on every raw GPS fix.
+    const slots = readDaycareSlots();
+    if (slots.length) {
+      for (const s of slots) s.distM += d;
+      writeDaycareSlots(slots);
+    }
     _distAnchorLat = lat;
     _distAnchorLng = lng;
     _distAnchorAt = ts;

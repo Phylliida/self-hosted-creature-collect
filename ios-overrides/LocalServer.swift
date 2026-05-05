@@ -249,6 +249,35 @@ import GCDWebServer
 
     private func handle(_ req: GCDWebServerRequest) -> GCDWebServerResponse {
         let rawPath = req.path
+
+        // Emergency-refresh route: pure-HTML escape hatch the
+        // refresh button's <a href="/__refresh__"> falls back to
+        // when its onclick JS doesn't run (live-update.js failed
+        // to parse, an earlier script crash poisoned the page,
+        // etc.). Clears any liveDir overlay so the BUNDLED code
+        // starts serving on the redirect — equivalent state to a
+        // fresh app reinstall, without the reinstall. From bundled
+        // code the user can press refresh again to pull updates
+        // via the normal in-page live-update flow.
+        if rawPath == "/__refresh__" {
+            setLiveDir(nil)
+            // HTML response with both an HTTP 302 (preferred) and
+            // a meta-refresh fallback — covers older WKWebView
+            // edge cases where the redirect header isn't honored
+            // for navigations from a same-origin <a> click.
+            let html = "<!doctype html><html><head>"
+                + "<meta http-equiv=\"refresh\" content=\"0;url=/\">"
+                + "<title>Refreshing\u{2026}</title></head><body>"
+                + "<p>Refreshing\u{2026} <a href=\"/\">tap here</a> if this page does not redirect.</p>"
+                + "</body></html>"
+            let resp = GCDWebServerDataResponse(html: html)
+                ?? GCDWebServerErrorResponse(statusCode: 500)
+            resp.statusCode = 302
+            resp.setValue("/", forAdditionalHeader: "Location")
+            resp.cacheControlMaxAge = 0
+            return resp
+        }
+
         // SPA-ish: bare `/` serves index.html.
         let path = (rawPath == "/" || rawPath.isEmpty) ? "/index.html" : rawPath
 

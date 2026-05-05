@@ -2731,18 +2731,49 @@
             bottom: max(18px, calc(env(safe-area-inset-bottom) + 8px));
             right: max(10px, env(safe-area-inset-right));
             z-index: 5;">
-  <button id="emergencyRefresh"
-          onclick="try{caches.open('app-v1').then(function(c){['/','/manifest.webmanifest','/static/icon.svg','/static/trip-planner.js','/static/vendor/maplibre-gl.css','/static/vendor/maplibre-gl.js'].forEach(function(u){c.delete(u)})})}catch(_){}try{localStorage.setItem('cc.refreshRequested','1');localStorage.removeItem('cc.lastUpdateFailedAt');}catch(_){}setTimeout(function(){location.reload()},150);"
-          type="button"
-          title="Refresh app (clears stale code, keeps icons/fonts/maps)"
-          aria-label="Refresh app"
-          style="-webkit-tap-highlight-color: rgba(0,0,0,0.1);
-                 touch-action: manipulation;">
+  <!-- Refresh: anchor element (NOT a <button>) so the browser's
+       default link-navigation provides a JS-free safety net. The
+       inline onclick handles the happy path (in-page live-update +
+       single reload) and returns false to cancel navigation. If the
+       click handler ever throws, doesn't run, or is sabotaged by a
+       live-update that broke the JS, the browser falls through to
+       the href — which hits LocalServer's /__refresh__ route, that
+       clears liveDir so the IPA's BUNDLED code takes over. Same
+       end-state as a fresh reinstall, no reinstall required. -->
+  <a id="emergencyRefresh" href="/__refresh__" role="button"
+     onclick="try{(function(){
+       // Stale-shell cache-clear, same as before.
+       try{caches.open('app-v1').then(function(c){['/','/manifest.webmanifest','/static/icon.svg','/static/trip-planner.js','/static/vendor/maplibre-gl.css','/static/vendor/maplibre-gl.js'].forEach(function(u){c.delete(u)})})}catch(_){}
+       try{localStorage.removeItem('cc.lastUpdateFailedAt');}catch(_){}
+       var btn=document.getElementById('emergencyRefresh');
+       if(btn){btn.style.opacity='0.5';btn.style.pointerEvents='none';}
+       // Two paths:
+       //   * Capacitor IPA: trigger live-update inline (force:true
+       //     bypasses the cc.refreshRequested gate) so it downloads
+       //     new files RIGHT NOW; we reload exactly once at the end.
+       //   * Web (no CCLiveUpdate): plain reload + cache-clear,
+       //     matching the original pre-live-update behavior since
+       //     web users always get the latest code from the origin
+       //     on the next request anyway.
+       function done(){setTimeout(function(){location.reload()},150);}
+       if(window.CCLiveUpdate&&window.CCLiveUpdate.check){
+         window.CCLiveUpdate.check({force:true}).then(done,done);
+       }else{
+         done();
+       }
+     })();return false;}catch(_){/* swallow — fall through to default navigation */}"
+     title="Refresh app (clears stale code, keeps icons/fonts/maps)"
+     aria-label="Refresh app"
+     style="-webkit-tap-highlight-color: rgba(0,0,0,0.1);
+            touch-action: manipulation; text-decoration: none;
+            color: var(--ui-text, inherit);
+            display: flex; align-items: center; justify-content: center;
+            width: 29px; height: 29px;">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"
          style="display:block;margin:auto;pointer-events:none">
       <path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10H17.6A5.99 5.99 0 0 1 12 18a6 6 0 1 1 4.22-10.22L13 11h7V4z"/>
     </svg>
-  </button>
+  </a>
 </div>
 <div id="map"></div>
 <div id="search">
@@ -5365,6 +5396,10 @@ function fmtDate(ts) {
       candyFamilyMigrated: localStorage.getItem('cc.candyMigrated.familyV2') === '1',
       bag: JSON.parse(localStorage.getItem('cc.bag.v1') || 'null'),
       tags: JSON.parse(localStorage.getItem('cc.tags.v1') || '[]'),
+      // Daycare slots (capture-id references). Only valid when paired
+      // with the captures payload above — IDs that don't match any
+      // imported capture will be silently dropped at apply time.
+      daycareSlots: JSON.parse(localStorage.getItem('cc.daycareSlots.v1') || '[]'),
       backupName: localStorage.getItem('cc.backupName') || null,
       // Daycare history (per-day distance summary + full GPS paths)
       // lives in IDB rather than localStorage so it can grow past LS
@@ -5566,6 +5601,52 @@ function fmtDate(ts) {
       localStorage.setItem('cc.backupName', data.backupName);
       const nameInput = document.getElementById('backupName');
       if (nameInput) nameInput.value = data.backupName;
+    }
+    // Daycare slots: union with current slots, capped at 2, and
+    // filtered against imported + existing capture IDs so we never
+    // store a dangling reference. Re-importing the same backup
+    // leaves slots unchanged.
+    //
+    // Schema-aware: each slot may be a plain id-string (legacy v1
+    // shape) or an object { id, addedAt, distM } (current shape).
+    // We normalize both into objects on the way in so the merged
+    // store always carries the per-stay timestamp + distance fields,
+    // and a string-only legacy save imported into a fresh device
+    // still gets sensible defaults (Date.now() / 0).
+    if (Array.isArray(data.daycareSlots)) {
+      const captures = JSON.parse(localStorage.getItem('cc.capturedCreatures') || '[]');
+      const validIds = new Set(captures.map((c) => c && c.id).filter(Boolean));
+      const current = JSON.parse(localStorage.getItem('cc.daycareSlots.v1') || '[]');
+      const merged = [];
+      const seen = new Set();
+      const _norm = (v) => {
+        if (typeof v === 'string' && v) {
+          return { id: v, addedAt: Date.now(), distM: 0 };
+        }
+        if (v && typeof v === 'object' && typeof v.id === 'string' && v.id) {
+          return {
+            id: v.id,
+            addedAt: typeof v.addedAt === 'number' ? v.addedAt : Date.now(),
+            distM: typeof v.distM === 'number' && v.distM >= 0 ? v.distM : 0,
+          };
+        }
+        return null;
+      };
+      for (const v of current) {
+        const slot = _norm(v);
+        if (!slot || !validIds.has(slot.id) || seen.has(slot.id)) continue;
+        seen.add(slot.id);
+        merged.push(slot);
+        if (merged.length >= 2) break;
+      }
+      for (const v of data.daycareSlots) {
+        if (merged.length >= 2) break;
+        const slot = _norm(v);
+        if (!slot || !validIds.has(slot.id) || seen.has(slot.id)) continue;
+        seen.add(slot.id);
+        merged.push(slot);
+      }
+      localStorage.setItem('cc.daycareSlots.v1', JSON.stringify(merged));
     }
     // Daycare: per-day-max merge for the summary; incoming wins for
     // path days the local device doesn't already have. See
