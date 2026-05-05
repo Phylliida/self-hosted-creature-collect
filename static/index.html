@@ -2761,10 +2761,15 @@
        single reload) and returns false to cancel navigation. If the
        click handler ever throws, doesn't run, or is sabotaged by a
        live-update that broke the JS, the browser falls through to
-       the href — which hits LocalServer's /__refresh__ route, that
-       clears liveDir so the IPA's BUNDLED code takes over. Same
-       end-state as a fresh reinstall, no reinstall required. -->
-  <a id="emergencyRefresh" href="/__refresh__" role="button"
+       the href. Per platform:
+         * iOS — LocalServer.swift's /__refresh__.html route
+           intercepts, clears any stale liveDir overlay, and
+           redirects to /. Same end-state as a fresh reinstall.
+         * Web — Flask's /__refresh__.html route 302s to /.
+         * Android — no native interceptor; the bundled static
+           __refresh__.html (from build-capacitor.sh) is served
+           directly with a meta-refresh that bounces to /. -->
+  <a id="emergencyRefresh" href="/__refresh__.html" role="button"
      onclick="try{(function(){
        // Stale-shell cache-clear, same as before.
        try{caches.open('app-v1').then(function(c){['/','/manifest.webmanifest','/static/icon.svg','/static/trip-planner.js','/static/vendor/maplibre-gl.css','/static/vendor/maplibre-gl.js'].forEach(function(u){c.delete(u)})})}catch(_){}

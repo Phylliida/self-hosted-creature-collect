@@ -503,18 +503,24 @@ def sprite_split_names():
     return resp
 
 
-@app.route("/__refresh__")
+@app.route("/__refresh__.html")
 def emergency_refresh():
-    """Web-side stub for the IPA's emergency-refresh fallback.
+    """Web-side stub for the cross-platform emergency-refresh
+    fallback.
 
-    The refresh button is rendered as `<a href="/__refresh__">` so
-    that even if its onclick JS is broken, the browser's default
-    link navigation still does *something*. In the IPA, LocalServer
-    handles this path natively (clearing any stale liveDir overlay
-    so the bundled code takes over). On the web there's no liveDir
-    overlay to clear — just bounce back to the root so the next
-    request fetches fresh code. Cheap insurance against the user
-    landing on a 404 in the rare case onclick throws on web.
+    The refresh button is rendered as `<a href="/__refresh__.html">`
+    so that even if its onclick JS is broken, the browser's default
+    link navigation still does *something*. Three platforms, three
+    handlers for the same href:
+      * iOS  — LocalServer.swift route clears any stale liveDir
+        overlay, redirects to /.
+      * Web  — this Flask route 302s to /.
+      * Android — no native interceptor; the bundled static
+        __refresh__.html (written by build-capacitor.sh) is served
+        directly by WebViewAssetLoader and meta-refreshes to /.
+
+    On the web there's no liveDir overlay to clear, so just bounce
+    back to the root and the next request fetches fresh code.
     """
     return redirect("/", code=302)
 

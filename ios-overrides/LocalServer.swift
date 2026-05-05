@@ -251,15 +251,20 @@ import GCDWebServer
         let rawPath = req.path
 
         // Emergency-refresh route: pure-HTML escape hatch the
-        // refresh button's <a href="/__refresh__"> falls back to
-        // when its onclick JS doesn't run (live-update.js failed
+        // refresh button's <a href="/__refresh__.html"> falls back
+        // to when its onclick JS doesn't run (live-update.js failed
         // to parse, an earlier script crash poisoned the page,
         // etc.). Clears any liveDir overlay so the BUNDLED code
         // starts serving on the redirect — equivalent state to a
         // fresh app reinstall, without the reinstall. From bundled
         // code the user can press refresh again to pull updates
         // via the normal in-page live-update flow.
-        if rawPath == "/__refresh__" {
+        //
+        // The path matches `/__refresh__.html` (not `/__refresh__`
+        // alone) so a single href works across platforms — Android,
+        // which has no native interceptor, can serve the bundled
+        // static file at that exact path via WebViewAssetLoader.
+        if rawPath == "/__refresh__.html" {
             setLiveDir(nil)
             // HTML response with both an HTTP 302 (preferred) and
             // a meta-refresh fallback — covers older WKWebView
