@@ -1732,9 +1732,24 @@
       #creatureInventory .actions {
         display: flex; margin-top: 14px;
       }
-      #creatureInventory button.close {
+      /* Scoped to .actions so the bottom Done button stretches without
+         affecting the top-right X (which also carries class="close"
+         via .cc-x-btn .inventory-x). */
+      #creatureInventory .actions button.close {
         flex: 1;
         padding: 10px 14px; font-size: 14px; cursor: pointer;
+      }
+      /* Done button only makes sense right after a successful catch,
+         when the post-catch detail screen pops up. Every other entry
+         to detail-view (taps from inventory, pokédex, fusion view,
+         etc.) already has the X close button + back arrow, so the
+         Done button would just be redundant. We hide the .actions row
+         everywhere by default and only re-show it when the panel
+         carries cc-post-catch (set in showDetail({ fromCatch: true })
+         and cleared on hide / when popped past the post-catch view). */
+      #creatureInventory .detail-view .actions { display: none; }
+      #creatureInventory.cc-post-catch .detail-view .actions {
+        display: flex;
       }
       #creatureInventory .detail-view { display: none; }
       /* .show -> display:flex via the column-layout rule below. */
@@ -3192,7 +3207,6 @@
           <button class="nav-arrow nav-prev" type="button" aria-label="previous">‹</button>
           <button class="nav-arrow nav-next" type="button" aria-label="next">›</button>
           <div class="fusion-track"></div>
-          <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
         <div class="pokedex-view">
           <button class="pokedex-back" type="button" aria-label="back">←</button>
@@ -3239,7 +3253,6 @@
           <button class="candy-back" type="button" aria-label="back">←</button>
           <h3 class="subview-title">Candy</h3>
           <div class="candy-body"></div>
-          <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
         <div class="daycare-view">
           <button class="daycare-back" type="button" aria-label="back">←</button>
@@ -3250,13 +3263,11 @@
           <button class="bag-back" type="button" aria-label="back">←</button>
           <h3 class="subview-title">Bag</h3>
           <div class="bag-body"></div>
-          <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
         <div class="tags-view">
           <button class="tags-back" type="button" aria-label="back">←</button>
           <h3 class="subview-title">Tags</h3>
           <div class="tags-body"></div>
-          <div class="actions"><button class="close" type="button">Done</button></div>
         </div>
       </div>
     `;
@@ -3689,6 +3700,13 @@
     panel.querySelector('.daycare-view').classList.remove('show');
     panel.querySelector('.bag-view').classList.remove('show');
     panel.querySelector('.tags-view').classList.remove('show');
+    // Post-catch context follows the active stack frame: the Done
+    // button surfaces ONLY while the user is on the specific detail
+    // entry that was opened by a successful catch (top.fromCatch).
+    // Navigating away (back to browse, into fusion, etc.) hides Done;
+    // back-arrow into the post-catch detail re-shows it.
+    panel.classList.toggle('cc-post-catch',
+      top.view === 'detail' && !!top.fromCatch);
     switch (top.view) {
       case 'browse': {
         panel.querySelector('.browse-view').style.display = '';
@@ -3915,12 +3933,18 @@
     applyTopView();
   }
 
-  function showDetail(id, list, idx) {
+  function showDetail(id, list, idx, opts) {
     const state = { view: 'detail', id };
     if (Array.isArray(list) && typeof idx === 'number') {
       state.list = list;
       state.idx = idx;
     }
+    // Mark the post-catch context on the stack frame, not the panel,
+    // so back-nav into and out of this detail entry adds/removes the
+    // .cc-post-catch class via applyTopView. That way the Done
+    // button only surfaces for THIS specific catch entry, not later
+    // detail visits during the same panel session.
+    if (opts && opts.fromCatch) state.fromCatch = true;
     pushView(state);
   }
 
@@ -5661,7 +5685,13 @@
 
   function hide() {
     const panel = document.getElementById('creatureInventory');
-    if (panel) panel.classList.remove('show');
+    if (panel) {
+      panel.classList.remove('show');
+      // Clear the post-catch context so re-opening the panel (from
+      // the inventory creature-ball, the pokédex, etc.) doesn't
+      // accidentally surface the Done button.
+      panel.classList.remove('cc-post-catch');
+    }
   }
 
   // Spawn rendering: each deterministic spawn becomes a MapLibre HTML
@@ -6682,7 +6712,11 @@
       const entry = await recordCaptureFromSpawn(spawn);
       closeBattleScreen();
       show();
-      showDetail(entry.id);
+      // fromCatch flips on .cc-post-catch so the Done button surfaces
+      // for THIS specific entry into the detail view. Inventory taps
+      // hit the same view but without the flag, so they don't get
+      // the redundant footer.
+      showDetail(entry.id, undefined, undefined, { fromCatch: true });
     } else {
       // Stage 4b: break out. Sequence:
       //   1) Cool white burst radiates from the ball — the
