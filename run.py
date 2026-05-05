@@ -1008,6 +1008,146 @@ def housenumbers():
     return resp
 
 
+@app.route("/addresses")
+def addresses():
+    """Per-region offline-search address bundle. Layout (little-endian):
+        Header (48 B):
+            0:  'ADDR' magic
+            4:  u32 version = 1
+            8:  u32 N (count)
+            12: u32 M_num (unique housenumber strings)
+            16: u32 numStringsByteLen
+            20: u32 M_street (unique street strings)
+            24: u32 streetStringsByteLen
+            28: u32 reserved
+            32: f32 bbox west
+            36: f32 bbox south
+            40: f32 bbox east
+            44: f32 bbox north
+        Columns (8 * N):
+            N × u16 lng_q
+            N × u16 lat_q
+            N × u16 num_idx
+            N × u16 street_idx
+        Strings (numStringsByteLen):
+            M_num × (u16 utf8_len + utf8 bytes)
+        Strings (streetStringsByteLen):
+            M_street × (u16 utf8_len + utf8 bytes)
+
+    Only addresses with a non-null `street_id` are emitted — without
+    a street name they're not searchable as "<num> <street>" anyway,
+    and the existing /housenumbers endpoint already covers
+    map-rendering needs for those entries.
+    """
+    try:
+        parts = [float(x) for x in request.args.get("bbox", "").split(",")]
+    except ValueError:
+        abort(400)
+    if len(parts) != 4:
+        abort(400)
+    w, s, e, n = parts
+
+    num_pool = []
+    num_to_idx = {}
+    street_pool = []
+    street_to_idx = {}
+    lngs = []
+    lats = []
+    num_indices = []
+    street_indices = []
+
+    for path in _relevant_files("*.housenumbers.sqlite",
+                                 lambda p, *a: _rtree_overlaps(p, "hn_rtree", *a),
+                                 w, s, e, n):
+        with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+            # Skip DBs that haven't been rebuilt under the v2 schema
+            # (no streets table → no address search data available).
+            try:
+                conn.execute("SELECT 1 FROM streets LIMIT 1")
+            except sqlite3.OperationalError:
+                continue
+            rows = conn.execute(
+                "SELECT h.lng_u, h.lat_u, h.text, s.name "
+                "FROM hn h "
+                "JOIN hn_rtree r ON h.id = r.id "
+                "JOIN streets s ON h.street_id = s.id "
+                "WHERE r.minX <= ? AND r.maxX >= ? AND r.minY <= ? AND r.maxY >= ?",
+                (e, w, n, s),
+            ).fetchall()
+            for lng_u, lat_u, num_text, street_text in rows:
+                if not num_text or not street_text:
+                    continue
+                ni = num_to_idx.get(num_text)
+                if ni is None:
+                    ni = len(num_pool)
+                    num_to_idx[num_text] = ni
+                    num_pool.append(num_text)
+                si = street_to_idx.get(street_text)
+                if si is None:
+                    si = len(street_pool)
+                    street_to_idx[street_text] = si
+                    street_pool.append(street_text)
+                lngs.append(lng_u / 1e6)
+                lats.append(lat_u / 1e6)
+                num_indices.append(ni)
+                street_indices.append(si)
+
+    N = len(lngs)
+    M_num = len(num_pool)
+    M_street = len(street_pool)
+
+    if N == 0:
+        bw, bs, be, bn = 0.0, 0.0, 0.0, 0.0
+    else:
+        bw, bs, be, bn = min(lngs), min(lats), max(lngs), max(lats)
+    lng_span = max(be - bw, 1e-9)
+    lat_span = max(bn - bs, 1e-9)
+
+    lngs_q = [max(0, min(65535, round((v - bw) / lng_span * 65535))) for v in lngs]
+    lats_q = [max(0, min(65535, round((v - bs) / lat_span * 65535))) for v in lats]
+
+    def _pack_strings(pool):
+        buf = BytesIO()
+        for text in pool:
+            b = text.encode("utf-8")
+            if len(b) > 65535:
+                b = b[:65535]
+            buf.write(struct.pack("<H", len(b)))
+            buf.write(b)
+        return buf.getvalue()
+
+    num_bytes = _pack_strings(num_pool)
+    street_bytes = _pack_strings(street_pool)
+
+    header = struct.pack(
+        "<4sIIIIIIIffff",
+        b"ADDR", 1, N,
+        M_num, len(num_bytes),
+        M_street, len(street_bytes),
+        0,
+        float(bw), float(bs), float(be), float(bn),
+    )
+
+    body = b"".join([
+        header,
+        _le_bytes(lngs_q, "H"),
+        _le_bytes(lats_q, "H"),
+        _le_bytes(num_indices, "H"),
+        _le_bytes(street_indices, "H"),
+        num_bytes,
+        street_bytes,
+    ])
+
+    compressed = gzip.compress(body, compresslevel=1)
+    resp = Response(compressed, mimetype="application/octet-stream")
+    resp.headers["Content-Encoding"] = "gzip"
+    resp.headers["Vary"] = "Accept-Encoding"
+    g.meta["N"] = N
+    g.meta["M_num"] = M_num
+    g.meta["M_street"] = M_street
+    return resp
+
+
 @app.route("/routes")
 def routes():
     try:

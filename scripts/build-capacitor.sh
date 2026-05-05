@@ -119,6 +119,16 @@ for path, name in to_stamp:
 print(f"  - stamped {count} file copies with {len(versions)} version entries")
 PY
 
+# Stamp a single-line identifier for THIS bundle build. LocalServer
+# reads it at launch and clears any stale liveDir whenever it
+# changes — that's how a fresh IPA install detects it should drop
+# the previous live-update overlay (which would otherwise mask the
+# bundled code with older files from a prior server snapshot).
+# Lives at the bundle root and is NEVER in the live-update tracked
+# list, so liveDir never has its own copy, and reads always resolve
+# to the bundle.
+date -u +%Y-%m-%dT%H:%M:%SZ > "$DIST/bundle-id.txt"
+
 echo "Built $(du -sh "$DIST" | cut -f1) at $DIST/"
 echo "  - $(find "$DIST/static" -type f 2>/dev/null | wc -l) static files"
 echo "  - $(find "$DIST/bundled-data" -type f 2>/dev/null | wc -l) bundled-data files"

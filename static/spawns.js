@@ -82,17 +82,24 @@
   const LAT_MOD = 5001;                  // prime wrap-around for hash
   const LON_MOD = 5503;
   const TICK_MS = 60 * 1000;             // birth-tick granularity (1 min)
-  const LIFETIME_MS = 10 * 60 * 1000;    // each spawn lives 10 min
-  const LIFETIME_TICKS = Math.ceil(LIFETIME_MS / TICK_MS);  // 10
+  const LIFETIME_MS = 20 * 60 * 1000;    // each spawn lives 20 min
+  const LIFETIME_TICKS = Math.ceil(LIFETIME_MS / TICK_MS);  // 20
   const DAY_SALT = 0x1F3B2C;             // bump to invalidate every seed
   // Probability a given (cell, tick) hosts a spawn. Visible-density
   // factor is pHit × LIFETIME_TICKS — the count of spawns active in a
   // cell at any moment averages this. Doubling lifetime + halving the
-  // hit probability keeps this product constant (0.0016 × 10 = 0.016,
-  // same as the prior 0.0032 × 5), so walking density is unchanged
-  // — but stationary players see new spawns appear half as often,
-  // since each (cell, tick) roll is now half as likely to hit.
-  const SPAWN_CHANCE_PER_TICK = 0.0016;
+  // hit probability keeps this product constant, so walking density
+  // is unchanged — but stationary players see new spawns appear half
+  // as often, since each (cell, tick) roll is now half as likely to
+  // hit.
+  // Lineage:
+  //   v1: 0.0032 × 5 ticks  = 0.016
+  //   v2: 0.0016 × 10 ticks = 0.016 (halved stationary rate)
+  //   v3: 0.0008 × 20 ticks = 0.016 (halved again — pulling the phone
+  //       out and waiting for spawns is now ~25% as productive as v1
+  //       per minute, while walking through fresh cells sees the
+  //       same density of pokemon as it always has).
+  const SPAWN_CHANCE_PER_TICK = 0.0008;
   const SPECIES_MAX = 150;               // v1 sprite download is sheets 1–150
   const MAX_CELLS = 40000;               // bail when zoomed out too far
 
