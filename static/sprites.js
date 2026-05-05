@@ -248,6 +248,8 @@
   const VARIANT_SUMMARY_KEY = '__summary__';
   const CREDITS_BUNDLE_KEY = '__credits__';
   const SPLIT_NAMES_KEY = '__splitnames__';
+  const MANIFEST_KEY = '__manifest__';
+  const CELLS_KEY = '__cells__';
   const SPECIES_MAX_DIM = 150;
   let _variantSummaryLoaded = false;
   let _creditsBundleCache = null;
@@ -291,23 +293,44 @@
           }
         }
       }
-      // Capacitor (IPA) fallback: VARIANT_SUMMARY is only ever written
-      // by bulkDownload pass 2, which the IPA doesn't run (welcome
-      // download UI is hidden). Without a fallback, every fusion's
-      // count comes back 0 → resolveSpawnVariant returns null → every
-      // marker uses the autogen path → custom art is invisible AND
-      // the pokédex reports "no custom art available." Populate from
-      // bundled cells.json (the canonical truth, fetched locally via
-      // LocalServer — no network) when the IDB summary is missing or
-      // empty. Web mode unchanged so the zero-data rule holds.
+      // Capacitor (IPA) fallback: VARIANT_SUMMARY and the per-cell
+      // variant arrays are only ever written by bulkDownload pass 2,
+      // which the IPA doesn't run (welcome download UI is hidden).
+      // Without a fallback:
+      //   * every fusion's count comes back 0 → resolveSpawnVariant
+      //     returns null → markers use the autogen path → custom art
+      //     is invisible AND the pokédex reports "no custom art."
+      //   * getSpriteCreditForSlot reads varGet(`${a}-${b}`) to look
+      //     up the manifest index for a slot and gets nothing → the
+      //     artist-credit UI is empty everywhere.
+      // Populate BOTH the in-memory count cache AND the IDB store
+      // from bundled cells.json (canonical truth, served locally via
+      // LocalServer — no network) so existing code paths that read
+      // either stay correct without further branching. Web mode
+      // unchanged so the zero-data rule holds.
       if (cache.size === 0 && typeof window !== 'undefined' && window.Capacitor) {
         try {
           const cellsMap = await getCells();
           if (cellsMap && typeof cellsMap === 'object') {
+            const entries = [];
             for (const key of Object.keys(cellsMap)) {
               const indices = cellsMap[key];
               if (Array.isArray(indices) && indices.length > 0) {
                 cache.set(key, indices.length);
+                entries.push([key, indices]);
+              }
+            }
+            if (entries.length) {
+              try {
+                const tx = db.transaction(STORE_VARIANTS, 'readwrite');
+                const store = tx.objectStore(STORE_VARIANTS);
+                for (const [k, v] of entries) store.put(v, k);
+                await new Promise((resolve) => {
+                  tx.oncomplete = () => resolve();
+                  tx.onerror = () => resolve();
+                });
+              } catch (e) {
+                _logSpriteError('ensureVariantSummary/cellsBulkPut', e);
               }
             }
           }
@@ -698,19 +721,50 @@
     }
     // Lazy-crop fallback: IDB miss. Fetch the appropriate sheet,
     // crop the cell, write it back to IDB so the next render is
-    // instant. Local-bundle reads (capacitor:// in IPA) take ~1ms;
-    // network reads (web) take longer first time but subsequent
-    // sprites for the same head share the cached ImageBitmap.
+    // instant. ONLY runs in Capacitor (IPA) builds — there
+    // `_autogenSheetUrl()` resolves to LocalServer at capacitor://
+    // localhost which reads bundled files from disk (no network).
+    //
+    // In the web build, the same URL would hit the actual origin —
+    // violating the zero-network rule. Web users seed IDB via the
+    // explicit "Download app data" button; an IDB miss outside that
+    // download is treated as "no sprite available" and the caller
+    // gets null back (placeholder / red dot stays visible). The user
+    // can re-run app data to fill any gaps.
+    if (typeof window === 'undefined' || !window.Capacitor) {
+      return null;
+    }
     try {
       const blob = isCustom
         ? await lazyCropCustom(a, b, variant)
         : await lazyCropAutogen(a, b);
-      if (blob) idbPut(key, blob).catch(() => {});
+      if (blob) {
+        idbPut(key, blob).catch(() => {});
+        // Broadcast so any UI element (map markers, dex grid) currently
+        // showing a red-dot / silhouette placeholder for this cell can
+        // swap in the real sprite without a polling retry.
+        _emitSpriteReady(a, b, variant, blob);
+      }
       return blob;
     } catch (e) {
       _logSpriteError(`getSpriteBlob/lazyCrop/${key}`, e);
       return null;
     }
+  }
+
+  // Fires whenever a brand-new sprite blob lands in IDB (the lazy-crop
+  // path completed successfully). Detail carries the cell coordinates,
+  // the canonical variant key (number for custom, null for autogen),
+  // and the blob itself so listeners don't have to re-read IDB. No-op
+  // outside a browser environment.
+  function _emitSpriteReady(a, b, variant, blob) {
+    if (typeof window === 'undefined' || !blob) return;
+    try {
+      const v = (typeof variant === 'number' && variant >= 0) ? variant : null;
+      window.dispatchEvent(new CustomEvent('cc-sprite-loaded', {
+        detail: { a, b, variant: v, blob },
+      }));
+    } catch { /* best-effort */ }
   }
 
   async function lazyCropAutogen(a, b) {
@@ -902,17 +956,38 @@
     localStorage.setItem(DOWNLOADED_KEY, JSON.stringify([...set].sort((a, b) => a - b)));
   }
 
+  // Read path: in-memory → IDB → (only in Capacitor) network fetch.
+  // The Capacitor fetch resolves to LocalServer, which reads the
+  // bundled file off disk, so it's local and safe to run without an
+  // explicit user action. The web build skips the fetch to honor
+  // the zero-network rule; web users seed manifest/cells via
+  // bulkDownload (which calls _downloadManifest / _downloadCells
+  // directly to bypass the gate).
   async function getCustomManifest() {
     if (_customManifest) return _customManifest;
     if (_customManifestPromise) return _customManifestPromise;
     _customManifestPromise = (async () => {
-      const resp = await fetch(`${BUNDLED_BASE}/manifest.json`);
-      if (!resp.ok) throw new Error(`manifest: HTTP ${resp.status}`);
-      _customManifest = await resp.json();
-      return _customManifest;
+      try {
+        const stored = await varGet(MANIFEST_KEY);
+        if (stored && typeof stored === 'object') {
+          _customManifest = stored;
+          return _customManifest;
+        }
+      } catch (e) { _logSpriteError('getCustomManifest/idb', e); }
+      if (typeof window !== 'undefined' && window.Capacitor) {
+        return _downloadManifest();
+      }
+      return null;
     })();
     try { return await _customManifestPromise; }
     finally { _customManifestPromise = null; }
+  }
+  async function _downloadManifest() {
+    const resp = await fetch(`${BUNDLED_BASE}/manifest.json`);
+    if (!resp.ok) throw new Error(`manifest: HTTP ${resp.status}`);
+    _customManifest = await resp.json();
+    varPut(MANIFEST_KEY, _customManifest).catch(() => {});
+    return _customManifest;
   }
 
   // cells.json: which (body, head) fusions have non-blank custom art
@@ -925,13 +1000,27 @@
     if (_cellsMap) return _cellsMap;
     if (_cellsPromise) return _cellsPromise;
     _cellsPromise = (async () => {
-      const resp = await fetch(`${BUNDLED_BASE}/cells.json`);
-      if (!resp.ok) throw new Error(`cells: HTTP ${resp.status}`);
-      _cellsMap = await resp.json();
-      return _cellsMap;
+      try {
+        const stored = await varGet(CELLS_KEY);
+        if (stored && typeof stored === 'object') {
+          _cellsMap = stored;
+          return _cellsMap;
+        }
+      } catch (e) { _logSpriteError('getCells/idb', e); }
+      if (typeof window !== 'undefined' && window.Capacitor) {
+        return _downloadCells();
+      }
+      return null;
     })();
     try { return await _cellsPromise; }
     finally { _cellsPromise = null; }
+  }
+  async function _downloadCells() {
+    const resp = await fetch(`${BUNDLED_BASE}/cells.json`);
+    if (!resp.ok) throw new Error(`cells: HTTP ${resp.status}`);
+    _cellsMap = await resp.json();
+    varPut(CELLS_KEY, _cellsMap).catch(() => {});
+    return _cellsMap;
   }
 
   // Pre-v2 cropAutogenSprite stored every sprite as a 96×96 PNG even
@@ -1137,8 +1226,11 @@
     let manifest = null;
     let cells = null;
     try {
-      manifest = await getCustomManifest();
-      cells = await getCells();
+      // Use the explicit-download helpers so bulkDownload works on the
+      // web build too. The cache-only `getCustomManifest`/`getCells`
+      // would return null in non-Capacitor environments.
+      manifest = await _downloadManifest();
+      cells = await _downloadCells();
     } catch {
       onProgress({
         sheetsDone: finished, sheetsTotal: totalSheets,

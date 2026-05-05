@@ -1730,10 +1730,11 @@
         padding: 24px 12px;
       }
       #creatureInventory .actions {
-        display: flex; justify-content: flex-end; margin-top: 14px;
+        display: flex; margin-top: 14px;
       }
       #creatureInventory button.close {
-        padding: 8px 14px; font-size: 14px; cursor: pointer;
+        flex: 1;
+        padding: 10px 14px; font-size: 14px; cursor: pointer;
       }
       #creatureInventory .detail-view { display: none; }
       /* .show -> display:flex via the column-layout rule below. */
@@ -6287,6 +6288,36 @@
     }
     populateBattleBalls();
 
+    // Helper: reveal the sprite element. Idempotent — adding the
+    // class twice is fine. Wrapped so both load paths (cached marker
+    // URL and async getSpriteUrl) can guarantee the reveal happens
+    // regardless of whether `img.onload` fires.
+    //
+    // Why we don't trust onload alone: iOS WKWebView will sometimes
+    // skip the `load` event when img.src is set to a blob URL whose
+    // underlying data is already decoded (the very common case after
+    // the marker has rendered the same sprite). That left the
+    // battle-sprite-ready class off the container, the sprite stuck
+    // at display:none, and only the throw-time `flash` element (which
+    // borrows sprite.src as its own src) ever appearing on screen —
+    // exactly the "icon flashes during the throw but is otherwise
+    // invisible" symptom. Belt-and-suspenders: register onload AND
+    // synchronously check img.complete for the cached path.
+    function revealSprite() { el.classList.add('battle-sprite-ready'); }
+    function bindSpriteLoadHandlers(targetImg) {
+      targetImg.onload = revealSprite;
+      targetImg.onerror = (e) => {
+        _logCreatureError('battleSprite/onerror',
+          (e && e.message) || 'image decode failed');
+      };
+    }
+    function maybeRevealCached(targetImg) {
+      // After assigning .src, if the resource was already decoded the
+      // browser may report `complete && naturalWidth > 0` immediately
+      // without firing onload. Cover that case synchronously.
+      if (targetImg.complete && targetImg.naturalWidth > 0) revealSprite();
+    }
+
     // If the marker for this spawn already has a loaded sprite, reuse
     // the same URL — same blob in memory, browser uses its decoded
     // image cache, no flash. Only fall back to a fresh IDB fetch when
@@ -6295,8 +6326,9 @@
     if (rec && rec.objectUrl) {
       _battleSpriteUrl = rec.objectUrl;
       _battleSpriteUrlOwned = false;
-      img.onload = () => { el.classList.add('battle-sprite-ready'); };
+      bindSpriteLoadHandlers(img);
       img.src = rec.objectUrl;
+      maybeRevealCached(img);
     } else if (global.Sprites) {
       // Prefer the variant cached on the marker record (resolved when
       // the marker first painted) — saves a getCellVariantCount round-
@@ -6314,8 +6346,9 @@
           }
           _battleSpriteUrl = url;
           _battleSpriteUrlOwned = true;
-          img.onload = () => { el.classList.add('battle-sprite-ready'); };
+          bindSpriteLoadHandlers(img);
           img.src = url;
+          maybeRevealCached(img);
         });
     }
     el.classList.add('show');
@@ -6758,9 +6791,18 @@
       const el = record.marker.getElement();
       const img = el.querySelector('img.creature-sprite');
       if (!img) return;
+      // Revoke any URL from a previous attempt that didn't successfully
+      // decode (img.onerror fired) before allocating a new one.
+      if (record.objectUrl) {
+        try { URL.revokeObjectURL(record.objectUrl); } catch {}
+        record.objectUrl = null;
+      }
       const url = URL.createObjectURL(blob);
       img.onload = () => {
         el.classList.add('creature-marker-ready');
+        // Mark the record as successfully rendered so the retry pass
+        // in refreshSpawnOverlay skips it on subsequent ticks.
+        record.loaded = true;
         window._spriteDiag = window._spriteDiag || {};
         if (window._spriteDiag.firstSpriteVisibleAt == null) {
           window._spriteDiag.firstSpriteVisibleAt = performance.now();
@@ -6802,7 +6844,17 @@
     const marker = new global.maplibregl.Marker({ element: el, anchor: 'center' })
       .setLngLat([spawn.lng, spawn.lat])
       .addTo(_overlayMap);
-    const record = { marker, objectUrl: null, spawn, firstShownAt: Date.now() };
+    const record = {
+      marker, objectUrl: null, spawn, firstShownAt: Date.now(),
+      // True once the marker is showing the actual sprite (img.onload
+      // has fired). When the initial batch returns a null blob we
+      // leave this false; the `cc-sprite-loaded` event listener below
+      // wakes the marker up as soon as a matching sprite lands in IDB
+      // (typically because the user tapped the red dot, which goes
+      // through the single-call lazy-crop path, OR the sheet finally
+      // finished decoding from a concurrent request).
+      loaded: false,
+    };
     _markers.set(spawn.id, record);
     // Diagnostic — record when the very first spawn DOM marker is
     // attached to the map, distinct from when its sprite finishes
@@ -7339,6 +7391,32 @@
         _renderDaycareLayer(_activeDaycareOverlay).catch(() => {});
       }
     });
+    // Wake stuck red-dot markers as soon as their sprite finally
+    // becomes available. Sprites.js dispatches `cc-sprite-loaded`
+    // any time a lazy-crop succeeds (e.g., the user tapped a red dot
+    // and the single-call path materialized the sprite, or the sheet
+    // for that body finished decoding from a concurrent request) —
+    // we look up every marker for that cell + variant and finish
+    // installing without waiting for the next viewport refresh.
+    if (typeof window !== 'undefined') {
+      window.addEventListener('cc-sprite-loaded', (e) => {
+        const d = e && e.detail;
+        if (!d || !d.blob) return;
+        for (const rec of _markers.values()) {
+          if (rec.loaded) continue;
+          if (rec.spawn.speciesA !== d.a) continue;
+          if (rec.spawn.speciesB !== d.b) continue;
+          // Variant equality: both null means autogen; otherwise
+          // require numeric equality. Records that haven't had their
+          // variant resolved yet (still undefined) still match the
+          // autogen path so a freshly-cropped autogen blob fills them.
+          const recV = (typeof rec.variant === 'number' && rec.variant >= 0)
+            ? rec.variant : null;
+          if (recV !== d.variant) continue;
+          installSpriteBlob(rec, d.blob);
+        }
+      });
+    }
     const ctrl = new CreatureBallControl();
     map.addControl(ctrl, 'bottom-right');
     if (readEnabled()) attachSpawnOverlay(map);

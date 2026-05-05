@@ -3146,15 +3146,40 @@
     const LOCAL_PREFIXES = ['/static/', '/bundled-data/', '/sw.js',
                             '/icons/', '/fonts/', '/manifest', '/tiles/'];
     const _origFetch = window.fetch.bind(window);
+    // Diagnostic: collect every fetch URL the page makes (and whether
+    // we rewrote it) so we can find unexpected remote traffic in the
+    // IPA. Read via window._ccFetchLog from the JS console / debug
+    // overlay. Capped at 200 entries.
+    window._ccFetchLog = window._ccFetchLog || [];
+    function _logFetch(originalUrl, finalUrl, rewritten) {
+      try {
+        if (window._ccFetchLog.length >= 200) window._ccFetchLog.shift();
+        window._ccFetchLog.push({
+          t: Date.now(), original: originalUrl, final: finalUrl, rewritten,
+        });
+        // Surface remote sprites / bundled-data traffic immediately so
+        // a stray request lights up the on-screen overlay without
+        // having to dump _ccFetchLog by hand.
+        if (/\/bundled-data\/sprites\//.test(originalUrl)
+            && /^https?:/.test(finalUrl)
+            && !/^https?:\/\/localhost/.test(finalUrl)) {
+          console.error('[fetch-leak] sprite went remote:',
+            originalUrl, '->', finalUrl,
+            new Error('stack').stack);
+        }
+      } catch (_) {}
+    }
     window.fetch = function (input, init) {
       const url = typeof input === 'string' ? input
                 : (input && input.url) ? input.url : '';
       if (url && url[0] === '/' && url[1] !== '/'
           && !LOCAL_PREFIXES.some((p) => url.startsWith(p))) {
         const rewritten = window.CC_API_BASE + url;
+        _logFetch(url, rewritten, true);
         if (typeof input === 'string') return _origFetch(rewritten, init);
         return _origFetch(new Request(rewritten, input), init);
       }
+      _logFetch(url, url, false);
       return _origFetch(input, init);
     };
 
