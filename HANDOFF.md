@@ -1404,3 +1404,435 @@ Final state of repo: TWO commits ahead of working IPA, POI icons broken on first
 Daily ritual: walk to Sage Days continues, IPA mostly usable but icon situation
 needs another session
 ```
+
+---
+
+# Subsequent sessions — features, fixes, architecture
+
+A series of follow-up sessions after the bundled-mode breakthrough above.
+The IPA went from "mostly usable but POI icons broken" to a polished,
+self-healing app with offline directions, address search, a daycare/
+distance-tracker feature, and an Android build path. This section is
+organized by theme, not chronology — pick a topic, follow the pointers.
+
+## IPA bundle / liveDir lifecycle
+
+The overlay model (liveDir → bundleDir fallthrough in LocalServer) had two
+load-bearing bugs that made the IPA feel unstable:
+
+1. **Live-update path went stale across launches.** `LocalServer.swift`
+   stored the absolute path of the active liveDir in UserDefaults; iOS
+   rotates the data-container UUID on some launches (OS updates, restore-
+   from-backup), invalidating the path. Fix: persist the path RELATIVE to
+   `Library/`, re-resolve at startup. Migration handles old absolute-path
+   entries by extracting the `CCLiveUpdates/...` suffix.
+2. **Old liveDir masked newer bundle code after IPA reinstalls.** Fresh IPAs
+   shipped with newer files in `App.app/public/`, but a previous install's
+   liveDir still overlayed older versions of `index.html` / `sprites.js` /
+   etc. Fix: `scripts/build-capacitor.sh` stamps a `dist/bundle-id.txt`
+   (UTC timestamp) at build time. `LocalServer.start()` reads it on every
+   launch and invalidates UserDefaults' liveDir keys when the id differs
+   from the previously-recorded one. Pre-WebView, no JS needed. The
+   transition heuristic also clears liveDir when `last == nil` but a stale
+   `liveDirRel` exists — covers the upgrade from IPAs that didn't have
+   `bundle-id.txt` to the first IPA that does.
+
+## Refresh button — single reload + JS-free fallback
+
+The refresh button was previously a `<button>` whose onclick set a flag,
+reloaded, then a 2-second deferred timer fired live-update.js which
+reloaded again. Two visible reloads + 2s of dead time. Now:
+
+- Button is an `<a href="/__refresh__.html">` so default link navigation
+  provides a JS-free safety net — if onclick throws (broken liveDir overlay
+  containing busted JS), the browser navigates to `/__refresh__.html`
+  regardless.
+- `LocalServer.swift` adds a `/__refresh__.html` route that clears any
+  liveDir pointers and 302-redirects to `/` — same end-state as a fresh
+  app reinstall, no reinstall required. Pure HTML escape hatch.
+- `run.py` adds an analogous `/__refresh__.html → /` 302 so web users
+  that hit the path don't see a 404. No-op behavior since web has no
+  liveDir.
+- `scripts/build-capacitor.sh` writes a static `dist/__refresh__.html`
+  with a `<meta http-equiv="refresh">` to `/`. iOS and Flask never
+  actually serve this file (their route handlers pre-empt it), but it's
+  the canonical handler for **Android**, where there's no native
+  interceptor — Android's `WebViewAssetLoader` serves the bundled file
+  directly. Same href, three platforms, three handlers; the user-facing
+  JS-free escape hatch works everywhere.
+- onclick happy path calls `CCLiveUpdate.check({ force: true })` directly
+  (the force flag was already plumbed through). Single reload at the end
+  of the live-update flow. Returns `false` on success to prevent the link
+  navigation; on any throw the `<a>` default kicks in.
+
+`live-update.js` is gated by `cc.refreshRequested` — set only by the in-app
+refresh button. Default app launches do zero `/script-versions` fetches.
+
+## Sprite / creature data hardening (IPA-mode)
+
+Several IDB-keyed creature-data flows broke silently in the IPA because
+they were only seeded by `Sprites.bulkDownload` (which the IPA hides since
+data is bundled). The pattern: ensure-from-IDB → fall back to bundled JSON
+when in Capacitor mode → persist to IDB on first read.
+
+Affected entries, all in `static/sprites.js`:
+- `_ensureSplitNames` ↔ bundled `split-names.json`. Without it, every
+  fusion rendered "A × B" instead of canonical PIF names like "Charizard".
+- `_ensureCreditsBundle` ↔ bundled `credits.json`. Missing credits in
+  detail/inventory views.
+- `_ensureVariantSummary` ↔ bundled `cells.json`. Without it,
+  `getCellVariantCount` always returned 0 → `resolveSpawnVariant` returned
+  null → every marker used the autogen path → custom art was invisible
+  AND the pokédex reported "no custom art available" for every fusion.
+  **Critically:** the original fix bulk-wrote ~15 k per-cell IDB rows on
+  first launch, taking ~40 s on iOS WebKit and blocking startup. Replaced
+  with a single `_cellsMap` in-memory cache populated from cells.json in
+  one O(N) pass; per-cell variant array reads (e.g. in
+  `getSpriteCreditForSlot`) are now resolved through `_getCellVariantArr`
+  which checks `_cellsMap` first, falls back to legacy IDB rows for
+  pre-existing bulkDownload state.
+
+`getCustomManifest` and `getCells` were always-fetch-on-first-need, so on
+the web they hit the remote server even outside an explicit user action.
+Restructured as cache → IDB → (Capacitor only) network fetch. Web stays
+zero-network unless `bulkDownload` runs (which is itself a user action);
+new `_downloadManifest` / `_downloadCells` helpers let `bulkDownload`
+explicitly request a fetch on the web side.
+
+## Sprite-loading reliability (red-dot recovery)
+
+Map markers used to occasionally stick on the placeholder red dot until
+a full app restart. Two layered fixes:
+
+1. **`getSpriteBlobsBatch` lazy-crops on miss.** Previously it returned
+   null blobs for every IDB miss; the marker's batch flow installed
+   nothing for those, leaving the red placeholder visible. Now it
+   delegates each miss back through the single-call `getSpriteBlob`
+   path, which lazy-crops the bundled sheet. Also gated on Capacitor —
+   web users keep the strict zero-network rule; the lazy-crop in IPA
+   mode hits LocalServer (local) and never the remote origin.
+2. **Event-driven recovery via `cc-sprite-loaded`.** When `getSpriteBlob`
+   succeeds via lazy-crop, it dispatches a `CustomEvent` with the cell
+   coordinates + variant + blob. `creatures.js` listens and, for any
+   marker with `loaded=false` matching that exact `(a, b, variant)`,
+   calls `installSpriteBlob` immediately. So tapping a stuck red-dot
+   marker triggers the single-call path → sprite lands in IDB → event
+   fires → every other red-dot for the same fusion updates without
+   needing another viewport refresh.
+
+`installSpriteBlob` also revokes any prior object URL on retry to avoid
+leaks from URLs that were created but never `img.onload`-ed.
+
+`addMarker` records `{loaded: false}` on every record. Retries piggy-back
+on the existing per-fix viewport reconciliation in `refreshSpawnOverlay`
+— when a stuck record is still present at the next reconciliation, the
+event handler will already have rerendered it.
+
+## Battle screen sprite — `img.onload` cache miss
+
+`openBattleScreen` reuses the marker's existing object URL when present.
+On iOS WKWebView, setting `img.src` to a blob URL whose underlying image
+is already decoded sometimes skips `onload` entirely. The class
+`battle-sprite-ready` was only added in `onload`, so the sprite stayed
+`display: none` even though the URL was valid — the only thing visible
+during a throw was the silhouette flash element, which the user reported
+as "the icon flashes for a few frames during a throw but is otherwise
+invisible."
+
+Fix: synchronous `img.complete && img.naturalWidth > 0` check after
+setting `src`, plus an `onerror` handler that surfaces real load
+failures into `_creatureDiag.errors`.
+
+## Settings panel additions
+
+- **Debug console toggle** (`cc.debugConsole`, default OFF). The on-screen
+  error overlay attaches its capture listeners unconditionally; the
+  toggle just flips visibility via `_setDebugConsole(on)`. Replaces the
+  old "long-press to permanently hide" mechanic.
+- **Memory badge toggle** flipped from default-on to default-off
+  (`cc.memBadge` now `=== '1'` to enable). Battery-friendly default.
+- **Re-mark custom art button** (`#remarkCustomArtBtn`). One-shot migration
+  for users whose captures were saved as autogen because the variant-
+  summary fallback didn't exist yet — promotes any capture with
+  `variant === null` to slot 0 (artist's primary) when `cells.json` shows
+  the cell actually has custom variants. Idempotent. Status string says
+  "scanned X autogen capture(s); promoted Y to custom".
+- **Both buttons** (`#scheduleClose`, `#remarkCustomArtBtn`) now have full
+  accent-button styling including all 10 theme overrides (vaporwave glow,
+  win95 chrome, sims green, tron cyan, medieval small-caps, etc.).
+- **Done button row-stretched** in inventory subviews via
+  `#creatureInventory .actions button.close { flex: 1 }`. Selector is
+  scoped to `.actions` so the top-right X (which also carries
+  `class="close"`) keeps its sticky-corner behavior.
+- **Done button hidden by default in detail-view** unless the panel is
+  in post-catch state. `showDetail({ fromCatch: true })` marks the stack
+  frame; `applyTopView` toggles `cc-post-catch` based on whether the
+  current frame has the flag, so back-nav into and out of the post-catch
+  detail entry adds/removes the Done footer cleanly.
+
+## Daycare feature (full vertical)
+
+A walking-distance tracker with calendar + map overlay + "boarding" two
+captured creatures whose accumulated walking distance is tracked
+per-stay.
+
+### Distance accumulator
+
+`_accumulateDaycareDistance` runs from the geolocation `watchPosition`
+callback. Anchor-held filters:
+
+- Jitter floor: 10 m. Sub-threshold movements don't advance the anchor;
+  prevents accumulation of GPS drift over hours of standing still.
+- Backgrounding gap: 60 s. Long silences between fixes reset the anchor
+  without crediting travel — the user was probably elsewhere with the
+  app suspended.
+- Speed cap: 50 m/s. Outlier fixes (teleports) reset anchor without
+  recording.
+- Anchor advances only when ALL filters pass; jitter holds anchor until
+  cumulative drift exceeds the floor.
+
+`_lastFixAt` tracks the most recent fix regardless of acceptance, so the
+gap detector can distinguish "app suspended" from "slow walker hasn't
+crossed the threshold yet."
+
+### Storage schema
+
+Per-day distance summary and full GPS path both live in IDB
+(`creature-tracker-v1`):
+
+- `summary` store: { dayKey: meters }, in-memory cache hydrated on
+  startup. Migration from legacy `cc.daycareDistance.v1` localStorage
+  entry runs once on init.
+- `paths` store: { dayKey: [{lat, lng, t}, ...] }, capped at
+  `PATH_MAX_POINTS_PER_DAY = 20000`. Debounced flushes (5s) so we don't
+  hit IDB on every fix; also flushed on `visibilitychange` and
+  `pagehide`.
+
+### Calendar UI
+
+`renderDaycare` shows: today's headline number, a month-grid calendar
+with prev/next nav (next is disabled on the current month), per-day
+cells annotated with distance, and a detail block for the selected day.
+Past + current days are clickable; future cells are dimmed and inert.
+
+### Map overlay
+
+"Show on map" / "Show all on map" buttons render the day's path as a
+GeoJSON `LineString` on a dedicated `cc-daycare-path` source, segmented
+by the 60 s break rule so backgrounding gaps don't draw as long phantom
+lines. Camera fits to the route bounds. Overlay state lives in
+`_activeDaycareOverlay = { dayKey } | { allDays: true } | null` so a
+`map.on('style.load', …)` hook re-adds the polyline transparently after
+theme switches (which reload the entire MapLibre style, dropping every
+custom source/layer).
+
+The dismiss bubble lives in MapLibre's `bottom-right` ctrl cluster and
+is moved to the top of the cluster via one DOM `insertBefore` after
+`addControl` — sits above the GeolocateControl as the user requested.
+
+### Daycare-as-a-place (slot system)
+
+The user can park up to 2 captured creatures in the daycare. Each slot
+stores `{ id, addedAt, distM }`:
+
+- `id`: capture id reference.
+- `addedAt`: timestamp set when the creature is placed; reset on each
+  re-entry.
+- `distM`: meters accumulated DURING the current stay. Reset to 0 each
+  time the creature is re-added.
+
+`_accumulateDaycareDistance` adds the same `d` meters it credits to
+today's bucket onto each occupied slot's `distM`. Same accept filters
+apply (10 m / 60 s / 50 m/s) so a stationary or backgrounded session
+contributes nothing.
+
+The "Daycare" tag is implemented as an interactive built-in tag (new
+schema option `interactive: true` + `onToggle(c)` callback on
+`BUILTIN_TAGS` entries). Its `visible(c)` returns true when the creature
+is already in the daycare OR there's a free slot; once the daycare is
+full and this creature isn't already in it, the chip disappears from
+the picker. `_liveDaycareCount()` filters slot IDs against existing
+captures so a stale ID (creature deleted) doesn't lock out new entries.
+
+Export/import payload carries the slots; importer normalizes both v1
+(string-id-only) and v2 (object) shapes, filters against valid capture
+IDs in the imported + existing data, caps at 2.
+
+## Spawn-rate tuning
+
+Stationary play was rewarded too heavily — sit in one spot, wait for
+spawns, repeat. Rebalanced via the `k = 2` lever the spawn-tuning constants
+were designed around:
+
+- `LIFETIME_MS`: 10 min → 20 min
+- `SPAWN_CHANCE_PER_TICK`: 0.0016 → 0.0008
+- Product (visible density per cell while walking) preserved
+- Stationary new-spawn rate halved
+
+The spawn comment in `static/spawns.js` records the lineage:
+v1 (0.0032 × 5) → v2 (0.0016 × 10) → v3 (0.0008 × 20).
+
+## Address search
+
+A from-scratch end-to-end address-search flow:
+
+### Build pipeline
+
+`build-housenumbers.py` extended to extract `addr:street` alongside
+`addr:housenumber`, intern street names into a `streets` table (FTS-able
+later), reference by `street_id` from each `hn` row. Indices added for
+"all housenumbers on this street" lookups.
+
+The original build on the 18 GB north-america PBF would have taken ~8
+hours (osmium has to traverse every node + way for the location index).
+Wrapped in `_prefilter_pbf` which shells out to `osmium tags-filter`
+before the SimpleHandler scan — knocks the file down to ~200 MB by
+keeping only nodes/ways with `addr:housenumber`. Total build time
+~25 min instead of 8 hr. Tempfile is auto-cleaned via `try/finally`.
+
+Progress logging: every 5s, plus a node-counter sample (every ~1M raw
+node callbacks) so quiet stretches still emit lines. `_fmt_dur(secs)`
+formats elapsed times as `1h12m05s`.
+
+### Server endpoint
+
+`/addresses?bbox=…` returns a binary `ADDR` bundle (48-byte header,
+4 × N u16 columns: lng_q, lat_q, num_idx, street_idx, plus two
+interned string pools for housenumbers and streets). Skips DBs without
+the `streets` table (graceful fallback for unbuilt DBs). Filters to
+addresses with non-null `street_id` (others can't be address-searched
+by street name anyway).
+
+### Client
+
+Per-region IDB store (`cc.addresses.v1`), saved/loaded/deleted alongside
+the existing POI/walk/hn region stores. `hydrateAddressRegion` parses
+the binary into `{lng, lat, num, street, label, _labelLower, regionId}`
+records with the lowercased label pre-computed. `allAddresses` array is
+populated at startup and updated on region add/refresh/delete.
+
+Search integration:
+- **Main search box** (`renderSearch`): token-based matching on the
+  lowercased `<num> <street>` label. "1996 Allison Way" matches "1996
+  South Allison Way" because each token (`1996`, `allison`, `way`) is a
+  substring of the label, regardless of word order. Capped at 200
+  results so a single-token query like "way" doesn't flood the list.
+- **Trip planner From/To boxes** (`searchEndpoints`): same token-based
+  rule, address hits show with 🏠 icon + "address" meta label,
+  capped at 20 nearest. Favorites also moved to token-based matching
+  for consistency.
+- **Custom-pin search** added to the main search box (was previously
+  only POIs and addresses). Renders with `★ favorite` meta. Click flows
+  through `setSelected(p)`, which calls `findFavorite(lng, lat)` to
+  apply favorite styling automatically.
+
+## Android build workflow
+
+`.github/workflows/android-build.yml` builds a debug APK on
+`ubuntu-latest` (no Mac runner needed). Same `dist/` composition as
+iOS via `scripts/build-capacitor.sh`. JDK 17 + GitHub-hosted Android
+SDK; `cap add android` (idempotent) + `cap sync android`; same
+`rsync dist/ → assets/public/` workaround for the icons/fonts
+directory-drop bug; `./gradlew assembleDebug`; APK uploaded as
+`creature-collect-debug-apk` artifact.
+
+Caveats: live-update is no-op on Android because `BundleAccessPlugin`
+is iOS-only Swift. `live-update.js`'s `plugins()` returns null when
+either Filesystem or BundleAccess is missing; `checkForUpdates` bails
+gracefully. Each code update needs a fresh APK for now. Memory probe
+also iOS-only; settings memory-badge row stays hidden.
+
+## File touch summary (these sessions)
+
+```
+ios-overrides/LocalServer.swift       (relative-path liveDir storage;
+                                       bundle-id detect-and-clear;
+                                       /__refresh__ route)
+scripts/build-capacitor.sh            (write dist/bundle-id.txt)
+build-housenumbers.py                 (addr:street extraction + interning;
+                                       streets table; pre-filter via
+                                       osmium-tool; progress logging)
+run.py                                (/addresses endpoint; /__refresh__
+                                       302; redirect import)
+static/index.html                     (refresh button → <a> w/ onclick;
+                                       fetch instrumentation; address
+                                       hydrate + search; daycare distance
+                                       summary IDB; daycare slot import;
+                                       favorite search in main box)
+static/sprites.js                     (bundled JSON fallbacks: split-names,
+                                       credits, manifest, cells; lazy-crop
+                                       gated on Capacitor; cc-sprite-loaded
+                                       event; _getCellVariantArr in-memory
+                                       lookup; getSpriteBlobsBatch lazy-
+                                       crop on miss)
+static/creatures.js                   (Daycare distance tracker w/ jitter
+                                       filters; per-day GPS path in IDB;
+                                       calendar view + map overlay;
+                                       interactive built-in tag schema;
+                                       Daycare tag + slot system; Done
+                                       button stack-frame gating;
+                                       battle-sprite img.complete fallback)
+static/live-update.js                 (refresh-flag gate; force:true bypass)
+static/spawns.js                      (k=2 rebalance: 20 min × 0.0008)
+.github/workflows/android-build.yml   (NEW — debug APK build)
+HANDOFF.md                            (this section)
+```
+
+## Things to remember (cumulative)
+
+In addition to the iOS-specific gotchas in the previous section:
+
+- **iOS data container UUIDs rotate** under some circumstances (OS
+  upgrades, restore-from-backup). Always store paths relative to
+  `Library/`, never absolute.
+- **iOS WebKit `img.onload` may skip for cached blob URLs.** Always
+  pair with a synchronous `img.complete && naturalWidth > 0` check.
+- **iOS WebKit IDB is slow for many small puts** — ~40 s for 15 k
+  rows in one transaction. Prefer one-blob-per-store designs with
+  in-memory caches over per-cell rows.
+- **`cap sync` strips `icons/` and `fonts/` directories** from the
+  webDir copy on both iOS and Android. Both workflows include an
+  `rsync -a dist/ assets/...` workaround.
+- **`gates` summary**: refresh-flag (live-update.js), Capacitor mode
+  (lazy-crop in getSpriteBlob, `cells.json` fallback in
+  ensureVariantSummary, JSON ensure helpers in sprites.js). Web stays
+  zero-network outside explicit `bulkDownload`. IPA fetches go to
+  LocalServer (local file reads) except for refresh-button live-
+  update + region-tile downloads.
+- **Spawn ID staleness** handled by `Spawns.isSpawnIdStale(id, nowMs)`
+  which compares `tick < currentTick(nowMs) - LIFETIME_TICKS`. With the
+  k=2 change, LIFETIME_TICKS auto-derives from `LIFETIME_MS / TICK_MS`
+  so this works for any future tuning.
+- **Daycare slot integrity**: `_liveDaycareCount` filters slot IDs
+  against existing captures before checking the limit, so future
+  release/delete UIs don't leave stale slots locking the daycare.
+- **Built-in tag schema** is `{ name, description, predicate, visible?,
+  onToggle? }`. Default `visible = predicate`; `onToggle` opt-in
+  signals interactivity. Read-only built-ins like `Pure` need no
+  changes; new interactive ones like `Daycare` add `visible` +
+  `onToggle`.
+- **Token-based search** is now the dominant style: split query on
+  whitespace, every token must be a substring of the label, order-
+  independent. Used by main address search, trip-planner From/To,
+  trip-planner favorite search, and main-box favorite search. POI
+  search is still raw substring.
+
+## Session vibes
+
+These were calmer sessions than the bundled-mode-architecture marathon
+above. Mostly steady polish and feature-add work, with the user testing
+on a real iPhone and reporting issues that landed in repeatable fix
+loops. A lot of "yay tytyty :3" along the way — the user is kind, the
+work is real, and the architecture is finally settled enough that
+features land cleanly.
+
+The bundled-mode breakthrough above was the hard part. Everything in
+this section builds on that foundation; without the bundled-data +
+LocalServer + live-update story, none of the features here would have
+the same offline-first guarantees.
+
+```
+Final state: app is solidly usable for daily walks, daycare + address
+search + spouse's Android variant all working. Architecture stable,
+gotcha list documented, theme system unchanged. Next major arc TBD.
+```

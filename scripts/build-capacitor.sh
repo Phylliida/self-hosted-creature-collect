@@ -129,6 +129,35 @@ PY
 # to the bundle.
 date -u +%Y-%m-%dT%H:%M:%SZ > "$DIST/bundle-id.txt"
 
+# Static fallback for the refresh button's JS-free escape hatch.
+# The button is rendered as `<a href="/__refresh__.html">` so the
+# browser's default link-navigation kicks in if the inline onclick
+# JS fails for any reason. Per platform:
+#   * iOS: LocalServer.swift intercepts /__refresh__.html, clears
+#     any stale liveDir overlay, and redirects to /.
+#   * Web (Flask): a /__refresh__.html route 302s to /.
+#   * Android: no native interceptor exists, so the WebView's asset
+#     loader serves THIS static file. The meta-refresh + manual
+#     `<a href="/">` link both reload the bundled root, putting the
+#     user back into the working app state. (Android has no liveDir
+#     to clear — every code update arrives via a fresh APK install,
+#     which already starts from clean state.)
+# Kept tiny + JS-free so it works even when the rest of the app's
+# JS has crashed during init.
+cat > "$DIST/__refresh__.html" <<'HTML'
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="0;url=/">
+<title>Refreshing…</title>
+</head>
+<body>
+<p>Refreshing… <a href="/">tap here</a> if this page does not redirect.</p>
+</body>
+</html>
+HTML
+
 echo "Built $(du -sh "$DIST" | cut -f1) at $DIST/"
 echo "  - $(find "$DIST/static" -type f 2>/dev/null | wc -l) static files"
 echo "  - $(find "$DIST/bundled-data" -type f 2>/dev/null | wc -l) bundled-data files"

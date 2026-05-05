@@ -1,6 +1,294 @@
 # self-hosted-creature-collect
 idk some self hosted creature collecting game
 
+## Features
+
+A Pokémon-style walking game built on top of a real, fully-offline
+OpenStreetMap stack. Designed to work end-to-end without making
+unprompted network requests — the only auto-fetches happen during
+explicit downloads (saving an offline region, downloading app data,
+pressing refresh in the IPA). The whole thing self-hosts on a single
+Flask process behind a Cloudflare tunnel.
+
+### Map & navigation
+
+- **Vector basemap** rendered by MapLibre GL with road / building /
+  water / landcover / park / POI / housenumber / transit-line layers
+  drawn from a trimmed openmaptiles schema. Low-zoom land + ocean
+  polygons come from Natural Earth so the world looks right at
+  z0–z8.
+- **Offline map regions** — pan/zoom to where you live, tap "save
+  current view" to download every tile + POI + walk graph + GTFS
+  schedule + housenumber + address record + transit-route shape for
+  that bbox into IndexedDB. Choice of max zoom (1–14). From then on
+  the app works offline forever; no auto-refetches. Per-region
+  storage size is reported in the panel.
+- **Refresh region** to pull updates for an existing saved bbox in
+  place, or **delete region** to free storage.
+- **Region naming** — auto-named after the largest place inside the
+  bbox (city / town / country fall-through); rename inline.
+- **Search box** ranks results by distance from the user's current
+  position (or map center if no GPS yet); filterable by POI category
+  via a dynamically-populated dropdown showing per-category counts
+  for downloaded regions.  Three things flow through the same UI:
+  - **POIs** — every named OSM feature in your downloaded regions
+    (cafés, parks, schools, transit stops, …). Substring match on
+    name. Tapping opens a card with address, opening hours, phone,
+    website, accessibility, brand, operator, cuisine, description,
+    Wikipedia / Wikidata, internet access — plus "Save as favorite"
+    and "Directions" buttons.
+  - **Addresses** — full street-address search via
+    `<housenumber> <street>` matching, token-based and word-order-
+    independent. "1996 Allison Way" finds "1996 South Allison Way";
+    "Allison 1996" works too. Powered by a dedicated `/addresses`
+    binary bundle per region (~480 KB / city) with interned street
+    names.
+  - **Favorites** (custom pins) — anything you've starred via the POI
+    card or pinned manually. Tappable in both the main search and the
+    trip planner's From / To boxes; rendered with a `★ favorite`
+    label so they're easy to distinguish.
+- **Drop a pin anywhere** — long-press on the map (or hit the pin
+  affordance on the bottom bar) to drop a draggable temporary
+  marker, fine-tune its position, then save it as a favorite with a
+  custom icon (~215 Maki options) and any of 8 colors. Useful for
+  marking your apartment, friends' houses, "where I parked", etc.
+- **POI cooldown overlays** — once you've collected from a pokéstop,
+  a fading countdown overlay appears on its marker so you can see
+  at a glance which stops are ready to be tapped again.
+- **Trip planner** — walk + transit routing over a typed-array walk
+  graph + a stop-pattern-indexed GTFS schedule, all client-side via
+  a time-dependent Dijkstra (`static/trip-planner.js`). Supports
+  "Leave now / Depart at / Arrive by", configurable walk-cost weight,
+  and a transfer minimum. Shows top-3 alternates with step-by-step
+  instructions, route shapes drawn on the map, and live next-
+  departure times for transit legs. **Save routes** for later
+  one-tap recall via a dedicated saved-routes panel.
+- **Tap a stop on a route** to see real-time-ish next departures
+  drawn from the GTFS calendar / schedule, organized by direction.
+- **Geolocation** ("where am I" button) auto-activates on launch but
+  the very first fix doesn't fly the camera if there's a saved view —
+  preserves the user's last-viewed location. Falls back to GPS shim
+  through Capacitor's Geolocation plugin in the IPA so iOS doesn't
+  intermittently drop fixes.
+- **Saved view** persists across reloads (lng/lat/zoom/bearing/pitch).
+
+### Creatures
+
+- **Deterministic, server-free spawning.** A Brent xor4096 PRNG seeded
+  by `(cell, minute-tick, day_salt)` decides which creatures appear
+  where. Two devices in the same place at the same time see the same
+  creatures — no server roundtrips, no dependency on real time being
+  synced beyond minute precision. Cell size is ~11 m at the equator.
+- **Sliding-window spawn lifecycle.** Each (cell, tick) is an
+  independent slot; a creature born at tick T expires at T + 20 min.
+  No synchronized mass-rollover ("oh look, all my pokemon vanished
+  and a new wave appeared at once") — at any moment some are freshly
+  born, some about to expire. Tunable so stationary play is deliberately
+  less rewarding than walking through fresh ground.
+- **Weather / type cycling** — daily and weekly rotating type pools,
+  deterministically seeded so two devices on the same day see the
+  same boosted types. Surfaced as a "weather bar" of two type chips
+  at the top of the inventory panel.
+- **Catch mechanic** with a Poké-ball / Great Ball throw animation,
+  per-ball catch rate (Poké Ball 70%, Great Ball 90% per shake^3),
+  bowed-arc trajectory, three-shake reveal, break-out vs. lock-in
+  with a celebratory "ding" + radial-burst animation on success.
+- **Inventory** (the "Pokémon" panel) — virtualized list of every
+  capture for smooth scroll on thousands of entries. Sortable by
+  name / first species / second species / catch date / level / size,
+  filterable by tag chips. Inline rename (long-press the title to
+  edit a nickname).
+- **Detail view** with arrow-key + swipe sibling navigation through
+  adjacent entries in the same filtered + sorted order. Shows
+  sprite, fused name, types, level, size, capture date, tagged
+  with a chip picker, candy tally, and a "view dex entry" link.
+- **Pokédex** — every fusion you've ever seen (or caught) tracked in
+  a 3-column virtualized grid. Filterable by built-in tag (Pure
+  monotypes), text-searchable by either / both species. Per-fusion
+  **family-tree** sub-view shows every cross within both species'
+  evolution lines. Per-variant silhouette grid (so you know which
+  custom artworks you've encountered vs. not). Inline candy tally
+  for the active root families.
+- **Pokémon Infinite Fusion data** baked in — full custom + autogen
+  sprite library, canonical fused names ("Charmander" + "Bulbasaur" =
+  "Charsaur") computed via PIF's split-names rule, per-fusion artist
+  credits surfaced in the detail / fusion sub-views, PIF's type-
+  inheritance rules (primary from A, secondary from B, dedup'd).
+- **Tags** — a flat list of short labels (max 8 chars) you can apply
+  to captures. **Built-in tags** are predicate-driven and appear
+  automatically when their condition fires (e.g. **Pure** for
+  monotype captures, where speciesA === speciesB). **Custom tags**
+  toggle membership when tapped. **Interactive built-ins** (Daycare,
+  see below) act on external state via an `onToggle` hook.
+- **Candy** ledger — per-evolution-family (Charmander candy covers
+  Charmander-anything fusions). Earned on capture, with a one-time
+  schema migration that promotes baby pokemon (Pichu, Cleffa, etc.)
+  to their parent's family root so the bucket name reads as expected.
+- **Bag** — Poké Ball / Great Ball inventory with a starter bag
+  granted on first read. Replenished by tapping pokéstops on the map.
+- **Pokéstops** — tappable POIs in creature mode with a "Collect
+  items" button that grants 1–3 random items per tap. Per-stop
+  cooldown timer rendered as a fading visible overlay so you know
+  which stops are ready.
+- **Variant tracking** — every variant you've ever seen for a given
+  fusion is recorded; pokédex variant grids silhouette unseen ones,
+  so completing the dex includes finding every artist's take on
+  every fusion.
+- **One-shot custom-art migration** — a Settings button promotes any
+  legacy autogen captures whose cells now report custom variants in
+  the bundled data, so older captures retroactively pick up the
+  artist's primary variant.
+
+### Daycare
+
+- **Distance tracker** that accumulates GPS-confirmed walking distance
+  while the app is open. Filters: 10 m jitter floor, 60 s
+  backgrounding gap detection, 50 m/s teleport speed cap. Same
+  fairness rules as commercial buddy-walking systems.
+- **Calendar** with month navigation, per-day distance annotations,
+  and a today-highlight. Tap any past day to see its total.
+- **GPS path** stored per day (capped at 20 k points). "Show on map"
+  draws the route as a polyline overlay, segmented by 60 s
+  backgrounding gaps so suspended-app sessions don't render as
+  phantom long lines. "Show all on map" overlays every day's route.
+- **Daycare slots** — tap the **Daycare** built-in tag on any
+  captured creature to park it (max 2 at a time). Each slot shows
+  the creature's sprite, name, and meters walked **during this
+  stay** below. Removing and re-adding resets the counter to 0. Tag
+  hides automatically when the daycare is full.
+
+### Backup & sync
+
+- **Export to JSON** dumps every captured creature, nickname, candy,
+  bag, tags, favorites, regions, theme, units, daycare slots, and
+  daycare history (per-day distance + full GPS paths) to a single
+  human-readable file.
+- **Import** merges by capture id (idempotent re-imports), with
+  per-key max merge for candy and bag so combining devices keeps
+  whichever had more.
+- **Save / Load to server** — same payload, stored under a trainer
+  name on the Flask backend (`/save`, `/load`). 7-day "have you
+  saved recently?" reminder banner in the inventory.
+
+### Themes & customization
+
+- **47 themes** ranging from sensible (default, dark, night, sepia,
+  mono, forest, nordic, ocean, autumn, pastel, mint chocolate, coral
+  reef) through nostalgic (win95, mac OS 9, gameboy, NES, Atari
+  2600, The Sims, Roller Coaster Tycoon, Pac-Man, VHS, Wes Anderson,
+  notebook, chalkboard, comic sans, hand-carved wood, sheet metal,
+  google maps, apple maps, minecraft) to atmospheric (vaporwave,
+  neon, sakura, amber, galaxy, noir, terminal, blueprint, desert,
+  abyss, fogbank, haunted mansion, backrooms, poolrooms, dead mall,
+  3am parking garage, bloodmoon, tron). All driven by CSS variables
+  — adding a new theme is one entry in `THEMES` plus an `<option>`
+  in the picker.
+- **Custom theme builder** lets you set every palette color
+  individually (background, land, water, building, road, label text,
+  label halo, POI icon color) with live preview.
+- **Per-theme decorations** — themes that ship with extra flourishes
+  layer them on top of the base CSS-variable palette: medieval gets
+  small-caps headings + serif body + sepia icon filter, win95 gets
+  navy title bars, sims gets bright button gradients, vaporwave/neon
+  get glow shadows, etc.
+- **Action buttons as icons / text** toggle — show the inventory
+  panel's Tags / Bag / Candy / Daycare / Dex header buttons as
+  compact SVG icons instead of text labels.
+- **Visibility toggles** for buildings, transit lines, housenumbers,
+  pokéstops on buildings — let you trade visual richness for
+  performance on dense urban areas.
+
+### Settings panel
+
+A single sheet covering everything user-tunable:
+
+- **Theme** picker + custom-color sub-grid.
+- **Units** — metric (km, m) / imperial (mi, ft). Drives the scale
+  control + every distance display in the app.
+- **Time format** — 24-hour / 12-hour. Drives schedule + transit
+  arrival times.
+- **Show offline-maps panel** toggle — hides the bottom-right
+  "↓ save current view" panel if you don't need it visible.
+- **Only download on Wi-Fi** — gates region downloads on the
+  Network Information API's `connection.type` so cellular bytes are
+  preserved.
+- **Creature mode** toggle — wild creatures, pokéstop loot, candy/
+  bag mechanics. Off = pure mapping/directions app.
+- **Memory footprint badge** (iOS only, opt-in) shows live phys-
+  footprint / RSS / peak via a custom MemoryProbe Capacitor plugin.
+- **Debug console** toggle — on-screen overlay that captures errors,
+  promise rejections, and console.error output. Useful on iOS where
+  dev tools aren't accessible. Off by default.
+- **Re-mark custom art** one-shot migration button (see Creatures).
+- **Clear sprites** button to free IDB space.
+- **Backup row** with Name field + Export / Import / Save / Load.
+  Save & Load round-trip a JSON dump to the Flask backend keyed on
+  trainer name; Export & Import use a file picker.
+- **App data** download button — fetches sprites, fonts, icons, and
+  low-zoom world tiles into IndexedDB. Welcome flow auto-runs this
+  on first launch.
+- **Startup phase timings** (small monospace block at the bottom)
+  — first GPS fix, first marker, first sprite, font preload time,
+  variant summary load, etc. Runs every launch; useful for tracking
+  cold-start performance regressions.
+- **Version + sprite-inflight badge** so you know what code you're
+  running and whether IDB reads are bottlenecking renders.
+
+### PWA & native wrappers
+
+- **Browser PWA** — works on any modern browser; "Add to Home Screen"
+  on iOS gives a real installable web app. Service Worker caches
+  every asset locally; downloads can be re-cached aggressively.
+- **iOS IPA build** via GitHub Actions on a free macOS runner — pure
+  unsigned IPA, sideloadable through SideStore or AltServer-Linux. No
+  paid Apple Developer account required. Custom Swift overrides bring
+  Service Workers (via embedded GCDWebServer + `http://localhost`),
+  plus a JS-callable `BundleAccess` plugin for live-updates.
+- **Android APK build** via GitHub Actions on Ubuntu — debug-keystore
+  signed, sideloadable directly. ~5-min build cycle, no Mac required.
+- **Live-update** (iOS) — refresh button fetches new code from the
+  server and overlays it on the bundled webDir, so iterating on the
+  app no longer requires a fresh IPA reinstall. Falls back to a
+  pure-HTML `/__refresh__.html` link that clears the overlay if JS
+  is too broken to run, so you can always recover without
+  reinstalling. The same href works on Android (served as a
+  bundled static file with a meta-refresh) and the web build (Flask
+  route 302s to `/`), so the JS-free escape hatch is consistent
+  across all three platforms.
+- **Bundle change detection** — every IPA build stamps a unique
+  `bundle-id.txt`; LocalServer reads it at launch and clears any
+  stale live-update overlay when a new bundle ships, preventing
+  "old code masks new code" surprises after reinstalls.
+
+### Privacy & offline-first
+
+- **Zero-data PWA mode**: every fetch is gated behind an explicit
+  user action. Default app launches make zero remote requests.
+- **Wi-Fi-only download** toggle — skips region downloads when on
+  cellular, so you don't accidentally pay for tile bytes.
+- **All catches and walked distance** stay on device unless you
+  explicitly tap Save or Export.
+- **No telemetry, no analytics, no third-party CDNs** — the only
+  outbound endpoints are your self-hosted Flask backend (and only
+  for the explicit download / save / refresh actions above).
+- **Welcome flow** on first launch walks new users through the
+  one-time app-data download (sprites, fonts, icons, world basemap)
+  and then through saving their first map region. After that the
+  app is fully offline.
+
+### Diagnostics
+
+- **On-screen debug overlay** captures uncaught errors, promise
+  rejections, and console.error calls — useful on iOS where dev
+  tools aren't accessible. Toggleable via Settings.
+- **Memory footprint badge** (iOS only) shows live phys-footprint /
+  RSS / peak. Toggleable; default off.
+- **Startup phase timings** in Settings — first GPS fix, first
+  marker, first sprite, font preload, icon bulk download, variant
+  summary load, etc.
+- **Sprite + icon download diagnostics** for tracking down "POI
+  rendered as red dot" issues.
+
 ## Setup
 
 `direnv allow` to load the nix shell (python + flask + tilemaker + cloudflared).
