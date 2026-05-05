@@ -3146,10 +3146,19 @@
     const LOCAL_PREFIXES = ['/static/', '/bundled-data/', '/sw.js',
                             '/icons/', '/fonts/', '/manifest', '/tiles/'];
     const _origFetch = window.fetch.bind(window);
-    // Diagnostic: collect every fetch URL the page makes (and whether
-    // we rewrote it) so we can find unexpected remote traffic in the
-    // IPA. Read via window._ccFetchLog from the JS console / debug
-    // overlay. Capped at 200 entries.
+    // Diagnostic: surface "interesting" fetches to the on-screen
+    // debug overlay (which captures console.error) so we can see
+    // network activity in the IPA without a JS console.
+    //   * Any fetch that touches /bundled-data/ — most likely place
+    //     for a stray remote request based on user reports.
+    //   * Any fetch that gets REWRITTEN through the page-context
+    //     CC_API_BASE rewrite branch.
+    //   * Any fetch whose final URL is absolute and NOT localhost
+    //     (i.e., goes off-device).
+    // We avoid logging every fetch (would flood the overlay during
+    // tile load); narrow filter shows only suspicious traffic. The
+    // full log is also kept on window._ccFetchLog for after-the-fact
+    // dumping.
     window._ccFetchLog = window._ccFetchLog || [];
     function _logFetch(originalUrl, finalUrl, rewritten) {
       try {
@@ -3157,15 +3166,16 @@
         window._ccFetchLog.push({
           t: Date.now(), original: originalUrl, final: finalUrl, rewritten,
         });
-        // Surface remote sprites / bundled-data traffic immediately so
-        // a stray request lights up the on-screen overlay without
-        // having to dump _ccFetchLog by hand.
-        if (/\/bundled-data\/sprites\//.test(originalUrl)
-            && /^https?:/.test(finalUrl)
-            && !/^https?:\/\/localhost/.test(finalUrl)) {
-          console.error('[fetch-leak] sprite went remote:',
-            originalUrl, '->', finalUrl,
-            new Error('stack').stack);
+        const interesting =
+          /\/bundled-data\//.test(String(originalUrl))
+          || rewritten
+          || (/^https?:/.test(String(finalUrl))
+              && !/^https?:\/\/localhost/.test(String(finalUrl)));
+        if (interesting) {
+          console.error('[fetch]',
+            (rewritten ? 'REWRITTEN ' : ''),
+            String(originalUrl),
+            (rewritten || originalUrl !== finalUrl) ? ('-> ' + String(finalUrl)) : '');
         }
       } catch (_) {}
     }
