@@ -1128,9 +1128,15 @@
 
   // Inline candy tally for an opened pokémon. Pivots both species to
   // their family roots first, then dedupes — so Charizard×Charmander
-  // shows a single "Charmander candy" pip (both sides share a root)
+  // shows a single Charmander-candy pip (both sides share a root)
   // and Growlithe×Vulpix shows both. Uses readCandy so opening a
   // detail/fusion view triggers the lazy schema migration.
+  //
+  // Visual: icon-only — `<candy icon> ×N` for each root. The icon
+  // is a CSS sprite slice from the bundled candies.png sheet,
+  // sized down (24px) to fit inline alongside the surrounding
+  // detail view text. Species name lives in title/aria-label for
+  // hover tooltips and screen readers.
   function candyTallyHtml(speciesA, speciesB) {
     if (speciesA == null || speciesB == null) return '';
     const candy = readCandy();
@@ -1140,7 +1146,17 @@
     const parts = roots.map((idx) => {
       const name = speciesNameFor(idx);
       const count = candy[String(idx)] || 0;
-      return `<span class="candy-tally-pip">${escapeHtml(name)} candy <b>×${count}</b></span>`;
+      const label = `${name} candy`;
+      const col = idx % CANDY_SHEET_COLS;
+      const row = Math.floor(idx / CANDY_SHEET_COLS);
+      // Tally-icon CSS uses a 24px cell; positions scale to that.
+      const TALLY_PX = 24;
+      return `<span class="candy-tally-pip">`
+        + `<span class="candy-tally-icon" `
+        + `style="background-position: -${col * TALLY_PX}px -${row * TALLY_PX}px" `
+        + `title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}"></span>`
+        + ` <b>×${count}</b>`
+        + `</span>`;
     });
     return `<div class="candy-tally">${parts.join(' · ')}</div>`;
   }
@@ -3503,6 +3519,28 @@
         color: var(--ui-text, #111);
         font-weight: 600;
       }
+      .candy-tally-pip {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        vertical-align: middle;
+      }
+      /* Inline candy icon for the per-pokémon tally — smaller than
+         the candy-menu icon (24 vs 40) so it sits comfortably
+         alongside the surrounding detail-view text. The sheet is
+         scaled down to match (background-size shrinks the whole
+         image proportionally so positions in 24px cells line up). */
+      .candy-tally-icon {
+        display: inline-block;
+        width: 24px;
+        height: 24px;
+        background-image: url('${BUNDLED_BASE}/candies.png');
+        background-size: ${24 * CANDY_SHEET_COLS}px ${24 * CANDY_SHEET_ROWS}px;
+        background-repeat: no-repeat;
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
+        flex-shrink: 0;
+      }
       #battleScreen .battle-actions {
         position: absolute;
         bottom: 8%;
@@ -4899,15 +4937,16 @@
       const label = `${name} candy`;
       // Icon is a CSS sprite — background-position picks the cell
       // for this species out of the bundled candies.png sheet.
-      // title + aria-label keep the species name reachable for
-      // accessibility / hover-tooltip even though the visible UI
-      // is now icon-only per the inventory's new look.
+      // Name is shown alongside the icon so the user can scan the
+      // list quickly even for species whose candy art looks
+      // similar (or for empty-cell candies that render blank).
       return `
         <div class="candy-row">
           <div class="candy-icon"
                style="background-position: -${col * CANDY_CELL_PX}px -${row * CANDY_CELL_PX}px"
                title="${escapeHtml(label)}"
                aria-label="${escapeHtml(label)}"></div>
+          <span class="candy-name">${escapeHtml(name)}</span>
           <span class="candy-count">×${n}</span>
         </div>
       `;

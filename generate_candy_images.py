@@ -43,6 +43,33 @@ OUT_DIR = ROOT / "data" / "BundledData"
 EGGS_PATH = OUT_DIR / "eggs.png"
 CANDIES_PATH = OUT_DIR / "candies.png"
 
+# PIF source directory for per-species egg PNGs — used as a fallback
+# when a gen-1 species' own egg cell is empty (PIF only ships egg art
+# for base evolutions, so e.g. Pikachu has no 25.png because its base
+# is Pichu (#172) in gen 2). For those, we crop the BABY's egg art
+# instead so the candy bucket — which is keyed on the gen-1 species
+# (Pikachu, not Pichu) — still has a recognizable visual identity.
+PIF_EGGS_DIR = ROOT / "data" / "InfiniteFusion" / "Graphics" / "Battlers" / "Eggs"
+
+# Map of gen-1 species ID → baby ID whose egg PNG to use when the
+# gen-1 cell is empty. Keys mirror the candy buckets that
+# CANDY_ROOT_BABIES (in creatures.js) promotes past — Pichu's bucket
+# is Pikachu, Cleffa's is Clefairy, etc., so each maps the *bucket
+# species* to the baby whose art best represents it.
+#
+# Tyrogue branches into both Hitmonlee and Hitmonchan, so both
+# point at 236.
+BABY_EGG_FALLBACK: dict[int, int] = {
+    25:  172,   # Pikachu     ← Pichu
+    35:  173,   # Clefairy    ← Cleffa
+    39:  174,   # Jigglypuff  ← Igglybuff
+    106: 236,   # Hitmonlee   ← Tyrogue
+    107: 236,   # Hitmonchan  ← Tyrogue
+    124: 238,   # Jynx        ← Smoochum
+    125: 239,   # Electabuzz  ← Elekid
+    126: 240,   # Magmar      ← Magby
+}
+
 
 def dominant_egg_color(img: "Image.Image") -> tuple[int, int, int]:
     """Most-common opaque non-near-white color in an image. Used to
@@ -144,7 +171,23 @@ def build_candies_sheet() -> tuple[int, int]:
         ))
         bbox = egg_cell.getbbox()
         if not bbox:
-            continue
+            # PIF only ships egg art for base evolutions, so gen-1
+            # species whose base is a gen-2 baby (Pichu→Pikachu,
+            # Cleffa→Clefairy, ...) come through empty. For those we
+            # load the baby's egg PNG directly from PIF source — the
+            # candy bucket is still keyed on the gen-1 species (which
+            # is what the user sees as "Pikachu candy"), but its
+            # visual identity comes from the baby's egg art.
+            baby = BABY_EGG_FALLBACK.get(species)
+            if baby is None:
+                continue
+            baby_path = PIF_EGGS_DIR / f"{baby}.png"
+            if not baby_path.is_file():
+                continue
+            egg_cell = Image.open(baby_path).convert("RGBA")
+            bbox = egg_cell.getbbox()
+            if not bbox:
+                continue
         # Shrink the bbox inward before cropping — drops the egg's
         # dark outline pixels (1-2 px wide in PIF art) plus a wider
         # band of edge color/shading, leaving just the inner
