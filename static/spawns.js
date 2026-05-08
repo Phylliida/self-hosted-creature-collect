@@ -362,6 +362,10 @@
   global.Spawns = {
     spawnsInBbox, generateCellAtTick, currentTick, isSpawnIdStale,
     currentWeather,
+    // Exposed so other deterministic features (e.g. daycare loot,
+    // future event drops) can seed their own streams from a stable,
+    // proven PRNG rather than each rolling their own hash.
+    getRng: getxor4069,
     TICK_MS, LIFETIME_MS,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
