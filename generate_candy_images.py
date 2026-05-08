@@ -51,6 +51,17 @@ CANDIES_PATH = OUT_DIR / "candies.png"
 # (Pikachu, not Pichu) — still has a recognizable visual identity.
 PIF_EGGS_DIR = ROOT / "data" / "InfiniteFusion" / "Graphics" / "Battlers" / "Eggs"
 
+# PIF autogen sprite sheets — used as a FINAL fallback for species
+# that have no own egg art AND no baby egg art (Snorlax, Mr. Mime —
+# their gen-4 babies aren't bundled in PIF's Eggs/ directory). The
+# species' solo sprite lives at cell (id%10, id//10) of the
+# <id>.png sheet (a sprite at that diagonal position is the species
+# fusing with itself, which is just the canonical solo art).
+PIF_AUTOGEN_SHEETS_DIR = (ROOT / "data" / "InfiniteFusion" / "Graphics"
+                          / "Battlers" / "spritesheets_autogen")
+AUTOGEN_CELL_PX = 96
+AUTOGEN_COLS = 10
+
 # Map of gen-1 species ID → baby ID whose egg PNG to use when the
 # gen-1 cell is empty. Keys mirror the candy buckets that
 # CANDY_ROOT_BABIES (in creatures.js) promotes past — Pichu's bucket
@@ -59,16 +70,45 @@ PIF_EGGS_DIR = ROOT / "data" / "InfiniteFusion" / "Graphics" / "Battlers" / "Egg
 #
 # Tyrogue branches into both Hitmonlee and Hitmonchan, so both
 # point at 236.
+# Baby art is preferred even when the baby itself has no egg PNG —
+# Munchlax (446) and Mime Jr. (439) aren't in PIF's Eggs/ dir but
+# they do appear in the autogen sprite sheets, so we fall back to
+# their solo autogen sprite when no baby egg is found.
 BABY_EGG_FALLBACK: dict[int, int] = {
     25:  172,   # Pikachu     ← Pichu
     35:  173,   # Clefairy    ← Cleffa
     39:  174,   # Jigglypuff  ← Igglybuff
     106: 236,   # Hitmonlee   ← Tyrogue
     107: 236,   # Hitmonchan  ← Tyrogue
+    113: 440,   # Chansey     ← Happiny
+    122: 439,   # Mr. Mime    ← Mime Jr.
     124: 238,   # Jynx        ← Smoochum
     125: 239,   # Electabuzz  ← Elekid
     126: 240,   # Magmar      ← Magby
+    143: 446,   # Snorlax     ← Munchlax
 }
+
+
+def _autogen_solo_sprite(species_id: int) -> "Image.Image | None":
+    """Crop the species' solo sprite from PIF's autogen sheet —
+    cell (id%10, id//10) of <id>.png is the species fused with
+    itself = its canonical solo art. Final fallback for species
+    that have no own egg art and no usable baby egg (Snorlax,
+    Mr. Mime). Returns None if the sheet is missing or the
+    diagonal cell is empty."""
+    sheet_path = PIF_AUTOGEN_SHEETS_DIR / f"{species_id}.png"
+    if not sheet_path.is_file():
+        return None
+    sheet = Image.open(sheet_path).convert("RGBA")
+    col = species_id % AUTOGEN_COLS
+    row = species_id // AUTOGEN_COLS
+    cell = sheet.crop((
+        col * AUTOGEN_CELL_PX,
+        row * AUTOGEN_CELL_PX,
+        (col + 1) * AUTOGEN_CELL_PX,
+        (row + 1) * AUTOGEN_CELL_PX,
+    ))
+    return cell if cell.getbbox() else None
 
 
 def dominant_egg_color(img: "Image.Image") -> tuple[int, int, int]:
@@ -112,12 +152,12 @@ def make_candy(size: int, egg_top: "Image.Image",
     body_r = cx + radius
     body_b = cy + radius
 
-    # Tinted sphere with 2 px outline.
+    # Tinted sphere with 1 px outline.
     draw.ellipse(
         (body_l, body_t, body_r, body_b),
         fill=(*twist_color, 255),
         outline=(0, 0, 0, 255),
-        width=2,
+        width=1,
     )
 
     # Inset so the egg paste sits comfortably inside the outline.
@@ -172,20 +212,39 @@ def build_candies_sheet() -> tuple[int, int]:
         bbox = egg_cell.getbbox()
         if not bbox:
             # PIF only ships egg art for base evolutions, so gen-1
-            # species whose base is a gen-2 baby (Pichu→Pikachu,
-            # Cleffa→Clefairy, ...) come through empty. For those we
-            # load the baby's egg PNG directly from PIF source — the
-            # candy bucket is still keyed on the gen-1 species (which
-            # is what the user sees as "Pikachu candy"), but its
-            # visual identity comes from the baby's egg art.
+            # species whose base is a gen-2+ baby (Pichu→Pikachu,
+            # Cleffa→Clefairy, Happiny→Chansey, Munchlax→Snorlax,
+            # MimeJr→Mr.Mime, ...) come through empty. Walk a
+            # waterfall of fallbacks until one provides art.
+            #
+            # Tier 1: baby's egg PNG. Pichu, Cleffa, Happiny etc.
+            # have egg art in PIF — preferred since it matches the
+            # visual style of the rest of the candy sheet.
             baby = BABY_EGG_FALLBACK.get(species)
-            if baby is None:
-                continue
-            baby_path = PIF_EGGS_DIR / f"{baby}.png"
-            if not baby_path.is_file():
-                continue
-            egg_cell = Image.open(baby_path).convert("RGBA")
-            bbox = egg_cell.getbbox()
+            if baby is not None:
+                baby_path = PIF_EGGS_DIR / f"{baby}.png"
+                if baby_path.is_file():
+                    egg_cell = Image.open(baby_path).convert("RGBA")
+                    bbox = egg_cell.getbbox()
+            # Tier 2: baby's autogen solo sprite. Munchlax (446)
+            # and Mime Jr. (439) don't have egg PNGs in PIF but
+            # do have autogen sheets, so we use the baby's solo
+            # silhouette rather than falling back to the parent.
+            if not bbox and baby is not None:
+                solo = _autogen_solo_sprite(baby)
+                if solo is not None:
+                    egg_cell = solo
+                    bbox = egg_cell.getbbox()
+            # Tier 3: species' own autogen solo sprite. Catches
+            # any remaining gen-1 species that have neither egg
+            # art nor a baby fallback (mostly mid-evolution
+            # species, which the candy menu won't query anyway —
+            # candy buckets to the family root).
+            if not bbox:
+                solo = _autogen_solo_sprite(species)
+                if solo is not None:
+                    egg_cell = solo
+                    bbox = egg_cell.getbbox()
             if not bbox:
                 continue
         # Shrink the bbox inward before cropping — drops the egg's
