@@ -101,6 +101,11 @@
       icon: '/static/great-ball.svg',
       catchShakeRate: 0.9655, // ≈ 90% catch
     },
+    test_orb: {
+      name: 'Test Orb',
+      desc: 'Placeholder daycare drop. Settings → "Repopulate daycare test loot" resets claimed indices so they reappear.',
+      icon: '/static/test-orb.svg',
+    },
   };
   // Items the pokéstop "Collect items" button can grant. Each press
   // samples 1-3 items uniformly from this list (with replacement).
@@ -290,15 +295,162 @@
   const DAYCARE_SLOTS_KEY = 'cc.daycareSlots.v1';
   const DAYCARE_SLOT_COUNT = 2;
 
+  // Daycare loot. Each slot earns one milestone of loot per kilometer
+  // walked while occupied. Milestone N's loot is deterministic in
+  // (slot.id, slot.addedAt, N) — no roll history is stored, just the
+  // list of milestone indices the user has already claimed. Removing
+  // the slot wipes both, so removeFromDaycare auto-claims any
+  // outstanding loot before deletion.
+  //
+  // The table is intentionally small for v1: a single "test orb" item
+  // so the surface area (UI, animations, claim flow, settings reset)
+  // can be exercised end-to-end before we layer in real drops.
+  // Settings → "Repopulate daycare test loot" wipes claimed indices
+  // across all slots, regenerating the same loot stream (same seed
+  // → same items) so the user can re-tap them.
+  const DAYCARE_LOOT_KM_M = 1000;
+  // Loot keys that the daycare can drop. Each must also exist in
+  // the top-level ITEMS catalog (icon + display name flow through
+  // the bag UI from there). v1 is a single placeholder so the UX
+  // can be exercised end-to-end before real drops are layered in.
+  const DAYCARE_LOOT_TABLE = ['test_orb'];
+
+  function _daycareLootAt(slot, n) {
+    if (!slot || !Number.isInteger(n) || n < 1) return null;
+    if (!DAYCARE_LOOT_TABLE.length) return null;
+    // Seed string is unique per (slot, milestone) so each tap-target
+    // has independent randomness — growing the table from 1 → many
+    // items later doesn't shuffle existing milestones' identities
+    // (each milestone seeds independently rather than pulling from
+    // a shared stream).
+    const seed = `dc|${slot.id}|${slot.addedAt}|${n}`;
+    let idx = 0;
+    if (global.Spawns && global.Spawns.getRng) {
+      const rng = global.Spawns.getRng(seed);
+      idx = (rng.int32() >>> 0) % DAYCARE_LOOT_TABLE.length;
+    }
+    const key = DAYCARE_LOOT_TABLE[idx];
+    const meta = ITEMS[key];
+    if (!meta) return null;
+    return { key, name: meta.name, icon: meta.icon };
+  }
+
+  function _daycareEarnedCount(slot) {
+    if (!slot) return 0;
+    return Math.floor((slot.distM || 0) / DAYCARE_LOOT_KM_M);
+  }
+
+  function _daycareUnclaimedLoot(slot) {
+    const claimed = new Set((slot && slot.claimed) || []);
+    const total = _daycareEarnedCount(slot);
+    const out = [];
+    for (let n = 1; n <= total; n++) {
+      if (claimed.has(n)) continue;
+      const item = _daycareLootAt(slot, n);
+      if (item) out.push({ n, item });
+    }
+    return out;
+  }
+
+  // Click handler for individual loot pills — module-scope so the
+  // initial render's queryAll-and-bind pass AND the
+  // cc-daycare-loot-tick listener (which dynamically inserts
+  // pills) can share the same function.
+  function _onPillClick(e, pill) {
+    e.stopPropagation();
+    if (pill.classList.contains('claimed')) return;
+    const slotEl = pill.closest('.daycare-slot[data-id]');
+    if (!slotEl) return;
+    const slotId = slotEl.dataset.id;
+    const n = parseInt(pill.dataset.n, 10);
+    if (!Number.isFinite(n)) return;
+    const granted = claimDaycareLoot(slotId, n);
+    if (!granted) return;
+    pill.classList.add('claimed');
+    let removed = false;
+    const finish = () => {
+      if (removed) return;
+      removed = true;
+      if (pill.parentNode) pill.parentNode.removeChild(pill);
+    };
+    pill.addEventListener('transitionend', (ev) => {
+      if (ev.propertyName === 'width') finish();
+    });
+    // Safety net (reduced-motion, ancestor display:none, etc.).
+    setTimeout(finish, 320);
+  }
+
+  // Per-slot loot row: a horizontal strip of pills below the
+  // creature's name + distance. The strip is width-capped so only
+  // the first ~4 pills fit; any extras are clipped by the row's
+  // overflow:hidden, with a "···" ellipsis overlay at the right
+  // edge (toggled via the .has-overflow class added in JS after
+  // measuring the rendered row's scroll width). Empty row still
+  // rendered when no loot pending so the slot's vertical layout
+  // doesn't jitter when the last pill is claimed.
+  function _daycareLootRowHtml(slot) {
+    const visible = _daycareUnclaimedLoot(slot);
+    if (!visible.length) {
+      return `<div class="daycare-slot-loot" aria-label="no daycare loot ready"></div>`;
+    }
+    const pills = visible.map(({ n, item }) =>
+      `<button class="daycare-loot-pill" type="button" data-n="${n}" `
+      + `title="${escapeHtml(item.name)}" `
+      + `aria-label="claim ${escapeHtml(item.name)}">`
+      + `<img src="${escapeHtml(item.icon)}" alt="">`
+      + `</button>`
+    ).join('');
+    return `<div class="daycare-slot-loot">${pills}</div>`;
+  }
+
+
+  // Claim every unclaimed milestone on this slot in one shot.
+  // Returns the list of granted item metas (most recent first) so
+  // the caller can surface a brief confirmation if desired.
+  function claimAllDaycareLoot(slotId) {
+    if (!slotId) return [];
+    const arr = readDaycareSlots();
+    const idx = arr.findIndex((s) => s.id === slotId);
+    if (idx < 0) return [];
+    const slot = arr[idx];
+    const total = _daycareEarnedCount(slot);
+    const claimed = new Set(slot.claimed || []);
+    const granted = [];
+    const newClaimed = [...claimed];
+    for (let n = 1; n <= total; n++) {
+      if (claimed.has(n)) continue;
+      const item = _daycareLootAt(slot, n);
+      if (!item) continue;
+      grantItem(item.key, 1);
+      newClaimed.push(n);
+      granted.push(item);
+    }
+    if (!granted.length) return [];
+    arr[idx] = {
+      ...slot,
+      claimed: newClaimed.sort((a, b) => a - b),
+    };
+    writeDaycareSlots(arr);
+    return granted;
+  }
+
   function _normalizeSlot(v) {
     if (typeof v === 'string' && v) {
-      return { id: v, addedAt: Date.now(), distM: 0 };
+      return { id: v, addedAt: Date.now(), distM: 0, claimed: [] };
     }
     if (v && typeof v === 'object' && typeof v.id === 'string' && v.id) {
+      // `claimed` is the set of milestone indices (1, 2, 3, ...) the
+      // user has tapped to collect. Stored as a sorted dedup'd array
+      // so the JSON shape stays small and stable across saves.
+      const rawClaimed = Array.isArray(v.claimed) ? v.claimed : [];
+      const claimed = Array.from(new Set(
+        rawClaimed.filter((n) => Number.isInteger(n) && n >= 1)
+      )).sort((a, b) => a - b);
       return {
         id: v.id,
         addedAt: typeof v.addedAt === 'number' ? v.addedAt : Date.now(),
         distM: typeof v.distM === 'number' && v.distM >= 0 ? v.distM : 0,
+        claimed,
       };
     }
     return null;
@@ -336,7 +488,7 @@
     const arr = readDaycareSlots();
     if (arr.some((s) => s.id === id)) return false;
     if (arr.length >= DAYCARE_SLOT_COUNT) return false;
-    arr.push({ id, addedAt: Date.now(), distM: 0 });
+    arr.push({ id, addedAt: Date.now(), distM: 0, claimed: [] });
     writeDaycareSlots(arr);
     return true;
   }
@@ -345,6 +497,19 @@
     const arr = readDaycareSlots();
     const idx = arr.findIndex((s) => s.id === id);
     if (idx < 0) return false;
+    // Auto-claim any unclaimed loot before deletion — the slot's
+    // loot stream is keyed by (id, addedAt, n), so removing wipes
+    // both the seed and the user's progress. Harvesting the
+    // remaining items first matches the "you earned this by
+    // walking" mental model.
+    const slot = arr[idx];
+    const total = _daycareEarnedCount(slot);
+    const claimed = new Set(slot.claimed || []);
+    for (let n = 1; n <= total; n++) {
+      if (claimed.has(n)) continue;
+      const item = _daycareLootAt(slot, n);
+      if (item) grantItem(item.key, 1);
+    }
     arr.splice(idx, 1);
     writeDaycareSlots(arr);
     return true;
@@ -352,6 +517,49 @@
   function toggleDaycare(id) {
     if (isInDaycare(id)) { removeFromDaycare(id); return false; }
     return addToDaycare(id);
+  }
+
+  // Claim milestone N's loot from the slot's stream. Idempotent
+  // (claiming an already-claimed N or a not-yet-earned N is a no-op).
+  // Returns the item meta on success so the caller can animate +
+  // surface a confirmation, or null if nothing was granted.
+  function claimDaycareLoot(slotId, n) {
+    if (!slotId || !Number.isInteger(n) || n < 1) return null;
+    const arr = readDaycareSlots();
+    const idx = arr.findIndex((s) => s.id === slotId);
+    if (idx < 0) return null;
+    const slot = arr[idx];
+    if (n > _daycareEarnedCount(slot)) return null;
+    const claimed = Array.isArray(slot.claimed) ? slot.claimed : [];
+    if (claimed.includes(n)) return null;
+    const item = _daycareLootAt(slot, n);
+    if (!item) return null;
+    grantItem(item.key, 1);
+    arr[idx] = {
+      ...slot,
+      claimed: [...claimed, n].sort((a, b) => a - b),
+    };
+    writeDaycareSlots(arr);
+    return item;
+  }
+
+  // Settings → "Repopulate daycare test loot": wipe `claimed` on
+  // every slot. Same `addedAt` → same loot stream → the user sees
+  // the items reappear and can tap them again. Granted items stay
+  // in the bag (this regenerates AVAILABLE drops, not deletes
+  // already-collected ones — symmetry with how a "reset" UI is
+  // typically expected to work).
+  function repopulateDaycareTestLoot() {
+    const arr = readDaycareSlots();
+    let touched = 0;
+    for (const s of arr) {
+      if (Array.isArray(s.claimed) && s.claimed.length) {
+        s.claimed = [];
+        touched++;
+      }
+    }
+    writeDaycareSlots(arr);
+    return touched;
   }
   // Count of slots currently occupied by captures that STILL EXIST.
   // No release/delete UI exists today, but defensive against future
@@ -2268,9 +2476,23 @@
       #creatureInventory .daycare-view.show { display: flex; flex-direction: column; }
       #creatureInventory .daycare-slots {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        /* Use minmax(0, 1fr), not bare 1fr — bare 1fr is implicitly
+           minmax(auto, 1fr), which means the column will GROW past
+           its 1fr share if a child has wide intrinsic content. The
+           pill row's flex children have a natural total width of
+           (N * 28) + gaps, and with 10+ pills that exceeded the
+           slot's intended half-width, stretching the slot column
+           horizontally and defeating overflow:hidden. min=0 forces
+           the column to honor 1fr regardless of content width. */
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
         gap: 8px;
         margin: 0 0 10px;
+      }
+      #creatureInventory .daycare-slot {
+        /* Same intrinsic-width-floor mitigation as the grid columns:
+           min-width: 0 lets the slot ignore its children's natural
+           widths so the pill row's overflow:hidden actually clips. */
+        min-width: 0;
       }
       #creatureInventory .daycare-slot {
         display: flex;
@@ -2283,10 +2505,20 @@
         background: var(--ui-hover, rgba(0,0,0,0.04));
         border: 1px solid var(--ui-hairline, rgba(0,0,0,0.08));
         border-radius: var(--ui-radius, 8px);
+        /* Clip children to the rounded bubble shape so the loot
+           row's full-width divider line doesn't bleed past the
+           slot's rounded corners. The pill row extends edge-to-
+           edge via negative margins; without this, the divider
+           visually overshoots the curve. */
+        overflow: hidden;
+        /* Slot itself isn't clickable — only the .daycare-slot-art
+           opens the creature detail, so a misclick on the loot row
+           or the empty padding around it doesn't navigate away. */
+      }
+      #creatureInventory .daycare-slot[data-id] .daycare-slot-art {
         cursor: pointer;
       }
       #creatureInventory .daycare-slot.daycare-slot-empty {
-        cursor: default;
         border-style: dashed;
       }
       #creatureInventory .daycare-slot-empty-label {
@@ -2328,6 +2560,94 @@
         color: var(--ui-muted, #666);
         font-variant-numeric: tabular-nums;
         margin-top: 1px;
+      }
+      /* Per-slot loot row: pills flow horizontally, anything past
+         the slot's right edge is clipped by overflow:hidden. As
+         pills get claimed (width-collapse to 0) the row's content
+         shrinks and previously-clipped pills shift leftward into
+         view. The row spans the slot edge-to-edge (negative
+         horizontal margins cancel the slot's 8px side padding) so
+         (a) the divider line above the row is full-width, visually
+         separating the loot zone from the creature info, and (b)
+         the cutoff sits at the slot's actual right edge — fitting
+         one more pill than a padded row would. */
+      #creatureInventory .daycare-slot-loot {
+        position: relative;
+        display: flex;
+        flex-direction: row;
+        gap: 4px;
+        align-items: center;
+        height: 32px;
+        overflow: hidden;
+        margin-top: 6px;
+        /* Negative margins extend the row toward the slot's edges
+           so the divider line spans nearly the full bubble width
+           and the cutoff sits as far right as possible. We stop 2px
+           short of the border on each side so iOS WebKit's
+           sub-pixel rounding on overflow:hidden + border-radius
+           doesn't let a partially-clipped pill peek past the
+           bubble's curved edge. */
+        margin-left: -6px;
+        margin-right: -6px;
+        width: calc(100% + 12px);
+        padding: 4px 4px 0;
+        border-top: 1px solid var(--ui-border, var(--ui-hairline, rgba(0,0,0,0.18)));
+      }
+      #creatureInventory .daycare-loot-pill {
+        flex: 0 0 auto;
+        width: 28px;
+        height: 28px;
+        padding: 1px;
+        border: 1px solid var(--ui-hairline, rgba(0,0,0,0.18));
+        background: var(--ui-input-bg, rgba(255,255,255,0.5));
+        border-radius: 50%;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        transition:
+          width 240ms ease,
+          opacity 200ms ease,
+          transform 200ms ease,
+          margin 240ms ease,
+          border-width 240ms ease,
+          padding 240ms ease;
+      }
+      #creatureInventory .daycare-loot-pill img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        pointer-events: none;
+      }
+      #creatureInventory .daycare-loot-pill:hover:not(.claimed):not(.appearing) {
+        transform: scale(1.08);
+      }
+      /* Claimed: collapse width to zero so the items to its right
+         shift leftward smoothly. transitionend on the width
+         property removes the element from DOM, and the row's
+         overflow class is re-evaluated so the ellipsis can hide
+         once everything fits. */
+      #creatureInventory .daycare-loot-pill.claimed {
+        width: 0;
+        margin: 0 -2px;
+        padding: 0;
+        border-width: 0;
+        transform: scale(0);
+        opacity: 0;
+        pointer-events: none;
+      }
+      /* Appearing: a freshly-earned milestone slides in. New pills
+         arrive at the END of the row — if the row already has 4+
+         pills they're added past the visible cap and the ellipsis
+         indicates that. */
+      #creatureInventory .daycare-loot-pill.appearing {
+        animation: daycare-loot-slide-in 320ms ease forwards;
+      }
+      @keyframes daycare-loot-slide-in {
+        0%   { width: 0; opacity: 0; transform: scale(0.4); padding: 0; border-width: 0; }
+        60%  { width: 28px; opacity: 1; transform: scale(1.12); padding: 1px; border-width: 1px; }
+        100% { width: 28px; opacity: 1; transform: scale(1); padding: 1px; border-width: 1px; }
       }
       #creatureInventory .daycare-today {
         display: flex; flex-direction: column; align-items: center;
@@ -4688,6 +5008,7 @@
             + `</div>`
             + `<div class="daycare-slot-name">${escapeHtml(name)}</div>`
             + `<div class="daycare-slot-dist">${distLabel}</div>`
+            + _daycareLootRowHtml(it.slot)
             + `</div>`;
         }).join('')}
       </div>
@@ -4716,11 +5037,18 @@
     // the cropped variant once the sprite blob URL resolves. Only
     // populated slots are clickable (data-id is present).
     body.querySelectorAll('.daycare-slot[data-id]').forEach((slot) => {
-      slot.addEventListener('click', () => {
-        const id = slot.dataset.id;
-        if (id) showDetail(id);
-      });
       const id = slot.dataset.id;
+      // Only the sprite tile opens the creature detail — a click on
+      // the slot's name, distance, loot row, or empty padding does
+      // nothing, so a misclick around the loot pills doesn't yank
+      // the user into the detail view.
+      const artEl = slot.querySelector('.daycare-slot-art');
+      if (artEl) {
+        artEl.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (id) showDetail(id);
+        });
+      }
       const c = findCreature(id);
       if (!c || !global.Sprites || !global.Sprites.useSpriteInto) return;
       if (c.speciesA == null || c.speciesB == null) return;
@@ -4729,15 +5057,64 @@
       if (!img) return;
       // Numeric variant for captures; undefined → "best available"
       // for legacy captures saved before per-capture variant tracking.
-      // (Captures with `variant === null` also fall through to
-      // best-available — same behavior as the previous getDefaultSpriteUrl
-      // fallback when the slot's getSpriteUrl-with-number branch missed.)
       const v = (typeof c.variant === 'number') ? c.variant : undefined;
       global.Sprites.useSpriteInto(img, c.speciesA, c.speciesB, v, () => {
         if (ph) ph.style.display = 'none';
         img.removeAttribute('hidden');
       });
     });
+    // Per-pill click → claim that single milestone. The pill
+    // collapses to width 0 (width transition pulls later pills
+    // leftward), and once it's removed from DOM any pills that
+    // were clipped past the slot's right edge slide into view.
+    body.querySelectorAll('.daycare-slot[data-id] .daycare-loot-pill').forEach((btn) => {
+      btn.addEventListener('click', (e) => _onPillClick(e, btn));
+    });
+    // Mid-walk new milestones: when distM crosses a kilometer
+    // boundary, _accumulateDaycareDistance dispatches
+    // cc-daycare-loot-tick with the slot id + new milestone numbers.
+    // Append a fresh pill (with .appearing slide-in) for each new
+    // milestone so the user sees it without a full re-render. If
+    // the slot already had its visible-pill quota filled, the new
+    // pill is appended past the slot's right edge and gets clipped
+    // by overflow:hidden until earlier pills are claimed.
+    if (!body._daycareLootTickHandler) {
+      const handler = (e) => {
+        const d = e && e.detail;
+        if (!d || !d.slotId || !Array.isArray(d.newNs)) return;
+        const slotEl = body.querySelector(
+          `.daycare-slot[data-id="${CSS.escape(d.slotId)}"]`,
+        );
+        if (!slotEl) return;
+        const row = slotEl.querySelector('.daycare-slot-loot');
+        if (!row) return;
+        const slot = readDaycareSlots().find((s) => s.id === d.slotId);
+        if (!slot) return;
+        for (const n of d.newNs) {
+          if ((slot.claimed || []).includes(n)) continue;
+          const item = _daycareLootAt(slot, n);
+          if (!item) continue;
+          if (row.querySelector(`.daycare-loot-pill[data-n="${n}"]`)) continue;
+          const pill = document.createElement('button');
+          pill.type = 'button';
+          pill.className = 'daycare-loot-pill appearing';
+          pill.dataset.n = String(n);
+          pill.title = item.name;
+          pill.setAttribute('aria-label', `claim ${item.name}`);
+          const img = document.createElement('img');
+          img.src = item.icon;
+          img.alt = '';
+          pill.appendChild(img);
+          pill.addEventListener('animationend', () => {
+            pill.classList.remove('appearing');
+          }, { once: true });
+          pill.addEventListener('click', (ev) => _onPillClick(ev, pill));
+          row.appendChild(pill);
+        }
+      };
+      body._daycareLootTickHandler = handler;
+      window.addEventListener('cc-daycare-loot-tick', handler);
+    }
     body.querySelectorAll('.daycare-cal-nav').forEach((btn) => {
       btn.addEventListener('click', () => {
         if (btn.disabled) return;
@@ -6376,10 +6753,37 @@
     // accepted segment — accepted segments are gated to ~10 m
     // jumps, so this writes localStorage once every minute or two
     // of walking at typical pace, not on every raw GPS fix.
+    //
+    // After updating distM, check whether any slot crossed one or
+    // more kilometer thresholds (i.e. earned new loot milestones).
+    // If so, dispatch `cc-daycare-loot-tick` with the slot id + the
+    // newly-unlocked milestone numbers so an open daycare panel
+    // can slide the new items into its loot row without a full
+    // re-render. Storage is unaffected — milestones are derived
+    // from distM at view time.
     const slots = readDaycareSlots();
     if (slots.length) {
-      for (const s of slots) s.distM += d;
+      const ticks = [];
+      for (const s of slots) {
+        const before = Math.floor((s.distM || 0) / DAYCARE_LOOT_KM_M);
+        s.distM += d;
+        const after = Math.floor(s.distM / DAYCARE_LOOT_KM_M);
+        if (after > before) {
+          const newNs = [];
+          for (let n = before + 1; n <= after; n++) newNs.push(n);
+          ticks.push({ slotId: s.id, newNs });
+        }
+      }
       writeDaycareSlots(slots);
+      if (ticks.length && typeof window !== 'undefined') {
+        for (const t of ticks) {
+          try {
+            window.dispatchEvent(new CustomEvent('cc-daycare-loot-tick', {
+              detail: { slotId: t.slotId, newNs: t.newNs },
+            }));
+          } catch { /* best-effort */ }
+        }
+      }
     }
     _distAnchorLat = lat;
     _distAnchorLng = lng;
@@ -7660,5 +8064,12 @@
     getDaycarePath,
     exportDaycareData,
     importDaycareData,
+    // Daycare loot. claimDaycareLoot grants a single milestone;
+    // claimAllDaycareLoot grants every outstanding milestone in
+    // one shot (what the in-panel "···" indicator uses).
+    // repopulateDaycareTestLoot is the Settings reset hook.
+    claimDaycareLoot,
+    claimAllDaycareLoot,
+    repopulateDaycareTestLoot,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

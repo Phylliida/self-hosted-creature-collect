@@ -1276,7 +1276,8 @@
   #transitClose,
   #savedRoutesClose,
   #scheduleClose,
-  #remarkCustomArtBtn {
+  #remarkCustomArtBtn,
+  #repopulateDaycareLootBtn {
     background: var(--ui-accent);
     color: var(--ui-accent-text);
     border: 1px solid var(--ui-accent-border);
@@ -1293,7 +1294,8 @@
   #transitClose:hover,
   #savedRoutesClose:hover,
   #scheduleClose:hover,
-  #remarkCustomArtBtn:hover:not(:disabled) {
+  #remarkCustomArtBtn:hover:not(:disabled),
+  #repopulateDaycareLootBtn:hover:not(:disabled) {
     background: var(--ui-accent-border);
   }
   #welcomeStart:disabled,
@@ -3087,6 +3089,15 @@
       <button id="remarkCustomArtBtn" type="button" style="padding: 6px 10px; font-size: 13px;">run</button>
     </div>
     <div id="remarkCustomArtStatus" style="font-size: 11px; color: var(--ui-muted); margin: -4px 0 6px;"></div>
+    <!-- Daycare loot is deterministic per (slot, milestone). Tap a
+         pill below a daycare pokémon to claim it; this row clears
+         the per-slot `claimed` indices so the same loot stream
+         reappears for re-testing. Already-granted bag items stay. -->
+    <div class="row" id="repopulateDaycareLootRow">
+      <label>Repopulate daycare test loot</label>
+      <button id="repopulateDaycareLootBtn" type="button" style="padding: 6px 10px; font-size: 13px;">run</button>
+    </div>
+    <div id="repopulateDaycareLootStatus" style="font-size: 11px; color: var(--ui-muted); margin: -4px 0 6px;"></div>
     <div id="appDataStatus" style="font-size: 11px; color: var(--ui-muted); margin: -4px 0 6px;"></div>
     <div id="spritesStatus" style="font-size: 11px; color: var(--ui-muted); margin: -4px 0 6px;"></div>
     <style>
@@ -5650,13 +5661,23 @@ function fmtDate(ts) {
       const seen = new Set();
       const _norm = (v) => {
         if (typeof v === 'string' && v) {
-          return { id: v, addedAt: Date.now(), distM: 0 };
+          return { id: v, addedAt: Date.now(), distM: 0, claimed: [] };
         }
         if (v && typeof v === 'object' && typeof v.id === 'string' && v.id) {
+          // claimed: dedup'd, sorted, integers ≥ 1. Round-tripping
+          // this is what makes the deterministic-loot model
+          // lossless across export/import — without it, re-imports
+          // would regenerate the same loot stream and let the user
+          // claim already-collected items again.
+          const rawClaimed = Array.isArray(v.claimed) ? v.claimed : [];
+          const claimed = Array.from(new Set(
+            rawClaimed.filter((n) => Number.isInteger(n) && n >= 1)
+          )).sort((a, b) => a - b);
           return {
             id: v.id,
             addedAt: typeof v.addedAt === 'number' ? v.addedAt : Date.now(),
             distM: typeof v.distM === 'number' && v.distM >= 0 ? v.distM : 0,
+            claimed,
           };
         }
         return null;
@@ -10854,6 +10875,30 @@ function fmtDate(ts) {
         remarkCustomArtStatus.textContent = `error: ${e && e.message ? e.message : e}`;
       } finally {
         remarkCustomArtBtn.disabled = false;
+      }
+    });
+  }
+
+  // Repopulate daycare test loot: clears `claimed` on every slot.
+  // Same (id, addedAt) → same deterministic loot stream → the
+  // user sees the previously-claimed items reappear. Granted bag
+  // items are not removed (this resets the *available* drops, not
+  // the user's collected inventory).
+  const repopulateDaycareLootBtn = document.getElementById('repopulateDaycareLootBtn');
+  const repopulateDaycareLootStatus = document.getElementById('repopulateDaycareLootStatus');
+  if (repopulateDaycareLootBtn && repopulateDaycareLootStatus) {
+    repopulateDaycareLootBtn.addEventListener('click', () => {
+      if (!window.Creatures || !window.Creatures.repopulateDaycareTestLoot) {
+        repopulateDaycareLootStatus.textContent = 'Creatures module not loaded yet';
+        return;
+      }
+      try {
+        const touched = window.Creatures.repopulateDaycareTestLoot();
+        repopulateDaycareLootStatus.textContent =
+          `reset claimed loot on ${touched} slot${touched === 1 ? '' : 's'}`;
+      } catch (e) {
+        repopulateDaycareLootStatus.textContent =
+          `error: ${e && e.message ? e.message : e}`;
       }
     });
   }

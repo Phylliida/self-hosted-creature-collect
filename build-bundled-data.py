@@ -96,6 +96,7 @@ AUTOGEN_SHEETS_DIR = INFINITEFUSION / "Graphics" / "Battlers" / "spritesheets_au
 CUSTOM_SHEETS_DIR = (INFINITEFUSION / "Graphics" / "CustomBattlers"
                      / "spritesheets" / "spritesheets_custom")
 EGGS_DIR = INFINITEFUSION / "Graphics" / "Battlers" / "Eggs"
+EVO_ITEMS_SRC = INFINITEFUSION / "Graphics" / "Items"
 SPECIES_DAT = INFINITEFUSION / "Data" / "species.dat"
 EXTRACTOR_SCRIPT = ROOT / "extract-pif-dat.rb"
 
@@ -484,6 +485,52 @@ def build_eggs_sheet() -> tuple[int, int]:
     return (present, MAX_SPECIES - present)
 
 
+def copy_evo_items(evos: dict) -> int:
+    """Copy evolution-item PNGs (Fire Stone, Thunder Stone, Linking
+    Cord, etc.) from PIF's Graphics/Items/ into BundledData/evo-items/.
+
+    The set of items copied is derived from the evolutions data:
+    every distinct `param` of an `Item` evolution method becomes a
+    file name (PARAM.png). Plus a manifest (evo-items-list.json) so
+    static hosts and the runtime "Download App Data" flow can
+    enumerate without needing directory listings.
+
+    Returns the count of items successfully copied.
+    """
+    items = set()
+    for evo_list in evos.values():
+        for evo in evo_list:
+            if len(evo) >= 3 and evo[1] == "Item":
+                items.add(evo[2])
+    items_sorted = sorted(items)
+
+    if not EVO_ITEMS_SRC.is_dir():
+        print(f"  ⚠ no Items directory at {EVO_ITEMS_SRC}, skipping evo items")
+        write_json(OUT_DIR / "evo-items-list.json", {"items": []})
+        return 0
+
+    dst = OUT_DIR / "evo-items"
+    if dst.exists():
+        shutil.rmtree(dst)
+    dst.mkdir(parents=True)
+
+    copied: list[str] = []
+    missing: list[str] = []
+    for name in items_sorted:
+        src_path = EVO_ITEMS_SRC / f"{name}.png"
+        if not src_path.is_file():
+            missing.append(name)
+            continue
+        shutil.copyfile(src_path, dst / f"{name}.png")
+        copied.append(name)
+
+    write_json(OUT_DIR / "evo-items-list.json", {"items": copied})
+
+    if missing:
+        print(f"  ⚠ {len(missing)} evo-item PNGs missing in source: {missing}")
+    return len(copied)
+
+
 def copy_app_data() -> tuple[int, int]:
     """Copy icons/ + fonts/ into BundledData/. Also writes two
     listing JSONs (icons-list.json + fonts-list.json) so static
@@ -648,6 +695,10 @@ def main() -> None:
     egg_present, egg_missing = build_eggs_sheet()
     print(f"  {egg_present} egg cells filled, {egg_missing} blank "
           "(species without dedicated egg art)")
+
+    print("→ Copying evolution-item art...")
+    evo_item_count = copy_evo_items(evos)
+    print(f"  {evo_item_count} evolution items")
 
     print("→ Copying app data (icons + fonts)...")
     icon_count, font_count = copy_app_data()
