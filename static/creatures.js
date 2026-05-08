@@ -1086,73 +1086,21 @@
     }
   }
 
-  // Revoke any object URLs held by `<img>` children of this element.
-  // Call before detaching the element from the DOM to prevent the blob
-  // it points to from leaking — img.onload is what normally revokes,
-  // but onload doesn't fire if the load is interrupted (e.g. the row
-  // gets virtualized out of view before the sprite finishes decoding).
+  // Hygiene: clear `<img>` src attributes on detaching elements so a
+  // recycled row doesn't briefly show its old sprite when it scrolls
+  // back into view. URLs themselves are owned by the shared sprite
+  // cache (Sprites._spriteCache) — no revoke happens here, since
+  // cached URLs may still be in use by other consumers (the world
+  // map, the battle screen, the pokédex). The cache evicts URLs via
+  // LRU on its own.
   function revokeObjectUrlsIn(el) {
     if (!el) return;
     el.querySelectorAll('img').forEach((img) => {
       const src = img.src;
       if (src && src.startsWith('blob:')) {
-        URL.revokeObjectURL(src);
         img.removeAttribute('src');
       }
     });
-  }
-
-  // Lazy sprite loader for grid views. Items array is
-  //   [{ card, a, b }, ...]
-  // and `apply(card, url)` is the per-card hook that wires the loaded
-  // object-URL into the card's DOM (different markup for inventory vs
-  // pokédex). IntersectionObserver fires when a card scrolls within
-  // rootMargin of the viewport, so we never touch IDB for cards the
-  // user hasn't scrolled to. Old observers attached to the same root
-  // are disconnected so re-renders don't leak.
-  function lazyLoadSpritesIntoGrid(rootEl, items, apply) {
-    if (!global.Sprites || !items.length) return;
-    if (rootEl._spriteObserver) {
-      rootEl._spriteObserver.disconnect();
-      rootEl._spriteObserver = null;
-    }
-    // Each item may carry a `variant` field:
-    //   - number: render that custom variant index (captured creatures
-    //             carry their captured variant so they stay visually
-    //             stable even after future re-downloads)
-    //   - null/undefined: pick the lowest-indexed variant the trainer
-    //             has actually seen (so the pokédex tile shows a sprite
-    //             they've encountered, not one they haven't). If none
-    //             seen, fall back to the abstract default-variant
-    //             picker (custom v0 / autogen).
-    const fetchInto = (card, a, b, variant) => {
-      let v = variant;
-      if (v === undefined) v = pickPreferredSeenVariant(a, b);
-      let p;
-      if (typeof v === 'number') p = global.Sprites.getSpriteUrl(a, b, v);
-      else if (v === null) p = global.Sprites.getSpriteUrl(a, b, null);
-      else p = global.Sprites.getDefaultSpriteUrl(a, b);
-      p.then((url) => {
-        if (!url) return;
-        apply(card, url);
-      }).catch(() => { /* swallow — placeholder stays */ });
-    };
-    if (typeof IntersectionObserver === 'undefined') {
-      for (const it of items) fetchInto(it.card, it.a, it.b, it.variant);
-      return;
-    }
-    const byEl = new Map(items.map((it) => [it.card, it]));
-    const scrollRoot = rootEl.closest('.sheet') || null;
-    const obs = new IntersectionObserver((entries) => {
-      for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
-        obs.unobserve(entry.target);
-        const it = byEl.get(entry.target);
-        if (it) fetchInto(it.card, it.a, it.b, it.variant);
-      }
-    }, { root: scrollRoot, rootMargin: '200px 0px' });
-    for (const it of items) obs.observe(it.card);
-    rootEl._spriteObserver = obs;
   }
 
   function famHasContent(famA, famB) {
@@ -1161,11 +1109,11 @@
   }
 
   // Build the family-tree grid: rows are B's family, columns are A's
-  // family. Each cell is a small fusion sprite. Sprites load async from
-  // IDB (no network — same rule as the rest of the inventory). The
-  // current (a, b) cell is outlined.
+  // family. Each cell is a small fusion sprite. Sprites load via the
+  // shared cache — same URL flows through map markers, battle screen,
+  // inventory and pokédex tiles, so re-opening a previously-viewed
+  // family tree is instant.
   function renderFamilyGrid(gridEl, famA, famB, currentA, currentB) {
-    // Revoke any sprite URLs from a prior expansion of this grid.
     revokeObjectUrlsIn(gridEl);
     gridEl.style.gridTemplateColumns = `repeat(${famA.length}, 1fr)`;
     const cells = [];
@@ -1189,29 +1137,20 @@
       }
     }
     gridEl.innerHTML = cells.join('');
-    if (!global.Sprites) return;
+    if (!global.Sprites || !global.Sprites.useSpriteInto) return;
     gridEl.querySelectorAll('.family-cell').forEach((cell) => {
       const a = +cell.dataset.a;
       const b = +cell.dataset.b;
+      const img = cell.querySelector('img');
+      if (!img) return;
       // Match what the user has actually seen so the family-tree
-      // mosaic shows their unlocked variants — falls back to the
-      // abstract default picker (custom v0 / autogen) for fusions
-      // they haven't seen yet (those render as silhouettes).
+      // mosaic shows their unlocked variants — `pickPreferredSeenVariant`
+      // returns `undefined` when the user hasn't seen any variant of
+      // the fusion, which `useSpriteInto` interprets as "best
+      // available" (custom slot 0 if any, else autogen).
       const v = pickPreferredSeenVariant(a, b);
-      const p = (typeof v === 'number')
-        ? global.Sprites.getSpriteUrl(a, b, v)
-        : (v === null
-            ? global.Sprites.getSpriteUrl(a, b, null)
-            : global.Sprites.getDefaultSpriteUrl(a, b));
-      p.then((url) => {
-        if (!url) return;
-        const img = cell.querySelector('img');
-        if (!img) { URL.revokeObjectURL(url); return; }
-        img.onload = () => {
-          URL.revokeObjectURL(url);
-          cell.classList.add('ready');
-        };
-        img.src = url;
+      global.Sprites.useSpriteInto(img, a, b, v, () => {
+        cell.classList.add('ready');
       });
     });
   }
@@ -4783,21 +4722,20 @@
       });
       const id = slot.dataset.id;
       const c = findCreature(id);
-      if (!c || !global.Sprites || c.speciesA == null || c.speciesB == null) return;
-      const p = (typeof c.variant === 'number')
-        ? global.Sprites.getSpriteUrl(c.speciesA, c.speciesB, c.variant)
-        : global.Sprites.getDefaultSpriteUrl(c.speciesA, c.speciesB);
-      p.then((url) => {
-        if (!url) return;
-        const img = slot.querySelector('.daycare-slot-art-img');
-        const ph = slot.querySelector('.daycare-slot-art-placeholder');
-        if (!img) { URL.revokeObjectURL(url); return; }
-        img.onload = () => {
-          URL.revokeObjectURL(url);
-          if (ph) ph.style.display = 'none';
-          img.removeAttribute('hidden');
-        };
-        img.src = url;
+      if (!c || !global.Sprites || !global.Sprites.useSpriteInto) return;
+      if (c.speciesA == null || c.speciesB == null) return;
+      const img = slot.querySelector('.daycare-slot-art-img');
+      const ph = slot.querySelector('.daycare-slot-art-placeholder');
+      if (!img) return;
+      // Numeric variant for captures; undefined → "best available"
+      // for legacy captures saved before per-capture variant tracking.
+      // (Captures with `variant === null` also fall through to
+      // best-available — same behavior as the previous getDefaultSpriteUrl
+      // fallback when the slot's getSpriteUrl-with-number branch missed.)
+      const v = (typeof c.variant === 'number') ? c.variant : undefined;
+      global.Sprites.useSpriteInto(img, c.speciesA, c.speciesB, v, () => {
+        if (ph) ph.style.display = 'none';
+        img.removeAttribute('hidden');
       });
     });
     body.querySelectorAll('.daycare-cal-nav').forEach((btn) => {
@@ -4846,42 +4784,32 @@
     if (!gridEl) return;
     const seen = readSeenVariants(a, b);
     const fusionSeen = isFusionSeen(a, b);
-    if (!global.Sprites) {
+    if (!global.Sprites || !global.Sprites.useSpriteInto) {
       gridEl.innerHTML = '<div class="variant-empty">Sprites unavailable.</div>';
       return;
     }
-    // Resolve count + autogen blob URL in parallel.
-    const [variantCount, autoUrl] = await Promise.all([
-      global.Sprites.getCellVariantCount(a, b).catch(() => 0),
-      global.Sprites.getSpriteUrl(a, b, null).catch(() => null),
-    ]);
-    // Each card is built inline so the grid renders in order
-    // (autogen first, then slots 0..N-1) without async race.
-    // Autogen is only shown when there are no custom variants —
-    // otherwise the hand-drawn ones stand on their own.
-    const cards = [];
-    if (variantCount === 0) {
-      const autoCls = !fusionSeen ? 'silhouette' : '';
-      cards.push({
-        cls: `variant-cell autogen ${autoCls}`,
-        url: autoUrl,
-        label: !fusionSeen ? '???' : 'autogen',
-      });
-    } else if (autoUrl) {
-      // Autogen URL fetched in parallel with the count but not used —
-      // revoke so the blob doesn't sit idle in memory.
-      try { URL.revokeObjectURL(autoUrl); } catch {}
-    }
-    // Build slot URLs + credits in parallel; use Promise.all so we
-    // apply them to the DOM in deterministic order.
-    const [slotUrls, slotCredits] = await Promise.all([
-      Promise.all(Array.from({ length: variantCount }, (_, i) =>
-        global.Sprites.getSpriteUrl(a, b, i).catch(() => null))),
-      Promise.all(Array.from({ length: variantCount }, (_, i) =>
+    // Variant count gates autogen visibility (autogen is shown only
+    // when there are no custom variants; otherwise the hand-drawn
+    // ones stand on their own). Credits run in parallel since they
+    // come from a different IDB key.
+    const variantCount = await global.Sprites.getCellVariantCount(a, b).catch(() => 0);
+    const slotCredits = await Promise.all(
+      Array.from({ length: variantCount }, (_, i) =>
         global.Sprites.getSpriteCreditForSlot
           ? global.Sprites.getSpriteCreditForSlot(a, b, i).catch(() => null)
-          : Promise.resolve(null))),
-    ]);
+          : Promise.resolve(null))
+    );
+    // Each card description includes the variant identity so the
+    // post-render walk can fire useSpriteInto with the right key.
+    // `variant: null` = autogen card; `variant: i` = custom slot i.
+    const cards = [];
+    if (variantCount === 0) {
+      cards.push({
+        cls: `variant-cell autogen ${!fusionSeen ? 'silhouette' : ''}`,
+        variant: null,
+        label: !fusionSeen ? '???' : 'autogen',
+      });
+    }
     for (let i = 0; i < variantCount; i++) {
       const isSeen = seen.has(String(i));
       // Label IS the artist name when we have it; falls back to a
@@ -4893,7 +4821,7 @@
       else label = `#${i + 1}`;
       cards.push({
         cls: `variant-cell ${isSeen ? '' : 'silhouette'}`,
-        url: slotUrls[i],
+        variant: i,
         label,
       });
     }
@@ -4901,11 +4829,6 @@
       gridEl.innerHTML = '<div class="variant-empty">No variants found.</div>';
       return;
     }
-    // Render cards. <img> src is set to the blob URL when we have
-    // one; otherwise left empty (placeholder). The img.onload
-    // handler is responsible for revoking the blob URL once the
-    // browser has decoded it — keeps the icon in the browser's
-    // image cache without leaving the URL alive on the element.
     gridEl.innerHTML = cards.map((c) => `
       <div class="${c.cls}">
         <img alt="">
@@ -4916,9 +4839,13 @@
     cards.forEach((c, i) => {
       const img = cellEls[i] && cellEls[i].querySelector('img');
       if (!img) return;
-      if (!c.url) { img.style.opacity = '0.2'; return; }
-      img.onload = () => { try { URL.revokeObjectURL(c.url); } catch {} };
-      img.src = c.url;
+      global.Sprites.useSpriteInto(img, a, b, c.variant, () => {
+        // Faded placeholder for cards whose blob isn't loadable
+        // (rare — cells.json says it exists but bulkDownload missed
+        // it). useSpriteInto won't fire onReady for those, so the
+        // dim opacity stays visible.
+      });
+      img.style.opacity = '';
     });
   }
 
@@ -5110,27 +5037,19 @@
 
     // Fusion sprite for the header. Prefer the lowest-indexed variant
     // the trainer has actually seen so the header matches the variant
-    // grid — falls back to the abstract default picker (custom v0 /
-    // autogen) when nothing has been seen.
-    if (global.Sprites) {
-      const headerVariant = pickPreferredSeenVariant(a, b);
-      const headerP = (typeof headerVariant === 'number')
-        ? global.Sprites.getSpriteUrl(a, b, headerVariant)
-        : (headerVariant === null
-            ? global.Sprites.getSpriteUrl(a, b, null)
-            : global.Sprites.getDefaultSpriteUrl(a, b));
-      headerP.then((url) => {
-        if (!url) return;
-        const img = body.querySelector('.detail-art-img');
-        const ph = body.querySelector('.detail-art-placeholder');
-        if (!img) { URL.revokeObjectURL(url); return; }
-        img.onload = () => {
-          URL.revokeObjectURL(url);
+    // grid — `pickPreferredSeenVariant` returns `undefined` when
+    // nothing has been seen, which `useSpriteInto` interprets as
+    // "best available" (custom slot 0 if any exists, else autogen).
+    if (global.Sprites && global.Sprites.useSpriteInto) {
+      const img = body.querySelector('.detail-art-img');
+      const ph = body.querySelector('.detail-art-placeholder');
+      if (img) {
+        const headerVariant = pickPreferredSeenVariant(a, b);
+        global.Sprites.useSpriteInto(img, a, b, headerVariant, () => {
           if (ph) ph.style.display = 'none';
           img.style.display = 'block';
-        };
-        img.src = url;
-      });
+        });
+      }
     }
 
     if (encounterClickable) {
@@ -5377,26 +5296,17 @@
         return card;
       },
       loadSpriteFor(card, entry) {
-        if (!global.Sprites) return;
+        if (!global.Sprites || !global.Sprites.useSpriteInto) return;
+        const img = card.querySelector('img');
+        if (!img) return;
         // Prefer the lowest-indexed variant the trainer has actually
         // seen, so the tile they tap matches what's "unlocked" inside
-        // the fusion view. Falls back to the abstract default picker
-        // (custom v0 / autogen) when nothing is seen.
+        // the fusion view. `pickPreferredSeenVariant` returns
+        // `undefined` for never-seen fusions; useSpriteInto falls
+        // back to the abstract default picker (custom v0 / autogen).
         const v = pickPreferredSeenVariant(entry.a, entry.b);
-        const p = (typeof v === 'number')
-          ? global.Sprites.getSpriteUrl(entry.a, entry.b, v)
-          : (v === null
-              ? global.Sprites.getSpriteUrl(entry.a, entry.b, null)
-              : global.Sprites.getDefaultSpriteUrl(entry.a, entry.b));
-        p.then((url) => {
-          if (!url) return;
-          const img = card.querySelector('img');
-          if (!img) { URL.revokeObjectURL(url); return; }
-          img.onload = () => {
-            URL.revokeObjectURL(url);
-            card.classList.add('ready');
-          };
-          img.src = url;
+        global.Sprites.useSpriteInto(img, entry.a, entry.b, v, () => {
+          card.classList.add('ready');
         });
       },
     });
@@ -5530,20 +5440,18 @@
       }
     }
     // Async-load each evolution row's sprite from IDB (no network).
-    if (global.Sprites && evoEntries.length) {
+    if (global.Sprites && global.Sprites.useSpriteInto && evoEntries.length) {
       for (let i = 0; i < evoEntries.length; i++) {
         const e = evoEntries[i];
         const row = body.querySelector(`.evo-row[data-evo-idx="${i}"]`);
         if (!row) continue;
-        global.Sprites.getDefaultSpriteUrl(e.newA, e.newB).then((url) => {
-          if (!url) return;
-          const img = row.querySelector('.evo-art img');
-          if (!img) { URL.revokeObjectURL(url); return; }
-          img.onload = () => {
-            URL.revokeObjectURL(url);
-            row.classList.add('evo-art-ready');
-          };
-          img.src = url;
+        const img = row.querySelector('.evo-art img');
+        if (!img) continue;
+        // `undefined` variant → "best available" (custom slot 0 if
+        // any, else autogen). Evolution previews aren't tied to a
+        // specific variant the user has seen.
+        global.Sprites.useSpriteInto(img, e.newA, e.newB, undefined, () => {
+          row.classList.add('evo-art-ready');
         });
       }
     }
@@ -5576,25 +5484,22 @@
         if (fresh) renderDetail(fresh);
       });
     });
-    if (global.Sprites && c.speciesA != null && c.speciesB != null) {
-      // Captured creature → render the variant burned in at capture
-      // time. Legacy captures (no variant field) fall back to the
-      // default-variant picker.
-      const p = (typeof c.variant === 'number')
-        ? global.Sprites.getSpriteUrl(c.speciesA, c.speciesB, c.variant)
-        : global.Sprites.getDefaultSpriteUrl(c.speciesA, c.speciesB);
-      p.then((url) => {
-        if (!url) return;
-        const img = body.querySelector('.detail-art-img');
-        const ph = body.querySelector('.detail-art-placeholder');
-        if (!img) { URL.revokeObjectURL(url); return; }
-        img.onload = () => {
-          URL.revokeObjectURL(url);
+    if (global.Sprites && global.Sprites.useSpriteInto
+        && c.speciesA != null && c.speciesB != null) {
+      const img = body.querySelector('.detail-art-img');
+      const ph = body.querySelector('.detail-art-placeholder');
+      if (img) {
+        // Captured creature → render the variant burned in at capture
+        // time. Legacy captures (no variant field) and explicit-null
+        // both fall back to the default-variant picker (custom v0 /
+        // autogen) via undefined — same behavior as the previous
+        // getDefaultSpriteUrl branch.
+        const v = (typeof c.variant === 'number') ? c.variant : undefined;
+        global.Sprites.useSpriteInto(img, c.speciesA, c.speciesB, v, () => {
           if (ph) ph.style.display = 'none';
           img.style.display = 'block';
-        };
-        img.src = url;
-      });
+        });
+      }
     }
   }
 
@@ -5946,25 +5851,19 @@
         return card;
       },
       loadSpriteFor(card, c) {
-        if (!global.Sprites) return;
+        if (!global.Sprites || !global.Sprites.useSpriteInto) return;
         if (c.speciesA == null || c.speciesB == null) return;
+        const img = card.querySelector('.art-img');
+        const ph = card.querySelector('.art-placeholder');
+        if (!img) return;
         // Captured creature → render the variant burned in at capture
         // time so the player's roster looks identical across sessions.
-        // Legacy captures (no `variant` field) get default-variant.
-        const p = (typeof c.variant === 'number')
-          ? global.Sprites.getSpriteUrl(c.speciesA, c.speciesB, c.variant)
-          : global.Sprites.getDefaultSpriteUrl(c.speciesA, c.speciesB);
-        p.then((url) => {
-          if (!url) return;
-          const img = card.querySelector('.art-img');
-          const ph = card.querySelector('.art-placeholder');
-          if (!img) { URL.revokeObjectURL(url); return; }
-          img.onload = () => {
-            URL.revokeObjectURL(url);
-            if (ph) ph.style.display = 'none';
-            img.style.display = 'block';
-          };
-          img.src = url;
+        // Legacy captures and explicit-null both fall back to the
+        // default-variant picker (custom v0 / autogen) via undefined.
+        const v = (typeof c.variant === 'number') ? c.variant : undefined;
+        global.Sprites.useSpriteInto(img, c.speciesA, c.speciesB, v, () => {
+          if (ph) ph.style.display = 'none';
+          img.style.display = 'block';
         });
       },
     });
@@ -5996,7 +5895,7 @@
   }
 
   // Spawn rendering: each deterministic spawn becomes a MapLibre HTML
-  // marker with the cropped fusion sprite (Sprites.getSpriteUrl). Only
+  // marker with the cropped fusion sprite (Sprites.useSpriteInto). Only
   // spawns within VISIBILITY_RADIUS_M of the user's GPS fix are shown —
   // you have to actually be there to see a creature. Markers reconcile
   // by spawn id so bucket rollover replaces (not duplicates) the set.
@@ -6015,7 +5914,9 @@
   let _geoWatchId = null;
   let _userLat = null;
   let _userLng = null;
-  // _markers: spawn.id -> { marker, objectUrl, spawn }
+  // _markers: spawn.id -> { marker, spawn, firstShownAt, loaded, variant? }
+  // No URL stored on the record — sprite URLs are owned by the
+  // shared sprite cache (Sprites._spriteCache).
   const _markers = new Map();
   // Dedupe cache: skip a refresh if the user has moved < 1 m AND the
   // last refresh was very recent. We can't dedupe by tick alone because
@@ -6516,11 +6417,6 @@
   // (locally only — other players still see it).
 
   let _currentBattleSpawn = null;
-  let _battleSpriteUrl = null;
-  // True when _battleSpriteUrl was created by us (must be revoked on
-  // close); false when it was borrowed from a marker record (revoked by
-  // removeMarker — we leave it alone).
-  let _battleSpriteUrlOwned = false;
 
   function ensureBattleScreen() {
     let el = document.getElementById('battleScreen');
@@ -6582,15 +6478,14 @@
       typesEl.innerHTML = typeChipsHtml(fusionTypesFor(spawn.speciesA, spawn.speciesB));
     }
     const img = el.querySelector('img.battle-sprite');
-    // Reset previous state — sprite blob, animation transforms,
-    // throwing flag — so a fresh encounter starts clean. Cancel any
-    // lingering Web Animations first so their `fill:'forwards'`
-    // contribution doesn't keep the sprite invisible / shrunk.
-    if (_battleSpriteUrl && _battleSpriteUrlOwned) {
-      URL.revokeObjectURL(_battleSpriteUrl);
-    }
-    _battleSpriteUrl = null;
-    _battleSpriteUrlOwned = false;
+    // Reset previous state — animation transforms, throwing flag —
+    // so a fresh encounter starts clean. Cancel any lingering Web
+    // Animations first so their `fill:'forwards'` contribution
+    // doesn't keep the sprite invisible / shrunk.
+    //
+    // We do NOT revoke any URL here — sprite URLs are owned by the
+    // shared sprite cache (Sprites._spriteCache) and can be safely
+    // reused across map / battle / inventory contexts.
     cancelAnimsOn(img);
     img.removeAttribute('src');
     img.style.transform = '';
@@ -6631,80 +6526,51 @@
     }
     populateBattleBalls();
 
-    // Helper: reveal the sprite element. Idempotent — adding the
-    // class twice is fine. Wrapped so both load paths (cached marker
-    // URL and async getSpriteUrl) can guarantee the reveal happens
-    // regardless of whether `img.onload` fires.
+    // Single sprite-load path via the shared cache. When the marker
+    // for this spawn just rendered the same fusion, the cache hits
+    // synchronously (zero-flash flip from world map → battle screen).
+    // On miss the cache reads from IDB or lazy-crops from the
+    // bundled sheet, then populates itself for the next consumer
+    // (inventory tile, pokédex grid, family-tree cell) that asks.
     //
-    // Why we don't trust onload alone: iOS WKWebView will sometimes
-    // skip the `load` event when img.src is set to a blob URL whose
-    // underlying data is already decoded (the very common case after
-    // the marker has rendered the same sprite). That left the
-    // battle-sprite-ready class off the container, the sprite stuck
-    // at display:none, and only the throw-time `flash` element (which
-    // borrows sprite.src as its own src) ever appearing on screen —
-    // exactly the "icon flashes during the throw but is otherwise
-    // invisible" symptom. Belt-and-suspenders: register onload AND
-    // synchronously check img.complete for the cached path.
-    function revealSprite() { el.classList.add('battle-sprite-ready'); }
-    function bindSpriteLoadHandlers(targetImg) {
-      targetImg.onload = revealSprite;
-      targetImg.onerror = (e) => {
-        _logCreatureError('battleSprite/onerror',
-          (e && e.message) || 'image decode failed');
-      };
-    }
-    function maybeRevealCached(targetImg) {
-      // After assigning .src, if the resource was already decoded the
-      // browser may report `complete && naturalWidth > 0` immediately
-      // without firing onload. Cover that case synchronously.
-      if (targetImg.complete && targetImg.naturalWidth > 0) revealSprite();
-    }
-
-    // If the marker for this spawn already has a loaded sprite, reuse
-    // the same URL — same blob in memory, browser uses its decoded
-    // image cache, no flash. Only fall back to a fresh IDB fetch when
-    // the marker hasn't loaded yet (first paint, or sprite missing).
-    const rec = _markers.get(spawn.id);
-    if (rec && rec.objectUrl) {
-      _battleSpriteUrl = rec.objectUrl;
-      _battleSpriteUrlOwned = false;
-      bindSpriteLoadHandlers(img);
-      img.src = rec.objectUrl;
-      maybeRevealCached(img);
-    } else if (global.Sprites) {
-      // Prefer the variant cached on the marker record (resolved when
-      // the marker first painted) — saves a getCellVariantCount round-
-      // trip to IDB. Fall back to re-resolving when the marker hasn't
-      // loaded yet (e.g. user tapped before paint).
+    // The onReady callback gates on `_currentBattleSpawn === spawn`
+    // so a slow load resolving after the user fled or moved on
+    // doesn't reveal the wrong sprite. Sprites.useSpriteInto also
+    // performs the synchronous `img.complete && naturalWidth > 0`
+    // reveal that's needed on iOS WKWebView when blob URLs whose
+    // underlying data is already decoded skip the `load` event.
+    if (global.Sprites && global.Sprites.useSpriteInto) {
+      const rec = _markers.get(spawn.id);
       const variantPromise = (rec && 'variant' in rec)
         ? Promise.resolve(rec.variant)
         : resolveSpawnVariant(spawn);
-      variantPromise
-        .then((variant) => global.Sprites.getSpriteUrl(spawn.speciesA, spawn.speciesB, variant))
-        .then((url) => {
-          if (!url || _currentBattleSpawn !== spawn) {
-            if (url) URL.revokeObjectURL(url);
-            return;
-          }
-          _battleSpriteUrl = url;
-          _battleSpriteUrlOwned = true;
-          bindSpriteLoadHandlers(img);
-          img.src = url;
-          maybeRevealCached(img);
-        });
+      variantPromise.then((variant) => {
+        if (_currentBattleSpawn !== spawn) return;
+        global.Sprites.useSpriteInto(
+          img, spawn.speciesA, spawn.speciesB, variant,
+          () => {
+            if (_currentBattleSpawn !== spawn) return;
+            el.classList.add('battle-sprite-ready');
+          },
+        );
+      }).catch((e) => {
+        _logCreatureError(`openBattleScreen/load/${spawn.speciesA}-${spawn.speciesB}`, e);
+      });
     }
     el.classList.add('show');
   }
 
   function closeBattleScreen() {
     const el = document.getElementById('battleScreen');
-    if (el) el.classList.remove('show');
-    if (_battleSpriteUrl && _battleSpriteUrlOwned) {
-      URL.revokeObjectURL(_battleSpriteUrl);
+    if (el) {
+      el.classList.remove('show');
+      // Symmetric reset so the next open starts from a clean state
+      // even if the open path is interrupted before it can reset
+      // these. URL ownership is the cache's problem now — nothing to
+      // revoke here.
+      el.classList.remove('battle-sprite-ready');
+      el.classList.remove('throwing');
     }
-    _battleSpriteUrl = null;
-    _battleSpriteUrlOwned = false;
     _currentBattleSpawn = null;
   }
 
@@ -7131,65 +6997,38 @@
     }
   }
 
-  function installSpriteBlob(record, blob) {
-    try {
-      if (!blob) return;
+  // Build the onReady callback that flips a marker from placeholder
+  // to "ready" once its sprite decodes. Closes over the record so
+  // stale callbacks (record removed before sprite arrived) bail out.
+  function _markerOnReady(record) {
+    return () => {
       if (!_markers.has(record.spawn.id) || _markers.get(record.spawn.id) !== record) return;
-      const el = record.marker.getElement();
-      const img = el.querySelector('img.creature-sprite');
-      if (!img) return;
-      // Revoke any URL from a previous attempt that didn't successfully
-      // decode (img.onerror fired) before allocating a new one.
-      if (record.objectUrl) {
-        try { URL.revokeObjectURL(record.objectUrl); } catch {}
-        record.objectUrl = null;
-      }
-      const url = URL.createObjectURL(blob);
-      const reveal = () => {
-        el.classList.add('creature-marker-ready');
-        // Mark the record as successfully rendered so the retry pass
-        // in refreshSpawnOverlay skips it on subsequent ticks.
-        record.loaded = true;
-        window._spriteDiag = window._spriteDiag || {};
-        if (window._spriteDiag.firstSpriteVisibleAt == null) {
-          window._spriteDiag.firstSpriteVisibleAt = performance.now();
-        }
-      };
-      img.onload = reveal;
-      img.onerror = (e) => {
-        _logCreatureError(`installSpriteBlob/img.onerror/${record.spawn.speciesA}-${record.spawn.speciesB}`,
-          (e && e.message) || 'image decode failed');
-      };
-      record.objectUrl = url;
-      img.src = url;
-      // iOS WKWebView sometimes skips `load` for blob URLs whose data is
-      // already decoded — exactly the lazy-crop case, where the Blob came
-      // straight out of a canvas pipeline still in memory. Without this
-      // fallback the marker stays on the red-dot placeholder (sprite is
-      // `display: none` until `creature-marker-ready` is added) until the
-      // next app launch, where the IDB-stored blob takes a slightly
-      // different decode pathway and `onload` fires normally. Same fix
-      // as `openBattleScreen` (see `maybeRevealCached`).
-      if (img.complete && img.naturalWidth > 0) reveal();
+      record.marker.getElement().classList.add('creature-marker-ready');
+      record.loaded = true;
       window._spriteDiag = window._spriteDiag || {};
-      if (window._spriteDiag.firstSpriteInstallAt == null) {
-        window._spriteDiag.firstSpriteInstallAt = performance.now();
+      if (window._spriteDiag.firstSpriteVisibleAt == null) {
+        window._spriteDiag.firstSpriteVisibleAt = performance.now();
       }
-    } catch (e) {
-      _logCreatureError('installSpriteBlob', e);
-    }
+    };
   }
 
   function loadMarkerSprite(record) {
-    if (!global.Sprites) return;
+    if (!global.Sprites || !global.Sprites.useSpriteInto) return;
     const { spawn } = record;
     resolveSpawnVariant(spawn)
       .then((variant) => {
         record.variant = variant;
-        if (!_markers.has(spawn.id) || _markers.get(spawn.id) !== record) return null;
-        return global.Sprites.getSpriteBlob(spawn.speciesA, spawn.speciesB, variant);
+        if (!_markers.has(spawn.id) || _markers.get(spawn.id) !== record) return;
+        const img = record.marker.getElement().querySelector('img.creature-sprite');
+        if (!img) return;
+        window._spriteDiag = window._spriteDiag || {};
+        if (window._spriteDiag.firstSpriteInstallAt == null) {
+          window._spriteDiag.firstSpriteInstallAt = performance.now();
+        }
+        global.Sprites.useSpriteInto(
+          img, spawn.speciesA, spawn.speciesB, variant, _markerOnReady(record),
+        );
       })
-      .then((blob) => { installSpriteBlob(record, blob); })
       .catch((e) => {
         _logCreatureError(`loadMarkerSprite/${spawn.speciesA}-${spawn.speciesB}`, e);
       });
@@ -7202,14 +7041,12 @@
       .setLngLat([spawn.lng, spawn.lat])
       .addTo(_overlayMap);
     const record = {
-      marker, objectUrl: null, spawn, firstShownAt: Date.now(),
-      // True once the marker is showing the actual sprite (img.onload
-      // has fired). When the initial batch returns a null blob we
-      // leave this false; the `cc-sprite-loaded` event listener below
-      // wakes the marker up as soon as a matching sprite lands in IDB
-      // (typically because the user tapped the red dot, which goes
-      // through the single-call lazy-crop path, OR the sheet finally
-      // finished decoding from a concurrent request).
+      marker, spawn, firstShownAt: Date.now(),
+      // True once the marker's sprite has decoded into the img and the
+      // `creature-marker-ready` class has flipped on (revealing the
+      // sprite, hiding the placeholder dot). The `cc-sprite-loaded`
+      // event listener below wakes any still-unloaded marker as soon
+      // as a matching sprite lands in the shared sprite cache.
       loaded: false,
     };
     _markers.set(spawn.id, record);
@@ -7227,10 +7064,12 @@
   }
 
   // Bulk add: place all markers in a single layout pass, then resolve
-  // every variant + fetch every sprite blob in ONE IDB transaction
-  // (Sprites.getSpriteBlobsBatch). On iOS Safari this turns ~50 separate
-  // serialized transactions into one pipelined one — pokémon icons
-  // appear in a single frame instead of staggering over seconds.
+  // every variant + load every sprite via ONE batched call to the
+  // sprite cache (Sprites.useSpritesIntoBatch). The batch opens a
+  // single IDB transaction for cache misses and lazy-crops the rest
+  // in parallel — on iOS Safari this turns ~50 individual
+  // transactions into one pipelined one, so icons appear in a single
+  // frame instead of staggering over seconds.
   async function addMarkersBatch(spawns) {
     try {
       if (!spawns.length) return;
@@ -7243,7 +7082,7 @@
           _logCreatureError(`addMarkersBatch/addMarker/${s.id}`, e);
         }
       }
-      if (!global.Sprites || !global.Sprites.getSpriteBlobsBatch) {
+      if (!global.Sprites || !global.Sprites.useSpritesIntoBatch) {
         for (const { rec } of records) loadMarkerSprite(rec);
         return;
       }
@@ -7254,7 +7093,7 @@
       // it, this is one pipelined read.
       let variants;
       try {
-        if (global.Sprites && global.Sprites.getCellVariantCountsBatch) {
+        if (global.Sprites.getCellVariantCountsBatch) {
           const cells = records.map(({ spawn }) => [spawn.speciesA, spawn.speciesB]);
           await global.Sprites.getCellVariantCountsBatch(cells);
         }
@@ -7269,23 +7108,25 @@
         _logCreatureError('addMarkersBatch/Promise.all(resolveSpawnVariant)', e);
         variants = records.map(() => null);
       }
-      const requests = records.map(({ spawn }, i) => ({
-        a: spawn.speciesA, b: spawn.speciesB, variant: variants[i], key: spawn.id,
-      }));
       records.forEach((r, i) => { r.rec.variant = variants[i]; });
-      let results;
-      try {
-        results = await global.Sprites.getSpriteBlobsBatch(requests);
-      } catch (e) {
-        _logCreatureError('addMarkersBatch/getSpriteBlobsBatch', e);
-        return;
+      window._spriteDiag = window._spriteDiag || {};
+      if (window._spriteDiag.firstSpriteInstallAt == null) {
+        window._spriteDiag.firstSpriteInstallAt = performance.now();
       }
-      for (let i = 0; i < records.length; i++) {
-        try {
-          installSpriteBlob(records[i].rec, results[i] && results[i].blob);
-        } catch (e) {
-          _logCreatureError(`addMarkersBatch/install/${records[i].spawn.id}`, e);
-        }
+      const reqs = records.map(({ rec, spawn }, i) => {
+        const img = rec.marker.getElement().querySelector('img.creature-sprite');
+        return {
+          img,
+          a: spawn.speciesA,
+          b: spawn.speciesB,
+          variant: variants[i],
+          onReady: _markerOnReady(rec),
+        };
+      }).filter((r) => r.img);
+      try {
+        await global.Sprites.useSpritesIntoBatch(reqs);
+      } catch (e) {
+        _logCreatureError('addMarkersBatch/useSpritesIntoBatch', e);
       }
     } catch (e) {
       _logCreatureError('addMarkersBatch/outer', e);
@@ -7296,7 +7137,11 @@
     const rec = _markers.get(id);
     if (!rec) return;
     rec.marker.remove();
-    if (rec.objectUrl) URL.revokeObjectURL(rec.objectUrl);
+    // No URL to revoke — sprite URLs are owned by the shared sprite
+    // cache (Sprites._spriteCache). The img element going out of DOM
+    // releases its reference; the cache eventually evicts the URL via
+    // LRU, and revoking an evicted URL is harmless to images that
+    // already decoded from it.
     _markers.delete(id);
   }
 
@@ -7758,7 +7603,7 @@
     if (typeof window !== 'undefined') {
       window.addEventListener('cc-sprite-loaded', (e) => {
         const d = e && e.detail;
-        if (!d || !d.blob) return;
+        if (!d) return;
         for (const rec of _markers.values()) {
           if (rec.loaded) continue;
           if (rec.spawn.speciesA !== d.a) continue;
@@ -7770,7 +7615,10 @@
           const recV = (typeof rec.variant === 'number' && rec.variant >= 0)
             ? rec.variant : null;
           if (recV !== d.variant) continue;
-          installSpriteBlob(rec, d.blob);
+          // Re-trigger the load — the lazy-crop that emitted this
+          // event also populated the shared sprite cache, so this
+          // resolves synchronously to a cache-hit + sync apply.
+          loadMarkerSprite(rec);
         }
       });
     }
