@@ -152,11 +152,14 @@ def make_candy(size: int, egg_top: "Image.Image",
     body_r = cx + radius
     body_b = cy + radius
 
-    # Tinted sphere with 1 px outline.
+    # Tinted sphere with a soft dark-gray outline. Pure black reads
+    # as harsh against the muted egg-art palette; ~70/70/70 keeps
+    # the silhouette legible without competing visually with the
+    # tinted body.
     draw.ellipse(
         (body_l, body_t, body_r, body_b),
         fill=(*twist_color, 255),
-        outline=(0, 0, 0, 255),
+        outline=(70, 70, 70, 255),
         width=1,
     )
 
