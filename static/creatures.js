@@ -534,21 +534,24 @@
       );
     }
     if (loot.kind === 'egg') {
-      // eggs_loot.png is the bbox-cropped + uniformly-scaled sister
-      // of eggs.png — same 10×16 indexing, but every cell's art
-      // fills the same 40×40 footprint regardless of how much
-      // transparent padding the source had or whether the source
-      // was a PIF egg PNG or a Munchlax-autogen-paste. Lets the
-      // pill render eggs at exactly the same on-pill height as
-      // candies through identical CSS math (same cell size, same
-      // background-position formula).
+      // Render eggs.png at a 60px-display cell so the visible art
+      // (~60×60 of a 160×160 cell, centered with transparent
+      // padding) shows at roughly the same on-pill footprint as
+      // a candy. Centering the cell's bbox on the pill needs an
+      // inset of (60 − 28) / 2 = 16 px on each axis.
       const id = loot.a;
       const col = id % EGGS_SHEET_COLS;
       const row = Math.floor(id / EGGS_SHEET_COLS);
+      const cellPx = 60;
+      const insetX = (cellPx - PILL_CELL_PX) / 2;
+      // 1 px less than insetX → image shifts down 1 px in the
+      // pill (smaller |bg-position-y| pulls the rendered image's
+      // top edge closer to the pill's top edge).
+      const insetY = insetX - 1;
       return (
-        `background-image: url('${BUNDLED_BASE}/eggs_loot.png');`
-        + `background-size: ${PILL_CELL_PX * EGGS_SHEET_COLS}px ${PILL_CELL_PX * EGGS_SHEET_ROWS}px;`
-        + `background-position: -${col * PILL_CELL_PX}px -${row * PILL_CELL_PX}px;`
+        `background-image: url('${BUNDLED_BASE}/eggs.png');`
+        + `background-size: ${cellPx * EGGS_SHEET_COLS}px ${cellPx * EGGS_SHEET_ROWS}px;`
+        + `background-position: -${col * cellPx + insetX}px -${row * cellPx + insetY}px;`
         + noRepeat
       );
     }

@@ -56,18 +56,6 @@ EGG_COLS = 10
 ROOT = Path(__file__).resolve().parent
 OUT_DIR = ROOT / "data" / "BundledData"
 EGGS_PATH = OUT_DIR / "eggs.png"
-EGGS_LOOT_PATH = OUT_DIR / "eggs_loot.png"
-
-# Display sheet for the daycare loot pill — eggs.png cells have
-# 75%-transparent padding around the actual art, and per-species
-# bbox heights vary (PIF egg ~60px, Munchlax-autogen-paste 96px),
-# so scaling eggs.png with a single CSS background-size can't give
-# uniform on-pill display heights. This sister sheet bbox-crops
-# every cell + aspect-preserving-scales it into a uniform 40×40
-# cell — same dimensions as candies.png — so eggs and candies share
-# identical pill-rendering math.
-EGGS_LOOT_PX = 40
-EGGS_LOOT_PADDING = 1  # transparent margin inside each loot cell
 
 
 def _own_cell(eggs_sheet: "Image.Image", species: int) -> "Image.Image | None":
@@ -178,71 +166,12 @@ def fill_egg_fallbacks() -> tuple[int, int]:
     return (filled, MAX_SPECIES - filled)
 
 
-def build_eggs_loot_sheet() -> tuple[int, int]:
-    """Bbox-crop each cell of eggs.png and aspect-preserving-scale
-    it into a uniform EGGS_LOOT_PX cell. The result mirrors
-    candies.png cell-for-cell, so the daycare loot pill can render
-    eggs and candies through identical CSS — every species' egg
-    displays at the same on-pill height as a candy, regardless of
-    how much transparent padding the original cell had or whether
-    the source was a PIF egg PNG or a Munchlax-autogen-paste.
-
-    Aspect-preserving fit keeps tall sources (Munchlax silhouette
-    ~96×96) from squashing horizontally; they shrink uniformly to
-    fit within EGGS_LOOT_PX − 2 × EGGS_LOOT_PADDING. NEAREST
-    resample preserves chunky source pixels, matching the
-    pixelated rendering aesthetic.
-
-    Returns (filled, blank) cell counts."""
-    if not EGGS_PATH.is_file():
-        print(f"error: eggs.png not found at {EGGS_PATH}.", file=sys.stderr)
-        return (0, MAX_SPECIES)
-
-    eggs_sheet = Image.open(EGGS_PATH).convert("RGBA")
-    cols = EGG_COLS
-    rows_needed = (MAX_SPECIES // cols) + 1
-    out = Image.new(
-        "RGBA",
-        (cols * EGGS_LOOT_PX, rows_needed * EGGS_LOOT_PX),
-        (0, 0, 0, 0),
-    )
-
-    target_inner = EGGS_LOOT_PX - 2 * EGGS_LOOT_PADDING
-    filled = 0
-    for species in range(1, MAX_SPECIES + 1):
-        col = species % cols
-        row = species // cols
-        cell = eggs_sheet.crop((
-            col * EGG_PX, row * EGG_PX,
-            (col + 1) * EGG_PX, (row + 1) * EGG_PX,
-        ))
-        bbox = cell.getbbox()
-        if bbox is None:
-            continue
-        cropped = cell.crop(bbox)
-        cw, ch = cropped.size
-        scale = min(target_inner / cw, target_inner / ch)
-        nw = max(1, int(round(cw * scale)))
-        nh = max(1, int(round(ch * scale)))
-        scaled = cropped.resize((nw, nh), Image.NEAREST)
-        ox = col * EGGS_LOOT_PX + (EGGS_LOOT_PX - nw) // 2
-        oy = row * EGGS_LOOT_PX + (EGGS_LOOT_PX - nh) // 2
-        out.paste(scaled, (ox, oy), scaled)
-        filled += 1
-
-    out.save(EGGS_LOOT_PATH, optimize=True)
-    return (filled, MAX_SPECIES - filled)
-
-
 def main() -> None:
     print(f"→ Filling fallbacks in {EGGS_PATH.name}...")
     filled, blank = fill_egg_fallbacks()
     if filled == 0 and blank == MAX_SPECIES:
         sys.exit(1)
     print(f"  {filled} egg cells filled, {blank} blank → {EGGS_PATH}")
-    print(f"→ Building uniform-size loot sheet {EGGS_LOOT_PATH.name}...")
-    lf, lb = build_eggs_loot_sheet()
-    print(f"  {lf} egg loot cells filled, {lb} blank → {EGGS_LOOT_PATH}")
 
 
 if __name__ == "__main__":
