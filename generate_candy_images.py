@@ -235,16 +235,10 @@ def build_candies_sheet() -> tuple[int, int]:
                 if solo is not None:
                     egg_cell = solo
                     bbox = egg_cell.getbbox()
-            # Tier 3: species' own autogen solo sprite. Catches
-            # any remaining gen-1 species that have neither egg
-            # art nor a baby fallback (mostly mid-evolution
-            # species, which the candy menu won't query anyway —
-            # candy buckets to the family root).
-            if not bbox:
-                solo = _autogen_solo_sprite(species)
-                if solo is not None:
-                    egg_cell = solo
-                    bbox = egg_cell.getbbox()
+            # No further fallback — leave cells blank when neither
+            # an egg PNG nor a baby's art is available. Makes
+            # missing data visually obvious in the candy sheet so
+            # we can spot which species still need a fix.
             if not bbox:
                 continue
         # Shrink the bbox inward before cropping — drops the egg's
