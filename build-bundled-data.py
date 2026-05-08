@@ -696,6 +696,15 @@ def main() -> None:
     print(f"  {egg_present} egg cells filled, {egg_missing} blank "
           "(species without dedicated egg art)")
 
+    # Candy sheet derives from eggs.png (just composed above) — kept
+    # in its own module so the candy compositing can be iterated
+    # quickly without re-running the slow sprite/egg/tile passes.
+    # Run `python3 generate_candy_images.py` directly during tweaks.
+    print("→ Composing candy sprite sheet from eggs.png...")
+    from generate_candy_images import build_candies_sheet
+    candy_present, candy_missing = build_candies_sheet()
+    print(f"  {candy_present} candy cells filled, {candy_missing} blank")
+
     print("→ Copying evolution-item art...")
     evo_item_count = copy_evo_items(evos)
     print(f"  {evo_item_count} evolution items")
