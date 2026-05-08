@@ -927,6 +927,198 @@
     return URL.createObjectURL(blob);
   }
 
+  // ─── Shared sprite-URL cache ─────────────────────────────────────────
+  //
+  // One LRU map of (a, b, variant) → { blob, url } shared by every
+  // consumer (world map markers, battle screen, inventory cards,
+  // pokédex tiles, family grid, evolution previews, fusion variant
+  // grid). Cross-consumer sharing means the same fusion rendered in
+  // multiple contexts gets ONE decoded image in the browser's image
+  // cache and ONE blob URL — instant flips between map ↔ battle ↔
+  // detail with no flash.
+  //
+  // The cache replaces the previous "every consumer creates and
+  // revokes its own URL" pattern (~12 ad-hoc revoke sites scattered
+  // across the codebase) plus the marker → battle-screen URL borrow
+  // (which had a known race where `removeMarker` revoked a URL the
+  // battle screen was still using). Eviction is LRU-by-insertion-
+  // order; revoking an evicted URL doesn't break already-rendered
+  // images (revoke invalidates the URL handle, not the decoded
+  // bitmap held by an img element), it only forces the next
+  // assignment that asks for that key to re-fetch — IDB-fast.
+  const _spriteCache = new Map();
+  // Cap chosen for: ~50 visible markers + ~20 inventory carousel
+  // slots + ~20 pokédex carousel slots + 1 battle screen + headroom
+  // for family grids (up to ~12 cells). 256 leaves comfortable room.
+  const SPRITE_CACHE_MAX = 256;
+
+  function _spriteCacheKey(a, b, variant) {
+    return (typeof variant === 'number' && variant >= 0)
+      ? `${a}-${b}:c${variant}`
+      : `${a}-${b}:auto`;
+  }
+
+  function _spriteCacheTouch(key, entry) {
+    // Move to most-recent: delete + re-insert puts it at the back of
+    // Map's iteration order. `keys().next()` returns the front.
+    _spriteCache.delete(key);
+    _spriteCache.set(key, entry);
+  }
+
+  function _spriteCacheEvictIfFull() {
+    while (_spriteCache.size > SPRITE_CACHE_MAX) {
+      const oldestKey = _spriteCache.keys().next().value;
+      const old = _spriteCache.get(oldestKey);
+      _spriteCache.delete(oldestKey);
+      if (old && old.url) {
+        try { URL.revokeObjectURL(old.url); } catch {}
+      }
+    }
+  }
+
+  function _spriteCachePut(key, blob) {
+    // Parallel callers may race to populate the same key; reuse an
+    // existing entry rather than minting a second URL for the same
+    // blob (which would leak the duplicate URL on eviction).
+    let entry = _spriteCache.get(key);
+    if (entry) {
+      _spriteCacheTouch(key, entry);
+      return entry;
+    }
+    entry = { blob, url: URL.createObjectURL(blob) };
+    _spriteCache.set(key, entry);
+    _spriteCacheEvictIfFull();
+    return entry;
+  }
+
+  // Per-img generation counter. A later useSpriteInto call on the
+  // same img element bumps this; older calls' async resolutions check
+  // the id matches before assigning src so a slow load can't clobber
+  // a faster subsequent one.
+  const _SPRITE_LOAD_ID = '__ccSpriteLoadId';
+
+  function _bumpSpriteLoadId(img) {
+    const next = ((img[_SPRITE_LOAD_ID] || 0) + 1);
+    img[_SPRITE_LOAD_ID] = next;
+    return next;
+  }
+
+  // Wire a cache entry into an img. Idempotent reveal: onReady fires
+  // from img.onload AND synchronously after src assignment if the
+  // bitmap is already decoded — iOS WKWebView sometimes skips `load`
+  // for fresh blob URLs whose data is in memory (e.g., a sprite that
+  // was just lazy-cropped; the canvas pipeline still has the bitmap),
+  // and that's the documented root cause of the "red dots until
+  // restart" / "battle screen sprite invisible" symptoms.
+  //
+  // On error: drop the entry (so the next render gets a fresh URL),
+  // mint a new URL from the live Blob, retry once. Past one attempt
+  // we give up to avoid loops on a genuinely broken Blob.
+  function _applySpriteEntry(img, entry, loadId, onReady, attempts, key) {
+    if (img[_SPRITE_LOAD_ID] !== loadId) return;
+    img.onload = () => {
+      if (img[_SPRITE_LOAD_ID] !== loadId) return;
+      if (onReady) { try { onReady(img); } catch (e) { _logSpriteError('useSpriteInto/onReady', e); } }
+    };
+    img.onerror = () => {
+      if (img[_SPRITE_LOAD_ID] !== loadId) return;
+      _spriteCache.delete(key);
+      try { URL.revokeObjectURL(entry.url); } catch {}
+      if (attempts >= 1) return;
+      const fresh = { blob: entry.blob, url: URL.createObjectURL(entry.blob) };
+      _spriteCache.set(key, fresh);
+      _spriteCacheEvictIfFull();
+      _applySpriteEntry(img, fresh, loadId, onReady, attempts + 1, key);
+    };
+    img.src = entry.url;
+    if (img.complete && img.naturalWidth > 0) {
+      if (onReady) { try { onReady(img); } catch (e) { _logSpriteError('useSpriteInto/onReady', e); } }
+    }
+  }
+
+  // Public: load a sprite into an <img>. Variant semantics match
+  // `getSpriteBlob`: number = custom slot, null = autogen, undefined =
+  // "best available" (custom slot 0 if any exists, else autogen).
+  // No URL bookkeeping needed at the call site — the cache owns
+  // every URL it mints and revokes them on LRU eviction.
+  async function useSpriteInto(img, a, b, variant, onReady) {
+    if (!img) return;
+    if (variant === undefined) {
+      const count = await getCellVariantCount(a, b).catch(() => 0);
+      variant = count > 0 ? 0 : null;
+    }
+    const loadId = _bumpSpriteLoadId(img);
+    const key = _spriteCacheKey(a, b, variant);
+    const cached = _spriteCache.get(key);
+    if (cached) {
+      _spriteCacheTouch(key, cached);
+      _applySpriteEntry(img, cached, loadId, onReady, 0, key);
+      return;
+    }
+    let blob;
+    try { blob = await getSpriteBlob(a, b, variant); }
+    catch (e) { _logSpriteError(`useSpriteInto/${key}`, e); return; }
+    if (!blob) return;
+    if (img[_SPRITE_LOAD_ID] !== loadId) return;
+    const entry = _spriteCachePut(key, blob);
+    _applySpriteEntry(img, entry, loadId, onReady, 0, key);
+  }
+
+  // Batch variant: opens ONE IDB transaction for all cache misses
+  // (preserves the iOS Safari serialization optimization that
+  // getSpriteBlobsBatch already provides for marker batches). Each
+  // request: { img, a, b, variant, onReady }. Cache hits resolve
+  // synchronously inside this function so warm-cache cases never
+  // touch IDB at all.
+  //
+  // Variants must already be resolved (number or null). The marker
+  // pipeline pre-resolves spawn → variant in `addMarkersBatch`; if
+  // a future caller wants undefined-handling here we can add it.
+  async function useSpritesIntoBatch(reqs) {
+    if (!reqs || !reqs.length) return;
+    const misses = [];
+    for (const r of reqs) {
+      if (!r || !r.img) continue;
+      const loadId = _bumpSpriteLoadId(r.img);
+      const key = _spriteCacheKey(r.a, r.b, r.variant);
+      const cached = _spriteCache.get(key);
+      if (cached) {
+        _spriteCacheTouch(key, cached);
+        _applySpriteEntry(r.img, cached, loadId, r.onReady, 0, key);
+      } else {
+        misses.push({ ...r, _loadId: loadId, _key: key });
+      }
+    }
+    if (!misses.length) return;
+    let results;
+    try {
+      results = await getSpriteBlobsBatch(
+        misses.map((r) => ({ a: r.a, b: r.b, variant: r.variant }))
+      );
+    } catch (e) {
+      _logSpriteError('useSpritesIntoBatch/getSpriteBlobsBatch', e);
+      return;
+    }
+    for (let i = 0; i < misses.length; i++) {
+      const r = misses[i];
+      const blob = results[i] && results[i].blob;
+      if (!blob) continue;
+      if (r.img[_SPRITE_LOAD_ID] !== r._loadId) continue;
+      const entry = _spriteCachePut(r._key, blob);
+      _applySpriteEntry(r.img, entry, r._loadId, r.onReady, 0, r._key);
+    }
+  }
+
+  // Test hook so deleteAllSprites can wipe the in-memory cache too.
+  function _clearSpriteCache() {
+    for (const entry of _spriteCache.values()) {
+      if (entry && entry.url) {
+        try { URL.revokeObjectURL(entry.url); } catch {}
+      }
+    }
+    _spriteCache.clear();
+  }
+
   // Prefetch tracking — sheet is "done" only when every crop in
   // [indexFrom..indexTo] has been written to IDB.
   const DOWNLOADED_KEY = 'cc.spritesDownloaded';
@@ -1354,6 +1546,7 @@
     _variantSummaryLoaded = false;
     _creditsBundleCache = null;
     _splitNamesCache = null;
+    _clearSpriteCache();
     const db = await openDb();
     return new Promise((resolve, reject) => {
       const tx = db.transaction([STORE_ICONS, STORE_VARIANTS], 'readwrite');
@@ -1367,6 +1560,7 @@
   global.Sprites = {
     getSpriteUrl, getSpriteBlob, getSpriteBlobsBatch,
     getDefaultSpriteUrl, getDefaultSpriteBlob,
+    useSpriteInto, useSpritesIntoBatch,
     getCellVariantCount, getCellVariantCountsBatch,
     bulkDownload, getDownloadedSheets, getDownloadStatus, deleteAllSprites,
     getCustomManifest,
