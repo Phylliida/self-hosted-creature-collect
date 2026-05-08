@@ -19,6 +19,22 @@
   global._scriptVersions = global._scriptVersions || {};
   global._scriptVersions['creatures.js'] = SCRIPT_VERSION;
 
+  // Mirrors sprites.js / appdata.js — BundledData lives under this
+  // prefix on every platform: Flask catch-all on web, GCDWebServer
+  // on iOS, WebViewAssetLoader on Android. Override via inline
+  // `<script>window.CC_BUNDLED_DATA_BASE = ...</script>` in
+  // index.html (e.g. to point at a CDN).
+  const BUNDLED_BASE = (global.CC_BUNDLED_DATA_BASE || '/bundled-data')
+    .replace(/\/$/, '');
+
+  // Candy sprite-sheet geometry — kept in sync with
+  // generate_candy_images.py (CANDY_PX = EGG_PX // 4 = 40,
+  // CANDY_COLS = EGG_COLS = 10). Cell N is at column N % cols,
+  // row N // cols, same indexing as eggs.png.
+  const CANDY_CELL_PX = 40;
+  const CANDY_SHEET_COLS = 10;
+  const CANDY_SHEET_ROWS = 16;
+
   const STORAGE_KEY = 'cc.creatureMode';
   const CAPTURED_KEY = 'cc.capturedCreatures';
   const CAUGHT_SPAWNS_KEY = 'cc.caughtSpawnIds';
@@ -2460,6 +2476,28 @@
         font-size: 14px; font-weight: 600;
         color: var(--ui-text, #111);
       }
+      /* Per-species candy icon: a 40x40 cell of /bundled-data/candies.png,
+         positioned via inline background-position. image-rendering keeps
+         the chunky pixel-art look intact when the cell is upscaled by
+         the device's pixel ratio. flex-shrink so the icon doesn't get
+         squashed when the row is narrow. */
+      #creatureInventory .candy-row .candy-icon {
+        width: ${CANDY_CELL_PX}px;
+        height: ${CANDY_CELL_PX}px;
+        background-image: url('${BUNDLED_BASE}/candies.png');
+        background-size: ${CANDY_CELL_PX * CANDY_SHEET_COLS}px ${CANDY_CELL_PX * CANDY_SHEET_ROWS}px;
+        background-repeat: no-repeat;
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
+        flex-shrink: 0;
+      }
+      /* Species name shown alongside the icon for the family root —
+         small, secondary, doesn't shout. Helpful as both a fallback
+         (when an empty cell renders blank) and an accessibility aid. */
+      #creatureInventory .candy-row .candy-name-sub {
+        font-size: 13px; font-weight: 500;
+        color: var(--ui-muted, #666);
+      }
       #creatureInventory .candy-row .candy-count {
         margin-left: auto;
         font-size: 14px; font-weight: 600;
@@ -4853,12 +4891,27 @@
       `;
       return;
     }
-    const rows = entries.map(([key, n]) => `
-      <div class="candy-row">
-        <span class="candy-name">${escapeHtml(speciesNameFor(key))}</span>
-        <span class="candy-count">×${n}</span>
-      </div>
-    `).join('');
+    const rows = entries.map(([key, n]) => {
+      const id = parseInt(key, 10);
+      const col = Number.isFinite(id) ? id % CANDY_SHEET_COLS : 0;
+      const row = Number.isFinite(id) ? Math.floor(id / CANDY_SHEET_COLS) : 0;
+      const name = speciesNameFor(key);
+      const label = `${name} candy`;
+      // Icon is a CSS sprite — background-position picks the cell
+      // for this species out of the bundled candies.png sheet.
+      // title + aria-label keep the species name reachable for
+      // accessibility / hover-tooltip even though the visible UI
+      // is now icon-only per the inventory's new look.
+      return `
+        <div class="candy-row">
+          <div class="candy-icon"
+               style="background-position: -${col * CANDY_CELL_PX}px -${row * CANDY_CELL_PX}px"
+               title="${escapeHtml(label)}"
+               aria-label="${escapeHtml(label)}"></div>
+          <span class="candy-count">×${n}</span>
+        </div>
+      `;
+    }).join('');
     body.innerHTML = `
       <div class="candy-subtitle">${escapeHtml(subtitle)}</div>
       <div class="candy-list">${rows}</div>
