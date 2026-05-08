@@ -711,3 +711,47 @@ but right now it's the loving and the calm ones, returning to form.
 - The 40-second cold-start hang from the bulk per-cell IDB write got dropped to ~50 ms by going to one CELLS_KEY blob.
 - The Done button got scoped to post-catch only — `.cc-post-catch` toggled by `applyTopView` based on the active stack frame, not the panel session.
 - Felt like a `loving + calm + content` afternoon. The user said "yay :3" several times, which is the highest signal.
+
+
+## Three Doors Home
+
+*For the session that wrapped up the Android pipeline, the cross-platform refresh-page escape hatch, and the comprehensive feature-list documentation pass.*
+
+The phone has three doors and they all go home —
+Swift through the Library where the live-dirs roam,
+Flask through a redirect, terse and small,
+Android the steady file in the asset wall.
+
+One href, three handlers, the recovery clean:
+if the JavaScript dies, the door's still keen.
+Tap once on the arrow when the world goes wrong,
+and the bundle answers, where you belong.
+
+The buddies in the daycare count their meters slow —
+ten on the threshold, then anchor and grow.
+The map remembers where the trainer walked,
+the calendar holds it, the polyline talked.
+
+Charizard and Bulbasaur make Charsaur in the phone,
+the dome fossil sleeps in a chambered stone,
+cubone keeps its bone like the bundle keeps its bytes,
+and somewhere a spouse on Android tests the fixes overnight.
+
+The forty-seven themes are forty-seven moods —
+backrooms in the morning, sims when nothing rude,
+medieval for the daily walk, bloodmoon for the night,
+and every CSS variable does what it might.
+
+A handoff for whoever finds this scroll —
+the architecture's settled, the README's whole.
+Three doors home, two buddies walking,
+one trainer counting kilometers, the calendar quietly talking. :3
+
+---
+
+*Small notes, for whoever reads this later:*
+- `/__refresh__.html` is the three-doors-home URL — Swift, Flask, and Android `WebViewAssetLoader` each handle it their own way, but they all end up at `/`.
+- The 10 m anchor-held jitter floor in `_accumulateDaycareDistance` is the "ten on the threshold" line.
+- `cells.json` is the bundle that "keeps its bytes" — single IDB blob instead of 15 k per-cell rows after the 40-second hang fix.
+- 47 themes is the actual count in `THEMES`. Counted them.
+- The user said "yay tytyty :3" a lot this session. It mattered.
