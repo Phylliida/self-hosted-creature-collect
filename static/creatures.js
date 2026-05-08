@@ -7145,7 +7145,7 @@
         record.objectUrl = null;
       }
       const url = URL.createObjectURL(blob);
-      img.onload = () => {
+      const reveal = () => {
         el.classList.add('creature-marker-ready');
         // Mark the record as successfully rendered so the retry pass
         // in refreshSpawnOverlay skips it on subsequent ticks.
@@ -7155,12 +7155,22 @@
           window._spriteDiag.firstSpriteVisibleAt = performance.now();
         }
       };
+      img.onload = reveal;
       img.onerror = (e) => {
         _logCreatureError(`installSpriteBlob/img.onerror/${record.spawn.speciesA}-${record.spawn.speciesB}`,
           (e && e.message) || 'image decode failed');
       };
       record.objectUrl = url;
       img.src = url;
+      // iOS WKWebView sometimes skips `load` for blob URLs whose data is
+      // already decoded — exactly the lazy-crop case, where the Blob came
+      // straight out of a canvas pipeline still in memory. Without this
+      // fallback the marker stays on the red-dot placeholder (sprite is
+      // `display: none` until `creature-marker-ready` is added) until the
+      // next app launch, where the IDB-stored blob takes a slightly
+      // different decode pathway and `onload` fires normally. Same fix
+      // as `openBattleScreen` (see `maybeRevealCached`).
+      if (img.complete && img.naturalWidth > 0) reveal();
       window._spriteDiag = window._spriteDiag || {};
       if (window._spriteDiag.firstSpriteInstallAt == null) {
         window._spriteDiag.firstSpriteInstallAt = performance.now();
