@@ -696,6 +696,27 @@ def main() -> None:
     print(f"  {egg_present} egg cells filled, {egg_missing} blank "
           "(species without dedicated egg art)")
 
+    # Fill in remaining egg cells using the same waterfall the candy
+    # generator applies (baby egg → baby autogen → family-root
+    # propagation), so eggs.png ends up with full coverage for every
+    # gen-1 species. Kept in its own module for fast iteration.
+    print("→ Filling egg sprite-sheet fallbacks...")
+    from generate_egg_images import (
+        fill_egg_fallbacks, build_eggs_loot_sheet,
+    )
+    egg_present, egg_missing = fill_egg_fallbacks()
+    print(f"  {egg_present} egg cells filled, {egg_missing} blank")
+
+    # Uniform-size loot sheet (40×40 cells matching candies.png).
+    # Required for the daycare loot pill to render eggs at exactly
+    # the same on-pill height as candies — eggs.png cells have
+    # variable transparent padding so a single CSS scale can't
+    # give uniform display height.
+    print("→ Building eggs loot sprite sheet (uniform 40×40 cells)...")
+    egg_loot_present, egg_loot_missing = build_eggs_loot_sheet()
+    print(f"  {egg_loot_present} egg loot cells filled, "
+          f"{egg_loot_missing} blank")
+
     # Candy sheet derives from eggs.png (just composed above) — kept
     # in its own module so the candy compositing can be iterated
     # quickly without re-running the slow sprite/egg/tile passes.

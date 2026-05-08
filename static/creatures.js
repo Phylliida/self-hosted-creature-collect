@@ -123,6 +123,48 @@
       icon: '/static/test-orb.svg',
     },
   };
+
+  // Format a PIF item identifier (FIRESTONE, KINGSROCK, LINKINGCORD)
+  // into a human-readable display name (Fire Stone, Kings Rock,
+  // Linking Cord). Used by both the evolution-method formatter and
+  // the dynamic ITEMS-catalog registration for evo items below.
+  function _formatItemName(s) {
+    if (typeof s !== 'string') return String(s);
+    // Common compound suffixes — split out so e.g. FIRESTONE renders
+    // as "Fire Stone" rather than "Firestone".
+    const tail = ['STONE', 'ROCK', 'SCALE', 'COAT', 'CHIP', 'SCROLL', 'CORD', 'DISC', 'CLOTH'];
+    let s2 = s;
+    for (const t of tail) {
+      const re = new RegExp(`(\\w+)${t}$`, 'i');
+      s2 = s2.replace(re, (_, w) => `${w} ${t}`);
+    }
+    return s2.toLowerCase()
+      .split(/[\s_]+/)
+      .map((p) => p ? p[0].toUpperCase() + p.slice(1) : '')
+      .join(' ').trim();
+  }
+
+  // Register evolution-item bag entries derived from the bundled
+  // evo-items/ directory. The set is intentionally hardcoded so the
+  // module loads quickly without needing the bundle JSON in memory;
+  // it mirrors the items copy_evo_items() ships in
+  // build-bundled-data.py. Each gets a name, an icon URL pointing
+  // at the bundled PNG, and a desc — slotting into the bag UI the
+  // same way poke_ball / great_ball / test_orb do.
+  const EVO_ITEM_KEYS = [
+    'DRAGONSCALE', 'ELECTIRIZER', 'FIRESTONE', 'ICESTONE', 'KINGSROCK',
+    'LEAFSTONE', 'LINKINGCORD', 'MAGMARIZER', 'MAGNETSTONE', 'METALCOAT',
+    'MOONSTONE', 'PROTECTOR', 'SHINYSTONE', 'SUNSTONE', 'THUNDERSTONE',
+    'UPGRADE', 'WATERSTONE',
+  ];
+  for (const key of EVO_ITEM_KEYS) {
+    if (ITEMS[key]) continue;
+    ITEMS[key] = {
+      name: _formatItemName(key),
+      desc: 'Evolution item — usable when the right pokémon is ready.',
+      icon: `${BUNDLED_BASE}/evo-items/${key}.png`,
+    };
+  }
   // Items the pokéstop "Collect items" button can grant. Each press
   // samples 1-3 items uniformly from this list (with replacement).
   const COLLECTIBLE_ITEM_KEYS = ['poke_ball', 'great_ball'];
@@ -311,6 +353,50 @@
   const DAYCARE_SLOTS_KEY = 'cc.daycareSlots.v1';
   const DAYCARE_SLOT_COUNT = 2;
 
+  // Egg inventory. Each entry is an unhatched fusion egg dropped
+  // from the daycare loot rolls (or, in the future, traded /
+  // gifted). Shape: { id, speciesA, speciesB, sizeM, createdAt }.
+  // sizeM is rolled at drop time and burned in so the eventual
+  // hatched creature's size is deterministic in the egg's PRNG seed.
+  // The incubator (which slots eggs hatch into + a per-egg distance
+  // counter) is layered in a separate slice; for v1 eggs are just
+  // collected and viewable in the new Eggs sub-view.
+  const EGGS_KEY = 'cc.eggs.v1';
+
+  function readEggs() {
+    try {
+      const raw = localStorage.getItem(EGGS_KEY);
+      const arr = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(arr)) return [];
+      return arr.filter((e) =>
+        e && typeof e === 'object'
+        && typeof e.id === 'string' && e.id
+        && Number.isInteger(e.speciesA)
+        && Number.isInteger(e.speciesB));
+    } catch { return []; }
+  }
+  function writeEggs(arr) {
+    try { localStorage.setItem(EGGS_KEY, JSON.stringify(arr)); }
+    catch {}
+  }
+  function addEgg(egg) {
+    if (!egg || !Number.isInteger(egg.speciesA) || !Number.isInteger(egg.speciesB)) {
+      return null;
+    }
+    const arr = readEggs();
+    const id = `e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const record = {
+      id,
+      speciesA: egg.speciesA,
+      speciesB: egg.speciesB,
+      sizeM: typeof egg.sizeM === 'number' ? egg.sizeM : 1.0,
+      createdAt: Date.now(),
+    };
+    arr.push(record);
+    writeEggs(arr);
+    return record;
+  }
+
   // Daycare loot. Each slot earns one milestone of loot per kilometer
   // walked while occupied. Milestone N's loot is deterministic in
   // (slot.id, slot.addedAt, N) — no roll history is stored, just the
@@ -325,30 +411,179 @@
   // across all slots, regenerating the same loot stream (same seed
   // → same items) so the user can re-tap them.
   const DAYCARE_LOOT_KM_M = 1000;
-  // Loot keys that the daycare can drop. Each must also exist in
-  // the top-level ITEMS catalog (icon + display name flow through
-  // the bag UI from there). v1 is a single placeholder so the UX
-  // can be exercised end-to-end before real drops are layered in.
-  const DAYCARE_LOOT_TABLE = ['test_orb'];
+  // Daycare loot is one of three kinds, rolled deterministically per
+  // milestone via the slot's seed. Probabilities sum to 1.0:
+  //   0.00–0.85  candy   — 1 candy in the daycare pokémon's family
+  //                        bucket (50/50 between A and B's roots)
+  //   0.85–0.95  egg     — same fusion as the parent, level 1, with
+  //                        a randomized size baked in at drop time
+  //   0.95–1.00  evo_item — uniform pick from items that can evolve
+  //                        either side's family. Falls back to candy
+  //                        if neither family has an Item evolution.
+  const DAYCARE_PROB_CANDY = 0.85;
+  const DAYCARE_PROB_EGG = 0.10;  // implicit upper bound = 0.95
+
+  function _evoItemsForFamily(speciesId) {
+    if (speciesId == null) return [];
+    if (!global.Species || !global.Species.familyOf) return [];
+    const family = global.Species.familyOf(speciesId) || [speciesId];
+    const items = new Set();
+    for (const id of family) {
+      const evos = (global.Species.evolutionsFor && global.Species.evolutionsFor(id)) || [];
+      for (const evo of evos) {
+        if (evo.method === 'Item' && typeof evo.param === 'string') {
+          items.add(evo.param);
+        }
+      }
+    }
+    return Array.from(items);
+  }
 
   function _daycareLootAt(slot, n) {
     if (!slot || !Number.isInteger(n) || n < 1) return null;
-    if (!DAYCARE_LOOT_TABLE.length) return null;
-    // Seed string is unique per (slot, milestone) so each tap-target
-    // has independent randomness — growing the table from 1 → many
-    // items later doesn't shuffle existing milestones' identities
-    // (each milestone seeds independently rather than pulling from
-    // a shared stream).
+    const creature = findCreature(slot.id);
+    if (!creature) return null;
+    const a = creature.speciesA;
+    const b = creature.speciesB;
+    if (!Number.isInteger(a) || !Number.isInteger(b)) return null;
+    if (!global.Spawns || !global.Spawns.getRng) return null;
+
+    // Three independent uniform draws from the per-milestone seed:
+    // u1 picks the kind, u2 picks the species/item within that kind,
+    // u3 is the size for eggs (split out so future tweaks to size
+    // distribution don't reshuffle older milestones' kind/species).
     const seed = `dc|${slot.id}|${slot.addedAt}|${n}`;
-    let idx = 0;
-    if (global.Spawns && global.Spawns.getRng) {
-      const rng = global.Spawns.getRng(seed);
-      idx = (rng.int32() >>> 0) % DAYCARE_LOOT_TABLE.length;
+    const rng = global.Spawns.getRng(seed);
+    const draw = () => (rng.int32() >>> 0) / 0x100000000;
+    const u1 = draw();
+    const u2 = draw();
+    const u3 = draw();
+
+    const rootA = candyRootFor(a);
+    const rootB = candyRootFor(b);
+    const candySpeciesPick = () =>
+      (rootA === rootB) ? rootA : (u2 < 0.5 ? rootA : rootB);
+    const candyLoot = () => {
+      const species = candySpeciesPick();
+      return {
+        kind: 'candy',
+        species,
+        label: `${speciesNameFor(species)} candy`,
+      };
+    };
+
+    if (u1 < DAYCARE_PROB_CANDY) {
+      return candyLoot();
     }
-    const key = DAYCARE_LOOT_TABLE[idx];
-    const meta = ITEMS[key];
-    if (!meta) return null;
-    return { key, name: meta.name, icon: meta.icon };
+    if (u1 < DAYCARE_PROB_CANDY + DAYCARE_PROB_EGG) {
+      // Egg fusion mirrors the parents (eventually we'll layer in
+      // breeding cross-products like A×B + C×D → A×D, but for v1 the
+      // egg always carries the parent's species pair). Size in
+      // 0.5–2.0 m is pretty arbitrary — placeholder until a real
+      // size distribution is wired in. Rounded to 0.01 m for
+      // tidy display.
+      const sizeM = Math.round((0.5 + u3 * 1.5) * 100) / 100;
+      return {
+        kind: 'egg',
+        a, b, sizeM,
+        label: `${fusionName(a, b)} egg`,
+      };
+    }
+    // Evo item branch — gather all items either family could
+    // graduate via, uniformly pick one. Fallback to candy if there's
+    // no evolution-by-item path on either side (Bulbasaur×Squirtle
+    // etc. — both families evolve by level only).
+    const possible = Array.from(new Set(
+      _evoItemsForFamily(a).concat(_evoItemsForFamily(b))
+    ));
+    if (!possible.length) return candyLoot();
+    const itemKey = possible[Math.floor(u2 * possible.length)] || possible[0];
+    const meta = ITEMS[itemKey];
+    return {
+      kind: 'evo_item',
+      itemKey,
+      label: (meta && meta.name) || _formatItemName(itemKey),
+    };
+  }
+
+  // CSS background-* values for a loot pill button. Each kind has
+  // its own icon source: candies + eggs are sprite-sheet cells
+  // (background-image + background-position), evo items are full
+  // PNGs (background-image + background-size: contain). Pill cells
+  // render at PILL_CELL_PX so the sheet's per-cell math is uniform
+  // across all kinds.
+  const PILL_CELL_PX = 28;
+  // eggs.png layout — kept in sync with build-bundled-data.py.
+  const EGGS_SHEET_COLS = 10;
+  const EGGS_SHEET_ROWS = 16;
+
+  function _lootIconStyle(loot) {
+    if (!loot) return '';
+    const noRepeat = 'background-repeat: no-repeat;'
+      + 'image-rendering: pixelated;'
+      + 'image-rendering: crisp-edges;';
+    if (loot.kind === 'candy') {
+      const id = loot.species;
+      const col = id % CANDY_SHEET_COLS;
+      const row = Math.floor(id / CANDY_SHEET_COLS);
+      return (
+        `background-image: url('${BUNDLED_BASE}/candies.png');`
+        + `background-size: ${PILL_CELL_PX * CANDY_SHEET_COLS}px ${PILL_CELL_PX * CANDY_SHEET_ROWS}px;`
+        + `background-position: -${col * PILL_CELL_PX}px -${row * PILL_CELL_PX}px;`
+        + noRepeat
+      );
+    }
+    if (loot.kind === 'egg') {
+      // eggs_loot.png is the bbox-cropped + uniformly-scaled sister
+      // of eggs.png — same 10×16 indexing, but every cell's art
+      // fills the same 40×40 footprint regardless of how much
+      // transparent padding the source had or whether the source
+      // was a PIF egg PNG or a Munchlax-autogen-paste. Lets the
+      // pill render eggs at exactly the same on-pill height as
+      // candies through identical CSS math (same cell size, same
+      // background-position formula).
+      const id = loot.a;
+      const col = id % EGGS_SHEET_COLS;
+      const row = Math.floor(id / EGGS_SHEET_COLS);
+      return (
+        `background-image: url('${BUNDLED_BASE}/eggs_loot.png');`
+        + `background-size: ${PILL_CELL_PX * EGGS_SHEET_COLS}px ${PILL_CELL_PX * EGGS_SHEET_ROWS}px;`
+        + `background-position: -${col * PILL_CELL_PX}px -${row * PILL_CELL_PX}px;`
+        + noRepeat
+      );
+    }
+    if (loot.kind === 'evo_item') {
+      const meta = ITEMS[loot.itemKey];
+      const url = (meta && meta.icon) || `${BUNDLED_BASE}/evo-items/${loot.itemKey}.png`;
+      return (
+        `background-image: url('${url}');`
+        + `background-size: contain;`
+        + `background-position: center;`
+        + noRepeat
+      );
+    }
+    return '';
+  }
+
+  // Apply a single loot drop to the player's inventory: candy goes
+  // to the family bucket, eggs land in cc.eggs.v1, evo items in
+  // the bag. Returns truthy on a successful grant so callers can
+  // distinguish "actually granted" from "skipped because already
+  // claimed / not yet earned".
+  function _grantLoot(loot) {
+    if (!loot) return false;
+    if (loot.kind === 'candy') {
+      bumpCandy(loot.species, 1);
+      return true;
+    }
+    if (loot.kind === 'egg') {
+      return !!addEgg({ speciesA: loot.a, speciesB: loot.b, sizeM: loot.sizeM });
+    }
+    if (loot.kind === 'evo_item') {
+      grantItem(loot.itemKey, 1);
+      return true;
+    }
+    return false;
   }
 
   function _daycareEarnedCount(slot) {
@@ -362,8 +597,8 @@
     const out = [];
     for (let n = 1; n <= total; n++) {
       if (claimed.has(n)) continue;
-      const item = _daycareLootAt(slot, n);
-      if (item) out.push({ n, item });
+      const loot = _daycareLootAt(slot, n);
+      if (loot) out.push({ n, loot });
     }
     return out;
   }
@@ -409,13 +644,14 @@
     if (!visible.length) {
       return `<div class="daycare-slot-loot" aria-label="no daycare loot ready"></div>`;
     }
-    const pills = visible.map(({ n, item }) =>
-      `<button class="daycare-loot-pill" type="button" data-n="${n}" `
-      + `title="${escapeHtml(item.name)}" `
-      + `aria-label="claim ${escapeHtml(item.name)}">`
-      + `<img src="${escapeHtml(item.icon)}" alt="">`
-      + `</button>`
-    ).join('');
+    const pills = visible.map(({ n, loot }) => {
+      const style = _lootIconStyle(loot);
+      const cls = `daycare-loot-pill loot-kind-${loot.kind}`;
+      return `<button class="${cls}" type="button" data-n="${n}" `
+        + `style="${style}" `
+        + `title="${escapeHtml(loot.label)}" `
+        + `aria-label="claim ${escapeHtml(loot.label)}"></button>`;
+    }).join('');
     return `<div class="daycare-slot-loot">${pills}</div>`;
   }
 
@@ -435,11 +671,10 @@
     const newClaimed = [...claimed];
     for (let n = 1; n <= total; n++) {
       if (claimed.has(n)) continue;
-      const item = _daycareLootAt(slot, n);
-      if (!item) continue;
-      grantItem(item.key, 1);
+      const loot = _daycareLootAt(slot, n);
+      if (!_grantLoot(loot)) continue;
       newClaimed.push(n);
-      granted.push(item);
+      granted.push(loot);
     }
     if (!granted.length) return [];
     arr[idx] = {
@@ -523,8 +758,7 @@
     const claimed = new Set(slot.claimed || []);
     for (let n = 1; n <= total; n++) {
       if (claimed.has(n)) continue;
-      const item = _daycareLootAt(slot, n);
-      if (item) grantItem(item.key, 1);
+      _grantLoot(_daycareLootAt(slot, n));
     }
     arr.splice(idx, 1);
     writeDaycareSlots(arr);
@@ -548,15 +782,14 @@
     if (n > _daycareEarnedCount(slot)) return null;
     const claimed = Array.isArray(slot.claimed) ? slot.claimed : [];
     if (claimed.includes(n)) return null;
-    const item = _daycareLootAt(slot, n);
-    if (!item) return null;
-    grantItem(item.key, 1);
+    const loot = _daycareLootAt(slot, n);
+    if (!_grantLoot(loot)) return null;
     arr[idx] = {
       ...slot,
       claimed: [...claimed, n].sort((a, b) => a - b),
     };
     writeDaycareSlots(arr);
-    return item;
+    return loot;
   }
 
   // Settings → "Repopulate daycare test loot": wipe `claimed` on
@@ -1399,21 +1632,7 @@
   // a short, human-readable label. Best-effort formatting — unrecognized
   // methods fall back to "<Method> <param>".
   function formatEvolutionMethod(method, param) {
-    const item = (s) => {
-      if (typeof s !== 'string') return String(s);
-      // FIRESTONE / THUNDERSTONE → Fire Stone / Thunder Stone
-      // KINGSROCK / METALCOAT → Kings Rock / Metal Coat
-      const tail = ['STONE', 'ROCK', 'SCALE', 'COAT', 'CHIP', 'SCROLL'];
-      let s2 = s;
-      for (const t of tail) {
-        const re = new RegExp(`(\\w+)${t}$`, 'i');
-        s2 = s2.replace(re, (_, w) => `${w} ${t}`);
-      }
-      return s2.toLowerCase()
-        .split(/[\s_]+/)
-        .map((p) => p ? p[0].toUpperCase() + p.slice(1) : '')
-        .join(' ').trim();
-    };
+    const item = _formatItemName;
     switch (method) {
       case 'Level':           return `Lv ${param}`;
       case 'LevelDay':        return `Lv ${param} (day)`;
@@ -2092,6 +2311,7 @@
       #creatureInventory .fusion-back,
       #creatureInventory .candy-back,
       #creatureInventory .daycare-back,
+      #creatureInventory .eggs-back,
       #creatureInventory .bag-back,
       #creatureInventory .tags-back {
         background: none;
@@ -2141,6 +2361,7 @@
       #creatureInventory .fusion-back:hover,
       #creatureInventory .candy-back:hover,
       #creatureInventory .daycare-back:hover,
+      #creatureInventory .eggs-back:hover,
       #creatureInventory .bag-back:hover,
       #creatureInventory .tags-back:hover {
         color: var(--ui-accent, #888);
@@ -2528,6 +2749,55 @@
       }
       #creatureInventory .daycare-view { display: none; }
       #creatureInventory .daycare-view.show { display: flex; flex-direction: column; }
+      #creatureInventory .eggs-view { display: none; }
+      #creatureInventory .eggs-view.show { display: flex; flex-direction: column; }
+      #creatureInventory .eggs-subtitle {
+        font-size: 12px; color: var(--ui-muted, #666);
+        text-align: center; margin: 0 0 12px;
+      }
+      #creatureInventory .eggs-empty {
+        padding: 24px 14px;
+        text-align: center;
+        color: var(--ui-muted, #666);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      #creatureInventory .eggs-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      #creatureInventory .egg-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 12px;
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+        border: 1px solid var(--ui-hairline, rgba(0,0,0,0.08));
+        border-radius: var(--ui-radius, 8px);
+      }
+      #creatureInventory .egg-icon {
+        flex: 0 0 auto;
+        width: 48px;
+        height: 48px;
+      }
+      #creatureInventory .egg-meta {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        flex: 1 1 auto;
+      }
+      #creatureInventory .egg-name {
+        font-size: 14px; font-weight: 600;
+        color: var(--ui-text, #111);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #creatureInventory .egg-sub {
+        font-size: 12px; color: var(--ui-muted, #666);
+        font-variant-numeric: tabular-nums;
+      }
       #creatureInventory .daycare-slots {
         display: grid;
         /* Use minmax(0, 1fr), not bare 1fr — bare 1fr is implicitly
@@ -2651,10 +2921,9 @@
         flex: 0 0 auto;
         width: 28px;
         height: 28px;
-        padding: 1px;
-        border: 1px solid var(--ui-hairline, rgba(0,0,0,0.18));
-        background: var(--ui-input-bg, rgba(255,255,255,0.5));
-        border-radius: 50%;
+        padding: 0;
+        border: 0 solid transparent;
+        background-color: transparent;
         cursor: pointer;
         display: inline-flex;
         align-items: center;
@@ -2664,15 +2933,7 @@
           width 240ms ease,
           opacity 200ms ease,
           transform 200ms ease,
-          margin 240ms ease,
-          border-width 240ms ease,
-          padding 240ms ease;
-      }
-      #creatureInventory .daycare-loot-pill img {
-        width: 100%;
-        height: 100%;
-        object-fit: contain;
-        pointer-events: none;
+          margin 240ms ease;
       }
       #creatureInventory .daycare-loot-pill:hover:not(.claimed):not(.appearing) {
         transform: scale(1.08);
@@ -2685,23 +2946,20 @@
       #creatureInventory .daycare-loot-pill.claimed {
         width: 0;
         margin: 0 -2px;
-        padding: 0;
-        border-width: 0;
         transform: scale(0);
         opacity: 0;
         pointer-events: none;
       }
       /* Appearing: a freshly-earned milestone slides in. New pills
-         arrive at the END of the row — if the row already has 4+
-         pills they're added past the visible cap and the ellipsis
-         indicates that. */
+         arrive at the END of the row — extras past the visible cap
+         are clipped by the row's overflow:hidden. */
       #creatureInventory .daycare-loot-pill.appearing {
         animation: daycare-loot-slide-in 320ms ease forwards;
       }
       @keyframes daycare-loot-slide-in {
-        0%   { width: 0; opacity: 0; transform: scale(0.4); padding: 0; border-width: 0; }
-        60%  { width: 28px; opacity: 1; transform: scale(1.12); padding: 1px; border-width: 1px; }
-        100% { width: 28px; opacity: 1; transform: scale(1); padding: 1px; border-width: 1px; }
+        0%   { width: 0; opacity: 0; transform: scale(0.4); }
+        60%  { width: 28px; opacity: 1; transform: scale(1.12); }
+        100% { width: 28px; opacity: 1; transform: scale(1); }
       }
       #creatureInventory .daycare-today {
         display: flex; flex-direction: column; align-items: center;
@@ -3220,6 +3478,7 @@
       #creatureInventory .pokedex-link,
       #creatureInventory .candy-link,
       #creatureInventory .daycare-link,
+      #creatureInventory .eggs-link,
       #creatureInventory .bag-link,
       #creatureInventory .tags-link {
         background: transparent;
@@ -3237,6 +3496,7 @@
       #creatureInventory .header-actions-icons .pokedex-link,
       #creatureInventory .header-actions-icons .candy-link,
       #creatureInventory .header-actions-icons .daycare-link,
+      #creatureInventory .header-actions-icons .eggs-link,
       #creatureInventory .header-actions-icons .bag-link,
       #creatureInventory .header-actions-icons .tags-link {
         padding: 4px 5px 2px 5px;
@@ -3246,6 +3506,7 @@
       #creatureInventory .header-actions-text .pokedex-link,
       #creatureInventory .header-actions-text .candy-link,
       #creatureInventory .header-actions-text .daycare-link,
+      #creatureInventory .header-actions-text .eggs-link,
       #creatureInventory .header-actions-text .bag-link,
       #creatureInventory .header-actions-text .tags-link {
         padding: 5px 10px;
@@ -3254,6 +3515,7 @@
       #creatureInventory .pokedex-link svg,
       #creatureInventory .candy-link svg,
       #creatureInventory .daycare-link svg,
+      #creatureInventory .eggs-link svg,
       #creatureInventory .bag-link svg,
       #creatureInventory .tags-link svg {
         display: block;
@@ -3263,6 +3525,7 @@
       #creatureInventory .pokedex-link:hover,
       #creatureInventory .candy-link:hover,
       #creatureInventory .daycare-link:hover,
+      #creatureInventory .eggs-link:hover,
       #creatureInventory .bag-link:hover,
       #creatureInventory .tags-link:hover {
         background: var(--ui-hover, rgba(0,0,0,0.04));
@@ -3812,6 +4075,11 @@
           <h3 class="subview-title">Daycare</h3>
           <div class="daycare-body"></div>
         </div>
+        <div class="eggs-view">
+          <button class="eggs-back" type="button" aria-label="back">←</button>
+          <h3 class="subview-title">Eggs</h3>
+          <div class="eggs-body"></div>
+        </div>
         <div class="bag-view">
           <button class="bag-back" type="button" aria-label="back">←</button>
           <h3 class="subview-title">Bag</h3>
@@ -4120,6 +4388,7 @@
     attachDrag('fusion');
     panel.querySelector('.candy-back').addEventListener('click', popView);
     panel.querySelector('.daycare-back').addEventListener('click', popView);
+    panel.querySelector('.eggs-back').addEventListener('click', popView);
     panel.querySelector('.bag-back').addEventListener('click', popView);
     panel.querySelector('.tags-back').addEventListener('click', popView);
     renderHeaderActions(panel);
@@ -4251,6 +4520,7 @@
     panel.querySelector('.fusion-view').classList.remove('show');
     panel.querySelector('.candy-view').classList.remove('show');
     panel.querySelector('.daycare-view').classList.remove('show');
+    panel.querySelector('.eggs-view').classList.remove('show');
     panel.querySelector('.bag-view').classList.remove('show');
     panel.querySelector('.tags-view').classList.remove('show');
     // Post-catch context follows the active stack frame: the Done
@@ -4338,6 +4608,10 @@
       case 'daycare':
         renderDaycare(top.opts || {});
         panel.querySelector('.daycare-view').classList.add('show');
+        return;
+      case 'eggs':
+        renderEggs();
+        panel.querySelector('.eggs-view').classList.add('show');
         return;
       case 'bag':
         renderBag();
@@ -4768,6 +5042,69 @@
     pushView({ view: 'daycare' });
   }
 
+  function showEggs() {
+    pushView({ view: 'eggs' });
+  }
+
+  // Eggs view: a flat read-only list of every unhatched egg in the
+  // player's collection. Each row shows the fusion's name, the size
+  // it'll hatch at, and (eventually) an incubate / hatch action.
+  // For v1 it's view-only — the incubator + hatch flow lands in a
+  // follow-up slice.
+  function renderEggs() {
+    const panel = document.getElementById('creatureInventory');
+    if (!panel) return;
+    const body = panel.querySelector('.eggs-body');
+    if (!body) return;
+    const eggs = readEggs();
+    if (!eggs.length) {
+      body.innerHTML = `
+        <div class="eggs-empty">
+          No eggs yet — keep walking with a pokémon in the daycare and one will eventually drop.
+        </div>
+      `;
+      return;
+    }
+    // Newest first — recently-dropped eggs feel like the active
+    // collection, older ones recede.
+    const sorted = [...eggs].sort((a, b) =>
+      (b.createdAt || 0) - (a.createdAt || 0));
+    const subtitle = `${eggs.length} egg${eggs.length === 1 ? '' : 's'}`;
+    const rows = sorted.map((egg) => {
+      // Egg art uses speciesA's cell from eggs.png — same indexing
+      // convention as the daycare loot pills. Some species have no
+      // dedicated egg art (mid-evolutions, late gens) so the cell
+      // can render blank; the row's text is the canonical signal.
+      const id = egg.speciesA;
+      const col = id % EGGS_SHEET_COLS;
+      const row = Math.floor(id / EGGS_SHEET_COLS);
+      const eggIconStyle =
+        `background-image: url('${BUNDLED_BASE}/eggs.png');`
+        + `background-size: ${48 * EGGS_SHEET_COLS}px ${48 * EGGS_SHEET_ROWS}px;`
+        + `background-position: -${col * 48}px -${row * 48}px;`
+        + `background-repeat: no-repeat;`
+        + `image-rendering: pixelated;`
+        + `image-rendering: crisp-edges;`;
+      const name = fusionName(egg.speciesA, egg.speciesB);
+      const sizeLabel = (typeof egg.sizeM === 'number')
+        ? formatSize(egg.sizeM) : '';
+      return `
+        <div class="egg-row" data-egg-id="${escapeHtml(egg.id)}">
+          <div class="egg-icon" style="${eggIconStyle}"
+               aria-label="${escapeHtml(name)} egg"></div>
+          <div class="egg-meta">
+            <div class="egg-name">${escapeHtml(name)} egg</div>
+            ${sizeLabel ? `<div class="egg-sub">${escapeHtml(sizeLabel)}</div>` : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+    body.innerHTML = `
+      <div class="eggs-subtitle">${escapeHtml(subtitle)}</div>
+      <div class="eggs-list">${rows}</div>
+    `;
+  }
+
   function showBag() {
     pushView({ view: 'bag' });
   }
@@ -5184,19 +5521,18 @@
         if (!slot) return;
         for (const n of d.newNs) {
           if ((slot.claimed || []).includes(n)) continue;
-          const item = _daycareLootAt(slot, n);
-          if (!item) continue;
+          const loot = _daycareLootAt(slot, n);
+          if (!loot) continue;
           if (row.querySelector(`.daycare-loot-pill[data-n="${n}"]`)) continue;
           const pill = document.createElement('button');
           pill.type = 'button';
-          pill.className = 'daycare-loot-pill appearing';
+          pill.className = `daycare-loot-pill loot-kind-${loot.kind} appearing`;
           pill.dataset.n = String(n);
-          pill.title = item.name;
-          pill.setAttribute('aria-label', `claim ${item.name}`);
-          const img = document.createElement('img');
-          img.src = item.icon;
-          img.alt = '';
-          pill.appendChild(img);
+          pill.title = loot.label;
+          pill.setAttribute('aria-label', `claim ${loot.label}`);
+          // Inline background style mirrors what _daycareLootRowHtml
+          // emits for cells that already exist at render time.
+          pill.style.cssText = _lootIconStyle(loot);
           pill.addEventListener('animationend', () => {
             pill.classList.remove('appearing');
           }, { once: true });
@@ -6046,6 +6382,9 @@
     bag: '<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M5 8h14l-1 12H6z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>',
     candy: '<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><ellipse cx="12" cy="12" rx="5" ry="4"/><path d="M7 12 L3 9 L3 15 Z"/><path d="M17 12 L21 9 L21 15 Z"/></svg>',
     daycare: '<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="9" r="3"/><path d="M5 21c0-3.5 3-6 7-6s7 2.5 7 6"/></svg>',
+    // Egg outline — a stylized vertical oval (taller than wide) with
+    // a tiny zigzag at the top suggesting the upcoming crack.
+    eggs: '<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M12 3c-3.5 0-6.5 4.5-6.5 9 0 4.5 3 7 6.5 7s6.5-2.5 6.5-7c0-4.5-3-9-6.5-9z"/><path d="M9 11l1.5-1.5L12 11l1.5-1.5L15 11"/></svg>',
     dex: '<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8" cy="9" r="2"/><line x1="3" y1="14" x2="21" y2="14"/><line x1="6" y1="17" x2="14" y2="17"/></svg>',
   };
   // Renders the inventory header's Tags / Bag / Candy / Pokédex
@@ -6062,6 +6401,7 @@
       { cls: 'bag-link', label: 'Bag', svg: _ACTION_ICON_SVG.bag, onClick: showBag },
       { cls: 'candy-link', label: 'Candy', svg: _ACTION_ICON_SVG.candy, onClick: showCandy },
       { cls: 'daycare-link', label: 'Daycare', svg: _ACTION_ICON_SVG.daycare, onClick: showDaycare },
+      { cls: 'eggs-link', label: 'Eggs', svg: _ACTION_ICON_SVG.eggs, onClick: showEggs },
       { cls: 'pokedex-link', label: 'Dex', svg: _ACTION_ICON_SVG.dex, onClick: showPokedex },
     ];
     container.classList.toggle('header-actions-text', !asIcons);
@@ -8163,5 +8503,11 @@
     claimDaycareLoot,
     claimAllDaycareLoot,
     repopulateDaycareTestLoot,
+    // Eggs — read-only for v1 (the incubator + hatch flow lands
+    // in a follow-up slice). addEgg is exposed for completeness so
+    // future code (gifting, trade, debug populators) can drop eggs
+    // into the collection without going through the daycare roll.
+    getEggs: readEggs,
+    addEgg,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
