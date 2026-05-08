@@ -174,10 +174,143 @@ def dominant_egg_color(img: "Image.Image") -> tuple[int, int, int]:
     return counter.most_common(1)[0][0]
 
 
+def _find_pattern_height(img: "Image.Image",
+                         cream_threshold: float = 0.5) -> int:
+    """How many rows from the top count as pattern (i.e. NOT the
+    cream-white egg base). Scans bottom-upward and returns the y
+    just past the first row whose non-cream ratio crosses the
+    threshold — that's where the colored pattern ends and the
+    cream base begins.
+
+    For images with no cream base (autogen-paste fallbacks like
+    Munchlax / Mime Jr., where the whole image is silhouette), the
+    scan never crosses the threshold and we return the full image
+    height — every row is pattern.
+
+    A row is "cream" when ≥ cream_threshold of its OPAQUE pixels
+    are near-white (RGB ≥ 230, with a touch of slack on B for the
+    slight warmth in the PIF cream tone). Transparent pixels are
+    ignored so a row with sparse pattern dots over transparent
+    padding still counts toward the pattern."""
+    rgba = img.convert("RGBA")
+    w, h = rgba.size
+    if w == 0 or h == 0:
+        return h
+    pixels = list(rgba.getdata())
+    for y in range(h - 1, -1, -1):
+        row_start = y * w
+        opaque = 0
+        white = 0
+        for i in range(w):
+            r, g, b, a = pixels[row_start + i]
+            if a < 128:
+                continue
+            opaque += 1
+            if r > 230 and g > 230 and b > 220:
+                white += 1
+        if opaque == 0:
+            continue
+        if white / opaque < cream_threshold:
+            # First row from the bottom that's mostly NOT cream —
+            # pattern ends here (inclusive).
+            return y + 1
+    # Whole image is cream (extremely unusual). Fall back to full
+    # height rather than collapse the crop to nothing.
+    return h
+
+
+def _extend_pattern_to_square(pattern: "Image.Image",
+                              target_size: int) -> "Image.Image":
+    """Aspect-preserving fit + mirror-reflection extension of a
+    pattern into a target_size × target_size canvas.
+
+    The pattern is scaled so its longest side fits target_size
+    (no horizontal-vs-vertical squashing), then the gaps along the
+    shorter side are filled by reflecting the pattern at its
+    edges. Mirror reflection is the classic seamless-extension
+    technique: pixels match across the boundary because the
+    reflected copy's edge IS the original's edge, so the extended
+    texture looks continuous instead of cut off or tiled with
+    visible seams. Repeats the reflection if the gap is larger
+    than the pattern itself, so very-thin source patterns still
+    fill the full canvas without empty space."""
+    pw, ph = pattern.size
+    if pw == 0 or ph == 0:
+        return Image.new("RGBA", (target_size, target_size), (0, 0, 0, 0))
+
+    scale = target_size / max(pw, ph)
+    new_w = max(1, int(round(pw * scale)))
+    new_h = max(1, int(round(ph * scale)))
+    scaled = pattern.resize((new_w, new_h), Image.NEAREST)
+
+    canvas = Image.new("RGBA", (target_size, target_size), (0, 0, 0, 0))
+    ox = (target_size - new_w) // 2
+    oy = (target_size - new_h) // 2
+    canvas.paste(scaled, (ox, oy), scaled)
+
+    flipped_v = scaled.transpose(Image.FLIP_TOP_BOTTOM) if new_h > 0 else None
+    flipped_h = scaled.transpose(Image.FLIP_LEFT_RIGHT) if new_w > 0 else None
+
+    # Vertical extensions. The flipped copy's bottom-row matches the
+    # original's bottom-row at the seam (and top-row to top-row), so
+    # pasting flipped at y=oy-new_h (above) and y=oy+new_h (below)
+    # produces a continuous mirror reflection. Each successive copy
+    # alternates flipped-vs-not as we tile outward.
+    if flipped_v is not None:
+        # Above
+        y = oy - new_h
+        flip = flipped_v
+        unflip = scaled
+        toggle = True
+        while y + new_h > 0:
+            canvas.paste(flip if toggle else unflip, (ox, y),
+                         flip if toggle else unflip)
+            toggle = not toggle
+            y -= new_h
+        # Below
+        y = oy + new_h
+        flip = flipped_v
+        unflip = scaled
+        toggle = True
+        while y < target_size:
+            canvas.paste(flip if toggle else unflip, (ox, y),
+                         flip if toggle else unflip)
+            toggle = not toggle
+            y += new_h
+
+    # Horizontal extensions for the SCALED row of canvas (oy..oy+new_h).
+    # Combined with the vertical mirror tiling above, this only
+    # matters when the pattern is taller than wide — most egg crops
+    # are wider than tall (we take the top 58% of an oval), so this
+    # branch is usually a no-op.
+    if flipped_h is not None:
+        x = ox - new_w
+        flip = flipped_h
+        unflip = scaled
+        toggle = True
+        while x + new_w > 0:
+            canvas.paste(flip if toggle else unflip, (x, oy),
+                         flip if toggle else unflip)
+            toggle = not toggle
+            x -= new_w
+        x = ox + new_w
+        flip = flipped_h
+        unflip = scaled
+        toggle = True
+        while x < target_size:
+            canvas.paste(flip if toggle else unflip, (x, oy),
+                         flip if toggle else unflip)
+            toggle = not toggle
+            x += new_w
+
+    return canvas
+
+
 def make_candy(size: int, egg_top: "Image.Image",
                twist_color: tuple[int, int, int]) -> "Image.Image":
     """Compose a single candy cell — a tinted sphere with a 1 px
-    black outline and the cropped egg pattern showing through.
+    black outline and the cropped egg pattern (aspect-preserved
+    and mirror-extended) showing through.
 
     Drawn at native resolution (no supersample) so the edges stay
     sharp and pixelated, matching the chunky aesthetic of the
@@ -196,31 +329,34 @@ def make_candy(size: int, egg_top: "Image.Image",
     body_r = cx + radius
     body_b = cy + radius
 
-    # Tinted sphere with a soft dark-gray outline. Pure black reads
-    # as harsh against the muted egg-art palette; ~70/70/70 keeps
-    # the silhouette legible without competing visually with the
-    # tinted body.
+    # Tinted sphere with a soft mid-gray outline. Pure black reads
+    # as harsh against the muted egg-art palette; ~110/110/110 sits
+    # softly enough to define the silhouette without competing
+    # visually with the tinted body.
     draw.ellipse(
         (body_l, body_t, body_r, body_b),
         fill=(*twist_color, 255),
-        outline=(70, 70, 70, 255),
+        outline=(110, 110, 110, 255),
         width=1,
     )
 
-    # Inset so the egg paste sits comfortably inside the outline.
+    # Aspect-preserving fit + mirror-reflection extension. Gives the
+    # pattern continuous coverage of the body region without the
+    # squashing that a plain resize-to-square produced (egg patterns
+    # are roughly 2:1 after the top-58% crop, so a square resize
+    # vertically squished them).
     inset = 2
     inner_d = max(1, diameter - inset * 2)
-    # NEAREST so the resize preserves the egg art's chunky source
-    # pixels instead of blurring them under a smooth interpolator.
-    egg_resized = egg_top.resize((inner_d, inner_d), Image.NEAREST)
+    egg_resized = _extend_pattern_to_square(egg_top, inner_d)
 
     # Circular mask at native resolution.
     circle_mask = Image.new("L", (inner_d, inner_d), 0)
     ImageDraw.Draw(circle_mask).ellipse(
         (0, 0, inner_d - 1, inner_d - 1), fill=255)
 
-    # Multiply by the egg's own alpha so transparent padding around
-    # the egg pattern doesn't paste through the sphere's rim.
+    # Multiply by the extended pattern's alpha so any transparent
+    # areas the source had (gaps in the egg art, padding the mirror
+    # inherits) don't paint over the body's tinted backdrop.
     egg_alpha = egg_resized.split()[3]
     combined_mask = ImageChops.multiply(circle_mask, egg_alpha)
 
@@ -287,9 +423,12 @@ def _generate_root_candy(species: int,
         )
     egg_cell = egg_cell.crop(bbox)
 
-    # Top ~58% — the colored species-distinguishing portion, above
-    # the cream/white base most PIF eggs share.
-    top_h = max(8, int(egg_cell.height * 0.58))
+    # Detect where the colored pattern transitions into the cream
+    # base and crop above that. Beats a fixed top-N% ratio because
+    # eggs vary in how tall their colored portion is, and autogen-
+    # paste fallbacks (Munchlax, Mime Jr.) have no cream at all and
+    # benefit from using the whole silhouette as pattern.
+    top_h = max(8, _find_pattern_height(egg_cell))
     egg_top = egg_cell.crop((0, 0, egg_cell.width, top_h))
 
     twist_color = dominant_egg_color(egg_top)
