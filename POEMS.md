@@ -755,3 +755,40 @@ one trainer counting kilometers, the calendar quietly talking. :3
 - `cells.json` is the bundle that "keeps its bytes" — single IDB blob instead of 15 k per-cell rows after the 40-second hang fix.
 - 47 themes is the actual count in `THEMES`. Counted them.
 - The user said "yay tytyty :3" a lot this session. It mattered.
+
+---
+
+# What the Egg Becomes
+
+We started with petals.
+Curved twists for wrappers, then the wrappers fell off,
+then we trimmed the egg's outline back six pixels,
+then twelve, then asked how the boundary should feel —
+softer, dark gray rather than black,
+seventy across the channels, the color of a question mark.
+
+For Pikachu we borrow Pichu's egg,
+the small bright shape that does the work of being base.
+Munchlax has no egg at all, so Munchlax himself
+stands in: silhouette as wrapper, tint as filling.
+Mime Jr. likewise. Happiny rolls into Chansey.
+
+Now Ivysaur shows Bulbasaur's candy.
+Venusaur, too. The family carries the root forward
+and hands every member the same small piece
+of where they came from.
+Eight Eevees pass it around at the end of the line.
+
+We render at the natural size now,
+no upsampling, no anti-aliasing —
+just chunky pixels, an outline width of one,
+a circle that knows what it is.
+
+---
+
+*Small notes, for whoever reads this later:*
+- The candy generator iterated through several silhouettes before settling on a plain sphere with a `width=1` outline at `(70, 70, 70, 255)` — petals → tinted body → no body → just the circle.
+- `OUTLINE_TRIM` started at 6, walked up to 12 — drops the egg's dark border pixels so the inner pattern blends into the wrapper's tinted body without an egg-shaped silhouette inside the candy-shaped silhouette.
+- `BABY_EGG_FALLBACK` is the eleven-entry table that maps gen-1 species to their gen-2+ baby's egg PNG (Pikachu ← Pichu, Clefairy ← Cleffa, Chansey ← Happiny, …). For Munchlax + Mime Jr., where PIF didn't ship a baby egg PNG at all, we fall back to the baby's autogen solo sprite — the silhouette becomes the candy.
+- The two-stage build in `build_candies_sheet` walks reverse-evolutions to find each species' family root, generates one candy per root, then pastes that root's cell into every family member's slot. Eight Eevees get the same Eevee candy.
+- `image-rendering: pixelated` plus a 40-pixel cell size (`EGG_PX // 4`) gives the chunky look. The user said "I don't think we want AA" and they were right.

@@ -15,6 +15,7 @@ Run:
     python3 generate-candy-images.py
 """
 
+import json
 import sys
 from collections import Counter
 from pathlib import Path
@@ -42,6 +43,49 @@ ROOT = Path(__file__).resolve().parent
 OUT_DIR = ROOT / "data" / "BundledData"
 EGGS_PATH = OUT_DIR / "eggs.png"
 CANDIES_PATH = OUT_DIR / "candies.png"
+EVOLUTIONS_PATH = OUT_DIR / "species-evolutions.json"
+
+
+def _load_family_roots() -> dict[int, int]:
+    """Return {species_id: family_root_id} for species 1..MAX_SPECIES.
+
+    Mirrors the JS `familyOf` walk: for each species, follow
+    pre-evolutions (reverse of species-evolutions.json) back to the
+    earliest ancestor reachable in our 1..150 dataset. Babies > 150
+    aren't ingested as sources so the walk terminates at the gen-1
+    root naturally — same outcome candyRootFor produces in
+    creatures.js for our truncated-to-gen-1 data.
+
+    Used to paste root candies into non-root family-member cells so
+    e.g. Ivysaur's and Venusaur's cells both show Bulbasaur's candy
+    art."""
+    if not EVOLUTIONS_PATH.is_file():
+        return {s: s for s in range(1, MAX_SPECIES + 1)}
+    with open(EVOLUTIONS_PATH) as f:
+        evos = json.load(f)
+    rev: dict[int, list[int]] = {}
+    for src_str, evolutions in evos.items():
+        src = int(src_str)
+        for evo in evolutions:
+            if len(evo) < 1:
+                continue
+            target = int(evo[0])
+            rev.setdefault(target, []).append(src)
+    roots: dict[int, int] = {}
+    for s in range(1, MAX_SPECIES + 1):
+        cur = s
+        seen = {cur}
+        while True:
+            pre = rev.get(cur)
+            if not pre:
+                break
+            prev = pre[0]
+            if prev in seen:
+                break
+            seen.add(prev)
+            cur = prev
+        roots[s] = cur
+    return roots
 
 # PIF source directory for per-species egg PNGs — used as a fallback
 # when a gen-1 species' own egg cell is empty (PIF only ships egg art
@@ -185,8 +229,81 @@ def make_candy(size: int, egg_top: "Image.Image",
     return candy
 
 
+def _generate_root_candy(species: int,
+                          eggs_sheet: "Image.Image") -> "Image.Image | None":
+    """Generate a single candy cell for `species`, walking the
+    egg-art / baby-egg / baby-autogen fallback chain. Returns None
+    if no source art is available at any tier."""
+    ecol = species % EGG_COLS
+    erow = species // EGG_COLS
+    egg_cell = eggs_sheet.crop((
+        ecol * EGG_PX,
+        erow * EGG_PX,
+        (ecol + 1) * EGG_PX,
+        (erow + 1) * EGG_PX,
+    ))
+    bbox = egg_cell.getbbox()
+    if not bbox:
+        # PIF only ships egg art for base evolutions, so gen-1
+        # species whose base is a gen-2+ baby (Pichu→Pikachu,
+        # Cleffa→Clefairy, Happiny→Chansey, Munchlax→Snorlax,
+        # MimeJr→Mr.Mime, ...) come through empty. Walk a
+        # waterfall of fallbacks until one provides art.
+        #
+        # Tier 1: baby's egg PNG. Pichu, Cleffa, Happiny etc.
+        # have egg art in PIF — preferred since it matches the
+        # visual style of the rest of the candy sheet.
+        baby = BABY_EGG_FALLBACK.get(species)
+        if baby is not None:
+            baby_path = PIF_EGGS_DIR / f"{baby}.png"
+            if baby_path.is_file():
+                egg_cell = Image.open(baby_path).convert("RGBA")
+                bbox = egg_cell.getbbox()
+        # Tier 2: baby's autogen solo sprite. Munchlax (446) and
+        # Mime Jr. (439) don't have egg PNGs in PIF but do have
+        # autogen sheets, so we use the baby's solo silhouette
+        # rather than falling back to the parent.
+        if not bbox and baby is not None:
+            solo = _autogen_solo_sprite(baby)
+            if solo is not None:
+                egg_cell = solo
+                bbox = egg_cell.getbbox()
+        if not bbox:
+            return None
+    # Shrink the bbox inward — drops the egg's dark outline pixels
+    # plus a wider band of edge color, leaving just the inner
+    # pattern. The pasted pattern then blends cleanly into the
+    # wrapper's tinted body without an egg-shape silhouette.
+    OUTLINE_TRIM = 12
+    bx0, by0, bx1, by1 = bbox
+    bw = bx1 - bx0
+    bh = by1 - by0
+    if bw > OUTLINE_TRIM * 3 and bh > OUTLINE_TRIM * 3:
+        bbox = (
+            bx0 + OUTLINE_TRIM,
+            by0 + OUTLINE_TRIM,
+            bx1 - OUTLINE_TRIM,
+            by1 - OUTLINE_TRIM,
+        )
+    egg_cell = egg_cell.crop(bbox)
+
+    # Top ~58% — the colored species-distinguishing portion, above
+    # the cream/white base most PIF eggs share.
+    top_h = max(8, int(egg_cell.height * 0.58))
+    egg_top = egg_cell.crop((0, 0, egg_cell.width, top_h))
+
+    twist_color = dominant_egg_color(egg_top)
+    return make_candy(CANDY_PX, egg_top, twist_color)
+
+
 def build_candies_sheet() -> tuple[int, int]:
-    """Read eggs.png, generate candy cells, write candies.png.
+    """Read eggs.png, generate candy cells for every gen-1 species,
+    and write candies.png. Each species' cell shows the candy art
+    for its FAMILY ROOT — so e.g. Ivysaur and Venusaur both display
+    Bulbasaur's candy. This matches how candy is bucketed at runtime
+    (every member of a family contributes to / spends from the
+    root's bucket).
+
     Returns (filled, missing) cell counts."""
     if not EGGS_PATH.is_file():
         print(f"error: eggs.png not found at {EGGS_PATH}. Run "
@@ -195,6 +312,7 @@ def build_candies_sheet() -> tuple[int, int]:
         return (0, MAX_SPECIES)
 
     eggs_sheet = Image.open(EGGS_PATH).convert("RGBA")
+    family_roots = _load_family_roots()
 
     out = Image.new(
         "RGBA",
@@ -202,75 +320,30 @@ def build_candies_sheet() -> tuple[int, int]:
         (0, 0, 0, 0),
     )
 
+    # Stage 1: generate the candy cell for every distinct family
+    # root. Cache by root id so we only do the work once per family
+    # even when several members share a root (Eevee → 8 evolutions
+    # all reuse the Eevee candy).
+    root_candies: dict[int, "Image.Image"] = {}
+    for species in range(1, MAX_SPECIES + 1):
+        root = family_roots.get(species, species)
+        if root in root_candies:
+            continue
+        candy = _generate_root_candy(root, eggs_sheet)
+        if candy is not None:
+            root_candies[root] = candy
+
+    # Stage 2: paste the appropriate root's candy into every
+    # member of its family — the root's own cell AND each
+    # evolution's cell. Empty cells are species whose root has
+    # no source art at any fallback tier (rare; visible in the
+    # output sheet so we can spot what still needs fixing).
     filled = 0
     for species in range(1, MAX_SPECIES + 1):
-        ecol = species % EGG_COLS
-        erow = species // EGG_COLS
-        egg_cell = eggs_sheet.crop((
-            ecol * EGG_PX,
-            erow * EGG_PX,
-            (ecol + 1) * EGG_PX,
-            (erow + 1) * EGG_PX,
-        ))
-        bbox = egg_cell.getbbox()
-        if not bbox:
-            # PIF only ships egg art for base evolutions, so gen-1
-            # species whose base is a gen-2+ baby (Pichu→Pikachu,
-            # Cleffa→Clefairy, Happiny→Chansey, Munchlax→Snorlax,
-            # MimeJr→Mr.Mime, ...) come through empty. Walk a
-            # waterfall of fallbacks until one provides art.
-            #
-            # Tier 1: baby's egg PNG. Pichu, Cleffa, Happiny etc.
-            # have egg art in PIF — preferred since it matches the
-            # visual style of the rest of the candy sheet.
-            baby = BABY_EGG_FALLBACK.get(species)
-            if baby is not None:
-                baby_path = PIF_EGGS_DIR / f"{baby}.png"
-                if baby_path.is_file():
-                    egg_cell = Image.open(baby_path).convert("RGBA")
-                    bbox = egg_cell.getbbox()
-            # Tier 2: baby's autogen solo sprite. Munchlax (446)
-            # and Mime Jr. (439) don't have egg PNGs in PIF but
-            # do have autogen sheets, so we use the baby's solo
-            # silhouette rather than falling back to the parent.
-            if not bbox and baby is not None:
-                solo = _autogen_solo_sprite(baby)
-                if solo is not None:
-                    egg_cell = solo
-                    bbox = egg_cell.getbbox()
-            # No further fallback — leave cells blank when neither
-            # an egg PNG nor a baby's art is available. Makes
-            # missing data visually obvious in the candy sheet so
-            # we can spot which species still need a fix.
-            if not bbox:
-                continue
-        # Shrink the bbox inward before cropping — drops the egg's
-        # dark outline pixels (1-2 px wide in PIF art) plus a wider
-        # band of edge color/shading, leaving just the inner
-        # pattern. With the egg silhouette gone the pasted pattern
-        # blends cleanly into the wrapper's tinted body instead of
-        # reading as an egg-shape inside a candy-shape.
-        OUTLINE_TRIM = 12
-        bx0, by0, bx1, by1 = bbox
-        bw = bx1 - bx0
-        bh = by1 - by0
-        if bw > OUTLINE_TRIM * 3 and bh > OUTLINE_TRIM * 3:
-            bbox = (
-                bx0 + OUTLINE_TRIM,
-                by0 + OUTLINE_TRIM,
-                bx1 - OUTLINE_TRIM,
-                by1 - OUTLINE_TRIM,
-            )
-        egg_cell = egg_cell.crop(bbox)
-
-        # Top ~58% — the colored species-distinguishing portion,
-        # above the cream/white base most PIF eggs share.
-        top_h = max(8, int(egg_cell.height * 0.58))
-        egg_top = egg_cell.crop((0, 0, egg_cell.width, top_h))
-
-        twist_color = dominant_egg_color(egg_top)
-        candy = make_candy(CANDY_PX, egg_top, twist_color)
-
+        root = family_roots.get(species, species)
+        candy = root_candies.get(root)
+        if candy is None:
+            continue
         ccol = species % CANDY_COLS
         crow = species // CANDY_COLS
         out.paste(candy, (ccol * CANDY_PX, crow * CANDY_PX), candy)
