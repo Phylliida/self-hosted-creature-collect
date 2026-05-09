@@ -35,6 +35,7 @@ on:
       - 'capacitor.config.json'
       - 'package.json'
       - 'package-lock.json'
+      - 'android-debug.keystore'
       - '.github/workflows/android-build.yml'
 
 jobs:
@@ -294,8 +295,32 @@ jobs:
           done
           echo "  total .svg: $(find "$ASSETS_DIR" -name '*.svg' | wc -l)"
 
-      # `assembleDebug` produces an unsigned-for-release-but-signed-
-      # with-the-debug-keystore APK at:
+      # Stage the project's pinned debug keystore at the location
+      # Android Gradle Plugin auto-detects (~/.android/debug.keystore).
+      # AGP's `debug` build type uses that file with alias
+      # `androiddebugkey` and password `android` by default — same
+      # convention Android Studio creates per-developer-machine.
+      #
+      # Why pin one in the repo: each CI run regenerates the android/
+      # scaffolding from scratch. Without a pinned keystore, every
+      # build would use a new auto-generated cert, and APKs from
+      # different runs would refuse to update each other on-device
+      # (`INSTALL_FAILED_UPDATE_INCOMPATIBLE` — signature mismatch).
+      # Committing one keystore = stable cert across all builds =
+      # `adb install -r -d` works without uninstalling first.
+      #
+      # Safe to commit: this is a *debug* keystore, equivalent to the
+      # one Android Studio auto-generates. Real release signing would
+      # use a separate keystore loaded from a GitHub Actions secret.
+      - name: Stage debug keystore
+        run: |
+          mkdir -p ~/.android
+          cp android-debug.keystore ~/.android/debug.keystore
+          echo "── keystore staged ──"
+          keytool -list -keystore ~/.android/debug.keystore -storepass android \
+            | grep -E "Certificate fingerprint|androiddebugkey"
+
+      # `assembleDebug` produces a debug-keystore-signed APK at:
       #   android/app/build/outputs/apk/debug/app-debug.apk
       # That's the file you sideload.
       - name: Build debug APK
