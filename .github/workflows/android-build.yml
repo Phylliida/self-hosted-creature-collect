@@ -84,6 +84,15 @@ jobs:
             npx cap add android
           fi
           npx cap sync android
+          # `android/app/src/main/assets/public` is the canonical webDir
+          # destination on Android — it's what Capacitor's WebViewClient
+          # AssetsPathHandler reads from for page-originated requests AND
+          # what the ServiceWorkerClient we install in MainActivity.java
+          # below reads from for SW-originated requests. Both paths point
+          # at the same bytes, so once the rsync below finishes, every
+          # asset is reachable identically through either interception
+          # path.
+          #
           # Same icons/fonts directory-dropping bug seen on iOS:
           # Capacitor's sync silently strips top-level directories
           # named `icons/` and `fonts/` from the webDir copy. Without
@@ -100,6 +109,106 @@ jobs:
             n=$(find "$ASSETS_DIR/bundled-data/$d" -type f 2>/dev/null | wc -l)
             echo "    bundled-data/$d: $n files"
           done
+          # Inject geolocation permissions into AndroidManifest.xml.
+          # Capacitor's `cap add android` generates the manifest from
+          # a default template that lacks ACCESS_FINE_LOCATION /
+          # ACCESS_COARSE_LOCATION. The web app uses navigator.geolocation
+          # which on Android is gated by these manifest permissions —
+          # without them the runtime prompt never fires and every fix
+          # silently fails.
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          echo "── patching $MANIFEST for geolocation ──"
+          python3 - <<'PY'
+          import pathlib, re, sys
+          p = pathlib.Path("android/app/src/main/AndroidManifest.xml")
+          text = p.read_text(encoding="utf-8")
+          perms = (
+              '    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n'
+              '    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n'
+          )
+          if "ACCESS_FINE_LOCATION" in text:
+              print("  already present, no change")
+              sys.exit(0)
+          # Insert the two lines right after the opening <manifest …> tag.
+          new = re.sub(r'(<manifest\b[^>]*>\s*\n)', r'\1' + perms, text, count=1)
+          if new == text:
+              print("  ERROR: could not find <manifest> tag", file=sys.stderr)
+              sys.exit(1)
+          p.write_text(new, encoding="utf-8")
+          print("  added ACCESS_FINE_LOCATION + ACCESS_COARSE_LOCATION")
+          PY
+          # Overwrite MainActivity.java with one that wires up a
+          # ServiceWorkerClient delegating to a parallel WebViewAssetLoader.
+          # Background: Android WebView has TWO request-interception paths.
+          # `WebViewClient.shouldInterceptRequest` handles requests
+          # originated by the page; Capacitor wires that one to its asset
+          # loader. `ServiceWorkerController.shouldInterceptRequest`
+          # (separate API) handles requests originated from inside a
+          # Service Worker — including the SW script-fetch itself. Capacitor
+          # leaves the latter unconfigured, so SW registration fails
+          # against `https://localhost/sw.js` with the generic Chromium
+          # message "An unknown error occurred when fetching the script"
+          # even though the script is reachable via `WebViewClient`. The
+          # same fix Cordova shipped in
+          # ionic-team/cordova-plugin-ionic-webview#452: install a
+          # ServiceWorkerClient backed by an equivalent
+          # WebViewAssetLoader. Once registered, all SW-originated fetches
+          # resolve via assets/public/, matching the WebViewClient path.
+          # External URLs (e.g., tile-server downloads) fall through and
+          # hit the network as expected.
+          echo "── writing MainActivity.java with SW bridge ──"
+          python3 - <<'PY'
+          import json, pathlib
+          cfg = json.loads(pathlib.Path("capacitor.config.json").read_text())
+          app_id = cfg["appId"]                       # e.g. org.phylliidaassets.creaturecollect
+          pkg_dir = pathlib.Path("android/app/src/main/java") / pathlib.Path(*app_id.split("."))
+          pkg_dir.mkdir(parents=True, exist_ok=True)
+          main_activity = pkg_dir / "MainActivity.java"
+          main_activity.write_text(f"""package {app_id};
+
+          import android.os.Bundle;
+          import android.webkit.WebResourceRequest;
+          import android.webkit.WebResourceResponse;
+
+          import androidx.webkit.ServiceWorkerClientCompat;
+          import androidx.webkit.ServiceWorkerControllerCompat;
+          import androidx.webkit.WebViewAssetLoader;
+          import androidx.webkit.WebViewFeature;
+
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {{
+              @Override
+              public void onCreate(Bundle savedInstanceState) {{
+                  super.onCreate(savedInstanceState);
+                  // Capacitor wires WebViewAssetLoader for page-originated
+                  // requests via WebViewClient. SW-originated requests
+                  // (script load + fetch handlers) take a separate
+                  // interception path through ServiceWorkerController.
+                  // Without an explicit ServiceWorkerClient those fail
+                  // with Chromium's generic "unknown error" message and
+                  // SW registration is impossible. This installs a
+                  // parallel asset loader on the SW path so /sw.js
+                  // resolves and the SW can take over offline caching.
+                  if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BASIC_USAGE)) {{
+                      final WebViewAssetLoader loader = new WebViewAssetLoader.Builder()
+                          .setDomain("localhost")
+                          .addPathHandler("/", new WebViewAssetLoader.AssetsPathHandler(this, "public"))
+                          .build();
+                      ServiceWorkerControllerCompat.getInstance().setServiceWorkerClient(
+                          new ServiceWorkerClientCompat() {{
+                              @Override
+                              public WebResourceResponse shouldInterceptRequest(WebResourceRequest request) {{
+                                  return loader.shouldInterceptRequest(request.getUrl());
+                              }}
+                          }}
+                      );
+                  }}
+              }}
+          }}
+          """, encoding="utf-8")
+          print(f"  wrote {main_activity}")
+          PY
 
       - name: Debug — assets folder after cap sync
         run: |
