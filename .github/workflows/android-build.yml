@@ -242,9 +242,25 @@ jobs:
                           new WebViewAssetLoader.PathHandler() {{
                               @Override
                               public WebResourceResponse handle(@NonNull String path) {{
+                                  // Directory-index resolution: an empty path
+                                  // ("/" stripped of the registered prefix)
+                                  // or any trailing-slash path resolves to
+                                  // index.html — same convention every
+                                  // static file server uses. Without this
+                                  // the navigation to `/` (which the SW
+                                  // intercepts and forwards through this
+                                  // handler) tries to open the directory
+                                  // `public/` as a stream and throws,
+                                  // breaking the page load with
+                                  // net::ERR_FAILED on every refresh once
+                                  // the SW is active.
+                                  String assetPath = "public/" + path;
+                                  if (path.isEmpty() || path.endsWith("/")) {{
+                                      assetPath = assetPath + "index.html";
+                                  }}
                                   try {{
-                                      InputStream is = getAssets().open("public/" + path);
-                                      String ext = MimeTypeMap.getFileExtensionFromUrl(path);
+                                      InputStream is = getAssets().open(assetPath);
+                                      String ext = MimeTypeMap.getFileExtensionFromUrl(assetPath);
                                       String mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext);
                                       if (mime == null) mime = "application/octet-stream";
                                       return new WebResourceResponse(mime, null, is);
