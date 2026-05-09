@@ -109,6 +109,37 @@ jobs:
             n=$(find "$ASSETS_DIR/bundled-data/$d" -type f 2>/dev/null | wc -l)
             echo "    bundled-data/$d: $n files"
           done
+          # Add an explicit androidx.webkit dependency to the app
+          # module. Capacitor declares webkit with `implementation`
+          # (not `api`) on its own module, which keeps it private to
+          # Capacitor's classpath — the app module compiling
+          # MainActivity.java can't see ServiceWorkerControllerCompat /
+          # ServiceWorkerClientCompat / WebViewAssetLoader symbols
+          # without its own dep. `$androidxWebkitVersion` is defined
+          # in the generated variables.gradle (1.10.0+ at the time of
+          # writing), so we reuse it to stay in lockstep with whatever
+          # Capacitor pinned.
+          APP_GRADLE=android/app/build.gradle
+          echo "── patching $APP_GRADLE for androidx.webkit ──"
+          python3 - <<'PY'
+          import pathlib, re, sys
+          p = pathlib.Path("android/app/build.gradle")
+          text = p.read_text(encoding="utf-8")
+          if 'androidx.webkit:webkit' in text:
+              print("  already present, no change")
+              sys.exit(0)
+          # Insert right after the capacitor-android project dep, which
+          # is the canonical anchor in the generated build.gradle.
+          dep_line = '    implementation "androidx.webkit:webkit:$androidxWebkitVersion"\n'
+          new = re.sub(
+              r"(implementation project\(':capacitor-android'\)\s*\n)",
+              r"\1" + dep_line, text, count=1)
+          if new == text:
+              print("  ERROR: couldn't find capacitor-android dep anchor", file=sys.stderr)
+              sys.exit(1)
+          p.write_text(new, encoding="utf-8")
+          print("  added androidx.webkit:webkit dependency")
+          PY
           # Inject geolocation permissions into AndroidManifest.xml.
           # Capacitor's `cap add android` generates the manifest from
           # a default template that lacks ACCESS_FINE_LOCATION /
