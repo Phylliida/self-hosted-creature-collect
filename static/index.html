@@ -66,6 +66,36 @@
   #welcomeDone:disabled { cursor: wait; }
   #welcomeStatus { margin-top: 10px; font-size: 12px; color: var(--ui-muted);
                    min-height: 14px; }
+  /* Sprite eager-crop overlay — same modal shape as #welcome but
+     no buttons (auto-dismiss when bulkDownload completes). */
+  #spritePrep {
+    position: fixed; inset: 0; z-index: 51; display: none;
+    justify-content: center; align-items: center;
+    background: rgba(0, 0, 0, 0.55);
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+            env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  #spritePrep.show { display: flex; }
+  #spritePrep .card {
+    background: var(--ui-bg); border-radius: var(--ui-radius); padding: 24px;
+    max-width: 320px; width: 92%; box-sizing: border-box;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.35);
+    text-align: center; color: var(--ui-text); font-size: 14px; line-height: 1.45;
+  }
+  #spritePrep h2 { margin: 0 0 10px; font-size: 18px; }
+  #spritePrep p { margin: 0 0 14px; color: var(--ui-muted); }
+  #spritePrepBar {
+    width: 100%; height: 8px; background: var(--ui-hairline, rgba(0,0,0,0.10));
+    border-radius: 999px; overflow: hidden; margin-bottom: 8px;
+  }
+  #spritePrepFill {
+    height: 100%; width: 0%; background: var(--ui-accent, #888);
+    transition: width 240ms ease;
+  }
+  #spritePrepStatus {
+    font-size: 12px; color: var(--ui-muted); min-height: 14px;
+    font-variant-numeric: tabular-nums;
+  }
 
   /* ============================================================
      GENERIC UI THEME VARS — each theme's `ui` dict fills these in
@@ -3171,6 +3201,23 @@
        visit.</p>
     <button id="welcomeDone" hidden>Got it!</button>
     <div id="welcomeStatus"></div>
+  </div>
+</div>
+<!-- First-launch sprite eager-crop overlay (Capacitor only). The
+     bundled APK/IPA ships sprite sheets but not pre-cropped per-cell
+     blobs — without this step, IDB starts empty and gets populated
+     lazily on each marker render, which leaves wild creatures as red
+     dots until the lazy-crop completes per cell (sometimes never, on
+     iOS WKWebView's flaky timing). Doing the crop ONCE at first
+     launch primes IDB so every subsequent render is a synchronous
+     cache hit. -->
+<div id="spritePrep">
+  <div class="card">
+    <h2>Setting up creatures…</h2>
+    <p>One-time prep so wild pokémon appear instantly on the map.
+       This takes about 30 seconds and only runs once.</p>
+    <div id="spritePrepBar"><div id="spritePrepFill"></div></div>
+    <div id="spritePrepStatus"></div>
   </div>
 </div>
 <div id="panel">
@@ -10729,6 +10776,64 @@ function fmtDate(ts) {
     localStorage.setItem('cc.iconsDownloaded', '1');
     localStorage.setItem('cc.baseMapDownloaded', '1');
     localStorage.setItem('cc.welcomeSeen', '1');
+  }
+  // First-launch sprite import (Capacitor only). The bundled
+  // APK/IPA ships pre-cropped binary "packs" (one per partner) at
+  // /bundled-data/sprite-packs/<b>.pack, generated at CI build time
+  // by generate_sprite_packs.py. Each pack carries every (a, variant)
+  // cell as tight-bbox PNG bytes plus a small index — runtime work
+  // is fetch + DataView parse + Blob slice + ONE bulk IDB transaction
+  // per pack. No PNG decode, no canvas, no on-device cropping. The
+  // ~30-60 s decode-and-crop step is moved to CI; first launch on
+  // iOS becomes ~5 s instead.
+  //
+  // Resume-aware: bulkImportPacks's per-pack writes are idempotent
+  // (idbPut overwrites), so an interrupted run can re-import without
+  // corruption. Gated on cc.spritesPreCropped.v1 so the overlay only
+  // appears until the FIRST successful completion.
+  if (window.Capacitor
+      && localStorage.getItem('cc.spritesPreCropped.v1') !== '1'
+      && typeof window.Sprites !== 'undefined') {
+    (async () => {
+      const overlay = document.getElementById('spritePrep');
+      const fillEl = document.getElementById('spritePrepFill');
+      const statusEl = document.getElementById('spritePrepStatus');
+      if (overlay) overlay.classList.add('show');
+      try {
+        if (window.Species && typeof window.Species.ensureLoaded === 'function') {
+          try { await window.Species.ensureLoaded(); } catch {}
+        }
+        await window.Sprites.bulkImportPacks({
+          sheetFrom: 1, sheetTo: 150,
+          onProgress: (p) => {
+            if (!fillEl || !statusEl) return;
+            const sheetTotal = p.sheetsTotal || 1;
+            const sheetsDone = p.sheetsDone || 0;
+            const pct = Math.round((sheetsDone / sheetTotal) * 100);
+            fillEl.style.width = `${pct}%`;
+            statusEl.textContent =
+              `creature sprites ${sheetsDone}/${sheetTotal}`;
+          },
+        });
+        localStorage.setItem('cc.spritesPreCropped.v1', '1');
+        // Wake any markers that rendered as red dots while the
+        // eager-crop was in flight (the modal scrim is non-blocking
+        // for rendering — markers can paint behind it). Every
+        // relevant sprite is now in IDB so a retry resolves
+        // synchronously to a cache hit. creatures.js listens for
+        // this event and loops _markers, calling loadMarkerSprite
+        // on any still-unloaded record.
+        try {
+          window.dispatchEvent(new CustomEvent('cc-sprites-bulk-ready'));
+        } catch {}
+      } catch (e) {
+        // Don't block startup — markers will fall back to the
+        // lazy-crop path and the user can retry on next launch.
+        console.error('[sprite-prep] bulkDownload failed:', e);
+      } finally {
+        if (overlay) overlay.classList.remove('show');
+      }
+    })();
   }
   const welcomeEl = document.getElementById('welcome');
   const welcomeStart = document.getElementById('welcomeStart');

@@ -123,6 +123,23 @@
   const varGet  = (key)        => _idbReq(STORE_VARIANTS, 'readonly',  (s) => s.get(key));
   const varPut  = (key, value) => _idbReq(STORE_VARIANTS, 'readwrite', (s) => s.put(value, key));
 
+  // Batched IDB writes — every `items` entry goes in one transaction.
+  // On iOS WKWebView each idbPut opens its own transaction, so a
+  // 22 500-cell sprite import via per-cell idbPut spends most of its
+  // wall-clock on transaction setup. Bulk-putting one pack's ~150
+  // cells per transaction collapses that to ~150 transactions and
+  // makes the first-launch import seconds instead of minutes.
+  function _idbBulkPut(store, items) {
+    return openDb().then((db) => new Promise((resolve, reject) => {
+      const tx = db.transaction(store, 'readwrite');
+      const objStore = tx.objectStore(store);
+      for (const it of items) objStore.put(it.value, it.key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    }));
+  }
+
   // LRU of decoded sheet ImageBitmaps. Keyed by URL. Used by both
   // bulk download and lazy-crop on render. Eviction is FIFO via the
   // Map insertion order — touch a key to push it to the back of the
@@ -1336,6 +1353,114 @@
     };
   }
 
+  // Fast-path first-launch sprite import using pre-cropped binary
+  // packs at `<BUNDLED_BASE>/sprite-packs/<b>.pack`. Each pack carries
+  // every (a, variant) cell for partner b as tight-bbox PNG bytes
+  // plus a small index — runtime work is fetch + DataView parse +
+  // Blob slice + ONE bulk IDB transaction per pack. No PNG decode,
+  // no canvas, no alpha-scan, no per-cell IDB overhead.
+  //
+  // Capacitor-only — packs live in the bundle; web mode keeps using
+  // bulkDownload via the welcome flow. The packs are produced at
+  // build time by generate_sprite_packs.py from the same source
+  // sheets bulkDownload would otherwise crop on-device, so the IDB
+  // state ends up identical to a sheet-based bulkDownload.
+  //
+  // Pack format (must match generate_sprite_packs.py):
+  //   Magic 4 bytes 'CRPP'
+  //   u32 LE   cell_count
+  //   N × 16 B (u32 a, i32 variant, u32 offset, u32 length)  index
+  //   PNG payload bytes
+  //
+  // opts:
+  //   sheetFrom / sheetTo : partner-B range (1..150 by default)
+  //   signal              : AbortSignal — caller can cancel
+  //   onProgress({ sheetsDone, sheetsTotal, currentSheet, phase })
+  async function bulkImportPacks(opts = {}) {
+    const sheetFrom = opts.sheetFrom || 1;
+    const sheetTo = opts.sheetTo || 150;
+    const signal = opts.signal;
+    const onProgress = opts.onProgress || (() => {});
+    const totalSheets = sheetTo - sheetFrom + 1;
+    const PACK_MAGIC_BE = 0x43525050;  // 'CRPP' read as big-endian u32
+
+    let imported = 0;
+    let totalCells = 0;
+    for (let b = sheetFrom; b <= sheetTo; b++) {
+      if (signal && signal.aborted) return { cancelled: true };
+      onProgress({
+        sheetsDone: imported, sheetsTotal: totalSheets,
+        currentSheet: b, phase: 'fetching',
+      });
+
+      let buf;
+      try {
+        const url = `${BUNDLED_BASE}/sprite-packs/${b}.pack`;
+        const resp = await fetch(url);
+        if (!resp.ok) {
+          // Pack absent (e.g., partner had no autogen art) — treat
+          // as a clean skip, mark as done so future runs don't retry.
+          markSheetDownloaded(b);
+          markCustomDone(b);
+          imported++;
+          continue;
+        }
+        buf = await resp.arrayBuffer();
+      } catch (e) {
+        _logSpriteError(`bulkImportPacks/fetch/${b}`, e);
+        continue;
+      }
+
+      const view = new DataView(buf);
+      if (buf.byteLength < 8 || view.getUint32(0, false) !== PACK_MAGIC_BE) {
+        _logSpriteError(`bulkImportPacks/badMagic/${b}`,
+          new Error(`pack ${b} bad magic (got ${view.getUint32(0, false).toString(16)})`));
+        continue;
+      }
+      const cellCount = view.getUint32(4, true);
+      const indexStart = 8;
+      const payloadStart = indexStart + cellCount * 16;
+      if (buf.byteLength < payloadStart) {
+        _logSpriteError(`bulkImportPacks/truncated/${b}`,
+          new Error(`pack ${b} index truncated`));
+        continue;
+      }
+
+      const items = new Array(cellCount);
+      for (let i = 0; i < cellCount; i++) {
+        const off = indexStart + i * 16;
+        const a = view.getUint32(off, true);
+        const variant = view.getInt32(off + 4, true);
+        const dataOffset = view.getUint32(off + 8, true);
+        const dataLength = view.getUint32(off + 12, true);
+        // Subarray is a view (no copy); Blob ctor will copy into the
+        // Blob's own backing once. ArrayBuffer becomes GC-eligible
+        // after this loop's enclosing iteration ends.
+        const slice = new Uint8Array(buf, payloadStart + dataOffset, dataLength);
+        const blob = new Blob([slice], { type: 'image/png' });
+        const key = variant < 0 ? autogenKey(a, b) : customKey(a, b, variant);
+        items[i] = { key, value: blob };
+      }
+
+      try {
+        await _idbBulkPut(STORE_ICONS, items);
+      } catch (e) {
+        _logSpriteError(`bulkImportPacks/idbBulkPut/${b}`, e);
+        continue;
+      }
+
+      markSheetDownloaded(b);
+      markCustomDone(b);
+      imported++;
+      totalCells += cellCount;
+      onProgress({
+        sheetsDone: imported, sheetsTotal: totalSheets,
+        currentSheet: b, phase: 'imported',
+      });
+    }
+    return { cancelled: false, imported, totalCells };
+  }
+
   // opts:
   //   sheetFrom / sheetTo: partner-B sheet range (1..150 by default)
   //   indexFrom / indexTo: partner-A crop range (1..150)
@@ -1597,7 +1722,7 @@
     getDefaultSpriteUrl, getDefaultSpriteBlob,
     useSpriteInto, useSpritesIntoBatch,
     getCellVariantCount, getCellVariantCountsBatch,
-    bulkDownload, getDownloadedSheets, getDownloadStatus, deleteAllSprites,
+    bulkDownload, bulkImportPacks, getDownloadedSheets, getDownloadStatus, deleteAllSprites,
     getCustomManifest,
     getInflightCount,
     rebuildVariantSummary: _writeVariantSummary,
