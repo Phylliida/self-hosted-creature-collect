@@ -84,7 +84,9 @@ pkgs.mkShell {
     # ── Android build toolchain ────────────────────────────────
     jdk17
     androidSdk
-    android-tools  # adb, fastboot
+    android-tools  # adb, fastboot — adb is also used by
+                   # install_android.sh to push the downloaded APK
+                   # to a USB-connected phone.
     gradle         # the project ships a wrapper, but a system gradle
                    # is handy for `gradle tasks` and one-off invocations
 
@@ -98,8 +100,10 @@ pkgs.mkShell {
     #    linking workaround is needed (steam-run/nix-ld).
     iloader
 
-    # ── GitHub CLI (used by install-ipa.sh to fetch the latest
-    #    workflow artifact). One-time: `gh auth login`.
+    # ── GitHub CLI (used by install-ipa.sh and install_android.sh
+    #    to fetch the latest workflow artifacts — IPA from
+    #    ios-build.yml, APK from android-build.yml). One-time:
+    #    `gh auth login`.
     gh
   ];
 

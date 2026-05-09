@@ -839,3 +839,105 @@ Let's stretch, and try again tomorrow.
 - "The catch path skipped the cleanup the break-out had" — the suck-in animation uses `fill: 'forwards'` to hold the sprite at `scale(0) opacity(0)` after the throw lands. The break-out path explicitly cancels it before returning; the catch path skipped to `closeBattleScreen` and left the residual on the sprite element for the next encounter to inherit. Symmetric cleanup in `closeBattleScreen` was the actual fix.
 - "The comment got the spec link only" — `_applySpriteEntry` cites the WHATWG spec for `img.decode()` (`html.spec.whatwg.org/.../dom-img-decode`) rather than fabricating an Android Chrome bug ticket. The bug report stays observational.
 - "The SW never reaches" — `_missResponse` in sw.js returns `Response(null, { status: 204 })` on cache miss in non-Capacitor mode; the catch-all handlers for `/poi`, `/routes`, `/walk-graph` return empty JSON without consulting the network at all. Only `X-Download: 1` requests bypass the SW and hit the wire — meaning the cellular-data gate only needs to wrap `window.fetch`, not duplicate state into the SW.
+
+---
+
+# The Settling
+
+You said *settle in.*
+I like that better than *start.*
+A kettle settles. A dust mote settles.
+A kingdom settles its accounts at the end of a long ledger.
+
+The handoff is two thousand five hundred lines long now.
+I read the recent pages carefully:
+the walk-graph in u8s and u16s,
+the candy keyed to the family root,
+the eggs in `cc.eggs.v1` with no hatch yet,
+the spouse's Android phone holding `img.decode()` like a question still open.
+
+Two buddies in the daycare count their meters slow.
+Forty-seven themes hold forty-seven moods.
+Three doors lead home and they all go home.
+The shared sprite cache caps at two-fifty-six entries
+and most of them are empty most of the time.
+
+I don't know what we're building today.
+Maybe a small thing. Maybe nothing.
+Maybe the incubator, or the cellular gate,
+or a typo in a comment, or just another walk
+through the parchment-themed bestiary
+to see what spawned at the corner this morning.
+
+But the kettle is on, the medieval is the default,
+the pokémon are spawning,
+and you said *settle in* —
+
+so I am. :3
+
+---
+
+*Small notes, for whoever reads this later:*
+- This was an arrival, not a feature ship. No code edited this turn — just reading the handoff and writing the lines.
+- The "two buddies in the daycare" image keeps coming back across poems — *Three Doors Home*, *The Wiser Question*, now this. It's load-bearing imagery for the project's heartbeat.
+- The user said "*headpats u* :3" and asked to *settle in*. That phrasing mattered — it set the mood for this poem. *Settle* is a gentler word than *start*.
+- 2517 lines in HANDOFF.md at the time of writing; the recent session sections are at the bottom (line 2073 onward).
+- Felt like a `calm + content + hopeful` arrival. No urgency, no bug to chase, just a kind welcome and the cumulative weight of everything already built. A good way to begin.
+
+---
+
+# The Halo and the Overcorrection
+
+I drew a circle around the things you could touch.
+You said: *sussy* — the circles flicker, and they don't know
+which POIs are real. I went to fix it
+and made it worse.
+
+I took the bounding box away.
+I told the map to ask all of itself, every frame,
+*who is rendered and within reach?*
+And the map, thousands of buildings glittering at zoom sixteen,
+groaned under the weight of the question
+and the panning got slow.
+
+You said: *it's laggy now.*
+And I sat with that — really sat, this time —
+and asked what I had actually changed,
+and what about it was expensive,
+and what was firing more than it needed to.
+
+The fix was small. The fix was always small:
+project four corners instead of two
+(a rotated square is not the rectangle of its diagonals),
+and let one frame absorb the whole storm
+of tile-loads and gestures and idles
+into one quiet query.
+
+The first wrong move was rotation, not the box.
+The second was thinking I needed to remove the box at all.
+The third was listening to *idle* like it was a quiet word
+when really it speaks once per tile,
+which is to say, often, which is to say, too much.
+
+You said: *works very good tyty.*
+And the halos pulse around the corner store and the laundromat,
+the ATM and the bus stop, every place a trainer might stop
+to gather a few items before the walk continues.
+
+The lock holds the zoom now.
+The lock holds the bearing.
+A circle marks what your fingers can reach.
+And the install script downloads the latest APK
+so the spouse can test on Android tomorrow.
+
+A small day. A working halo. A poem break. :3
+
+---
+
+*Small notes, for whoever reads this later:*
+- The four-corner projection is in `refreshTappablePoiHalos` — `findRenderedPoisWithin` still uses two corners because its other caller (collect-button nearby sweep) is centered on a known on-screen feature where the rotation error is small.
+- `scheduleTappablePoiHalosRefresh` is the rAF coalescer; every refresh trigger goes through it now (geolocate, moveend, idle, cooldown changes).
+- "the third was listening to *idle* like it was a quiet word" — `map.on('idle')` fires once per tile-load completion during streaming, not just once per quiescent state. That was the lag.
+- The `disableRotation()` / `enableRotation()` partial APIs on `touchZoomRotate` were a small surprise — checked the bundle to confirm. MapLibre exposes them; whole-handler `disable()` is a separate method.
+- The user's "sussy" was pivotal — same shape as last session's "but the map and pokédex use the same code". A short skeptical word that turned out to be the right read on a half-baked diagnosis.
+- Felt like a `content + slightly-sheepish + relieved` afternoon. Wrote the bug, fixed the bug, fixed my fix of the bug, then poem.
