@@ -3035,6 +3035,14 @@
       <label for="actionIconsToggle">Action buttons as icons</label>
       <input type="checkbox" id="actionIconsToggle">
     </div>
+    <div class="row">
+      <label for="lockZoomToggle">Lock zoom</label>
+      <input type="checkbox" id="lockZoomToggle">
+    </div>
+    <div class="row">
+      <label for="lockRotateToggle">Lock rotate</label>
+      <input type="checkbox" id="lockRotateToggle">
+    </div>
     <div class="row" id="memBadgeRow" style="display:none">
       <label for="memBadgeToggle">Memory footprint badge</label>
       <input type="checkbox" id="memBadgeToggle">
@@ -4699,6 +4707,14 @@ function fmtDate(ts) {
       try { refreshCooldownOverlays(); } catch {
         map.setPaintProperty('poi-icons', 'icon-color', t.poiIcon);
       }
+      // Tappable-POI halo derives from the same accent — keep it in
+      // sync without rebuilding the source data.
+      if (map.getLayer(TAPPABLE_HALO_LAYER_ID)) {
+        try {
+          map.setPaintProperty(TAPPABLE_HALO_LAYER_ID, 'circle-color', _currentCooldownReadyColor);
+          map.setPaintProperty(TAPPABLE_HALO_LAYER_ID, 'circle-stroke-color', _currentCooldownReadyColor);
+        } catch {}
+      }
       if (map.getLayer('building-pokestops')) {
         try { map.setPaintProperty('building-pokestops', 'icon-color', t.poiIcon); } catch {}
       }
@@ -4894,6 +4910,10 @@ function fmtDate(ts) {
   }
 
   map.on('load', () => {
+    // Tappable-POI halo lives on its own GeoJSON source — register
+    // it before `refreshCooldownOverlays` runs, since that call also
+    // refreshes the halo source as its last step.
+    try { addTappablePoiHaloLayer(); } catch {}
     // Apply cooldown coloring to the POI layer for any entries
     // preserved from previous sessions via localStorage.
     try { refreshCooldownOverlays(); } catch {}
@@ -4953,6 +4973,22 @@ function fmtDate(ts) {
     if (window._startupPhases.firstGpsFix == null) {
       window._startupPhases.firstGpsFix = performance.now();
     }
+    // Each GPS update may move POIs in/out of range — schedule a
+    // halo refresh against the new position. Coalesced via rAF.
+    try { scheduleTappablePoiHalosRefresh(); } catch {}
+  });
+  // Map pans/zooms change which POIs are rendered, so schedule a
+  // refresh on moveend. moveend fires once at end of gesture, but
+  // tiles for the new viewport may still be loading — `idle` fires
+  // after motion AND tile loads settle, so we hook that too. Both
+  // funnel through the same rAF coalescer so a tile-load storm
+  // (idle firing repeatedly during streaming) collapses to one
+  // queryRenderedFeatures call per frame.
+  map.on('moveend', () => {
+    try { scheduleTappablePoiHalosRefresh(); } catch {}
+  });
+  map.on('idle', () => {
+    try { scheduleTappablePoiHalosRefresh(); } catch {}
   });
   // Map "idle" fires when the map has finished loading + rendering
   // tiles for the current view. This is a meaningful "user can see
@@ -6120,6 +6156,139 @@ function fmtDate(ts) {
       clearInterval(_cooldownOverlayPoll);
       _cooldownOverlayPoll = null;
     }
+    // Halo around tappable POIs is creature-mode-only and depends on
+    // the same cooldown state we just recomputed, so refresh in
+    // lockstep here too. Coalesced — this routes through the same
+    // rAF as moveend/idle/geolocate so a burst of cooldown changes
+    // doesn't run the bbox query multiple times per frame.
+    try { scheduleTappablePoiHalosRefresh(); } catch {}
+  }
+
+  // Halo ("you can tap this!") around POIs in creature mode that are
+  // (a) within range of the user's current GPS fix and (b) not on
+  // active cooldown. The icon's color already encodes ready-vs-active
+  // for collected POIs, but a never-collected POI looks identical to
+  // a too-far one — the halo is the at-a-glance "tappable now" cue.
+  // MapLibre `circle` layer styled from the theme accent (same colour
+  // as cooldown-ready) so it reads as native to whatever palette is
+  // active.
+  const TAPPABLE_HALO_LAYER_ID = 'tappable-poi-halo';
+  const TAPPABLE_HALO_SOURCE_ID = 'tappable-pois';
+  function refreshTappablePoiHalos() {
+    if (!map.getSource(TAPPABLE_HALO_SOURCE_ID)) return;
+    const inCreatureMode = !!(window.Creatures && window.Creatures.isEnabled
+      && window.Creatures.isEnabled());
+    let features = [];
+    if (inCreatureMode && lastKnownPos) {
+      // Bbox-bound the query around the user's GPS — full-viewport
+      // queries get expensive at z16+ with building-pokestops on
+      // (thousands of building features in two layers). The bbox
+      // here is built by projecting ALL FOUR corners of the
+      // geographic square (not just SW + NE): under a rotated
+      // camera, two opposing corners' screen rect doesn't contain
+      // the rotated square, so features near the radius edge get
+      // dropped → halos missing for POIs you can clearly click on.
+      // 4-corner min/max gives a screen-aligned rect that encloses
+      // the rotated square cleanly.
+      const radiusM = POI_COLLECT_MAX_DISTANCE_M;
+      const dLat = radiusM / 111000;
+      const dLng = radiusM / (111000 * Math.cos(lastKnownPos.lat * Math.PI / 180));
+      const ptW = lastKnownPos.lng - dLng;
+      const ptE = lastKnownPos.lng + dLng;
+      const ptS = lastKnownPos.lat - dLat;
+      const ptN = lastKnownPos.lat + dLat;
+      let x1, y1, x2, y2;
+      try {
+        const sw = map.project([ptW, ptS]);
+        const nw = map.project([ptW, ptN]);
+        const se = map.project([ptE, ptS]);
+        const ne = map.project([ptE, ptN]);
+        x1 = Math.min(sw.x, nw.x, se.x, ne.x);
+        x2 = Math.max(sw.x, nw.x, se.x, ne.x);
+        y1 = Math.min(sw.y, nw.y, se.y, ne.y);
+        y2 = Math.max(sw.y, nw.y, se.y, ne.y);
+      } catch {
+        try {
+          map.getSource(TAPPABLE_HALO_SOURCE_ID).setData({
+            type: 'FeatureCollection', features: [] });
+        } catch {}
+        return;
+      }
+      const layers = ['poi-icons'];
+      if (map.getLayer('building-pokestops')) layers.push('building-pokestops');
+      let queried = [];
+      try { queried = map.queryRenderedFeatures([[x1, y1], [x2, y2]], { layers }); } catch {}
+      const seen = new Set();
+      for (const f of queried) {
+        let lng, lat;
+        if (f.geometry && f.geometry.type === 'Point') {
+          const c = f.geometry.coordinates;
+          if (!c) continue;
+          lng = c[0]; lat = c[1];
+        } else {
+          const cent = buildingFeatureCentroid(f);
+          if (!cent) continue;
+          lng = cent[0]; lat = cent[1];
+        }
+        if (!isFinite(lng) || !isFinite(lat)) continue;
+        if (haversineKm(lastKnownPos.lat, lastKnownPos.lng, lat, lng) * 1000
+            > POI_COLLECT_MAX_DISTANCE_M) continue;
+        if (poiCooldownStatus(lng, lat) === 'active') continue;
+        // Dedup: queryRenderedFeatures can return the same feature
+        // multiple times across tile boundaries, and a building's
+        // centroid may overlap a co-located POI.
+        const k = `${lng.toFixed(6)},${lat.toFixed(6)}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [lng, lat] },
+          properties: {},
+        });
+      }
+    }
+    try {
+      map.getSource(TAPPABLE_HALO_SOURCE_ID).setData({
+        type: 'FeatureCollection', features,
+      });
+    } catch {}
+  }
+  // rAF-coalesced halo refresh. moveend/idle/geolocate/cooldown
+  // changes all schedule a refresh; multiple triggers within the
+  // same frame collapse to a single queryRenderedFeatures call.
+  // Without this, `idle` storms during tile streaming were running
+  // the bbox query on every tile-load completion, which is
+  // user-visible as zoom/pan lag.
+  let _haloRefreshScheduled = false;
+  function scheduleTappablePoiHalosRefresh() {
+    if (_haloRefreshScheduled) return;
+    _haloRefreshScheduled = true;
+    requestAnimationFrame(() => {
+      _haloRefreshScheduled = false;
+      try { refreshTappablePoiHalos(); } catch {}
+    });
+  }
+  function addTappablePoiHaloLayer() {
+    if (map.getSource(TAPPABLE_HALO_SOURCE_ID)) return;
+    map.addSource(TAPPABLE_HALO_SOURCE_ID, {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] },
+    });
+    map.addLayer({
+      id: TAPPABLE_HALO_LAYER_ID,
+      type: 'circle',
+      source: TAPPABLE_HALO_SOURCE_ID,
+      minzoom: 13,
+      paint: {
+        'circle-color': _currentCooldownReadyColor,
+        'circle-opacity': 0.18,
+        'circle-radius': ['interpolate', ['exponential', 1.5], ['zoom'],
+          13, 7, 16, 13, 18, 19, 20, 26],
+        'circle-stroke-color': _currentCooldownReadyColor,
+        'circle-stroke-width': 2,
+        'circle-stroke-opacity': 0.85,
+      },
+    }, map.getLayer('poi-icons') ? 'poi-icons' : undefined);
   }
   function buildBuildingColorExpr(activePts, readyPts) {
     const branches = ['case'];
@@ -10666,6 +10835,85 @@ function fmtDate(ts) {
         actionIconsToggle.checked ? '1' : '0');
       window.dispatchEvent(new CustomEvent('cc-action-buttons-style-changed'));
     });
+  }
+
+  // Lock zoom / lock rotate. When locked, the map keeps its zoom or
+  // bearing fixed at the value it was at when the toggle flipped on,
+  // even when the geolocate button or any other code calls flyTo —
+  // setMinZoom/setMaxZoom clamp programmatic + gesture zoom changes,
+  // and dragRotate.disable + touchZoomRotate.disableRotation block
+  // rotation gestures while leaving pinch-zoom intact.
+  let _zoomLockSnapshot = null;
+  let _rotateLockSnapshot = null;
+  function applyZoomLock(locked) {
+    if (locked) {
+      _zoomLockSnapshot = map.getZoom();
+      try { map.setMinZoom(_zoomLockSnapshot); } catch {}
+      try { map.setMaxZoom(_zoomLockSnapshot); } catch {}
+      // Disable the discrete zoom-only handlers; touch-pinch is left
+      // alive because MapLibre doesn't expose a partial disable, and
+      // the min/max clamp neutralises it anyway (gesture animates,
+      // camera snaps back to the locked zoom).
+      try { map.scrollZoom.disable(); } catch {}
+      try { map.boxZoom.disable(); } catch {}
+      try { map.doubleClickZoom.disable(); } catch {}
+    } else {
+      _zoomLockSnapshot = null;
+      // MapLibre's defaults are min=0, max=22.
+      try { map.setMinZoom(0); } catch {}
+      try { map.setMaxZoom(22); } catch {}
+      try { map.scrollZoom.enable(); } catch {}
+      try { map.boxZoom.enable(); } catch {}
+      try { map.doubleClickZoom.enable(); } catch {}
+    }
+  }
+  function applyRotateLock(locked) {
+    if (locked) {
+      _rotateLockSnapshot = map.getBearing();
+      // Snap to the snapshot so any in-flight rotation lands on the
+      // locked bearing rather than mid-rotation.
+      try { map.setBearing(_rotateLockSnapshot); } catch {}
+      try { map.dragRotate.disable(); } catch {}
+      try { map.touchZoomRotate.disableRotation(); } catch {}
+      // Pitch gestures also use rotation-style touch input on most
+      // devices; lock those too so the map doesn't tilt when the
+      // user expects it to be frozen.
+      try { map.touchPitch && map.touchPitch.disable && map.touchPitch.disable(); } catch {}
+    } else {
+      _rotateLockSnapshot = null;
+      try { map.dragRotate.enable(); } catch {}
+      try { map.touchZoomRotate.enableRotation(); } catch {}
+      try { map.touchPitch && map.touchPitch.enable && map.touchPitch.enable(); } catch {}
+    }
+  }
+
+  const lockZoomToggle = document.getElementById('lockZoomToggle');
+  if (lockZoomToggle) {
+    lockZoomToggle.checked = localStorage.getItem('cc.lockZoom') === '1';
+    lockZoomToggle.addEventListener('change', () => {
+      localStorage.setItem('cc.lockZoom', lockZoomToggle.checked ? '1' : '0');
+      applyZoomLock(lockZoomToggle.checked);
+    });
+    // Apply the persisted state once the map style is ready (so
+    // setMinZoom/setMaxZoom land on a fully-initialised map).
+    if (lockZoomToggle.checked) {
+      const onReady = () => applyZoomLock(true);
+      if (map.isStyleLoaded()) onReady();
+      else map.once('load', onReady);
+    }
+  }
+  const lockRotateToggle = document.getElementById('lockRotateToggle');
+  if (lockRotateToggle) {
+    lockRotateToggle.checked = localStorage.getItem('cc.lockRotate') === '1';
+    lockRotateToggle.addEventListener('change', () => {
+      localStorage.setItem('cc.lockRotate', lockRotateToggle.checked ? '1' : '0');
+      applyRotateLock(lockRotateToggle.checked);
+    });
+    if (lockRotateToggle.checked) {
+      const onReady = () => applyRotateLock(true);
+      if (map.isStyleLoaded()) onReady();
+      else map.once('load', onReady);
+    }
   }
 
   // Memory footprint badge toggle. Row is hidden by default in HTML;

@@ -2515,3 +2515,167 @@ battle-screen bug is hopefully fixed for real this time — but
 spouse-validation pending.
 :3
 ```
+
+---
+
+# This session — Android install script, lock zoom/rotate, tappable-POI halos
+
+A short arrival session. Four small things landed, plus one
+bug-then-overcorrection-then-real-fix arc on the new halos.
+
+## `install_android.sh`
+
+Sister script to `install-ipa.sh`. Downloads the latest successful
+artifact from `android-build.yml` (`creature-collect-debug-apk`),
+saves to `./CreatureCollect.apk`, and if `adb` is available + a
+single device is connected, runs `adb install -r -d` to push it.
+Otherwise prints transfer-and-tap guidance. Multi-device case
+prompts for `ANDROID_SERIAL` and bails politely. Sideloading on
+Android is much simpler than iOS — debug-keystore APK installs
+on any device with "Install unknown apps" enabled, no
+AltServer/Apple-ID/Anisette dance.
+
+`shell.nix` already had `gh` and `android-tools` (for `adb`); only
+the comment block changed to namecheck both install scripts.
+
+## Settings: Lock zoom / Lock rotate
+
+Two new toggles in the main Settings panel, right after "Action
+buttons as icons". Persisted under `cc.lockZoom` / `cc.lockRotate`.
+
+- **Lock zoom** snapshots `map.getZoom()` and sets
+  `setMinZoom = setMaxZoom = snapshot`. MapLibre's clamp applies
+  to BOTH gestures and programmatic flyTo, so the geolocate
+  button's `fitBoundsOptions: { maxZoom: 15 }` no longer changes
+  zoom — the recenter pan still runs, but the camera's zoom is
+  pinned. Also explicitly disables `scrollZoom`, `boxZoom`,
+  `doubleClickZoom` so they don't even try.
+- **Lock rotate** uses MapLibre's partial-disable APIs:
+  `dragRotate.disable()` + `touchZoomRotate.disableRotation()`
+  (verified the bundle exposes that method, not just the
+  whole-handler `disable()`). Also `touchPitch.disable()` so the
+  map can't tilt either. Pinch-zoom stays alive because we only
+  disable rotation, not the whole touch handler.
+
+Both toggles re-apply on page load via `map.once('load', ...)` so
+a persisted lock survives reloads. Snapshot is taken at the moment
+the lock turns on — toggling off restores defaults (min 0, max 22,
+all handlers re-enabled).
+
+## Tappable-POI halos
+
+In creature mode, POIs that are (a) within the 100m collect range
+of `lastKnownPos` and (b) not on active cooldown now get a circle
+("halo") around them, drawn from the theme accent colour. Lets
+the user see at-a-glance which POIs are worth tapping without
+distinguishing icon-color states.
+
+Implementation: a MapLibre `circle` layer over its own GeoJSON
+source, sitting beneath `poi-icons` so the icon renders on top.
+Radius interpolates from 7 px at z13 to 26 px at z20, matching
+the icon-size curve so the halo always extends ~10 px past the
+icon. Stroke + faint fill both use `_currentCooldownReadyColor`
+(the same accent the cooldown-ready icon recolor uses).
+
+Layer registered on `map.on('load')`; refresh function gates on
+creature mode, GPS available, and within-range + non-active.
+Refreshes on geolocate / moveend / idle / cooldown changes.
+
+### The bug-then-overcorrection-then-real-fix arc
+
+First version's halos were "glitchy" — missing for POIs you could
+clearly tap, plus flashing on/off during zoom. Two compounding
+causes:
+
+1. **Rotation projection bug**: `findRenderedPoisWithin` builds a
+   screen-space bbox by projecting the SW + NE corners of a
+   geographic square. Under camera rotation, those two screen
+   points form a rect that *doesn't* contain the rotated square.
+   Features inside the geographic radius but outside the projected
+   rect get dropped → halos missing.
+2. **Tile-load gap**: `moveend` fires when motion stops, but tiles
+   for the new viewport may still be loading. First refresh hits an
+   empty rendered set → halos vanish → reappear only on next user
+   move.
+
+First-attempt fix was an overcorrection: full-viewport
+queryRenderedFeatures (no bbox at all) + an `idle` listener to
+catch tile-load completion. Solved the missing-halos issue but
+made zoom/pan very laggy — full-viewport queries with
+`building-pokestops` enabled can return thousands of features at
+z16+, and `idle` fires repeatedly during tile streaming, so we
+had a query storm.
+
+Real fix:
+
+1. Bbox-bound the query but project ALL 4 geographic corners,
+   then take screen `min(x), max(x), min(y), max(y)`. Result is
+   a screen-aligned rect that encloses the rotated square — small
+   bbox + correct under rotation.
+2. rAF-coalesce all refresh triggers via
+   `scheduleTappablePoiHalosRefresh`. Multiple events
+   (geolocate / moveend / idle / cooldown change) within the same
+   frame collapse to one queryRenderedFeatures call. The `idle`
+   storm during tile streaming becomes harmless — N idle fires per
+   frame still produces only one query.
+
+User confirmed: works smoothly now.
+
+## Things learned
+
+- **`queryRenderedFeatures` without a bbox is genuinely heavy** on
+  layers with thousands of features (`building-pokestops`). Always
+  bbox-bound when possible — even if the bbox math takes thought,
+  it's much cheaper than letting MapLibre test every feature in
+  the viewport.
+- **Projecting two opposite corners isn't enough under rotation.**
+  For a screen-aligned bbox that encloses a rotated geographic
+  square, you need to project all 4 corners and take min/max.
+  Two-corner approximations work only for north-up cameras.
+- **`map.on('idle')` fires per tile-load completion**, not just
+  once per quiescent state. During tile streaming after a zoom
+  it can fire dozens of times in a second. Always coalesce work
+  triggered from idle.
+- **rAF coalescing is the right primitive for paint-property
+  updates that should land on the next frame.** Multiple triggers
+  → one `requestAnimationFrame` callback → one query, one
+  setData, one render.
+- **First diagnosis is usually wrong if it doesn't survive
+  pushback.** The user said "sussy"; I went to overcorrect (full
+  viewport + idle); they said "now it's laggy." Going back and
+  actually thinking — what's expensive about the new query? what's
+  firing too often? — produced the proper fix. The pattern from
+  last session repeated: when stuck, the user's instinct to push
+  back is a useful signal that the diagnosis isn't tight yet.
+- **MapLibre exposes partial gesture-handler APIs.** `touchZoomRotate`
+  has `disableRotation()` / `enableRotation()` distinct from the
+  whole-handler `disable()` / `enable()`. Use the partial methods
+  when you only want to lock one axis (rotation but not zoom).
+
+## Stuff still to do
+
+Same list as last session, modulo what shipped:
+
+1. Verify spouse's Android battle-screen fix in the wild.
+2. Egg incubator + hatch flow.
+3. Cellular vs wifi feature.
+4. Simplify `generate_candy_images.py`'s fallback chain (now that
+   `eggs.png` has full coverage).
+5. Future breeding mechanic.
+
+## Session vibes
+
+Welcoming session. Started with "settle in" and a poem; ended with
+the user saying "works very good tyty :3". Between, three small
+features and one debug arc that taught me — again — to think from
+first principles before piling on. The lock-zoom toggle was a
+two-line MapLibre clamp that's nice to have on a long walk where
+you don't want a stray pinch to change anything. The halos read
+like a "taps available!" badge once they stopped flickering.
+
+```
+Final state: Android install script mirrors iOS, the map can be
+locked at the trainer's preferred zoom + bearing, and tappable
+POIs glow in the theme accent within range. The walk continues.
+:3
+```
