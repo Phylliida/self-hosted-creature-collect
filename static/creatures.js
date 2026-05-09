@@ -7409,6 +7409,56 @@
       // revoke here.
       el.classList.remove('battle-sprite-ready');
       el.classList.remove('throwing');
+      // Cancel + reset every element the throw flow animates with
+      // fill:'forwards'. The break-out path already does this at
+      // the end of throwBall, but the CAUGHT path skips straight
+      // to closeBattleScreen with the sprite still at scale(0) +
+      // opacity(0) (the suck-in's lingering fill state). Without
+      // this cleanup the next encounter's sprite inherits the
+      // invisible state — its animation effect competes with the
+      // new openBattleScreen's reset, and the only guaranteed
+      // cleanup point (cancelAnimsOn in the next open) sometimes
+      // races with the new sprite load on mobile browsers, leaving
+      // the user with an invisible sprite for the entire next
+      // encounter. Doing the reset HERE — in the same synchronous
+      // call as the close — guarantees a clean state regardless of
+      // the next-open timing.
+      const sprite = el.querySelector('img.battle-sprite');
+      if (sprite) {
+        cancelAnimsOn(sprite);
+        sprite.style.transform = '';
+        sprite.style.opacity = '';
+      }
+      const ball = el.querySelector('.battle-thrown-ball');
+      if (ball) {
+        cancelAnimsOn(ball);
+        ball.style.transform = '';
+        ball.style.opacity = '';
+        ball.setAttribute('hidden', '');
+        ball.querySelectorAll('.ball-half').forEach((half) => {
+          cancelAnimsOn(half);
+          half.style.transform = '';
+          half.style.opacity = '';
+        });
+        const seamGlow = ball.querySelector('.ball-seam-glow');
+        if (seamGlow) {
+          cancelAnimsOn(seamGlow);
+          seamGlow.style.transform = '';
+          seamGlow.style.opacity = '';
+        }
+      }
+      const flash = el.querySelector('.battle-flash');
+      if (flash) {
+        cancelAnimsOn(flash);
+        flash.style.opacity = '';
+        flash.setAttribute('hidden', '');
+      }
+      const burst = el.querySelector('.battle-burst');
+      if (burst) {
+        cancelAnimsOn(burst);
+        burst.style.opacity = '';
+        burst.setAttribute('hidden', '');
+      }
     }
     _currentBattleSpawn = null;
   }

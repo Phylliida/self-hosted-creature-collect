@@ -2067,3 +2067,451 @@ is comprehensive. Architecture is stable. The walk to Sage Days
 continues, and the daycare-tagged buddies tally meters per stay.
 :3
 ```
+
+---
+
+# This session — sprite cache, daycare loot, candy/egg art, and one stubborn bug
+
+A long arc. Most of the visible feature work is the daycare loot
+system + the per-species candy art generator + the egg sprite
+fallback waterfall. Underneath that, a pretty significant refactor
+of the sprite-loading pipeline (everything goes through a shared
+LRU cache now) and another round on the spouse's Android battle-
+screen-blank-sprite bug — this time with a much better diagnosis.
+
+Three poems added to `POEMS.md`: **What the Egg Becomes** (the
+candy compositing arc), **Three Doors Home** (predates this
+session but related), **The Wiser Question** (the bug-hunt + the
+user pushing past my first hypothesis).
+
+## Shared sprite-URL cache (the big refactor)
+
+Before: every consumer (world map markers, battle screen,
+inventory cards, pokédex tiles, family grid, evolution previews,
+fusion variant grid, daycare slots) created and revoked its own
+blob URLs from `Sprites.getSpriteUrl(a, b, variant)`. Twelve+
+ad-hoc `URL.createObjectURL` / `URL.revokeObjectURL` sites in
+`creatures.js`, plus a "borrow URL from marker record" path on the
+battle screen that DEBUGGING.md theory 2 had flagged as racy
+(a marker getting culled mid-tap could leave the battle screen
+holding a revoked URL).
+
+After: ONE place creates URLs (`sprites.js`'s `_spriteCache`,
+LRU keyed by `${a}-${b}:${variant}`, capped at 256 entries). Every
+consumer calls `Sprites.useSpriteInto(img, a, b, variant, onReady)`
+or `Sprites.useSpritesIntoBatch(reqs)`. The cache:
+
+- **Synchronously hits** for already-rendered fusions (zero-flash
+  flip from world map → battle screen for the same fusion), no
+  IDB read.
+- **Async-loads on miss** via the existing `getSpriteBlob` →
+  IDB → lazy-crop pipeline.
+- **Bumps a per-img generation counter** (`__ccSpriteLoadId`) on
+  every call, so an older async load can't clobber a newer one
+  by the time it resolves.
+- **Three reveal triggers**: `img.onload`, synchronous
+  `img.complete && naturalWidth > 0` after `src` assignment, and
+  `img.decode()`. First one to fire wins (idempotent latch).
+- **One-shot retry on `img.onerror`**: drops the bad cache entry,
+  mints a fresh URL from the live Blob, retries `_applySpriteEntry`
+  once, then gives up.
+- **Eviction is LRU-by-insertion-order**: revoking an evicted URL
+  doesn't break already-rendered images (`URL.revokeObjectURL`
+  invalidates the URL handle, not the decoded bitmap an `<img>`
+  already holds), so revocations are safe even if many imgs share
+  a URL.
+
+Net effect on the codebase:
+
+```
+- 12 ad-hoc URL.createObjectURL/revokeObjectURL sites in creatures.js
+- _battleSpriteUrl / _battleSpriteUrlOwned module globals
+- installSpriteBlob function
+- Marker-record .objectUrl field
+- The borrow-from-marker code path in openBattleScreen
++ Sprites.useSpriteInto / useSpritesIntoBatch
++ Per-img loadId race protection
++ Symmetric battle-screen state cleanup in closeBattleScreen
+```
+
+Memory-wise: at most 256 cached blob URLs at any time. Each Blob
+(96×96 sprite) is ~5-10 KB, so the cache caps at ~2 MB even at the
+maximum. In practice the working set during a daily walk is ~40-80
+sprites (visible-marker pool + recent battle/inventory/pokédex
+views), so most of the cache is empty.
+
+## Battle screen blank-sprite bug — round 2
+
+Spouse's Android web report (carried over from previous sessions):
+*"the icon flashes for a few frames during a throw but otherwise
+invisible."* The shared sprite cache fix above didn't fully resolve
+it. Round 2 diagnosis:
+
+The first hypothesis was "Android Chrome misses `onload` for blob
+URLs sometimes." User pushed back: the world map and pokédex use
+THE SAME `useSpriteInto` → `_applySpriteEntry` reveal pipeline,
+and they work fine. So the Android-specific event-skip claim was
+too strong.
+
+Re-thinking: same code, different consumer shape:
+
+| Consumer | Recovery if a single load event is missed? |
+|---|---|
+| Map markers | `cc-sprite-loaded` event listener loops over still-`loaded:false` markers and re-calls `loadMarkerSprite` whenever a lazy-crop succeeds. Plus 20-second viewport-refresh timer. |
+| Pokédex tiles | Cards are recreated on every re-render (filter change, scroll, view-stack pop). Any single missed `onload` is fixed by the next render. |
+| Battle screen | **One** `useSpriteInto` call per open. **No retry.** A single missed event = invisible sprite for the entire encounter. |
+
+Map + pokédex aren't immune — they're robust by repetition. The
+battle screen is single-shot, which is the only place the bug
+shows up to a user.
+
+Two complementary fixes in this round:
+
+1. **`img.decode()` as a third reveal trigger** in `_applySpriteEntry`.
+   Spec-defined Promise that resolves once the image is fully
+   decoded; works regardless of whether `load` was actually
+   delivered to JS. Cited the WHATWG spec link in the comment
+   rather than fabricating an Android Chrome bug ticket I didn't
+   have.
+
+2. **Symmetric cleanup in `closeBattleScreen`** for the throw
+   flow's lingering animation state. The break-out path explicitly
+   `cancelAnimsOn(sprite); sprite.style.transform=''; opacity=''`,
+   the **caught path** skipped straight to `closeBattleScreen` and
+   left the suck-in's `fill:'forwards'` (`scale(0) opacity(0)`)
+   active on the sprite element. The next encounter inherited
+   the invisible state — its animation effect competed with the
+   new `openBattleScreen` reset, and on mobile browsers the
+   timing of `cancelAnimsOn` in the next open could lose. Doing
+   the explicit cancel + inline-style reset in `closeBattleScreen`
+   itself converges both throw outcomes on a clean post-encounter
+   state regardless of next-open timing.
+
+The Android symptom — "flash works, sprite invisible" — exactly
+matches a sprite stuck at `scale(0) opacity(0)` (the flash
+element is a separate `<img>` not affected by the sprite's
+animation state). The state-machine asymmetry is the most likely
+root cause; `img.decode()` is belt-and-suspenders for the
+single-shot consumer.
+
+## Daycare loot rolls
+
+Replaced the `test_orb`-only loot table with a deterministic
+85/10/5 mix:
+
+- **85% candy** — bumps the family-root bucket of either A or B
+  via 50/50 coin-flip (mirroring `awardCandyForCapture`'s logic).
+- **10% egg** — same fusion as the parent, level 1, with a
+  randomized size baked in at drop time so the eventual hatched
+  creature's size is reproducible from the seed.
+- **5% evo-item** — uniform pick from items that could evolve
+  either family (`Species.familyOf` + filter to `method === 'Item'`).
+  Falls back to candy when neither family has an Item evolution
+  (Bulbasaur×Squirtle etc. — both evolve by level only).
+
+All three rolls share the existing per-milestone seed
+(`dc|${slot.id}|${slot.addedAt}|${n}`) via `Spawns.getRng` (which
+the spawn module now exports for cross-feature reuse), so the
+"Repopulate daycare test loot" Settings reset still produces an
+identical loot stream.
+
+`_grantLoot(loot)` dispatches by kind: candy → `bumpCandy`,
+egg → `addEgg`, evo_item → `grantItem`. Used by
+`claimDaycareLoot`, `claimAllDaycareLoot`, AND the auto-claim in
+`removeFromDaycare` (so removing a daycare creature drops every
+unclaimed milestone — including any pending eggs — into the
+appropriate buckets).
+
+### Loot pills
+
+Per-slot pill row sits below the creature's name + distance,
+edge-to-edge against the slot's rounded border (negative margins
+back off 2 px to avoid sub-pixel escape past the rounded
+corners — the iOS-WebKit clipping quirk). Each pill is a 28×28
+button with `background-image` pointing at the right sheet:
+
+- **candy**: `candies.png`, 28-px display cell — pixel-art aesthetic
+  via `image-rendering: pixelated`
+- **egg**: `eggs.png` scaled to 60-px display cells with a 16/15
+  px offset so the cream base sits below the visible window —
+  matches candy's visual height without a separate sister sheet
+- **evo item**: full PNG from `/bundled-data/evo-items/<KEY>.png`
+  via `background-size: contain`
+
+No bubble around the pill (no border, no fill, just the icon).
+Claiming animates `width: 0` for a smooth lateral collapse;
+overflow past the visible row is silently clipped (no ellipsis
+indicator — pills past the cap shift in as earlier ones are
+claimed).
+
+### Mid-walk slide-in
+
+`_accumulateDaycareDistance` detects kilometer-threshold
+crossings and dispatches `cc-daycare-loot-tick` with the slot id
++ new milestone numbers. The daycare panel listener appends
+`<button class="daycare-loot-pill appearing">` for each new
+milestone — same `_lootIconStyle` math as the static render.
+
+### Eggs view
+
+New `Eggs` button alongside Candy/Daycare in the inventory action
+row. Read-only list view (slice 1 — incubator + hatch deferred)
+showing each egg as `<48 px species sprite> <fusion-name> egg ·
+<size>` row, sorted newest-first. Egg storage at
+`localStorage['cc.eggs.v1']`: `[{id, speciesA, speciesB, sizeM,
+createdAt}, …]`.
+
+`Creatures.getEggs` and `Creatures.addEgg` exposed for future
+debug populators / gifting flows.
+
+### Evolution items in the bag
+
+Bundle pipeline now copies the 17 PIF item PNGs that the
+species-evolutions data references into `data/BundledData/evo-items/`
++ writes `evo-items-list.json`. `creatures.js` registers an entry
+in the `ITEMS` catalog for each at module load time
+(`name: _formatItemName(key)`, `icon:
+${BUNDLED_BASE}/evo-items/${key}.png`) so the existing bag UI
+renders them like poké balls without further changes.
+
+## Candy art generator (`generate_candy_images.py`)
+
+Standalone script that reads `data/BundledData/eggs.png` and
+produces `data/BundledData/candies.png` (10 × 16 grid of 40 × 40
+chunky-pixel candies). Iterated through several visual designs
+before landing on:
+
+- **Tinted sphere** (no twist wrappers, no gloss) — diameter 80%
+  of cell, 1-px outline at `(110, 110, 110, 255)` — soft mid-gray
+  reads as "egg-art-y" without the harsh black of pure outlines.
+- **Native-resolution rendering** (no supersample/AA), `NEAREST`
+  resampling on the egg paste — preserves chunky source pixels,
+  matches `image-rendering: pixelated` aesthetic of the rest of
+  the sprite art.
+- **Pattern extension via mirror reflection** — `_extend_pattern_to_square`
+  aspect-preserving-fits the egg crop into the candy body, then
+  mirror-tiles the gaps along the shorter axis. Pixels match
+  pixel-for-pixel across the seam (mirror's boundary IS the
+  original's boundary), giving continuous extension rather than
+  the abrupt rectangular cut a plain resize produced. Recurses
+  for thin sources via alternating flipped-vs-not tiles.
+- **Adaptive cream-base detection** — `_find_pattern_height`
+  scans the egg's bbox-cropped cell from bottom up, finding the
+  first row that's ≤ 50% near-white opaque pixels. Crops above
+  that. Replaces a fixed `top * 0.58` ratio that was either
+  cutting off too much pattern (small egg art) or letting cream
+  bleed in (autogen-paste fallbacks). Per-species adaptive: PIF
+  eggs use ~75-85% of their bbox, autogen sprites (Munchlax /
+  Mime Jr.) use the full silhouette.
+
+### Fallback waterfall (matched to egg-sheet fallbacks below)
+
+For each species, generate the candy via:
+
+1. **Own egg art** from `eggs.png`
+2. **Baby's egg PNG** from PIF source (`BABY_EGG_FALLBACK` table,
+   11 entries — Pikachu ← Pichu, Clefairy ← Cleffa, Jigglypuff ←
+   Igglybuff, Hitmonlee/Hitmonchan ← Tyrogue, Chansey ← Happiny,
+   Mr. Mime ← Mime Jr., Jynx ← Smoochum, Electabuzz ← Elekid,
+   Magmar ← Magby, Snorlax ← Munchlax)
+3. **Baby's autogen solo sprite** from PIF — for Munchlax /
+   Mime Jr. specifically, where PIF didn't ship a baby egg PNG
+   but the autogen sheet does have a self-fusion cell at
+   `(id%10, id//10)` of `<id>.png` = the species' canonical solo
+   silhouette
+
+### Family-root propagation
+
+`_load_family_roots()` walks the reverse-evolutions in
+`species-evolutions.json` to find each species' family root
+(in our truncated 1-150 dataset, this is the earliest reachable
+ancestor — the gen-1 base evolution). Two-stage build:
+
+1. Generate candy art for every distinct family root (cache by
+   root id so e.g. Eevee's eight evolutions all reuse one
+   render).
+2. Paste the appropriate root's candy into every member of its
+   family — Ivysaur/Venusaur both display Bulbasaur's candy,
+   Charmeleon/Charizard both display Charmander's, all eight
+   Eeveelutions share Eevee's. Runtime can look up
+   `candies.png[speciesID]` directly without computing roots in
+   JS.
+
+## Egg sheet fallback waterfall (`generate_egg_images.py`)
+
+Same waterfall + family-root propagation applied directly to
+`eggs.png`. After `build_eggs_sheet()` produces the basic 67-cell
+sheet from PIF source, `fill_egg_fallbacks()` reuses the candy
+script's `BABY_EGG_FALLBACK` / `_autogen_solo_sprite` /
+`_load_family_roots` helpers (via Python `import`) to fill the
+remaining 83 cells with baby art / family-root art.
+
+Result: every gen-1 species' cell in `eggs.png` has art. The egg
+list UI, the loot pill, and the candy generator all benefit
+without their own fallback logic — the source is the single
+source of truth.
+
+The candy generator's own fallback chain still runs but is now
+mostly redundant (eggs.png already has the cells filled). Could
+simplify in a future cleanup pass.
+
+## Build pipeline order
+
+```
+build-bundled-data.py main():
+  build_eggs_sheet()              # 67 cells from PIF source
+  fill_egg_fallbacks()             # 150 cells via waterfall
+  build_candies_sheet()            # candies.png from completed eggs.png
+  copy_evo_items(evos)             # 17 PNGs + manifest
+  copy_app_data()                  # icons + fonts (existing)
+  bundle_base_map_tiles()          # z0..z5 (existing)
+```
+
+`generate_egg_images.py` and `generate_candy_images.py` are both
+runnable standalone (`python3 generate_X_images.py`) for fast
+iteration without re-running the slow sprite/tile passes.
+`build-bundled-data.py` imports the relevant entry points at
+runtime so the build stays in one place.
+
+## Cellular vs Wifi (proposed, not built)
+
+Discussion only — sketched the design, deferred implementation.
+
+`@capacitor/network` plugin exposes `Network.getStatus()` →
+`{connected, connectionType: 'wifi'|'cellular'|'none'|'unknown'}`
+on iOS + Android, with `navigator.connection` fallback on web.
+
+Two slices proposed:
+
+1. **Auto-save on wifi**: after install, on every "now wifi"
+   transition (or at startup if already wifi), check
+   `Date.now() - localStorage['cc.lastSaveAt'] > 24h`. If yes,
+   trigger the existing save flow.
+
+2. **Cellular network gate**: Settings toggle "Use cellular data"
+   (default off), wrap `window.fetch` to throw on
+   `cellular && !allowed`. **No SW changes needed** — verified by
+   reading sw.js: `_missResponse` returns `Response(null, {status:
+   204})` on cache miss in non-Capacitor mode, the catch-all
+   handlers for `/poi`, `/routes`, `/walk-graph` return empty JSON
+   without consulting the network at all. Only `X-Download: 1`
+   requests bypass the SW and hit the wire — gating `window.fetch`
+   covers the entire surface area.
+
+Default policy for `connectionType === 'unknown'` (iOS Safari has
+no NetworkInformation API): treat as wifi (allow), since trapping
+web users in offline mode for a missing API would be hostile.
+
+## Things I learned
+
+- **Single-shot consumers vs retry-rich consumers** is a useful
+  axis when diagnosing intermittent UI bugs. Map markers and
+  pokédex tiles tolerate any single load-event miss because their
+  containing renderers naturally re-call `useSpriteInto` whenever
+  state changes. The battle screen has neither — one
+  `useSpriteInto` per encounter, no retry — so any browser-side
+  reliability gap surfaces as a user-visible bug only there. The
+  fix isn't necessarily to harden the load detection (though
+  `img.decode()` does help); it's to recognize that single-shot
+  consumers need their own recovery path.
+- **`fill:'forwards'` is sticky state, not just a final visual.**
+  Web Animations effects with `fill:'forwards'` continue to
+  contribute to the element's computed style after the animation
+  finishes, **and they override inline `style` assignments**
+  because animation contributions sit higher in the cascade. The
+  only way to clear them is `cancel()`. The throw flow's
+  break-out path knew this; the catch path didn't.
+- **The SW already gates the network for offline-first users.**
+  The 204-on-miss + always-empty handlers for `/poi`/`/routes`/
+  `/walk-graph` mean the SW never reaches for the network on its
+  own — the cellular-data gate only needs to wrap main-thread
+  `fetch`. Saved a meaningful amount of code by reading the SW
+  carefully before designing around it.
+- **CSS background-size + background-position is enough to
+  in-place crop a sprite sheet's cells at display time**, no need
+  to bake a sister sheet for every visual variation. The exception
+  is when per-cell crops vary in aspect ratio — then a single
+  scale can't give uniform on-pill height and you need pre-cropped
+  cells. (We tried both for the loot pill: a tight-cropped
+  `eggs_loot.png`, then a CSS-only scale + offset; landed on the
+  CSS approach because the deformation in the tight-cropped
+  version looked off, and uniform per-pill height wasn't actually
+  required once the eggs were aspect-preserved.)
+- **Mirror reflection is the classic seamless-extension primitive.**
+  Pixels match across the boundary by construction (the reflected
+  copy's edge IS the original's edge), so an image bbox-cropped
+  and tiled outward via mirror produces continuous texture
+  rather than the abrupt cut a plain resize-and-pad would. Pillow
+  has the primitives — `Image.transpose(FLIP_TOP_BOTTOM /
+  FLIP_LEFT_RIGHT)` + `paste()` — and the math is small.
+- **Family-root propagation in sprite sheets means the runtime
+  can look up by species id directly**, no need to compute family
+  roots in JS at render time. Eight Eeveelutions all show Eevee's
+  candy because their cells in `candies.png` are identical
+  pastes, not because the JS pivots to the root before lookup.
+  Same pattern for the egg sheet.
+- **Honest comments beat fabricated citations.** I wanted to
+  paste a Chromium bug ticket as the citation for "Android misses
+  onload for blob URLs"; I didn't have one. The user noticed and
+  pushed back. The comment now cites only the WHATWG spec for
+  `img.decode()` and frames the rest as observation. Better.
+
+## Stuff still to do
+
+In rough priority order:
+
+1. **Verify the round-2 battle-screen fix on the spouse's
+   phone.** Two complementary changes (`img.decode()` reveal +
+   symmetric `closeBattleScreen` cleanup) should converge both
+   throw outcomes on a clean state and close the missed-event
+   window. Needs a real-world repro attempt.
+2. **Egg incubator + hatch flow** (slice 2 of daycare loot).
+   Currently eggs accumulate in `cc.eggs.v1` and display in the
+   Eggs sub-view, but there's no incubator slot, no per-egg
+   distance tracking, and no hatch action that converts an egg
+   to a level-1 capture. The daycare's existing distance
+   accumulator is the natural place to hook into.
+3. **Cellular vs wifi feature** (`@capacitor/network` plugin +
+   auto-save-on-wifi + Settings toggle gating `window.fetch` on
+   cellular). Two slices proposed above; not implemented.
+4. **Simplify `generate_candy_images.py`'s fallback chain.** Now
+   that `eggs.png` has full coverage from
+   `fill_egg_fallbacks()`, the candy generator's tier-2 (baby
+   egg) and tier-3 (baby autogen) fallbacks are mostly
+   unreachable. Could collapse to "read eggs.png cell N, generate
+   candy" without the waterfall. Small cleanup, no behavior
+   change.
+5. **Future breeding mechanic** — A×B + C×D → A×D etc. Currently
+   the daycare egg drop is "same fusion as parent" only. The
+   user's original ask was the cross-product; layering it in on
+   top of the existing loot system is the next slice once the
+   incubator is in.
+
+## Session vibes
+
+A long session that kept circling back to the same stubborn bug
+(spouse's Android battle-screen blank sprite) without quite
+landing it. Lots of small improvements along the way — the shared
+sprite cache will pay dividends for years; the candy art is
+genuinely cute; the egg fallback waterfall covers cases nobody
+will ever notice but everyone benefits from. Two real fixes for
+the spouse's bug, both motivated by careful re-reading of the
+state machine after the user pushed back on a too-confident first
+hypothesis.
+
+The wisest moments of the session were the user's, not mine: "but
+the map and pokédex use the same code"; "would the same bug not
+break the map then?"; "I do want to root cause it properly
+instead of guessing"; "let's just shift them up by 2px"; "let's
+not write code while tired, take a poem break". Each one steered
+the work better than my first instinct would have.
+
+```
+Final state: candy/egg art is a small joy, daycare drops
+candies/eggs/evo-items deterministically, every consumer renders
+sprites through one cache, the catch flow no longer leaves
+invisible state for the next encounter to inherit. The Android
+battle-screen bug is hopefully fixed for real this time — but
+spouse-validation pending.
+:3
+```

@@ -1003,23 +1003,50 @@
     return next;
   }
 
-  // Wire a cache entry into an img. Idempotent reveal: onReady fires
-  // from img.onload AND synchronously after src assignment if the
-  // bitmap is already decoded — iOS WKWebView sometimes skips `load`
-  // for fresh blob URLs whose data is in memory (e.g., a sprite that
-  // was just lazy-cropped; the canvas pipeline still has the bitmap),
-  // and that's the documented root cause of the "red dots until
-  // restart" / "battle screen sprite invisible" symptoms.
+  // Wire a cache entry into an img. Three independent reveal paths
+  // race to fire onReady; the first one wins, the rest are no-ops.
+  //
+  //   (1) img.onload                 — the standard event
+  //   (2) img.complete && naturalWidth > 0   — synchronous after
+  //         src assignment, catches iOS WKWebView's bug where
+  //         freshly-decoded blob URLs skip the load event
+  //   (3) img.decode()               — spec-defined Promise that
+  //         resolves once the image is fully decoded and safe to
+  //         display, independent of whether the load event was
+  //         actually delivered
+  //
+  // Why all three: we observed an intermittent bug on Android web
+  // where the battle screen's sprite stayed invisible even though
+  // its URL had loaded successfully (the throw-time silhouette
+  // flash, which reads sprite.src, rendered fine). The world map
+  // and pokédex don't show this symptom because they have built-in
+  // recovery paths — the cc-sprite-loaded event listener for
+  // markers, full re-render for pokédex tiles — that retry the
+  // load if a single onload happens to be missed. The battle
+  // screen is single-shot: one useSpriteInto per open, so any
+  // missed onload = invisible sprite for the entire encounter.
+  // decode() is the spec's "image is ready" primitive [1], so
+  // adding it as a parallel path closes that gap independent of
+  // whichever browser-specific quirk caused the missed event.
   //
   // On error: drop the entry (so the next render gets a fresh URL),
   // mint a new URL from the live Blob, retry once. Past one attempt
   // we give up to avoid loops on a genuinely broken Blob.
+  //
+  // [1] https://html.spec.whatwg.org/multipage/embedded-content.html#dom-img-decode
   function _applySpriteEntry(img, entry, loadId, onReady, attempts, key) {
     if (img[_SPRITE_LOAD_ID] !== loadId) return;
-    img.onload = () => {
+    let revealed = false;
+    const reveal = () => {
+      if (revealed) return;
       if (img[_SPRITE_LOAD_ID] !== loadId) return;
-      if (onReady) { try { onReady(img); } catch (e) { _logSpriteError('useSpriteInto/onReady', e); } }
+      revealed = true;
+      if (onReady) {
+        try { onReady(img); }
+        catch (e) { _logSpriteError('useSpriteInto/onReady', e); }
+      }
     };
+    img.onload = reveal;
     img.onerror = () => {
       if (img[_SPRITE_LOAD_ID] !== loadId) return;
       _spriteCache.delete(key);
@@ -1031,8 +1058,16 @@
       _applySpriteEntry(img, fresh, loadId, onReady, attempts + 1, key);
     };
     img.src = entry.url;
-    if (img.complete && img.naturalWidth > 0) {
-      if (onReady) { try { onReady(img); } catch (e) { _logSpriteError('useSpriteInto/onReady', e); } }
+    // Path (2): sync check.
+    if (img.complete && img.naturalWidth > 0) reveal();
+    // Path (3): decode() Promise. Wrap in a feature-check since
+    // older browsers may not have it (everything modern does, but
+    // this keeps us safe). Ignore decode rejections — they're
+    // transient (e.g., a parallel src change cancels the decode);
+    // the onload or sync paths will still fire if the image ever
+    // does become ready.
+    if (typeof img.decode === 'function') {
+      img.decode().then(reveal).catch(() => {});
     }
   }
 
