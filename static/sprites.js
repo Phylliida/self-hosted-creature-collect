@@ -718,7 +718,154 @@
     else _variantCountCache.delete(key);
   }
 
+  // ─── Pre-cropped pack file cache (Capacitor) ─────────────────────────
+  //
+  // On iOS/Android Capacitor builds, sprite cells are served directly
+  // from the bundle's pre-cropped pack files at
+  // `<BUNDLED_BASE>/sprite-packs/<b>.pack` (built by
+  // generate_sprite_packs.py at CI time). Each pack is a small binary
+  // container holding every (a, variant) cell for one partner species
+  // as tight-bbox PNG bytes plus a small index — runtime work is one
+  // fetch + DataView parse per partner, then sub-ms ArrayBuffer slices
+  // for every cell access after that.
+  //
+  // Why no IDB layer: writing 22 500 Blobs to IDB takes ~50 minutes on
+  // iOS WKWebView (each `put(blob)` structured-clones individually,
+  // even within a single transaction). The bundle is already on disk
+  // and served by LocalServer in milliseconds, so copying its bytes
+  // into IDB would just duplicate data and add launch-time cost. The
+  // OS file cache + LocalServer is the persistent cache; this
+  // in-memory LRU is the hot cache.
+  //
+  // Pack format (must match generate_sprite_packs.py):
+  //   Magic 4 bytes 'CRPP'
+  //   u32 LE   cell_count
+  //   N × 16 B (u32 a, i32 variant, u32 offset, u32 length)  index
+  //   PNG payload bytes
+  //
+  // _packCache holds parsed packs keyed by partner-id b. Entries are a
+  // Map<"a:variant", [absolute_offset, length]> + the underlying
+  // ArrayBuffer. LRU-evicted at PACK_CACHE_MAX so memory stays bounded
+  // even for users who roam across many regions in one session.
+  const _packCache = new Map();
+  const _packLoadPromises = new Map();
+  const PACK_CACHE_MAX = 16;
+  const PACK_MAGIC_BE = 0x43525050;  // 'CRPP' read big-endian
+
+  function _packEntryKey(a, variant) {
+    // variant: -1 means autogen, 0+ means custom slot. Normalize null
+    // → -1 so callers can pass either shape.
+    const v = (typeof variant === 'number' && variant >= 0) ? variant : -1;
+    return `${a}:${v}`;
+  }
+
+  async function _loadPack(b) {
+    const cached = _packCache.get(b);
+    if (cached) {
+      _packCache.delete(b);
+      _packCache.set(b, cached);
+      return cached;
+    }
+    const inflight = _packLoadPromises.get(b);
+    if (inflight) return inflight;
+
+    const p = (async () => {
+      const url = `${BUNDLED_BASE}/sprite-packs/${b}.pack`;
+      let buf;
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) return null;
+        buf = await resp.arrayBuffer();
+      } catch (e) {
+        _logSpriteError(`loadPack/fetch/${b}`, e);
+        return null;
+      }
+      const view = new DataView(buf);
+      if (buf.byteLength < 8 || view.getUint32(0, false) !== PACK_MAGIC_BE) {
+        _logSpriteError(`loadPack/badMagic/${b}`,
+          new Error(`pack ${b} bad magic`));
+        return null;
+      }
+      const cellCount = view.getUint32(4, true);
+      const indexStart = 8;
+      const payloadStart = indexStart + cellCount * 16;
+      if (buf.byteLength < payloadStart) {
+        _logSpriteError(`loadPack/truncated/${b}`,
+          new Error(`pack ${b} index truncated`));
+        return null;
+      }
+      const entries = new Map();
+      for (let i = 0; i < cellCount; i++) {
+        const off = indexStart + i * 16;
+        const a = view.getUint32(off, true);
+        const variant = view.getInt32(off + 4, true);
+        const dataOffset = view.getUint32(off + 8, true);
+        const dataLength = view.getUint32(off + 12, true);
+        entries.set(_packEntryKey(a, variant),
+          [payloadStart + dataOffset, dataLength]);
+      }
+      const pack = { entries, buf };
+      _packCache.set(b, pack);
+      while (_packCache.size > PACK_CACHE_MAX) {
+        const oldestKey = _packCache.keys().next().value;
+        _packCache.delete(oldestKey);
+      }
+      return pack;
+    })();
+    _packLoadPromises.set(b, p);
+    try { return await p; }
+    finally { _packLoadPromises.delete(b); }
+  }
+
+  async function _packGetBlob(a, b, variant) {
+    const pack = await _loadPack(b);
+    if (!pack) return null;
+    const entry = pack.entries.get(_packEntryKey(a, variant));
+    if (!entry) return null;
+    const [offset, length] = entry;
+    // Uint8Array view (no copy); Blob ctor takes one snapshot of those
+    // bytes into the blob's internal store. The underlying ArrayBuffer
+    // stays alive in _packCache so subsequent slices for the same
+    // partner are sub-ms.
+    const slice = new Uint8Array(pack.buf, offset, length);
+    return new Blob([slice], { type: 'image/png' });
+  }
+
   async function getSpriteBlob(a, b, variant) {
+    // Capacitor: serve from the bundled pack file via the in-memory
+    // _packCache. No IDB, no canvas, no decode — just fetch (cached
+    // by the OS file layer + LocalServer/asset loader) + DataView
+    // parse + ArrayBuffer slice. First sprite per partner: ~50-100 ms;
+    // subsequent sprites for that partner: sub-ms.
+    if (typeof window !== 'undefined' && window.Capacitor) {
+      try {
+        const blob = await _packGetBlob(a, b, variant);
+        if (blob) return blob;
+      } catch (e) {
+        _logSpriteError(`getSpriteBlob/pack/${a}-${b}:${variant}`, e);
+        // Fall through to the lazy-crop sheet path as a safety net.
+      }
+      // Pack absent or partner has no entry. Fall through to the
+      // lazy-crop sheet path — should rarely fire on a healthy build,
+      // but keeps a fallback so a corrupted pack never permanently
+      // breaks rendering.
+      try {
+        const isCustomFallback = (typeof variant === 'number' && variant >= 0);
+        const blob = isCustomFallback
+          ? await lazyCropCustom(a, b, variant)
+          : await lazyCropAutogen(a, b);
+        return blob || null;
+      } catch (e) {
+        _logSpriteError(`getSpriteBlob/lazyCropFallback/${a}-${b}:${variant}`, e);
+        return null;
+      }
+    }
+    // Web build: IDB-only. bulkDownload (welcome flow) is the
+    // canonical path that seeds IDB; an IDB miss outside that
+    // download is treated as "no sprite available" and the caller
+    // gets null back (placeholder / red dot stays visible). The user
+    // can re-run app data to fill any gaps. The zero-network rule
+    // forbids any same-origin fetch outside an explicit user action.
     const isCustom = (typeof variant === 'number' && variant >= 0);
     const key = isCustom ? customKey(a, b, variant) : autogenKey(a, b);
     _incInflight();
@@ -727,11 +874,10 @@
     catch (e) { _logSpriteError(`getSpriteBlob/${key}`, e); cached = null; }
     finally { _decInflight(); }
     if (cached) {
-      // Self-heal: legacy autogen v1 crops were stored as full 96×96 PNGs
-      // with transparent padding around the creature. Trim on first
-      // access so markers self-correct without a full re-download.
-      // Custom crops are written tight from the start, so this only
-      // applies to the autogen key.
+      // Self-heal: legacy autogen v1 crops were stored as full 96×96
+      // PNGs with transparent padding. Trim on first access so older
+      // saves auto-fix without a full re-download. Custom crops were
+      // tight from the start, so this only applies to the autogen key.
       if (!isCustom && await isLegacyPaddedPng(cached)) {
         const trimmed = await retrimStoredBlob(cached);
         if (trimmed) {
@@ -741,37 +887,7 @@
       }
       return cached;
     }
-    // Lazy-crop fallback: IDB miss. Fetch the appropriate sheet,
-    // crop the cell, write it back to IDB so the next render is
-    // instant. ONLY runs in Capacitor (IPA) builds — there
-    // `_autogenSheetUrl()` resolves to LocalServer at capacitor://
-    // localhost which reads bundled files from disk (no network).
-    //
-    // In the web build, the same URL would hit the actual origin —
-    // violating the zero-network rule. Web users seed IDB via the
-    // explicit "Download app data" button; an IDB miss outside that
-    // download is treated as "no sprite available" and the caller
-    // gets null back (placeholder / red dot stays visible). The user
-    // can re-run app data to fill any gaps.
-    if (typeof window === 'undefined' || !window.Capacitor) {
-      return null;
-    }
-    try {
-      const blob = isCustom
-        ? await lazyCropCustom(a, b, variant)
-        : await lazyCropAutogen(a, b);
-      if (blob) {
-        idbPut(key, blob).catch(() => {});
-        // Broadcast so any UI element (map markers, dex grid) currently
-        // showing a red-dot / silhouette placeholder for this cell can
-        // swap in the real sprite without a polling retry.
-        _emitSpriteReady(a, b, variant, blob);
-      }
-      return blob;
-    } catch (e) {
-      _logSpriteError(`getSpriteBlob/lazyCrop/${key}`, e);
-      return null;
-    }
+    return null;
   }
 
   // Fires whenever a brand-new sprite blob lands in IDB (the lazy-crop
@@ -1353,114 +1469,6 @@
     };
   }
 
-  // Fast-path first-launch sprite import using pre-cropped binary
-  // packs at `<BUNDLED_BASE>/sprite-packs/<b>.pack`. Each pack carries
-  // every (a, variant) cell for partner b as tight-bbox PNG bytes
-  // plus a small index — runtime work is fetch + DataView parse +
-  // Blob slice + ONE bulk IDB transaction per pack. No PNG decode,
-  // no canvas, no alpha-scan, no per-cell IDB overhead.
-  //
-  // Capacitor-only — packs live in the bundle; web mode keeps using
-  // bulkDownload via the welcome flow. The packs are produced at
-  // build time by generate_sprite_packs.py from the same source
-  // sheets bulkDownload would otherwise crop on-device, so the IDB
-  // state ends up identical to a sheet-based bulkDownload.
-  //
-  // Pack format (must match generate_sprite_packs.py):
-  //   Magic 4 bytes 'CRPP'
-  //   u32 LE   cell_count
-  //   N × 16 B (u32 a, i32 variant, u32 offset, u32 length)  index
-  //   PNG payload bytes
-  //
-  // opts:
-  //   sheetFrom / sheetTo : partner-B range (1..150 by default)
-  //   signal              : AbortSignal — caller can cancel
-  //   onProgress({ sheetsDone, sheetsTotal, currentSheet, phase })
-  async function bulkImportPacks(opts = {}) {
-    const sheetFrom = opts.sheetFrom || 1;
-    const sheetTo = opts.sheetTo || 150;
-    const signal = opts.signal;
-    const onProgress = opts.onProgress || (() => {});
-    const totalSheets = sheetTo - sheetFrom + 1;
-    const PACK_MAGIC_BE = 0x43525050;  // 'CRPP' read as big-endian u32
-
-    let imported = 0;
-    let totalCells = 0;
-    for (let b = sheetFrom; b <= sheetTo; b++) {
-      if (signal && signal.aborted) return { cancelled: true };
-      onProgress({
-        sheetsDone: imported, sheetsTotal: totalSheets,
-        currentSheet: b, phase: 'fetching',
-      });
-
-      let buf;
-      try {
-        const url = `${BUNDLED_BASE}/sprite-packs/${b}.pack`;
-        const resp = await fetch(url);
-        if (!resp.ok) {
-          // Pack absent (e.g., partner had no autogen art) — treat
-          // as a clean skip, mark as done so future runs don't retry.
-          markSheetDownloaded(b);
-          markCustomDone(b);
-          imported++;
-          continue;
-        }
-        buf = await resp.arrayBuffer();
-      } catch (e) {
-        _logSpriteError(`bulkImportPacks/fetch/${b}`, e);
-        continue;
-      }
-
-      const view = new DataView(buf);
-      if (buf.byteLength < 8 || view.getUint32(0, false) !== PACK_MAGIC_BE) {
-        _logSpriteError(`bulkImportPacks/badMagic/${b}`,
-          new Error(`pack ${b} bad magic (got ${view.getUint32(0, false).toString(16)})`));
-        continue;
-      }
-      const cellCount = view.getUint32(4, true);
-      const indexStart = 8;
-      const payloadStart = indexStart + cellCount * 16;
-      if (buf.byteLength < payloadStart) {
-        _logSpriteError(`bulkImportPacks/truncated/${b}`,
-          new Error(`pack ${b} index truncated`));
-        continue;
-      }
-
-      const items = new Array(cellCount);
-      for (let i = 0; i < cellCount; i++) {
-        const off = indexStart + i * 16;
-        const a = view.getUint32(off, true);
-        const variant = view.getInt32(off + 4, true);
-        const dataOffset = view.getUint32(off + 8, true);
-        const dataLength = view.getUint32(off + 12, true);
-        // Subarray is a view (no copy); Blob ctor will copy into the
-        // Blob's own backing once. ArrayBuffer becomes GC-eligible
-        // after this loop's enclosing iteration ends.
-        const slice = new Uint8Array(buf, payloadStart + dataOffset, dataLength);
-        const blob = new Blob([slice], { type: 'image/png' });
-        const key = variant < 0 ? autogenKey(a, b) : customKey(a, b, variant);
-        items[i] = { key, value: blob };
-      }
-
-      try {
-        await _idbBulkPut(STORE_ICONS, items);
-      } catch (e) {
-        _logSpriteError(`bulkImportPacks/idbBulkPut/${b}`, e);
-        continue;
-      }
-
-      markSheetDownloaded(b);
-      markCustomDone(b);
-      imported++;
-      totalCells += cellCount;
-      onProgress({
-        sheetsDone: imported, sheetsTotal: totalSheets,
-        currentSheet: b, phase: 'imported',
-      });
-    }
-    return { cancelled: false, imported, totalCells };
-  }
-
   // opts:
   //   sheetFrom / sheetTo: partner-B sheet range (1..150 by default)
   //   indexFrom / indexTo: partner-A crop range (1..150)
@@ -1722,7 +1730,7 @@
     getDefaultSpriteUrl, getDefaultSpriteBlob,
     useSpriteInto, useSpritesIntoBatch,
     getCellVariantCount, getCellVariantCountsBatch,
-    bulkDownload, bulkImportPacks, getDownloadedSheets, getDownloadStatus, deleteAllSprites,
+    bulkDownload, getDownloadedSheets, getDownloadStatus, deleteAllSprites,
     getCustomManifest,
     getInflightCount,
     rebuildVariantSummary: _writeVariantSummary,
