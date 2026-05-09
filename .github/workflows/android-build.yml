@@ -198,15 +198,20 @@ jobs:
           main_activity.write_text(f"""package {app_id};
 
           import android.os.Bundle;
+          import android.webkit.MimeTypeMap;
           import android.webkit.WebResourceRequest;
           import android.webkit.WebResourceResponse;
 
+          import androidx.annotation.NonNull;
           import androidx.webkit.ServiceWorkerClientCompat;
           import androidx.webkit.ServiceWorkerControllerCompat;
           import androidx.webkit.WebViewAssetLoader;
           import androidx.webkit.WebViewFeature;
 
           import com.getcapacitor.BridgeActivity;
+
+          import java.io.IOException;
+          import java.io.InputStream;
 
           public class MainActivity extends BridgeActivity {{
               @Override
@@ -222,9 +227,39 @@ jobs:
                   // parallel asset loader on the SW path so /sw.js
                   // resolves and the SW can take over offline caching.
                   if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BASIC_USAGE)) {{
+                      // Capacitor stages the webDir at `assets/public/`,
+                      // not the `assets/` root, so the stock 1-arg
+                      // AssetsPathHandler (which only serves from root)
+                      // can't find sw.js or any of the other webDir
+                      // files. Custom PathHandler prepends "public/" and
+                      // infers MIME via Android's MimeTypeMap — critical
+                      // because Chromium rejects SW registration if
+                      // sw.js comes back with the wrong MIME (must be
+                      // `application/javascript`, which is what the .js
+                      // extension maps to).
+                      final WebViewAssetLoader.PathHandler publicAssets =
+                          new WebViewAssetLoader.PathHandler() {{
+                              @Override
+                              public WebResourceResponse handle(@NonNull String path) {{
+                                  try {{
+                                      InputStream is = getAssets().open("public/" + path);
+                                      String ext = MimeTypeMap.getFileExtensionFromUrl(path);
+                                      String mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext);
+                                      if (mime == null) mime = "application/octet-stream";
+                                      return new WebResourceResponse(mime, null, is);
+                                  }} catch (IOException e) {{
+                                      // Asset not found → fall through to
+                                      // the network. For SW-originated
+                                      // requests this means external URLs
+                                      // (e.g., tile-server downloads) hit
+                                      // the wire as expected.
+                                      return null;
+                                  }}
+                              }}
+                          }};
                       final WebViewAssetLoader loader = new WebViewAssetLoader.Builder()
                           .setDomain("localhost")
-                          .addPathHandler("/", new WebViewAssetLoader.AssetsPathHandler(this, "public"))
+                          .addPathHandler("/", publicAssets)
                           .build();
                       ServiceWorkerControllerCompat.getInstance().setServiceWorkerClient(
                           new ServiceWorkerClientCompat() {{
