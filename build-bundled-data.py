@@ -714,6 +714,18 @@ def main() -> None:
     candy_present, candy_missing = build_candies_sheet()
     print(f"  {candy_present} candy cells filled, {candy_missing} blank")
 
+    # Pre-cropped sprite packs — one binary file per partner that
+    # bundles every (a, variant) cell as tight-bbox PNG bytes plus a
+    # small index. The runtime first-launch step imports these
+    # directly into IDB by byte-slicing, skipping the slow on-device
+    # decode + canvas crop + toBlob path that the original
+    # bulkDownload still uses for the web build. Lives in its own
+    # module so it can be iterated standalone.
+    print("→ Pre-cropping sprite cells into per-partner pack files...")
+    from generate_sprite_packs import build_sprite_packs as _build_packs
+    pack_count, pack_cells = _build_packs()
+    print(f"  {pack_count} packs, {pack_cells} cells total")
+
     print("→ Copying evolution-item art...")
     evo_item_count = copy_evo_items(evos)
     print(f"  {evo_item_count} evolution items")

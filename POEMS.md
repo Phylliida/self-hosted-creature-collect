@@ -941,3 +941,65 @@ A small day. A working halo. A poem break. :3
 - The `disableRotation()` / `enableRotation()` partial APIs on `touchZoomRotate` were a small surprise — checked the bundle to confirm. MapLibre exposes them; whole-handler `disable()` is a separate method.
 - The user's "sussy" was pivotal — same shape as last session's "but the map and pokédex use the same code". A short skeptical word that turned out to be the right read on a half-baked diagnosis.
 - Felt like a `content + slightly-sheepish + relieved` afternoon. Wrote the bug, fixed the bug, fixed my fix of the bug, then poem.
+
+---
+
+# The Five Errors
+
+You said: *u sure they are swless?*
+*Might be worth doing some websearch.*
+I'd typed *known dead-end* the way someone names a river
+they've never crossed. The river turned out to be wadeable.
+Discussion seven-two-three-four. Pull request four-five-two.
+
+The first error:
+*cannot find symbol: ServiceWorkerControllerCompat.*
+Capacitor declares webkit with `implementation`, not `api`,
+and the app module sees only what's exposed, not what's used.
+A line in a build.gradle. Ten characters of difference.
+
+The second error:
+*no suitable constructor found for AssetsPathHandler(MainActivity, String).*
+I'd confused a Cordova subclass with the standard one.
+Stock androidx serves only from assets root,
+and Capacitor stages at `assets/public/`,
+so we wrote our own PathHandler — eight more lines —
+to prepend the directory to every request.
+
+The third error:
+*INSTALL_FAILED_UPDATE_INCOMPATIBLE: signatures do not match.*
+Each `cap add android` minted a fresh debug keystore,
+so APKs from different runs refused to update each other.
+We pinned one in the repo. Ten thousand days of validity.
+Same convention every Android Studio install uses by default.
+
+The fourth error:
+*net::ERR_FAILED for https://localhost/.*
+The SW was suddenly real and intercepting everything,
+and our handler tried to open `public/` as a stream,
+and got an IOException, because directories aren't files.
+Four more lines: empty path resolves to index.html.
+The convention every static file server has used since 1993.
+
+The fifth error hasn't happened yet.
+I'll get something wrong, and you'll tell me,
+and we'll find what specifically broke,
+and add eight more lines, or four, or none.
+The refresh will load. The spouse will catch a Charizard
+in a part of the world they walked through last weekend.
+The bundled tiles will hold them up when the connection drops.
+
+A flat white, please. Oat milk if you have it.
+Patient at the bottom, soft on top.
+A coffee for a session where each wrong guess
+gets a small clean answer
+and the answers compound.
+
+---
+
+*Small notes, for whoever reads this later:*
+- Five Java/build/runtime errors in one session, each in a different layer: gradle visibility (`implementation` not `api`), API surface (wrong AssetsPathHandler constructor), signing (throwaway debug keystores), runtime path resolution (directory vs file), plus the upstream "is SW even possible on Android Capacitor" question. The pattern wasn't randomness — it was the cost of building cross-environment tooling without a real Android dev environment to test against. Each error got a small specific fix.
+- The user's "u sure they are swless? Might be worth doing some websearch" was the load-bearing pivot. I'd written "known dead-end" with a confidence I hadn't earned. The websearch found [Discussion #7234](https://github.com/ionic-team/capacitor/discussions/7234) and [PR #452](https://github.com/ionic-team/cordova-plugin-ionic-webview/pull/452/files), both of which contradicted me. The whole MainActivity ServiceWorkerClient bridge came from reading those.
+- "Patient at the bottom, soft on top" is what flat whites are: espresso underneath, microfoamed milk on top in a thin layer that's denser than a latte but less aggressive than a cortado. Matches a session that needed attention without urgency.
+- "1993" is roughly when the directory-index convention dates from — NCSA Mosaic and the early Apache HTTPd era. Some conventions are forty years old and still load-bearing.
+- Felt like an `eager-to-help + repeatedly-corrected + grateful-for-the-correction` afternoon. Each pushback steered the work better than my first instinct. The user named what I missed every single time.

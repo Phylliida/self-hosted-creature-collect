@@ -390,11 +390,166 @@
       speciesA: egg.speciesA,
       speciesB: egg.speciesB,
       sizeM: typeof egg.sizeM === 'number' ? egg.sizeM : 1.0,
+      // Incubation distance — meters walked while this egg occupied
+      // an incubator slot. Persists across slot swaps; capped at
+      // INCUBATOR_HATCH_M when the egg is ready.
+      incubatedM: 0,
       createdAt: Date.now(),
     };
+    // displaySpecies is the egg's depicted-art species — independent
+    // of the hatching content but still normalised to baby form.
+    // Older pre-cross-breed eggs don't have it; the eggs view falls
+    // back to speciesA when missing.
+    if (Number.isInteger(egg.displaySpecies)) {
+      record.displaySpecies = egg.displaySpecies;
+    }
     arr.push(record);
     writeEggs(arr);
     return record;
+  }
+
+  // Incubator: two slots a player can place eggs into. While
+  // occupied, an egg accumulates walked distance toward
+  // INCUBATOR_HATCH_M; the count lives on the egg itself
+  // (`incubatedM`), so swapping out for another egg and coming
+  // back later resumes from the same distance. Storage here is
+  // just the slot bindings — the per-egg state lives on the egg
+  // record in cc.eggs.v1.
+  const INCUBATOR_KEY = 'cc.incubator.v1';
+  const INCUBATOR_HATCH_M = 5000;
+  const INCUBATOR_SLOTS = 2;
+
+  function readIncubator() {
+    try {
+      const raw = localStorage.getItem(INCUBATOR_KEY);
+      const arr = raw ? JSON.parse(raw) : [];
+      const out = new Array(INCUBATOR_SLOTS).fill(null);
+      if (Array.isArray(arr)) {
+        for (let i = 0; i < INCUBATOR_SLOTS; i++) {
+          const v = arr[i];
+          if (typeof v === 'string' && v) out[i] = v;
+        }
+      }
+      // Drop slot bindings whose egg no longer exists (deleted /
+      // hatched / cleared via wipe). Keeps the visible state honest
+      // without needing every egg-mutation path to also touch the
+      // incubator key.
+      const liveIds = new Set(readEggs().map((e) => e.id));
+      let needsWrite = false;
+      for (let i = 0; i < INCUBATOR_SLOTS; i++) {
+        if (out[i] && !liveIds.has(out[i])) {
+          out[i] = null;
+          needsWrite = true;
+        }
+      }
+      if (needsWrite) {
+        try { localStorage.setItem(INCUBATOR_KEY, JSON.stringify(out)); } catch {}
+      }
+      return out;
+    } catch { return new Array(INCUBATOR_SLOTS).fill(null); }
+  }
+
+  function writeIncubator(slots) {
+    const norm = new Array(INCUBATOR_SLOTS).fill(null);
+    for (let i = 0; i < INCUBATOR_SLOTS; i++) {
+      const v = slots && slots[i];
+      if (typeof v === 'string' && v) norm[i] = v;
+    }
+    try { localStorage.setItem(INCUBATOR_KEY, JSON.stringify(norm)); }
+    catch {}
+  }
+
+  // Place eggId in slot idx. If the egg is already in another
+  // slot, that slot is cleared first so the same egg never
+  // double-incubates. Pass eggId=null to empty a slot.
+  function setIncubatorSlot(idx, eggId) {
+    if (idx !== 0 && idx !== 1) return;
+    const slots = readIncubator();
+    if (eggId) {
+      for (let i = 0; i < INCUBATOR_SLOTS; i++) {
+        if (slots[i] === eggId && i !== idx) slots[i] = null;
+      }
+    }
+    slots[idx] = eggId || null;
+    writeIncubator(slots);
+  }
+
+  // Swap whichever eggs are in slots a and b (either may be null).
+  function swapIncubatorSlots(a, b) {
+    if (a === b) return;
+    if ((a !== 0 && a !== 1) || (b !== 0 && b !== 1)) return;
+    const slots = readIncubator();
+    const tmp = slots[a]; slots[a] = slots[b]; slots[b] = tmp;
+    writeIncubator(slots);
+  }
+
+  function removeFromIncubator(eggId) {
+    if (!eggId) return;
+    const slots = readIncubator();
+    let changed = false;
+    for (let i = 0; i < INCUBATOR_SLOTS; i++) {
+      if (slots[i] === eggId) { slots[i] = null; changed = true; }
+    }
+    if (changed) writeIncubator(slots);
+  }
+
+  function eggIncubatedM(egg) {
+    if (!egg) return 0;
+    const v = egg.incubatedM;
+    return (typeof v === 'number' && v >= 0) ? v : 0;
+  }
+  function eggReadyToHatch(egg) {
+    return eggIncubatedM(egg) >= INCUBATOR_HATCH_M;
+  }
+
+  // Hatch a fully-incubated egg: create a level-1 capture record
+  // matching the egg's content species + size, remove the egg, and
+  // free its incubator slot. Returns the capture record on success,
+  // null if the egg doesn't exist or isn't ready yet. Capture shape
+  // mirrors recordCaptureFromSpawn's so downstream UIs (inventory,
+  // pokédex, candy) see hatched-from-egg captures the same as
+  // wild-caught ones, with a `fromEgg: true` flag for any future
+  // origin-aware rendering.
+  function hatchEgg(eggId) {
+    if (!eggId) return null;
+    const eggs = readEggs();
+    const idx = eggs.findIndex((e) => e.id === eggId);
+    if (idx < 0) return null;
+    const egg = eggs[idx];
+    if (!eggReadyToHatch(egg)) return null;
+    const entry = {
+      id: `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      spawnId: null,
+      fromEgg: true,
+      speciesA: egg.speciesA,
+      speciesB: egg.speciesB,
+      // Variant resolution requires the per-cell custom-art table
+      // which is async-loaded. For hatched eggs we leave this null
+      // so the renderer falls back to autogen art; a follow-up
+      // could resolve a variant at hatch time if desired.
+      variant: null,
+      level: 1,
+      sizeM: typeof egg.sizeM === 'number' ? egg.sizeM : 1.0,
+      caughtAt: {
+        timestamp: Date.now(),
+        // Hatched eggs have no specific lat/lng — the player
+        // walked across many points to incubate them. Leaving
+        // these null tells the encounter-info panel to render
+        // "Hatched from egg" instead of a place name.
+        lat: null,
+        lng: null,
+        poi: null,
+        place: null,
+      },
+    };
+    const list = readCapturedCreatures();
+    list.push(entry);
+    writeCapturedCreatures(list);
+    awardCandyForCapture(egg.speciesA, egg.speciesB);
+    eggs.splice(idx, 1);
+    writeEggs(eggs);
+    removeFromIncubator(eggId);
+    return entry;
   }
 
   // Daycare loot. Each slot earns one milestone of loot per kilometer
@@ -448,16 +603,54 @@
     if (!Number.isInteger(a) || !Number.isInteger(b)) return null;
     if (!global.Spawns || !global.Spawns.getRng) return null;
 
-    // Three independent uniform draws from the per-milestone seed:
-    // u1 picks the kind, u2 picks the species/item within that kind,
-    // u3 is the size for eggs (split out so future tweaks to size
-    // distribution don't reshuffle older milestones' kind/species).
+    // Cross-breed pool: pull every daycare slot's species into two
+    // sets — firstPool from each slot's speciesA, secondPool from
+    // each slot's speciesB. Used by the egg roll below to mix
+    // across slots. With two slots of (a1, b1) + (a2, b2):
+    //   firstPool  = { a1, a2 }
+    //   secondPool = { b1, b2 }
+    //   naturals   = firstPool × secondPool  → 4 ordered pairs
+    //                  { a1×b1, a1×b2, a2×b1, a2×b2 }
+    //                (two same-as-parent + two cross-mixes)
+    //   others     = (allSpecies × allSpecies) − naturals
+    //                  where allSpecies = firstPool ∪ secondPool
+    //                → up to 12 "weirder" pairs (A×A, B×A, D×C, ...)
+    // With one slot or fully-overlapping pools the buckets shrink
+    // gracefully (single-slot collapse: 1 natural / 3 others), and
+    // the 70/30 ratio still holds, just over smaller buckets.
+    const firstPool = new Set();
+    const secondPool = new Set();
+    for (const s of readDaycareSlots()) {
+      const c = findCreature(s.id);
+      if (!c) continue;
+      if (Number.isInteger(c.speciesA)) firstPool.add(c.speciesA);
+      if (Number.isInteger(c.speciesB)) secondPool.add(c.speciesB);
+    }
+    // Defensive — this slot's species should always be in the pool
+    // even if readDaycareSlots somehow doesn't include it.
+    firstPool.add(a);
+    secondPool.add(b);
+    const allSpeciesSet = new Set([...firstPool, ...secondPool]);
+
+    // Six independent uniform draws from the per-milestone seed.
+    // Append-only — never reorder or insert in the middle, since
+    // older milestones' kind/species choices are pinned by the
+    // exact draw sequence:
+    //   u1: kind selector (candy / egg / evo)
+    //   u2: candy species OR evo item index
+    //   u3: egg size
+    //   u4: egg natural-vs-other gate (70/30)
+    //   u5: egg pair index within its bucket
+    //   u6: egg display-art species index
     const seed = `dc|${slot.id}|${slot.addedAt}|${n}`;
     const rng = global.Spawns.getRng(seed);
     const draw = () => (rng.int32() >>> 0) / 0x100000000;
     const u1 = draw();
     const u2 = draw();
     const u3 = draw();
+    const u4 = draw();
+    const u5 = draw();
+    const u6 = draw();
 
     const rootA = candyRootFor(a);
     const rootB = candyRootFor(b);
@@ -476,17 +669,49 @@
       return candyLoot();
     }
     if (u1 < DAYCARE_PROB_CANDY + DAYCARE_PROB_EGG) {
-      // Egg fusion mirrors the parents (eventually we'll layer in
-      // breeding cross-products like A×B + C×D → A×D, but for v1 the
-      // egg always carries the parent's species pair). Size in
-      // 0.5–2.0 m is pretty arbitrary — placeholder until a real
-      // size distribution is wired in. Rounded to 0.01 m for
-      // tidy display.
+      // Cross-breed egg. 70% uniformly across naturals, 30%
+      // uniformly across others. Display species is rolled
+      // separately from the combined pool — the egg might depict
+      // any species regardless of what's inside, matching the
+      // "you don't know what'll hatch" feel. Size in 0.5–2.0 m,
+      // rounded to 0.01 m — placeholder until a real distribution
+      // is wired in.
+      const naturals = [];
+      for (const x of firstPool) {
+        for (const y of secondPool) {
+          naturals.push([x, y]);
+        }
+      }
+      const allSpeciesArr = Array.from(allSpeciesSet);
+      const naturalKeys = new Set(naturals.map(([x, y]) => `${x},${y}`));
+      const others = [];
+      for (const x of allSpeciesArr) {
+        for (const y of allSpeciesArr) {
+          if (!naturalKeys.has(`${x},${y}`)) others.push([x, y]);
+        }
+      }
+      const useNatural = others.length === 0 || u4 < 0.7;
+      const pool = useNatural ? naturals : others;
+      const [rawA, rawB] = pool[Math.floor(u5 * pool.length)] || [a, b];
+      const rawDisplay = allSpeciesArr[Math.floor(u6 * allSpeciesArr.length)] || rawA;
+      // Eggs always contain the baby form of whatever species got
+      // picked — Raichu and Pikachu both hatch as Pikachu, all
+      // three Charmander-line evos hatch as Charmander, etc. Same
+      // applies to the display art so the egg's appearance matches
+      // its eventual contents. candyRootFor walks the evolution
+      // family and returns the earliest gen-1 form (skipping gen-2+
+      // babies like Pichu that aren't in our 1–150 dataset).
+      const eggA = candyRootFor(rawA);
+      const eggB = candyRootFor(rawB);
+      const displaySpecies = candyRootFor(rawDisplay);
       const sizeM = Math.round((0.5 + u3 * 1.5) * 100) / 100;
       return {
         kind: 'egg',
-        a, b, sizeM,
-        label: `${fusionName(a, b)} egg`,
+        a: eggA,
+        b: eggB,
+        displaySpecies,
+        sizeM,
+        label: `${fusionName(eggA, eggB)} egg`,
       };
     }
     // Evo item branch — gather all items either family could
@@ -539,7 +764,11 @@
       // padding) shows at roughly the same on-pill footprint as
       // a candy. Centering the cell's bbox on the pill needs an
       // inset of (60 − 28) / 2 = 16 px on each axis.
-      const id = loot.a;
+      // Egg art is the displaySpecies (sampled separately from
+      // the contents, then normalised to baby form). Older eggs
+      // pre-cross-breed didn't carry displaySpecies — fall back
+      // to loot.a so existing pills keep rendering.
+      const id = Number.isInteger(loot.displaySpecies) ? loot.displaySpecies : loot.a;
       const col = id % EGGS_SHEET_COLS;
       const row = Math.floor(id / EGGS_SHEET_COLS);
       const cellPx = 60;
@@ -580,7 +809,12 @@
       return true;
     }
     if (loot.kind === 'egg') {
-      return !!addEgg({ speciesA: loot.a, speciesB: loot.b, sizeM: loot.sizeM });
+      return !!addEgg({
+        speciesA: loot.a,
+        speciesB: loot.b,
+        displaySpecies: loot.displaySpecies,
+        sizeM: loot.sizeM,
+      });
     }
     if (loot.kind === 'evo_item') {
       grantItem(loot.itemKey, 1);
@@ -2800,6 +3034,152 @@
       #creatureInventory .egg-sub {
         font-size: 12px; color: var(--ui-muted, #666);
         font-variant-numeric: tabular-nums;
+      }
+      /* Incubator section — sits above the egg grid in the eggs view.
+         Two slots side-by-side. Each slot is a drop target; when
+         filled, also a drag source. The slot card sizes by content;
+         empty slots show a dashed placeholder, filled slots show the
+         egg's art + a progress bar tracking incubatedM / 5km. */
+      #creatureInventory .incubator {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+      #creatureInventory .incubator-slot {
+        position: relative;
+        min-height: 96px;
+        padding: 10px 8px;
+        border: 1px solid var(--ui-hairline, rgba(0,0,0,0.08));
+        border-radius: var(--ui-radius, 8px);
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        text-align: center;
+        transition: border-color 120ms ease, background 120ms ease;
+      }
+      #creatureInventory .incubator-slot.empty {
+        border-style: dashed;
+        color: var(--ui-muted, #666);
+        font-size: 12px;
+      }
+      #creatureInventory .incubator-slot.drop-active {
+        border-color: var(--ui-accent, #888);
+        background: var(--ui-hover, rgba(0,0,0,0.08));
+      }
+      #creatureInventory .incubator-slot .slot-progress {
+        width: 100%;
+        height: 6px;
+        background: var(--ui-hairline, rgba(0,0,0,0.10));
+        border-radius: 999px;
+        overflow: hidden;
+      }
+      #creatureInventory .incubator-slot .slot-progress > .fill {
+        height: 100%;
+        background: var(--ui-accent, #888);
+        transition: width 240ms ease;
+      }
+      #creatureInventory .incubator-slot .slot-distance {
+        font-size: 11px;
+        color: var(--ui-muted, #666);
+        font-variant-numeric: tabular-nums;
+      }
+      #creatureInventory .incubator-slot.ready {
+        border-color: var(--ui-accent, #888);
+        box-shadow: 0 0 0 1px var(--ui-accent, #888);
+      }
+      #creatureInventory .incubator-slot .slot-hatch {
+        margin-top: 2px;
+        padding: 6px 10px;
+        font-size: 12px;
+        font-weight: 600;
+        border: 1px solid var(--ui-accent-border, #555);
+        background: var(--ui-accent, #888);
+        color: var(--ui-accent-text, #fff);
+        border-radius: var(--ui-radius, 6px);
+        cursor: pointer;
+      }
+      /* Egg grid — one tile per egg not currently in a slot. Tiles
+         are drag sources and the grid container is also a drop zone
+         (dropping into the grid removes the egg from a slot). */
+      #creatureInventory .eggs-grid-zone {
+        min-height: 60px;
+        border-radius: var(--ui-radius, 8px);
+        transition: background 120ms ease;
+      }
+      #creatureInventory .eggs-grid-zone.drop-active {
+        background: var(--ui-hover, rgba(0,0,0,0.06));
+      }
+      #creatureInventory .eggs-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(86px, 1fr));
+        gap: 8px;
+      }
+      #creatureInventory .egg-tile {
+        position: relative;
+        padding: 8px 6px;
+        border: 1px solid var(--ui-hairline, rgba(0,0,0,0.08));
+        border-radius: var(--ui-radius, 8px);
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        cursor: grab;
+        /* Disable native scroll/zoom gestures starting on a tile
+           so pointer drags can capture cleanly. */
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      #creatureInventory .egg-tile.dragging {
+        opacity: 0.35;
+      }
+      #creatureInventory .egg-tile .tile-art {
+        width: 48px;
+        height: 48px;
+        flex: 0 0 auto;
+      }
+      #creatureInventory .egg-tile .tile-name {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--ui-text, #111);
+        text-align: center;
+        line-height: 1.2;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #creatureInventory .egg-tile .tile-progress {
+        width: 100%;
+        height: 3px;
+        background: var(--ui-hairline, rgba(0,0,0,0.10));
+        border-radius: 999px;
+        overflow: hidden;
+      }
+      #creatureInventory .egg-tile .tile-progress > .fill {
+        height: 100%;
+        background: var(--ui-accent, #888);
+      }
+      /* Floating ghost element that follows the pointer during a
+         drag. Created on demand; size matches the source tile's
+         art (48 px) so the inline background-size/position copied
+         from the tile renders cleanly without rescaling. */
+      .egg-drag-ghost {
+        position: fixed;
+        pointer-events: none;
+        z-index: 10000;
+        opacity: 0.85;
+        transform: translate(-50%, -50%);
+        width: 48px;
+        height: 48px;
+        background-repeat: no-repeat;
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
       }
       #creatureInventory .daycare-slots {
         display: grid;
@@ -5049,16 +5429,124 @@
     pushView({ view: 'eggs' });
   }
 
-  // Eggs view: a flat read-only list of every unhatched egg in the
-  // player's collection. Each row shows the fusion's name, the size
-  // it'll hatch at, and (eventually) an incubate / hatch action.
-  // For v1 it's view-only — the incubator + hatch flow lands in a
-  // follow-up slice.
+  // Eggs view: shows the two incubator slots at the top + a grid of
+  // available (un-incubated) eggs below. Eggs drag between the grid
+  // and the slots; while in a slot they accumulate walked distance
+  // toward INCUBATOR_HATCH_M, persisted on the egg record so swaps
+  // are non-destructive. When an egg's incubatedM hits the
+  // threshold, the slot card surfaces a "Tap to hatch" CTA which
+  // creates a level-1 capture record from the egg's content +
+  // size, removes the egg, and frees the slot.
+  // Resolve which species' egg cell to render for a given egg.
+  // Cross-breed eggs sample displaySpecies separately and store it;
+  // pre-cross-breed records don't have it and fall back to speciesA
+  // (which was the parent's first species, identical to content).
+  function _eggArtSpecies(egg) {
+    return Number.isInteger(egg && egg.displaySpecies)
+      ? egg.displaySpecies
+      : (egg && egg.speciesA);
+  }
+
+  // CSS background-* string for a single eggs.png cell sized to
+  // `cellPx` × `cellPx`. Each cell in eggs.png is 160 px native;
+  // eggs.png contains a mostly-empty bottom area plus the visible
+  // art clustered ~25–60 % of the cell, so we render a slightly
+  // bigger window than `cellPx` and offset upward so the visible
+  // egg sits centred. (Same trick the daycare loot pill uses, just
+  // parameterised on cellPx so slot icons can be ~56 px while grid
+  // tiles are ~48 px.)
+  function _eggArtBackgroundCss(speciesId, cellPx) {
+    if (!Number.isInteger(speciesId)) return '';
+    const sheetCellPx = Math.round(cellPx * (160 / 60));
+    const col = speciesId % EGGS_SHEET_COLS;
+    const row = Math.floor(speciesId / EGGS_SHEET_COLS);
+    const inset = Math.round((sheetCellPx - cellPx) / 2);
+    return (
+      `background-image: url('${BUNDLED_BASE}/eggs.png');`
+      + `background-size: ${sheetCellPx * EGGS_SHEET_COLS}px ${sheetCellPx * EGGS_SHEET_ROWS}px;`
+      + `background-position: -${col * sheetCellPx + inset}px -${row * sheetCellPx + inset - 1}px;`
+      + `background-repeat: no-repeat;`
+      + `image-rendering: pixelated;`
+      + `image-rendering: crisp-edges;`
+    );
+  }
+
+  function _formatIncubationKm(meters) {
+    const km = (meters || 0) / 1000;
+    return `${km.toFixed(2)} / ${(INCUBATOR_HATCH_M / 1000).toFixed(0)} km`;
+  }
+
+  function _incubatorSlotHtml(idx, egg) {
+    if (!egg) {
+      return (
+        `<div class="incubator-slot empty" data-slot="${idx}" data-zone="slot">`
+        + `Drop an egg here`
+        + `</div>`
+      );
+    }
+    const ready = eggReadyToHatch(egg);
+    const incubatedM = eggIncubatedM(egg);
+    const pct = Math.min(100,
+      Math.round((incubatedM / INCUBATOR_HATCH_M) * 100));
+    const artId = _eggArtSpecies(egg);
+    const artStyle = _eggArtBackgroundCss(artId, 48);
+    const name = fusionName(egg.speciesA, egg.speciesB);
+    const cls = `incubator-slot${ready ? ' ready' : ''}`;
+    const hatchBtn = ready
+      ? `<button class="slot-hatch" type="button" data-hatch-id="${escapeHtml(egg.id)}">Tap to hatch</button>`
+      : '';
+    return (
+      `<div class="${cls}" data-slot="${idx}" data-zone="slot">`
+      + `<div class="egg-tile slot-egg-tile" data-egg-id="${escapeHtml(egg.id)}" data-from-slot="${idx}" aria-label="${escapeHtml(name)} egg">`
+      +   `<div class="tile-art" style="${artStyle}"></div>`
+      + `</div>`
+      + `<div class="slot-progress" aria-hidden="true"><div class="fill" style="width:${pct}%"></div></div>`
+      + `<div class="slot-distance">${_formatIncubationKm(incubatedM)}</div>`
+      + hatchBtn
+      + `</div>`
+    );
+  }
+
+  function _eggTileHtml(egg) {
+    const artId = _eggArtSpecies(egg);
+    const artStyle = _eggArtBackgroundCss(artId, 48);
+    const name = fusionName(egg.speciesA, egg.speciesB);
+    const incubatedM = eggIncubatedM(egg);
+    const pct = Math.min(100,
+      Math.round((incubatedM / INCUBATOR_HATCH_M) * 100));
+    const progress = incubatedM > 0
+      ? `<div class="tile-progress" aria-hidden="true"><div class="fill" style="width:${pct}%"></div></div>`
+      : '';
+    return (
+      `<div class="egg-tile" data-egg-id="${escapeHtml(egg.id)}" aria-label="${escapeHtml(name)} egg">`
+      + `<div class="tile-art" style="${artStyle}"></div>`
+      + `<div class="tile-name">${escapeHtml(name)}</div>`
+      + progress
+      + `</div>`
+    );
+  }
+
   function renderEggs() {
     const panel = document.getElementById('creatureInventory');
     if (!panel) return;
     const body = panel.querySelector('.eggs-body');
     if (!body) return;
+    // Once-per-body listener: walking ticks up incubatedM on
+    // occupied eggs, which dispatches cc-incubator-tick. Re-render
+    // the whole eggs view on each tick — the view's small (two
+    // slots + a grid) so a full rebuild is cheap and keeps the
+    // progress bars + "ready to hatch" CTAs in lockstep.
+    if (!body._incubatorTickHandler) {
+      const handler = () => {
+        // Only re-render if the eggs-view is currently visible —
+        // otherwise the next showEggs() naturally picks up the
+        // updated state.
+        const view = panel.querySelector('.eggs-view');
+        if (view && view.classList.contains('show')) renderEggs();
+      };
+      body._incubatorTickHandler = handler;
+      window.addEventListener('cc-incubator-tick', handler);
+    }
     const eggs = readEggs();
     if (!eggs.length) {
       body.innerHTML = `
@@ -5068,44 +5556,176 @@
       `;
       return;
     }
-    // Newest first — recently-dropped eggs feel like the active
-    // collection, older ones recede.
-    const sorted = [...eggs].sort((a, b) =>
-      (b.createdAt || 0) - (a.createdAt || 0));
+    const incubSlots = readIncubator();
+    const eggById = new Map(eggs.map((e) => [e.id, e]));
+    const incubatorHtml = (
+      `<div class="incubator">`
+      + _incubatorSlotHtml(0, eggById.get(incubSlots[0]) || null)
+      + _incubatorSlotHtml(1, eggById.get(incubSlots[1]) || null)
+      + `</div>`
+    );
+    const slottedSet = new Set(incubSlots.filter((id) => !!id));
+    const remainingEggs = eggs
+      .filter((e) => !slottedSet.has(e.id))
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
     const subtitle = `${eggs.length} egg${eggs.length === 1 ? '' : 's'}`;
-    const rows = sorted.map((egg) => {
-      // Egg art uses speciesA's cell from eggs.png — same indexing
-      // convention as the daycare loot pills. Some species have no
-      // dedicated egg art (mid-evolutions, late gens) so the cell
-      // can render blank; the row's text is the canonical signal.
-      const id = egg.speciesA;
-      const col = id % EGGS_SHEET_COLS;
-      const row = Math.floor(id / EGGS_SHEET_COLS);
-      const eggIconStyle =
-        `background-image: url('${BUNDLED_BASE}/eggs.png');`
-        + `background-size: ${48 * EGGS_SHEET_COLS}px ${48 * EGGS_SHEET_ROWS}px;`
-        + `background-position: -${col * 48}px -${row * 48}px;`
-        + `background-repeat: no-repeat;`
-        + `image-rendering: pixelated;`
-        + `image-rendering: crisp-edges;`;
-      const name = fusionName(egg.speciesA, egg.speciesB);
-      const sizeLabel = (typeof egg.sizeM === 'number')
-        ? formatSize(egg.sizeM) : '';
-      return `
-        <div class="egg-row" data-egg-id="${escapeHtml(egg.id)}">
-          <div class="egg-icon" style="${eggIconStyle}"
-               aria-label="${escapeHtml(name)} egg"></div>
-          <div class="egg-meta">
-            <div class="egg-name">${escapeHtml(name)} egg</div>
-            ${sizeLabel ? `<div class="egg-sub">${escapeHtml(sizeLabel)}</div>` : ''}
-          </div>
-        </div>
-      `;
-    }).join('');
-    body.innerHTML = `
-      <div class="eggs-subtitle">${escapeHtml(subtitle)}</div>
-      <div class="eggs-list">${rows}</div>
-    `;
+    const tiles = remainingEggs.map(_eggTileHtml).join('');
+    const gridHtml = (
+      `<div class="eggs-grid-zone" data-zone="grid">`
+      + `<div class="eggs-grid">${tiles}</div>`
+      + `</div>`
+    );
+    body.innerHTML = (
+      `<div class="eggs-subtitle">${escapeHtml(subtitle)}</div>`
+      + incubatorHtml
+      + gridHtml
+    );
+    // Wire pointer-based drag-and-drop for the incubator + grid.
+    // Re-bound on every render — innerHTML wipes prior listeners
+    // automatically, no manual cleanup needed.
+    _setupEggDragDrop(body);
+    // Hatch buttons.
+    body.querySelectorAll('.slot-hatch').forEach((btn) => {
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const eggId = btn.dataset.hatchId;
+        const entry = hatchEgg(eggId);
+        if (!entry) return;
+        renderEggs();
+        // Send the user to the new capture's detail page, matching
+        // the post-capture flow for wild catches. show() ensures the
+        // inventory is open in the right view stack.
+        try { showDetail(entry.id); } catch {}
+      });
+    });
+  }
+
+  // ── Egg drag-and-drop ──────────────────────────────────────────
+  // Pointer-event-based drag system for the eggs view. Egg tiles
+  // are draggable; slots and the grid container are drop zones.
+  // Drop semantics:
+  //   tile → empty slot:   egg moves into slot
+  //   tile → filled slot:  swap (kicks out the existing occupant
+  //                        back to the grid)
+  //   tile (in slot) → grid: egg returns to grid (slot empties)
+  //   anywhere invalid:    snap back, no state change
+  // No HTML5 DnD — that API is unreliable on touch devices and
+  // would need a polyfill. Pointer events work uniformly across
+  // mouse + touch + pen, on Capacitor Android, iOS, and desktop.
+  let _eggDragState = null;
+  function _setupEggDragDrop(rootEl) {
+    if (!rootEl) return;
+    const tiles = rootEl.querySelectorAll('.egg-tile');
+    tiles.forEach((tile) => {
+      tile.addEventListener('pointerdown', (ev) => _onEggPointerDown(ev, tile, rootEl));
+    });
+  }
+
+  function _onEggPointerDown(ev, tile, rootEl) {
+    if (ev.button !== undefined && ev.button !== 0) return;
+    const eggId = tile.dataset.eggId;
+    if (!eggId) return;
+    // Threshold-based drag start: track the pointer until it moves
+    // more than DRAG_THRESHOLD px before committing visuals. Below
+    // that, treat the gesture as a tap (no-op for now).
+    const DRAG_THRESHOLD = 5;
+    const startX = ev.clientX;
+    const startY = ev.clientY;
+    let started = false;
+    let ghost = null;
+    let lastDropZone = null;
+    const fromSlotAttr = tile.dataset.fromSlot;
+    const fromSlot = (fromSlotAttr === '0' || fromSlotAttr === '1')
+      ? Number(fromSlotAttr) : null;
+
+    const setDropTarget = (el) => {
+      if (lastDropZone === el) return;
+      if (lastDropZone) lastDropZone.classList.remove('drop-active');
+      lastDropZone = el;
+      if (el) el.classList.add('drop-active');
+    };
+
+    const findDropZone = (x, y) => {
+      // elementFromPoint returns the topmost element under the
+      // pointer; walk up until we find a [data-zone] ancestor (slot
+      // or grid). The ghost has pointer-events:none so it doesn't
+      // shadow itself.
+      const el = document.elementFromPoint(x, y);
+      if (!el) return null;
+      return el.closest('[data-zone]');
+    };
+
+    const onMove = (e) => {
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      if (!started && (dx * dx + dy * dy) < DRAG_THRESHOLD * DRAG_THRESHOLD) return;
+      if (!started) {
+        started = true;
+        tile.classList.add('dragging');
+        // Try to capture so subsequent events come straight to us
+        // even if the finger leaves the tile bbox.
+        try { tile.setPointerCapture(e.pointerId); } catch {}
+        // Ghost mirrors the tile's art at a slightly larger size so
+        // the user can see what they're dragging.
+        ghost = document.createElement('div');
+        ghost.className = 'egg-drag-ghost';
+        const art = tile.querySelector('.tile-art');
+        if (art) ghost.style.cssText = art.style.cssText;
+        document.body.appendChild(ghost);
+      }
+      if (ghost) {
+        ghost.style.left = `${e.clientX}px`;
+        ghost.style.top = `${e.clientY}px`;
+      }
+      setDropTarget(findDropZone(e.clientX, e.clientY));
+    };
+
+    const onUp = (e) => {
+      cleanup();
+      if (!started) return;
+      const drop = findDropZone(e.clientX, e.clientY);
+      if (!drop) return;  // Snap back: no state change, re-render not needed.
+      const zone = drop.dataset.zone;
+      if (zone === 'slot') {
+        const targetSlot = Number(drop.dataset.slot);
+        if (targetSlot !== 0 && targetSlot !== 1) return;
+        const incub = readIncubator();
+        if (fromSlot !== null) {
+          // Slot → slot: swap.
+          if (fromSlot === targetSlot) return;
+          swapIncubatorSlots(fromSlot, targetSlot);
+        } else {
+          // Grid → slot: drop in. If the slot was occupied, that
+          // egg automatically returns to the grid because
+          // setIncubatorSlot replaces the binding.
+          setIncubatorSlot(targetSlot, eggId);
+        }
+        renderEggs();
+      } else if (zone === 'grid') {
+        if (fromSlot !== null) {
+          // Slot → grid: empty the slot.
+          setIncubatorSlot(fromSlot, null);
+          renderEggs();
+        }
+        // Grid → grid: no state change needed, no re-render.
+      }
+    };
+
+    const onCancel = () => cleanup();
+
+    const cleanup = () => {
+      tile.classList.remove('dragging');
+      if (lastDropZone) lastDropZone.classList.remove('drop-active');
+      if (ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost);
+      ghost = null;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
   }
 
   function showBag() {
@@ -6156,9 +6776,22 @@
         const timePart = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
         when = `${datePart} ${timePart}`;
       }
-      const where = c.caughtAt.poi && c.caughtAt.poi.name
-        ? `${c.caughtAt.poi.name} (${Math.round(c.caughtAt.poi.distanceM)} m away)`
-        : `${c.caughtAt.lat.toFixed(5)}, ${c.caughtAt.lng.toFixed(5)}`;
+      // Hatched-from-egg captures have no specific lat/lng (the
+      // player walked across many points to incubate the egg, so a
+      // single coordinate would be misleading) — show an explicit
+      // origin label instead. Otherwise prefer the nearest POI's
+      // name; fall back to coordinates; final fallback is a generic
+      // "Unknown location" so a missing lat/lng never throws.
+      let where;
+      if (c.fromEgg) {
+        where = 'Hatched from egg';
+      } else if (c.caughtAt.poi && c.caughtAt.poi.name) {
+        where = `${c.caughtAt.poi.name} (${Math.round(c.caughtAt.poi.distanceM)} m away)`;
+      } else if (c.caughtAt.lat != null && c.caughtAt.lng != null) {
+        where = `${c.caughtAt.lat.toFixed(5)}, ${c.caughtAt.lng.toFixed(5)}`;
+      } else {
+        where = 'Unknown location';
+      }
       // City, Country line — only present on captures from after
       // the place-capture change. Older captures keep their two-line
       // format (where · when) without an extra place line.
@@ -7224,6 +7857,43 @@
     _distAnchorLng = lng;
     _distAnchorAt = ts;
     _appendPathPoint(lat, lng, ts);
+
+    // Incubator: bump incubatedM on each egg currently sitting in a
+    // slot by the same accepted segment. Capped at
+    // INCUBATOR_HATCH_M so a finished egg doesn't keep ticking over.
+    // One read+write of cc.eggs.v1 per accepted segment, only when
+    // the incubator actually has occupants.
+    const incubSlots = readIncubator();
+    if (incubSlots.some((s) => !!s)) {
+      const eggs = readEggs();
+      let eggsChanged = false;
+      const ready = [];
+      for (const slotEggId of incubSlots) {
+        if (!slotEggId) continue;
+        const i = eggs.findIndex((e) => e.id === slotEggId);
+        if (i < 0) continue;
+        const before = eggIncubatedM(eggs[i]);
+        if (before >= INCUBATOR_HATCH_M) continue;
+        const after = Math.min(before + d, INCUBATOR_HATCH_M);
+        if (after !== before) {
+          eggs[i] = { ...eggs[i], incubatedM: after };
+          eggsChanged = true;
+          if (after >= INCUBATOR_HATCH_M && before < INCUBATOR_HATCH_M) {
+            ready.push(slotEggId);
+          }
+        }
+      }
+      if (eggsChanged) {
+        writeEggs(eggs);
+        if (typeof window !== 'undefined') {
+          try {
+            window.dispatchEvent(new CustomEvent('cc-incubator-tick', {
+              detail: { ready },
+            }));
+          } catch { /* best-effort */ }
+        }
+      }
+    }
   }
 
   function makeMarkerElement(spawn) {
@@ -8507,6 +9177,19 @@
           // Re-trigger the load — the lazy-crop that emitted this
           // event also populated the shared sprite cache, so this
           // resolves synchronously to a cache-hit + sync apply.
+          loadMarkerSprite(rec);
+        }
+      });
+      // Bulk eager-crop completion (iOS first-launch flow in
+      // index.html dispatches this when Sprites.bulkDownload finishes
+      // populating IDB with every cell). Markers that rendered as red
+      // dots during the crop are now retried — every relevant blob
+      // is in IDB so loadMarkerSprite resolves on the IDB-hit path.
+      // Distinct from cc-sprite-loaded because that one filters by
+      // (a, b, variant); this one matches all unloaded markers.
+      window.addEventListener('cc-sprites-bulk-ready', () => {
+        for (const rec of _markers.values()) {
+          if (rec.loaded) continue;
           loadMarkerSprite(rec);
         }
       });
