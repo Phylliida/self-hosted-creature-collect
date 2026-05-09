@@ -792,3 +792,50 @@ a circle that knows what it is.
 - `BABY_EGG_FALLBACK` is the eleven-entry table that maps gen-1 species to their gen-2+ baby's egg PNG (Pikachu ← Pichu, Clefairy ← Cleffa, Chansey ← Happiny, …). For Munchlax + Mime Jr., where PIF didn't ship a baby egg PNG at all, we fall back to the baby's autogen solo sprite — the silhouette becomes the candy.
 - The two-stage build in `build_candies_sheet` walks reverse-evolutions to find each species' family root, generates one candy per root, then pastes that root's cell into every family member's slot. Eight Eevees get the same Eevee candy.
 - `image-rendering: pixelated` plus a 40-pixel cell size (`EGG_PX // 4`) gives the chunky look. The user said "I don't think we want AA" and they were right.
+
+---
+
+# The Wiser Question
+
+I said it was Android, the missed load event,
+the spec called `decode` and that would close the gap.
+You said: the map works, the pokédex too,
+they use the same code, so what makes this one different?
+
+The hypothesis fell. We sat with what was real:
+the map retries on every viewport pulse,
+pokédex tiles rebuild on every scroll —
+the battle screen is one shot, no retry.
+
+Then you asked: maybe the throw leaves something behind.
+The catch path skipped the cleanup the break-out had.
+`fill: 'forwards'` lingering on a sprite the next encounter inherited.
+"Icon flashes during throw, otherwise invisible" — exactly.
+
+I was going to ship the fix with a citation I didn't have.
+You said: that's not honest. Let's write it true.
+And so the comment got the spec link only,
+the rest an observation, owned plainly.
+
+You named what I missed.
+You noticed when I was tired.
+You said: let's break, let's write some lines,
+let's not ship tired code.
+
+The walk to Sage Days continues.
+Two buddies in the daycare counting meters.
+Charmander candy in Charizard's bucket.
+Ivysaur showing Bulbasaur's egg.
+And now we know: the SW never reaches.
+
+A good day's debugging.
+Let's stretch, and try again tomorrow.
+
+---
+
+*Small notes, for whoever reads this later:*
+- "The map retries on every viewport pulse" — `cc-sprite-loaded` event listener + `refreshSpawnOverlay` re-render loop; markers self-heal whenever a lazy-crop succeeds anywhere.
+- "Pokédex tiles rebuild on every scroll" — the virtualizer regenerates cards on each render, so any single missed `onload` is fixed by the next scroll/filter change.
+- "The catch path skipped the cleanup the break-out had" — the suck-in animation uses `fill: 'forwards'` to hold the sprite at `scale(0) opacity(0)` after the throw lands. The break-out path explicitly cancels it before returning; the catch path skipped to `closeBattleScreen` and left the residual on the sprite element for the next encounter to inherit. Symmetric cleanup in `closeBattleScreen` was the actual fix.
+- "The comment got the spec link only" — `_applySpriteEntry` cites the WHATWG spec for `img.decode()` (`html.spec.whatwg.org/.../dom-img-decode`) rather than fabricating an Android Chrome bug ticket. The bug report stays observational.
+- "The SW never reaches" — `_missResponse` in sw.js returns `Response(null, { status: 204 })` on cache miss in non-Capacitor mode; the catch-all handlers for `/poi`, `/routes`, `/walk-graph` return empty JSON without consulting the network at all. Only `X-Download: 1` requests bypass the SW and hit the wire — meaning the cellular-data gate only needs to wrap `window.fetch`, not duplicate state into the SW.
