@@ -1202,6 +1202,31 @@
     if (typeof img.decode === 'function') {
       img.decode().then(reveal).catch(() => {});
     }
+    // Path (4): polling fallback. iOS WKWebView occasionally drops
+    // both `onload` and the `decode()` resolution for blob-URL loads
+    // when several imgs decode concurrently — `img.complete +
+    // naturalWidth > 0` ends up true (browser DID finish decoding)
+    // but no event ever tells JS. That's the long-standing red-dot
+    // bug: the pixels are ready, the marker just never gets the
+    // signal to flip from `creature-placeholder` to ready. Poll the
+    // canonical "loaded" state every 150 ms; the moment the browser
+    // has the bytes decoded, reveal regardless of which event-channel
+    // failed. Stops on first successful reveal or when the consumer
+    // moves on to a newer load (loadId mismatch). Cost is one
+    // setTimeout per still-loading img — for ~50 markers this is
+    // ~50 timers firing 1-3 times each, negligible.
+    const POLL_MS = 150;
+    const POLL_LIMIT_MS = 8000;  // give up after 8 s; reveal won't ever fire
+    let elapsed = 0;
+    const pollLoaded = () => {
+      if (revealed) return;
+      if (img[_SPRITE_LOAD_ID] !== loadId) return;
+      if (img.complete && img.naturalWidth > 0) { reveal(); return; }
+      elapsed += POLL_MS;
+      if (elapsed >= POLL_LIMIT_MS) return;
+      setTimeout(pollLoaded, POLL_MS);
+    };
+    setTimeout(pollLoaded, POLL_MS);
   }
 
   // Public: load a sprite into an <img>. Variant semantics match
