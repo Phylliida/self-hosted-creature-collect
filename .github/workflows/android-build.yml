@@ -121,25 +121,42 @@ jobs:
           # writing), so we reuse it to stay in lockstep with whatever
           # Capacitor pinned.
           APP_GRADLE=android/app/build.gradle
-          echo "── patching $APP_GRADLE for androidx.webkit ──"
+          echo "── patching $APP_GRADLE for androidx.webkit + play-services-location ──"
           python3 - <<'PY'
           import pathlib, re, sys
           p = pathlib.Path("android/app/build.gradle")
           text = p.read_text(encoding="utf-8")
-          if 'androidx.webkit:webkit' in text:
+          # Anchor: the capacitor-android project dep that every
+          # generated app/build.gradle has. Insert any extra deps
+          # right below it.
+          anchor = re.compile(
+              r"(implementation project\(':capacitor-android'\)\s*\n)")
+          extras = []
+          # androidx.webkit — needed by MainActivity.java's
+          # ServiceWorkerClient bridge. Capacitor declares it
+          # `implementation` (not `api`) on its own module, so the
+          # symbols don't reach the app module without an explicit dep.
+          if "androidx.webkit:webkit" not in text:
+              extras.append('    implementation "androidx.webkit:webkit:$androidxWebkitVersion"')
+          # play-services-location — needed by LocationForegroundService
+          # (FusedLocationProviderClient). Same transitive-visibility
+          # issue: @capacitor/geolocation declares it `implementation`,
+          # so we need our own here for the foreground-service plugin.
+          # Pin to a recent stable; bump alongside Google Play Services
+          # version sweeps.
+          if "play-services-location" not in text:
+              extras.append('    implementation "com.google.android.gms:play-services-location:21.3.0"')
+          if not extras:
               print("  already present, no change")
               sys.exit(0)
-          # Insert right after the capacitor-android project dep, which
-          # is the canonical anchor in the generated build.gradle.
-          dep_line = '    implementation "androidx.webkit:webkit:$androidxWebkitVersion"\n'
-          new = re.sub(
-              r"(implementation project\(':capacitor-android'\)\s*\n)",
-              r"\1" + dep_line, text, count=1)
+          inject = "\n".join(extras) + "\n"
+          new = anchor.sub(lambda m: m.group(1) + inject, text, count=1)
           if new == text:
               print("  ERROR: couldn't find capacitor-android dep anchor", file=sys.stderr)
               sys.exit(1)
           p.write_text(new, encoding="utf-8")
-          print("  added androidx.webkit:webkit dependency")
+          for line in extras:
+              print(f"  added: {line.strip()}")
           PY
           # Inject geolocation permissions into AndroidManifest.xml.
           # Capacitor's `cap add android` generates the manifest from
@@ -149,25 +166,55 @@ jobs:
           # without them the runtime prompt never fires and every fix
           # silently fails.
           MANIFEST=android/app/src/main/AndroidManifest.xml
-          echo "── patching $MANIFEST for geolocation ──"
+          echo "── patching $MANIFEST for geolocation + foreground service ──"
           python3 - <<'PY'
           import pathlib, re, sys
           p = pathlib.Path("android/app/src/main/AndroidManifest.xml")
           text = p.read_text(encoding="utf-8")
+          changed = False
+          # 1) Permissions block right after <manifest …>:
+          #    - ACCESS_FINE/COARSE_LOCATION : navigator.geolocation gate.
+          #    - FOREGROUND_SERVICE          : required to startForeground at all.
+          #    - FOREGROUND_SERVICE_LOCATION : Android 14+ requires this for
+          #      a service that declares foregroundServiceType="location".
           perms = (
               '    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n'
               '    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n'
+              '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n'
+              '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />\n'
           )
-          if "ACCESS_FINE_LOCATION" in text:
+          if "ACCESS_FINE_LOCATION" not in text:
+              new = re.sub(r'(<manifest\b[^>]*>\s*\n)', r'\1' + perms, text, count=1)
+              if new == text:
+                  print("  ERROR: could not find <manifest> tag", file=sys.stderr)
+                  sys.exit(1)
+              text = new
+              changed = True
+              print("  added location + foreground-service permissions")
+          # 2) Service declaration inside <application>. The plugin's
+          #    foreground service holds the persistent notification that
+          #    keeps location updates flowing in battery saver / Doze.
+          #    Type "location" tells Android the service uses location
+          #    so battery-saver throttling is bypassed for it.
+          service_tag = (
+              '        <service\n'
+              '            android:name=".LocationForegroundService"\n'
+              '            android:exported="false"\n'
+              '            android:foregroundServiceType="location" />\n'
+          )
+          if "LocationForegroundService" not in text:
+              # Insert just before </application>.
+              new = re.sub(r'(\s*</application>)', '\n' + service_tag + r'\1', text, count=1)
+              if new == text:
+                  print("  ERROR: could not find </application> tag", file=sys.stderr)
+                  sys.exit(1)
+              text = new
+              changed = True
+              print("  added LocationForegroundService declaration")
+          if changed:
+              p.write_text(text, encoding="utf-8")
+          else:
               print("  already present, no change")
-              sys.exit(0)
-          # Insert the two lines right after the opening <manifest …> tag.
-          new = re.sub(r'(<manifest\b[^>]*>\s*\n)', r'\1' + perms, text, count=1)
-          if new == text:
-              print("  ERROR: could not find <manifest> tag", file=sys.stderr)
-              sys.exit(1)
-          p.write_text(new, encoding="utf-8")
-          print("  added ACCESS_FINE_LOCATION + ACCESS_COARSE_LOCATION")
           PY
           # Overwrite MainActivity.java with one that wires up a
           # ServiceWorkerClient delegating to a parallel WebViewAssetLoader.
@@ -217,6 +264,12 @@ jobs:
           public class MainActivity extends BridgeActivity {{
               @Override
               public void onCreate(Bundle savedInstanceState) {{
+                  // Register custom Capacitor plugins BEFORE super.onCreate
+                  // (Capacitor docs are explicit on this — registration
+                  // must happen during the activity's pre-init pass so
+                  // the plugin classes are available when the WebView
+                  // constructs Capacitor.Plugins.<Name>).
+                  registerPlugin(BackgroundLocationPlugin.class);
                   super.onCreate(savedInstanceState);
                   // Capacitor wires WebViewAssetLoader for page-originated
                   // requests via WebViewClient. SW-originated requests
@@ -291,6 +344,278 @@ jobs:
           }}
           """, encoding="utf-8")
           print(f"  wrote {main_activity}")
+          PY
+          # Write BackgroundLocationPlugin.java + LocationForegroundService.java.
+          # Why a custom plugin: navigator.geolocation on Android (whether
+          # via WebView's built-in or @capacitor/geolocation) is throttled
+          # by Battery Saver and Doze mode — without a foreground service,
+          # location updates drop to once every several minutes and the
+          # daycare distance tracker stalls when the screen turns off.
+          # The plugin starts a Service with `foregroundServiceType="location"`
+          # and a persistent notification, which exempts the location
+          # stream from throttling for as long as the user has chosen to
+          # walk with the app. The service uses FusedLocationProviderClient
+          # at HIGH_ACCURACY priority and forwards every fix to JS via
+          # the Capacitor bridge's `notifyListeners`.
+          echo "── writing BackgroundLocationPlugin.java + service ──"
+          python3 - <<'PY'
+          import json, pathlib
+          cfg = json.loads(pathlib.Path("capacitor.config.json").read_text())
+          app_id = cfg["appId"]
+          pkg_dir = pathlib.Path("android/app/src/main/java") / pathlib.Path(*app_id.split("."))
+          pkg_dir.mkdir(parents=True, exist_ok=True)
+
+          plugin = pkg_dir / "BackgroundLocationPlugin.java"
+          plugin.write_text(f"""package {app_id};
+
+          import android.Manifest;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.pm.PackageManager;
+          import android.location.Location;
+          import android.os.Build;
+
+          import androidx.core.app.ActivityCompat;
+
+          import com.getcapacitor.JSObject;
+          import com.getcapacitor.PermissionState;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+          import com.getcapacitor.annotation.Permission;
+          import com.getcapacitor.annotation.PermissionCallback;
+
+          /**
+           * BackgroundLocation plugin. JS exposure: window.Capacitor.Plugins.BackgroundLocation.
+           * Methods:
+           *   start()   — checks/requests location permission, starts the
+           *               foreground service (which begins streaming fixes).
+           *   stop()    — stops the service, ending location updates AND
+           *               removing the persistent notification.
+           * Events:
+           *   "location" — emitted by the service for each location fix.
+           *                Detail: {{ latitude, longitude, accuracy, altitude,
+           *                speed, heading, timestamp }}.
+           */
+          @CapacitorPlugin(
+              name = "BackgroundLocation",
+              permissions = {{
+                  @Permission(strings = {{ Manifest.permission.ACCESS_FINE_LOCATION }}, alias = "fine"),
+                  @Permission(strings = {{ Manifest.permission.ACCESS_COARSE_LOCATION }}, alias = "coarse"),
+              }}
+          )
+          public class BackgroundLocationPlugin extends Plugin {{
+              private static BackgroundLocationPlugin instance;
+
+              @Override
+              public void load() {{
+                  super.load();
+                  instance = this;
+              }}
+
+              @PluginMethod
+              public void start(PluginCall call) {{
+                  Context ctx = getContext();
+                  // If neither fine nor coarse is granted, request fine
+                  // (which auto-grants coarse on most OEMs). The
+                  // permissionsCallback resumes the start() flow on grant.
+                  boolean hasFine = ActivityCompat.checkSelfPermission(
+                      ctx, Manifest.permission.ACCESS_FINE_LOCATION)
+                          == PackageManager.PERMISSION_GRANTED;
+                  boolean hasCoarse = ActivityCompat.checkSelfPermission(
+                      ctx, Manifest.permission.ACCESS_COARSE_LOCATION)
+                          == PackageManager.PERMISSION_GRANTED;
+                  if (!hasFine && !hasCoarse) {{
+                      requestPermissionForAlias("fine", call, "permsCallback");
+                      return;
+                  }}
+                  Intent intent = new Intent(ctx, LocationForegroundService.class);
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {{
+                      ctx.startForegroundService(intent);
+                  }} else {{
+                      ctx.startService(intent);
+                  }}
+                  JSObject result = new JSObject();
+                  result.put("started", true);
+                  call.resolve(result);
+              }}
+
+              @PermissionCallback
+              private void permsCallback(PluginCall call) {{
+                  PermissionState fine = getPermissionState("fine");
+                  PermissionState coarse = getPermissionState("coarse");
+                  if (fine == PermissionState.GRANTED || coarse == PermissionState.GRANTED) {{
+                      // Re-enter start() now that permission landed.
+                      start(call);
+                  }} else {{
+                      call.reject("Location permission denied");
+                  }}
+              }}
+
+              @PluginMethod
+              public void stop(PluginCall call) {{
+                  Context ctx = getContext();
+                  Intent intent = new Intent(ctx, LocationForegroundService.class);
+                  ctx.stopService(intent);
+                  call.resolve();
+              }}
+
+              /**
+               * Bridge from LocationForegroundService → JS. Called from
+               * the FusedLocationProviderClient callback on the main
+               * thread; notifyListeners is thread-safe so this is fine.
+               */
+              static void notifyLocation(Location loc) {{
+                  if (instance == null || loc == null) return;
+                  JSObject data = new JSObject();
+                  data.put("latitude", loc.getLatitude());
+                  data.put("longitude", loc.getLongitude());
+                  data.put("accuracy", loc.getAccuracy());
+                  if (loc.hasAltitude()) data.put("altitude", loc.getAltitude());
+                  if (loc.hasSpeed()) data.put("speed", loc.getSpeed());
+                  if (loc.hasBearing()) data.put("heading", loc.getBearing());
+                  data.put("timestamp", loc.getTime());
+                  instance.notifyListeners("location", data);
+              }}
+          }}
+          """, encoding="utf-8")
+          print(f"  wrote {plugin}")
+
+          service = pkg_dir / "LocationForegroundService.java"
+          service.write_text(f"""package {app_id};
+
+          import android.app.Notification;
+          import android.app.NotificationChannel;
+          import android.app.NotificationManager;
+          import android.app.PendingIntent;
+          import android.app.Service;
+          import android.content.Intent;
+          import android.content.pm.ServiceInfo;
+          import android.location.Location;
+          import android.os.Build;
+          import android.os.IBinder;
+          import android.os.Looper;
+
+          import androidx.core.app.NotificationCompat;
+
+          import com.google.android.gms.location.FusedLocationProviderClient;
+          import com.google.android.gms.location.LocationCallback;
+          import com.google.android.gms.location.LocationRequest;
+          import com.google.android.gms.location.LocationResult;
+          import com.google.android.gms.location.LocationServices;
+          import com.google.android.gms.location.Priority;
+
+          /**
+           * Foreground service that holds a persistent notification and
+           * streams high-accuracy location fixes via FusedLocationProvider.
+           * The notification is what tells Android "this app is doing
+           * user-visible work" — without it Battery Saver / Doze throttle
+           * the location stream to once-every-several-minutes.
+           */
+          public class LocationForegroundService extends Service {{
+              private static final String CHANNEL_ID = "creature_collect_location";
+              private static final int NOTIFICATION_ID = 7142;
+              // Update cadence: 5 s nominal, 2 s minimum if a fix arrives
+              // sooner. Tuned for daycare distance tracking — the daycare
+              // accumulator already filters jitter at 10 m, so faster
+              // fixes don't help; 5 s keeps battery use sane.
+              private static final long UPDATE_INTERVAL_MS = 5000L;
+              private static final long FASTEST_INTERVAL_MS = 2000L;
+
+              private FusedLocationProviderClient fused;
+              private LocationCallback callback;
+
+              @Override
+              public IBinder onBind(Intent intent) {{ return null; }}
+
+              @Override
+              public void onCreate() {{
+                  super.onCreate();
+                  ensureChannel();
+                  Notification notif = buildNotification();
+                  // Android 14+ (UPSIDE_DOWN_CAKE / API 34) requires the
+                  // foreground-service-type to be passed at startForeground
+                  // time AND for FOREGROUND_SERVICE_LOCATION permission to
+                  // be declared in the manifest (which we do).
+                  if (Build.VERSION.SDK_INT >= 34) {{
+                      startForeground(NOTIFICATION_ID, notif,
+                          ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
+                  }} else {{
+                      startForeground(NOTIFICATION_ID, notif);
+                  }}
+                  fused = LocationServices.getFusedLocationProviderClient(this);
+                  callback = new LocationCallback() {{
+                      @Override
+                      public void onLocationResult(LocationResult result) {{
+                          for (Location loc : result.getLocations()) {{
+                              BackgroundLocationPlugin.notifyLocation(loc);
+                          }}
+                      }}
+                  }};
+                  LocationRequest req = new LocationRequest.Builder(
+                          Priority.PRIORITY_HIGH_ACCURACY, UPDATE_INTERVAL_MS)
+                      .setMinUpdateIntervalMillis(FASTEST_INTERVAL_MS)
+                      .build();
+                  try {{
+                      fused.requestLocationUpdates(req, callback, Looper.getMainLooper());
+                  }} catch (SecurityException e) {{
+                      // Permission missing — service stays alive (notification
+                      // visible) but no fixes will flow. The plugin's
+                      // start() entry already gates on permission, so this
+                      // path shouldn't fire on a healthy build.
+                  }}
+              }}
+
+              @Override
+              public int onStartCommand(Intent intent, int flags, int startId) {{
+                  // STICKY: if the OS kills the service for memory pressure,
+                  // it will be re-created (without the original intent) so
+                  // location updates resume on its own.
+                  return START_STICKY;
+              }}
+
+              @Override
+              public void onDestroy() {{
+                  if (fused != null && callback != null) {{
+                      try {{ fused.removeLocationUpdates(callback); }}
+                      catch (Exception e) {{ /* best-effort */ }}
+                  }}
+                  super.onDestroy();
+              }}
+
+              private void ensureChannel() {{
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {{
+                      NotificationManager nm = (NotificationManager)
+                          getSystemService(NOTIFICATION_SERVICE);
+                      NotificationChannel ch = new NotificationChannel(
+                          CHANNEL_ID, "Walk tracking", NotificationManager.IMPORTANCE_LOW);
+                      ch.setDescription(
+                          "Active while you're walking with a pokémon in the daycare. "
+                          + "Tap to return to the app.");
+                      nm.createNotificationChannel(ch);
+                  }}
+              }}
+
+              private Notification buildNotification() {{
+                  Intent launch = getPackageManager().getLaunchIntentForPackage(getPackageName());
+                  PendingIntent pi = null;
+                  if (launch != null) {{
+                      pi = PendingIntent.getActivity(this, 0, launch,
+                          PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+                  }}
+                  NotificationCompat.Builder b = new NotificationCompat.Builder(this, CHANNEL_ID)
+                      .setContentTitle("Creature Collect")
+                      .setContentText("Tracking your walk")
+                      .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+                      .setOngoing(true)
+                      .setPriority(NotificationCompat.PRIORITY_LOW);
+                  if (pi != null) b.setContentIntent(pi);
+                  return b.build();
+              }}
+          }}
+          """, encoding="utf-8")
+          print(f"  wrote {service}")
           PY
 
       - name: Debug — assets folder after cap sync

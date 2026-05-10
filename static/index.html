@@ -3297,7 +3297,104 @@
     // by handing out a sync placeholder ID immediately and forwarding
     // clearWatch to the real ID once the promise resolves.
     const Geo = window.Capacitor.Plugins && window.Capacitor.Plugins.Geolocation;
-    if (Geo) {
+    const BgLoc = window.Capacitor.Plugins && window.Capacitor.Plugins.BackgroundLocation;
+    const platform = (window.Capacitor.getPlatform && window.Capacitor.getPlatform()) || '';
+    const useBgLocOnAndroid = platform === 'android' && !!BgLoc;
+
+    if (useBgLocOnAndroid) {
+      // Android-only path: route watchPosition through the
+      // BackgroundLocation native plugin (which holds a foreground
+      // service + persistent notification). Battery Saver and Doze
+      // would otherwise throttle the location stream to once every
+      // several minutes — the foreground service is what exempts the
+      // app from those caps. getCurrentPosition stays one-shot via
+      // @capacitor/geolocation since it doesn't need the service.
+      const watches = new Map();
+      let nextId = 1;
+      let listenerHandle = null;
+      let serviceStarted = false;
+
+      const ensureServiceStarted = async () => {
+        if (serviceStarted) return;
+        serviceStarted = true;
+        try { await BgLoc.start(); }
+        catch (e) {
+          serviceStarted = false;
+          throw e;
+        }
+        // Single shared listener fans out to every active watch —
+        // adding/removing watches doesn't churn the listener.
+        listenerHandle = await BgLoc.addListener('location', (data) => {
+          const pos = {
+            coords: {
+              latitude: data.latitude,
+              longitude: data.longitude,
+              accuracy: data.accuracy,
+              altitude: typeof data.altitude === 'number' ? data.altitude : null,
+              altitudeAccuracy: null,
+              heading: typeof data.heading === 'number' ? data.heading : null,
+              speed: typeof data.speed === 'number' ? data.speed : null,
+            },
+            timestamp: data.timestamp || Date.now(),
+          };
+          for (const w of watches.values()) {
+            try { if (w.success) w.success(pos); }
+            catch (e) { /* one consumer's bug shouldn't break others */ }
+          }
+        });
+      };
+
+      const stopServiceIfIdle = async () => {
+        if (watches.size > 0) return;
+        if (listenerHandle && listenerHandle.remove) {
+          try { await listenerHandle.remove(); } catch {}
+          listenerHandle = null;
+        }
+        if (serviceStarted) {
+          serviceStarted = false;
+          try { await BgLoc.stop(); } catch {}
+        }
+      };
+
+      const shim = {
+        getCurrentPosition(success, error, opts) {
+          // One-shot stays via @capacitor/geolocation — no need to
+          // bring up the foreground service for a single fix.
+          if (!Geo) {
+            if (error) error(new Error('Geolocation plugin missing'));
+            return;
+          }
+          Geo.getCurrentPosition(opts || {})
+            .then((pos) => success && success(pos))
+            .catch((err) => error && error(err));
+        },
+        watchPosition(success, error, opts) {
+          const id = nextId++;
+          watches.set(id, { success, error });
+          ensureServiceStarted().catch((e) => {
+            watches.delete(id);
+            if (error) error(e);
+          });
+          return id;
+        },
+        clearWatch(id) {
+          if (!watches.has(id)) return;
+          watches.delete(id);
+          stopServiceIfIdle().catch(() => {});
+        },
+      };
+      try {
+        Object.defineProperty(navigator, 'geolocation', {
+          value: shim, configurable: true,
+        });
+      } catch {
+        navigator.geolocation = shim;
+      }
+    } else if (Geo) {
+      // Non-Android Capacitor (iOS) — keep the existing
+      // @capacitor/geolocation shim. iOS Low Power Mode doesn't
+      // throttle CLLocationManager while the app is in the
+      // foreground, so the native plugin is enough on its own.
       const watches = new Map();
       let nextId = 1;
       const shim = {
