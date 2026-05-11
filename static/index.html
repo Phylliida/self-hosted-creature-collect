@@ -3149,6 +3149,26 @@
       <span id="spriteInflightBadge" title="creature sprite IDB reads currently in flight (should stay near 0 except briefly when new spawns enter view)"></span>
       <span id="memBadge" title="estimated live JS heap used by map data"></span>
     </div>
+    <div style="margin-top: 6px; display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--ui-muted); flex-wrap: wrap;">
+      <button id="copyLogsBtn" type="button"
+        style="padding: 4px 10px; font-size: 11px; cursor: pointer;
+               background: var(--ui-input-bg); color: var(--ui-text);
+               border: 1px solid var(--ui-border); border-radius: var(--ui-radius);
+               font-family: inherit;"
+        title="copy the full diagnostic dump below to the clipboard">Copy logs</button>
+      <!-- iOS-only — wires the LocalServerDiag.restart() plugin to a
+           stop+start of the GCDWebServer listen socket. Useful both
+           for testing the auto-restart path and as a recovery escape
+           hatch when the server gets stuck. Row is hidden when the
+           plugin isn't available (Android, web, older builds). -->
+      <button id="restartServerBtn" type="button" hidden
+        style="padding: 4px 10px; font-size: 11px; cursor: pointer;
+               background: var(--ui-input-bg); color: var(--ui-text);
+               border: 1px solid var(--ui-border); border-radius: var(--ui-radius);
+               font-family: inherit;"
+        title="stop + start the GCDWebServer listen socket (iOS only)">Restart server</button>
+      <span id="copyLogsStatus"></span>
+    </div>
     <div id="startupPhases" style="margin-top: 6px; font-size: 11px; color: var(--ui-muted); line-height: 1.5; font-family: monospace;"></div>
     <div class="actions"><button class="close" id="settingsClose">Done</button></div>
   </div>
@@ -9725,6 +9745,25 @@ function fmtDate(ts) {
             `             last=${ageS(sp.lastAt)} ${sp.lastDurMs ?? '—'}ms ` +
             `result="${sp.lastResult ?? ''}"`,
           );
+          // Restart history — counts both manual restarts (via the
+          // Settings button) and auto-restarts (foreground health
+          // check failed → re-bind). A non-zero count means we've
+          // recovered from a wedge at least once this session.
+          const rs = lsd.restart || {};
+          if (rs.count || rs.lastForegroundCheckAt) {
+            const errSuffix = rs.lastError
+              ? ` err="${rs.lastError}"` : '';
+            lines.push(
+              `  restart: count=${rs.count ?? 0}  ` +
+              `last=${ageS(rs.lastAt)}${errSuffix}`,
+            );
+            if (rs.lastForegroundCheckAt) {
+              lines.push(
+                `  foreground-check: ${ageS(rs.lastForegroundCheckAt)}  ` +
+                `result="${rs.lastForegroundCheckResult ?? ''}"`,
+              );
+            }
+          }
           // In-flight requests — if `inFlight` is pinned > 0 with a
           // stale lastResp, this is the list of paths that are stuck
           // (oldest first). The ages tell us how long each has been
@@ -9831,6 +9870,92 @@ function fmtDate(ts) {
     if (panel && panel.classList.contains('show')) updateSpriteInflightBadge();
   }, 250);
   updateSpriteInflightBadge();
+
+  // Copy logs button. The diagnostic dump is refreshed every 250ms,
+  // which destroys any in-progress text selection — making it nearly
+  // impossible to manually copy on iOS without race-typing. Button
+  // grabs the latest text, tries the modern Clipboard API first, and
+  // falls back to the document.execCommand('copy') hack via a hidden
+  // textarea (iOS WKWebView's Clipboard API is gated on user gesture
+  // + secure context AND sometimes rejects on bundled-app origins).
+  {
+    const btn = document.getElementById('copyLogsBtn');
+    const statusEl = document.getElementById('copyLogsStatus');
+    if (btn && statusEl) {
+      const flash = (msg, ms) => {
+        statusEl.textContent = msg;
+        setTimeout(() => { statusEl.textContent = ''; }, ms || 2000);
+      };
+      const legacyCopy = (text) => {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'absolute';
+        ta.style.left = '-9999px';
+        ta.style.top = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        ta.setSelectionRange(0, text.length);
+        let ok = false;
+        try { ok = document.execCommand('copy'); } catch { ok = false; }
+        document.body.removeChild(ta);
+        return ok;
+      };
+      btn.addEventListener('click', async () => {
+        // Compose the full payload: the version line + the diagnostic
+        // dump. Including the version makes it self-describing when
+        // pasted into an issue.
+        const phases = document.getElementById('startupPhases');
+        const versionEl = document.getElementById('versionBadge');
+        const ua = navigator.userAgent || '';
+        const platform = (window.Capacitor && window.Capacitor.getPlatform)
+          ? window.Capacitor.getPlatform() : 'web';
+        const header = `creature-collect ${versionEl ? versionEl.textContent : ''} `
+          + `(${platform}) — ${new Date().toISOString()}\n`
+          + `UA: ${ua}\n`
+          + '─'.repeat(50) + '\n';
+        const body = phases ? (phases.textContent || '') : '';
+        const text = header + body;
+        let ok = false;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          try { await navigator.clipboard.writeText(text); ok = true; }
+          catch { /* fall through to legacy */ }
+        }
+        if (!ok) ok = legacyCopy(text);
+        flash(ok ? `✓ copied (${text.length} chars)` : '✕ copy failed', 2500);
+      });
+    }
+    // Restart-server button (iOS only). Reveals itself once we've
+    // confirmed the LocalServerDiag plugin is present. Click pokes
+    // LocalServerDiag.restart() which stops + re-binds the listen
+    // socket — same code path the foreground health check uses for
+    // automatic recovery, just user-driven for testing.
+    const restartBtn = document.getElementById('restartServerBtn');
+    if (restartBtn) {
+      const LSDiag = window.Capacitor && window.Capacitor.Plugins
+        && window.Capacitor.Plugins.LocalServerDiag;
+      if (LSDiag && typeof LSDiag.restart === 'function') {
+        restartBtn.hidden = false;
+        restartBtn.addEventListener('click', async () => {
+          if (!statusEl) return;
+          restartBtn.disabled = true;
+          statusEl.textContent = 'restarting…';
+          try {
+            const r = await LSDiag.restart();
+            statusEl.textContent = r && r.ok
+              ? '✓ server restarted'
+              : '✕ restart failed';
+          } catch (e) {
+            statusEl.textContent = '✕ restart error: '
+              + ((e && e.message) ? e.message : String(e));
+          } finally {
+            restartBtn.disabled = false;
+            setTimeout(() => { statusEl.textContent = ''; }, 4000);
+          }
+        });
+      }
+    }
+  }
 
   function haversineM(lng1, lat1, lng2, lat2) {
     const R = 6371000;

@@ -84,6 +84,19 @@ import UIKit
     // these events points at the OS, not at our code.
     private var _memoryWarnings: [Date] = []
     private var _lifecycleEvents: [LifecycleEvent] = []
+    // Restart tracking. iOS sometimes tears down GCDWebServer's
+    // listen socket during background suspension despite our
+    // `AutomaticallySuspendInBackground: false` flag — the library's
+    // internal `isRunning` flag stays true but new connects refuse.
+    // The didBecomeActive hook runs a foreground health check; if it
+    // fails, we stop+start the server to re-bind. The manual
+    // LocalServerDiag.restart() also flows through here. These
+    // counters surface both pathways in the diagnostic dump.
+    private var _restartCount: Int = 0
+    private var _lastRestartAt: Date?
+    private var _lastRestartError: String?
+    private var _lastForegroundCheckAt: Date?
+    private var _lastForegroundCheckResult: String = ""
     // Anything taking longer than this ms threshold goes into
     // recentSlow. Healthy file reads on iOS are sub-10ms; >100ms
     // is usually file-system contention or a hung worker.
@@ -182,8 +195,131 @@ import UIKit
         ] {
             nc.addObserver(forName: name, object: nil, queue: nil) { [weak self] _ in
                 self?.recordLifecycle(label)
+                if name == UIApplication.didBecomeActiveNotification {
+                    self?.scheduleForegroundHealthCheck()
+                }
             }
         }
+    }
+
+    /// Schedule a one-shot self-ping shortly after foregrounding. If
+    /// the ping fails, the listen socket likely died during iOS
+    /// suspension — auto-restart the server to re-bind. The delay
+    /// gives the runtime a moment to settle (URLSession in particular
+    /// is flaky for the first ~second after wake-up).
+    private func scheduleForegroundHealthCheck() {
+        let q = DispatchQueue.global(qos: .utility)
+        q.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            self?.foregroundHealthCheck()
+        }
+    }
+
+    private func foregroundHealthCheck() {
+        guard let baseURL = server.serverURL else { return }
+        let url = baseURL.appendingPathComponent("__ping__")
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 2.0
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        URLSession.shared.dataTask(with: req) { [weak self] _, response, error in
+            guard let self = self else { return }
+            let ok: Bool
+            let resultStr: String
+            if let r = response as? HTTPURLResponse, (200..<400).contains(r.statusCode) {
+                ok = true
+                resultStr = "ok HTTP \(r.statusCode)"
+            } else if let err = error {
+                ok = false
+                let nsErr = err as NSError
+                resultStr = "error: \(nsErr.code) \(nsErr.localizedDescription)"
+            } else {
+                ok = false
+                resultStr = "no response"
+            }
+            self.diagQueue.sync {
+                self._lastForegroundCheckAt = Date()
+                self._lastForegroundCheckResult = resultStr
+            }
+            if ok {
+                NSLog("[LocalServer] foreground health check OK")
+            } else {
+                NSLog("[LocalServer] foreground health check failed (\(resultStr)); auto-restarting")
+                _ = self.restartServer()
+            }
+        }.resume()
+    }
+
+    /// Stop + restart the listen socket. Used by the foreground
+    /// health-check recovery path and by the LocalServerDiag.restart()
+    /// plugin method (debug button in Settings). Returns true on
+    /// success. Safe to call from any thread — `server.stop()` and
+    /// `server.start(options:)` are both synchronous and serialise
+    /// internally, but we run from a background queue so main isn't
+    /// blocked during stop()'s in-flight drain.
+    @objc func restartServer() -> Bool {
+        NSLog("[LocalServer] restart requested (current isRunning=\(server.isRunning))")
+        if server.isRunning {
+            server.stop()
+        }
+        do {
+            let url = try bindListener()
+            diagQueue.sync {
+                _restartCount += 1
+                _lastRestartAt = Date()
+                _lastRestartError = nil
+                _serverStartedAt = Date()
+            }
+            NSLog("[LocalServer] restart succeeded: \(url.absoluteString)")
+            return true
+        } catch {
+            let msg = String(describing: error)
+            diagQueue.sync {
+                _restartCount += 1
+                _lastRestartAt = Date()
+                _lastRestartError = msg
+            }
+            NSLog("[LocalServer] restart failed: \(msg)")
+            return false
+        }
+    }
+
+    /// Bind the listen socket on the saved port (falling back to OS-
+    /// assigned). Shared between initial start() and restartServer().
+    /// Does NOT register the handler or lifecycle observers — those
+    /// are one-time setup that survives stop/start.
+    private func bindListener() throws -> URL {
+        let savedPort = UserDefaults.standard.integer(forKey: "cc.localServer.port")
+        let portsToTry: [UInt] = savedPort > 0
+            ? [UInt(savedPort), 0]
+            : [0]
+        var lastError: Error?
+        var bound = false
+        for port in portsToTry {
+            do {
+                try server.start(options: [
+                    GCDWebServerOption_Port: port,
+                    GCDWebServerOption_BindToLocalhost: true,
+                    GCDWebServerOption_AutomaticallySuspendInBackground: false,
+                ])
+                bound = true
+                break
+            } catch {
+                lastError = error
+                NSLog("[LocalServer] port \(port) failed: \(error); trying next")
+            }
+        }
+        if !bound {
+            throw lastError ?? NSError(domain: "LocalServer", code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "no port available"])
+        }
+        guard let url = server.serverURL else {
+            throw NSError(domain: "LocalServer", code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "Server started but no URL"])
+        }
+        let actualPort = Int(server.port)
+        if actualPort != savedPort {
+            UserDefaults.standard.set(actualPort, forKey: "cc.localServer.port")
+        }
+        return url
     }
 
     /// Repeating timer that fires a GET to the server's own
@@ -297,6 +433,13 @@ import UIKit
                 ] as [String: Any],
                 "memoryWarnings": memWarnings,
                 "lifecycle": lifecycle,
+                "restart": [
+                    "count": _restartCount,
+                    "lastAt": _lastRestartAt?.timeIntervalSince1970 ?? 0,
+                    "lastError": _lastRestartError ?? "",
+                    "lastForegroundCheckAt": _lastForegroundCheckAt?.timeIntervalSince1970 ?? 0,
+                    "lastForegroundCheckResult": _lastForegroundCheckResult,
+                ] as [String: Any],
             ]
         }
     }
@@ -370,44 +513,13 @@ import UIKit
             return resp
         }
 
-        // Persist the port across launches. The Service Worker's
+        // Bind the listen socket. Port-fallback logic lives in
+        // bindListener() so restartServer() can reuse it. Persist the
+        // resolved port across launches — the Service Worker's
         // TILES_CACHE keys responses by full URL (including port), so
         // a fresh port every launch would invalidate every cached
         // tile from prior sessions and break "save current view".
-        // Strategy: try the saved port first; on bind failure, fall
-        // back to OS-assigned (port 0) and persist whatever we got.
-        let savedPort = UserDefaults.standard.integer(forKey: "cc.localServer.port")
-        let portsToTry: [UInt] = savedPort > 0
-            ? [UInt(savedPort), 0]
-            : [0]
-        var lastError: Error?
-        var bound = false
-        for port in portsToTry {
-            do {
-                try server.start(options: [
-                    GCDWebServerOption_Port: port,
-                    GCDWebServerOption_BindToLocalhost: true,
-                    GCDWebServerOption_AutomaticallySuspendInBackground: false,
-                ])
-                bound = true
-                break
-            } catch {
-                lastError = error
-                NSLog("[LocalServer] port \(port) failed: \(error); trying next")
-            }
-        }
-        if !bound {
-            throw lastError ?? NSError(domain: "LocalServer", code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "no port available"])
-        }
-        guard let url = server.serverURL else {
-            throw NSError(domain: "LocalServer", code: 3,
-                userInfo: [NSLocalizedDescriptionKey: "Server started but no URL"])
-        }
-        let actualPort = Int(server.port)
-        if actualPort != savedPort {
-            UserDefaults.standard.set(actualPort, forKey: "cc.localServer.port")
-        }
+        let url = try bindListener()
         diagQueue.sync { _serverStartedAt = Date() }
         observeLifecycle()
         startSelfPing()
