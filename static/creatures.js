@@ -568,15 +568,15 @@
   const DAYCARE_LOOT_KM_M = 1000;
   // Daycare loot is one of three kinds, rolled deterministically per
   // milestone via the slot's seed. Probabilities sum to 1.0:
-  //   0.00–0.85  candy   — 1 candy in the daycare pokémon's family
+  //   0.00–0.75  candy   — 1 candy in the daycare pokémon's family
   //                        bucket (50/50 between A and B's roots)
-  //   0.85–0.95  egg     — same fusion as the parent, level 1, with
+  //   0.75–0.90  egg     — same fusion as the parent, level 1, with
   //                        a randomized size baked in at drop time
-  //   0.95–1.00  evo_item — uniform pick from items that can evolve
+  //   0.90–1.00  evo_item — uniform pick from items that can evolve
   //                        either side's family. Falls back to candy
   //                        if neither family has an Item evolution.
-  const DAYCARE_PROB_CANDY = 0.85;
-  const DAYCARE_PROB_EGG = 0.10;  // implicit upper bound = 0.95
+  const DAYCARE_PROB_CANDY = 0.75;
+  const DAYCARE_PROB_EGG = 0.15;  // implicit upper bound = 0.90
 
   function _evoItemsForFamily(speciesId) {
     if (speciesId == null) return [];

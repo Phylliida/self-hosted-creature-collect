@@ -29,6 +29,7 @@ public class LocalServerDiagPlugin: CAPPlugin, CAPBridgedPlugin {
     public let jsName = "LocalServerDiag"
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "getDiagnostics", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "restart",        returnType: CAPPluginReturnPromise),
     ]
 
     /// Snapshot the in-process state of the LocalServer at the moment
@@ -51,5 +52,25 @@ public class LocalServerDiagPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func getDiagnostics(_ call: CAPPluginCall) {
         let snap = LocalServer.shared.diagnosticsSnapshot()
         call.resolve(snap as! [String: Any])
+    }
+
+    /// Stop + start the GCDWebServer listen socket. Used both by the
+    /// debug "Restart local server" button in Settings and (via the
+    /// same path) by the foreground health-check recovery. Resolves
+    /// with `{ ok: bool, snapshot: { … } }` — the post-restart
+    /// snapshot makes it easy to confirm the new state.
+    ///
+    /// Runs `restartServer()` on a utility queue because `server.stop()`
+    /// may briefly block draining in-flight requests. We don't want
+    /// to stall the JS bridge / main thread on that.
+    @objc func restart(_ call: CAPPluginCall) {
+        DispatchQueue.global(qos: .utility).async {
+            let ok = LocalServer.shared.restartServer()
+            let snap = LocalServer.shared.diagnosticsSnapshot()
+            call.resolve([
+                "ok": ok,
+                "snapshot": snap,
+            ])
+        }
     }
 }
