@@ -113,7 +113,29 @@ self.addEventListener('fetch', (e) => {
     );
     return;
   }
-  e.respondWith(caches.match(e.request).then(hit => hit || fetch(e.request)));
+  // Default branch: cache hit, else try LocalServer / origin via
+  // fetch. On iOS Capacitor this fetch is to LocalServer (GCDWebServer
+  // at http://localhost:<port>) which always serves the bundled
+  // webDir as long as the app is running — local file IO, not real
+  // network. On Android Capacitor the same fetch goes through our
+  // WebViewAssetLoader path handler. On the web PWA it goes to the
+  // origin server. All three paths can be transiently flaky (Safari
+  // storage pressure throwing from caches.match, brief LocalServer
+  // hiccups during app resume, real offline conditions on the PWA),
+  // so the outer .catch coerces any rejection — fetch, caches.match,
+  // anything else — to a 504. The page never sees a thrown error,
+  // and the SW never logs "FetchEvent.respondWith received an error"
+  // even when something does briefly fail. Legit user-initiated
+  // network requests with X-Download still bypass the SW via the
+  // explicit-branch handlers.
+  e.respondWith(
+    caches.match(e.request)
+      .then((hit) => {
+        if (hit) return hit;
+        return fetch(e.request).catch(() => new Response(null, { status: 504 }));
+      })
+      .catch(() => new Response(null, { status: 504 }))
+  );
 });
 
 self.addEventListener('message', (e) => {
