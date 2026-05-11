@@ -20,6 +20,7 @@
 
 import Foundation
 import GCDWebServer
+import UIKit
 
 @objc class LocalServer: NSObject {
     @objc static let shared = LocalServer()
@@ -58,11 +59,39 @@ import GCDWebServer
     private var _lastResponseFinishedAt: Date?
     private var _recentErrors: [DiagEvent] = []
     private var _recentSlow:   [DiagEvent] = []
+    // Per-request tracking. Keyed by monotonic request id, so the
+    // snapshot can show WHICH paths are currently stuck and HOW LONG
+    // each has been pending. When `_inFlight` is pinned > 0, the
+    // contents of this dict are the smoking gun.
+    private var _inFlightRequests: [Int: InFlightEntry] = [:]
+    private var _nextRequestId = 0
+    // Self-ping — repeating timer that has the server fetch its own
+    // /__ping__ endpoint via URLSession.shared. URLSession.shared and
+    // WKWebView's internal URLSession use different connection pools,
+    // so this distinguishes "server is alive, WebView's URLSession is
+    // stale" (self-ping succeeds, page fetches fail) from "server is
+    // wedged" (both fail).
+    private var pingTimer: DispatchSourceTimer?
+    private var _lastSelfPingAt: Date?
+    private var _lastSelfPingDurMs: Int = 0
+    private var _lastSelfPingResult: String = ""
+    private var _consecutiveSelfPingFails: Int = 0
+    private var _selfPingsTotal: Int = 0
+    private var _selfPingsOk: Int = 0
+    // App lifecycle + memory pressure. iOS sends memory warnings
+    // before it suspends or kills the app; backgrounding can suspend
+    // dispatch sources. A wedge that lines up in time with one of
+    // these events points at the OS, not at our code.
+    private var _memoryWarnings: [Date] = []
+    private var _lifecycleEvents: [LifecycleEvent] = []
     // Anything taking longer than this ms threshold goes into
     // recentSlow. Healthy file reads on iOS are sub-10ms; >100ms
     // is usually file-system contention or a hung worker.
     private static let SLOW_THRESHOLD_MS = 100
     private static let RING_BUFFER_CAP = 30
+    private static let SELF_PING_PATH = "/__ping__"
+    private static let SELF_PING_INTERVAL_S: Double = 5.0
+    private static let SELF_PING_TIMEOUT_S: TimeInterval = 5.0
 
     private struct DiagEvent {
         let timestamp: Date
@@ -71,19 +100,36 @@ import GCDWebServer
         let durationMs: Int
     }
 
-    private func recordRequestStart() {
-        diagQueue.sync {
+    private struct InFlightEntry {
+        let path: String
+        let startedAt: Date
+    }
+
+    private struct LifecycleEvent {
+        let type: String
+        let at: Date
+    }
+
+    /// Returns the request id so recordRequestEnd can remove the
+    /// matching in-flight entry.
+    private func recordRequestStart(path: String) -> Int {
+        return diagQueue.sync {
             _totalRequests += 1
             _inFlight += 1
             if _inFlight > _peakInFlight { _peakInFlight = _inFlight }
             _lastRequestStartedAt = Date()
+            _nextRequestId += 1
+            let id = _nextRequestId
+            _inFlightRequests[id] = InFlightEntry(path: path, startedAt: Date())
+            return id
         }
     }
 
-    private func recordRequestEnd(path: String, durationMs: Int, statusCode: Int) {
+    private func recordRequestEnd(id: Int, path: String, durationMs: Int, statusCode: Int) {
         diagQueue.sync {
             _inFlight = max(0, _inFlight - 1)
             _lastResponseFinishedAt = Date()
+            _inFlightRequests.removeValue(forKey: id)
             if durationMs > LocalServer.SLOW_THRESHOLD_MS {
                 _recentSlow.append(DiagEvent(
                     timestamp: Date(), path: path,
@@ -104,6 +150,92 @@ import GCDWebServer
         }
     }
 
+    private func recordLifecycle(_ type: String) {
+        diagQueue.sync {
+            _lifecycleEvents.append(LifecycleEvent(type: type, at: Date()))
+            if _lifecycleEvents.count > 10 { _lifecycleEvents.removeFirst() }
+        }
+    }
+
+    private func recordMemoryWarning() {
+        diagQueue.sync {
+            _memoryWarnings.append(Date())
+            if _memoryWarnings.count > 10 { _memoryWarnings.removeFirst() }
+        }
+    }
+
+    /// Register notification observers for memory + lifecycle. Called
+    /// once from start(). The observers are intentionally kept until
+    /// the LocalServer instance dies, which is process-lifetime in
+    /// practice (singleton).
+    private func observeLifecycle() {
+        let nc = NotificationCenter.default
+        nc.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification,
+                       object: nil, queue: nil) { [weak self] _ in
+            self?.recordMemoryWarning()
+        }
+        for (name, label) in [
+            (UIApplication.didEnterBackgroundNotification,  "didEnterBackground"),
+            (UIApplication.willEnterForegroundNotification, "willEnterForeground"),
+            (UIApplication.willResignActiveNotification,    "willResignActive"),
+            (UIApplication.didBecomeActiveNotification,     "didBecomeActive"),
+        ] {
+            nc.addObserver(forName: name, object: nil, queue: nil) { [weak self] _ in
+                self?.recordLifecycle(label)
+            }
+        }
+    }
+
+    /// Repeating timer that fires a GET to the server's own
+    /// /__ping__ endpoint. Runs on a utility-priority global queue so
+    /// it doesn't compete with the main thread or with GCDWebServer's
+    /// own queue.
+    private func startSelfPing() {
+        pingTimer?.cancel()
+        let q = DispatchQueue.global(qos: .utility)
+        let t = DispatchSource.makeTimerSource(queue: q)
+        t.schedule(deadline: .now() + LocalServer.SELF_PING_INTERVAL_S,
+                   repeating: LocalServer.SELF_PING_INTERVAL_S)
+        t.setEventHandler { [weak self] in self?.performSelfPing() }
+        pingTimer = t
+        t.resume()
+    }
+
+    private func performSelfPing() {
+        guard let baseURL = server.serverURL else { return }
+        let url = baseURL.appendingPathComponent("__ping__")
+        var req = URLRequest(url: url)
+        req.timeoutInterval = LocalServer.SELF_PING_TIMEOUT_S
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        let started = Date()
+        URLSession.shared.dataTask(with: req) { [weak self] _, response, error in
+            guard let self = self else { return }
+            let durMs = Int(Date().timeIntervalSince(started) * 1000)
+            self.diagQueue.sync {
+                self._selfPingsTotal += 1
+                self._lastSelfPingAt = Date()
+                self._lastSelfPingDurMs = durMs
+                if let err = error {
+                    let nsErr = err as NSError
+                    self._lastSelfPingResult =
+                        "error: \(nsErr.code) \(nsErr.localizedDescription)"
+                    self._consecutiveSelfPingFails += 1
+                } else if let r = response as? HTTPURLResponse {
+                    self._lastSelfPingResult = "HTTP \(r.statusCode)"
+                    if (200..<400).contains(r.statusCode) {
+                        self._selfPingsOk += 1
+                        self._consecutiveSelfPingFails = 0
+                    } else {
+                        self._consecutiveSelfPingFails += 1
+                    }
+                } else {
+                    self._lastSelfPingResult = "no response"
+                    self._consecutiveSelfPingFails += 1
+                }
+            }
+        }.resume()
+    }
+
     /// In-process snapshot for the LocalServerDiag plugin. Safe to
     /// call from any thread; serialised through diagQueue. Returns a
     /// JSObject-compatible dict.
@@ -122,6 +254,23 @@ import GCDWebServer
                     "durMs": e.durationMs,
                 ]
             }
+            // Sort in-flight oldest-first so the longest-stuck request
+            // is the first thing the user sees. Cap at 20 — anything
+            // more is wallpaper.
+            let inflightSorted = _inFlightRequests
+                .sorted { $0.value.startedAt < $1.value.startedAt }
+                .prefix(20)
+                .map { (id, entry) -> [String: Any] in
+                    [
+                        "id": id,
+                        "path": entry.path,
+                        "startedAt": entry.startedAt.timeIntervalSince1970,
+                    ]
+                }
+            let memWarnings = _memoryWarnings.map { ["t": $0.timeIntervalSince1970] }
+            let lifecycle = _lifecycleEvents.map {
+                ["t": $0.at.timeIntervalSince1970, "type": $0.type] as [String: Any]
+            }
             return [
                 "isRunning": isRunning,
                 "port": port,
@@ -136,6 +285,18 @@ import GCDWebServer
                 "slowThresholdMs": LocalServer.SLOW_THRESHOLD_MS,
                 "recentErrors": _recentErrors.map(fmt),
                 "recentSlow": _recentSlow.map(fmt),
+                "inFlightDetails": Array(inflightSorted),
+                "selfPing": [
+                    "total": _selfPingsTotal,
+                    "ok": _selfPingsOk,
+                    "consecutiveFailures": _consecutiveSelfPingFails,
+                    "lastAt": _lastSelfPingAt?.timeIntervalSince1970 ?? 0,
+                    "lastDurMs": _lastSelfPingDurMs,
+                    "lastResult": _lastSelfPingResult,
+                    "intervalS": LocalServer.SELF_PING_INTERVAL_S,
+                ] as [String: Any],
+                "memoryWarnings": memWarnings,
+                "lifecycle": lifecycle,
             ]
         }
     }
@@ -190,12 +351,21 @@ import GCDWebServer
                 return GCDWebServerErrorResponse(statusCode: 500)
             }
             let path = req.path
+            // Self-ping is internal — don't count it against the
+            // public request counters; it has its own dedicated
+            // tracking under selfPing.* in the snapshot.
+            if path == LocalServer.SELF_PING_PATH {
+                return GCDWebServerDataResponse(jsonObject: [
+                    "ok": true,
+                    "t": Date().timeIntervalSince1970,
+                ]) ?? GCDWebServerErrorResponse(statusCode: 500)
+            }
             let started = Date()
-            self.recordRequestStart()
+            let id = self.recordRequestStart(path: path)
             let resp = self.handle(req)
             let durMs = Int(Date().timeIntervalSince(started) * 1000)
             self.recordRequestEnd(
-                path: path, durationMs: durMs,
+                id: id, path: path, durationMs: durMs,
                 statusCode: Int(resp.statusCode))
             return resp
         }
@@ -239,6 +409,8 @@ import GCDWebServer
             UserDefaults.standard.set(actualPort, forKey: "cc.localServer.port")
         }
         diagQueue.sync { _serverStartedAt = Date() }
+        observeLifecycle()
+        startSelfPing()
         NSLog("[LocalServer] listening at \(url.absoluteString)")
         return url
     }

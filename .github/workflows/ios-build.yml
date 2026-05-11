@@ -135,6 +135,7 @@ jobs:
           cp ios-overrides/AppBridgeViewController.swift ios/App/App/AppBridgeViewController.swift
           cp ios-overrides/BundleAccessPlugin.swift      ios/App/App/BundleAccessPlugin.swift
           cp ios-overrides/MemoryProbePlugin.swift       ios/App/App/MemoryProbePlugin.swift
+          cp ios-overrides/LocalServerDiagPlugin.swift   ios/App/App/LocalServerDiagPlugin.swift
 
           # Point Main.storyboard at our subclass instead of stock CAPBridgeViewController.
           STORYBOARD=ios/App/App/Base.lproj/Main.storyboard
