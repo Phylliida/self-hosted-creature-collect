@@ -3264,18 +3264,81 @@
         }
       } catch (_) {}
     }
+    // Outcome tracking — separate from the URL log so the Settings
+    // diagnostic dump can answer "is LocalServer still responding?"
+    // at a glance. The thing we actually care about is the LOCAL
+    // fetches (LocalServer / WebViewAssetLoader); remote fetches
+    // (the CC_API_BASE rewrite branch) hit the WKWebView's network
+    // stack, which is a separate failure mode, so we track them
+    // separately under `remote`.
+    window._fetchHealth = window._fetchHealth || {
+      local:  { total: 0, ok: 0, n4xx: 0, n5xx: 0, rejected: 0,
+                consecutiveFailures: 0,
+                lastSuccessAt: 0, lastFailureAt: 0 },
+      remote: { total: 0, ok: 0, n4xx: 0, n5xx: 0, rejected: 0,
+                consecutiveFailures: 0,
+                lastSuccessAt: 0, lastFailureAt: 0 },
+      recent: [],   // [{t, url, status, reason, scope}] capped at 20
+    };
+    function _recordFetchOutcome(url, scope, status, err) {
+      try {
+        const h = window._fetchHealth;
+        const bucket = h[scope] || h.local;
+        bucket.total++;
+        const now = Date.now();
+        const pushRecent = (statusVal, reason) => {
+          h.recent.push({
+            t: now, url: String(url).slice(0, 140),
+            status: statusVal, reason, scope,
+          });
+          if (h.recent.length > 20) h.recent.shift();
+        };
+        if (err) {
+          bucket.rejected++;
+          bucket.lastFailureAt = now;
+          bucket.consecutiveFailures++;
+          pushRecent(0, (err && err.message) || String(err));
+        } else if (status >= 200 && status < 400) {
+          // 2xx + 3xx (redirects are fine, SW returns 302 for some).
+          bucket.ok++;
+          bucket.lastSuccessAt = now;
+          bucket.consecutiveFailures = 0;
+        } else if (status >= 400 && status < 500) {
+          bucket.n4xx++;
+          bucket.lastFailureAt = now;
+          bucket.consecutiveFailures++;
+          pushRecent(status, '');
+        } else if (status >= 500) {
+          bucket.n5xx++;
+          bucket.lastFailureAt = now;
+          bucket.consecutiveFailures++;
+          pushRecent(status, '');
+        }
+      } catch (_) {}
+    }
     window.fetch = function (input, init) {
       const url = typeof input === 'string' ? input
                 : (input && input.url) ? input.url : '';
+      let resp;
+      let scope = 'local';
       if (url && url[0] === '/' && url[1] !== '/'
           && !LOCAL_PREFIXES.some((p) => url.startsWith(p))) {
         const rewritten = window.CC_API_BASE + url;
         _logFetch(url, rewritten, true);
-        if (typeof input === 'string') return _origFetch(rewritten, init);
-        return _origFetch(new Request(rewritten, input), init);
+        scope = 'remote';
+        resp = (typeof input === 'string')
+          ? _origFetch(rewritten, init)
+          : _origFetch(new Request(rewritten, input), init);
+      } else {
+        _logFetch(url, url, false);
+        resp = _origFetch(input, init);
       }
-      _logFetch(url, url, false);
-      return _origFetch(input, init);
+      // Tap the outcome without disturbing the caller's chain.
+      resp.then(
+        (r) => _recordFetchOutcome(url, scope, r && r.status, null),
+        (err) => _recordFetchOutcome(url, scope, 0, err),
+      );
+      return resp;
     };
 
     // Marker class used by CSS to hide the "↓ app data" download UI
@@ -9597,6 +9660,36 @@ function fmtDate(ts) {
       );
       if (cd.reasons) {
         for (const [k, v] of Object.entries(cd.reasons)) lines.push(`  • ${k}: ${v}`);
+      }
+      // Fetch health — populated by the Capacitor fetch interceptor
+      // earlier in this file (window._fetchHealth). "local" = the
+      // LocalServer / WebViewAssetLoader path that serves bundled
+      // assets; "remote" = the CC_API_BASE rewrite path that goes
+      // to the live Flask backend. A run of consecutive failures on
+      // `local` with a stale lastSuccess is the signature of the
+      // in-app HTTP server stalling out.
+      const fh = window._fetchHealth;
+      if (fh) {
+        const ageSec = (t) => t ? `${Math.round((Date.now() - t) / 1000)}s ago` : '—';
+        const bucketLine = (name, b) =>
+          `  ${name.padEnd(7)} total=${b.total} ok=${b.ok} 4xx=${b.n4xx} ` +
+          `5xx=${b.n5xx} rejected=${b.rejected} ` +
+          `streak=${b.consecutiveFailures} ` +
+          `lastOk=${ageSec(b.lastSuccessAt)} ` +
+          `lastFail=${ageSec(b.lastFailureAt)}`;
+        lines.push(`[fetch health]`);
+        lines.push(bucketLine('local',  fh.local  || {}));
+        lines.push(bucketLine('remote', fh.remote || {}));
+        if (fh.recent && fh.recent.length) {
+          lines.push(`  recent failures (newest first):`);
+          for (let i = fh.recent.length - 1; i >= 0 && i > fh.recent.length - 6; i--) {
+            const f = fh.recent[i];
+            const ago = Math.round((Date.now() - f.t) / 1000);
+            const label = f.status ? String(f.status) : (f.reason || 'rejected');
+            const url = f.url.length > 80 ? f.url.slice(0, 80) + '…' : f.url;
+            lines.push(`    -${ago}s [${f.scope}] ${label}  ${url}`);
+          }
+        }
       }
       // Script versions — each .js file declares its own SCRIPT_VERSION
       // and pushes it into window._scriptVersions on load. The server
