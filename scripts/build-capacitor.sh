@@ -78,7 +78,7 @@ import json, pathlib, re, time
 DIST = pathlib.Path("$DIST")
 STATIC_SRC = pathlib.Path("static")
 TRACKED_JS = {
-    "creatures.js", "sprites.js", "appdata.js",
+    "creatures.js", "sprites.js", "sprite-store.js", "appdata.js",
     "species.js", "spawns.js", "trip-planner.js",
     "live-update.js", "sw.js",
 }

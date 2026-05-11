@@ -103,7 +103,7 @@ app = Flask(__name__, static_folder=None)
 # `SCRIPT_VERSION = '...'` constant the server replaces on serve;
 # HTML files get a tiny registration <script> injected after <head>.
 _TRACKED_JS = {
-    "creatures.js", "sprites.js", "appdata.js",
+    "creatures.js", "sprites.js", "sprite-store.js", "appdata.js",
     "species.js", "spawns.js", "trip-planner.js",
     "live-update.js",
 }
@@ -112,7 +112,7 @@ _TRACKED_HTML = {"index.html", "dex.html"}
 # Used both to build the HTML-injected `_serverScriptVersions` map and
 # by the /script-versions fallback endpoint.
 _SCRIPT_VERSION_FILES = [
-    "creatures.js", "sprites.js", "appdata.js",
+    "creatures.js", "sprites.js", "sprite-store.js", "appdata.js",
     "species.js", "spawns.js", "trip-planner.js", "live-update.js", "sw.js",
     "index.html", "dex.html",
 ]
