@@ -3569,6 +3569,27 @@
       // Default OFF. Settings handler will update at runtime.
       if (localStorage.getItem('cc.memBadge') === '1') window._setMemBadge(true);
     }
+
+    // LocalServer diagnostic poll. The Settings panel reads this
+    // snapshot to answer "is GCDWebServer actually receiving + handling
+    // requests, or has it wedged?". In-process bridge call — works even
+    // when the HTTP path is broken (which is the whole point). Polled
+    // at 1 Hz so a stuck-state inspection is responsive without burning
+    // cycles when nobody's looking. iOS-only — no equivalent on Android
+    // (WebViewAssetLoader, not GCDWebServer).
+    const LSDiag = window.Capacitor.Plugins
+      && window.Capacitor.Plugins.LocalServerDiag;
+    if (LSDiag) {
+      window._localServerDiag = null;
+      setInterval(async () => {
+        try { window._localServerDiag = await LSDiag.getDiagnostics(); }
+        catch (e) {
+          window._localServerDiag = {
+            error: (e && e.message) ? e.message : String(e),
+          };
+        }
+      }, 1000);
+    }
   }
 </script>
 <script src="/static/vendor/maplibre-gl.js"></script>
@@ -9660,6 +9681,58 @@ function fmtDate(ts) {
       );
       if (cd.reasons) {
         for (const [k, v] of Object.entries(cd.reasons)) lines.push(`  • ${k}: ${v}`);
+      }
+      // LocalServer in-process diagnostics (iOS Capacitor only). The
+      // snapshot is refreshed every 1s by the poll set up alongside
+      // the MemoryProbe block above. Reading it from JS bypasses
+      // HTTP entirely — the Capacitor bridge is in-process, so this
+      // works even when GCDWebServer has stopped responding to fetches.
+      // Three signatures to look for:
+      //   * totalRequests not increasing → socket is dead / not bound
+      //   * inFlight pinned > 0 with stale lastResponseFinishedAt
+      //     → worker pool exhausted, handlers stuck
+      //   * recentErrors populated → handler returning 4xx/5xx
+      //   * recentSlow populated → file I/O contention
+      const lsd = window._localServerDiag;
+      if (lsd) {
+        lines.push(`[local server (iOS)]`);
+        if (lsd.error) {
+          lines.push(`  diag plugin error: ${lsd.error}`);
+        } else {
+          const now = lsd.now || (Date.now() / 1000);
+          const ageS = (epoch) => epoch
+            ? `${Math.round(now - epoch)}s ago` : '—';
+          lines.push(
+            `  running=${lsd.isRunning ? 'y' : 'n'} port=${lsd.port}  ` +
+            `uptime=${ageS(lsd.serverStartedAt)}`,
+            `  total=${lsd.totalRequests} inFlight=${lsd.inFlight} ` +
+            `peak=${lsd.peakInFlight} errors=${lsd.totalErrors}`,
+            `  lastReq=${ageS(lsd.lastRequestStartedAt)}  ` +
+            `lastResp=${ageS(lsd.lastResponseFinishedAt)}`,
+          );
+          if (lsd.recentErrors && lsd.recentErrors.length) {
+            lines.push(`  recent errors (newest first):`);
+            for (let i = lsd.recentErrors.length - 1;
+                 i >= 0 && i > lsd.recentErrors.length - 6; i--) {
+              const e = lsd.recentErrors[i];
+              const ago = Math.round(now - e.t);
+              const path = e.path && e.path.length > 70
+                ? e.path.slice(0, 70) + '…' : (e.path || '');
+              lines.push(`    -${ago}s  ${e.msg}  ${path}`);
+            }
+          }
+          if (lsd.recentSlow && lsd.recentSlow.length) {
+            lines.push(`  recent slow (>${lsd.slowThresholdMs}ms, newest first):`);
+            for (let i = lsd.recentSlow.length - 1;
+                 i >= 0 && i > lsd.recentSlow.length - 6; i--) {
+              const s = lsd.recentSlow[i];
+              const ago = Math.round(now - s.t);
+              const path = s.path && s.path.length > 70
+                ? s.path.slice(0, 70) + '…' : (s.path || '');
+              lines.push(`    -${ago}s  ${s.durMs}ms  ${path}`);
+            }
+          }
+        }
       }
       // Fetch health — populated by the Capacitor fetch interceptor
       // earlier in this file (window._fetchHealth). "local" = the

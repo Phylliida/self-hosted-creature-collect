@@ -32,6 +32,114 @@ import GCDWebServer
     // private(set) can't coexist with @objc property exposure.
     private(set) var liveDir: URL?
 
+    // ─── Diagnostic state ────────────────────────────────────────────
+    //
+    // GCDWebServer runs request handlers on its own dispatch queue.
+    // These counters are touched from both that queue (via record*
+    // helpers) and from the main thread (via diagnosticsSnapshot
+    // — called by LocalServerDiagPlugin in response to a JS bridge
+    // call). Serialised via diagQueue.
+    //
+    // Why this exists: when GCDWebServer wedges, HTTP fetches stop
+    // resolving — the page can't probe the server over HTTP. But the
+    // Capacitor plugin bridge is in-process and routes around the
+    // wedge, so JS can still read these counters and figure out
+    // WHICH part of the server is stuck (no requests arriving =
+    // socket dead; lots of in-flight = worker pool exhausted;
+    // recentSlow piling up = file I/O stalling; recentErrors
+    // populated = handler throwing).
+    private let diagQueue = DispatchQueue(label: "cc.localServer.diag")
+    private var _totalRequests = 0
+    private var _inFlight = 0
+    private var _peakInFlight = 0
+    private var _totalErrors = 0
+    private var _serverStartedAt: Date?
+    private var _lastRequestStartedAt: Date?
+    private var _lastResponseFinishedAt: Date?
+    private var _recentErrors: [DiagEvent] = []
+    private var _recentSlow:   [DiagEvent] = []
+    // Anything taking longer than this ms threshold goes into
+    // recentSlow. Healthy file reads on iOS are sub-10ms; >100ms
+    // is usually file-system contention or a hung worker.
+    private static let SLOW_THRESHOLD_MS = 100
+    private static let RING_BUFFER_CAP = 30
+
+    private struct DiagEvent {
+        let timestamp: Date
+        let path: String
+        let message: String
+        let durationMs: Int
+    }
+
+    private func recordRequestStart() {
+        diagQueue.sync {
+            _totalRequests += 1
+            _inFlight += 1
+            if _inFlight > _peakInFlight { _peakInFlight = _inFlight }
+            _lastRequestStartedAt = Date()
+        }
+    }
+
+    private func recordRequestEnd(path: String, durationMs: Int, statusCode: Int) {
+        diagQueue.sync {
+            _inFlight = max(0, _inFlight - 1)
+            _lastResponseFinishedAt = Date()
+            if durationMs > LocalServer.SLOW_THRESHOLD_MS {
+                _recentSlow.append(DiagEvent(
+                    timestamp: Date(), path: path,
+                    message: "HTTP \(statusCode)", durationMs: durationMs))
+                if _recentSlow.count > LocalServer.RING_BUFFER_CAP {
+                    _recentSlow.removeFirst()
+                }
+            }
+            if statusCode >= 400 {
+                _totalErrors += 1
+                _recentErrors.append(DiagEvent(
+                    timestamp: Date(), path: path,
+                    message: "HTTP \(statusCode)", durationMs: durationMs))
+                if _recentErrors.count > LocalServer.RING_BUFFER_CAP {
+                    _recentErrors.removeFirst()
+                }
+            }
+        }
+    }
+
+    /// In-process snapshot for the LocalServerDiag plugin. Safe to
+    /// call from any thread; serialised through diagQueue. Returns a
+    /// JSObject-compatible dict.
+    @objc func diagnosticsSnapshot() -> [String: Any] {
+        // Capture server-state fields outside diagQueue (they have
+        // their own internal synchronisation), then merge with the
+        // diagQueue-protected counters.
+        let isRunning = server.isRunning
+        let port = Int(server.port)
+        return diagQueue.sync {
+            let fmt: (DiagEvent) -> [String: Any] = { e in
+                [
+                    "t": e.timestamp.timeIntervalSince1970,
+                    "path": e.path,
+                    "msg": e.message,
+                    "durMs": e.durationMs,
+                ]
+            }
+            return [
+                "isRunning": isRunning,
+                "port": port,
+                "serverStartedAt": _serverStartedAt?.timeIntervalSince1970 ?? 0,
+                "now": Date().timeIntervalSince1970,
+                "totalRequests": _totalRequests,
+                "inFlight": _inFlight,
+                "peakInFlight": _peakInFlight,
+                "totalErrors": _totalErrors,
+                "lastRequestStartedAt": _lastRequestStartedAt?.timeIntervalSince1970 ?? 0,
+                "lastResponseFinishedAt": _lastResponseFinishedAt?.timeIntervalSince1970 ?? 0,
+                "slowThresholdMs": LocalServer.SLOW_THRESHOLD_MS,
+                "recentErrors": _recentErrors.map(fmt),
+                "recentSlow": _recentSlow.map(fmt),
+            ]
+        }
+    }
+
     /// Start the server. Idempotent — calling start() twice returns
     /// the same URL. Throws if the bundled `public/` folder can't be
     /// located in the app's main bundle.
@@ -69,10 +177,27 @@ import GCDWebServer
         // Single catch-all handler. We use processBlock (sync) rather
         // than asyncProcessBlock since file lookup + GCDWebServerFileResponse
         // are both fast and run on a background queue anyway.
+        //
+        // The wrapper records per-request diagnostic state so
+        // LocalServerDiagPlugin can surface "what is the server
+        // actually doing" to the page. `defer` guarantees we
+        // decrement inFlight + record duration on every code path,
+        // including the early `self == nil` return.
         server.addHandler(forMethod: "GET",
                           pathRegex: ".*",
                           request: GCDWebServerRequest.self) { [weak self] req in
-            return self?.handle(req) ?? GCDWebServerErrorResponse(statusCode: 500)
+            guard let self = self else {
+                return GCDWebServerErrorResponse(statusCode: 500)
+            }
+            let path = req.path
+            let started = Date()
+            self.recordRequestStart()
+            let resp = self.handle(req)
+            let durMs = Int(Date().timeIntervalSince(started) * 1000)
+            self.recordRequestEnd(
+                path: path, durationMs: durMs,
+                statusCode: Int(resp.statusCode))
+            return resp
         }
 
         // Persist the port across launches. The Service Worker's
@@ -113,6 +238,7 @@ import GCDWebServer
         if actualPort != savedPort {
             UserDefaults.standard.set(actualPort, forKey: "cc.localServer.port")
         }
+        diagQueue.sync { _serverStartedAt = Date() }
         NSLog("[LocalServer] listening at \(url.absoluteString)")
         return url
     }

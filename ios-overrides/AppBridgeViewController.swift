@@ -35,5 +35,6 @@ class AppBridgeViewController: CAPBridgeViewController {
         super.capacitorDidLoad()
         bridge?.registerPluginInstance(BundleAccessPlugin())
         bridge?.registerPluginInstance(MemoryProbePlugin())
+        bridge?.registerPluginInstance(LocalServerDiagPlugin())
     }
 }
