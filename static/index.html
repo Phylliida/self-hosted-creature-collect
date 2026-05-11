@@ -9702,6 +9702,7 @@ function fmtDate(ts) {
           const now = lsd.now || (Date.now() / 1000);
           const ageS = (epoch) => epoch
             ? `${Math.round(now - epoch)}s ago` : '—';
+          const trim = (s, n) => (s && s.length > n) ? s.slice(0, n) + '…' : (s || '');
           lines.push(
             `  running=${lsd.isRunning ? 'y' : 'n'} port=${lsd.port}  ` +
             `uptime=${ageS(lsd.serverStartedAt)}`,
@@ -9710,15 +9711,41 @@ function fmtDate(ts) {
             `  lastReq=${ageS(lsd.lastRequestStartedAt)}  ` +
             `lastResp=${ageS(lsd.lastResponseFinishedAt)}`,
           );
+          // Self-ping — the killer test for "is the HTTP path even
+          // reachable from inside this process?". URLSession.shared
+          // and WKWebView's URLSession use different connection pools,
+          // so self-ping succeeding while page fetches fail isolates
+          // the bug to WKWebView's side.
+          const sp = lsd.selfPing || {};
+          const spStreak = sp.consecutiveFailures || 0;
+          const spFlag = spStreak >= 3 ? '  ⚠' : '';
+          lines.push(
+            `  self-ping: ${sp.total ?? 0} total / ${sp.ok ?? 0} ok / ` +
+            `streak=${spStreak}${spFlag}`,
+            `             last=${ageS(sp.lastAt)} ${sp.lastDurMs ?? '—'}ms ` +
+            `result="${sp.lastResult ?? ''}"`,
+          );
+          // In-flight requests — if `inFlight` is pinned > 0 with a
+          // stale lastResp, this is the list of paths that are stuck
+          // (oldest first). The ages tell us how long each has been
+          // waiting; >5s on a static file is conclusive evidence of
+          // a worker hang.
+          if (lsd.inFlightDetails && lsd.inFlightDetails.length) {
+            lines.push(`  in-flight (oldest first):`);
+            for (const r of lsd.inFlightDetails.slice(0, 8)) {
+              const age = Math.round(now - r.startedAt);
+              lines.push(`    ${age}s  ${trim(r.path, 70)}`);
+            }
+            if (lsd.inFlightDetails.length > 8) {
+              lines.push(`    … ${lsd.inFlightDetails.length - 8} more`);
+            }
+          }
           if (lsd.recentErrors && lsd.recentErrors.length) {
             lines.push(`  recent errors (newest first):`);
             for (let i = lsd.recentErrors.length - 1;
                  i >= 0 && i > lsd.recentErrors.length - 6; i--) {
               const e = lsd.recentErrors[i];
-              const ago = Math.round(now - e.t);
-              const path = e.path && e.path.length > 70
-                ? e.path.slice(0, 70) + '…' : (e.path || '');
-              lines.push(`    -${ago}s  ${e.msg}  ${path}`);
+              lines.push(`    -${Math.round(now - e.t)}s  ${e.msg}  ${trim(e.path, 70)}`);
             }
           }
           if (lsd.recentSlow && lsd.recentSlow.length) {
@@ -9726,10 +9753,22 @@ function fmtDate(ts) {
             for (let i = lsd.recentSlow.length - 1;
                  i >= 0 && i > lsd.recentSlow.length - 6; i--) {
               const s = lsd.recentSlow[i];
-              const ago = Math.round(now - s.t);
-              const path = s.path && s.path.length > 70
-                ? s.path.slice(0, 70) + '…' : (s.path || '');
-              lines.push(`    -${ago}s  ${s.durMs}ms  ${path}`);
+              lines.push(`    -${Math.round(now - s.t)}s  ${s.durMs}ms  ${trim(s.path, 70)}`);
+            }
+          }
+          // Memory warnings + lifecycle events. A wedge that lines up
+          // in time with a memory warning or a background transition
+          // points at iOS suspending us, not at our own code.
+          if (lsd.memoryWarnings && lsd.memoryWarnings.length) {
+            const ages = lsd.memoryWarnings.map(w => `${Math.round(now - w.t)}s`).join(', ');
+            lines.push(`  memory warnings: ${lsd.memoryWarnings.length} (${ages} ago)`);
+          }
+          if (lsd.lifecycle && lsd.lifecycle.length) {
+            lines.push(`  lifecycle (newest first):`);
+            for (let i = lsd.lifecycle.length - 1;
+                 i >= 0 && i > lsd.lifecycle.length - 6; i--) {
+              const e = lsd.lifecycle[i];
+              lines.push(`    -${Math.round(now - e.t)}s  ${e.type}`);
             }
           }
         }
