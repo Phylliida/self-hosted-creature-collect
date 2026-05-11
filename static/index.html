@@ -2696,6 +2696,12 @@
   var SUPPRESS = [
     /^Load failed\b/,         // Safari <img> failed to load (we self-heal)
     /^TypeError: Load failed/,
+    // SW fetch rejection on offline / unreachable URLs. The current
+    // sw.js catches these and resolves to a 504 instead, but older
+    // clients still running a cached SW from before that fix surface
+    // the message via console.error. Suppress on the page side too so
+    // the debug overlay stays quiet across the SW update window.
+    /FetchEvent\.respondWith received an error/,
   ];
   var origErr = console.error.bind(console);
   console.error = function () {
@@ -5573,6 +5579,15 @@ function fmtDate(ts) {
       // with the captures payload above — IDs that don't match any
       // imported capture will be silently dropped at apply time.
       daycareSlots: JSON.parse(localStorage.getItem('cc.daycareSlots.v1') || '[]'),
+      // Unhatched eggs (full record per egg) + incubator slot
+      // bindings (egg-id references into the eggs array). Eggs travel
+      // independently of captures since they don't become a creature
+      // until the user explicitly hatches them. The incubator carries
+      // each egg's incubatedM via the egg record itself, so swapping
+      // a partly-incubated egg out, exporting, and re-importing on
+      // another device preserves exact progress.
+      eggs: JSON.parse(localStorage.getItem('cc.eggs.v1') || '[]'),
+      incubator: JSON.parse(localStorage.getItem('cc.incubator.v1') || '[]'),
       backupName: localStorage.getItem('cc.backupName') || null,
       // Daycare history (per-day distance summary + full GPS paths)
       // lives in IDB rather than localStorage so it can grow past LS
@@ -5831,6 +5846,51 @@ function fmtDate(ts) {
       }
       localStorage.setItem('cc.daycareSlots.v1', JSON.stringify(merged));
     }
+    // Eggs: merge by egg id (skip duplicates), keeping the local
+    // copy on conflict so incubatedM that has advanced on this
+    // device isn't clobbered by an older snapshot. New eggs from
+    // the import (ones whose id isn't local) get appended.
+    let eggsAdded = 0, eggsSkipped = 0;
+    if (Array.isArray(data.eggs)) {
+      const existing = JSON.parse(localStorage.getItem('cc.eggs.v1') || '[]');
+      const existingIds = new Set(existing.map((e) => e && e.id).filter(Boolean));
+      const merged = existing.slice();
+      for (const e of data.eggs) {
+        if (!e || !e.id || typeof e !== 'object') continue;
+        if (!Number.isInteger(e.speciesA) || !Number.isInteger(e.speciesB)) continue;
+        if (existingIds.has(e.id)) { eggsSkipped++; continue; }
+        merged.push(e);
+        eggsAdded++;
+      }
+      localStorage.setItem('cc.eggs.v1', JSON.stringify(merged));
+    }
+    // Incubator: 2-slot bindings keyed by egg id. Honour current
+    // device's bindings first (the user may have just placed an
+    // egg in a slot here), then fill any remaining slots from the
+    // import. Drop any binding whose egg id isn't present in the
+    // merged egg list — same dangling-reference safeguard the
+    // daycareSlots merge applies for capture ids.
+    if (Array.isArray(data.incubator)) {
+      const eggsNow = JSON.parse(localStorage.getItem('cc.eggs.v1') || '[]');
+      const validEggIds = new Set(eggsNow.map((e) => e && e.id).filter(Boolean));
+      const current = JSON.parse(localStorage.getItem('cc.incubator.v1') || '[]');
+      const slots = [null, null];
+      const seen = new Set();
+      const tryFill = (id) => {
+        if (typeof id !== 'string' || !id) return;
+        if (!validEggIds.has(id) || seen.has(id)) return;
+        for (let i = 0; i < 2; i++) {
+          if (slots[i] == null) {
+            slots[i] = id;
+            seen.add(id);
+            return;
+          }
+        }
+      };
+      for (let i = 0; i < 2; i++) tryFill(current[i]);
+      for (let i = 0; i < 2; i++) tryFill(data.incubator[i]);
+      localStorage.setItem('cc.incubator.v1', JSON.stringify(slots));
+    }
     // Daycare: per-day-max merge for the summary; incoming wins for
     // path days the local device doesn't already have. See
     // Creatures.importDaycareData for the merge semantics.
@@ -5841,7 +5901,8 @@ function fmtDate(ts) {
     alert(
       `Imported: ${favAdded} favorite(s) (${favSkipped} skipped), ` +
       `${regAdded} region(s), ` +
-      `${creaturesAdded} creature(s) (${creaturesSkipped} skipped)`
+      `${creaturesAdded} creature(s) (${creaturesSkipped} skipped), ` +
+      `${eggsAdded} egg(s) (${eggsSkipped} skipped)`
     );
   }
   async function loadFromServer() {

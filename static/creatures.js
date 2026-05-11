@@ -5030,6 +5030,28 @@
   // Type filters / sort / tags persist via localStorage at run-time,
   // so the snapshot writes those keys on apply (the entry being
   // restored is the user's "current" filter state).
+  // Strip any tag names from a stored filter snapshot that no longer
+  // exist (user deleted the tag while the snapshot was sitting in a
+  // _viewStack frame). Without this guard, _applyInventoryFilters /
+  // _applyPokedexFilters write the stale snapshot back to localStorage
+  // on re-entry to the view, resurrecting a filter for a tag no
+  // capture has — which leaves the inventory permanently empty until
+  // the user manually deselects the chip (which doesn't render
+  // because the tag is gone). Argument shape: the JSON-stringified
+  // array localStorage stores. Returns the same shape with deleted
+  // tags filtered out, or the input verbatim if it doesn't parse.
+  function _validateStoredTagFilter(raw) {
+    if (!raw) return raw;
+    try {
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) return raw;
+      const valid = new Set(allTagNames());
+      const filtered = arr.filter((t) => typeof t === 'string' && valid.has(t));
+      if (filtered.length === arr.length) return raw;
+      return JSON.stringify(filtered);
+    } catch { return raw; }
+  }
+
   function _capturePokedexFilters(panel) {
     return {
       searchAny: (panel.querySelector('#pokedexSearchAny') || {}).value || '',
@@ -5056,7 +5078,7 @@
     localStorage.setItem('cc.pokedexFilterTypeB', f.filterTypeB || '');
     if (f.sortBy) localStorage.setItem('cc.pokedexSortBy', f.sortBy);
     if (f.sortDir) localStorage.setItem('cc.pokedexSortDir', f.sortDir);
-    localStorage.setItem('cc.pokedexTagFilter', f.tags || '');
+    localStorage.setItem('cc.pokedexTagFilter', _validateStoredTagFilter(f.tags) || '');
     // Sync DOM selects so they reflect the restored values, and
     // re-apply the type-color background trick so a select set
     // back to "any" loses its themed color and one set to a type
@@ -5099,7 +5121,7 @@
     localStorage.setItem('cc.invFilterTypeB', f.filterTypeB || '');
     if (f.sortBy) localStorage.setItem('cc.creatureSortBy', f.sortBy);
     if (f.sortDir) localStorage.setItem('cc.creatureSortDir', f.sortDir);
-    localStorage.setItem('cc.invTagFilter', f.tags || '');
+    localStorage.setItem('cc.invTagFilter', _validateStoredTagFilter(f.tags) || '');
     const ft = panel.querySelector('#creatureFilterType');
     if (ft) { ft.value = f.filterType || ''; applyTypeSelectColor(ft); }
     const fta = panel.querySelector('#creatureFilterTypeA');
@@ -7926,6 +7948,10 @@
   // (locally only — other players still see it).
 
   let _currentBattleSpawn = null;
+  // Re-entry guard for throwBall — see the wrapper below the impl
+  // for why. Set true while an animation chain is in flight; rapid
+  // double-taps and multi-button mashes are rejected at the door.
+  let _throwInFlight = false;
 
   function ensureBattleScreen() {
     let el = document.getElementById('battleScreen');
@@ -8230,7 +8256,26 @@
   //      close battle → open inventory detail for the new entry.
   //  5b. Break out → ball pops open with flash → creature reappears →
   //      re-enable buttons (and re-render in case bag is now empty).
+  // Re-entry-guarded wrapper. Two rapid taps on a ball button (or
+  // taps on two different ball buttons before the .throwing CSS class
+  // applies pointer-events:none) used to both reach this function on
+  // the same event-loop tick — each consumed a ball AND each
+  // eventually called recordCaptureFromSpawn(spawn), resulting in two
+  // captures of the same spawn from a single ball-tap session. The
+  // CSS gate doesn't help because clicks already dispatched in the
+  // current tick aren't suppressed by a same-tick pointer-events
+  // change. _throwInFlight is the synchronous gate that does.
   async function throwBall(ballKey, sourceBtn) {
+    if (_throwInFlight) return;
+    _throwInFlight = true;
+    try {
+      await _throwBallImpl(ballKey, sourceBtn);
+    } finally {
+      _throwInFlight = false;
+    }
+  }
+
+  async function _throwBallImpl(ballKey, sourceBtn) {
     const spawn = _currentBattleSpawn;
     if (!spawn) return;
     const meta = ITEMS[ballKey];
