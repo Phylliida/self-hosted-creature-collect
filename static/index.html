@@ -3402,6 +3402,8 @@
       let nextId = 1;
       let listenerHandle = null;
       let serviceStarted = false;
+      let pausedByVisibility = false;
+      const STALE_FIX_THRESHOLD_MS = 5000;
 
       const ensureServiceStarted = async () => {
         if (serviceStarted) return;
@@ -3414,6 +3416,15 @@
         // Single shared listener fans out to every active watch —
         // adding/removing watches doesn't churn the listener.
         listenerHandle = await BgLoc.addListener('location', (data) => {
+          const t = data.timestamp || Date.now();
+          // Drop stale fixes. When the app is backgrounded and the JS
+          // tick can't pause the service in time, the bridge queues
+          // every fix the native side emitted while we were paused and
+          // flushes them all at the next JS resume — looks to the page
+          // like the GPS "replays" the user's entire absence in a
+          // fraction of a second. Anything older than a few seconds is
+          // not a live position; ignore.
+          if (Date.now() - t > STALE_FIX_THRESHOLD_MS) return;
           const pos = {
             coords: {
               latitude: data.latitude,
@@ -3424,7 +3435,7 @@
               heading: typeof data.heading === 'number' ? data.heading : null,
               speed: typeof data.speed === 'number' ? data.speed : null,
             },
-            timestamp: data.timestamp || Date.now(),
+            timestamp: t,
           };
           for (const w of watches.values()) {
             try { if (w.success) w.success(pos); }
@@ -3472,6 +3483,43 @@
           stopServiceIfIdle().catch(() => {});
         },
       };
+      // Pause the foreground service while the app is in the background.
+      // The whole point of the foreground service is to keep getting
+      // location updates without Doze / Battery Saver throttling — that
+      // only matters when the app is OPEN. While backgrounded we have
+      // no consumer for the fixes, and the persistent-notification
+      // service would otherwise keep the radio + fused location
+      // provider awake, draining battery for nothing.
+      //
+      // Side benefit: stopping the listener tears down the Capacitor
+      // bridge queue that would otherwise buffer every fix emitted
+      // during the absence and flush them all at the next resume — the
+      // "GPS replays the whole walk in half a second" bug.
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') {
+          if (serviceStarted) {
+            pausedByVisibility = true;
+            // Drop the listener first so any native callback already
+            // queued in the bridge can't fire after we've decided to
+            // stop. stopServiceIfIdle would normally only run when
+            // watches.size===0; here we tear down regardless because
+            // the watches are still wanted, just not while hidden.
+            if (listenerHandle && listenerHandle.remove) {
+              try { listenerHandle.remove(); } catch {}
+              listenerHandle = null;
+            }
+            serviceStarted = false;
+            BgLoc.stop().catch(() => {});
+          }
+        } else {
+          if (pausedByVisibility && watches.size > 0) {
+            pausedByVisibility = false;
+            ensureServiceStarted().catch(() => {});
+          } else {
+            pausedByVisibility = false;
+          }
+        }
+      });
       try {
         Object.defineProperty(navigator, 'geolocation', {
           value: shim, configurable: true,
