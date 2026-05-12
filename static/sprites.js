@@ -156,7 +156,11 @@
     if (_sheetPromises.has(url)) return _sheetPromises.get(url);
     const p = (async () => {
       const resp = await fetch(url);
-      if (!resp.ok) throw new Error(`${url}: HTTP ${resp.status}`);
+      if (!resp.ok) {
+        const err = new Error(`${url}: HTTP ${resp.status}`);
+        err.httpStatus = resp.status;
+        throw err;
+      }
       const blob = await resp.blob();
       const bmp = await createImageBitmap(blob);
       _sheetCache.set(url, bmp);
@@ -890,6 +894,70 @@
     return null;
   }
 
+  // Same cascade as getSpriteBlob but reports WHY a fetch failed so
+  // callers can decide whether to cache the result. Returns:
+  //   { status: 'ok',        blob }  — sprite loaded
+  //   { status: 'missing',   blob: null }  — file genuinely absent
+  //                                          (404 / pack miss / IDB miss).
+  //                                          Cache this; future calls won't
+  //                                          succeed without re-bundling.
+  //   { status: 'transient', blob: null }  — fetch failed for a recoverable
+  //                                          reason (5xx, network error,
+  //                                          decode failure). Caller should
+  //                                          retry later, not cache.
+  //
+  // getSpriteBlob currently collapses both failure modes to `null`, which
+  // is why a single 504 during LocalServer's restart window leaves a
+  // permanent red dot on every consumer that hit it. SpriteStore uses this
+  // variant so it can cache 404s and retry transients.
+  async function getSpriteBlobAttempt(a, b, variant) {
+    if (typeof window !== 'undefined' && window.Capacitor) {
+      try {
+        const blob = await _packGetBlob(a, b, variant);
+        if (blob) return { status: 'ok', blob };
+      } catch (e) {
+        _logSpriteError(`getSpriteBlobAttempt/pack/${a}-${b}:${variant}`, e);
+        // Fall through — lazy-crop may still succeed.
+      }
+      try {
+        const isCustomFallback = (typeof variant === 'number' && variant >= 0);
+        const blob = isCustomFallback
+          ? await lazyCropCustom(a, b, variant)
+          : await lazyCropAutogen(a, b);
+        if (blob) return { status: 'ok', blob };
+        // lazyCrop returned null — manifest/cells lookup found nothing.
+        // That's a true absence, not a transient fetch error.
+        return { status: 'missing', blob: null };
+      } catch (e) {
+        _logSpriteError(`getSpriteBlobAttempt/lazyCropFallback/${a}-${b}:${variant}`, e);
+        const httpStatus = e && e.httpStatus;
+        // 404 = file really isn't on the server for this build.
+        // Anything else (5xx, no httpStatus = network/decode) = transient.
+        if (httpStatus === 404) return { status: 'missing', blob: null };
+        return { status: 'transient', blob: null };
+      }
+    }
+    // Web build: IDB-only path.
+    const isCustom = (typeof variant === 'number' && variant >= 0);
+    const key = isCustom ? customKey(a, b, variant) : autogenKey(a, b);
+    _incInflight();
+    let cached = null;
+    let idbOk = false;
+    try { cached = await idbGet(key); idbOk = true; }
+    catch (e) { _logSpriteError(`getSpriteBlobAttempt/${key}`, e); }
+    finally { _decInflight(); }
+    if (!idbOk) return { status: 'transient', blob: null };
+    if (!cached) return { status: 'missing', blob: null };
+    if (!isCustom && await isLegacyPaddedPng(cached)) {
+      const trimmed = await retrimStoredBlob(cached);
+      if (trimmed) {
+        idbPut(key, trimmed).catch(() => {});
+        return { status: 'ok', blob: trimmed };
+      }
+    }
+    return { status: 'ok', blob: cached };
+  }
+
   async function lazyCropAutogen(a, b) {
     const bmp = await fetchAndDecodeSheet(_autogenSheetUrl(b));
     return cropAutogenCell(bmp, a);
@@ -1001,23 +1069,30 @@
   /// + persist to IDB, then the next reload would see it.
   async function getSpriteBlobsBatch(requests) {
     const results = await _idbBlobsBatch(requests);
-    // Find misses, run them through the single-call path which already
-    // knows how to fetch the sheet, crop the cell, and write to IDB.
-    // Done in parallel — typical viewport miss-set is small (≤ a few
-    // dozen) and each lazy-crop is a separate transaction anyway.
+    // Per-entry result shape: { key, blob, status }
+    //   status: 'ok' | 'missing' | 'transient'
+    //
+    // IDB hits are 'ok'. IDB misses (Capacitor: always, since this code
+    // path's IDB is empty; web: cold cache) fall through to the per-entry
+    // attempt API which classifies the result properly. preload uses the
+    // status to decide whether to cache, return null, or trigger a retry.
     const missJobs = [];
     for (let i = 0; i < requests.length; i++) {
-      if (results[i] && results[i].blob == null) {
-        const req = requests[i];
-        missJobs.push(
-          getSpriteBlob(req.a, req.b, req.variant)
-            .then((blob) => { if (blob) results[i].blob = blob; })
-            .catch((e) => {
-              _logSpriteError(
-                `getSpriteBlobsBatch/lazyCrop/${req.a}-${req.b}/v${req.variant}`, e);
-            })
-        );
-      }
+      if (!results[i]) continue;
+      if (results[i].blob) { results[i].status = 'ok'; continue; }
+      const req = requests[i];
+      missJobs.push(
+        getSpriteBlobAttempt(req.a, req.b, req.variant)
+          .then((r) => {
+            results[i].blob = r.blob;
+            results[i].status = r.status;
+          })
+          .catch((e) => {
+            results[i].status = 'transient';
+            _logSpriteError(
+              `getSpriteBlobsBatch/lazyCrop/${req.a}-${req.b}/v${req.variant}`, e);
+          })
+      );
     }
     if (missJobs.length) await Promise.all(missJobs);
     return results;
@@ -1489,7 +1564,7 @@
   }
 
   global.Sprites = {
-    getSpriteUrl, getSpriteBlob, getSpriteBlobsBatch,
+    getSpriteUrl, getSpriteBlob, getSpriteBlobAttempt, getSpriteBlobsBatch,
     getDefaultSpriteUrl, getDefaultSpriteBlob,
     getCellVariantCount, getCellVariantCountsBatch,
     bulkDownload, getDownloadedSheets, getDownloadStatus, deleteAllSprites,
