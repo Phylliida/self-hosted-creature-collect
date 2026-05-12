@@ -2679,3 +2679,372 @@ locked at the trainer's preferred zoom + bearing, and tappable
 POIs glow in the theme accent within range. The walk continues.
 :3
 ```
+
+---
+
+# Next session
+
+A refactor-and-diagnostics session. Code review pass over `static/`,
+sprite-rendering subsystem replaced with a cleaner pattern, loot
+probabilities tweaked, and a deep dive into "why does LocalServer
+permanently die on iOS sometimes" that ended in the actual root cause
++ an automatic fix.
+
+## Files added this session
+
+| File | Role |
+|---|---|
+| `static/sprite-store.js` | Memoized `Map<key, Promise<url \| null>>` per (a, b, variant) fusion. Replaces the old 4-reveal-path `useSpriteInto` / `_spriteCache` / `_applySpriteEntry` machinery in `sprites.js`. Single public API: `SpriteStore.showSprite(img, a, b, v, { onReady })`. |
+| `ios-overrides/LocalServerDiagPlugin.swift` | Capacitor plugin exposing LocalServer's in-process diagnostics (counters, in-flight tracking, self-ping, lifecycle, restart history) AND a `restart()` method. In-process bridge — works even when the HTTP path is wedged. |
+| `CODE_REVIEW.md` | Read-pass findings doc covering all of `static/`. Module-by-module overview, natural extraction boundaries (markers.js, eggs.js, tags.js, daycare.js, etc.), dead-code candidates, duplicated patterns. Pure findings + a phased extraction plan, no code changes. |
+
+## Sprite-rendering refactor (the big one)
+
+The old sprite pipeline had a chronic "stuck red dot" bug class on iOS:
+sprite blob loaded, marker stayed unrevealed because `<img>.onload`
+didn't fire reliably on WKWebView. The fix had grown to **four parallel
+reveal paths** racing inside `_applySpriteEntry`:
+
+1. `img.onload`
+2. Synchronous `img.complete && img.naturalWidth > 0` check post-src
+3. `img.decode()` Promise
+4. 150 ms polling fallback (`setTimeout` loop up to 8 s)
+
+Plus a `_SPRITE_LOAD_ID` per-img generation counter for cancellation,
+a shared `_spriteCache` LRU with manual revoke, plus `cc-sprite-loaded`
+and `cc-sprites-bulk-ready` custom events to wake stuck markers.
+~250 lines of plumbing on top of a fundamental conflation:
+
+> "Is the sprite blob available?" (cache's problem)
+> "Has the browser finished rendering an `<img>` whose src points at
+> it?" (browser's problem)
+
+The new module owns answer #1 only. The DOM-side glue is a single
+function that awaits the URL, checks a per-element generation counter
+(`img._spriteGen`), assigns `src`, and calls `onReady`. The `<img>`'s
+own load event is irrelevant — once we have a Blob URL in hand, the
+bytes are already-decoded data in memory; assigning src triggers a
+one-frame paint and we're done.
+
+### Migration
+
+All 11 consumers (markers + battle screen + inventory cards + pokédex
+tiles + family tree + variant grid + evolution rows + daycare slot art
++ fusion view header + detail view header + family cells) migrated.
+Old API and its 250 lines of plumbing deleted from `sprites.js`.
+
+Marker batch loading still goes through `Sprites.getSpriteBlobsBatch`
+underneath — `SpriteStore.preload(reqs)` collapses misses into one
+batched IDB read, then `cache.set`s a per-entry Promise that resolves
+out of the shared batch result. iOS's IDB-transaction-serialisation
+optimisation preserved exactly.
+
+### Sites also updated when adding the new file
+
+Adding a new tracked JS file means three places:
+
+1. `static/index.html` — `<script>` tag (between `sprites.js` and `appdata.js`).
+2. `run.py` — both `_TRACKED_JS` and `_SCRIPT_VERSION_FILES`.
+3. `scripts/build-capacitor.sh` — `TRACKED_JS` set in the inline Python
+   stamping block.
+
+Live-update's `fileUrl` / `localPath` route by `Object.keys(latest)`
+from `/script-versions`, so any new file gets picked up automatically
+once it's in `run.py`'s list.
+
+### What's now reliably gone
+
+- `cc-sprite-loaded` event (was never dispatched anyway — `_emitSpriteReady`
+  in `sprites.js` had no callers, dead since the pack-direct pivot)
+- `cc-sprites-bulk-ready` event (dead since eager-crop removal)
+- `_SPRITE_LOAD_ID` generation counter
+- The 4-reveal-path race
+- `_idbBulkPut` in `sprites.js` (leftover from the IDB-cached pack experiment)
+
+## Daycare loot probabilities
+
+Bumped per user request:
+- Candy: 85% → 75%
+- Egg: 10% → 15%
+- Evo item: 5% → 10%
+
+Just three constants in `creatures.js` (`DAYCARE_PROB_CANDY`,
+`DAYCARE_PROB_EGG`, plus the comment block above them). The loot
+stream is deterministic in `(slot.id, slot.addedAt, n)`, so changing
+the thresholds retroactively changes what unclaimed milestones drop
+for existing daycare slots. Already-claimed milestones are unaffected
+(only the indices live in `slot.claimed`, not the resolved drops).
+
+## Diagnostic instrumentation
+
+Two layers, page + native, surfaced in the existing Settings
+diagnostic dump (the `#startupPhases` block).
+
+### Layer 1: page-side fetch health (`window._fetchHealth`)
+
+The Capacitor fetch interceptor (`window.fetch` wrap in `index.html`)
+now records every outcome. Two buckets:
+- `local` — fetches to LocalServer (bundled-data, static, icons, fonts, tiles, sw.js)
+- `remote` — fetches rewritten through `CC_API_BASE` (`/save`, `/load`, `/script-versions`)
+
+Per bucket: `total / ok / 4xx / 5xx / rejected / consecutiveFailures /
+lastSuccessAt / lastFailureAt`. Plus a 20-entry ring buffer of recent
+failures with `{ t, url, status | reason, scope }`.
+
+Renders as a `[fetch health]` block in Settings:
+```
+[fetch health]
+  local   total=412 ok=410 4xx=0 5xx=2 rejected=0 streak=0 lastOk=2s ago lastFail=18s ago
+  remote  total=7   ok=7   4xx=0 5xx=0 rejected=0 streak=0 lastOk=14s ago lastFail=—
+  recent failures (newest first):
+    -18s [local] 504  /bundled-data/sprites/147/custom/147.png
+```
+
+### Layer 2: native LocalServer diagnostics (iOS only)
+
+`ios-overrides/LocalServer.swift` grew an in-process diagnostic queue
+(`diagQueue`, serial DispatchQueue) that tracks:
+
+- **Counters:** totalRequests, inFlight, peakInFlight, totalErrors
+- **Timestamps:** serverStartedAt, lastRequestStartedAt, lastResponseFinishedAt
+- **Ring buffers:** recentErrors (30), recentSlow (30 — anything over 100 ms)
+- **Per-request in-flight tracking** `Dict<Int, (path, startedAt)>` so the
+  snapshot can name *which* requests are stuck and how long they've
+  been pending. Each request gets a monotonic id; recordRequestStart
+  inserts, recordRequestEnd removes.
+- **Self-ping** — 5 s DispatchSourceTimer fires `URLSession.shared.dataTask`
+  against `http://localhost:<port>/__ping__`. The `__ping__` route is
+  intercepted in the handler and bypasses request counting (its own
+  counters live under `selfPing.*`). Importantly: `URLSession.shared`
+  and WKWebView's URLSession use *different* connection pools, so a
+  succeeding self-ping while page fetches fail localises the bug to
+  WKWebView's side.
+- **Lifecycle observers** — NotificationCenter for memory warnings +
+  didEnterBackground / willEnterForeground / willResignActive /
+  didBecomeActive. Ring-buffered (10 each).
+- **Restart history** — count, lastAt, lastError, lastForegroundCheckAt,
+  lastForegroundCheckResult.
+
+`LocalServerDiagPlugin.swift` exposes `getDiagnostics()` (poll) and
+`restart()` (stop+start the listen socket). Page polls the snapshot
+every 1 s into `window._localServerDiag` so the Settings renderer can
+read it synchronously.
+
+Renders as a `[local server (iOS)]` block:
+```
+[local server (iOS)]
+  running=y port=52562  uptime=813s ago
+  total=242 inFlight=0 peak=6 errors=10
+  lastReq=489s ago  lastResp=489s ago
+  self-ping: 77 total / 49 ok / streak=28  ⚠
+             last=3s ago 5ms result="error: -1004 Could not connect…"
+  restart: count=0  last=—
+  recent errors (newest first):
+    -787s  HTTP 404  /bundled-data/sprites/339/autogen/339.png
+  memory warnings: 1 (607s ago)
+  lifecycle (newest first):
+    -135s  didBecomeActive
+    -136s  willEnterForeground
+    -486s  didEnterBackground
+    -486s  willResignActive
+```
+
+## The iOS wedge: actual diagnosis + fix
+
+User has been hitting a recurring "LocalServer permanently dies until
+app restart" bug. With the new diagnostics, captured a real-world log
+and identified the cause unambiguously.
+
+**Signature:**
+- `running=y` (GCDWebServer thinks it's listening)
+- `total / lastReq / lastResp` all show the server hasn't received a
+  request in N minutes — equal values for lastReq and lastResp means
+  zero requests since the last response
+- self-ping consistently fails with `URLError -1004 "Could not connect
+  to the server"` (URLSession.shared can't establish TCP to localhost)
+- `lifecycle` shows a recent `didEnterBackground` → `didBecomeActive`
+  transition; the wedge starts at backgrounding and persists across
+  foregrounding
+- Page-side `[fetch health].local.streak` keeps climbing post-foreground
+
+**Cause:** iOS suspends the full process after the ~3-min background
+tail window (despite `GCDWebServerOption_AutomaticallySuspendInBackground:
+false`, which only stops GCDWebServer's *own* background-tail logic —
+iOS still suspends the whole process after its quota). The suspension
+tears down the dispatch sources backing the listen socket. When the
+app foregrounds, GCDWebServer's internal `isRunning` flag stays true
+but the kernel-side listener is dead. New connects (from both
+WKWebView and URLSession.shared) refuse.
+
+**Fix:** auto-restart on foreground + manual restart button.
+
+- `observeLifecycle()` now schedules a `foregroundHealthCheck()` 2 s
+  after `didBecomeActive`. The check `URLSession.shared.dataTask`s
+  `/__ping__` with 2 s timeout. On failure → log + call `restartServer()`.
+- `restartServer()` is a `server.stop()` + `bindListener()` pair.
+  `bindListener()` was extracted from `start()` so both paths share
+  port-fallback logic. Updates `_restartCount`, `_lastRestartAt`,
+  `_lastRestartError`. Logs to console.
+- `LocalServerDiagPlugin.restart()` exposes the same path to JS.
+- Settings panel has a "Restart server" button next to "Copy logs"
+  (iOS only — hidden via the plugin-availability probe). Status flash
+  shows ✓/✕ for 4 s.
+
+The auto-restart path makes the bug self-healing in the common case.
+The manual button is for testing + emergency escape hatch.
+
+## Settings: utility buttons
+
+Two new buttons just above the diagnostic dump:
+
+**Copy logs** — grabs `#startupPhases.textContent` + a small header
+(version, platform, ISO timestamp, UA) and copies to clipboard. Tries
+`navigator.clipboard.writeText` first, falls back to the
+`document.execCommand('copy')` via hidden-textarea hack (iOS WKWebView
+gates the modern API under secure-context + user-gesture rules).
+Status flash for 2.5 s.
+
+**Restart server** — iOS-only, hidden when the LocalServerDiag plugin
+isn't present (Android, web, older builds). Calls
+`LocalServerDiag.restart()`. Status flash for 4 s.
+
+## Audit of LocalServer.swift for deadlock candidates
+
+User asked for a deadlock audit. Walked every lock acquisition + every
+cross-thread point. Findings:
+
+- **No classical mutex deadlock.** `diagQueue.sync` calls don't nest;
+  no two queues form a wait cycle; self-ping uses URLSession.shared
+  which has its own connection pool separate from GCDWebServer's;
+  notification observers use `queue: nil` (synchronous on posting
+  thread) but never block on a queue that's blocked on them.
+
+- **The real "wedge-ish" candidate:** synchronous file I/O in `handle()`
+  blocking the GCDWebServer worker pool under iOS storage pressure.
+  `FileManager.fileExists` and `GCDWebServerFileResponse(file:)` are
+  blocking syscalls; if FS contention briefly hangs one, a worker is
+  stuck. With ~30 concurrent sprite-pack fetches and a typical 8-worker
+  pool, the kernel-level connection queue fills behind blocked workers.
+  Not classical deadlock — workers eventually unblock — but presents
+  identically. Fix would be `asyncProcessBlock` + dedicated file-I/O
+  DispatchQueue. Not implemented this session; the actual wedge turned
+  out to be the listen-socket-death issue above, not this.
+
+- **`liveDir` data race.** `setLiveDir(_:)` writes from Capacitor's
+  plugin queue; `handle()` reads from GCDWebServer's worker queue. No
+  synchronization. Technically undefined behaviour in Swift but URL?
+  is small enough that a tear is unlikely to manifest. Logged.
+
+- **`_inFlightRequests` leak on ObjC exception.** If `handle(req)`
+  throws a `NSException` (vanishingly rare from GCDWebServerFileResponse),
+  Swift's try/catch doesn't catch it; recordRequestEnd never fires;
+  the entry leaks forever. Solution if it becomes a problem: wrap in
+  a `defer` block.
+
+- **`queue: nil` notification observers are fragile.** Run synchronously
+  on the posting thread. Today they don't deadlock because diagQueue
+  holds are all O(1), but if anyone ever calls `diagnosticsSnapshot()`
+  from main while a memory warning fires during the snapshot, the
+  notification observer would run in the same main-thread call stack
+  as the diagQueue.sync. Could be hardened by switching to `queue: .main`.
+
+## Things learned
+
+- **Pattern recognition: when reaching for four parallel reveal paths
+  + a generation counter + custom events, you're probably conflating
+  two distinct questions.** In the sprite case: "is the data ready"
+  vs "did the browser fire an event". Once decoupled, a 250-line
+  subsystem collapses to ~150 lines of `Map<key, Promise<url>>`. The
+  `<img>`'s onload was never actually needed; we already knew the
+  blob URL was valid the moment we created it.
+
+- **Capacitor plugins are the right tool for "diagnose a native
+  subsystem that's broken".** The plugin bridge is in-process. When
+  HTTP is wedged, JS can still call into Swift and read its state
+  directly. This is how the LocalServer diagnostic survives the wedge
+  it's designed to diagnose.
+
+- **`URLSession.shared` vs `WKWebView`'s URLSession are separate
+  connection pools.** Critical for the self-ping: hitting localhost
+  via URLSession.shared and seeing the same failure WKWebView sees
+  isolates "server is wedged" from "WKWebView's URLSession is stale".
+  In our case both fail at the same time, which rules out WebView-side
+  staleness and points at the listen socket.
+
+- **`GCDWebServerOption_AutomaticallySuspendInBackground: false` is
+  not what it sounds like.** It only disables GCDWebServer's *own*
+  background-tail suspension logic. iOS still suspends the process
+  after its quota, and the OS-level suspension can invalidate the
+  dispatch sources underlying the listen socket. The library's
+  `isRunning` flag tracks its own logical state, not the actual
+  kernel-side listener.
+
+- **Three places to add a new tracked JS file.** `index.html` script
+  tag, `run.py`'s two lists, `build-capacitor.sh`'s TRACKED_JS set.
+  Plus a fourth for iOS plugins: `inject-into-xcodeproj.rb` `NEW_FILES`
+  list + `.github/workflows/ios-build.yml` copy step. Consider a glob
+  if this trap bites again.
+
+- **Diagnostic data > recovery code.** The user asked at one point if
+  the sprite code should self-heal transient failures. Adding it would
+  have masked the real problem (the wedge) by retrying constantly and
+  consuming resources. Reverting the retry + adding diagnostics
+  instead led directly to identifying the actual root cause and a
+  proper fix.
+
+## What didn't get done
+
+- The phased refactor from `CODE_REVIEW.md` — CSS extraction, then
+  small utilities (lsGet/lsSet, makeRegionStore factory, shared
+  haversine/escape), then carving `tags.js` / `pokedex-data.js` /
+  `eggs.js` / etc. out of `creatures.js`. Discussed; not started.
+- Audit-finding fixes: `liveDir` race, `defer`-wrap for in-flight
+  cleanup, `queue: nil` → `.main` migration. None bite today; left
+  for a future hardening pass.
+- `asyncProcessBlock` migration for the GCDWebServer handler. The
+  listen-socket-death fix solves the actual wedge we were seeing;
+  this is hardening against the *next* class of wedge (worker
+  exhaustion under blocking I/O).
+- The Verus-shaped "verified data structures" thread — discussed
+  candidates (walk-graph + routing, binary-format library, schedule
+  index, candy roots, spawn determinism), no implementation.
+
+## Stuff still to do
+
+1. Verify the auto-restart-on-foreground fix in the wild over a few
+   days. Look for `restart.count > 0` in Settings after a wedge —
+   means the foreground health check caught it and re-bound the
+   listener without user intervention.
+2. If `restart.count` keeps climbing daily, the wedge is more frequent
+   than expected and we should consider `asyncProcessBlock` migration.
+3. Code review extractions from `CODE_REVIEW.md` Phase A (CSS
+   extraction) — cheap, mechanical, would shrink `creatures.js` and
+   `index.html` by ~30% each with zero behaviour change.
+4. Egg cross-breeding tuning if it's noticeable in real play (the
+   probability bump should make eggs visible quickly enough that the
+   user can decide).
+5. Future breeding mechanic (carried over from previous sessions).
+
+## Session vibes
+
+Methodical and satisfying. Started with a code-review request, ended
+with an actual root-cause diagnosis of a real bug class. The arc was:
+
+1. Read every line of `static/`
+2. Find the most painful subsystem (sprite rendering)
+3. Replace it with a simpler pattern
+4. User reports a wedge after the migration
+5. Resist the temptation to attribute it to the migration
+6. Add diagnostics specifically designed to distinguish causes
+7. Capture an actual wedge in the wild
+8. Diagnosis points unambiguously at iOS+GCDWebServer interaction
+9. Ship the targeted fix (auto-restart on foreground)
+
+```
+Final state: sprite rendering is one Map<key, Promise<url>> the way
+it always wanted to be; the daycare drops eggs more often; the iOS
+LocalServer heals itself when iOS tears down its listen socket
+during background suspension; Settings has the diagnostic dump
+you need to identify the next wedge before guessing at it.
+:3
+```

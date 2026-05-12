@@ -74,6 +74,15 @@
     cache.set(key, p);
   }
 
+  // Cache policy:
+  //   - status='ok'        → Promise<url>     stored
+  //   - status='missing'   → Promise<null>    stored (genuine absence;
+  //                                            don't hammer the server
+  //                                            forever for files that
+  //                                            aren't there)
+  //   - status='transient' → Promise rejected, entry removed from cache,
+  //                          caller (showSprite) registers the img for
+  //                          retryPoll to revisit.
   function spriteUrl(a, b, variant) {
     const key = keyOf(a, b, variant);
     if (cache.has(key)) {
@@ -82,14 +91,14 @@
     }
     evictUntilUnder(MAX_ENTRIES);
     const p = (async () => {
-      try {
-        const blob = await global.Sprites.getSpriteBlob(a, b, variant);
-        return blob ? URL.createObjectURL(blob) : null;
-      } catch {
-        return null;
-      }
+      const r = await global.Sprites.getSpriteBlobAttempt(a, b, variant);
+      if (r.status === 'ok')      return URL.createObjectURL(r.blob);
+      if (r.status === 'missing') return null;
+      throw new Error('sprite fetch transient: ' + key);
     })();
     cache.set(key, p);
+    // On rejection, evict so the next call kicks off a fresh fetch.
+    p.catch(() => { if (cache.get(key) === p) cache.delete(key); });
     return p;
   }
 
@@ -116,14 +125,20 @@
       misses.map((r) => ({ a: r.a, b: r.b, variant: r.variant }))
     );
     misses.forEach((m, i) => {
+      // Same caching policy as spriteUrl: cache successes + permanent
+      // misses, reject on transient so the cache evicts and the retry
+      // loop kicks in via showSprite's catch.
       const urlP = batchP.then(
         (results) => {
-          const blob = results && results[i] && results[i].blob;
-          return blob ? URL.createObjectURL(blob) : null;
+          const r = results && results[i];
+          if (r && r.blob)               return URL.createObjectURL(r.blob);
+          if (r && r.status === 'missing') return null;
+          throw new Error('sprite preload transient: ' + m.key);
         },
-        () => null,
+        () => { throw new Error('sprite preload batch rejected: ' + m.key); },
       );
       cache.set(m.key, urlP);
+      urlP.catch(() => { if (cache.get(m.key) === urlP) cache.delete(m.key); });
     });
     return batchP.then(() => undefined, () => undefined);
   }
@@ -156,6 +171,25 @@
   // No img.onload / img.decode race: setting src on a blob URL is a
   // synchronous assignment, and the bytes are already-decoded data in
   // memory. The browser paints within one frame.
+
+  // Pending-retry registry. Populated when a showSprite call hits a
+  // transient failure (e.g. 504 during LocalServer's restart window).
+  // Drained on a ~1s poll; entries whose imgs have been removed from
+  // the DOM or superseded by a newer showSprite call get pruned.
+  //
+  // Each entry: { img, a, b, variant, opts, gen }.
+  // gen pins the entry to the showSprite call that registered it — a
+  // later call on the same img bumps img._spriteGen, which the retry
+  // loop notices and skips the stale entry.
+  const pendingRetries = new Set();
+
+  function registerRetry(img, a, b, variant, opts, gen) {
+    for (const e of pendingRetries) {
+      if (e.img === img) { pendingRetries.delete(e); break; }
+    }
+    pendingRetries.add({ img, a, b, variant, opts, gen });
+  }
+
   async function showSprite(img, a, b, variant, opts) {
     if (!img) return;
     opts = opts || {};
@@ -167,9 +201,13 @@
     }
     let url;
     try { url = await spriteUrl(a, b, variant); }
-    catch { return; }
+    catch {
+      // Transient failure — register for retry instead of giving up.
+      if (img._spriteGen === gen) registerRetry(img, a, b, variant, opts, gen);
+      return;
+    }
     if (img._spriteGen !== gen) return;
-    if (!url) return;
+    if (!url) return; // 'missing' — permanent absence, no retry.
     img.src = url;
     if (opts.readyClass) img.classList.add(opts.readyClass);
     if (typeof opts.onReady === 'function') {
@@ -177,6 +215,23 @@
       catch (e) { console.error('SpriteStore.showSprite/onReady', e); }
     }
   }
+
+  // Drain pending transient failures, re-attempt each. Successes flow
+  // through the normal showSprite path (cache hit on the now-resolved
+  // spriteUrl, src assignment, onReady). Re-failures naturally re-add
+  // to pendingRetries via registerRetry, picked up on the next tick.
+  function retryPoll() {
+    if (!pendingRetries.size) return;
+    const snapshot = Array.from(pendingRetries);
+    pendingRetries.clear();
+    for (const r of snapshot) {
+      if (!r.img.isConnected) continue;        // detached → drop
+      if (r.img._spriteGen !== r.gen) continue; // superseded → drop
+      showSprite(r.img, r.a, r.b, r.variant, r.opts);
+    }
+  }
+  const RETRY_INTERVAL_MS = 1000;
+  if (typeof setInterval === 'function') setInterval(retryPoll, RETRY_INTERVAL_MS);
 
   function invalidate(a, b, variant) {
     const key = keyOf(a, b, variant);
@@ -196,5 +251,7 @@
   global.SpriteStore = {
     spriteUrl, preload, showSprite, bestVariantFor,
     invalidate, clearAll,
+    retryPoll,
+    pendingRetryCount: () => pendingRetries.size,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
