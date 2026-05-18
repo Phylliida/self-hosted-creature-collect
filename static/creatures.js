@@ -7795,6 +7795,107 @@
     return { merged };
   }
 
+  // Credit `d` meters at time `ts` to: today's distance summary, every
+  // occupied daycare slot (firing cc-daycare-loot-tick on km crossings),
+  // and every occupied incubator egg (firing cc-incubator-tick on hatch
+  // completion). The shared write path for both GPS-driven (haversine
+  // between fixes) and pedometer-driven (CMPedometer cumulative meters
+  // while the app was closed) accumulation.
+  function _creditMeters(d, ts) {
+    if (!Number.isFinite(d) || d <= 0) return;
+    const k = _localDayKey(ts);
+    if (!_summaryCache) _summaryCache = {};
+    _summaryCache[k] = (_summaryCache[k] || 0) + d;
+    _idbPutSummary(k, _summaryCache[k]).catch(() => {});
+    const slots = readDaycareSlots();
+    if (slots.length) {
+      const ticks = [];
+      for (const s of slots) {
+        const before = Math.floor((s.distM || 0) / DAYCARE_LOOT_KM_M);
+        s.distM += d;
+        const after = Math.floor(s.distM / DAYCARE_LOOT_KM_M);
+        if (after > before) {
+          const newNs = [];
+          for (let n = before + 1; n <= after; n++) newNs.push(n);
+          ticks.push({ slotId: s.id, newNs });
+        }
+      }
+      writeDaycareSlots(slots);
+      if (ticks.length && typeof window !== 'undefined') {
+        for (const t of ticks) {
+          try {
+            window.dispatchEvent(new CustomEvent('cc-daycare-loot-tick', {
+              detail: { slotId: t.slotId, newNs: t.newNs },
+            }));
+          } catch { /* best-effort */ }
+        }
+      }
+    }
+    const incubSlots = readIncubator();
+    if (incubSlots.some((s) => !!s)) {
+      const eggs = readEggs();
+      let eggsChanged = false;
+      const ready = [];
+      for (const slotEggId of incubSlots) {
+        if (!slotEggId) continue;
+        const i = eggs.findIndex((e) => e.id === slotEggId);
+        if (i < 0) continue;
+        const before = eggIncubatedM(eggs[i]);
+        if (before >= INCUBATOR_HATCH_M) continue;
+        const after = Math.min(before + d, INCUBATOR_HATCH_M);
+        if (after !== before) {
+          eggs[i] = { ...eggs[i], incubatedM: after };
+          eggsChanged = true;
+          if (after >= INCUBATOR_HATCH_M && before < INCUBATOR_HATCH_M) {
+            ready.push(slotEggId);
+          }
+        }
+      }
+      if (eggsChanged) {
+        writeEggs(eggs);
+        if (typeof window !== 'undefined') {
+          try {
+            window.dispatchEvent(new CustomEvent('cc-incubator-tick', {
+              detail: { ready },
+            }));
+          } catch { /* best-effort */ }
+        }
+      }
+    }
+  }
+
+  // Persist the timestamp through which movement has been credited (by
+  // either GPS or pedometer). The pedometer sync uses this as the lower
+  // bound of its next "since last sync" query, so we never double-count
+  // intervals the GPS already credited. Stored in localStorage as ms
+  // since epoch.
+  const LAST_FITNESS_SYNC_KEY = 'cc.lastFitnessSyncMs';
+  function _markFitnessSynced(ts) {
+    if (!Number.isFinite(ts) || ts <= 0) return;
+    try {
+      const cur = parseInt(localStorage.getItem(LAST_FITNESS_SYNC_KEY), 10) || 0;
+      // Monotonic: never move the marker backward. The pedometer resolver
+      // and the GPS callback can race on the foreground transition; max()
+      // makes whichever sees a higher ts win.
+      if (ts > cur) localStorage.setItem(LAST_FITNESS_SYNC_KEY, String(ts));
+    } catch { /* localStorage full / disabled — pedometer sync degrades to no-op */ }
+  }
+  function _readLastFitnessSync() {
+    try {
+      const v = parseInt(localStorage.getItem(LAST_FITNESS_SYNC_KEY), 10);
+      return Number.isFinite(v) && v > 0 ? v : null;
+    } catch { return null; }
+  }
+
+  // Public entry point for the pedometer bridge (see index.html's
+  // visibility handler). `meters` is the cumulative distance the
+  // CMPedometer query reported for [lastFitnessSync, now]; we forward
+  // straight to the shared credit path. The caller is responsible for
+  // advancing lastFitnessSync only on a successful query (ok:true).
+  function creditPedometerMeters(meters) {
+    _creditMeters(meters, Date.now());
+  }
+
   // Called from the geolocation watchPosition callback. The anchor
   // is HELD across sub-threshold fixes (so jitter doesn't compound
   // even though no individual segment exceeds the 10 m floor) — only
@@ -7834,91 +7935,15 @@
       _distAnchorAt = ts;
       return;
     }
-    // Accept: credit the day, advance anchor, record path.
-    const k = _localDayKey(ts);
-    if (!_summaryCache) _summaryCache = {};
-    _summaryCache[k] = (_summaryCache[k] || 0) + d;
-    _idbPutSummary(k, _summaryCache[k]).catch(() => {});
-    // Credit each currently-occupied daycare slot with this segment.
-    // Slot distance accumulates only while a creature is in the slot;
-    // removing + re-adding starts a fresh count (that's why
-    // addToDaycare zeroes distM on entry). One read+write per
-    // accepted segment — accepted segments are gated to ~10 m
-    // jumps, so this writes localStorage once every minute or two
-    // of walking at typical pace, not on every raw GPS fix.
-    //
-    // After updating distM, check whether any slot crossed one or
-    // more kilometer thresholds (i.e. earned new loot milestones).
-    // If so, dispatch `cc-daycare-loot-tick` with the slot id + the
-    // newly-unlocked milestone numbers so an open daycare panel
-    // can slide the new items into its loot row without a full
-    // re-render. Storage is unaffected — milestones are derived
-    // from distM at view time.
-    const slots = readDaycareSlots();
-    if (slots.length) {
-      const ticks = [];
-      for (const s of slots) {
-        const before = Math.floor((s.distM || 0) / DAYCARE_LOOT_KM_M);
-        s.distM += d;
-        const after = Math.floor(s.distM / DAYCARE_LOOT_KM_M);
-        if (after > before) {
-          const newNs = [];
-          for (let n = before + 1; n <= after; n++) newNs.push(n);
-          ticks.push({ slotId: s.id, newNs });
-        }
-      }
-      writeDaycareSlots(slots);
-      if (ticks.length && typeof window !== 'undefined') {
-        for (const t of ticks) {
-          try {
-            window.dispatchEvent(new CustomEvent('cc-daycare-loot-tick', {
-              detail: { slotId: t.slotId, newNs: t.newNs },
-            }));
-          } catch { /* best-effort */ }
-        }
-      }
-    }
+    // Accept: credit the day + slots + eggs, advance anchor, record
+    // path, and mark fitness-synced so the pedometer's next "since
+    // last sync" query doesn't double-count this segment.
+    _creditMeters(d, ts);
+    _markFitnessSynced(ts);
     _distAnchorLat = lat;
     _distAnchorLng = lng;
     _distAnchorAt = ts;
     _appendPathPoint(lat, lng, ts);
-
-    // Incubator: bump incubatedM on each egg currently sitting in a
-    // slot by the same accepted segment. Capped at
-    // INCUBATOR_HATCH_M so a finished egg doesn't keep ticking over.
-    // One read+write of cc.eggs.v1 per accepted segment, only when
-    // the incubator actually has occupants.
-    const incubSlots = readIncubator();
-    if (incubSlots.some((s) => !!s)) {
-      const eggs = readEggs();
-      let eggsChanged = false;
-      const ready = [];
-      for (const slotEggId of incubSlots) {
-        if (!slotEggId) continue;
-        const i = eggs.findIndex((e) => e.id === slotEggId);
-        if (i < 0) continue;
-        const before = eggIncubatedM(eggs[i]);
-        if (before >= INCUBATOR_HATCH_M) continue;
-        const after = Math.min(before + d, INCUBATOR_HATCH_M);
-        if (after !== before) {
-          eggs[i] = { ...eggs[i], incubatedM: after };
-          eggsChanged = true;
-          if (after >= INCUBATOR_HATCH_M && before < INCUBATOR_HATCH_M) {
-            ready.push(slotEggId);
-          }
-        }
-      }
-      if (eggsChanged) {
-        writeEggs(eggs);
-        if (typeof window !== 'undefined') {
-          try {
-            window.dispatchEvent(new CustomEvent('cc-incubator-tick', {
-              detail: { ready },
-            }));
-          } catch { /* best-effort */ }
-        }
-      }
-    }
   }
 
   function makeMarkerElement(spawn) {
@@ -9272,6 +9297,11 @@
     getDaycarePath,
     exportDaycareData,
     importDaycareData,
+    // Fitness bridge — page-side pedometer sync (iOS) calls these to
+    // credit closed-app movement and to read the last-synced marker.
+    creditPedometerMeters,
+    readLastFitnessSync: _readLastFitnessSync,
+    markFitnessSynced: _markFitnessSynced,
     // Daycare loot. claimDaycareLoot grants a single milestone;
     // claimAllDaycareLoot grants every outstanding milestone in
     // one shot (what the in-panel "···" indicator uses).

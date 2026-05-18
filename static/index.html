@@ -3053,6 +3053,10 @@
       <label for="memBadgeToggle">Memory footprint badge</label>
       <input type="checkbox" id="memBadgeToggle">
     </div>
+    <div class="row" id="pedometerRow" style="display:none">
+      <label for="pedometerToggle">Count steps while app is closed</label>
+      <input type="checkbox" id="pedometerToggle">
+    </div>
     <div class="row">
       <label for="debugConsoleToggle">Debug console (errors overlay)</label>
       <input type="checkbox" id="debugConsoleToggle">
@@ -3636,6 +3640,88 @@
       };
       // Default OFF. Settings handler will update at runtime.
       if (localStorage.getItem('cc.memBadge') === '1') window._setMemBadge(true);
+    }
+
+    // CMPedometer bridge. While the app is closed, iOS's M-series motion
+    // coprocessor keeps counting steps + distance — querying the
+    // pedometer on each foreground transition lets the daycare loot
+    // bucket + incubator eggs accumulate for "walks the user took
+    // without the app open". Same chip HealthKit reads from, but without
+    // the entitlement (HealthKit needs a paid Developer Program
+    // membership; CMPedometer only needs NSMotionUsageDescription).
+    //
+    // Sync policy (avoids double-counting with the GPS path):
+    //   - GPS watchPosition callback updates cc.lastFitnessSyncMs on
+    //     every accepted fix (see Creatures.markFitnessSynced).
+    //   - On visibility=visible, we query CMPedometer for the window
+    //     [lastFitnessSyncMs, now], credit the delta via
+    //     Creatures.creditPedometerMeters, then advance the marker.
+    //   - The marker is monotonic (max-only) so a race between GPS and
+    //     the pedometer resolver on foreground transitions can't shift
+    //     the marker backward.
+    //
+    // Toggled via Settings → "Count steps while app is closed"
+    // (cc.pedometerEnabled). Default OFF — opt-in because it triggers
+    // the motion-permission prompt the first time it's enabled.
+    const Ped = window.Capacitor.Plugins && window.Capacitor.Plugins.MotionPedometer;
+    if (Ped) {
+      // CMPedometer retains roughly seven days of pedometer history.
+      // Queries beyond that return an error; clamp the lower bound.
+      const PEDOMETER_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+      // Skip the bridge call for trivially-short windows so a quick
+      // background-foreground (e.g. pulling down the notification tray
+      // and dismissing) doesn't churn pedometer queries.
+      const MIN_SYNC_WINDOW_MS = 60 * 1000;
+      let syncInFlight = false;
+
+      window._pedometerSync = async function () {
+        if (syncInFlight) return;
+        if (localStorage.getItem('cc.pedometerEnabled') !== '1') return;
+        if (!window.Creatures) return;
+        // Capture both bounds synchronously. If the GPS watch's first
+        // post-foreground fix arrives between here and the query
+        // resolving, the marker-update path's max() guards against
+        // moving lastSync backward.
+        const capturedNow = Date.now();
+        const lastSync = window.Creatures.readLastFitnessSync() || capturedNow;
+        const fromMs = Math.max(lastSync, capturedNow - PEDOMETER_RETENTION_MS);
+        if (capturedNow - fromMs < MIN_SYNC_WINDOW_MS) return;
+        syncInFlight = true;
+        try {
+          const r = await Ped.getDistanceMeters({ fromMs, toMs: capturedNow });
+          if (!r || !r.ok) return;
+          const meters = Number(r.meters) || 0;
+          if (meters > 0) {
+            try { window.Creatures.creditPedometerMeters(meters); }
+            catch (e) { console.warn('[pedometer] credit failed', e); }
+          }
+          window.Creatures.markFitnessSynced(capturedNow);
+        } catch (e) {
+          console.warn('[pedometer] sync failed', e);
+        } finally {
+          syncInFlight = false;
+        }
+      };
+
+      // Public so Settings can enable + immediately probe permission.
+      // Returns the post-prompt snapshot from the plugin.
+      window._pedometerRequestAuth = async function () {
+        try { return await Ped.requestAuth(); }
+        catch (e) { return { authStatus: 'unknown', error: String(e) }; }
+      };
+      window._pedometerIsAvailable = async function () {
+        try { return await Ped.isAvailable(); }
+        catch (e) { return { authStatus: 'unknown', error: String(e) }; }
+      };
+
+      // Sync on every transition into visible state. The page is visible
+      // immediately after load too — that's the desired "catch up on
+      // whatever happened while the app icon was tapped to open" path.
+      const tryInitialSync = () => { try { window._pedometerSync(); } catch {} };
+      if (document.visibilityState === 'visible') tryInitialSync();
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') tryInitialSync();
+      });
     }
 
     // LocalServer diagnostic poll. The Settings panel reads this
@@ -11473,6 +11559,41 @@ function fmtDate(ts) {
       const on = memBadgeToggle.checked;
       localStorage.setItem('cc.memBadge', on ? '1' : '0');
       window._setMemBadge(on);
+    });
+  }
+
+  // Pedometer ("count steps while app is closed") toggle. Row is hidden
+  // by default; revealed only when the MotionPedometer plugin is
+  // present (iOS Capacitor build). On enable, we trigger the system
+  // motion-permission prompt; if the user denies, we revert the toggle
+  // and leave the cc.pedometerEnabled key set to '0'. On enable-success
+  // we seed cc.lastFitnessSyncMs to "now" so the first sync only counts
+  // movement from this moment forward (avoids a giant 7-day backfill
+  // crediting eggs on first activation).
+  const pedometerRow = document.getElementById('pedometerRow');
+  const pedometerToggle = document.getElementById('pedometerToggle');
+  if (pedometerRow && pedometerToggle && typeof window._pedometerRequestAuth === 'function') {
+    pedometerRow.style.display = '';
+    pedometerToggle.checked = localStorage.getItem('cc.pedometerEnabled') === '1';
+    pedometerToggle.addEventListener('change', async () => {
+      const on = pedometerToggle.checked;
+      if (on) {
+        const r = await window._pedometerRequestAuth();
+        if (r && r.authStatus === 'authorized') {
+          localStorage.setItem('cc.pedometerEnabled', '1');
+          if (window.Creatures && window.Creatures.markFitnessSynced) {
+            window.Creatures.markFitnessSynced(Date.now());
+          }
+        } else {
+          // Revert UI — the user denied (or status is otherwise
+          // not-authorized). Keep cc.pedometerEnabled at '0' so the
+          // sync function stays a no-op.
+          pedometerToggle.checked = false;
+          localStorage.setItem('cc.pedometerEnabled', '0');
+        }
+      } else {
+        localStorage.setItem('cc.pedometerEnabled', '0');
+      }
     });
   }
 
