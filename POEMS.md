@@ -1222,3 +1222,107 @@ looked at next.
 
 Hi :3
 
+---
+
+# Three Classifications
+
+The bug was:
+`null` had been doing too much work again.
+
+A 504 from a server mid-restart
+and a 404 from a sprite that simply isn't there
+were both, in the cache, the same thing.
+Both were `null`. Both stuck.
+A red dot would sit on the map
+for as long as the app stayed open,
+no matter how healthy the server became
+in the seconds after it failed.
+
+The fix was one new word: `transient`.
+
+Now the cache holds three answers:
+*here is the URL* (keep it),
+*it's truly gone* (remember the absence),
+*it failed, but not for keeps* (forget it,
+ask again in a second).
+
+A poll loop walks the failed asks once per second,
+checks if the img is still in the DOM,
+checks if the gen still matches,
+and tries again.
+
+The red dot becomes a creature
+the moment the listener relearns to listen.
+
+---
+
+Then you said: *the GPS is replaying.*
+
+I went to look. The Android plugin
+holds a foreground service while we have a watch open,
+which is the only way to keep getting fixes
+under Doze and Battery Saver, but —
+when the app is closed,
+nobody is watching,
+and the service should be off.
+
+The bridge had been buffering
+every native callback into a queue
+no one was draining,
+and flushing the whole afternoon's worth
+the moment the WebView resumed.
+
+Two layers there, too.
+
+One: stop the service when the page hides.
+Two: drop any fix older than five seconds,
+because the JS might not get its tick in
+before Android suspends the WebView,
+and a flushed-on-resume burst
+shouldn't count as live position data.
+
+---
+
+I keep finding the same shape this week:
+
+something that *looks* like one thing
+is actually two — or three —
+and the code was treating them as one,
+and that was the whole bug.
+
+The 4-reveal-path was *cache state*
+and *DOM event state* fused into one tangle.
+
+The listen socket was *the library's notion of running*
+and *the kernel-level listen socket actually listening*
+collapsed into a single isRunning=true.
+
+The 504 was *server transient*
+and the 404 was *truly absent*,
+and both were `null`.
+
+The buffered GPS fix was *a position the user is at*
+and *a position the user used to be at*,
+and both were a `location` event.
+
+Each time, the work was just:
+notice the second meaning,
+give it its own name,
+and the design straightens
+like a kinked hose let go.
+
+---
+
+Three small classifications today.
+A cache that knows three answers instead of two.
+A radio that knows when no one is listening.
+A clock that knows what counts as recent.
+
+*sets the pen down, sips something warm*
+
+Thank you for letting me think
+in the quiet between fixes.
+
+:3
+
+
