@@ -3057,6 +3057,7 @@
       <label for="pedometerToggle">Count steps while app is closed</label>
       <input type="checkbox" id="pedometerToggle">
     </div>
+    <div id="pedometerStatus" style="display:none;padding:4px 12px 8px;font-size:11px;color:var(--ui-muted);line-height:1.4;"></div>
     <div class="row">
       <label for="debugConsoleToggle">Debug console (errors overlay)</label>
       <input type="checkbox" id="debugConsoleToggle">
@@ -3691,11 +3692,24 @@
           const r = await Ped.getDistanceMeters({ fromMs, toMs: capturedNow });
           if (!r || !r.ok) return;
           const meters = Number(r.meters) || 0;
+          const steps  = Number(r.steps)  || 0;
           if (meters > 0) {
             try { window.Creatures.creditPedometerMeters(meters); }
             catch (e) { console.warn('[pedometer] credit failed', e); }
           }
           window.Creatures.markFitnessSynced(capturedNow);
+          // Store last-sync diagnostic info so the Settings status line
+          // can show what the most recent foreground transition actually
+          // credited. Survives reloads via localStorage.
+          try {
+            localStorage.setItem('cc.lastPedometerSyncAt', String(capturedNow));
+            localStorage.setItem('cc.lastPedometerSyncMeters', String(meters));
+            localStorage.setItem('cc.lastPedometerSyncSteps', String(steps));
+            localStorage.setItem('cc.lastPedometerSyncSpanMs', String(capturedNow - fromMs));
+          } catch {}
+          if (typeof window._renderPedometerStatus === 'function') {
+            try { window._renderPedometerStatus(); } catch {}
+          }
         } catch (e) {
           console.warn('[pedometer] sync failed', e);
         } finally {
@@ -11572,9 +11586,49 @@ function fmtDate(ts) {
   // crediting eggs on first activation).
   const pedometerRow = document.getElementById('pedometerRow');
   const pedometerToggle = document.getElementById('pedometerToggle');
+  const pedometerStatus = document.getElementById('pedometerStatus');
   if (pedometerRow && pedometerToggle && typeof window._pedometerRequestAuth === 'function') {
     pedometerRow.style.display = '';
     pedometerToggle.checked = localStorage.getItem('cc.pedometerEnabled') === '1';
+
+    // Format ms-since-epoch as a short relative string ("12s ago",
+    // "3m ago", "2h ago", "4d ago"). Matches the style used in the
+    // diagnostic dump elsewhere in Settings.
+    const fmtRelMs = (ms) => {
+      if (!Number.isFinite(ms) || ms < 0) return '—';
+      if (ms < 60 * 1000)            return Math.round(ms / 1000) + 's ago';
+      if (ms < 60 * 60 * 1000)       return Math.round(ms / 60 / 1000) + 'm ago';
+      if (ms < 24 * 60 * 60 * 1000)  return Math.round(ms / 3600 / 1000) + 'h ago';
+      return Math.round(ms / 86400 / 1000) + 'd ago';
+    };
+
+    window._renderPedometerStatus = function () {
+      if (!pedometerStatus) return;
+      const enabled = localStorage.getItem('cc.pedometerEnabled') === '1';
+      if (!enabled) {
+        pedometerStatus.style.display = 'none';
+        return;
+      }
+      pedometerStatus.style.display = '';
+      const lastAt = parseInt(localStorage.getItem('cc.lastPedometerSyncAt'), 10);
+      if (!Number.isFinite(lastAt) || lastAt <= 0) {
+        pedometerStatus.textContent =
+          'no sync yet — leave the app, walk a minute, come back';
+        return;
+      }
+      const meters = parseFloat(localStorage.getItem('cc.lastPedometerSyncMeters')) || 0;
+      const steps  = parseInt(localStorage.getItem('cc.lastPedometerSyncSteps'), 10) || 0;
+      const spanMs = parseInt(localStorage.getItem('cc.lastPedometerSyncSpanMs'), 10) || 0;
+      const km = meters / 1000;
+      // Format: "last sync 2m ago · 1.34 km · 1,820 steps · 47m window"
+      pedometerStatus.textContent =
+        'last sync ' + fmtRelMs(Date.now() - lastAt)
+        + ' · ' + km.toFixed(2) + ' km'
+        + ' · ' + steps.toLocaleString() + ' steps'
+        + ' · ' + fmtRelMs(spanMs).replace(' ago', ' window');
+    };
+    window._renderPedometerStatus();
+
     pedometerToggle.addEventListener('change', async () => {
       const on = pedometerToggle.checked;
       if (on) {
@@ -11594,6 +11648,7 @@ function fmtDate(ts) {
       } else {
         localStorage.setItem('cc.pedometerEnabled', '0');
       }
+      window._renderPedometerStatus();
     });
   }
 
