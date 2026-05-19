@@ -7896,6 +7896,19 @@
     _creditMeters(meters, Date.now());
   }
 
+  // When the pedometer toggle is on, the CMPedometer bridge is the
+  // sole distance source — GPS fixes still drive the on-map path
+  // polyline, the anchor-based jitter filter, and the spawn-proximity
+  // logic, but they stop crediting daycare slots / incubator eggs /
+  // the daily summary. The pedometer query (which sees the M-series
+  // coprocessor's reading directly) is more accurate than haversine
+  // anyway, and avoids the double-counting that would otherwise need
+  // careful interleaving between the two streams.
+  function _isPedometerActive() {
+    try { return localStorage.getItem('cc.pedometerEnabled') === '1'; }
+    catch { return false; }
+  }
+
   // Called from the geolocation watchPosition callback. The anchor
   // is HELD across sub-threshold fixes (so jitter doesn't compound
   // even though no individual segment exceeds the 10 m floor) — only
@@ -7935,11 +7948,16 @@
       _distAnchorAt = ts;
       return;
     }
-    // Accept: credit the day + slots + eggs, advance anchor, record
-    // path, and mark fitness-synced so the pedometer's next "since
-    // last sync" query doesn't double-count this segment.
-    _creditMeters(d, ts);
-    _markFitnessSynced(ts);
+    // Accept: advance anchor, record path. When pedometer is the
+    // distance source, skip the credit + sync-marker updates — the
+    // pedometer's periodic foreground query owns distance accounting.
+    // The anchor / path-polyline / spawn-radius logic still runs so
+    // gameplay (markers, halos, "where I've been today" view) keeps
+    // working unchanged.
+    if (!_isPedometerActive()) {
+      _creditMeters(d, ts);
+      _markFitnessSynced(ts);
+    }
     _distAnchorLat = lat;
     _distAnchorLng = lng;
     _distAnchorAt = ts;
