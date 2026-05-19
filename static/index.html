@@ -3671,8 +3671,12 @@
       const PEDOMETER_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
       // Skip the bridge call for trivially-short windows so a quick
       // background-foreground (e.g. pulling down the notification tray
-      // and dismissing) doesn't churn pedometer queries.
-      const MIN_SYNC_WINDOW_MS = 60 * 1000;
+      // and dismissing) doesn't churn pedometer queries. Set well
+      // below PERIODIC_SYNC_MS so the in-app periodic ticks always
+      // clear the threshold and the user sees a live-updating
+      // distance counter while walking with the app open.
+      const MIN_SYNC_WINDOW_MS = 20 * 1000;
+      const PERIODIC_SYNC_MS = 60 * 1000;
       let syncInFlight = false;
 
       window._pedometerSync = async function () {
@@ -3736,6 +3740,12 @@
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') tryInitialSync();
       });
+      // Periodic in-app sync — keeps the daycare counters / status
+      // line / loot pills live while the user is walking with the app
+      // open. setInterval is paused implicitly when iOS suspends the
+      // WebView in the background, so this only fires when the page
+      // is actually visible.
+      setInterval(tryInitialSync, PERIODIC_SYNC_MS);
     }
 
     // LocalServer diagnostic poll. The Settings panel reads this
