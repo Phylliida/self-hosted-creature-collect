@@ -632,8 +632,28 @@ hf auth login                        # paste a write-scoped token from
 Upload (parallel, resumable, re-runnable):
 
 ```bash
-hf upload-large-folder <your-user>/maps-datum regions/ --repo-type=dataset
+HF_HUB_DISABLE_XET=1 HF_HUB_ENABLE_HF_TRANSFER=1 \
+hf upload-large-folder \
+    TessaCoil/maps-dataset regions/ \
+    --repo-type=dataset \
+    --num-workers=2
 ```
+
+(Substitute your HF user/repo for `TessaCoil/maps-dataset`.)
+
+Notes on the flags — all empirically needed to actually finish a
+multi-GB upload over residential bandwidth without hanging:
+  - `HF_HUB_ENABLE_HF_TRANSFER=1`: routes uploads through the Rust
+    `hf_transfer` library (`pip install hf_transfer`). The pure-Python
+    path stalls on slow TLS handshakes when many files transfer in
+    parallel.
+  - `HF_HUB_DISABLE_XET=1`: disables HF's experimental Xet storage
+    backend. Xet was hanging mid-upload on the regions/ payload.
+  - `--num-workers=2`: caps parallelism low enough that residential
+    upstreams don't saturate and trigger TLS / ISP throttling.
+
+Resumable: re-running picks up changed files only — if it does hang,
+Ctrl-C and re-run.
 
 Files become reachable at:
 
@@ -697,8 +717,14 @@ sleep 5                                      # wait for Flask to be ready
 python build-regions.py --plan=regions-na.json --out-dir=regions
 
 # 4. Sync to the host. upload-large-folder + rclone sync both diff on
-#    content hash; only changed files transfer.
-hf upload-large-folder <your-user>/maps-datum regions/ --repo-type=dataset
+#    content hash; only changed files transfer. The two env vars +
+#    --num-workers=2 mirror what the "Upload to Hugging Face Datasets"
+#    section above documents; needed in practice to keep multi-GB
+#    uploads from hanging on residential bandwidth.
+HF_HUB_DISABLE_XET=1 HF_HUB_ENABLE_HF_TRANSFER=1 \
+hf upload-large-folder \
+    <your-user>/maps-dataset regions/ \
+    --repo-type=dataset --num-workers=2
 # OR for R2:
 # rclone sync regions/ r2:<bucket-name>/ --progress
 ```

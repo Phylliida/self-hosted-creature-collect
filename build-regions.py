@@ -337,14 +337,19 @@ def build_region(region, region_dir, ctx):
     walk_path = region_dir / "walk.bin"
     poi_path = region_dir / "poi.bin"
     hn_path = region_dir / "housenumbers.bin"
+    sched_path = region_dir / "schedule.json"
+    addr_path = region_dir / "addresses.bin"
     pmt_path = region_dir / "tiles.pmtiles"
 
-    # Resume support — skip regions where all four files exist already.
-    if all(p.exists() for p in (walk_path, poi_path, hn_path, pmt_path)):
+    # Resume support — skip regions where all six files exist already.
+    expected = (walk_path, poi_path, hn_path, sched_path, addr_path, pmt_path)
+    if all(p.exists() for p in expected):
         return {
             "walk": walk_path.stat().st_size,
             "poi": poi_path.stat().st_size,
             "housenumbers": hn_path.stat().st_size,
+            "schedule": sched_path.stat().st_size,
+            "addresses": addr_path.stat().st_size,
             "tiles": pmt_path.stat().st_size,
             "skipped": True,
         }
@@ -353,6 +358,9 @@ def build_region(region, region_dir, ctx):
     sizes["walk"] = fetch_to_file(f"{ctx['server']}/walk-graph?{q}", walk_path)
     sizes["poi"] = fetch_to_file(f"{ctx['server']}/poi?{q}", poi_path)
     sizes["housenumbers"] = fetch_to_file(f"{ctx['server']}/housenumbers?{q}", hn_path)
+    # Schedule (JSON, not binary) — areas without transit return 0 bytes.
+    sizes["schedule"] = fetch_to_file(f"{ctx['server']}/schedule?{q}", sched_path)
+    sizes["addresses"] = fetch_to_file(f"{ctx['server']}/addresses?{q}", addr_path)
 
     # Tiles: collect from mbtiles, write a fresh pmtiles archive.
     tiles_iter = list(extract_tiles_for_bbox(
@@ -461,6 +469,8 @@ def main():
             f"walk={format_size(sizes['walk'])} "
             f"poi={format_size(sizes['poi'])} "
             f"hn={format_size(sizes['housenumbers'])} "
+            f"sched={format_size(sizes.get('schedule', 0))} "
+            f"addr={format_size(sizes.get('addresses', 0))} "
             f"tiles={format_size(sizes['tiles'])} "
             f"total={format_size(total)} t={elapsed:.1f}s\n"
         )
@@ -473,6 +483,8 @@ def main():
                 "walk": f"{rid}/walk.bin",
                 "poi": f"{rid}/poi.bin",
                 "housenumbers": f"{rid}/housenumbers.bin",
+                "schedule": f"{rid}/schedule.json",
+                "addresses": f"{rid}/addresses.bin",
                 "tiles": f"{rid}/tiles.pmtiles",
             },
         })
