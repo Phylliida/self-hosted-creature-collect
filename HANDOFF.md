@@ -3048,3 +3048,425 @@ during background suspension; Settings has the diagnostic dump
 you need to identify the next wedge before guessing at it.
 :3
 ```
+
+---
+
+# Session — sprite-store transient/missing split, Android GPS background lifecycle, iOS CMPedometer
+
+A bug-driven session. Three things landed, each one a "two questions
+were entangled" problem with a small structural answer.
+
+## Files added this session
+
+| File | Role |
+|---|---|
+| `ios-overrides/MotionPedometerPlugin.swift` | Capacitor plugin wrapping `CMPedometer.queryPedometerData(from:to:)`. Methods: `isAvailable`, `requestAuth`, `getDistanceMeters({fromMs,toMs}) → {meters, steps, ok}`. Reads the M-series motion coprocessor directly — same data source as HealthKit but no entitlement required (works with free-cert sideload). |
+
+## Sprite-store: `transient` vs `missing` (the actual root-cause fix)
+
+Following the auto-restart-on-foreground fix from the previous session,
+the user still hit "red dots in the wild" cases. Logs (`restart: count=2
+last=22s ago`, six 504s clustered at `-25s`, server healthy now) told
+the story:
+
+- Auto-restart fires correctly on `didBecomeActive` (count=2 is the
+  signal — the fix is working).
+- BUT: any sprite fetches in flight DURING the restart window get HTTP
+  504. `getSpriteBlob` collapses all failures to `null`. SpriteStore
+  caches that `null` permanently. Server comes back, sprites stay red
+  forever (or until reload).
+
+The fundamental conflation: `null` was doing duty for two completely
+different things — "this sprite genuinely doesn't exist on the server
+for this build" (404) and "this sprite failed temporarily, the server
+was restarting" (504, network error, decode failure).
+
+### Three-state cache
+
+New shape in `sprites.js`:
+```
+getSpriteBlobAttempt(a, b, variant) → {
+  status: 'ok' | 'missing' | 'transient',
+  blob:   Blob | null,
+}
+```
+
+`fetchAndDecodeSheet` now attaches `err.httpStatus` so the classifier
+can tell 404 (`missing`) from 5xx / network / decode error (`transient`).
+`getSpriteBlobsBatch`'s lazy-crop fallback uses the new classifier and
+threads status through per-entry results.
+
+### SpriteStore caching policy
+
+```
+status='ok'        → Promise<url>     cached
+status='missing'   → Promise<null>    cached (genuinely absent, don't
+                                      hammer the server for it again)
+status='transient' → Promise rejected → cache.delete(key) so the next
+                                        call re-attempts; consumer
+                                        (showSprite) catches the
+                                        rejection and registers a
+                                        retry.
+```
+
+Same policy on the `preload` path (which uses `getSpriteBlobsBatch`),
+so batched marker loads benefit identically.
+
+### Retry registry
+
+Inside `sprite-store.js`:
+```
+const pendingRetries = new Set<{ img, a, b, variant, opts, gen }>();
+setInterval(retryPoll, 1000);
+```
+
+When `showSprite` catches a transient rejection, it registers
+`{img, a, b, variant, opts, gen}` in `pendingRetries`. The img reference
+is captured directly — no separate DOM-attribute scheme, no WeakRef
+gymnastics.
+
+Every second, `retryPoll`:
+1. Snapshots `pendingRetries`, clears it.
+2. For each entry: skip if `!img.isConnected` (removed from DOM) or
+   if `img._spriteGen !== r.gen` (superseded by a newer call).
+3. Re-call `showSprite(img, a, b, variant, opts)` — which re-runs the
+   whole pipeline. Cache was evicted on transient, so a fresh
+   `getSpriteBlobAttempt` runs. If the server has recovered, the
+   resolved URL gets assigned to `img.src` and the same `onReady`
+   closure (the one bound to `_markerOnReady(record)`) fires, flipping
+   the marker's `.creature-marker-ready` class. Red dot → sprite.
+
+### Verified end-to-end
+
+The whole flow traces cleanly:
+- Marker DOM = outer `.creature-marker` div (red-dot placeholder via
+  CSS) + inner `img.creature-sprite`. The `.creature-marker-ready`
+  class on the outer div is what hides the dot and reveals the sprite.
+- `onReady: _markerOnReady(record)` is the closure that adds that
+  class. It's captured into the retry entry's `opts` and called by
+  the retried `showSprite`.
+- So a marker created during the restart window will, on the next
+  retry tick (≤1s after the server is back), assign `img.src` and
+  fire onReady → red dot transitions to sprite.
+
+The "old pokemon past 150" 404s stay cached as `missing` — no hammering.
+
+### `SpriteStore.pendingRetryCount()` exposed
+
+For Settings diagnostics, if we want it later. Not yet wired into the
+diagnostic dump.
+
+## Android GPS: visibility-driven lifecycle + staleness filter
+
+User noticed Android replaying the full closed-app GPS trace as a fast
+flood the moment the app reopened — and the persistent-notification
+foreground service was draining battery while backgrounded.
+
+Two layers of fix in `index.html`'s `useBgLocOnAndroid` branch:
+
+### Visibility-driven service start/stop
+
+```js
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    if (serviceStarted) {
+      pausedByVisibility = true;
+      // Drop the listener first so any native callback already
+      // queued in the bridge can't fire after we've decided to stop.
+      listenerHandle.remove();
+      listenerHandle = null;
+      serviceStarted = false;
+      BgLoc.stop().catch(() => {});
+    }
+  } else {
+    if (pausedByVisibility && watches.size > 0) {
+      pausedByVisibility = false;
+      ensureServiceStarted();
+    }
+  }
+});
+```
+
+Foreground service exists only when the user is in the app. The
+persistent notification disappears on background; GPS radio + fused
+provider go cold; no battery drain. On return, service restarts within
+~1s, fixes resume.
+
+### Staleness filter (belt-and-suspenders)
+
+```js
+listenerHandle = await BgLoc.addListener('location', (data) => {
+  const t = data.timestamp || Date.now();
+  if (Date.now() - t > STALE_FIX_THRESHOLD_MS) return;
+  // ...fan out to watches
+});
+```
+
+`STALE_FIX_THRESHOLD_MS = 5000`. If iOS-style JS suspension catches
+the visibility handler before it can run, Capacitor's bridge buffers
+native callbacks and flushes them on resume. The flushed events
+arrive with old timestamps; the filter drops them. The replay never
+reaches `lastKnownPos`.
+
+The two layers are complementary: visibility prevents the data being
+collected at all (the primary fix); the filter catches any that slip
+through (the safety net).
+
+## iOS CMPedometer for closed-app step/distance
+
+User asked to track steps + km while the app is closed so daycare
+slots and incubator eggs can still accumulate. HealthKit is the
+"correct" iOS API but requires a paid Apple Developer membership +
+App ID registration for the entitlement — not viable for the free-cert
+sideload flow.
+
+**CMPedometer** (Core Motion framework) reads the same M-series motion
+coprocessor data but only needs `NSMotionUsageDescription` in
+Info.plist. ~7 days of historical pedometer data is queryable at any
+time, even when the app wasn't running. Phone-only (no Apple Watch /
+manual aggregation) — fine for a phone-in-pocket walking game.
+
+### Plugin shape
+
+`MotionPedometerPlugin.swift`:
+```swift
+@objc(MotionPedometerPlugin)
+public class MotionPedometerPlugin: CAPPlugin, CAPBridgedPlugin {
+    public let identifier = "MotionPedometerPlugin"
+    public let jsName = "MotionPedometer"
+    public let pluginMethods = [
+        CAPPluginMethod(name: "isAvailable",       returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "requestAuth",       returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "getDistanceMeters", returnType: CAPPluginReturnPromise),
+    ]
+    private let pedometer = CMPedometer()
+    // ...
+}
+```
+
+`requestAuth` triggers the system motion-permission prompt by kicking
+off a trivial 1-minute pedometer query — CMPedometer prompts implicitly
+on first data access, and the callback only fires after the user
+dismisses the prompt. Resolves with the post-prompt `authStatus`.
+
+`getDistanceMeters({fromMs, toMs})` resolves with
+`{meters, steps, ok, error?}`. `ok=false` for permission-denied or
+out-of-window queries — callers must NOT advance their lastSync marker
+on a failed query or movement is silently lost.
+
+### Page-side wiring (`index.html`)
+
+Plugin lookup mirrors the existing MemoryProbe pattern:
+```js
+const Ped = window.Capacitor.Plugins && window.Capacitor.Plugins.MotionPedometer;
+if (Ped) { /* set up sync, periodic interval, visibility listener */ }
+```
+
+Functions exposed:
+- `window._pedometerSync()` — query CMPedometer for `[lastFitnessSync, now]`,
+  credit via `Creatures.creditPedometerMeters(meters)`, advance the marker.
+  Guarded by `cc.pedometerEnabled === '1'`. Single in-flight via
+  `syncInFlight` flag. Skips windows under `MIN_SYNC_WINDOW_MS = 20s`.
+- `window._pedometerRequestAuth()` / `window._pedometerIsAvailable()`
+  — pass-throughs for Settings UI.
+
+Triggers:
+1. **visibility=visible**: catch-up on whatever happened while the
+   app icon was tapped to open.
+2. **Initial state**: same handler runs on script load if already
+   visible.
+3. **Periodic `setInterval(60s)`**: keeps daycare counters live while
+   walking with the app open. iOS suspends `setInterval` automatically
+   during background — no need to gate on visibility ourselves.
+
+### Pedometer is the sole distance source when active
+
+User's explicit ask: "if pedometer is active just use that, no need
+to compute distance with GPS anymore (GPS still used for playing the
+game, and I like that daycare tracks where I've been while app is
+open, keep that, but don't need it for distance)."
+
+In `creatures.js`'s `_accumulateDaycareDistance`, the credit branch
+now gates on a helper:
+
+```js
+function _isPedometerActive() {
+  try { return localStorage.getItem('cc.pedometerEnabled') === '1'; }
+  catch { return false; }
+}
+// ...accepted-fix branch:
+if (!_isPedometerActive()) {
+  _creditMeters(d, ts);
+  _markFitnessSynced(ts);
+}
+_distAnchorLat = lat;
+_distAnchorLng = lng;
+_distAnchorAt = ts;
+_appendPathPoint(lat, lng, ts);
+```
+
+So with pedometer enabled, GPS fixes:
+- Still drive `_appendPathPoint` (the daily polyline shown on the map)
+- Still update the anchor + run jitter / outlier filtering
+- Still update `_userLat/Lng` for spawn proximity
+- Do NOT credit distance to daycare slots, incubator eggs, or daily summary
+
+The pedometer's periodic foreground query is the sole source of
+truth for those.
+
+### Shared credit path
+
+Extracted from the GPS-driven credit logic into a standalone
+`_creditMeters(d, ts)` helper. Both GPS (when pedometer is off) and
+pedometer (always, when enabled) route through this. It owns:
+- Daily summary update (`_summaryCache[k] += d`, persisted to IDB)
+- Daycare slot `distM` updates + `cc-daycare-loot-tick` events on km
+  crossings
+- Incubator egg `incubatedM` updates + `cc-incubator-tick` events on
+  hatch completion
+
+### Bookkeeping markers
+
+`cc.lastFitnessSyncMs` (localStorage) — timestamp through which
+movement has been credited. Read by pedometer sync as the lower bound
+of its next query; written by either source (GPS path when
+pedometer-off, pedometer resolver always). Monotonic via
+`_markFitnessSynced` (max-only update) so a race between GPS and the
+pedometer resolver on foreground transitions can't shift it backward.
+
+Pedometer query window: `[max(lastFitnessSync, now - 7d), now]`. The
+7-day clamp matches CMPedometer's on-device retention.
+
+### Settings UX
+
+Row "Count steps while app is closed" only appears when the plugin
+is available (iOS Capacitor build).
+
+- Toggle ON: triggers motion-permission prompt. On grant:
+  `cc.pedometerEnabled='1'`, `markFitnessSynced(now)` (so the first
+  sync only counts forward, no 7-day backfill surprise).
+- Toggle OFF: `cc.pedometerEnabled='0'`. GPS resumes crediting.
+
+Status line below the toggle, populated from
+`cc.lastPedometerSync{At,Meters,Steps,SpanMs}`:
+```
+last sync 12s ago · 0.78 km · 1,041 steps · 1m window
+```
+
+Renders on toggle-init AND after every successful sync (via
+`window._renderPedometerStatus`). Pre-first-sync:
+`no sync yet — leave the app, walk a minute, come back`.
+
+### Files touched for the pedometer
+
+```
+ios-overrides/MotionPedometerPlugin.swift   (NEW)
+ios-overrides/AppBridgeViewController.swift (register the plugin)
+ios-overrides/inject-into-xcodeproj.rb      (NEW_FILES += plugin)
+.github/workflows/ios-build.yml             (cp step + NSMotionUsageDescription)
+static/creatures.js                         (_creditMeters extraction,
+                                             _markFitnessSynced /
+                                             _readLastFitnessSync,
+                                             creditPedometerMeters,
+                                             _isPedometerActive gate)
+static/index.html                           (Plugin lookup,
+                                             _pedometerSync,
+                                             visibility + periodic triggers,
+                                             Settings row + toggle + status line)
+```
+
+## Things learned
+
+- **`null` is rarely a single thing.** Across two sessions: sprite
+  fetches collapsed 404 + 5xx + decode-error into a single `null`,
+  and that's where the wedge bug actually lived. The fix wasn't more
+  retry plumbing; it was distinguishing the second meaning. Same shape
+  in the GPS path: a `location` event for "current position" and a
+  `location` event for "buffered position from 12 minutes ago" were
+  the same event, and that's where the replay bug lived.
+
+- **The retry trigger has to come from somewhere.** Just "don't cache
+  failures" doesn't solve red-dot stickiness — nothing would re-call
+  `showSprite` and re-fetch. The poll-based registry is the trigger:
+  a 1s `setInterval` walks the failed asks and re-invokes the same
+  consumer call. No subscription pattern needed.
+
+- **HealthKit vs CMPedometer is the kind of trade-off worth surfacing
+  before plunging in.** The entitlement constraint would've broken
+  the sideload signing flow entirely. Half a day of plugin work avoided
+  by asking "wait, does this work with free certs?" once.
+
+- **Pedometer-as-sole-source is cleaner than dual-source-with-dedup.**
+  Earlier draft of the iOS integration tried to keep GPS crediting in
+  real-time AND pedometer filling background gaps. The bookkeeping
+  for "what time range has been credited" got hairy fast. User's
+  instinct ("just use pedometer") cut through it — one source of
+  distance, GPS keeps doing the gameplay-side things it's good at,
+  the structure straightens.
+
+- **A status line in Settings is worth more than logging.** The
+  pedometer status line (`last sync 12s ago · 0.78 km · 1,041 steps
+  · 1m window`) tells the user at a glance whether the sync is
+  working. No `console.log`-and-tail dance to verify.
+
+- **Period of in-app pedometer polling needs to clear the
+  MIN_SYNC_WINDOW threshold.** First draft had `MIN=60s, period=60s`
+  — every periodic tick would skip because the window equalled the
+  floor and small timing jitter pushed it under. `MIN=20s, period=60s`
+  gives a healthy margin.
+
+## What didn't get done
+
+- **Sprite retry surfaced in the diagnostic dump.** Exposed via
+  `SpriteStore.pendingRetryCount()` but not yet wired into the
+  `[fetch health]` block in Settings. Easy add if it matters.
+- **Android Health Connect.** iOS is in, Android needs its own custom
+  Kotlin plugin since Google Fit is being sunset and Health Connect
+  doesn't have a polished Capacitor plugin yet. Probably 1-2 days.
+- **Phase A CSS extraction** from `CODE_REVIEW.md`. Still queued.
+
+## Stuff still to do
+
+In rough priority order:
+
+1. Verify the new sprite retry path in the wild — next time the iOS
+   LocalServer wedges + auto-restarts, red dots should heal themselves
+   within ~1s of the restart completing (no reload required).
+2. Verify the Android GPS battery / replay fix on the spouse's phone.
+   Expected: no persistent-notification icon while the app is
+   backgrounded, no big GPS-event flood on resume.
+3. Verify the iOS pedometer flow once a build with the new plugin
+   lands. Procedure: enable toggle → grant motion permission → close
+   app → walk a minute → reopen → Settings should show non-zero meters
+   in the status line and daycare slot distM should have advanced.
+4. Android Health Connect plugin for closed-app step tracking on
+   Android. Separate session.
+5. Future breeding mechanic (carried).
+6. Phase A CSS extraction (carried).
+
+## Session vibes
+
+Bug-fix-driven from start to end, each fix grounded in a real-world
+signal the user spotted ("red dots in the wild even after the restart
+fix"; "the GPS is replaying"). The CMPedometer arc was the day's
+green-fields piece — actually building something new instead of
+fixing — but even there the design pivots came from the user's "just
+use pedometer, don't bother dual-sourcing" instinct rather than my
+first draft.
+
+The session also confirmed a pattern that's been visible across the
+last few sessions: when the diagnosis points at a "the code is
+treating these two things as one thing" answer, the fix is small and
+the code shrinks. When it points at "this needs more retry / backoff
+/ buffering", that's usually a wrong-diagnosis warning sign.
+
+```
+Final state: sprite-store distinguishes truly-gone (cached forever)
+from temporarily-unreachable (retry-polled every 1s); Android's
+foreground location service pauses with the WebView's visibility and
+filters stale flushed events on resume; iOS has a CMPedometer bridge
+that lets daycare slots + incubator eggs accumulate while the app is
+closed, with a live status line so you can sanity-check it from
+Settings. Three classifications, three smaller designs.
+:3
+```

@@ -1,0 +1,1464 @@
+{
+  "root_bbox": [
+    -79.7,
+    44.9,
+    -57.1,
+    62.6
+  ],
+  "params": {
+    "budget_mb": 50.0,
+    "min_deg": 0.02,
+    "max_depth": 14,
+    "min_zoom": 0,
+    "max_zoom": 14
+  },
+  "calibration": {
+    "fits": {
+      "walk": {
+        "slope": 19.298593701282442,
+        "intercept": 4625.542938535412,
+        "r_squared": 0.9999998954278142
+      },
+      "poi": {
+        "slope": 28.1001232821631,
+        "intercept": -1472.2978390256565,
+        "r_squared": 0.9999991741319828
+      },
+      "housenumbers": {
+        "slope": 3.5014014132281925,
+        "intercept": 360.37370837262523,
+        "r_squared": 0.9999999630726747
+      }
+    },
+    "samples": {
+      "walk": [
+        [
+          2868107,
+          55355049
+        ],
+        [
+          1666,
+          51214
+        ],
+        [
+          27,
+          944
+        ],
+        [
+          27,
+          944
+        ],
+        [
+          159,
+          6266
+        ],
+        [
+          0,
+          30
+        ]
+      ],
+      "poi": [
+        [
+          312762,
+          8787215
+        ],
+        [
+          1774,
+          41858
+        ],
+        [
+          29,
+          1030
+        ],
+        [
+          29,
+          1030
+        ],
+        [
+          24,
+          698
+        ],
+        [
+          2,
+          196
+        ]
+      ],
+      "housenumbers": [
+        [
+          2427867,
+          8501297
+        ],
+        [
+          580,
+          3725
+        ],
+        [
+          0,
+          27
+        ],
+        [
+          0,
+          27
+        ],
+        [
+          0,
+          27
+        ],
+        [
+          0,
+          27
+        ]
+      ]
+    }
+  },
+  "stats": {
+    "n_regions_total": 58,
+    "n_regions_substantive": 58,
+    "n_regions_empty": 0,
+    "n_regions_over_budget": 0,
+    "substantive_bytes_total": 1499180464,
+    "per_artifact_total_bytes": {
+      "walk": 55679031,
+      "poi": 8713812,
+      "housenumbers": 8521888,
+      "tiles": 1426265733
+    },
+    "wall_time_s": 101.0
+  },
+  "regions": [
+    {
+      "bbox": [
+        -79.7,
+        44.9,
+        -76.875,
+        47.1125
+      ],
+      "sizes": {
+        "walk": 1453177,
+        "poi": 341321,
+        "housenumbers": 127121,
+        "tiles": 49648966
+      },
+      "counts": {
+        "walk_nodes": 64595,
+        "walk_edges": 75060,
+        "pois": 12199,
+        "housenumbers": 36203,
+        "tiles": 25516
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -76.875,
+        44.9,
+        -75.4625,
+        46.006249999999994
+      ],
+      "sizes": {
+        "walk": 7867084,
+        "poi": 1243812,
+        "housenumbers": 1807356,
+        "tiles": 31990854
+      },
+      "counts": {
+        "walk_nodes": 288850,
+        "walk_edges": 407411,
+        "pois": 44316,
+        "housenumbers": 516078,
+        "tiles": 6429
+      },
+      "depth": 4,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -75.4625,
+        44.9,
+        -74.05000000000001,
+        46.006249999999994
+      ],
+      "sizes": {
+        "walk": 2806665,
+        "poi": 395273,
+        "housenumbers": 514404,
+        "tiles": 21143515
+      },
+      "counts": {
+        "walk_nodes": 112217,
+        "walk_edges": 145194,
+        "pois": 14119,
+        "housenumbers": 146811,
+        "tiles": 6427
+      },
+      "depth": 4,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -76.875,
+        46.006249999999994,
+        -75.4625,
+        47.1125
+      ],
+      "sizes": {
+        "walk": 263342,
+        "poi": 100278,
+        "housenumbers": 40412,
+        "tiles": 10897701
+      },
+      "counts": {
+        "walk_nodes": 11993,
+        "walk_edges": 13406,
+        "pois": 3621,
+        "housenumbers": 11439,
+        "tiles": 6553
+      },
+      "depth": 4,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -75.4625,
+        46.006249999999994,
+        -74.05000000000001,
+        47.1125
+      ],
+      "sizes": {
+        "walk": 681292,
+        "poi": 174293,
+        "housenumbers": 56992,
+        "tiles": 12592625
+      },
+      "counts": {
+        "walk_nodes": 29176,
+        "walk_edges": 35063,
+        "pois": 6255,
+        "housenumbers": 16174,
+        "tiles": 6551
+      },
+      "depth": 4,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -79.7,
+        47.1125,
+        -76.875,
+        49.325
+      ],
+      "sizes": {
+        "walk": 1057769,
+        "poi": 137286,
+        "housenumbers": 69716,
+        "tiles": 29545512
+      },
+      "counts": {
+        "walk_nodes": 47076,
+        "walk_edges": 54571,
+        "pois": 4938,
+        "housenumbers": 19808,
+        "tiles": 26435
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -76.875,
+        47.1125,
+        -74.05000000000001,
+        49.325
+      ],
+      "sizes": {
+        "walk": 93399,
+        "poi": 149959,
+        "housenumbers": 1764,
+        "tiles": 33147648
+      },
+      "counts": {
+        "walk_nodes": 4300,
+        "walk_edges": 4600,
+        "pois": 5389,
+        "housenumbers": 401,
+        "tiles": 26279
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -74.05000000000001,
+        44.9,
+        -72.63750000000002,
+        46.006249999999994
+      ],
+      "sizes": {
+        "walk": 19474417,
+        "poi": 2135064,
+        "housenumbers": 2736215,
+        "tiles": 50892907
+      },
+      "counts": {
+        "walk_nodes": 724586,
+        "walk_edges": 1008871,
+        "pois": 76033,
+        "housenumbers": 781360,
+        "tiles": 6541
+      },
+      "depth": 4,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -72.63750000000002,
+        44.9,
+        -71.22500000000001,
+        46.006249999999994
+      ],
+      "sizes": {
+        "walk": 2975315,
+        "poi": 360906,
+        "housenumbers": 461228,
+        "tiles": 19332976
+      },
+      "counts": {
+        "walk_nodes": 123303,
+        "walk_edges": 153933,
+        "pois": 12896,
+        "housenumbers": 131624,
+        "tiles": 6427
+      },
+      "depth": 4,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -74.05000000000001,
+        46.006249999999994,
+        -72.63750000000002,
+        47.1125
+      ],
+      "sizes": {
+        "walk": 951549,
+        "poi": 211751,
+        "housenumbers": 180248,
+        "tiles": 13349644
+      },
+      "counts": {
+        "walk_nodes": 38021,
+        "walk_edges": 49067,
+        "pois": 7588,
+        "housenumbers": 51376,
+        "tiles": 6666
+      },
+      "depth": 4,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -72.63750000000002,
+        46.006249999999994,
+        -71.22500000000001,
+        47.1125
+      ],
+      "sizes": {
+        "walk": 2466836,
+        "poi": 399966,
+        "housenumbers": 447135,
+        "tiles": 16938801
+      },
+      "counts": {
+        "walk_nodes": 94401,
+        "walk_edges": 127585,
+        "pois": 14286,
+        "housenumbers": 127599,
+        "tiles": 6551
+      },
+      "depth": 4,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -71.22500000000001,
+        44.9,
+        -68.4,
+        47.1125
+      ],
+      "sizes": {
+        "walk": 2593744,
+        "poi": 489549,
+        "housenumbers": 505770,
+        "tiles": 34546254
+      },
+      "counts": {
+        "walk_nodes": 111946,
+        "walk_edges": 134161,
+        "pois": 17474,
+        "housenumbers": 144345,
+        "tiles": 25513
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -74.05000000000001,
+        47.1125,
+        -71.22500000000001,
+        49.325
+      ],
+      "sizes": {
+        "walk": 683665,
+        "poi": 322887,
+        "housenumbers": 97009,
+        "tiles": 33339252
+      },
+      "counts": {
+        "walk_nodes": 29233,
+        "walk_edges": 35186,
+        "pois": 11543,
+        "housenumbers": 27603,
+        "tiles": 26509
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -71.22500000000001,
+        47.1125,
+        -68.4,
+        49.325
+      ],
+      "sizes": {
+        "walk": 1646202,
+        "poi": 367060,
+        "housenumbers": 200461,
+        "tiles": 33390025
+      },
+      "counts": {
+        "walk_nodes": 71436,
+        "walk_edges": 85062,
+        "pois": 13115,
+        "housenumbers": 57149,
+        "tiles": 26431
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -79.7,
+        49.325,
+        -74.05000000000001,
+        53.75
+      ],
+      "sizes": {
+        "walk": 339282,
+        "poi": 57847,
+        "housenumbers": 6211,
+        "tiles": 38005722
+      },
+      "counts": {
+        "walk_nodes": 14674,
+        "walk_edges": 17341,
+        "pois": 2111,
+        "housenumbers": 1671,
+        "tiles": 112577
+      },
+      "depth": 2,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -74.05000000000001,
+        49.325,
+        -71.22500000000001,
+        51.5375
+      ],
+      "sizes": {
+        "walk": 52080,
+        "poi": 29297,
+        "housenumbers": 426,
+        "tiles": 14653272
+      },
+      "counts": {
+        "walk_nodes": 2298,
+        "walk_edges": 2459,
+        "pois": 1095,
+        "housenumbers": 19,
+        "tiles": 28006
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -71.22500000000001,
+        49.325,
+        -68.4,
+        51.5375
+      ],
+      "sizes": {
+        "walk": 90311,
+        "poi": 25307,
+        "housenumbers": 363,
+        "tiles": 18740237
+      },
+      "counts": {
+        "walk_nodes": 4248,
+        "walk_edges": 4440,
+        "pois": 953,
+        "housenumbers": 1,
+        "tiles": 27924
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -74.05000000000001,
+        51.5375,
+        -71.22500000000001,
+        53.75
+      ],
+      "sizes": {
+        "walk": 9006,
+        "poi": 0,
+        "housenumbers": 360,
+        "tiles": 12846110
+      },
+      "counts": {
+        "walk_nodes": 217,
+        "walk_edges": 227,
+        "pois": 32,
+        "housenumbers": 0,
+        "tiles": 29216
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -71.22500000000001,
+        51.5375,
+        -68.4,
+        53.75
+      ],
+      "sizes": {
+        "walk": 4644,
+        "poi": 1927,
+        "housenumbers": 360,
+        "tiles": 35380246
+      },
+      "counts": {
+        "walk_nodes": 1,
+        "walk_edges": 1,
+        "pois": 121,
+        "housenumbers": 0,
+        "tiles": 29130
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -68.4,
+        44.9,
+        -65.575,
+        47.1125
+      ],
+      "sizes": {
+        "walk": 2708647,
+        "poi": 420900,
+        "housenumbers": 260083,
+        "tiles": 33153324
+      },
+      "counts": {
+        "walk_nodes": 115228,
+        "walk_edges": 140115,
+        "pois": 15031,
+        "housenumbers": 74177,
+        "tiles": 25371
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -65.575,
+        44.9,
+        -62.75,
+        47.1125
+      ],
+      "sizes": {
+        "walk": 3114130,
+        "poi": 450518,
+        "housenumbers": 458802,
+        "tiles": 30711446
+      },
+      "counts": {
+        "walk_nodes": 131712,
+        "walk_edges": 161126,
+        "pois": 16085,
+        "housenumbers": 130931,
+        "tiles": 25644
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -68.4,
+        47.1125,
+        -65.575,
+        49.325
+      ],
+      "sizes": {
+        "walk": 1140810,
+        "poi": 189046,
+        "housenumbers": 119327,
+        "tiles": 20332784
+      },
+      "counts": {
+        "walk_nodes": 49818,
+        "walk_edges": 58874,
+        "pois": 6780,
+        "housenumbers": 33977,
+        "tiles": 26284
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -65.575,
+        47.1125,
+        -62.75,
+        49.325
+      ],
+      "sizes": {
+        "walk": 373556,
+        "poi": 101036,
+        "housenumbers": 36883,
+        "tiles": 8414468
+      },
+      "counts": {
+        "walk_nodes": 16235,
+        "walk_edges": 19117,
+        "pois": 3648,
+        "housenumbers": 10431,
+        "tiles": 26565
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -62.75,
+        44.9,
+        -57.1,
+        49.325
+      ],
+      "sizes": {
+        "walk": 2066390,
+        "poi": 376614,
+        "housenumbers": 348252,
+        "tiles": 40633274
+      },
+      "counts": {
+        "walk_nodes": 94218,
+        "walk_edges": 106835,
+        "pois": 13455,
+        "housenumbers": 99358,
+        "tiles": 102444
+      },
+      "depth": 2,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -68.4,
+        49.325,
+        -65.575,
+        51.5375
+      ],
+      "sizes": {
+        "walk": 116538,
+        "poi": 48658,
+        "housenumbers": 21298,
+        "tiles": 13715996
+      },
+      "counts": {
+        "walk_nodes": 4726,
+        "walk_edges": 5799,
+        "pois": 1784,
+        "housenumbers": 5980,
+        "tiles": 27767
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -65.575,
+        49.325,
+        -62.75,
+        51.5375
+      ],
+      "sizes": {
+        "walk": 56365,
+        "poi": 17551,
+        "housenumbers": 3623,
+        "tiles": 10283763
+      },
+      "counts": {
+        "walk_nodes": 2333,
+        "walk_edges": 2681,
+        "pois": 677,
+        "housenumbers": 932,
+        "tiles": 28067
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -68.4,
+        51.5375,
+        -65.575,
+        53.75
+      ],
+      "sizes": {
+        "walk": 143787,
+        "poi": 11903,
+        "housenumbers": 486,
+        "tiles": 22139762
+      },
+      "counts": {
+        "walk_nodes": 6035,
+        "walk_edges": 7211,
+        "pois": 476,
+        "housenumbers": 36,
+        "tiles": 28967
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -65.575,
+        51.5375,
+        -62.75,
+        53.75
+      ],
+      "sizes": {
+        "walk": 16764,
+        "poi": 972,
+        "housenumbers": 363,
+        "tiles": 28995376
+      },
+      "counts": {
+        "walk_nodes": 612,
+        "walk_edges": 629,
+        "pois": 87,
+        "housenumbers": 1,
+        "tiles": 29279
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -62.75,
+        49.325,
+        -59.925,
+        51.5375
+      ],
+      "sizes": {
+        "walk": 41910,
+        "poi": 10161,
+        "housenumbers": 1515,
+        "tiles": 8914305
+      },
+      "counts": {
+        "walk_nodes": 1654,
+        "walk_edges": 1932,
+        "pois": 414,
+        "housenumbers": 330,
+        "tiles": 27765
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -59.925,
+        49.325,
+        -57.1,
+        51.5375
+      ],
+      "sizes": {
+        "walk": 109629,
+        "poi": 43403,
+        "housenumbers": 2352,
+        "tiles": 15795214
+      },
+      "counts": {
+        "walk_nodes": 4984,
+        "walk_edges": 5441,
+        "pois": 1597,
+        "housenumbers": 569,
+        "tiles": 27924
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -62.75,
+        51.5375,
+        -59.925,
+        53.75
+      ],
+      "sizes": {
+        "walk": 45615,
+        "poi": 5243,
+        "housenumbers": 619,
+        "tiles": 16785406
+      },
+      "counts": {
+        "walk_nodes": 1894,
+        "walk_edges": 2124,
+        "pois": 239,
+        "housenumbers": 74,
+        "tiles": 28965
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -59.925,
+        51.5375,
+        -57.1,
+        53.75
+      ],
+      "sizes": {
+        "walk": 5629,
+        "poi": 2377,
+        "housenumbers": 360,
+        "tiles": 17699156
+      },
+      "counts": {
+        "walk_nodes": 58,
+        "walk_edges": 52,
+        "pois": 137,
+        "housenumbers": 0,
+        "tiles": 29130
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -79.7,
+        53.75,
+        -76.875,
+        55.9625
+      ],
+      "sizes": {
+        "walk": 28729,
+        "poi": 6845,
+        "housenumbers": 920,
+        "tiles": 9212229
+      },
+      "counts": {
+        "walk_nodes": 959,
+        "walk_edges": 1249,
+        "pois": 296,
+        "housenumbers": 160,
+        "tiles": 30587
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -76.875,
+        53.75,
+        -74.05000000000001,
+        55.9625
+      ],
+      "sizes": {
+        "walk": 4837,
+        "poi": 0,
+        "housenumbers": 360,
+        "tiles": 28858109
+      },
+      "counts": {
+        "walk_nodes": 11,
+        "walk_edges": 11,
+        "pois": 36,
+        "housenumbers": 0,
+        "tiles": 30407
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -79.7,
+        55.9625,
+        -76.875,
+        58.175
+      ],
+      "sizes": {
+        "walk": 7057,
+        "poi": 1955,
+        "housenumbers": 360,
+        "tiles": 3330680
+      },
+      "counts": {
+        "walk_nodes": 95,
+        "walk_edges": 126,
+        "pois": 122,
+        "housenumbers": 0,
+        "tiles": 32476
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -76.875,
+        55.9625,
+        -74.05000000000001,
+        58.175
+      ],
+      "sizes": {
+        "walk": 6439,
+        "poi": 860,
+        "housenumbers": 927,
+        "tiles": 41251249
+      },
+      "counts": {
+        "walk_nodes": 73,
+        "walk_edges": 94,
+        "pois": 83,
+        "housenumbers": 162,
+        "tiles": 32288
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -74.05000000000001,
+        53.75,
+        -71.22500000000001,
+        55.9625
+      ],
+      "sizes": {
+        "walk": 9527,
+        "poi": 1506,
+        "housenumbers": 360,
+        "tiles": 46354421
+      },
+      "counts": {
+        "walk_nodes": 227,
+        "walk_edges": 254,
+        "pois": 106,
+        "housenumbers": 0,
+        "tiles": 30673
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -71.22500000000001,
+        53.75,
+        -68.4,
+        55.9625
+      ],
+      "sizes": {
+        "walk": 9604,
+        "poi": 3360,
+        "housenumbers": 360,
+        "tiles": 35098582
+      },
+      "counts": {
+        "walk_nodes": 222,
+        "walk_edges": 258,
+        "pois": 172,
+        "housenumbers": 0,
+        "tiles": 30583
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -74.05000000000001,
+        55.9625,
+        -71.22500000000001,
+        58.175
+      ],
+      "sizes": {
+        "walk": 4625,
+        "poi": 0,
+        "housenumbers": 360,
+        "tiles": 48761428
+      },
+      "counts": {
+        "walk_nodes": 0,
+        "walk_edges": 0,
+        "pois": 4,
+        "housenumbers": 0,
+        "tiles": 32569
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -71.22500000000001,
+        55.9625,
+        -68.4,
+        58.175
+      ],
+      "sizes": {
+        "walk": 10395,
+        "poi": 3136,
+        "housenumbers": 1116,
+        "tiles": 33748930
+      },
+      "counts": {
+        "walk_nodes": 243,
+        "walk_edges": 299,
+        "pois": 164,
+        "housenumbers": 216,
+        "tiles": 32474
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -79.7,
+        58.175,
+        -76.875,
+        60.3875
+      ],
+      "sizes": {
+        "walk": 10994,
+        "poi": 5946,
+        "housenumbers": 374,
+        "tiles": 16564752
+      },
+      "counts": {
+        "walk_nodes": 251,
+        "walk_edges": 330,
+        "pois": 264,
+        "housenumbers": 4,
+        "tiles": 34431
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -76.875,
+        58.175,
+        -75.4625,
+        59.28125
+      ],
+      "sizes": {
+        "walk": 4625,
+        "poi": 0,
+        "housenumbers": 360,
+        "tiles": 15231412
+      },
+      "counts": {
+        "walk_nodes": 0,
+        "walk_edges": 0,
+        "pois": 20,
+        "housenumbers": 0,
+        "tiles": 8592
+      },
+      "depth": 4,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -75.4625,
+        58.175,
+        -74.05000000000001,
+        59.28125
+      ],
+      "sizes": {
+        "walk": 4625,
+        "poi": 0,
+        "housenumbers": 360,
+        "tiles": 17836604
+      },
+      "counts": {
+        "walk_nodes": 0,
+        "walk_edges": 0,
+        "pois": 6,
+        "housenumbers": 0,
+        "tiles": 8590
+      },
+      "depth": 4,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -76.875,
+        59.28125,
+        -75.4625,
+        60.3875
+      ],
+      "sizes": {
+        "walk": 4625,
+        "poi": 0,
+        "housenumbers": 360,
+        "tiles": 15103351
+      },
+      "counts": {
+        "walk_nodes": 0,
+        "walk_edges": 0,
+        "pois": 2,
+        "housenumbers": 0,
+        "tiles": 8871
+      },
+      "depth": 4,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -75.4625,
+        59.28125,
+        -74.05000000000001,
+        60.3875
+      ],
+      "sizes": {
+        "walk": 4625,
+        "poi": 0,
+        "housenumbers": 360,
+        "tiles": 14832873
+      },
+      "counts": {
+        "walk_nodes": 0,
+        "walk_edges": 0,
+        "pois": 1,
+        "housenumbers": 0,
+        "tiles": 8869
+      },
+      "depth": 4,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -79.7,
+        60.3875,
+        -76.875,
+        62.6
+      ],
+      "sizes": {
+        "walk": 7288,
+        "poi": 4456,
+        "housenumbers": 920,
+        "tiles": 16104113
+      },
+      "counts": {
+        "walk_nodes": 115,
+        "walk_edges": 138,
+        "pois": 211,
+        "housenumbers": 160,
+        "tiles": 36977
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -76.875,
+        60.3875,
+        -74.05000000000001,
+        62.6
+      ],
+      "sizes": {
+        "walk": 9276,
+        "poi": 2349,
+        "housenumbers": 363,
+        "tiles": 23991999
+      },
+      "counts": {
+        "walk_nodes": 190,
+        "walk_edges": 241,
+        "pois": 136,
+        "housenumbers": 1,
+        "tiles": 36761
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -74.05000000000001,
+        58.175,
+        -71.22500000000001,
+        60.3875
+      ],
+      "sizes": {
+        "walk": 4625,
+        "poi": 0,
+        "housenumbers": 360,
+        "tiles": 43269692
+      },
+      "counts": {
+        "walk_nodes": 0,
+        "walk_edges": 0,
+        "pois": 10,
+        "housenumbers": 0,
+        "tiles": 34529
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -71.22500000000001,
+        58.175,
+        -68.4,
+        60.3875
+      ],
+      "sizes": {
+        "walk": 10646,
+        "poi": 12718,
+        "housenumbers": 643,
+        "tiles": 27233853
+      },
+      "counts": {
+        "walk_nodes": 252,
+        "walk_edges": 312,
+        "pois": 505,
+        "housenumbers": 81,
+        "tiles": 34428
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -74.05000000000001,
+        60.3875,
+        -71.22500000000001,
+        62.6
+      ],
+      "sizes": {
+        "walk": 15645,
+        "poi": 4428,
+        "housenumbers": 601,
+        "tiles": 14611026
+      },
+      "counts": {
+        "walk_nodes": 447,
+        "walk_edges": 571,
+        "pois": 210,
+        "housenumbers": 69,
+        "tiles": 37082
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -71.22500000000001,
+        60.3875,
+        -68.4,
+        62.6
+      ],
+      "sizes": {
+        "walk": 6729,
+        "poi": 2714,
+        "housenumbers": 360,
+        "tiles": 6245721
+      },
+      "counts": {
+        "walk_nodes": 91,
+        "walk_edges": 109,
+        "pois": 149,
+        "housenumbers": 0,
+        "tiles": 36973
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -68.4,
+        53.75,
+        -65.575,
+        55.9625
+      ],
+      "sizes": {
+        "walk": 14043,
+        "poi": 7632,
+        "housenumbers": 1123,
+        "tiles": 31048073
+      },
+      "counts": {
+        "walk_nodes": 371,
+        "walk_edges": 488,
+        "pois": 324,
+        "housenumbers": 218,
+        "tiles": 30413
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -65.575,
+        53.75,
+        -62.75,
+        55.9625
+      ],
+      "sizes": {
+        "walk": 6864,
+        "poi": 0,
+        "housenumbers": 360,
+        "tiles": 33251492
+      },
+      "counts": {
+        "walk_nodes": 97,
+        "walk_edges": 116,
+        "pois": 42,
+        "housenumbers": 0,
+        "tiles": 30737
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -68.4,
+        55.9625,
+        -65.575,
+        58.175
+      ],
+      "sizes": {
+        "walk": 9257,
+        "poi": 382,
+        "housenumbers": 1547,
+        "tiles": 33586090
+      },
+      "counts": {
+        "walk_nodes": 181,
+        "walk_edges": 240,
+        "pois": 66,
+        "housenumbers": 339,
+        "tiles": 32291
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -65.575,
+        55.9625,
+        -62.75,
+        58.175
+      ],
+      "sizes": {
+        "walk": 4625,
+        "poi": 0,
+        "housenumbers": 360,
+        "tiles": 26919693
+      },
+      "counts": {
+        "walk_nodes": 0,
+        "walk_edges": 0,
+        "pois": 21,
+        "housenumbers": 0,
+        "tiles": 32641
+      },
+      "depth": 3,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -62.75,
+        53.75,
+        -57.1,
+        58.175
+      ],
+      "sizes": {
+        "walk": 16648,
+        "poi": 24576,
+        "housenumbers": 440,
+        "tiles": 39946720
+      },
+      "counts": {
+        "walk_nodes": 535,
+        "walk_edges": 623,
+        "pois": 927,
+        "housenumbers": 23,
+        "tiles": 124478
+      },
+      "depth": 2,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -68.4,
+        58.175,
+        -62.75,
+        62.6
+      ],
+      "sizes": {
+        "walk": 7983,
+        "poi": 8784,
+        "housenumbers": 360,
+        "tiles": 19773252
+      },
+      "counts": {
+        "walk_nodes": 150,
+        "walk_edges": 174,
+        "pois": 365,
+        "housenumbers": 0,
+        "tiles": 141386
+      },
+      "depth": 2,
+      "leaf_reason": "fits"
+    },
+    {
+      "bbox": [
+        -62.75,
+        58.175,
+        -57.1,
+        62.6
+      ],
+      "sizes": {
+        "walk": 5146,
+        "poi": 0,
+        "housenumbers": 360,
+        "tiles": 6142848
+      },
+      "counts": {
+        "walk_nodes": 28,
+        "walk_edges": 27,
+        "pois": 29,
+        "housenumbers": 0,
+        "tiles": 141023
+      },
+      "depth": 2,
+      "leaf_reason": "fits"
+    }
+  ]
+}

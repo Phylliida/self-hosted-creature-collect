@@ -3059,6 +3059,10 @@
     </div>
     <div id="pedometerStatus" style="display:none;padding:4px 12px 8px;font-size:11px;color:var(--ui-muted);line-height:1.4;"></div>
     <div class="row">
+      <label for="hfRegionsToggle">Use Hugging Face for region data</label>
+      <input type="checkbox" id="hfRegionsToggle">
+    </div>
+    <div class="row">
       <label for="debugConsoleToggle">Debug console (errors overlay)</label>
       <input type="checkbox" id="debugConsoleToggle">
     </div>
@@ -3747,6 +3751,132 @@
       // is actually visible.
       setInterval(tryInitialSync, PERIODIC_SYNC_MS);
     }
+
+    // ── Region data source ────────────────────────────────────────
+    // The PWA fetches per-region map artifacts (walk graph, POIs,
+    // housenumbers, vector-tile PMTiles archives) from one of two
+    // sources, controlled by the `cc.hfRegions` Settings toggle:
+    //
+    //   '0' (default): the app's hosted server, served via the
+    //     `/regions/<id>/<filename>` route in run.py. Built locally
+    //     by build-regions.py and served from a regions/ directory
+    //     next to run.py.
+    //
+    //   '1' : the public Hugging Face dataset
+    //     `TessaCoil/maps-dataset`. URL pattern
+    //     `https://huggingface.co/datasets/TessaCoil/maps-dataset
+    //      /resolve/main/<id>/<filename>`. Free unlimited public
+    //     bandwidth, no payment method on file. Used by friends-of-
+    //     friends who can't / shouldn't depend on the self-hosted
+    //     server staying up.
+    //
+    // The manifest itself (region id → bbox) is bundled with the app
+    // at /bundled-data/regions.json and loaded once at startup into
+    // window._regionsManifest. The actual region-id-by-location
+    // picker code that consumes this manifest lives elsewhere (TODO:
+    // not yet wired up — see HANDOFF for the static-region rollout
+    // plan). Helpers here are the URL plumbing for whatever fetcher
+    // eventually uses them.
+    const HF_REGIONS_BASE =
+      'https://huggingface.co/datasets/TessaCoil/maps-dataset/resolve/main';
+    window._regionBaseUrl = function () {
+      if (localStorage.getItem('cc.hfRegions') === '1') return HF_REGIONS_BASE;
+      // Server-relative; resolves against window.location.origin.
+      return '/regions';
+    };
+    window._regionFileUrl = function (regionId, filename) {
+      return window._regionBaseUrl() + '/' + regionId + '/' + filename;
+    };
+    // Load the manifest once at startup. It's bundled (~100 KB
+    // normalized form) so this is a single cached fetch on the first
+    // run. Consumers can either `await window._regionsManifestLoaded`
+    // or check `window._regionsManifest` directly when needed.
+    window._regionsManifest = null;
+    window._regionsManifestLoaded = (async () => {
+      try {
+        const resp = await fetch('/bundled-data/regions.json');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        window._regionsManifest = await resp.json();
+      } catch (e) {
+        console.warn('[regions] manifest load failed', e);
+        window._regionsManifest = null;
+      }
+    })();
+
+    // ── Region picker ─────────────────────────────────────────────
+    // Given a point or bbox, find which region(s) cover it and what
+    // they'd cost to download. The manifest holds 655 leaf bboxes
+    // (for North America at 50 MB budget) — linear scan is sub-ms.
+    //
+    // Sizes in the manifest are either "actual" (from build-regions.py
+    // output → `_regionsManifest.source === 'build'`) or "estimated"
+    // (from partition-regions.py before files are built →
+    // `source === 'plan'`). The picker doesn't care; it just sums.
+    //
+    // Manifest entry shape (after normalization in
+    // build-bundled-data.py's bundle_regions_manifest):
+    //   { id: "region-NNNN", bbox: [w,s,e,n],
+    //     sizes: { walk, poi, housenumbers, tiles } }
+    function _bboxContainsPoint(bbox, lng, lat) {
+      return lng >= bbox[0] && lng <= bbox[2]
+          && lat >= bbox[1] && lat <= bbox[3];
+    }
+    function _bboxesIntersect(a, b) {
+      // a, b are [w, s, e, n].
+      return a[0] < b[2] && a[2] > b[0]
+          && a[1] < b[3] && a[3] > b[1];
+    }
+    window.RegionPicker = {
+      /** Region containing (lng, lat), or null. First-match wins on
+       *  shared edges. */
+      findByPoint(lng, lat) {
+        const m = window._regionsManifest;
+        if (!m || !m.regions) return null;
+        for (const r of m.regions) {
+          if (_bboxContainsPoint(r.bbox, lng, lat)) return r;
+        }
+        return null;
+      },
+      /** All regions whose bbox intersects [w, s, e, n]. */
+      findByBbox(w, s, e, n) {
+        const m = window._regionsManifest;
+        if (!m || !m.regions) return [];
+        const probe = [w, s, e, n];
+        const out = [];
+        for (const r of m.regions) {
+          if (_bboxesIntersect(r.bbox, probe)) out.push(r);
+        }
+        return out;
+      },
+      /** How many regions intersect [w, s, e, n]. */
+      countInBbox(w, s, e, n) {
+        return this.findByBbox(w, s, e, n).length;
+      },
+      /** Sum of per-artifact bytes across all regions intersecting
+       *  the bbox. Useful for "you'll download N MB to view this
+       *  area" UI. Returns { walk, poi, housenumbers, tiles, total }.
+       */
+      totalBytesInBbox(w, s, e, n) {
+        const regions = this.findByBbox(w, s, e, n);
+        const sum = { walk: 0, poi: 0, housenumbers: 0, tiles: 0 };
+        for (const r of regions) {
+          const s2 = r.sizes || {};
+          sum.walk += s2.walk || 0;
+          sum.poi += s2.poi || 0;
+          sum.housenumbers += s2.housenumbers || 0;
+          sum.tiles += s2.tiles || 0;
+        }
+        sum.total = sum.walk + sum.poi + sum.housenumbers + sum.tiles;
+        return sum;
+      },
+      /** Whether sizes in the manifest are actual (post-build) or
+       *  estimated (post-plan only). Use this when displaying size
+       *  numbers to the user so the UI can disclaim estimates. */
+      sizesAreActual() {
+        const m = window._regionsManifest;
+        return !!(m && m.source === 'build');
+      },
+    };
 
     // LocalServer diagnostic poll. The Settings panel reads this
     // snapshot to answer "is GCDWebServer actually receiving + handling
@@ -10000,6 +10130,37 @@ function fmtDate(ts) {
           }
         }
       }
+      // Region coverage for the current map view. Sub-millisecond
+      // linear scan over the bundled 655-entry manifest. Sizes are
+      // either actual (post-build) or estimated (plan only); the
+      // line tags which.
+      try {
+        if (window.RegionPicker && window._regionsManifest && map) {
+          const b = map.getBounds();
+          const w = b.getWest(), s = b.getSouth();
+          const e = b.getEast(), n = b.getNorth();
+          const n_regions = window.RegionPicker.countInBbox(w, s, e, n);
+          const sz = window.RegionPicker.totalBytesInBbox(w, s, e, n);
+          const m = window._regionsManifest;
+          const tag = window.RegionPicker.sizesAreActual() ? 'actual' : 'est';
+          const fmtMB = (b2) => (b2 / (1024 * 1024)).toFixed(1) + 'MB';
+          const source = (localStorage.getItem('cc.hfRegions') === '1')
+            ? 'huggingface' : 'server';
+          lines.push(`[regions]`);
+          lines.push(
+            `  source=${source} manifest=${m.n_regions} regions ` +
+            `(${m.source})`
+          );
+          lines.push(
+            `  in view: ${n_regions} regions, ${fmtMB(sz.total)} total (${tag})`
+          );
+          lines.push(
+            `    walk=${fmtMB(sz.walk)} poi=${fmtMB(sz.poi)} ` +
+            `hn=${fmtMB(sz.housenumbers)} tiles=${fmtMB(sz.tiles)}`
+          );
+        }
+      } catch (e) { /* best-effort */ }
+
       // Script versions — each .js file declares its own SCRIPT_VERSION
       // and pushes it into window._scriptVersions on load. The server
       // parses the same constants from disk via /script-versions.
@@ -11659,6 +11820,21 @@ function fmtDate(ts) {
         localStorage.setItem('cc.pedometerEnabled', '0');
       }
       window._renderPedometerStatus();
+    });
+  }
+
+  // Hugging Face regions toggle. Default OFF (regions come from the
+  // app's hosted server). When ON, region artifacts are fetched from
+  // the public Hugging Face dataset instead. URL builder helpers
+  // (window._regionBaseUrl, window._regionFileUrl) read this setting
+  // at fetch time, so the toggle takes effect on the next region
+  // request without needing a page reload.
+  const hfRegionsToggle = document.getElementById('hfRegionsToggle');
+  if (hfRegionsToggle) {
+    hfRegionsToggle.checked = localStorage.getItem('cc.hfRegions') === '1';
+    hfRegionsToggle.addEventListener('change', () => {
+      localStorage.setItem('cc.hfRegions',
+        hfRegionsToggle.checked ? '1' : '0');
     });
   }
 

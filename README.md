@@ -556,6 +556,159 @@ services.cloudflared = {
 
 Copy the credentials JSON to `/var/lib/cloudflared/` and `nixos-rebuild switch`.
 
+## Static region hosting (optional — alternative to running the server)
+
+The dynamic Flask server (`run.py`) is the path of least resistance for a
+self-hosted single-user deployment. If you want to share the app at scale
+without keeping a Python server alive, you can pre-build per-region static
+files and serve them from a free CDN. The pipeline takes the same SQLite
++ mbtiles inputs that `run.py` would use, and produces a directory of
+per-region artifacts that any S3-compatible host (or Hugging Face) can
+serve.
+
+### Build region files
+
+Two-step pipeline. Step 1 plans the region boundaries (adaptive quad-tree
+that subdivides until every leaf's largest artifact fits the size
+budget). Step 2 materializes the actual files (walk graph, POIs,
+housenumbers, vector tile PMTiles archive) per leaf.
+
+```bash
+# 1. Partition. Default "tile-only" mode measures tile bytes exactly
+#    from mbtiles and estimates other artifacts as a fixed fraction
+#    of tile bytes. No Flask server needed. ~20 min for full NA.
+python partition-regions.py \
+    --bbox=-170,7,-52,84 \
+    --budget-mb=50 \
+    --out=regions-na.json
+
+# 2. Materialize. Needs `python run.py` in another terminal — the build
+#    fetches walk.bin / poi.bin / housenumbers.bin via the existing
+#    Flask bbox endpoints, and writes a fresh PMTiles archive per
+#    region from mbtiles directly. Resumable: re-running skips
+#    regions whose 4 files already exist on disk.
+python build-regions.py --plan=regions-na.json --out-dir=regions
+```
+
+For all of North America at a 50 MB budget this produces ~655 regions and
+~18 GB on disk. Output shape:
+
+```
+regions/
+  index.json                    — manifest the client downloads first
+  region-0000/walk.bin
+  region-0000/poi.bin
+  region-0000/housenumbers.bin
+  region-0000/tiles.pmtiles
+  region-0001/...
+  ...
+```
+
+Partitioner alternatives (all opt-in; the default tile-only mode is the
+recommended path for most use cases):
+
+| Flag | Behavior |
+|---|---|
+| (none) | Default tile-only mode — fastest, no server needed |
+| `--calibrate` | Runs an HTTP-probe calibration pass to fit byte-per-row constants |
+| `--calibration-from=PATH` | Loads fits from a previous `regions.json` |
+| `--actual-sizes` | HTTP-probes Flask for true packed bytes per leaf — slow, precise |
+| `--skip-calibration` | Hardcoded constants, no probes, no calibration |
+
+### Upload to Hugging Face Datasets
+
+Free unlimited public storage + bandwidth. **No payment method on file,
+so no spending-blowup risk** if the app gets popular. Uses an existing CDN
+under the hood and supports HTTP range requests (needed for PMTiles).
+
+One-time setup:
+
+```bash
+pip install huggingface_hub          # or add to shell.nix
+hf auth login                        # paste a write-scoped token from
+                                     # huggingface.co/settings/tokens
+```
+
+Upload (parallel, resumable, re-runnable):
+
+```bash
+hf upload-large-folder <your-user>/maps-datum regions/ --repo-type=dataset
+```
+
+Files become reachable at:
+
+```
+https://huggingface.co/datasets/<your-user>/maps-datum/resolve/main/index.json
+https://huggingface.co/datasets/<your-user>/maps-datum/resolve/main/region-0000/tiles.pmtiles
+```
+
+(Substitute your HF username and repo name. CORS + range requests work out
+of the box for the `resolve/main/...` URLs.)
+
+### Alternative: Cloudflare R2
+
+If you'd rather not depend on Hugging Face (or want hard spending caps
+via Cloudflare's billing alerts), R2 is the next-best option: ~$0.12/month
+storage for 18 GB, zero egress. Replace the upload step with:
+
+```bash
+rclone sync regions/ r2:<bucket-name>/ --progress
+```
+
+See https://developers.cloudflare.com/r2/api/s3/tokens/ for rclone config
++ token setup. Don't forget to set CORS on the bucket (allow `GET` + `HEAD`
++ range/if-match/if-none-match headers from your PWA's origin).
+
+### Weekly refresh via cron
+
+OSM data churns daily-ish; refreshing static regions weekly keeps the app
+current. The pipeline is fully idempotent and resumable, so a weekly run
+is safe to leave unattended.
+
+```cron
+# Refresh static regions every Sunday at 03:00 UTC.
+0 3 * * 0 /path/to/self-hosted-creature-collect/refresh-regions.sh \
+    >> /var/log/region-refresh.log 2>&1
+```
+
+Where `refresh-regions.sh` ties the steps together. Suggested template:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+
+# 1. Refresh OSM extract + rebuild tiles/POIs/walk/housenumbers.
+#    (See the build sections higher up in this README; minimal version:)
+./get-shapefiles.sh                          # idempotent
+./make-tiles.sh                              # rebuilds *.mbtiles + *.sqlite
+
+# 2. Start Flask in the background — build-regions.py needs it for the
+#    walk/poi/housenumbers fetches.
+python run.py &
+FLASK_PID=$!
+trap "kill $FLASK_PID" EXIT
+sleep 5                                      # wait for Flask to be ready
+
+# 3. Re-build region files. partition-regions.py only needs to re-run if
+#    the budget or root bbox changed; otherwise reuse the existing plan.
+#    build-regions.py is resumable — files that haven't changed are
+#    skipped via the on-disk check.
+python build-regions.py --plan=regions-na.json --out-dir=regions
+
+# 4. Sync to the host. upload-large-folder + rclone sync both diff on
+#    content hash; only changed files transfer.
+hf upload-large-folder <your-user>/maps-datum regions/ --repo-type=dataset
+# OR for R2:
+# rclone sync regions/ r2:<bucket-name>/ --progress
+```
+
+Make the script executable (`chmod +x refresh-regions.sh`) and verify a
+manual run completes cleanly before adding the cron entry. Add a
+`--limit=10` flag to `build-regions.py` for a first dry-run to confirm the
+pipeline works end-to-end before committing to the full ~30-60 min
+rebuild.
+
 ## On iPhone: install as a PWA
 
 Open the HTTPS URL in Safari → tap **Share** → **Add to Home Screen**. Launch
