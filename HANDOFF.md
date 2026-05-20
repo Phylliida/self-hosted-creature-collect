@@ -3470,3 +3470,392 @@ closed, with a live status line so you can sanity-check it from
 Settings. Three classifications, three smaller designs.
 :3
 ```
+
+---
+
+# Session — static region distribution (partitioner → builder → uploader → client)
+
+The big slice this session: a full pipeline for distributing the
+world's map data as static files (per-region archives on Cloudflare R2
+/ Hugging Face / your own server) instead of bbox-querying a live
+Flask backend. Took most of a day, included a long debug chain, and
+ended with the bbox flow + the new static flow coexisting cleanly.
+
+## Files added
+
+| File | Role |
+|---|---|
+| `partition-regions.py` | Adaptive quad-tree region planner. Hits a sample of bbox sizes via SQLite + Flask, fits a model, emits `regions-na.json` with leaf bboxes + estimated artifact sizes. Default mode is "tile-only" — just measures mbtiles tile bytes directly + estimates non-tile artifacts as 0.3× tile size (empirically ~6× actual). No Flask needed in default mode. |
+| `build-regions.py` | Materializes the planned region files. For each leaf: HTTP-fetches `walk.bin`/`poi.bin`/`housenumbers.bin`/`schedule.json`/`addresses.bin` from Flask (with `Accept-Encoding: identity` so the bytes-on-disk aren't gzip-wrapped), then extracts a `tiles.pmtiles` straight from `north-america-latest.mbtiles` via SQLite. Writes a PMTiles v3 archive using an inline encoder (~150 lines, mirrors protomaps' spec). Resumable — Ctrl+C and re-run picks up where it stopped. |
+| `data/BundledData/regions.json` | The region manifest baked into the iOS/Android wrappers. Normalized to `{ regions: [{id, bbox, sizes}], source: 'plan'\|'build', n_regions: N }`. Used by `window.RegionPicker` at runtime to answer "which region covers this point". |
+
+## Files modified
+
+- `static/index.html`: ~1000 lines of new JS for the static-region
+  download flow + PMTiles reader + protocol handler + Settings UI.
+- `static/sw.js`: untouched in this session, but its existing
+  `204-on-tile-miss → MapLibre over-zoom` convention turned out to be
+  load-bearing for the runtime fix at the end.
+- `build-bundled-data.py`: new `bundle_regions_manifest()` step that
+  prefers `regions/index.json` (post-build, actual sizes) over
+  `regions-na.json` (partition-plan-only, estimated sizes) when both
+  exist. Tags the bundled manifest with `source: 'plan'` or `'build'`.
+- `run.py`: added `/regions/<path:fname>` route that serves built
+  region files from a local `regions/` dir, mirroring the URL layout
+  the Hugging Face dataset uses. Available for self-hosted static
+  distribution.
+- `README.md`: full "Static region hosting (optional)" section
+  documenting the pipeline + the exact `hf upload-large-folder`
+  incantation that actually works on residential bandwidth:
+  `HF_HUB_DISABLE_XET=1 HF_HUB_ENABLE_HF_TRANSFER=1 hf upload-large-folder TessaCoil/maps-dataset regions/ --repo-type=dataset --num-workers=2`
+
+## Pipeline shape
+
+Three stages, each idempotent + resumable:
+
+```
+1. partition  →  regions-na.json
+   python partition-regions.py --bbox=-170,7,-52,84 --budget-mb=50
+
+2. build      →  regions/region-NNNN/{walk,poi,housenumbers,addresses}.bin
+              →  regions/region-NNNN/schedule.json
+              →  regions/region-NNNN/tiles.pmtiles
+              →  regions/index.json
+   python build-regions.py --plan=regions-na.json --out-dir=regions
+
+3. upload     →  Hugging Face dataset (free, no payment method on file)
+              OR Cloudflare R2 (~$0.12/mo, hard spending caps available)
+   HF_HUB_DISABLE_XET=1 HF_HUB_ENABLE_HF_TRANSFER=1 hf upload-large-folder \
+       TessaCoil/maps-dataset regions/ --repo-type=dataset --num-workers=2
+```
+
+For North America at a 50 MB budget the partitioner emits ~655 leaf
+regions totaling ~18 GB. Quebec province (used as a sanity-check
+sub-region during development) is 58 leaves, ~1.4 GB.
+
+The partition takes ~20 min (mostly the SQL scans for mbtiles tile
+byte sums; the linear-regression calibration is ~30 s of HTTP probes).
+The build takes ~30-60 min (each region needs 4 HTTP fetches + a
+pmtiles extract). The upload takes 1-4 h depending on bandwidth.
+
+## Client-side: three-way mode select
+
+`cc.regionsMode` localStorage setting picks the data source:
+
+- `bbox-flask` (default) — original behavior, dynamic bbox queries
+  against the Flask server.
+- `static-flask` — static region files served from the local server's
+  `/regions/<id>/...` route.
+- `static-hf` — static region files from
+  `huggingface.co/datasets/TessaCoil/maps-dataset/resolve/main/<id>/...`.
+
+Migrated from the original `cc.hfRegions` boolean transparently on
+first read. Settings UI has a `<select>` for the three options.
+
+## Tile rendering — the long arc
+
+This was the most painful part of the session. The shape of the
+architecture stabilized late; the path there was a series of
+bugs each unmasking the next:
+
+1. **TDZ on cold start** — `const STATIC_REGIONS_KEY` declared too
+   late in the IIFE; `renderRegions()` called at startup hit it via
+   `loadStaticRegions()`, swallowed the ReferenceError silently in an
+   inner try/catch, returned `[]`. Result: downloaded regions never
+   appeared in the offline-maps panel after a reload. Fix: hoist the
+   storage constants + load/save functions to before `renderRegions`.
+
+2. **`MapLibre: null is not an object (evaluating 'a.slice')`** — my
+   protocol handler returned `{ data: null }` for missing tiles, but
+   MapLibre's vector tile parser calls `.slice(0)` on the data without
+   null-checking. Fix: return a zero-length `Uint8Array` instead.
+
+3. **`POI: bad magic`** — Flask gzip-encodes `/poi`/`/walk-graph`/
+   `/housenumbers` responses. `urllib.urlopen` in `build-regions.py`
+   doesn't auto-decompress, so the `.bin` files on disk were
+   gzip-wrapped. HF served them as-is without `Content-Encoding`, so
+   `fetch()` didn't decompress either. The client saw `0x1f 0x8b`
+   where it expected `POIB`. Two fixes: client-side gzip-detect +
+   decompress before parsing (handles already-uploaded files), and
+   `Accept-Encoding: identity` in `build-regions.py` so future
+   rebuilds save raw bytes.
+
+4. **`The object can not be cloned`** — I reused a single empty
+   `Uint8Array` (`EMPTY_TILE`) for every missing-tile response.
+   MapLibre transferred it to a Worker on first use, detaching the
+   buffer, then tried to send the same buffer to a second Worker —
+   structured-clone failed. Fix: allocate fresh `new Uint8Array(0)`
+   per call.
+
+5. **`Cannot declare a const variable twice`** — I'd hoisted the
+   storage constants but forgot to delete the originals in the
+   later block. Removed the duplicates.
+
+6. **Blank tiles at boundaries** — original `_serveStaticTile` picked
+   ONE region by tile center (via `RegionPicker.findByPoint`). At
+   boundary tiles, the center might fall in an undownloaded neighbor
+   even though a downloaded region also covered the tile. Fix:
+   iterate all downloaded regions whose bbox intersects the tile;
+   first non-empty match wins.
+
+7. **`Cannot access uninitialized variable lines 10941 10933 5804`**
+   — second TDZ; this one in the `_pmtilesReaders` LRU cache
+   declarations and the IDB constants for `cc-static-regions-v1`.
+   Resolved by the same hoist + dedupe pattern as bug #1.
+
+8. **204 vs 404 — the over-zoom signal** — the user reminded me of an
+   earlier fix in `sw.js`: MapLibre treats HTTP 404 as "tile FAILED
+   to load" (no parent fallback, just blank) but treats 204 as "tile
+   intentionally empty" (parent fallback chain kicks in). The custom
+   protocol handler had been using 404; I switched it to 204.
+
+9. **Slow startup from unpacking pmtiles into SW cache** — at one
+   point I tried "unpack the pmtiles into the SW's `tiles-v1` cache
+   so the existing /tiles/Z/X/Y.pbf flow renders them on its existing
+   pipeline." Conceptually clean but each region wrote 1000-3000
+   `cache.put`s, and accumulated stores made `loadAllPois()` +
+   peer functions much slower. Reverted to keeping pmtiles as a
+   single blob in IDB and serving via the custom protocol.
+
+10. **THE actual root cause of "roads/names disappear at high zoom in
+    bundled areas"** — *not* my static-region code at all. MapLibre's
+    `maxTileCacheZoomLevels` default is 5. Tiles more than 5 zoom
+    levels away from the current visual zoom get evicted from the
+    in-memory tile cache. At visual zoom 11+, the bundled z=0..5 base
+    tiles fall outside that window and get dropped. Without parents
+    in cache, MapLibre can't over-zoom from them — so place labels +
+    roads disappear in undownloaded areas at high zoom. Bumping the
+    option to `16` covers the full z=0..14 span and the labels stay
+    visible everywhere. This was the user's intuition all along:
+    "I think there's just a number we need to tweak."
+
+## Final tile-serving architecture
+
+After the chain of fixes, the static-mode tile flow is:
+
+1. MapLibre asks for `/tiles/{z}/{x}/{y}.pbf`
+2. `transformRequest` rewrites to `static-region://tile/Z/X/Y.pbf`
+   when in static mode AND ≥1 region downloaded. When not in static
+   mode OR no regions: URL passes through unchanged to the SW.
+3. Custom MapLibre protocol handler iterates ALL downloaded regions
+   in `cc.staticRegions.v1` order. For each, opens a `PMTilesReader`
+   (cached forever, ~30 KB resident per region), binary-searches the
+   directory by Hilbert-curve tile_id, returns the first non-empty
+   match.
+4. If no downloaded region has the tile, the handler rejects with
+   `Error{status: 204}`. MapLibre over-zooms from the nearest
+   available parent tile — which (with `maxTileCacheZoomLevels: 16`)
+   includes the bundled z=0..5 base map at all visual zooms.
+
+For the bbox-flow: no change at all. Original `/tiles/...` → SW →
+LocalServer → bundled flow, exactly as before.
+
+## Other artifacts: same dual-storage idea
+
+For walk-graph / POIs / housenumbers / addresses / schedules, the
+download path:
+
+1. Fetch the raw `.bin` from HF/server.
+2. Store the blob in `cc-static-regions-v1` IDB (for resume + diag).
+3. ALSO call the existing `saveXRegion(regionId, buffer)` functions
+   (same ones `performRegionDownload` uses for bbox-mode) so the
+   data hydrates into the existing consumer-side IDB stores
+   (`cc.pois.v2` etc.) and in-memory arrays (`allPois`, `allAddresses`).
+
+This means search, POI markers, walk routing, transit lookups, and
+the housenumber overlay all see static-region data via their existing
+read paths — no consumer-side wiring needed. Schedule + addresses got
+added late in the session when the user asked "does navigation using
+bus schedules work cross-region?" — yes, by the same merge-by-id
+mechanism `rebuildScheduleIndex` already used.
+
+## Settings UI
+
+- **Region data source** select (`bbox-flask` / `static-flask` /
+  `static-hf`) — the three-way picker.
+- **"Save current view" button label** in static modes shows count +
+  size of NEW regions to be downloaded (skips already-downloaded
+  ones). Edge cases: "no static regions in this view" /
+  "✓ N regions already downloaded".
+- **Offline-maps panel** now lists static regions alongside bbox
+  regions, distinguished by `[static]` prefix on the label and a
+  data-del-static delete handler.
+- **`[map view]` diagnostic block** in the Settings dump shows
+  current zoom, center, bearing, pitch, plus
+  `mode=… regions in view: X/Y downloaded` when in a static mode.
+
+## Hosting recommendation
+
+- Hugging Face datasets (free unlimited public bandwidth, no payment
+  method = no spending-blowup risk) is the default recommendation
+  for friends-of-friends scale.
+- Cloudflare R2 (~$0.12/mo storage, zero egress, but requires a
+  payment method) for users who want hard spending caps via the
+  Cloudflare billing alert path.
+
+Both are S3-compatible (uploads via `rclone` for R2,
+`hf upload-large-folder` for HF). Migrating between hosts is a single
+sync away — the data layout is identical.
+
+## Other small wins this session
+
+- **iOS Health/CMPedometer** was already done before this session
+  started, but we reviewed it in passing.
+- **Save file includes UI theme** — `theme` and `themeCustom` were
+  already saved, but the load path only applied them when local was
+  unset. Removed the guard so loading a save now always overrides
+  the local theme.
+- **`hf upload-large-folder` invocation** documented in README with
+  all three of the empirically-required flags
+  (`HF_HUB_DISABLE_XET=1`, `HF_HUB_ENABLE_HF_TRANSFER=1`,
+  `--num-workers=2`). Without all three, multi-GB uploads hang on
+  residential bandwidth — found this out the hard way.
+- **Progress bar** added to the sprite-cropping step in
+  `build-bundled-data.py` so users don't think it's hung.
+- **`Accept-Encoding: identity`** added to `build-regions.py`'s
+  `fetch_to_file` to keep urllib from accidentally writing
+  gzip-wrapped bytes (see bug #3 above).
+- **Bundled regions manifest** size: ~100 KB normalized
+  (originally ~217 KB before trimming `counts` / `depth` /
+  `leaf_reason` fields the client doesn't need).
+
+## Things learned
+
+1. **`maxTileCacheZoomLevels`** is the most consequential one-line
+   change of the session. The default of 5 silently degrades the
+   bundled-base-map fallback at high zoom in ways that look like a
+   completely different bug ("roads disappearing at zoom > 10"). When
+   features vanish at specific zoom thresholds with bundled base
+   tiles, this is the first thing to check.
+
+2. **204 vs 404** in MapLibre protocols. 204 = "fall back to parent";
+   404 = "give up, blank tile". For both HTTP responses AND custom
+   protocol rejections via `Error{status: 204}`. The convention was
+   already documented in `sw.js`; I rediscovered it the hard way.
+
+3. **Custom MapLibre protocols and structured clone**. The data
+   returned from a custom protocol gets transferred to a Worker for
+   parsing. If you return the same buffer instance twice, the second
+   transfer fails because the first detached it. Always allocate
+   fresh response buffers.
+
+4. **TDZ swallowed by inner try/catch** is a particularly mean failure
+   mode: code looks like it's "handling errors" while the actual
+   crash silently nullifies an entire feature. The fix is invariably
+   to either (a) hoist the constants, or (b) lazy-initialize.
+   `typeof X === 'function'` checks DON'T catch TDZ because function
+   declarations are hoisted; only the const access throws.
+
+5. **gzip auto-decompression depends on Content-Encoding headers in
+   ways that surprise across HTTP libraries.** Flask gzips responses
+   and sets the header. Browsers and modern fetch() honor it.
+   urllib doesn't auto-decompress. Static file hosts (HF, S3) serve
+   files as-is without the header. So a chain of "Flask → urllib →
+   disk → HF → fetch" can deliver gzip-wrapped bytes that NOTHING
+   along the way decompressed. Belt-and-suspenders: client-side
+   gzip-magic detection + server-side `Accept-Encoding: identity`.
+
+6. **PMTiles spec is small enough to implement inline both ways.**
+   The encoder fit in ~150 lines of Python in `build-regions.py`,
+   the reader in ~100 lines of JS in `index.html`. The Hilbert curve
+   tile_id encoding has a clean closed-form inverse for unpacking.
+
+7. **Adaptive quad-tree partitioning by file-size budget** produces
+   sensible region distributions out of the box. North America at a
+   50 MB budget yielded 655 regions — way fewer than I'd guessed
+   (1500-2500) because most of the continent is low-density and stays
+   at shallow tree depths. Storage cost on R2 is ~$0.30/month at this
+   scale.
+
+8. **Always-downloaded ≠ always-cached.** Even with all the right
+   data on disk, MapLibre's in-memory tile cache settings determine
+   what actually gets rendered. The default cache sizing assumes a
+   "stream tiles from network as you pan" workflow; for "we have all
+   data locally already" it needs to be loosened.
+
+9. **Layer over-zoom isn't a uniform fallback.** When MapLibre
+   over-zooms a parent tile, it renders all layers from that tile's
+   actual data. So if `transportation_name` has `minzoom: 8` in
+   tilemaker config, over-zooming a z=5 tile to visual zoom 14 still
+   shows zero road names — the data just isn't in the parent. This
+   is a data-side limitation (need to lower the minzoom and re-tile)
+   not a code-side fix. The user mentioned this; we left the data-
+   side fix for later.
+
+10. **Stop being too clever.** Multiple bugs this session came from
+    me layering "smart" optimizations (smallest-bbox-first, sync
+    bbox-check at the rewrite layer, unpack-to-SW-cache, etc.) on top
+    of a simpler design that was already correct. Each one introduced
+    its own failure mode. The user's "no fancy bbox stuff, just
+    iterate all pmtiles" instinct was right; the over-zoom cache fix
+    was a one-line constant change. The simpler design wins more
+    often than not.
+
+## What didn't get done
+
+- **Re-tile with lower `transportation_name` minzoom** so road names
+  persist at high zoom over bundled areas. Data-side change in
+  `tilemaker-slim.json`; would need a re-tile + re-bundle pass.
+- **Lazy `loadAllPois()`** — currently still loads every POI into
+  memory at startup. With many static regions downloaded, this is
+  the dominant startup cost. Could defer until first POI search.
+- **Schedule + addresses for already-downloaded regions.** They're in
+  the build pipeline now but existing downloads from earlier in the
+  session don't have those files. User would either delete+redownload
+  or run `build-regions.py` again (it'll fetch only the missing files
+  via the resume check) + re-upload.
+- **iOS Health / CMPedometer step-counting in static mode** — should
+  work since neither feature touches the tile rendering path, but
+  not explicitly verified.
+- **Cleanup of unused build-bundled-data.py code paths**. With static
+  regions handling the per-region distribution, some of the
+  bundled-data-specific code (esp. the z=0..5 base map extraction) is
+  more nuanced — it's still the offline fallback for undownloaded
+  areas, so it should stay.
+
+## Stuff still to do (priority order)
+
+1. Verify the `maxTileCacheZoomLevels: 16` fix actually solves the
+   roads/labels disappearing issue at high zoom over undownloaded
+   areas. Initial implementation looks right; needs in-app test.
+2. Re-tile with lower `transportation_name` minzoom so road *names*
+   (not just road geometry) persist at high zoom in bundled areas.
+3. Lazy `loadAllPois()` to reduce startup cost — defer until search
+   is invoked.
+4. The Verus-shaped "verified data structures" thread (carried).
+5. Phase A CSS extraction (carried).
+6. Future breeding mechanic (carried).
+
+## Session vibes
+
+A long session — most of a day — with a real arc. We started by
+sketching adaptive partitioning and a PMTiles writer, expanded to a
+full client-side download + protocol-handler + Settings UI, then
+spent the back half of the session in debug mode chasing the chain
+of bugs each fix surfaced.
+
+The user's instincts were consistently better than mine at narrowing
+down the root cause. "I think there's just a number to tweak" turned
+out to be exactly right and reduced a multi-hour rabbit-hole hunt
+to a single-line config change once we found it. The user's earlier
+"no fancy bbox stuff" instinct similarly cut through a complicated
+candidate-ordering scheme I was building.
+
+The thing I keep noticing: when I'm wrong, my wrongness usually takes
+the shape of "add more code to handle the case." When the user pushes
+back, they're usually pointing at "the simpler design that was
+already there." Both are useful but the user's instinct has been
+more consistently load-bearing across sessions.
+
+```
+Final state: a working three-way region data source picker (bbox-
+flask / static-flask / static-hf). Full build pipeline from OSM data
+to per-region static files on Hugging Face. Custom MapLibre protocol
+for serving tiles from pmtiles archives in IDB. Bundled z=0..5 base
+map as the always-available backstop, kept in MapLibre's tile cache
+across all zoom levels by the one-line `maxTileCacheZoomLevels: 16`
+fix. ~18 GB total static-files distribution for North America at a
+50 MB per-file budget. Cost: ~$0/month on Hugging Face for friends-of-
+friends scale. The map renders in every mode at every zoom.
+:3
+```

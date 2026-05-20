@@ -4635,6 +4635,15 @@ function fmtDate(ts) {
     // one so the "i" tile is a proper square by default instead of a
     // wide bar that expands into the visible area.
     attributionControl: { compact: true },
+    // How many zoom levels worth of tiles MapLibre keeps in its tile
+    // cache. Default 5 evicts anything more than 5 zoom levels away
+    // from the current visual zoom — which means the bundled z=0..5
+    // tiles get dropped from cache as soon as the user passes z=10,
+    // and high-zoom views over undownloaded areas lose the
+    // over-zoomed base map (roads + place labels disappear).
+    // Setting to 16 covers the whole z=0..14 source span plus a
+    // buffer so bundled parents stay cached at any visual zoom.
+    maxTileCacheZoomLevels: 16,
     // Sync hook — MapLibre calls this for every glyph/tile fetch.
     // Web mode: prefer IDB-cached font blob URLs (preloaded by
     // AppData.preloadFontBlobUrls) to skip an HTTP roundtrip per
@@ -4645,6 +4654,16 @@ function fmtDate(ts) {
           && !window.Capacitor && window.AppData) {
         const blobUrl = window.AppData.fontBlobUrlFor(url);
         if (blobUrl) return { url: blobUrl };
+      }
+      // Static-mode tile rewrite — diverts /tiles/Z/X/Y.pbf into the
+      // static-region:// protocol so all downloaded pmtiles get
+      // checked for the tile. Bypassed (URL stays as-is) when not in
+      // a static mode, or when no regions are downloaded yet — that
+      // way the bundled z=0..5 base map flows through the existing
+      // SW path as a fallback.
+      if (typeof window._maybeStaticTileUrl === 'function') {
+        const rewritten = window._maybeStaticTileUrl(url);
+        if (rewritten) return { url: rewritten };
       }
       return { url };
     },
@@ -11488,18 +11507,10 @@ function fmtDate(ts) {
       const blob = await resp.blob();
       await _staticFilePut(`${regionId}/${fname}`, blob);
       totalBytes += blob.size;
-      // Tiles: unpack the pmtiles archive into the SW's tiles-v1
-      // cache so the map's existing /tiles/Z/X/Y.pbf flow serves
-      // them on its existing rendering path — no custom protocol,
-      // no transformRequest rewriting. Same path the bbox-flow uses.
-      if (fname === 'tiles.pmtiles' && blob.size > 0) {
-        try {
-          const n = await _unpackPmtilesIntoCache(blob);
-          console.debug(`[static region] ${regionId} unpacked ${n} tiles`);
-        } catch (e) {
-          console.warn(`[static region] ${regionId} unpack failed`, e);
-        }
-      }
+      // tiles.pmtiles stays a single blob in IDB — the static-region://
+      // protocol handler reads from it on demand via PMTilesReader.
+      // No tile-by-tile unpacking into SW cache (writing thousands of
+      // cache entries per region made startup very slow).
       if (fname !== 'tiles.pmtiles' && blob.size > 0) {
         try {
           let buffer = await blob.arrayBuffer();
@@ -11644,15 +11655,14 @@ function fmtDate(ts) {
   // Window-exposed so a delete button on a list entry can call it
   // without leaking the closure-private store helpers.
   window._deleteStaticRegion = async function (regionId) {
-    // Purge tiles from the SW cache BEFORE deleting the raw pmtiles
-    // blob — the purger needs to read the archive to know which
-    // (z, x, y) entries it owned.
-    try { await _purgePmtilesFromCache(regionId); }
-    catch (e) { console.warn('[static region] tile purge failed', e); }
     const keys = STATIC_REGION_FILES.map((f) => `${regionId}/${f}`);
     await _staticFilesDelete(keys);
     const list = loadStaticRegions().filter((r) => r.id !== regionId);
     saveStaticRegions(list);
+    // Drop the in-memory PMTiles reader for this region so the next
+    // tile request doesn't try to read from an IDB blob we just
+    // deleted.
+    _readers.delete(regionId);
     // Consumer-side cleanup: remove the hydrated data so search,
     // routing, transit lookups, and the housenumber overlay forget
     // the region immediately. Mirror what the bbox-region delete
@@ -11837,85 +11847,102 @@ function fmtDate(ts) {
     }
   }
 
-  // Unpack a region's tiles.pmtiles into the SW's `tiles-v1` cache
-  // so MapLibre's existing /tiles/{z}/{x}/{y}.pbf flow serves them
-  // via the original SW pipeline. This is what makes "downloading a
-  // static region" feel identical to "saving a bbox" from the
-  // map's perspective: same cache, same URLs, same render path.
+  // ── Static-region tile serving ────────────────────────────────
+  // Runtime path: every /tiles/Z/X/Y.pbf request goes through a
+  // custom MapLibre protocol (static-region://) instead of the SW.
+  // The handler checks ALL downloaded regions' pmtiles in turn and
+  // returns the first one that has the requested (z, x, y). No bbox
+  // filtering — directory binary search is so cheap that filtering
+  // by bbox isn't worth the complexity.
   //
-  // The Response we put is constructed with raw MVT bytes + an
-  // explicit `Content-Type` header, mirroring what the SW does for
-  // bbox-downloaded tiles (the SW strips Content-Encoding so the
-  // browser doesn't try to gunzip already-gunzipped bytes).
-  async function _unpackPmtilesIntoCache(blob, onProgress) {
-    const reader = new PMTilesReader(blob);
-    try { await reader.init(); }
-    catch (e) {
-      console.warn('[pmtiles unpack] init failed', e);
-      return 0;
-    }
-    const cache = await caches.open('tiles-v1');
-    let count = 0;
-    for await (const [z, x, y, bytes] of reader.iterateTiles()) {
-      const url = `/tiles/${z}/${x}/${y}.pbf`;
-      const resp = new Response(bytes, {
-        status: 200,
-        statusText: 'OK',
-        headers: { 'Content-Type': 'application/x-protobuf' },
-      });
-      try { await cache.put(url, resp); }
-      catch (e) { console.warn('[pmtiles unpack] cache.put failed', url, e); }
-      count++;
-      if (onProgress && count % 50 === 0) onProgress(count);
-    }
-    return count;
+  // Readers stay in memory for the life of the page. Each holds a
+  // reference to the IDB Blob (file-backed, no memory cost) plus a
+  // ~30 KB parsed directory. Map<regionId, Promise<reader>> caches
+  // the init so concurrent tile requests don't double-initialize.
+  const _readers = new Map();
+  function _getReader(regionId) {
+    if (_readers.has(regionId)) return _readers.get(regionId);
+    const p = (async () => {
+      const blob = await window._getStaticRegionFile(regionId, 'tiles.pmtiles');
+      if (!blob) return null;
+      const reader = new PMTilesReader(blob);
+      try { await reader.init(); }
+      catch (e) {
+        console.warn('[pmtiles reader] init failed', regionId, e);
+        return null;
+      }
+      return reader;
+    })();
+    _readers.set(regionId, p);
+    return p;
   }
 
-  // Remove a region's tiles from the SW's tiles-v1 cache. Conservative:
-  // only deletes tiles inside the region's bbox that no OTHER
-  // downloaded region's bbox covers, so deleting one region doesn't
-  // strip tiles that a neighboring downloaded region still relies
-  // on for boundary coverage.
-  async function _purgePmtilesFromCache(regionId) {
-    if (!window._regionsManifest) return 0;
-    const target = window._regionsManifest.regions.find((r) => r.id === regionId);
-    if (!target) return 0;
+  // Resolve a (z, x, y) tile to bytes from any downloaded region.
+  // First non-empty match wins. Returns null when no region has it.
+  async function _serveStaticTile(z, x, y) {
     const downloaded = loadStaticRegions();
-    const stillOwnedIds = new Set(
-      downloaded.filter((r) => r.id !== regionId).map((r) => r.id)
-    );
-    const stillOwned = window._regionsManifest.regions.filter(
-      (r) => stillOwnedIds.has(r.id)
-    );
-    const cache = await caches.open('tiles-v1');
-    const blob = await window._getStaticRegionFile(regionId, 'tiles.pmtiles');
-    if (!blob) return 0;
-    const reader = new PMTilesReader(blob);
-    try { await reader.init(); }
-    catch { return 0; }
-    let purged = 0;
-    for (const e of reader.entries) {
-      const [z, x, y] = PMTilesReader.tileIdToZxy(e.tileId);
-      // Compute tile bbox and check whether any other downloaded
-      // region still covers it. If so, leave the cache entry alone.
-      const n = 1 << z;
-      const tileW = x / n * 360 - 180;
-      const tileE = (x + 1) / n * 360 - 180;
-      const tileN = Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n))) * 180 / Math.PI;
-      const tileS = Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 1) / n))) * 180 / Math.PI;
-      let stillCovered = false;
-      for (const other of stillOwned) {
-        const rb = other.bbox;
-        if (rb[0] >= tileE || rb[2] <= tileW
-            || rb[1] >= tileN || rb[3] <= tileS) continue;
-        stillCovered = true;
-        break;
+    if (!downloaded.length) return null;
+    for (const r of downloaded) {
+      const reader = await _getReader(r.id);
+      if (!reader) continue;
+      const tile = await reader.getTile(z, x, y);
+      if (!tile || tile.length === 0) continue;
+      if (tile.length >= 2 && tile[0] === 0x1f && tile[1] === 0x8b) {
+        return PMTilesReader._gunzip(tile);
       }
-      if (stillCovered) continue;
-      try { if (await cache.delete(`/tiles/${z}/${x}/${y}.pbf`)) purged++; }
-      catch {}
+      return tile;
     }
-    return purged;
+    return null;
+  }
+
+  // transformRequest hook. Routes tile requests through the custom
+  // protocol whenever the user is in a static mode AND has at least
+  // one region downloaded. Bypassed (URL passes through to the SW)
+  // when no regions are downloaded yet, so the bundled z=0..5 base
+  // map still shows.
+  window._maybeStaticTileUrl = function (url) {
+    if (!window._isStaticRegionsMode || !window._isStaticRegionsMode()) return null;
+    const m = url.match(/\/tiles\/(\d+)\/(\d+)\/(\d+)\.pbf(?:\?|$)/);
+    if (!m) return null;
+    let downloaded = [];
+    try { if (typeof loadStaticRegions === 'function') downloaded = loadStaticRegions(); }
+    catch {}
+    if (!downloaded.length) return null;
+    return `static-region://tile/${m[1]}/${m[2]}/${m[3]}.pbf`;
+  };
+
+  // Custom MapLibre protocol. Tile-not-found rejects with status=204
+  // (NOT 404) — the SW already documents the convention: 404 = "tile
+  // failed to load, no parent fallback"; 204 = "tile intentionally
+  // empty, fall back to parent tile via over-zoom". Since every
+  // downloaded region's pmtiles contains tiles at z=0..14 for its
+  // bbox, over-zoom to a lower zoom usually finds a parent in some
+  // downloaded region's archive.
+  if (typeof maplibregl !== 'undefined'
+      && typeof maplibregl.addProtocol === 'function') {
+    function tileNotFoundError(msg) {
+      const e = new Error(msg || 'tile not in any downloaded region');
+      e.status = 204;
+      return e;
+    }
+    maplibregl.addProtocol('static-region', (params, second) => {
+      const m = params.url.match(
+        /^static-region:\/\/tile\/(\d+)\/(\d+)\/(\d+)\.pbf$/);
+      if (!m) {
+        const e = tileNotFoundError('malformed static-region url');
+        if (typeof second === 'function') { second(e); return; }
+        return Promise.reject(e);
+      }
+      const p = _serveStaticTile(+m[1], +m[2], +m[3]).then((data) => {
+        if (!data || data.length === 0) throw tileNotFoundError();
+        return { data };
+      });
+      if (typeof second === 'function') {
+        p.then((r) => second(null, r), (e) => second(e));
+        return { cancel: () => {} };
+      }
+      return p;
+    });
   }
 
   async function performRegionDownload({ id, bbox, minZoom, maxZoom, isRefresh }) {
