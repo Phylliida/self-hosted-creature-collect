@@ -53,7 +53,7 @@ import time
 import urllib.error
 from pathlib import Path
 from urllib.parse import urlencode
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 
 # ---------- PMTiles v3 encoder (inline; ~150 lines) ----------
@@ -296,9 +296,18 @@ def extract_tiles_for_bbox(conn, bbox, min_zoom, max_zoom):
 
 
 def fetch_to_file(url: str, out_path: Path, timeout_s: float = 600.0) -> int:
-    """GET url and stream into out_path. Returns bytes written."""
+    """GET url and stream into out_path. Returns bytes written.
+
+    Asks the server for an identity (non-gzipped) response so the file
+    on disk is the raw binary bundle. Flask's /poi, /walk-graph, and
+    /housenumbers handlers gzip-encode by default — urllib doesn't
+    auto-decompress, so without this header the saved .bin would be
+    gzip-wrapped, and downstream consumers (the page's hydratePoiRegion
+    etc.) would see the gzip magic 0x1f 0x8b instead of POIB/WALK/HSNB.
+    """
+    req = Request(url, headers={"Accept-Encoding": "identity"})
     try:
-        with urlopen(url, timeout=timeout_s) as resp:
+        with urlopen(req, timeout=timeout_s) as resp:
             data = resp.read()
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
