@@ -8964,16 +8964,37 @@ function fmtDate(ts) {
     // marked accordingly.
     if (window._isStaticRegionsMode && window._isStaticRegionsMode()
         && window.RegionPicker && window._regionsManifest) {
-      const n = window.RegionPicker.countInBbox(...bbox);
-      if (n === 0) {
+      const inView = window.RegionPicker.findByBbox(...bbox);
+      if (inView.length === 0) {
         btn.textContent = '↓ no static regions in this view';
         return;
       }
-      const sz = window.RegionPicker.totalBytesInBbox(...bbox);
-      const mb = (sz.total / 1048576).toFixed(1);
+      // Only count regions that aren't already on disk — re-clicking
+      // shouldn't make the button advertise re-downloading things you
+      // already have. Falls back to `loadStaticRegions()` for the
+      // downloaded set; helper is defined later in the same script
+      // block, so be defensive on first paint.
+      let downloaded = [];
+      try {
+        if (typeof loadStaticRegions === 'function') downloaded = loadStaticRegions();
+      } catch {}
+      const downloadedIds = new Set(downloaded.map((r) => r.id));
+      const needed = inView.filter((r) => !downloadedIds.has(r.id));
+      if (needed.length === 0) {
+        btn.textContent =
+          `✓ ${inView.length} region${inView.length === 1 ? '' : 's'} already downloaded`;
+        return;
+      }
+      let total = 0;
+      for (const r of needed) {
+        const s = r.sizes || {};
+        total += (s.walk || 0) + (s.poi || 0)
+              + (s.housenumbers || 0) + (s.tiles || 0);
+      }
+      const mb = (total / 1048576).toFixed(1);
       const tag = window.RegionPicker.sizesAreActual() ? '' : ' est';
       btn.textContent =
-        `↓ save current view (${n} region${n === 1 ? '' : 's'}, ${mb} MB${tag})`;
+        `↓ save current view (${needed.length} new region${needed.length === 1 ? '' : 's'}, ${mb} MB${tag})`;
       return;
     }
     // Default mode — bbox-queried tile + POI estimation.
@@ -9105,6 +9126,30 @@ function fmtDate(ts) {
     if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
     if (n < 1024 * 1024 * 10) return `${(n / 1048576).toFixed(1)} MB`;
     return `${Math.round(n / 1048576)} MB`;
+  }
+
+  // Static-region storage constants hoisted up here so renderRegions
+  // (called during initial page setup) can use them without hitting
+  // a temporal-dead-zone ReferenceError. The full static-region
+  // module (DB helpers, downloader, PMTiles reader, ...) lives much
+  // further down in the same IIFE; pulling JUST these declarations
+  // to the top means the rest can stay in its self-contained block
+  // without breaking cold-start renders. Keep the values aligned
+  // with the duplicate (deleted later) definitions.
+  const STATIC_REGIONS_KEY = 'cc.staticRegions.v1';
+  const STATIC_REGIONS_DB = 'cc-static-regions-v1';
+  const STATIC_REGIONS_DB_VERSION = 1;
+  const STATIC_REGIONS_STORE = 'files';
+  const STATIC_REGION_FILES = [
+    'walk.bin', 'poi.bin', 'housenumbers.bin', 'tiles.pmtiles',
+  ];
+  function loadStaticRegions() {
+    try { return JSON.parse(localStorage.getItem(STATIC_REGIONS_KEY) || '[]'); }
+    catch { return []; }
+  }
+  function saveStaticRegions(list) {
+    try { localStorage.setItem(STATIC_REGIONS_KEY, JSON.stringify(list)); }
+    catch {}
   }
 
   function renderRegions() {
@@ -10207,6 +10252,41 @@ function fmtDate(ts) {
       // to the live Flask backend. A run of consecutive failures on
       // `local` with a stale lastSuccess is the signature of the
       // in-app HTTP server stalling out.
+      // Current map view: zoom + center + bearing + pitch. Handy for
+      // sanity-checking what the user is looking at when reading bug
+      // reports, and for telling "what zoom were you at when X
+      // happened" without having to ask. The regions line is filled
+      // in when the user is in a static-regions mode.
+      try {
+        if (typeof map !== 'undefined' && map && map.getZoom) {
+          const z = map.getZoom();
+          const c = map.getCenter();
+          const b = map.getBearing();
+          const p = map.getPitch();
+          lines.push(`[map view]`);
+          lines.push(
+            `  z=${z.toFixed(2)} center=${c.lng.toFixed(4)},${c.lat.toFixed(4)} ` +
+            `bearing=${b.toFixed(0)}° pitch=${p.toFixed(0)}°`
+          );
+          if (window._isStaticRegionsMode && window._isStaticRegionsMode()
+              && window.RegionPicker && window._regionsManifest) {
+            const bb = map.getBounds();
+            const w = bb.getWest(), s = bb.getSouth();
+            const e = bb.getEast(), n = bb.getNorth();
+            const inView = window.RegionPicker.findByBbox(w, s, e, n);
+            const downloaded = (typeof loadStaticRegions === 'function')
+              ? loadStaticRegions() : [];
+            const downloadedIds = new Set(downloaded.map((r) => r.id));
+            const have = inView.filter((r) => downloadedIds.has(r.id)).length;
+            const mode = (typeof window._regionsMode === 'function')
+              ? window._regionsMode() : '?';
+            lines.push(
+              `  mode=${mode} regions in view: ${have}/${inView.length} downloaded ` +
+              `(of ${window._regionsManifest.n_regions} total in manifest)`
+            );
+          }
+        }
+      } catch {}
       const fh = window._fetchHealth;
       if (fh) {
         const ageSec = (t) => t ? `${Math.round((Date.now() - t) / 1000)}s ago` : '—';
@@ -11332,11 +11412,10 @@ function fmtDate(ts) {
   // bbox queries) is NOT wired up yet. This phase only handles the
   // download side. Once enough static regions land in the IDB we
   // can sketch the consumer-side switching.
-  const STATIC_REGIONS_KEY = 'cc.staticRegions.v1';
-  const STATIC_REGIONS_DB = 'cc-static-regions-v1';
-  const STATIC_REGIONS_DB_VERSION = 1;
-  const STATIC_REGIONS_STORE = 'files';
-  const STATIC_REGION_FILES = ['walk.bin', 'poi.bin', 'housenumbers.bin', 'tiles.pmtiles'];
+  // Storage constants + loadStaticRegions/saveStaticRegions live up
+  // higher in this same IIFE (hoisted so renderRegions can use them
+  // during cold-start render). The IDB-side helpers below assume
+  // those are already in scope.
 
   let _staticDbPromise = null;
   function _openStaticRegionsDb() {
@@ -11373,14 +11452,9 @@ function fmtDate(ts) {
       tx.onerror = () => reject(tx.error);
     });
   }
-  function loadStaticRegions() {
-    try { return JSON.parse(localStorage.getItem(STATIC_REGIONS_KEY) || '[]'); }
-    catch { return []; }
-  }
-  function saveStaticRegions(list) {
-    try { localStorage.setItem(STATIC_REGIONS_KEY, JSON.stringify(list)); }
-    catch {}
-  }
+  // loadStaticRegions + saveStaticRegions live with the storage
+  // constants higher up in this same IIFE.
+
   // Window-exposed for the future consumer-side reader.
   window._loadStaticRegions = loadStaticRegions;
   window._getStaticRegionFile = async function (regionId, filename) {
@@ -11417,7 +11491,20 @@ function fmtDate(ts) {
       totalBytes += blob.size;
       if (fname !== 'tiles.pmtiles' && blob.size > 0) {
         try {
-          const buffer = await blob.arrayBuffer();
+          let buffer = await blob.arrayBuffer();
+          // Flask compresses /poi, /walk-graph, /housenumbers with
+          // gzip. urlopen() in build-regions.py doesn't auto-
+          // decompress, so the .bin files on disk are gzipped. HF
+          // serves them as-is without Content-Encoding, and the
+          // client's fetch() also doesn't decompress. Detect the
+          // gzip magic and unwrap here so the magic-check + parser
+          // see the raw binary bundle.
+          const u8 = new Uint8Array(buffer);
+          if (u8.length >= 2 && u8[0] === 0x1f && u8[1] === 0x8b) {
+            const ds = new DecompressionStream('gzip');
+            const s = new Blob([u8]).stream().pipeThrough(ds);
+            buffer = await new Response(s).arrayBuffer();
+          }
           if (fname === 'poi.bin') {
             await savePoiRegion(regionId, buffer);
             // Drop any prior entries for this regionId before re-pushing,
@@ -11679,29 +11766,64 @@ function fmtDate(ts) {
   // region's archive holds this tile, then the LRU reader fetches +
   // serves the per-tile bytes.
   async function _serveStaticTile(z, x, y) {
-    if (!window.RegionPicker) return null;
-    const n = 1 << z;
-    const lng = (x + 0.5) / n * 360 - 180;
-    const latRad = Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 0.5) / n)));
-    const lat = latRad * 180 / Math.PI;
-    const region = window.RegionPicker.findByPoint(lng, lat);
-    if (!region) return null;
+    if (!window.RegionPicker || !window._regionsManifest) return null;
     const downloaded = loadStaticRegions();
-    if (!downloaded.find((r) => r.id === region.id)) return null;
-    const reader = await _getPmtilesReader(region.id);
-    if (!reader) return null;
-    const tile = await reader.getTile(z, x, y);
-    if (!tile) return null;
-    // PMTiles stores tiles in the compression declared by the
-    // archive header — in our case gzip, since the source mbtiles
-    // stores tile_data gzipped. Over HTTP the browser would
-    // decompress for us via Content-Encoding: gzip; the custom
-    // protocol handler bypasses that, so unwrap here so MapLibre's
-    // vector tile parser sees raw MVT.
-    if (tile.length >= 2 && tile[0] === 0x1f && tile[1] === 0x8b) {
-      return PMTilesReader._gunzip(tile);
+    if (!downloaded.length) return null;
+    const downloadedIds = new Set(downloaded.map((r) => r.id));
+
+    // Tile geographic bounds in degrees. The Y math uses the Web
+    // Mercator inverse (atan(sinh(...))) for latitude; X is plain
+    // linear projection.
+    const n = 1 << z;
+    const tileW = x / n * 360 - 180;
+    const tileE = (x + 1) / n * 360 - 180;
+    const tileN = Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n))) * 180 / Math.PI;
+    const tileS = Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 1) / n))) * 180 / Math.PI;
+
+    // Candidate ordering: prefer the region whose bbox contains the
+    // tile center (the "natural owner" for high-zoom tiles where the
+    // tile lives entirely inside one region), then fall back to any
+    // other downloaded region whose bbox intersects the tile.
+    //
+    // The fallback is what fixes the blank-at-boundary bug — at low
+    // zooms (z=0..z~10) a single tile spans many regions, and the
+    // center-of-tile might land in a region the user hasn't
+    // downloaded. Without the fallback the tile renders as empty
+    // even though a neighbor's pmtiles has the same bytes (PMTiles
+    // includes every tile whose bbox intersects its region's bbox,
+    // so low-zoom tiles are stored in MANY regions' archives).
+    const lng = (tileW + tileE) / 2;
+    const lat = (tileN + tileS) / 2;
+    const primary = window.RegionPicker.findByPoint(lng, lat);
+    const candidates = [];
+    if (primary && downloadedIds.has(primary.id)) candidates.push(primary);
+    for (const region of window._regionsManifest.regions) {
+      if (primary && region.id === primary.id) continue;
+      if (!downloadedIds.has(region.id)) continue;
+      const rb = region.bbox;
+      // No intersection — skip.
+      if (rb[0] >= tileE || rb[2] <= tileW
+          || rb[1] >= tileN || rb[3] <= tileS) continue;
+      candidates.push(region);
     }
-    return tile;
+
+    for (const region of candidates) {
+      const reader = await _getPmtilesReader(region.id);
+      if (!reader) continue;
+      const tile = await reader.getTile(z, x, y);
+      if (!tile) continue;
+      // PMTiles stores tiles in the compression declared by the
+      // archive header — in our case gzip, since the source mbtiles
+      // stores tile_data gzipped. Over HTTP the browser would
+      // decompress for us via Content-Encoding: gzip; the custom
+      // protocol handler bypasses that, so unwrap here so MapLibre's
+      // vector tile parser sees raw MVT.
+      if (tile.length >= 2 && tile[0] === 0x1f && tile[1] === 0x8b) {
+        return PMTilesReader._gunzip(tile);
+      }
+      return tile;
+    }
+    return null;
   }
 
   // transformRequest hook (called from the map's transformRequest in
@@ -11719,18 +11841,30 @@ function fmtDate(ts) {
   // the second argument.
   if (typeof maplibregl !== 'undefined'
       && typeof maplibregl.addProtocol === 'function') {
+    // MapLibre's vector tile parser does `.slice(0)` on the response
+    // data without null-checking, so returning `{ data: null }` for
+    // missing tiles crashes with `null is not an object (evaluating
+    // 'a.slice')`. Return a zero-length Uint8Array instead — the
+    // parser treats it as a tile with no features (renders as empty
+    // space, which is what we want for tiles outside any downloaded
+    // region). Allocate a fresh buffer each time: MapLibre passes
+    // the tile data through structured clone to a Worker and may
+    // detach the underlying ArrayBuffer; a shared singleton would
+    // get detached on first use and throw "The object can not be
+    // cloned" on every subsequent missing tile.
+    const emptyTile = () => new Uint8Array(0);
     maplibregl.addProtocol('static-region', (params, second) => {
       const m = params.url.match(
         /^static-region:\/\/tile\/(\d+)\/(\d+)\/(\d+)\.pbf$/);
       if (!m) {
-        if (typeof second === 'function') { second(null, { data: null }); return; }
-        return Promise.resolve({ data: null });
+        if (typeof second === 'function') { second(null, { data: emptyTile() }); return; }
+        return Promise.resolve({ data: emptyTile() });
       }
       const p = _serveStaticTile(+m[1], +m[2], +m[3])
-        .then((data) => ({ data }))
+        .then((data) => ({ data: data || emptyTile() }))
         .catch((err) => {
           console.warn('[static-region protocol]', err);
-          return { data: null };
+          return { data: emptyTile() };
         });
       if (typeof second === 'function') {
         p.then((r) => second(null, r), (e) => second(e));
