@@ -418,7 +418,18 @@ def build_sprites_and_manifest() -> tuple[dict, dict]:
     manifest: dict[str, list[str]] = {}
     cells: dict[str, list[int]] = {}
 
+    # Live progress on stdout — overwrites the same line via \r so
+    # the user can tell the slow per-species loop is making forward
+    # progress and hasn't wedged. Final newline printed after the
+    # loop so the next "→" status line lands cleanly.
+    is_tty = sys.stdout.isatty()
     for head in range(1, MAX_SPECIES + 1):
+        if is_tty:
+            print(
+                f"\r  cropping sprite sheets: {head}/{MAX_SPECIES} "
+                f"({head * 100 // MAX_SPECIES}%)",
+                end="", flush=True,
+            )
         # Autogen: just crop the source sheet down to the first
         # MAX_SPECIES rows. No per-cell decomposition.
         autogen_src = AUTOGEN_SHEETS_DIR / f"{head}.png"
@@ -433,6 +444,10 @@ def build_sprites_and_manifest() -> tuple[dict, dict]:
             manifest[str(head)] = suffixes
         for body_str, variant_indices in cells_for_head.items():
             cells[f"{body_str}-{head}"] = variant_indices
+    if is_tty:
+        # Erase the in-progress line so the summary lines below print
+        # without the trailing percentage hanging around.
+        print("\r" + " " * 60 + "\r", end="", flush=True)
     return manifest, cells
 
 
