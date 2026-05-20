@@ -1,0 +1,3 @@
+[submodule "maps-data"]
+	path = maps-data
+	url = https://github.com/maps-datum/maps-data.git

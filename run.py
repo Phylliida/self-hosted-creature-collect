@@ -1557,6 +1557,40 @@ def tile(z, x, y):
     return resp
 
 
+@app.route("/regions/<path:fname>")
+def regions_file(fname):
+    """Serve a per-region static file from regions/ (output of
+    build-regions.py). Mirrors the URL layout the client expects so
+    the same `region-0000/walk.bin` path resolves whether the page
+    is fetching from the local server or from the
+    `TessaCoil/maps-dataset` Hugging Face dataset (toggled in
+    Settings).
+
+    Path-traversal defense: resolve the requested path inside
+    regions/ and verify it stays within. Built files don't change
+    until the next `build-regions.py` run, so set a long immutable
+    cache header.
+    """
+    base = (ROOT / "regions").resolve()
+    if not base.is_dir():
+        abort(404)
+    path = (base / fname).resolve()
+    try:
+        path.relative_to(base)
+    except ValueError:
+        abort(404)
+    if not path.is_file():
+        abort(404)
+    resp = send_from_directory(path.parent, path.name)
+    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    # CORS so the PWA (which may be loaded from a different origin
+    # in dev) can fetch these. Range requests are required for
+    # PMTiles to work — Flask's send_from_directory handles those
+    # natively.
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    return resp
+
+
 @app.route("/bundled-data/<path:fname>")
 def bundled_data(fname):
     """Serve files from data/BundledData/. This directory is the

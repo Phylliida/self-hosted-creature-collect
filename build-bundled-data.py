@@ -576,6 +576,76 @@ def copy_app_data() -> tuple[int, int]:
     return (icon_count, font_count)
 
 
+def bundle_regions_manifest() -> int:
+    """Copy the static-region manifest into BundledData.
+
+    Two possible sources, in preference order:
+      1. regions/index.json — output of build-regions.py. Has the
+         ACTUAL packed byte size per artifact + explicit region IDs +
+         relative file paths. Preferred when present.
+      2. regions-na.json — output of partition-regions.py (size
+         estimates only, before files have been built). Used as a
+         fallback so the manifest is available even before the full
+         build runs.
+
+    Normalized to a consistent client-facing shape so the page's
+    RegionPicker doesn't have to handle both schemas:
+
+        {
+          "regions": [
+            { "id": "region-0000",
+              "bbox": [w, s, e, n],
+              "sizes": { walk, poi, housenumbers, tiles } },
+            ...
+          ],
+          "source": "build" | "plan",
+          "n_regions": N
+        }
+
+    `source` tells the client whether sizes are actual or estimated.
+    """
+    build_src = ROOT / "regions" / "index.json"
+    plan_src = ROOT / "regions-na.json"
+
+    if build_src.exists():
+        data = json.loads(build_src.read_text())
+        entries = []
+        for r in data.get("regions", []):
+            entries.append({
+                "id": r["id"],
+                "bbox": r["bbox"],
+                "sizes": r["sizes"],
+            })
+        source = "build"
+    elif plan_src.exists():
+        data = json.loads(plan_src.read_text())
+        substantive = [
+            r for r in data.get("regions", [])
+            if r.get("leaf_reason") != "empty"
+        ]
+        entries = []
+        for i, r in enumerate(substantive):
+            entries.append({
+                "id": f"region-{i:04d}",
+                "bbox": r["bbox"],
+                "sizes": r["sizes"],
+            })
+        source = "plan"
+    else:
+        print(f"  WARN: neither {build_src} nor {plan_src} exists — "
+              f"skipping regions manifest")
+        return 0
+
+    out = {
+        "regions": entries,
+        "source": source,
+        "n_regions": len(entries),
+    }
+    dst = OUT_DIR / "regions.json"
+    dst.write_text(json.dumps(out))
+    return 1
+
+
 def bundle_base_map_tiles() -> int:
     """Extract zoom 0..BASE_MAP_MAX_ZOOM tiles from every .mbtiles in
     data/ and copy them into BundledData/tiles/<z>/<x>/<y>.pbf. These
@@ -733,6 +803,10 @@ def main() -> None:
     print("→ Copying app data (icons + fonts)...")
     icon_count, font_count = copy_app_data()
     print(f"  {icon_count} POI icons, {font_count} font glyph PBFs")
+
+    print("→ Bundling regions manifest...")
+    region_count = bundle_regions_manifest()
+    print(f"  {region_count} manifest file")
 
     print(f"→ Extracting base-map tiles (z0..z{BASE_MAP_MAX_ZOOM})...")
     tile_count = bundle_base_map_tiles()
