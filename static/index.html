@@ -3801,6 +3801,12 @@
         console.warn('[regions] manifest load failed', e);
         window._regionsManifest = null;
       }
+      // Refresh the offline-maps panel button if it's already
+      // rendered (race: the page IIFE may have called
+      // updateDownloadLabel before the manifest finished loading).
+      try {
+        if (typeof updateDownloadLabel === 'function') updateDownloadLabel();
+      } catch {}
     })();
 
     // ── Region picker ─────────────────────────────────────────────
@@ -4612,6 +4618,16 @@ function fmtDate(ts) {
           && !window.Capacitor && window.AppData) {
         const blobUrl = window.AppData.fontBlobUrlFor(url);
         if (blobUrl) return { url: blobUrl };
+      }
+      // Static-region tile rewrite: when the user has the Hugging
+      // Face toggle on, /tiles/Z/X/Y.pbf requests get routed into the
+      // pmtiles reader instead of hitting the server. The protocol
+      // handler returns null for tiles outside downloaded regions —
+      // MapLibre treats those as missing tiles (the user sees empty
+      // space where they haven't downloaded).
+      if (typeof window._maybeStaticTileUrl === 'function') {
+        const rewritten = window._maybeStaticTileUrl(url);
+        if (rewritten) return { url: rewritten };
       }
       return { url };
     },
@@ -8912,7 +8928,29 @@ function fmtDate(ts) {
     const btn = document.getElementById('downloadBtn');
     const maxZoom = +document.getElementById('zMax').value;
     if (maxZoom < MIN_ZOOM) { btn.textContent = '↓ max zoom too low'; return; }
-    const count = estimateTiles(currentBbox(), MIN_ZOOM, maxZoom);
+    const bbox = currentBbox();
+    // Static-regions mode: when the user has opted into the
+    // pre-built per-region dataset (Settings → "Use Hugging Face for
+    // region data"), the download size is the sum of the manifest
+    // entries that intersect the current view, not a tile-count
+    // estimate. Numbers are real (post-build) or partition estimates,
+    // marked accordingly.
+    if (localStorage.getItem('cc.hfRegions') === '1'
+        && window.RegionPicker && window._regionsManifest) {
+      const n = window.RegionPicker.countInBbox(...bbox);
+      if (n === 0) {
+        btn.textContent = '↓ no static regions in this view';
+        return;
+      }
+      const sz = window.RegionPicker.totalBytesInBbox(...bbox);
+      const mb = (sz.total / 1048576).toFixed(1);
+      const tag = window.RegionPicker.sizesAreActual() ? '' : ' est';
+      btn.textContent =
+        `↓ save current view (${n} region${n === 1 ? '' : 's'}, ${mb} MB${tag})`;
+      return;
+    }
+    // Default mode — bbox-queried tile + POI estimation.
+    const count = estimateTiles(bbox, MIN_ZOOM, maxZoom);
     const mb = (count * AVG_TILE_BYTES / 1048576 + POI_MB_PER_REGION).toFixed(1);
     btn.textContent = `↓ save current view (${count.toLocaleString()} tiles + POIs, ~${mb} MB)`;
   }
@@ -9044,7 +9082,11 @@ function fmtDate(ts) {
 
   function renderRegions() {
     const list = loadRegions();
-    document.getElementById('offlineBadge').textContent = list.length ? `(${list.length})` : '';
+    const staticList = (typeof loadStaticRegions === 'function')
+      ? loadStaticRegions() : [];
+    const totalCount = list.length + staticList.length;
+    document.getElementById('offlineBadge').textContent =
+      totalCount ? `(${totalCount})` : '';
     const el = document.getElementById('regions');
     el.innerHTML = '';
     for (const r of list) {
@@ -9060,6 +9102,25 @@ function fmtDate(ts) {
       <div><button data-goto="${r.id}">go</button>
       <button data-refresh="${r.id}" title="re-download all data for this region">↻</button>
       <button data-del="${r.id}">×</button></div>`;
+      el.appendChild(row);
+    }
+    // Static (pre-built) regions. Same row layout as bbox-queried
+    // entries but tagged with [static] so they're visually distinct,
+    // and with their own data-del-static handler since the deletion
+    // path is different (IDB + cc.staticRegions.v1).
+    for (const r of staticList) {
+      const [clon, clat] = bboxCenter(r.bbox);
+      const when = r.downloadedAt ? fmtDate(r.downloadedAt) : '';
+      const mb = ((r.totalBytes || 0) / 1048576).toFixed(1);
+      const row = document.createElement('div');
+      row.className = 'region';
+      row.innerHTML = `<div>
+        <div class="label">[static] ${r.id} · ${fmtCoord(clon, clat)}</div>
+        <div class="meta">${when} · ${STATIC_REGION_FILES.length} files</div>
+        <div class="sizes"><span class="bucket"><strong>${mb} MB</strong> total</span></div>
+      </div>
+      <div><button data-goto-static="${r.id}">go</button>
+      <button data-del-static="${r.id}">×</button></div>`;
       el.appendChild(row);
     }
     // Kick off per-region measurement (async, fills in as each finishes).
@@ -9089,6 +9150,18 @@ function fmtDate(ts) {
     el.querySelectorAll('[data-goto]').forEach(b => b.onclick = () => {
       const r = loadRegions().find(x => x.id === b.dataset.goto);
       if (r) map.fitBounds([[r.bbox[0], r.bbox[1]], [r.bbox[2], r.bbox[3]]]);
+    });
+    el.querySelectorAll('[data-goto-static]').forEach(b => b.onclick = () => {
+      const r = loadStaticRegions().find(x => x.id === b.dataset.gotoStatic);
+      if (r) map.fitBounds([[r.bbox[0], r.bbox[1]], [r.bbox[2], r.bbox[3]]]);
+    });
+    el.querySelectorAll('[data-del-static]').forEach(b => b.onclick = async () => {
+      const id = b.dataset.delStatic;
+      if (!confirm(`delete static region ${id}?`)) return;
+      try { await window._deleteStaticRegion(id); }
+      catch (e) { console.error('delete static region failed', e); }
+      renderRegions();
+      updateDownloadLabel();
     });
     el.querySelectorAll('[data-refresh]').forEach(b => b.onclick = () => {
       refreshRegion(b.dataset.refresh);
@@ -10130,37 +10203,6 @@ function fmtDate(ts) {
           }
         }
       }
-      // Region coverage for the current map view. Sub-millisecond
-      // linear scan over the bundled 655-entry manifest. Sizes are
-      // either actual (post-build) or estimated (plan only); the
-      // line tags which.
-      try {
-        if (window.RegionPicker && window._regionsManifest && map) {
-          const b = map.getBounds();
-          const w = b.getWest(), s = b.getSouth();
-          const e = b.getEast(), n = b.getNorth();
-          const n_regions = window.RegionPicker.countInBbox(w, s, e, n);
-          const sz = window.RegionPicker.totalBytesInBbox(w, s, e, n);
-          const m = window._regionsManifest;
-          const tag = window.RegionPicker.sizesAreActual() ? 'actual' : 'est';
-          const fmtMB = (b2) => (b2 / (1024 * 1024)).toFixed(1) + 'MB';
-          const source = (localStorage.getItem('cc.hfRegions') === '1')
-            ? 'huggingface' : 'server';
-          lines.push(`[regions]`);
-          lines.push(
-            `  source=${source} manifest=${m.n_regions} regions ` +
-            `(${m.source})`
-          );
-          lines.push(
-            `  in view: ${n_regions} regions, ${fmtMB(sz.total)} total (${tag})`
-          );
-          lines.push(
-            `    walk=${fmtMB(sz.walk)} poi=${fmtMB(sz.poi)} ` +
-            `hn=${fmtMB(sz.housenumbers)} tiles=${fmtMB(sz.tiles)}`
-          );
-        }
-      } catch (e) { /* best-effort */ }
-
       // Script versions — each .js file declares its own SCRIPT_VERSION
       // and pushes it into window._scriptVersions on load. The server
       // parses the same constants from disk via /script-versions.
@@ -11248,6 +11290,429 @@ function fmtDate(ts) {
   // (re-using an existing region's id so IDB records and the region entry
   // are overwritten in place). IDB stores key by regionId, and SW's tile
   // cache keys by URL, so re-running with the same id naturally replaces.
+  // ── Static-region downloads ───────────────────────────────────
+  // Used when cc.hfRegions === '1'. The bundled regions manifest
+  // tells us which pre-built region(s) cover the current view; we
+  // fetch each region's 4 artifact files (walk.bin / poi.bin /
+  // housenumbers.bin / tiles.pmtiles) from the configured source
+  // (the app's hosted server, or the Hugging Face dataset, per
+  // window._regionBaseUrl) and store them in their own IDB so the
+  // existing bbox-queried region store (cc.regions.v1) is left
+  // untouched. Tracking lives in cc.staticRegions.v1 as a flat
+  // list of { id, downloadedAt, totalBytes } records.
+  //
+  // NOTE: consumption (using the downloaded files instead of live
+  // bbox queries) is NOT wired up yet. This phase only handles the
+  // download side. Once enough static regions land in the IDB we
+  // can sketch the consumer-side switching.
+  const STATIC_REGIONS_KEY = 'cc.staticRegions.v1';
+  const STATIC_REGIONS_DB = 'cc-static-regions-v1';
+  const STATIC_REGIONS_DB_VERSION = 1;
+  const STATIC_REGIONS_STORE = 'files';
+  const STATIC_REGION_FILES = ['walk.bin', 'poi.bin', 'housenumbers.bin', 'tiles.pmtiles'];
+
+  let _staticDbPromise = null;
+  function _openStaticRegionsDb() {
+    if (_staticDbPromise) return _staticDbPromise;
+    _staticDbPromise = new Promise((resolve, reject) => {
+      const req = indexedDB.open(STATIC_REGIONS_DB, STATIC_REGIONS_DB_VERSION);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(STATIC_REGIONS_STORE)) {
+          db.createObjectStore(STATIC_REGIONS_STORE);
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return _staticDbPromise;
+  }
+  async function _staticFilePut(key, blob) {
+    const db = await _openStaticRegionsDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STATIC_REGIONS_STORE, 'readwrite');
+      const req = tx.objectStore(STATIC_REGIONS_STORE).put(blob, key);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async function _staticFilesDelete(keys) {
+    const db = await _openStaticRegionsDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STATIC_REGIONS_STORE, 'readwrite');
+      const store = tx.objectStore(STATIC_REGIONS_STORE);
+      for (const k of keys) store.delete(k);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+  function loadStaticRegions() {
+    try { return JSON.parse(localStorage.getItem(STATIC_REGIONS_KEY) || '[]'); }
+    catch { return []; }
+  }
+  function saveStaticRegions(list) {
+    try { localStorage.setItem(STATIC_REGIONS_KEY, JSON.stringify(list)); }
+    catch {}
+  }
+  // Window-exposed for the future consumer-side reader.
+  window._loadStaticRegions = loadStaticRegions;
+  window._getStaticRegionFile = async function (regionId, filename) {
+    const db = await _openStaticRegionsDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STATIC_REGIONS_STORE, 'readonly');
+      const req = tx.objectStore(STATIC_REGIONS_STORE).get(`${regionId}/${filename}`);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  };
+
+  // Fetch all 4 files for one region, store in IDB. Returns total
+  // bytes written. Throws on any HTTP failure (caller decides).
+  //
+  // After storing the raw blob, we ALSO hydrate the .bin files into
+  // the same consumer-facing IDB stores bbox-mode uses (cc-pois.v2,
+  // cc-walkgraph.v1, cc-housenumbers.v1). That way every place in
+  // the page that reads from those stores — search, POI markers,
+  // walk routing, housenumber overlay — sees the static-region data
+  // with no extra plumbing. tiles.pmtiles stays raw and is served on
+  // demand by the static-region:// protocol handler.
+  async function downloadOneStaticRegion(regionId, onFile) {
+    let totalBytes = 0;
+    let poisHydrated = 0;
+    for (const fname of STATIC_REGION_FILES) {
+      const url = window._regionFileUrl(regionId, fname);
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        throw new Error(`HTTP ${resp.status} ${fname}`);
+      }
+      const blob = await resp.blob();
+      await _staticFilePut(`${regionId}/${fname}`, blob);
+      totalBytes += blob.size;
+      if (fname !== 'tiles.pmtiles' && blob.size > 0) {
+        try {
+          const buffer = await blob.arrayBuffer();
+          if (fname === 'poi.bin') {
+            await savePoiRegion(regionId, buffer);
+            // Drop any prior entries for this regionId before re-pushing,
+            // so re-downloading the same region doesn't double up POIs
+            // in the in-memory array. savePoiRegion overwrites in IDB.
+            allPois = allPois.filter((p) => p.regionId !== regionId);
+            const hydrated = hydratePoiRegion(regionId, buffer);
+            for (const poi of hydrated) allPois.push(poi);
+            poisHydrated = hydrated.length;
+          } else if (fname === 'walk.bin') {
+            await saveWalkGraph(regionId, buffer);
+          } else if (fname === 'housenumbers.bin') {
+            await saveHousenumberRegion(regionId, buffer);
+          }
+        } catch (e) {
+          console.warn(`[static region] ${regionId}/${fname} hydrate failed`, e);
+        }
+      }
+      if (onFile) onFile(fname, blob.size);
+    }
+    return totalBytes;
+  }
+
+  // Orchestrator. Downloads every static region intersecting the
+  // current view, with progress in the offline-maps status line.
+  async function performStaticRegionsDownload(bbox) {
+    const status = document.getElementById('status');
+    if (!window.RegionPicker || !window._regionsManifest) {
+      status.textContent = 'manifest not loaded yet — try again in a moment';
+      return;
+    }
+    const regions = window.RegionPicker.findByBbox(...bbox);
+    if (!regions.length) {
+      status.textContent = 'no static regions cover this view';
+      return;
+    }
+    const list = loadStaticRegions();
+    let saved = 0;
+    let bytesAll = 0;
+    for (let i = 0; i < regions.length; i++) {
+      const r = regions[i];
+      status.textContent = `downloading ${r.id} (${i + 1}/${regions.length})…`;
+      try {
+        const bytes = await downloadOneStaticRegion(r.id, (fname, sz) => {
+          status.textContent =
+            `downloading ${r.id} (${i + 1}/${regions.length}) · ${fname} ${(sz / 1024).toFixed(0)}KB`;
+        });
+        bytesAll += bytes;
+        saved += 1;
+        const existing = list.find((x) => x.id === r.id);
+        const record = {
+          id: r.id,
+          bbox: r.bbox,
+          downloadedAt: Date.now(),
+          totalBytes: bytes,
+        };
+        if (existing) Object.assign(existing, record);
+        else list.push(record);
+      } catch (e) {
+        console.error(`[static region] ${r.id} failed`, e);
+        status.textContent =
+          `${r.id} failed: ${e.message} (saved ${saved}/${regions.length})`;
+        saveStaticRegions(list);
+        renderRegions();
+        return;
+      }
+    }
+    saveStaticRegions(list);
+    const mb = (bytesAll / 1048576).toFixed(1);
+    status.textContent =
+      `saved ${saved} region${saved === 1 ? '' : 's'} (${mb} MB total)`;
+    renderRegions();
+    updateDownloadLabel();
+    // Consumer-side refreshes for downstream features that read from
+    // the freshly-hydrated IDB stores / in-memory arrays.
+    try { renderPoiStat(); } catch {}
+    try { populateFilter(); } catch {}
+    // Drop the parsed walk-graph so the next routing call reloads it
+    // with the newly-saved regions merged in.
+    try { unloadWalkGraph(); } catch {}
+    // Force re-parse of housenumbers on next zoom-in so the new
+    // region's points appear immediately.
+    try { hnRegions = []; } catch {}
+    // Tell MapLibre to re-fetch tiles so the new region's PMTiles
+    // start being served by the protocol handler without panning.
+    try {
+      for (const id of ['base', 'local']) {
+        const src = map.getSource(id);
+        if (src && src.setTiles) {
+          src.setTiles([location.origin + '/tiles/{z}/{x}/{y}.pbf']);
+        }
+      }
+    } catch {}
+  }
+  // Window-exposed so a delete button on a list entry can call it
+  // without leaking the closure-private store helpers.
+  window._deleteStaticRegion = async function (regionId) {
+    const keys = STATIC_REGION_FILES.map((f) => `${regionId}/${f}`);
+    await _staticFilesDelete(keys);
+    const list = loadStaticRegions().filter((r) => r.id !== regionId);
+    saveStaticRegions(list);
+    // Drop the in-memory PMTiles reader for this region so future tile
+    // fetches see the deletion (otherwise the LRU might serve cached
+    // bytes for a region the user just removed).
+    _pmtilesReaders.delete(regionId);
+    // Consumer-side cleanup: remove the hydrated POI/walk/hn data so
+    // search, routing, and the housenumber overlay forget the region
+    // immediately. Mirror what the bbox-region delete handler does.
+    try { await deletePoisByRegion(regionId); } catch {}
+    try { allPois = allPois.filter((p) => p.regionId !== regionId); } catch {}
+    try { await deleteWalkGraphByRegion(regionId); } catch {}
+    try { unloadWalkGraph(); } catch {}
+    try { await deleteHousenumbersByRegion(regionId); } catch {}
+    try { hnRegions = []; } catch {}
+    try { renderPoiStat(); } catch {}
+    try { populateFilter(); } catch {}
+  };
+
+  // ── PMTiles v3 reader (inline) ────────────────────────────────
+  // Mirrors the encoder in build-regions.py. Reads enough of the
+  // archive's header + root directory to map (z, x, y) → byte range
+  // within the in-IDB blob. No leaf-directory support yet — every
+  // region's archive has all entries in the root, which holds for
+  // our region sizes (~1000 tiles per archive, well below the leaf
+  // split threshold).
+  const PMTILES_MAGIC = [0x50,0x4d,0x54,0x69,0x6c,0x65,0x73]; // "PMTiles"
+  class PMTilesReader {
+    constructor(blob) {
+      this.blob = blob;
+      this.entries = null;
+      this.tileDataOffset = 0;
+      this.tileCompression = 0;
+      this.minZoom = 0;
+      this.maxZoom = 14;
+    }
+    async init() {
+      const hb = new Uint8Array(await this.blob.slice(0, 127).arrayBuffer());
+      for (let i = 0; i < 7; i++) {
+        if (hb[i] !== PMTILES_MAGIC[i]) throw new Error('not pmtiles');
+      }
+      if (hb[7] !== 3) throw new Error('pmtiles v' + hb[7] + ' unsupported');
+      const view = new DataView(hb.buffer);
+      const rootOff = Number(view.getBigUint64(8, true));
+      const rootLen = Number(view.getBigUint64(16, true));
+      this.tileDataOffset = Number(view.getBigUint64(56, true));
+      const internalComp = hb[97];
+      this.tileCompression = hb[98];
+      this.minZoom = hb[100];
+      this.maxZoom = hb[101];
+      const rootBuf = await this.blob.slice(rootOff, rootOff + rootLen).arrayBuffer();
+      let dirBytes = new Uint8Array(rootBuf);
+      if (internalComp === 2) dirBytes = await PMTilesReader._gunzip(dirBytes);
+      this.entries = PMTilesReader._parseDirectory(dirBytes);
+    }
+    static async _gunzip(bytes) {
+      const ds = new DecompressionStream('gzip');
+      const stream = new Blob([bytes]).stream().pipeThrough(ds);
+      return new Uint8Array(await new Response(stream).arrayBuffer());
+    }
+    static _parseDirectory(bytes) {
+      let pos = 0;
+      const readVarint = () => {
+        let n = 0, shift = 0;
+        while (true) {
+          const b = bytes[pos++];
+          n |= (b & 0x7F) << shift;
+          if ((b & 0x80) === 0) return n;
+          shift += 7;
+        }
+      };
+      const count = readVarint();
+      const out = new Array(count);
+      let prev = 0;
+      for (let i = 0; i < count; i++) {
+        prev += readVarint();
+        out[i] = { tileId: prev, runLength: 0, length: 0, offset: 0 };
+      }
+      for (let i = 0; i < count; i++) out[i].runLength = readVarint();
+      for (let i = 0; i < count; i++) out[i].length = readVarint();
+      for (let i = 0; i < count; i++) {
+        const raw = readVarint();
+        if (raw === 0 && i > 0) {
+          out[i].offset = out[i - 1].offset + out[i - 1].length;
+        } else {
+          out[i].offset = raw - 1;
+        }
+      }
+      return out;
+    }
+    // PMTiles tile_id = Hilbert position at z + (4^z - 1)/3.
+    static zxyToTileId(z, x, y) {
+      if (z === 0) return 0;
+      const acc = ((1 << (2 * z)) - 1) / 3;
+      let d = 0, s = 1 << (z - 1);
+      while (s > 0) {
+        const rx = (x & s) > 0 ? 1 : 0;
+        const ry = (y & s) > 0 ? 1 : 0;
+        d += s * s * ((3 * rx) ^ ry);
+        if (ry === 0) {
+          if (rx === 1) { x = s - 1 - x; y = s - 1 - y; }
+          const tmp = x; x = y; y = tmp;
+        }
+        s >>= 1;
+      }
+      return acc + d;
+    }
+    async getTile(z, x, y) {
+      if (!this.entries) await this.init();
+      if (z < this.minZoom || z > this.maxZoom) return null;
+      const tileId = PMTilesReader.zxyToTileId(z, x, y);
+      // Binary search the sorted directory.
+      let lo = 0, hi = this.entries.length - 1;
+      let entry = null;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const e = this.entries[mid];
+        if (e.tileId === tileId) { entry = e; break; }
+        if (e.tileId < tileId) lo = mid + 1;
+        else hi = mid - 1;
+      }
+      if (!entry) return null;
+      const off = this.tileDataOffset + entry.offset;
+      return new Uint8Array(
+        await this.blob.slice(off, off + entry.length).arrayBuffer()
+      );
+    }
+  }
+
+  // LRU cache of opened readers — opening costs an IDB get + a gzip
+  // inflate of the root directory (~ms scale). Keep up to N hot
+  // readers so panning across region boundaries doesn't thrash.
+  const _pmtilesReaders = new Map();
+  const PMTILES_READER_LRU_MAX = 8;
+  async function _getPmtilesReader(regionId) {
+    if (_pmtilesReaders.has(regionId)) {
+      const r = _pmtilesReaders.get(regionId);
+      _pmtilesReaders.delete(regionId);
+      _pmtilesReaders.set(regionId, r);
+      return r;
+    }
+    const blob = await window._getStaticRegionFile(regionId, 'tiles.pmtiles');
+    if (!blob) return null;
+    const reader = new PMTilesReader(blob);
+    try { await reader.init(); }
+    catch (e) {
+      console.warn('[pmtiles] init failed', regionId, e);
+      return null;
+    }
+    _pmtilesReaders.set(regionId, reader);
+    while (_pmtilesReaders.size > PMTILES_READER_LRU_MAX) {
+      const oldest = _pmtilesReaders.keys().next().value;
+      _pmtilesReaders.delete(oldest);
+    }
+    return reader;
+  }
+
+  // Resolve a (z, x, y) tile to PMTiles bytes from a downloaded region.
+  // Returns Uint8Array or null. The region picker is used to find which
+  // region's archive holds this tile, then the LRU reader fetches +
+  // serves the per-tile bytes.
+  async function _serveStaticTile(z, x, y) {
+    if (!window.RegionPicker) return null;
+    const n = 1 << z;
+    const lng = (x + 0.5) / n * 360 - 180;
+    const latRad = Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 0.5) / n)));
+    const lat = latRad * 180 / Math.PI;
+    const region = window.RegionPicker.findByPoint(lng, lat);
+    if (!region) return null;
+    const downloaded = loadStaticRegions();
+    if (!downloaded.find((r) => r.id === region.id)) return null;
+    const reader = await _getPmtilesReader(region.id);
+    if (!reader) return null;
+    const tile = await reader.getTile(z, x, y);
+    if (!tile) return null;
+    // PMTiles stores tiles in the compression declared by the
+    // archive header — in our case gzip, since the source mbtiles
+    // stores tile_data gzipped. Over HTTP the browser would
+    // decompress for us via Content-Encoding: gzip; the custom
+    // protocol handler bypasses that, so unwrap here so MapLibre's
+    // vector tile parser sees raw MVT.
+    if (tile.length >= 2 && tile[0] === 0x1f && tile[1] === 0x8b) {
+      return PMTilesReader._gunzip(tile);
+    }
+    return tile;
+  }
+
+  // transformRequest hook (called from the map's transformRequest in
+  // the MapLibre style config). Returns a rewritten URL when we want
+  // the static-region protocol to handle the tile, else null.
+  window._maybeStaticTileUrl = function (url) {
+    if (localStorage.getItem('cc.hfRegions') !== '1') return null;
+    const m = url.match(/\/tiles\/(\d+)\/(\d+)\/(\d+)\.pbf(?:\?|$)/);
+    if (!m) return null;
+    return `static-region://tile/${m[1]}/${m[2]}/${m[3]}.pbf`;
+  };
+
+  // Register the protocol. MapLibre's signature switched from
+  // callback-style (v2) to async (v3+); we support both by sniffing
+  // the second argument.
+  if (typeof maplibregl !== 'undefined'
+      && typeof maplibregl.addProtocol === 'function') {
+    maplibregl.addProtocol('static-region', (params, second) => {
+      const m = params.url.match(
+        /^static-region:\/\/tile\/(\d+)\/(\d+)\/(\d+)\.pbf$/);
+      if (!m) {
+        if (typeof second === 'function') { second(null, { data: null }); return; }
+        return Promise.resolve({ data: null });
+      }
+      const p = _serveStaticTile(+m[1], +m[2], +m[3])
+        .then((data) => ({ data }))
+        .catch((err) => {
+          console.warn('[static-region protocol]', err);
+          return { data: null };
+        });
+      if (typeof second === 'function') {
+        p.then((r) => second(null, r), (e) => second(e));
+        return { cancel: () => {} };
+      }
+      return p;
+    });
+  }
+
   async function performRegionDownload({ id, bbox, minZoom, maxZoom, isRefresh }) {
     const status = document.getElementById('status');
     if (isRefresh) {
@@ -11373,6 +11838,16 @@ function fmtDate(ts) {
 
   document.getElementById('downloadBtn').onclick = async () => {
     if (!checkWifiGate()) return;
+    // Static-regions mode: download per-region pre-built artifacts
+    // instead of running a fresh bbox-queried sweep against the
+    // server. Picks regions from the bundled manifest that intersect
+    // the current view and stores each region's 4 files in its own
+    // IDB. The traditional bbox-region store (cc.regions.v1) is left
+    // untouched in this mode.
+    if (localStorage.getItem('cc.hfRegions') === '1') {
+      await performStaticRegionsDownload(currentBbox());
+      return;
+    }
     const maxZoom = +document.getElementById('zMax').value;
     if (maxZoom < MIN_ZOOM) return;
     await performRegionDownload({
@@ -11835,6 +12310,22 @@ function fmtDate(ts) {
     hfRegionsToggle.addEventListener('change', () => {
       localStorage.setItem('cc.hfRegions',
         hfRegionsToggle.checked ? '1' : '0');
+      // Refresh the offline-maps panel's "save current view" button
+      // so the user sees the new estimate immediately rather than on
+      // the next map move.
+      if (typeof updateDownloadLabel === 'function') updateDownloadLabel();
+      // Force MapLibre to re-fetch every tile so the transformRequest
+      // hook re-evaluates with the new toggle state. setTiles() is the
+      // documented way to flush a vector tile source's cache without
+      // tearing down the source.
+      try {
+        for (const id of ['base', 'local']) {
+          const src = map.getSource(id);
+          if (src && src.setTiles) {
+            src.setTiles([location.origin + '/tiles/{z}/{x}/{y}.pbf']);
+          }
+        }
+      } catch {}
     });
   }
 
