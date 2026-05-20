@@ -11780,38 +11780,47 @@ function fmtDate(ts) {
     const tileN = Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n))) * 180 / Math.PI;
     const tileS = Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 1) / n))) * 180 / Math.PI;
 
-    // Candidate ordering: prefer the region whose bbox contains the
-    // tile center (the "natural owner" for high-zoom tiles where the
-    // tile lives entirely inside one region), then fall back to any
-    // other downloaded region whose bbox intersects the tile.
+    // Candidate ordering: smallest-bbox first. The quadtree partition
+    // is non-overlapping, but at low zooms a single tile spans many
+    // regions, and at high zooms an edge tile can sit in 2+ regions'
+    // bboxes via the inclusion-by-intersection extraction rule (each
+    // region's pmtiles includes every tile whose bbox intersects the
+    // region — boundary tiles end up in multiple archives).
     //
-    // The fallback is what fixes the blank-at-boundary bug — at low
-    // zooms (z=0..z~10) a single tile spans many regions, and the
-    // center-of-tile might land in a region the user hasn't
-    // downloaded. Without the fallback the tile renders as empty
-    // even though a neighbor's pmtiles has the same bytes (PMTiles
-    // includes every tile whose bbox intersects its region's bbox,
-    // so low-zoom tiles are stored in MANY regions' archives).
-    const lng = (tileW + tileE) / 2;
-    const lat = (tileN + tileS) / 2;
-    const primary = window.RegionPicker.findByPoint(lng, lat);
+    // Picking the smallest bbox among intersecting downloaded regions
+    // wins three cases at once:
+    //   1. Boundary tiles: prefer the more-specific region the user
+    //      actually targeted, not the larger neighbor that happens to
+    //      contain the tile center.
+    //   2. Hybrid wilderness + city downloads: the city region is
+    //      smaller and almost always the higher-priority data the
+    //      user cares about — pick it even when both intersect.
+    //   3. Low-zoom tiles: any candidate has the same content (same
+    //      source mbtiles), so smallest-first is at worst neutral.
     const candidates = [];
-    if (primary && downloadedIds.has(primary.id)) candidates.push(primary);
     for (const region of window._regionsManifest.regions) {
-      if (primary && region.id === primary.id) continue;
       if (!downloadedIds.has(region.id)) continue;
       const rb = region.bbox;
-      // No intersection — skip.
       if (rb[0] >= tileE || rb[2] <= tileW
           || rb[1] >= tileN || rb[3] <= tileS) continue;
       candidates.push(region);
     }
+    candidates.sort((a, b) => {
+      const aArea = (a.bbox[2] - a.bbox[0]) * (a.bbox[3] - a.bbox[1]);
+      const bArea = (b.bbox[2] - b.bbox[0]) * (b.bbox[3] - b.bbox[1]);
+      return aArea - bArea;
+    });
 
     for (const region of candidates) {
       const reader = await _getPmtilesReader(region.id);
       if (!reader) continue;
       const tile = await reader.getTile(z, x, y);
-      if (!tile) continue;
+      // Skip zero-length entries — those can exist in a pmtiles
+      // archive when build-regions.py pulled an empty source tile
+      // (areas with no features at a given zoom). Trying the next
+      // candidate may yield real bytes since at boundaries multiple
+      // archives hold the same logical tile.
+      if (!tile || tile.length === 0) continue;
       // PMTiles stores tiles in the compression declared by the
       // archive header — in our case gzip, since the source mbtiles
       // stores tile_data gzipped. Over HTTP the browser would
@@ -11841,31 +11850,31 @@ function fmtDate(ts) {
   // the second argument.
   if (typeof maplibregl !== 'undefined'
       && typeof maplibregl.addProtocol === 'function') {
-    // MapLibre's vector tile parser does `.slice(0)` on the response
-    // data without null-checking, so returning `{ data: null }` for
-    // missing tiles crashes with `null is not an object (evaluating
-    // 'a.slice')`. Return a zero-length Uint8Array instead — the
-    // parser treats it as a tile with no features (renders as empty
-    // space, which is what we want for tiles outside any downloaded
-    // region). Allocate a fresh buffer each time: MapLibre passes
-    // the tile data through structured clone to a Worker and may
-    // detach the underlying ArrayBuffer; a shared singleton would
-    // get detached on first use and throw "The object can not be
-    // cloned" on every subsequent missing tile.
-    const emptyTile = () => new Uint8Array(0);
+    // Tile-not-found is signalled by REJECTING the protocol call
+    // with status=204 (No Content), NOT 404. The convention is
+    // already documented in static/sw.js's _missResponse — MapLibre
+    // treats 404 as "tile FAILED to load" (no parent fallback, just
+    // blank) but treats 204 as "tile is intentionally empty"
+    // (parent fallback chain kicks in). We want the latter so
+    // panning outside a downloaded region shows the over-zoomed
+    // lower-detail parent tile instead of a blank patch.
+    function tileNotFoundError(msg) {
+      const e = new Error(msg || 'tile not in any downloaded region');
+      e.status = 204;
+      return e;
+    }
     maplibregl.addProtocol('static-region', (params, second) => {
       const m = params.url.match(
         /^static-region:\/\/tile\/(\d+)\/(\d+)\/(\d+)\.pbf$/);
       if (!m) {
-        if (typeof second === 'function') { second(null, { data: emptyTile() }); return; }
-        return Promise.resolve({ data: emptyTile() });
+        const e = tileNotFoundError('malformed static-region url');
+        if (typeof second === 'function') { second(e); return; }
+        return Promise.reject(e);
       }
-      const p = _serveStaticTile(+m[1], +m[2], +m[3])
-        .then((data) => ({ data: data || emptyTile() }))
-        .catch((err) => {
-          console.warn('[static-region protocol]', err);
-          return { data: emptyTile() };
-        });
+      const p = _serveStaticTile(+m[1], +m[2], +m[3]).then((data) => {
+        if (!data || data.length === 0) throw tileNotFoundError();
+        return { data };
+      });
       if (typeof second === 'function') {
         p.then((r) => second(null, r), (e) => second(e));
         return { cancel: () => {} };
