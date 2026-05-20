@@ -3059,8 +3059,12 @@
     </div>
     <div id="pedometerStatus" style="display:none;padding:4px 12px 8px;font-size:11px;color:var(--ui-muted);line-height:1.4;"></div>
     <div class="row">
-      <label for="hfRegionsToggle">Use Hugging Face for region data</label>
-      <input type="checkbox" id="hfRegionsToggle">
+      <label for="regionsModeSelect">Region data source</label>
+      <select id="regionsModeSelect">
+        <option value="bbox-flask">Live (server bbox)</option>
+        <option value="static-flask">Static (server)</option>
+        <option value="static-hf">Static (Hugging Face)</option>
+      </select>
     </div>
     <div class="row">
       <label for="debugConsoleToggle">Debug console (errors overlay)</label>
@@ -3753,35 +3757,58 @@
     }
 
     // ── Region data source ────────────────────────────────────────
-    // The PWA fetches per-region map artifacts (walk graph, POIs,
-    // housenumbers, vector-tile PMTiles archives) from one of two
-    // sources, controlled by the `cc.hfRegions` Settings toggle:
+    // The PWA's map data (walk graph, POIs, housenumbers, vector
+    // tiles) comes from one of three sources, picked by the
+    // `cc.regionsMode` Settings selector:
     //
-    //   '0' (default): the app's hosted server, served via the
-    //     `/regions/<id>/<filename>` route in run.py. Built locally
-    //     by build-regions.py and served from a regions/ directory
-    //     next to run.py.
+    //   'bbox-flask' (default) — live bbox-queried fetches against
+    //     the local Flask server (the original behavior). Tiles via
+    //     /tiles/Z/X/Y.pbf, data via /poi?bbox=… etc.
     //
-    //   '1' : the public Hugging Face dataset
-    //     `TessaCoil/maps-dataset`. URL pattern
-    //     `https://huggingface.co/datasets/TessaCoil/maps-dataset
-    //      /resolve/main/<id>/<filename>`. Free unlimited public
-    //     bandwidth, no payment method on file. Used by friends-of-
-    //     friends who can't / shouldn't depend on the self-hosted
-    //     server staying up.
+    //   'static-flask' — static per-region files served from the
+    //     Flask server's /regions/<id>/<filename> route (output of
+    //     build-regions.py copied next to run.py).
     //
-    // The manifest itself (region id → bbox) is bundled with the app
-    // at /bundled-data/regions.json and loaded once at startup into
-    // window._regionsManifest. The actual region-id-by-location
-    // picker code that consumes this manifest lives elsewhere (TODO:
-    // not yet wired up — see HANDOFF for the static-region rollout
-    // plan). Helpers here are the URL plumbing for whatever fetcher
-    // eventually uses them.
+    //   'static-hf' — static per-region files from the public
+    //     Hugging Face dataset TessaCoil/maps-dataset (no payment
+    //     method on file → no spending-blowup risk for the host).
+    //
+    // The bundled regions manifest (~100 KB JSON) is shipped at
+    // /bundled-data/regions.json regardless of mode — both static
+    // modes use it for region id → bbox lookups via RegionPicker;
+    // bbox-flask doesn't read it.
     const HF_REGIONS_BASE =
       'https://huggingface.co/datasets/TessaCoil/maps-dataset/resolve/main';
+    function _regionsMode() {
+      let mode = null;
+      try { mode = localStorage.getItem('cc.regionsMode'); } catch {}
+      if (mode === 'bbox-flask' || mode === 'static-flask' || mode === 'static-hf') {
+        return mode;
+      }
+      // Migration: if the legacy cc.hfRegions checkbox was set,
+      // translate it into the equivalent mode value.
+      try {
+        const legacy = localStorage.getItem('cc.hfRegions') === '1';
+        const next = legacy ? 'static-hf' : 'bbox-flask';
+        localStorage.setItem('cc.regionsMode', next);
+        return next;
+      } catch {
+        return 'bbox-flask';
+      }
+    }
+    function _isStaticRegionsMode() {
+      const m = _regionsMode();
+      return m === 'static-flask' || m === 'static-hf';
+    }
+    window._regionsMode = _regionsMode;
+    window._isStaticRegionsMode = _isStaticRegionsMode;
     window._regionBaseUrl = function () {
-      if (localStorage.getItem('cc.hfRegions') === '1') return HF_REGIONS_BASE;
-      // Server-relative; resolves against window.location.origin.
+      const m = _regionsMode();
+      if (m === 'static-hf') return HF_REGIONS_BASE;
+      // Both 'bbox-flask' and 'static-flask' route through the
+      // local server. Callers using this URL builder are always
+      // in a static-mode code path; the value matters only for
+      // building per-region file URLs.
       return '/regions';
     };
     window._regionFileUrl = function (regionId, filename) {
@@ -8935,7 +8962,7 @@ function fmtDate(ts) {
     // entries that intersect the current view, not a tile-count
     // estimate. Numbers are real (post-build) or partition estimates,
     // marked accordingly.
-    if (localStorage.getItem('cc.hfRegions') === '1'
+    if (window._isStaticRegionsMode && window._isStaticRegionsMode()
         && window.RegionPicker && window._regionsManifest) {
       const n = window.RegionPicker.countInBbox(...bbox);
       if (n === 0) {
@@ -11291,15 +11318,15 @@ function fmtDate(ts) {
   // are overwritten in place). IDB stores key by regionId, and SW's tile
   // cache keys by URL, so re-running with the same id naturally replaces.
   // ── Static-region downloads ───────────────────────────────────
-  // Used when cc.hfRegions === '1'. The bundled regions manifest
-  // tells us which pre-built region(s) cover the current view; we
-  // fetch each region's 4 artifact files (walk.bin / poi.bin /
-  // housenumbers.bin / tiles.pmtiles) from the configured source
-  // (the app's hosted server, or the Hugging Face dataset, per
-  // window._regionBaseUrl) and store them in their own IDB so the
-  // existing bbox-queried region store (cc.regions.v1) is left
-  // untouched. Tracking lives in cc.staticRegions.v1 as a flat
-  // list of { id, downloadedAt, totalBytes } records.
+  // Used when cc.regionsMode is 'static-flask' or 'static-hf'. The
+  // bundled regions manifest tells us which pre-built region(s) cover
+  // the current view; we fetch each region's 4 artifact files
+  // (walk.bin / poi.bin / housenumbers.bin / tiles.pmtiles) from the
+  // mode-appropriate base URL (per window._regionBaseUrl) and store
+  // them in their own IDB so the existing bbox-queried region store
+  // (cc.regions.v1) is left untouched. Tracking lives in
+  // cc.staticRegions.v1 as a flat list of
+  // { id, downloadedAt, totalBytes } records.
   //
   // NOTE: consumption (using the downloaded files instead of live
   // bbox queries) is NOT wired up yet. This phase only handles the
@@ -11681,7 +11708,7 @@ function fmtDate(ts) {
   // the MapLibre style config). Returns a rewritten URL when we want
   // the static-region protocol to handle the tile, else null.
   window._maybeStaticTileUrl = function (url) {
-    if (localStorage.getItem('cc.hfRegions') !== '1') return null;
+    if (!window._isStaticRegionsMode || !window._isStaticRegionsMode()) return null;
     const m = url.match(/\/tiles\/(\d+)\/(\d+)\/(\d+)\.pbf(?:\?|$)/);
     if (!m) return null;
     return `static-region://tile/${m[1]}/${m[2]}/${m[3]}.pbf`;
@@ -11844,7 +11871,7 @@ function fmtDate(ts) {
     // the current view and stores each region's 4 files in its own
     // IDB. The traditional bbox-region store (cc.regions.v1) is left
     // untouched in this mode.
-    if (localStorage.getItem('cc.hfRegions') === '1') {
+    if (window._isStaticRegionsMode && window._isStaticRegionsMode()) {
       await performStaticRegionsDownload(currentBbox());
       return;
     }
@@ -12304,18 +12331,23 @@ function fmtDate(ts) {
   // (window._regionBaseUrl, window._regionFileUrl) read this setting
   // at fetch time, so the toggle takes effect on the next region
   // request without needing a page reload.
-  const hfRegionsToggle = document.getElementById('hfRegionsToggle');
-  if (hfRegionsToggle) {
-    hfRegionsToggle.checked = localStorage.getItem('cc.hfRegions') === '1';
-    hfRegionsToggle.addEventListener('change', () => {
-      localStorage.setItem('cc.hfRegions',
-        hfRegionsToggle.checked ? '1' : '0');
-      // Refresh the offline-maps panel's "save current view" button
-      // so the user sees the new estimate immediately rather than on
-      // the next map move.
+  const regionsModeSelect = document.getElementById('regionsModeSelect');
+  if (regionsModeSelect) {
+    // Read via the helper so legacy cc.hfRegions migrates on first
+    // access (also writes the new key, so subsequent reads hit it
+    // directly).
+    const current = (typeof window._regionsMode === 'function')
+      ? window._regionsMode() : 'bbox-flask';
+    regionsModeSelect.value = current;
+    regionsModeSelect.addEventListener('change', () => {
+      try { localStorage.setItem('cc.regionsMode', regionsModeSelect.value); }
+      catch {}
+      // Refresh the offline-maps panel's "save current view" button so
+      // the user sees the new estimate immediately rather than on the
+      // next map move.
       if (typeof updateDownloadLabel === 'function') updateDownloadLabel();
       // Force MapLibre to re-fetch every tile so the transformRequest
-      // hook re-evaluates with the new toggle state. setTiles() is the
+      // hook re-evaluates with the new mode. setTiles() is the
       // documented way to flush a vector tile source's cache without
       // tearing down the source.
       try {
