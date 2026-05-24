@@ -4934,14 +4934,28 @@ function fmtDate(ts) {
         // unbounded as you pan/zoom — aggressive on iOS. 32 is plenty for
         // smooth panning; evicted tiles re-parse quickly from the SW cache.
         //
-        // Both sources share the SAME tile URL and SAME maxzoom — base
-        // used to be capped at z5 as a "low-detail" optimization, but
-        // that broke MapLibre's tile-pyramid fallback: when local
-        // returned 404 for an uncached z14 tile, base couldn't supply
-        // a parent because base only goes to z5 (over-zoom limit ≈ 5
-        // levels). Setting both to maxzoom 14 lets MapLibre walk the
-        // parent chain: missing z14 → try z13 → … → bundled z5 → render.
-        base:  { type: 'vector', tiles: [location.origin + '/tiles/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 14, maxTileCacheSize: 32 },
+        // base.maxzoom = 5: this source is the "always-available
+        // bundled fallback." Capping it at z=5 means MapLibre always
+        // asks for z<=5 base tiles, which our transformRequest does
+        // NOT rewrite (the z<=5 passthrough lets them flow to the
+        // SW → LocalServer → bundled tile). At least one z=5 tile
+        // always loads successfully, which fires map.on('load') —
+        // critical because icon loading, sprite installation, and
+        // other startup work is gated on that event.
+        //
+        // Old config had base.maxzoom = 14 too. The rationale was
+        // "let MapLibre walk parents to z=5" but in static-hf mode
+        // with no downloaded region covering the initial viewport,
+        // the parent-walk never reaches z=5 in time (every parent
+        // gets rewritten to static-region:// and 204s), so map.load
+        // never fires and the whole UI hangs blank. See the long
+        // diagnostic session 2026-05-24 for the smoking-gun logs.
+        //
+        // MapLibre's maxOverzooming = 10 means a z=5 tile renders
+        // correctly via over-zoom up to visual zoom 15. Local source
+        // (maxzoom=14) takes over for higher detail when a region is
+        // downloaded covering the view.
+        base:  { type: 'vector', tiles: [location.origin + '/tiles/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 5, maxTileCacheSize: 32 },
         local: { type: 'vector', tiles: [location.origin + '/tiles/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 14, maxTileCacheSize: 64 },
         'bus-routes': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
         'route-stops': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
