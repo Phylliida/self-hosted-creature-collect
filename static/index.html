@@ -4647,6 +4647,24 @@ function fmtDate(ts) {
     try { localStorage.setItem(STATIC_REGIONS_KEY, JSON.stringify(list)); }
     catch {}
   }
+  // Tile-flow diagnostics. Populated by transformRequest and by
+  // map.on('data')/('error') handlers attached just below map
+  // creation. Rolling buffers capped to keep noise low. Read by
+  // [tile flow] section in Settings → Copy Logs.
+  window._tileFlowDiag = {
+    transform: {
+      total: 0, rewritten: 0, passthrough: 0,
+      byZoom: {},   // { [z]: { rw, pt } }
+      recent: [],   // { t, z, x, y, rw } bounded 40
+    },
+    sourceEvents: {
+      loaded: 0, errored: 0, abort: 0,
+      byZoom: {},   // { [z]: { loaded, errored } } — only for tile events
+      loadedByStatusOk: 0,
+      errorByStatus: {}, // { [status]: count }
+      recent: [],   // { t, kind, source, z, x, y, status?, msg? } bounded 40
+    },
+  };
   window._loadStaticRegions = loadStaticRegions;
   window._maybeStaticTileUrl = function (url) {
     if (!window._isStaticRegionsMode || !window._isStaticRegionsMode()) return null;
@@ -4745,10 +4763,31 @@ function fmtDate(ts) {
       // a static mode, or when no regions are downloaded yet — that
       // way the bundled z=0..5 base map flows through the existing
       // SW path as a fallback.
+      let rewritten = null;
       if (typeof window._maybeStaticTileUrl === 'function') {
-        const rewritten = window._maybeStaticTileUrl(url);
-        if (rewritten) return { url: rewritten };
+        rewritten = window._maybeStaticTileUrl(url);
       }
+      // Diagnostic: capture the tile-URL flow so we can correlate
+      // what MapLibre asked for vs what we routed it to. Only logs
+      // /tiles/... URLs (skip glyphs/icons/etc.) to keep noise low.
+      // Read by [tile flow] section in Settings → Copy Logs.
+      if (window._tileFlowDiag && /\/tiles\/\d+\/\d+\/\d+\.pbf/.test(url)) {
+        const fd = window._tileFlowDiag;
+        const m = url.match(/\/tiles\/(\d+)\/(\d+)\/(\d+)/);
+        const z = m ? +m[1] : -1;
+        fd.transform.total++;
+        if (rewritten) fd.transform.rewritten++;
+        else fd.transform.passthrough++;
+        fd.transform.byZoom[z] = fd.transform.byZoom[z] || { rw: 0, pt: 0 };
+        if (rewritten) fd.transform.byZoom[z].rw++;
+        else fd.transform.byZoom[z].pt++;
+        fd.transform.recent.push({
+          t: Date.now(), z, x: m ? +m[2] : 0, y: m ? +m[3] : 0,
+          rw: !!rewritten,
+        });
+        if (fd.transform.recent.length > 40) fd.transform.recent.shift();
+      }
+      if (rewritten) return { url: rewritten };
       return { url };
     },
     center: savedView?.center || [0, 0],
@@ -5510,6 +5549,65 @@ function fmtDate(ts) {
       }
       if (e && e.error && e.error.url) extra += ` url=${e.error.url}`;
       console.error(`MapLibre: ${msg}${src}${extra}`);
+    });
+  }
+
+  // Tile-flow diagnostic listeners. Captures every successful tile
+  // load AND every tile error from the `base` / `local` sources,
+  // with (z, x, y) + source + status when present. Combined with
+  // the transformRequest log this lets us correlate "MapLibre asked
+  // for tile X" → "transformRequest routed it via path Y" →
+  // "MapLibre got result Z (loaded / errored with status N)" and
+  // see if MapLibre walked parents after a child tile errored.
+  // Designed for the [tile flow] dump section, not console — the
+  // structured rolling log survives across the diag refresh cycle.
+  {
+    const fd = window._tileFlowDiag;
+    const pushEvt = (evt) => {
+      fd.sourceEvents.recent.push({ t: Date.now(), ...evt });
+      if (fd.sourceEvents.recent.length > 40) fd.sourceEvents.recent.shift();
+    };
+    map.on('data', (e) => {
+      // Only care about TILE-level data events on the tile sources
+      // we care about. e.dataType==='source' fires for non-tile
+      // source updates too (geojson, etc.) which we skip.
+      if (!e || e.dataType !== 'source' || !e.tile) return;
+      const src = e.sourceId || '?';
+      if (src !== 'base' && src !== 'local') return;
+      const c = e.tile.tileID && e.tile.tileID.canonical;
+      if (!c) return;
+      // sourceDataType 'metadata' fires on tilejson load; we want
+      // 'content' (tile loaded successfully). Some MapLibre builds
+      // omit the field — fall back to checking tile.state.
+      const isContent = (e.sourceDataType === 'content')
+        || (e.tile.state === 'loaded');
+      if (!isContent) return;
+      fd.sourceEvents.loaded++;
+      fd.sourceEvents.loadedByStatusOk++;
+      const zKey = c.z;
+      fd.sourceEvents.byZoom[zKey] = fd.sourceEvents.byZoom[zKey]
+        || { loaded: 0, errored: 0 };
+      fd.sourceEvents.byZoom[zKey].loaded++;
+      pushEvt({ kind: 'load', source: src, z: c.z, x: c.x, y: c.y });
+    });
+    // map.on('error') already exists above for console logging; add
+    // a second handler so we can record per-tile errors structurally.
+    // MapLibre fires both events for tile errors — we tap both.
+    map.on('error', (e) => {
+      if (!e || !e.tile || !e.tile.tileID || !e.tile.tileID.canonical) return;
+      const src = e.sourceId || '?';
+      if (src !== 'base' && src !== 'local') return;
+      const c = e.tile.tileID.canonical;
+      const status = e.error && (e.error.status ?? e.error.code) || null;
+      const msg = e.error && e.error.message ? e.error.message.slice(0, 80) : '';
+      fd.sourceEvents.errored++;
+      const zKey = c.z;
+      fd.sourceEvents.byZoom[zKey] = fd.sourceEvents.byZoom[zKey]
+        || { loaded: 0, errored: 0 };
+      fd.sourceEvents.byZoom[zKey].errored++;
+      const sk = status == null ? 'none' : String(status);
+      fd.sourceEvents.errorByStatus[sk] = (fd.sourceEvents.errorByStatus[sk] || 0) + 1;
+      pushEvt({ kind: 'err', source: src, z: c.z, x: c.x, y: c.y, status, msg });
     });
   }
 
@@ -10378,6 +10476,95 @@ function fmtDate(ts) {
           }
         }
       } catch {}
+      // Tile-flow diagnostics. Combines transformRequest routing
+      // decisions with MapLibre's tile load/error events so we can
+      // trace the full lifecycle of every tile request and see
+      // whether parent over-zoom walking actually happens after a
+      // child errors out.
+      try {
+        const fd = window._tileFlowDiag;
+        if (fd && (fd.transform.total > 0 || fd.sourceEvents.loaded > 0
+            || fd.sourceEvents.errored > 0)) {
+          lines.push(`[tile flow]`);
+          lines.push(
+            `  transformRequest: ${fd.transform.total} total / ` +
+            `${fd.transform.rewritten} rewritten → static-region:// / ` +
+            `${fd.transform.passthrough} pass-through → /tiles`
+          );
+          // Per-zoom routing — confirms our z<=5 passthrough rule
+          // is firing where expected, and shows which zooms are
+          // actually being requested.
+          const tzKeys = Object.keys(fd.transform.byZoom)
+            .map(Number).sort((a, b) => b - a);
+          if (tzKeys.length) {
+            const tzStr = tzKeys
+              .map((z) => `z${z}:${fd.transform.byZoom[z].rw}rw+${fd.transform.byZoom[z].pt}pt`)
+              .join(' ');
+            lines.push(`  transform by zoom: ${tzStr}`);
+          }
+          lines.push(
+            `  source events: ${fd.sourceEvents.loaded} loaded / ` +
+            `${fd.sourceEvents.errored} errored`
+          );
+          // Per-zoom load/error split. If z=5 has loaded events and
+          // z=10 has only errored events, the bundled fallback is
+          // working but high-zoom parent-walks aren't producing data.
+          const seKeys = Object.keys(fd.sourceEvents.byZoom)
+            .map(Number).sort((a, b) => b - a);
+          if (seKeys.length) {
+            const seStr = seKeys
+              .map((z) => {
+                const v = fd.sourceEvents.byZoom[z];
+                return `z${z}:${v.loaded}L/${v.errored}E`;
+              })
+              .join(' ');
+            lines.push(`  events by zoom: ${seStr}`);
+          }
+          // Error status breakdown — tells us what error codes
+          // MapLibre is seeing (correlates with 204 / 404 / network
+          // failures from the custom protocol or the SW).
+          const esKeys = Object.keys(fd.sourceEvents.errorByStatus);
+          if (esKeys.length) {
+            const esStr = esKeys
+              .map((s) => `${s}:${fd.sourceEvents.errorByStatus[s]}`)
+              .join(' ');
+            lines.push(`  errors by status: ${esStr}`);
+          }
+          // Last few transformRequest decisions — useful to confirm
+          // tile requests are still flowing as the user pans.
+          if (fd.transform.recent.length) {
+            lines.push(`  recent transformRequest (newest first, ${fd.transform.recent.length}):`);
+            const now = Date.now();
+            const tail = fd.transform.recent.slice(-10);
+            for (let i = tail.length - 1; i >= 0; i--) {
+              const r = tail[i];
+              const ago = ((now - r.t) / 1000).toFixed(1);
+              const arrow = r.rw ? '→static-region' : '→passthrough';
+              lines.push(`    -${ago}s  z=${r.z} x=${r.x} y=${r.y}  ${arrow}`);
+            }
+          }
+          // Last few source events. THE key signal: if a child tile
+          // errors and you DON'T see follow-up load/error events at
+          // lower zooms (parents) within a few ms, MapLibre is NOT
+          // walking parents — that points back to the custom-protocol
+          // error semantics question.
+          if (fd.sourceEvents.recent.length) {
+            lines.push(`  recent source events (newest first, ${fd.sourceEvents.recent.length}):`);
+            const now = Date.now();
+            const tail = fd.sourceEvents.recent.slice(-15);
+            for (let i = tail.length - 1; i >= 0; i--) {
+              const r = tail[i];
+              const ago = ((now - r.t) / 1000).toFixed(1);
+              const kind = r.kind === 'load' ? '✓load' : '✗err';
+              const sx = `${r.source.padEnd(5)} z=${r.z} x=${r.x} y=${r.y}`;
+              const tail2 = r.kind === 'err'
+                ? `  status=${r.status ?? 'none'} ${r.msg || ''}`
+                : '';
+              lines.push(`    -${ago}s  ${kind}  ${sx}${tail2}`);
+            }
+          }
+        }
+      } catch {}
       // Static-region tile serving — only meaningful in a static mode.
       // Distinguishes hypotheses for "sometimes blank tiles at certain
       // zooms": (1) MapLibre caching 204 responses; (2) source-cache
@@ -12152,6 +12339,42 @@ function fmtDate(ts) {
   window._serveStaticTile = _serveStaticTile;
   if (typeof window._markStaticReady === 'function') {
     window._markStaticReady();
+  }
+
+  // Initial-load parent-walk kick. The custom protocol's status=204
+  // error semantics are correct for steady-state behavior — MapLibre
+  // treats those tiles as errored and shows their over-zoom parent
+  // on the NEXT source-cache update (pan/zoom triggers one
+  // naturally). The pain is the FIRST update: it ran before the
+  // initial tile requests had a chance to error, so when they did
+  // error nothing re-ran _updateRetainedTiles to walk parents and
+  // bring in the bundled z<=5 fallback. Result: blank until the
+  // first user pan/zoom.
+  //
+  // Flipping status to 404 would trigger update() per-error inside
+  // MapLibre's catch block, but at high zoom over undownloaded
+  // areas the cascade (every parent also 404s, every parent fires
+  // another update) breaks rendering. One coalesced kick after the
+  // initial burst settles avoids both the blank-on-load and the
+  // cascade.
+  if (typeof map !== 'undefined') {
+    const kickSourceCaches = () => {
+      try {
+        if (!map.style || !map.style.sourceCaches) return;
+        const tr = map.transform;
+        for (const id of Object.keys(map.style.sourceCaches)) {
+          const sc = map.style.sourceCaches[id];
+          if (sc && typeof sc.update === 'function') sc.update(tr);
+        }
+        if (typeof map.triggerRepaint === 'function') map.triggerRepaint();
+      } catch {}
+    };
+    // 250ms gives the queued static-region requests time to resolve
+    // (the 204-error path is fast, ~50-150ms based on our diag) so
+    // the update sees them as errored and walks parents.
+    const scheduleKick = () => setTimeout(kickSourceCaches, 250);
+    if (map.loaded && map.loaded()) scheduleKick();
+    else map.once('load', scheduleKick);
   }
 
   async function performRegionDownload({ id, bbox, minZoom, maxZoom, isRefresh }) {
