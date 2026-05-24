@@ -3665,11 +3665,25 @@
           pollHandle = setInterval(async () => {
             try {
               const r = await Mem.getFootprint();
-              const mb  = r.physFootprint / (1024 * 1024);
-              const rss = r.residentSize  / (1024 * 1024);
-              if (mb > peakMB) peakMB = mb;
-              badge.textContent =
-                `mem ${mb.toFixed(1)}M  peak ${peakMB.toFixed(1)}M  rss ${rss.toFixed(1)}M`;
+              const hostMb = r.physFootprint / (1024 * 1024);
+              const webMb  = (r.webPhysFootprint || 0) / (1024 * 1024);
+              // Headline number = host + web (= overall app footprint).
+              // Track peak based on the headline; show web separately so
+              // we can see at a glance which process is growing. webProc
+              // count > 0 confirms the multi-process plugin is active.
+              const totalMb = hostMb + webMb;
+              if (totalMb > peakMB) peakMB = totalMb;
+              if (r.webProcessCount && r.webProcessCount > 0) {
+                badge.textContent =
+                  `mem ${totalMb.toFixed(1)}M  peak ${peakMB.toFixed(1)}M  ` +
+                  `[host ${hostMb.toFixed(1)} + web ${webMb.toFixed(1)} ×${r.webProcessCount}]`;
+              } else {
+                // Old plugin or no WebContent processes detected — fall
+                // back to the host-only display.
+                const rss = r.residentSize  / (1024 * 1024);
+                badge.textContent =
+                  `mem ${hostMb.toFixed(1)}M  peak ${peakMB.toFixed(1)}M  rss ${rss.toFixed(1)}M`;
+              }
               window._lastMem = r;
             } catch (e) {
               badge.textContent = 'mem err: ' + (e && e.message ? e.message : e);
@@ -4267,13 +4281,98 @@ async function saveWalkGraph(regionId, buffer) {
   await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
   db.close();
 }
-async function loadAllWalkGraphs() {
+async function loadAllWalkGraphs(includeRegionIds) {
+  // includeRegionIds is an optional Set<string>. When provided, ONLY
+  // those regions' buffers are read from IDB. Critical for memory:
+  // a getAll() materializes every blob into JS memory regardless of
+  // downstream filtering, which crashes iOS when many static regions
+  // are downloaded. With per-key gets we only pay for what we'll use.
   const db = await openWalkDB();
-  return new Promise((resolve, reject) => {
-    const req = db.transaction('regions', 'readonly').objectStore('regions').getAll();
-    req.onsuccess = () => { resolve(req.result); db.close(); };
-    req.onerror = () => reject(req.error);
-  });
+  try {
+    if (includeRegionIds && includeRegionIds.size > 0) {
+      const ids = Array.from(includeRegionIds);
+      _routeTrace('walk:idb:fetch_keys', { n: ids.length });
+      const tx = db.transaction('regions', 'readonly');
+      const store = tx.objectStore('regions');
+      const results = [];
+      await Promise.all(ids.map((id) => new Promise((resolve) => {
+        const req = store.get(id);
+        req.onsuccess = () => { if (req.result) results.push(req.result); resolve(); };
+        req.onerror = () => resolve();  // missing/errored region just gets skipped
+      })));
+      return results;
+    }
+    return await new Promise((resolve, reject) => {
+      const req = db.transaction('regions', 'readonly').objectStore('regions').getAll();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+// Crash-survival routing trace. Writes the most recent N routing-pipeline
+// steps to localStorage. iOS Capacitor refreshes on memory exhaustion
+// before any in-memory diag survives — but localStorage persists across
+// the refresh, so the next session's [route trace] section in Settings
+// shows what step the previous routing attempt died on.
+const ROUTE_TRACE_KEY = 'cc.routeTrace.v1';
+const ROUTE_TRACE_MAX = 40;
+function _routeTrace(step, data) {
+  try {
+    const raw = localStorage.getItem(ROUTE_TRACE_KEY) || '[]';
+    const arr = JSON.parse(raw);
+    // Auto-stamp memory footprint when MemoryProbe poll has cached
+    // a recent reading. Prefer the WebContent process's footprint
+    // (where JS / typed arrays / map tiles actually live) — the host
+    // process footprint is just the Capacitor shell and barely
+    // moves regardless of what JS is doing. Falls back to host
+    // metric on builds without the multi-process plugin update.
+    let mem = null, hostMem = null, webProcs = null;
+    if (window._lastMem) {
+      const m = window._lastMem;
+      hostMem = +(m.physFootprint / 1048576).toFixed(1);
+      if (m.webPhysFootprint != null && m.webPhysFootprint > 0) {
+        mem = +(m.webPhysFootprint / 1048576).toFixed(1);
+        webProcs = m.webProcessCount || 0;
+      } else {
+        mem = hostMem;
+      }
+    }
+    arr.push({ t: Date.now(), step, data: data || null, mem, hostMem, webProcs });
+    while (arr.length > ROUTE_TRACE_MAX) arr.shift();
+    localStorage.setItem(ROUTE_TRACE_KEY, JSON.stringify(arr));
+  } catch {}
+}
+function _routeTraceClear() {
+  try { localStorage.removeItem(ROUTE_TRACE_KEY); } catch {}
+}
+function _routeTraceRead() {
+  try { return JSON.parse(localStorage.getItem(ROUTE_TRACE_KEY) || '[]'); }
+  catch { return []; }
+}
+
+// Routing-scoped memory probe. The badge-poll only runs when the user
+// has the mem badge enabled, so during a normal-user crash report we
+// have no memory data. Kick our own 250ms poll for the duration of a
+// route — single mach syscall per tick, cheap — so the route-trace
+// progress lines have accurate memMb values.
+let _routeProbeTimer = null;
+function _routeProbeStart() {
+  if (_routeProbeTimer) return;
+  const Mem = window.Capacitor && window.Capacitor.Plugins
+    && window.Capacitor.Plugins.MemoryProbe;
+  if (!Mem || typeof Mem.getFootprint !== 'function') return;
+  _routeProbeTimer = setInterval(async () => {
+    try { window._lastMem = await Mem.getFootprint(); } catch {}
+  }, 250);
+}
+function _routeProbeStop() {
+  if (_routeProbeTimer) {
+    clearInterval(_routeProbeTimer);
+    _routeProbeTimer = null;
+  }
 }
 async function deleteWalkGraphByRegion(regionId) {
   const db = await openWalkDB();
@@ -8611,6 +8710,16 @@ function fmtDate(ts) {
       alert('Pick both a From and a To first.');
       return;
     }
+    _routeProbeStart();
+    _routeTrace('route:start', {
+      from: from && [from.lng, from.lat],
+      to: to && [to.lng, to.lat],
+      mode: (typeof window._regionsMode === 'function') ? window._regionsMode() : '?',
+      bboxRegions: (typeof loadRegions === 'function' ? loadRegions().length : 0),
+      staticRegions: (typeof loadStaticRegions === 'function' ? loadStaticRegions().length : 0),
+      memMbAtStart: (window._lastMem
+        ? +(window._lastMem.physFootprint / 1048576).toFixed(1) : null),
+    });
     // Single spinner covering both walk-graph hydration (first call can take
     // a second or two) and the Dijkstra search. Double-rAF lets the browser
     // paint the spinner before the main thread gets busy.
@@ -8621,17 +8730,60 @@ function fmtDate(ts) {
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
     routingInFlight = true;
     try {
-      // Force-load every saved region so cross-boundary routes work, even
-      // if the viewport-cull timer had trimmed the walk graph to just the
-      // visible region(s).
-      const allIds = new Set(loadRegions().map(r => r.id));
+      // Pick the set of regions whose walk graph we need to merge for
+      // this specific route. Originally this used `loadRegions()` (the
+      // bbox-mode storage) only — fine when users had a handful of
+      // saved bboxes, but in static-hf mode users can have 50+ small
+      // regions downloaded and parsing them ALL into one merged graph
+      // is a memory bomb that crashes iOS.
+      //
+      // The right scope is "regions intersecting the route's
+      // from→to bounding box plus some padding." That covers cross-
+      // boundary routing without dragging in unrelated continents.
+      // We pull from BOTH the bbox-mode list AND the static-mode
+      // list so the same routing works in either mode.
+      const ROUTE_PAD_DEG = 0.05;  // ~5 km of slop around the route bbox
+      const routeBbox = [
+        Math.min(from.lng, to.lng) - ROUTE_PAD_DEG,
+        Math.min(from.lat, to.lat) - ROUTE_PAD_DEG,
+        Math.max(from.lng, to.lng) + ROUTE_PAD_DEG,
+        Math.max(from.lat, to.lat) + ROUTE_PAD_DEG,
+      ];
+      const intersects = (rb) =>
+        rb && rb[0] <= routeBbox[2] && rb[2] >= routeBbox[0]
+          && rb[1] <= routeBbox[3] && rb[3] >= routeBbox[1];
+      const bboxRegions = (typeof loadRegions === 'function')
+        ? loadRegions() : [];
+      const staticRegions = (typeof loadStaticRegions === 'function')
+        ? loadStaticRegions() : [];
+      const allIds = new Set();
+      for (const r of bboxRegions) if (intersects(r.bbox)) allIds.add(r.id);
+      for (const r of staticRegions) if (intersects(r.bbox)) allIds.add(r.id);
+      _routeTrace('route:region_filter', {
+        bbox: routeBbox,
+        intersecting: allIds.size,
+        bboxTotal: bboxRegions.length,
+        staticTotal: staticRegions.length,
+        ids: Array.from(allIds).slice(0, 20),
+      });
+      _routeTrace('route:ensure_walk_start');
       await ensureWalkGraph(allIds.size ? allIds : undefined);
+      _routeTrace('route:ensure_walk_done', {
+        nodes: walkGraph.nodeCount,
+        edges: walkGraph.edgeCount,
+        loadedRegions: walkGraphLoadedRegions.size,
+      });
       if (walkGraph.nodeCount === 0) {
         alert('No walking graph for this region yet — save the area first.');
         return;
       }
+      _routeTrace('route:find_nearest_start');
       const start = findNearestWalkNode(from.lng, from.lat);
       const end = findNearestWalkNode(to.lng, to.lat);
+      _routeTrace('route:find_nearest_done', {
+        startId: start.id, startDist: Math.round(start.distance || 0),
+        endId: end.id, endDist: Math.round(end.distance || 0),
+      });
       if (!start.id || !end.id) { alert('Could not find walkable path endpoints.'); return; }
       if (start.distance > 500 || end.distance > 500) {
         alert('One of the endpoints is too far from any walking path.');
@@ -8643,8 +8795,13 @@ function fmtDate(ts) {
       const walkWeight = currentWalkWeight();
       const transferSec = currentTransferSec();
       const canTransit = scheduleIdx.stops.size > 0 && scheduleIdx.stopToWalkNode.size > 0;
+      _routeTrace('route:plan_start', {
+        canTransit,
+        transit: { stops: scheduleIdx.stops.size, stopToWalk: scheduleIdx.stopToWalkNode.size },
+      });
       if (canTransit) {
         const raws = planAlternatives(start.id, end.id, mode, pivotDate, walkWeight, transferSec);
+        _routeTrace('route:transit_done', { alternatives: raws.length });
         if (raws.length) {
           const pivotIso = pivotDate.toISOString();
           const plans = raws.map(raw => ({
@@ -8658,13 +8815,18 @@ function fmtDate(ts) {
           return;
         }
       }
+      _routeTrace('route:astar_start');
       const route = astar(start.id, end.id);
+      _routeTrace('route:astar_done', { found: !!route });
       if (!route) { alert('No route found between those points.'); return; }
       renderDirections(route, from, toPoi);
+      _routeTrace('route:render_done');
     } catch (e) {
+      _routeTrace('route:caught', { err: (e && e.message) || String(e) });
       console.error('routing failed:', e);
       alert('Could not plan route.');
     } finally {
+      _routeProbeStop();
       routingGo.classList.remove('loading');
       routingGo.disabled = false;
       routingGo.innerHTML = origLabel;
@@ -10121,11 +10283,30 @@ function fmtDate(ts) {
   const WALK_SPEED_MPS = 1.3;  // converts walk-edge meters → seconds
 
   async function rebuildWalkGraph(includeRegionIds) {
-    const groups = await loadAllWalkGraphs();
+    _routeTrace('walk:rebuild:start', {
+      include: includeRegionIds ? Array.from(includeRegionIds) : null,
+    });
+    // Pass the filter to loadAllWalkGraphs so only the needed
+    // buffers come out of IDB (avoids materializing every blob
+    // when there are many static regions stored).
+    const groups = await loadAllWalkGraphs(includeRegionIds);
+    _routeTrace('walk:rebuild:groups_loaded', { n: groups.length });
+    // Defensive: when includeRegionIds wasn't passed (e.g., legacy
+    // callers), filter at the JS level here so behavior matches the
+    // old path. With the filter passed through this is a no-op.
     const filteredGroups = includeRegionIds
       ? groups.filter(g => includeRegionIds.has(g.regionId))
       : groups;
+    let totalBufBytes = 0;
+    for (const g of filteredGroups) {
+      if (g.buffer && g.buffer.byteLength) totalBufBytes += g.buffer.byteLength;
+    }
+    _routeTrace('walk:rebuild:bytes', {
+      regions: filteredGroups.length,
+      bytes: totalBufBytes,
+    });
     const regions = filteredGroups.map(g => viewWalkRegion(g.buffer));
+    _routeTrace('walk:rebuild:parsed', { n: regions.length });
     const wg = emptyWalkGraph();
 
     // Pass 1: assign sequential internal indices (keyed by OSM id), count
@@ -10158,6 +10339,17 @@ function fmtDate(ts) {
     wg.nodeCount = nodeCount;
     wg.edgeCount = edgeCount;
     wg.adjCount  = 2 * edgeCount;
+    // Allocation cost = 4*nodes + 4*nodes + 4*(nodes+1) + 4*2*edges
+    //                 + 4*2*edges + 4*edges + 4*edges + 4*edges
+    //                 + 4*edges + shapeBytes
+    //               ≈ 12*nodes + 24*edges + shapeBytes (bytes)
+    const estBytes = 12 * nodeCount + 24 * edgeCount + totalShapeBytes;
+    _routeTrace('walk:rebuild:alloc', {
+      nodes: nodeCount, edges: edgeCount,
+      shapeBytes: totalShapeBytes,
+      estBytes,
+      names: nameToGlobal.size,
+    });
     wg._nodeLng      = new Float32Array(nodeCount);
     wg._nodeLat      = new Float32Array(nodeCount);
     wg._adjStart     = new Int32Array(nodeCount + 1);
@@ -10169,6 +10361,7 @@ function fmtDate(ts) {
     wg._edgeShapeLen = new Uint32Array(edgeCount);
     wg._shapeBuf     = new Uint8Array(totalShapeBytes);
     wg._names        = Array.from(nameToGlobal.keys());
+    _routeTrace('walk:rebuild:alloc_done');
 
     // Pass 2: fill node coords (last region wins on duplicate OSM id).
     for (const r of regions) {
@@ -10245,10 +10438,27 @@ function fmtDate(ts) {
     }
 
     walkGraph = wg;
-    buildMultimodalBridges();
+    _routeTrace('walk:rebuild:fill_done');
+    // Snapshot which regions we just merged so the diag still reports
+    // them, then drop strong refs to every input buffer + parsed view
+    // so the GC can reclaim ~32MB of IDB blobs BEFORE the bridges
+    // build allocates its own ~47MB spatial grid. Without this, peak
+    // memory at the bridges step is buffers+typedArrays+grid ≈ 120MB
+    // and iOS kills the WebView.
+    const justLoadedIds = filteredGroups.map(g => g.regionId);
+    for (let i = 0; i < regions.length; i++) regions[i] = null;
+    for (let i = 0; i < filteredGroups.length; i++) filteredGroups[i] = null;
+    for (let i = 0; i < groups.length; i++) groups[i] = null;
+    _routeTrace('walk:rebuild:buffers_released');
+    await buildMultimodalBridges();
+    _routeTrace('walk:rebuild:bridges_done');
     walkGraphLoaded = true;
-    walkGraphLoadedRegions = new Set(filteredGroups.map(g => g.regionId));
+    walkGraphLoadedRegions = new Set(justLoadedIds);
     updateMemBadge();
+    _routeTrace('walk:rebuild:done', {
+      nodes: nodeCount, edges: edgeCount,
+      regions: justLoadedIds.length,
+    });
   }
 
   // Lazy load: the walk graph is memory-heavy (80-120 MB live for a country-
@@ -10280,6 +10490,13 @@ function fmtDate(ts) {
   // Drop the in-memory graph so iOS can reclaim it during long idle periods.
   // Next routing call will re-hydrate via ensureWalkGraph().
   function unloadWalkGraph() {
+    // Caller-source trace — we want to know WHO triggers each unload,
+    // because the cycle of unload-then-reallocate is itself an OOM
+    // risk on iOS (the new allocation happens while the old garbage
+    // hasn't been collected yet).
+    let caller = '';
+    try { caller = new Error().stack?.split('\n')[2]?.trim().slice(0, 80) || ''; } catch {}
+    _routeTrace('walk:unload', { caller });
     walkGraph = emptyWalkGraph();
     walkGraphLoaded = false;
     walkGraphLoadedRegions = new Set();
@@ -10301,8 +10518,16 @@ function fmtDate(ts) {
     const v = map.getBounds();
     const vb = [v.getWest(), v.getSouth(), v.getEast(), v.getNorth()];
     const out = new Set();
+    // Both bbox-mode and static-mode regions can have walk-graph
+    // entries in IDB; both need to be considered when deciding
+    // which regions to keep merged into the live walkGraph.
     for (const r of loadRegions()) {
       if (r.bbox && bboxIntersects(r.bbox, vb)) out.add(r.id);
+    }
+    if (typeof loadStaticRegions === 'function') {
+      for (const r of loadStaticRegions()) {
+        if (r.bbox && bboxIntersects(r.bbox, vb)) out.add(r.id);
+      }
     }
     return out;
   }
@@ -10665,6 +10890,50 @@ function fmtDate(ts) {
               `  mode=${mode} regions in view: ${have}/${inView.length} downloaded ` +
               `(of ${window._regionsManifest.n_regions} total in manifest)`
             );
+          }
+        }
+      } catch {}
+      // Route-trace from the LAST routing pipeline run. Persisted to
+      // localStorage so it survives the iOS-OOM auto-refresh that
+      // happens when computing directions over many regions blows
+      // memory. The last entry before a refresh tells us exactly
+      // which step ran out of memory.
+      try {
+        const rt = _routeTraceRead();
+        if (rt.length) {
+          lines.push(`[route trace]  (${rt.length} steps, newest last)`);
+          const fmtMs = (n) => `${(n / 1024 / 1024).toFixed(1)}MB`;
+          for (const e of rt) {
+            const dt = new Date(e.t);
+            const hhmm = dt.toLocaleTimeString(undefined, {
+              hour: '2-digit', minute: '2-digit', second: '2-digit',
+            });
+            let data = '';
+            if (e.data && typeof e.data === 'object') {
+              const parts = [];
+              for (const [k, v] of Object.entries(e.data)) {
+                if (k === 'bytes' || k === 'estBytes' || k === 'shapeBytes') {
+                  parts.push(`${k}=${fmtMs(v)}`);
+                } else if (Array.isArray(v)) {
+                  parts.push(`${k}=[${v.slice(0, 3).join(',')}${v.length > 3 ? '…' : ''}]`);
+                } else {
+                  parts.push(`${k}=${v}`);
+                }
+              }
+              data = '  ' + parts.join(' ');
+            }
+            // Memory tag: [WEB+HOST=TOTAL] when multi-process plugin
+            // is active, otherwise [MB] for the legacy single value.
+            let memTag = '';
+            if (e.mem != null) {
+              if (e.hostMem != null && e.hostMem !== e.mem) {
+                const total = (e.mem + e.hostMem).toFixed(1);
+                memTag = `  [web ${e.mem} + host ${e.hostMem} = ${total}MB${e.webProcs ? ' ×' + e.webProcs : ''}]`;
+              } else {
+                memTag = `  [${e.mem}MB]`;
+              }
+            }
+            lines.push(`  ${hhmm}${memTag}  ${e.step}${data}`);
           }
         }
       } catch {}
@@ -11699,52 +11968,126 @@ function fmtDate(ts) {
     }
 
     scheduleIdx = idx;
-    buildMultimodalBridges();
+    await buildMultimodalBridges();
     rebuildTransitFromSchedule();
     await refreshRoutesSource();
     if (typeof renderTransitModes  === 'function') renderTransitModes();
     if (typeof renderTransitRoutes === 'function') renderTransitRoutes();
   }
 
-  function buildMultimodalBridges() {
+  async function buildMultimodalBridges() {
+    _routeTrace('bridges:start', {
+      walkNodes: walkGraph.nodeCount,
+      stops: scheduleIdx.stops.size,
+    });
     scheduleIdx.stopToWalkNode = new Map();
     scheduleIdx.walkNodeToStops = new Map();
-    if (!walkGraph.nodeCount || !scheduleIdx.stops.size) return;
+    if (!walkGraph.nodeCount || !scheduleIdx.stops.size) {
+      _routeTrace('bridges:short_circuit');
+      return;
+    }
     const GRID = 1000;  // ~100m buckets at equator
     const walkGrid = new Map();
     const wcount = walkGraph.nodeCount;
     const wlngs  = walkGraph._nodeLng;
     const wlats  = walkGraph._nodeLat;
+    // Memory-frugal: cells store Uint32Array of node indices only.
+    // lng/lat get re-read from walkGraph's typed arrays during the
+    // stop-lookup loop. Previously each cell held [idx, lng, lat]
+    // triples — for ~935k nodes that was ~47MB just for the grid;
+    // now it's ~4MB (4 bytes per idx). We grow cells via a "list
+    // of small arrays" pattern to avoid Uint32Array resizing.
+    // Two-pass: first count per-cell, then allocate exact-sized arrays.
+    const cellCounts = new Map();
     for (let idx = 0; idx < wcount; idx++) {
       const lng = wlngs[idx], lat = wlats[idx];
       const k = Math.round(lng * GRID) + ',' + Math.round(lat * GRID);
-      if (!walkGrid.has(k)) walkGrid.set(k, []);
-      walkGrid.get(k).push([idx, lng, lat]);  // idx is internal node index
+      cellCounts.set(k, (cellCounts.get(k) || 0) + 1);
     }
+    _routeTrace('bridges:cells_counted', { cells: cellCounts.size });
+    const cellCursors = new Map();
+    for (const k of cellCounts.keys()) {
+      walkGrid.set(k, new Uint32Array(cellCounts.get(k)));
+      cellCursors.set(k, 0);
+    }
+    for (let idx = 0; idx < wcount; idx++) {
+      const lng = wlngs[idx], lat = wlats[idx];
+      const k = Math.round(lng * GRID) + ',' + Math.round(lat * GRID);
+      const arr = walkGrid.get(k);
+      const pos = cellCursors.get(k);
+      arr[pos] = idx;
+      cellCursors.set(k, pos + 1);
+    }
+    cellCounts.clear();
+    cellCursors.clear();
+    _routeTrace('bridges:grid_filled');
     const MAX_LINK_M = 500;
+    let linked = 0;
+    let processed = 0;
+    const TRACE_EVERY = 5000;
+    // Yield to the event loop every YIELD_EVERY iterations. The stop-
+    // linking loop runs synchronously over ~30k stops × 25 grid cells
+    // — total ~15s of sync work on iOS, which trips WebKit's hang
+    // watchdog and kills the page (mistaken for OOM). Yielding lets
+    // the watchdog reset and also lets the spinner UI animate.
+    const YIELD_EVERY = 2000;
     for (const [stopId, stop] of scheduleIdx.stops) {
       const cx = Math.round(stop.lng * GRID);
       const cy = Math.round(stop.lat * GRID);
-      let best = null, bestD = Infinity;
+      let best = -1, bestD = Infinity;
       for (let dx = -2; dx <= 2; dx++) {
         for (let dy = -2; dy <= 2; dy++) {
           const cell = walkGrid.get((cx + dx) + ',' + (cy + dy));
           if (!cell) continue;
-          for (const [id, nlng, nlat] of cell) {
-            const d = haversineM(nlng, nlat, stop.lng, stop.lat);
+          for (let i = 0; i < cell.length; i++) {
+            const id = cell[i];
+            const d = haversineM(wlngs[id], wlats[id], stop.lng, stop.lat);
             if (d < bestD) { bestD = d; best = id; }
           }
         }
       }
-      if (best !== null && bestD <= MAX_LINK_M) {
+      if (best !== -1 && bestD <= MAX_LINK_M) {
         const walkSec = bestD / WALK_SPEED_MPS;
         scheduleIdx.stopToWalkNode.set(stopId, { node: best, walkSec });
         if (!scheduleIdx.walkNodeToStops.has(best)) {
           scheduleIdx.walkNodeToStops.set(best, []);
         }
         scheduleIdx.walkNodeToStops.get(best).push([stopId, walkSec]);
+        linked++;
+      }
+      processed++;
+      // Yield to the event loop. setTimeout(0) drains pending tasks
+      // (rendering, user input, the iOS watchdog tick). Without this,
+      // a multi-second sync loop is treated as "page hung" and the
+      // WebContent process gets terminated.
+      if (processed % YIELD_EVERY === 0) {
+        await new Promise((r) => setTimeout(r, 0));
+      }
+      // Periodic trace + memory probe so we can pinpoint how far the
+      // loop got before a crash. Probe via Capacitor's MemoryProbe
+      // plugin if present (iOS) — gives RAM in MB at that moment.
+      if (processed % TRACE_EVERY === 0) {
+        let memMb = null, peakMb = null;
+        try {
+          // window._lastMem is set by the MemoryProbe badge poll. The
+          // poll only runs when the badge is enabled, so route-trace
+          // memory readings are best-effort. routeProbeStart()
+          // ensures a fresh poll for the duration of a route.
+          if (window._lastMem) {
+            memMb = +(window._lastMem.physFootprint / 1048576).toFixed(1);
+            if (window._lastMem.residentSize) {
+              peakMb = +(window._lastMem.residentSize / 1048576).toFixed(1);
+            }
+          }
+        } catch {}
+        _routeTrace('bridges:progress', {
+          processed, linked,
+          totalStops: scheduleIdx.stops.size,
+          memMb, peakMb,
+        });
       }
     }
+    _routeTrace('bridges:done', { linked, processed });
   }
   // Extract wall-clock components of an instant as seen in a given IANA time zone.
   function walltimeInTz(d, tz) {
