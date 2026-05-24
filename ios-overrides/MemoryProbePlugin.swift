@@ -1,22 +1,29 @@
-// Capacitor plugin exposing memory footprints for our own (host) process
-// AND every reachable child process. The host process — what
-// task_info(mach_task_self_, ...) reports — is just the Capacitor
-// shell. The actual heavyweight memory consumer is the separate
-// WKWebView "WebContent" process where all JS runs (typed arrays,
-// MapLibre tile cache, etc.). Reporting only the host hides the
-// real memory pressure and makes "page reloaded due to OOM" bugs
-// undebuggable.
+// Capacitor plugin exposing the app's current memory footprint to JS.
+// Used by the bottom-left on-screen badge to watch memory while
+// scrolling captured pokes / browsing the dex on a real device — we
+// don't have Instruments on the dev machine (Linux), so in-app
+// reporting is the only practical signal.
 //
 // `phys_footprint` is the value iOS uses for memory-limit kills, i.e.
-// the ground truth for "how close is this process to OOM". `resident_size`
+// the ground truth for "how close is this app to OOM". `resident_size`
 // (RSS) is reported alongside for context — usually close, can diverge
 // under compression.
 //
-// We use proc_listallpids + proc_pid_rusage / proc_pidpath, all public
-// APIs. iOS sandbox restricts proc_pid_rusage to the calling app's
-// own processes, so the returned list is { host process } + { our
-// WebContent processes } + { any other helper processes WebKit spawns
-// like Networking, GPU }. That's exactly the scope we want.
+// IMPORTANT LIMITATION: this measures the HOST app process (Capacitor
+// shell). WKWebView runs JavaScript in a separate WebContent process
+// that has its own memory accounting and OOM kill behavior — and from
+// inside a sandboxed iOS app there is no public API to read another
+// process's memory. We tried libproc (proc_listallpids /
+// proc_pid_rusage) but those aren't exposed through Swift's Darwin
+// module on iOS, and task_for_pid requires entitlements not available
+// to standard sideloaded apps.
+//
+// So when JS allocations grow (typed arrays, MapLibre tile cache, walk
+// graph), the readings from this plugin barely move — that doesn't
+// mean the app isn't using memory, just that the consumer is the
+// invisible WebContent process. The JS side has its own
+// _jsMemEstimate() helper that sums up known data structures as a
+// crude but useful proxy.
 //
 // Registered manually from AppBridgeViewController.capacitorDidLoad
 // via `bridge.registerPluginInstance(...)`. No CAP_PLUGIN macro / .m
@@ -25,7 +32,6 @@
 import Foundation
 import Capacitor
 import Darwin.Mach
-import Darwin
 
 @objc(MemoryProbePlugin)
 public class MemoryProbePlugin: CAPPlugin, CAPBridgedPlugin {
@@ -36,9 +42,6 @@ public class MemoryProbePlugin: CAPPlugin, CAPBridgedPlugin {
     ]
 
     @objc func getFootprint(_ call: CAPPluginCall) {
-        // ---- Host (current) process via task_info — same as before.
-        var hostPhys: UInt64 = 0
-        var hostRss: UInt64 = 0
         var info = task_vm_info_data_t()
         var count = mach_msg_type_number_t(
             MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
@@ -47,95 +50,15 @@ public class MemoryProbePlugin: CAPPlugin, CAPBridgedPlugin {
                 task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), intPtr, &count)
             }
         }
-        if kr == KERN_SUCCESS {
-            hostPhys = info.phys_footprint
-            hostRss = info.resident_size
+        if kr != KERN_SUCCESS {
+            call.reject("task_info failed: \(kr)")
+            return
         }
-
-        // ---- Enumerate sibling processes (WebContent, Networking, GPU,
-        // any other helpers we spawned). proc_listallpids → proc_name →
-        // proc_pid_rusage. Sandbox limits this to processes we have
-        // permission to inspect, which on iOS is our own + our spawned
-        // helpers — exactly what we want.
-        var processes: [[String: Any]] = []
-
-        // Always include the host entry first.
-        processes.append([
-            "pid": Int(getpid()),
-            "name": "host",
-            "physFootprint": Double(hostPhys),
-            "residentSize":  Double(hostRss),
-        ])
-
-        // Get all PIDs on the system (sandbox will gate which ones we
-        // can actually inspect). First call with nil buffer to learn
-        // size; second to fill.
-        let needed = proc_listallpids(nil, 0)
-        if needed > 0 {
-            let cap = Int(needed) + 32  // a little headroom in case the list grew
-            var pids = [pid_t](repeating: 0, count: cap)
-            let got = pids.withUnsafeMutableBufferPointer { buf -> Int32 in
-                proc_listallpids(buf.baseAddress,
-                                 Int32(buf.count * MemoryLayout<pid_t>.size))
-            }
-            if got > 0 {
-                let myPid = getpid()
-                let n = Int(got)
-                for i in 0..<n {
-                    let pid = pids[i]
-                    if pid <= 0 || pid == myPid { continue }
-                    // Best-effort name (truncated to 16 bytes by the OS,
-                    // path is the full executable path).
-                    var nameBuf = [CChar](repeating: 0, count: 64)
-                    let nameLen = nameBuf.withUnsafeMutableBufferPointer { buf -> Int32 in
-                        proc_name(pid, buf.baseAddress, UInt32(buf.count))
-                    }
-                    let name = nameLen > 0 ? String(cString: nameBuf) : ""
-                    if name.isEmpty { continue }
-                    // proc_pid_rusage with the v4/current flavor.
-                    var rusage = rusage_info_current()
-                    let rr = withUnsafeMutablePointer(to: &rusage) { ptr -> Int32 in
-                        ptr.withMemoryRebound(to: Optional<UnsafeMutableRawPointer>.self,
-                                              capacity: 1) { rebound in
-                            proc_pid_rusage(pid, RUSAGE_INFO_CURRENT, rebound)
-                        }
-                    }
-                    if rr != 0 { continue }  // not readable from our sandbox
-                    processes.append([
-                        "pid": Int(pid),
-                        "name": name,
-                        "physFootprint": Double(rusage.ri_phys_footprint),
-                        "residentSize":  Double(rusage.ri_resident_size),
-                    ])
-                }
-            }
-        }
-
-        // Roll up the WebContent processes (one or more) into a summary
-        // so the JS caller can read it cheaply without iterating.
-        var webPhys: Double = 0
-        var webRss: Double = 0
-        var webCount = 0
-        for p in processes {
-            let name = (p["name"] as? String) ?? ""
-            if name.contains("WebContent") {
-                webPhys += (p["physFootprint"] as? Double) ?? 0
-                webRss  += (p["residentSize"]  as? Double) ?? 0
-                webCount += 1
-            }
-        }
-
+        // Bytes. JS Number has 53-bit precision — 9 PB headroom, fine
+        // for any plausible memory size.
         call.resolve([
-            // Back-compat: top-level physFootprint/residentSize stay as the
-            // HOST process so existing JS keeps showing the same shell-level
-            // metric (the on-screen mem badge for instance). The WebContent
-            // values are exposed separately so callers can opt in.
-            "physFootprint": Double(hostPhys),
-            "residentSize":  Double(hostRss),
-            "webPhysFootprint": webPhys,
-            "webResidentSize":  webRss,
-            "webProcessCount":  webCount,
-            "processes": processes,
+            "physFootprint": Double(info.phys_footprint),
+            "residentSize":  Double(info.resident_size),
         ])
     }
 }

@@ -3665,26 +3665,20 @@
           pollHandle = setInterval(async () => {
             try {
               const r = await Mem.getFootprint();
-              const hostMb = r.physFootprint / (1024 * 1024);
-              const webMb  = (r.webPhysFootprint || 0) / (1024 * 1024);
-              // Headline number = host + web (= overall app footprint).
-              // Track peak based on the headline; show web separately so
-              // we can see at a glance which process is growing. webProc
-              // count > 0 confirms the multi-process plugin is active.
-              const totalMb = hostMb + webMb;
-              if (totalMb > peakMB) peakMB = totalMb;
-              if (r.webProcessCount && r.webProcessCount > 0) {
-                badge.textContent =
-                  `mem ${totalMb.toFixed(1)}M  peak ${peakMB.toFixed(1)}M  ` +
-                  `[host ${hostMb.toFixed(1)} + web ${webMb.toFixed(1)} ×${r.webProcessCount}]`;
-              } else {
-                // Old plugin or no WebContent processes detected — fall
-                // back to the host-only display.
-                const rss = r.residentSize  / (1024 * 1024);
-                badge.textContent =
-                  `mem ${hostMb.toFixed(1)}M  peak ${peakMB.toFixed(1)}M  rss ${rss.toFixed(1)}M`;
-              }
+              const mb  = r.physFootprint / (1024 * 1024);
+              const rss = r.residentSize  / (1024 * 1024);
+              if (mb > peakMB) peakMB = mb;
+              // Host-process figures (shell only — JS allocations live
+              // in the separate WebContent process and don't show here;
+              // see the plugin source for why). The JS-side estimate
+              // below covers what we can actually count from inside JS.
+              const jsMb = (typeof _jsMemEstimate === 'function')
+                ? _jsMemEstimate() / 1048576 : 0;
+              badge.textContent =
+                `host ${mb.toFixed(1)}M  peak ${peakMB.toFixed(1)}M  ` +
+                `js≈${jsMb.toFixed(1)}M`;
               window._lastMem = r;
+              window._lastJsMem = jsMb * 1048576;
             } catch (e) {
               badge.textContent = 'mem err: ' + (e && e.message ? e.message : e);
             }
@@ -4323,24 +4317,26 @@ function _routeTrace(step, data) {
   try {
     const raw = localStorage.getItem(ROUTE_TRACE_KEY) || '[]';
     const arr = JSON.parse(raw);
-    // Auto-stamp memory footprint when MemoryProbe poll has cached
-    // a recent reading. Prefer the WebContent process's footprint
-    // (where JS / typed arrays / map tiles actually live) — the host
-    // process footprint is just the Capacitor shell and barely
-    // moves regardless of what JS is doing. Falls back to host
-    // metric on builds without the multi-process plugin update.
-    let mem = null, hostMem = null, webProcs = null;
+    // Two memory readings stamped on every trace entry:
+    //   hostMb  — Capacitor shell process from the MemoryProbe plugin
+    //             (this is what task_info(mach_task_self_) returns; it
+    //             is NOT what WebContent / JS is using and barely
+    //             moves regardless of JS allocations)
+    //   jsMb    — our own JS-side estimate summing known data
+    //             structures (walk graph typed arrays, POIs,
+    //             housenumbers, etc.). Doesn't include MapLibre's
+    //             tile cache or other webkit-internal allocations,
+    //             so it's a LOWER bound on actual JS memory pressure.
+    let hostMb = null, jsMb = null;
     if (window._lastMem) {
-      const m = window._lastMem;
-      hostMem = +(m.physFootprint / 1048576).toFixed(1);
-      if (m.webPhysFootprint != null && m.webPhysFootprint > 0) {
-        mem = +(m.webPhysFootprint / 1048576).toFixed(1);
-        webProcs = m.webProcessCount || 0;
-      } else {
-        mem = hostMem;
-      }
+      hostMb = +(window._lastMem.physFootprint / 1048576).toFixed(1);
     }
-    arr.push({ t: Date.now(), step, data: data || null, mem, hostMem, webProcs });
+    if (window._lastJsMem != null) {
+      jsMb = +(window._lastJsMem / 1048576).toFixed(1);
+    } else if (typeof _jsMemEstimate === 'function') {
+      try { jsMb = +(_jsMemEstimate() / 1048576).toFixed(1); } catch {}
+    }
+    arr.push({ t: Date.now(), step, data: data || null, hostMb, jsMb });
     while (arr.length > ROUTE_TRACE_MAX) arr.shift();
     localStorage.setItem(ROUTE_TRACE_KEY, JSON.stringify(arr));
   } catch {}
@@ -10549,9 +10545,13 @@ function fmtDate(ts) {
   setInterval(cullWalkGraphToViewport, 30_000);
 
   // ---- memory diagnostic -------------------------------------------------
-  // Best-effort estimate of bytes held by walk graph + POIs + housenumbers.
-  // Schedule data is omitted (Maps are hard to size accurately). Rendered
-  // into the settings dialog so the user can eyeball trends.
+  // Best-effort estimate of bytes held by walk graph + POIs + housenumbers
+  // + schedule bridges. This is a LOWER BOUND on the JS heap — doesn't
+  // include MapLibre's tile cache (lives in webkit internals we can't
+  // introspect), PMTiles reader directories, font glyph bitmaps, sprite
+  // image data, etc. But the chunks listed here are the biggest
+  // user-data sinks and the ones that grow during routing, so trend
+  // movement here is meaningful for the OOM hunt.
   function estimateLoadedBytes() {
     let b = 0;
     if (walkGraph) {
@@ -10576,8 +10576,32 @@ function fmtDate(ts) {
       if (r.strIdx) b += r.strIdx.byteLength;
       if (r.strings) for (const s of r.strings) b += s.length * 2;
     }
+    // Schedule bridges: built by buildMultimodalBridges, holds one
+    // entry per linked transit stop. Each entry is a small Map slot
+    // plus a {node, walkSec} object plus an array slot in the
+    // reverse map. Approx 100 bytes per linked stop.
+    try {
+      if (scheduleIdx && scheduleIdx.stopToWalkNode) {
+        b += scheduleIdx.stopToWalkNode.size * 100;
+      }
+      if (scheduleIdx && scheduleIdx.walkNodeToStops) {
+        let entries = 0;
+        for (const arr of scheduleIdx.walkNodeToStops.values()) {
+          entries += arr.length;
+        }
+        b += entries * 80;
+      }
+      // scheduleIdx.stops itself: ~80 bytes per stop (id, name, lng,
+      // lat, plus map overhead).
+      if (scheduleIdx && scheduleIdx.stops) {
+        b += scheduleIdx.stops.size * 120;
+      }
+    } catch {}
     return b;
   }
+  // Window-exposed as _jsMemEstimate for the route-trace + badge to
+  // call from outside this IIFE. Single canonical estimator.
+  window._jsMemEstimate = estimateLoadedBytes;
   function updateMemBadge() {
     const el = document.getElementById('memBadge');
     if (!el) return;
@@ -10922,16 +10946,16 @@ function fmtDate(ts) {
               }
               data = '  ' + parts.join(' ');
             }
-            // Memory tag: [WEB+HOST=TOTAL] when multi-process plugin
-            // is active, otherwise [MB] for the legacy single value.
+            // Memory tag: [js≈X host=Y] (js estimate, then host
+            // shell process from MemoryProbe). js is the meaningful
+            // number for routing/walk-graph allocations; host barely
+            // moves regardless of JS state (see plugin source).
             let memTag = '';
-            if (e.mem != null) {
-              if (e.hostMem != null && e.hostMem !== e.mem) {
-                const total = (e.mem + e.hostMem).toFixed(1);
-                memTag = `  [web ${e.mem} + host ${e.hostMem} = ${total}MB${e.webProcs ? ' ×' + e.webProcs : ''}]`;
-              } else {
-                memTag = `  [${e.mem}MB]`;
-              }
+            if (e.jsMb != null || e.hostMb != null) {
+              const parts = [];
+              if (e.jsMb != null) parts.push(`js≈${e.jsMb}`);
+              if (e.hostMb != null) parts.push(`host=${e.hostMb}`);
+              memTag = `  [${parts.join(' ')}MB]`;
             }
             lines.push(`  ${hhmm}${memTag}  ${e.step}${data}`);
           }
