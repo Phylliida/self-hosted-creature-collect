@@ -10304,6 +10304,97 @@ function fmtDate(ts) {
           }
         }
       } catch {}
+      // Static-region tile serving — only meaningful in a static mode.
+      // Distinguishes hypotheses for "sometimes blank tiles at certain
+      // zooms": (1) MapLibre caching 204 responses; (2) source-cache
+      // eviction; (4) reader-init race. The recent-decisions log is
+      // the strongest signal — if the same (z,x,y) shows different
+      // outcomes across reloads, it's a race; if a region's initMs is
+      // unexpectedly high (or `error` is set), it's an init problem.
+      try {
+        const std = window._staticTilesDiag;
+        if (std && (std.totalCalls > 0
+            || (window._isStaticRegionsMode && window._isStaticRegionsMode()))) {
+          lines.push(`[static tiles]`);
+          const mode = (typeof window._regionsMode === 'function')
+            ? window._regionsMode() : '?';
+          const dl = (typeof loadStaticRegions === 'function')
+            ? loadStaticRegions() : [];
+          lines.push(`  mode=${mode}  downloaded=${dl.length} region(s)`);
+          lines.push(
+            `  serve: ${std.totalCalls} total / ${std.totalServed} ok / ` +
+            `${std.totalNull} returned 204`
+          );
+          lines.push(
+            `  in-flight: ${std.inFlight}  peak: ${std.peakInFlight}  ` +
+            `inits-pending: ${std.initsPending}`
+          );
+          // Per-region table, ordered to match `downloaded` iteration
+          // order (which is the order `_serveStaticTile` checks them
+          // in — so the first row is the one most likely to "win" a
+          // tile, the last row is the fallback).
+          const seen = new Set();
+          const rows = [];
+          for (const r of dl) {
+            seen.add(r.id);
+            rows.push([r.id, std.byRegion[r.id] || {}]);
+          }
+          // Any regions in the diag we don't have in `downloaded`
+          // (deleted but readers still cached) — surface them too.
+          for (const id of Object.keys(std.byRegion)) {
+            if (!seen.has(id)) rows.push([id, std.byRegion[id]]);
+          }
+          if (rows.length) {
+            lines.push(`  by region (iteration order):`);
+            for (const [id, br] of rows) {
+              const served = (br.served ?? 0).toString().padStart(4);
+              const notHere = (br.notHere ?? 0).toString().padStart(4);
+              const initMs = br.initMs !== undefined
+                ? `${br.initMs}ms`.padStart(7) : '   —   ';
+              const entries = br.entries !== undefined
+                ? `${br.entries}`.padStart(5) : '    —';
+              const zRange = (br.minZoom !== undefined && br.maxZoom !== undefined)
+                ? `z${br.minZoom}-${br.maxZoom}` : '—';
+              const err = br.error ? `  err="${br.error}"` : '';
+              lines.push(
+                `    ${id.padEnd(14)} served=${served}  ` +
+                `notHere=${notHere}  init=${initMs}  ` +
+                `entries=${entries}  ${zRange}${err}`
+              );
+            }
+          }
+          // 204 rejections by zoom — if a single zoom dominates, it
+          // hints at coverage gaps at that level (e.g., z=14 tiles
+          // outside any downloaded region's bbox) vs racing.
+          const zoomKeys = Object.keys(std.rejectByZoom)
+            .map(Number).sort((a, b) => b - a);
+          if (zoomKeys.length) {
+            const zStr = zoomKeys.map((z) => `z${z}:${std.rejectByZoom[z]}`).join(' ');
+            lines.push(`  204 by zoom: ${zStr}`);
+          }
+          // Rolling log of the most recent N tile decisions. The
+          // race hypothesis (4) shows up here as: same (z,x,y) seen
+          // multiple times with different `served` values across
+          // reloads (or even within one session if MapLibre retries
+          // the tile). The cache-poisoning hypothesis (1) shows as:
+          // (z,x,y) gets 204, then never re-appears even when you
+          // pan back over it.
+          if (std.recent.length) {
+            lines.push(`  recent decisions (newest first, ${std.recent.length} of ${std.totalCalls}):`);
+            const now = Date.now();
+            for (let i = std.recent.length - 1; i >= 0; i--) {
+              const r = std.recent[i];
+              const ago = ((now - r.t) / 1000).toFixed(1);
+              const what = r.served
+                ? `→${r.served} (${r.tried.length} tried)`
+                : `→204 (${r.tried.length} tried: ${r.tried.join(',')})`;
+              lines.push(
+                `    -${ago}s  z=${r.z} x=${r.x} y=${r.y}  ${what}  ${r.durMs}ms`
+              );
+            }
+          }
+        }
+      } catch {}
       const fh = window._fetchHealth;
       if (fh) {
         const ageSec = (t) => t ? `${Math.round((Date.now() - t) / 1000)}s ago` : '—';
@@ -11859,18 +11950,87 @@ function fmtDate(ts) {
   // reference to the IDB Blob (file-backed, no memory cost) plus a
   // ~30 KB parsed directory. Map<regionId, Promise<reader>> caches
   // the init so concurrent tile requests don't double-initialize.
+
+  // Diagnostic counters/log read by the [static tiles] section of the
+  // Settings → Copy Logs dump. Read-only from outside this block;
+  // _dbgRecordDecision + the _getReader instrumentation mutate it.
+  // Bounded — `recent` capped at ~30 entries, byRegion is one entry
+  // per downloaded region. Tracks: in-flight count + peak, per-region
+  // init lifecycle (started/duration/entries/error), per-region
+  // served/not-here counters, recent decisions, and 204 counts by
+  // zoom. Designed to distinguish (1) MapLibre caching a 204 from
+  // (4) reader-init race when the same (z,x,y) gets different
+  // outcomes across runs.
+  window._staticTilesDiag = {
+    totalCalls: 0,
+    totalServed: 0,
+    totalNull: 0,
+    inFlight: 0,
+    peakInFlight: 0,
+    initsPending: 0,
+    byRegion: {},      // { [id]: { served, notHere, initStartedAt, initMs,
+                       //           entries, minZoom, maxZoom, error } }
+    rejectByZoom: {},  // { [z]: count } — z that got 204
+    recent: [],        // rolling, newest last; cap 30
+    _maxRecent: 30,
+  };
+  function _dbgRecordDecision(z, x, y, served, tried, startedAt) {
+    const d = window._staticTilesDiag;
+    const durMs = Math.round(performance.now() - startedAt);
+    d.totalCalls++;
+    if (served) {
+      d.totalServed++;
+      const r = d.byRegion[served] = d.byRegion[served]
+        || { served: 0, notHere: 0 };
+      r.served++;
+    } else {
+      d.totalNull++;
+      d.rejectByZoom[z] = (d.rejectByZoom[z] || 0) + 1;
+    }
+    for (const id of tried) {
+      if (id === served) continue;
+      const r = d.byRegion[id] = d.byRegion[id]
+        || { served: 0, notHere: 0 };
+      r.notHere++;
+    }
+    d.recent.push({
+      t: Date.now(), z, x, y, served,
+      tried: tried.slice(),
+      durMs,
+    });
+    if (d.recent.length > d._maxRecent) d.recent.shift();
+  }
+
   const _readers = new Map();
   function _getReader(regionId) {
     if (_readers.has(regionId)) return _readers.get(regionId);
+    const diag = window._staticTilesDiag;
+    diag.initsPending++;
+    const r = diag.byRegion[regionId] = diag.byRegion[regionId]
+      || { served: 0, notHere: 0 };
+    r.initStartedAt = performance.now();
     const p = (async () => {
       const blob = await window._getStaticRegionFile(regionId, 'tiles.pmtiles');
-      if (!blob) return null;
+      if (!blob) {
+        r.error = 'no blob in IDB';
+        r.initMs = Math.round(performance.now() - r.initStartedAt);
+        diag.initsPending--;
+        return null;
+      }
       const reader = new PMTilesReader(blob);
       try { await reader.init(); }
       catch (e) {
         console.warn('[pmtiles reader] init failed', regionId, e);
+        r.error = e.message || String(e);
+        r.initMs = Math.round(performance.now() - r.initStartedAt);
+        diag.initsPending--;
         return null;
       }
+      r.initMs = Math.round(performance.now() - r.initStartedAt);
+      r.entries = reader.entries ? reader.entries.length : 0;
+      r.minZoom = reader.minZoom;
+      r.maxZoom = reader.maxZoom;
+      diag.initsPending--;
       return reader;
     })();
     _readers.set(regionId, p);
@@ -11882,17 +12042,29 @@ function fmtDate(ts) {
   async function _serveStaticTile(z, x, y) {
     const downloaded = loadStaticRegions();
     if (!downloaded.length) return null;
-    for (const r of downloaded) {
-      const reader = await _getReader(r.id);
-      if (!reader) continue;
-      const tile = await reader.getTile(z, x, y);
-      if (!tile || tile.length === 0) continue;
-      if (tile.length >= 2 && tile[0] === 0x1f && tile[1] === 0x8b) {
-        return PMTilesReader._gunzip(tile);
+    const diag = window._staticTilesDiag;
+    diag.inFlight++;
+    if (diag.inFlight > diag.peakInFlight) diag.peakInFlight = diag.inFlight;
+    const startedAt = performance.now();
+    const tried = [];
+    try {
+      for (const r of downloaded) {
+        tried.push(r.id);
+        const reader = await _getReader(r.id);
+        if (!reader) continue;
+        const tile = await reader.getTile(z, x, y);
+        if (!tile || tile.length === 0) continue;
+        const result = (tile.length >= 2 && tile[0] === 0x1f && tile[1] === 0x8b)
+          ? await PMTilesReader._gunzip(tile)
+          : tile;
+        _dbgRecordDecision(z, x, y, r.id, tried, startedAt);
+        return result;
       }
-      return tile;
+      _dbgRecordDecision(z, x, y, null, tried, startedAt);
+      return null;
+    } finally {
+      diag.inFlight--;
     }
-    return null;
   }
 
   // transformRequest hook. Routes tile requests through the custom
