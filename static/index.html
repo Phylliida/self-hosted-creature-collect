@@ -4628,6 +4628,90 @@ function fmtDate(ts) {
     window._startupPhases.iconBulkDownload = performance.now() - t0;
   }
 
+  // ── Hoisted static-region scaffolding ─────────────────────────
+  // These must exist BEFORE the map is created so transformRequest
+  // can rewrite /tiles URLs from the very first tile request. The
+  // implementation (PMTilesReader, _serveStaticTile, IDB plumbing)
+  // lives in a much later block in this same IIFE; it sets
+  // window._serveStaticTile and calls window._markStaticReady()
+  // once ready. Tile requests that arrive during the gap queue on
+  // _staticReadyPromise instead of falling through to LocalServer
+  // (which would 404 for z>5 and poison MapLibre's cache with
+  // permanent "empty" tiles — that was the original bug).
+  const STATIC_REGIONS_KEY = 'cc.staticRegions.v1';
+  function loadStaticRegions() {
+    try { return JSON.parse(localStorage.getItem(STATIC_REGIONS_KEY) || '[]'); }
+    catch { return []; }
+  }
+  function saveStaticRegions(list) {
+    try { localStorage.setItem(STATIC_REGIONS_KEY, JSON.stringify(list)); }
+    catch {}
+  }
+  window._loadStaticRegions = loadStaticRegions;
+  window._maybeStaticTileUrl = function (url) {
+    if (!window._isStaticRegionsMode || !window._isStaticRegionsMode()) return null;
+    const m = url.match(/\/tiles\/(\d+)\/(\d+)\/(\d+)\.pbf(?:\?|$)/);
+    if (!m) return null;
+    // Bundled z=0..5 base map is always available via the existing
+    // /tiles → SW → LocalServer path and covers the whole world.
+    // Each downloaded region's pmtiles only contains z=0..5 tiles
+    // that intersect ITS bbox — usually just one or two at z=5 —
+    // so for low-zoom views over undownloaded areas the protocol
+    // handler has nothing to serve and MapLibre's over-zoom chain
+    // (which would also be routed through static-region://) finds
+    // no parent either. Letting low-zoom requests fall through
+    // to the SW means the bundled base map always renders.
+    // Keep `5` aligned with BASE_MAP_MAX_ZOOM declared later.
+    const z = +m[1];
+    if (z <= 5) return null;
+    const downloaded = loadStaticRegions();
+    if (!downloaded.length) return null;
+    return `static-region://tile/${m[1]}/${m[2]}/${m[3]}.pbf`;
+  };
+  // Resolved by the static-tile-serving block below when it
+  // installs _serveStaticTile. Until resolved, the protocol
+  // handler awaits — so early tile requests queue rather than
+  // failing fast with a 204 that MapLibre would cache forever.
+  let _resolveStaticReady;
+  window._staticReadyPromise = new Promise((resolve) => {
+    _resolveStaticReady = resolve;
+  });
+  window._markStaticReady = function () {
+    if (_resolveStaticReady) {
+      _resolveStaticReady();
+      _resolveStaticReady = null;
+    }
+  };
+  if (typeof maplibregl !== 'undefined'
+      && typeof maplibregl.addProtocol === 'function') {
+    const tileNotFoundError = (msg) => {
+      const e = new Error(msg || 'tile not in any downloaded region');
+      e.status = 204;
+      return e;
+    };
+    maplibregl.addProtocol('static-region', (params, second) => {
+      const m = params.url.match(
+        /^static-region:\/\/tile\/(\d+)\/(\d+)\/(\d+)\.pbf$/);
+      if (!m) {
+        const e = tileNotFoundError('malformed static-region url');
+        if (typeof second === 'function') { second(e); return; }
+        return Promise.reject(e);
+      }
+      const z = +m[1], x = +m[2], y = +m[3];
+      const p = window._staticReadyPromise
+        .then(() => window._serveStaticTile(z, x, y))
+        .then((data) => {
+          if (!data || data.length === 0) throw tileNotFoundError();
+          return { data };
+        });
+      if (typeof second === 'function') {
+        p.then((r) => second(null, r), (e) => second(e));
+        return { cancel: () => {} };
+      }
+      return p;
+    });
+  }
+
   const map = new maplibregl.Map({
     container: 'map',
     hash: true,
@@ -9144,15 +9228,13 @@ function fmtDate(ts) {
     return `${Math.round(n / 1048576)} MB`;
   }
 
-  // Static-region storage constants hoisted up here so renderRegions
-  // (called during initial page setup) can use them without hitting
-  // a temporal-dead-zone ReferenceError. The full static-region
-  // module (DB helpers, downloader, PMTiles reader, ...) lives much
-  // further down in the same IIFE; pulling JUST these declarations
-  // to the top means the rest can stay in its self-contained block
-  // without breaking cold-start renders. Keep the values aligned
-  // with the duplicate (deleted later) definitions.
-  const STATIC_REGIONS_KEY = 'cc.staticRegions.v1';
+  // IDB-related static-region constants. The cc.staticRegions.v1
+  // localStorage key + loadStaticRegions/saveStaticRegions are
+  // hoisted to before map creation (see the "Hoisted static-region
+  // scaffolding" block earlier) so transformRequest can use them
+  // immediately. These IDB constants stay here because they're
+  // only touched by the downloader/reader code in the static-tile
+  // block below.
   const STATIC_REGIONS_DB = 'cc-static-regions-v1';
   const STATIC_REGIONS_DB_VERSION = 1;
   const STATIC_REGIONS_STORE = 'files';
@@ -9160,14 +9242,6 @@ function fmtDate(ts) {
     'walk.bin', 'poi.bin', 'housenumbers.bin',
     'schedule.json', 'addresses.bin', 'tiles.pmtiles',
   ];
-  function loadStaticRegions() {
-    try { return JSON.parse(localStorage.getItem(STATIC_REGIONS_KEY) || '[]'); }
-    catch { return []; }
-  }
-  function saveStaticRegions(list) {
-    try { localStorage.setItem(STATIC_REGIONS_KEY, JSON.stringify(list)); }
-    catch {}
-  }
 
   function renderRegions() {
     const list = loadRegions();
@@ -12067,54 +12141,17 @@ function fmtDate(ts) {
     }
   }
 
-  // transformRequest hook. Routes tile requests through the custom
-  // protocol whenever the user is in a static mode AND has at least
-  // one region downloaded. Bypassed (URL passes through to the SW)
-  // when no regions are downloaded yet, so the bundled z=0..5 base
-  // map still shows.
-  window._maybeStaticTileUrl = function (url) {
-    if (!window._isStaticRegionsMode || !window._isStaticRegionsMode()) return null;
-    const m = url.match(/\/tiles\/(\d+)\/(\d+)\/(\d+)\.pbf(?:\?|$)/);
-    if (!m) return null;
-    let downloaded = [];
-    try { if (typeof loadStaticRegions === 'function') downloaded = loadStaticRegions(); }
-    catch {}
-    if (!downloaded.length) return null;
-    return `static-region://tile/${m[1]}/${m[2]}/${m[3]}.pbf`;
-  };
-
-  // Custom MapLibre protocol. Tile-not-found rejects with status=204
-  // (NOT 404) — the SW already documents the convention: 404 = "tile
-  // failed to load, no parent fallback"; 204 = "tile intentionally
-  // empty, fall back to parent tile via over-zoom". Since every
-  // downloaded region's pmtiles contains tiles at z=0..14 for its
-  // bbox, over-zoom to a lower zoom usually finds a parent in some
-  // downloaded region's archive.
-  if (typeof maplibregl !== 'undefined'
-      && typeof maplibregl.addProtocol === 'function') {
-    function tileNotFoundError(msg) {
-      const e = new Error(msg || 'tile not in any downloaded region');
-      e.status = 204;
-      return e;
-    }
-    maplibregl.addProtocol('static-region', (params, second) => {
-      const m = params.url.match(
-        /^static-region:\/\/tile\/(\d+)\/(\d+)\/(\d+)\.pbf$/);
-      if (!m) {
-        const e = tileNotFoundError('malformed static-region url');
-        if (typeof second === 'function') { second(e); return; }
-        return Promise.reject(e);
-      }
-      const p = _serveStaticTile(+m[1], +m[2], +m[3]).then((data) => {
-        if (!data || data.length === 0) throw tileNotFoundError();
-        return { data };
-      });
-      if (typeof second === 'function') {
-        p.then((r) => second(null, r), (e) => second(e));
-        return { cancel: () => {} };
-      }
-      return p;
-    });
+  // Publish _serveStaticTile so the hoisted protocol handler (set
+  // up before map creation) can call it. Then mark static-region
+  // serving as ready, which releases any tile requests that were
+  // awaiting _staticReadyPromise from MapLibre's startup burst.
+  // Both window assignments + the markStaticReady call must happen
+  // AFTER _serveStaticTile + _getReader + PMTilesReader + the IDB
+  // helpers are all defined — that's why this lives down here at
+  // the bottom of the static-region block, not up top.
+  window._serveStaticTile = _serveStaticTile;
+  if (typeof window._markStaticReady === 'function') {
+    window._markStaticReady();
   }
 
   async function performRegionDownload({ id, bbox, minZoom, maxZoom, isRefresh }) {
