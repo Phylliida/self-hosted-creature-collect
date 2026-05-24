@@ -3182,6 +3182,41 @@
         title="stop + start the GCDWebServer listen socket (iOS only)">Restart server</button>
       <span id="copyLogsStatus"></span>
     </div>
+    <!-- Tile-flow debug triggers. These call window._dbgTrigger(name)
+         which snapshots load/error counters, runs an action that
+         might "unstick" MapLibre's tile pyramid (sourceCache.update,
+         clearTiles, source.setTiles, tiny pan/zoom), and records the
+         delta. The diff shows up in [tile flow] → "debug triggers"
+         in the dump. Used to A/B which mechanism actually triggers
+         parent-walking for the initial-blank bug. -->
+    <div style="margin-top: 6px; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ui-muted); flex-wrap: wrap;">
+      <span>tile-flow:</span>
+      <button class="dbg-trigger-btn" data-trigger="update" type="button"
+        style="padding: 3px 8px; font-size: 11px; cursor: pointer;
+               background: var(--ui-input-bg); color: var(--ui-text);
+               border: 1px solid var(--ui-border); border-radius: var(--ui-radius);
+               font-family: inherit;">update</button>
+      <button class="dbg-trigger-btn" data-trigger="clear" type="button"
+        style="padding: 3px 8px; font-size: 11px; cursor: pointer;
+               background: var(--ui-input-bg); color: var(--ui-text);
+               border: 1px solid var(--ui-border); border-radius: var(--ui-radius);
+               font-family: inherit;">clear+update</button>
+      <button class="dbg-trigger-btn" data-trigger="reload" type="button"
+        style="padding: 3px 8px; font-size: 11px; cursor: pointer;
+               background: var(--ui-input-bg); color: var(--ui-text);
+               border: 1px solid var(--ui-border); border-radius: var(--ui-radius);
+               font-family: inherit;">setTiles</button>
+      <button class="dbg-trigger-btn" data-trigger="pan" type="button"
+        style="padding: 3px 8px; font-size: 11px; cursor: pointer;
+               background: var(--ui-input-bg); color: var(--ui-text);
+               border: 1px solid var(--ui-border); border-radius: var(--ui-radius);
+               font-family: inherit;">tinyPan</button>
+      <button class="dbg-trigger-btn" data-trigger="zoom" type="button"
+        style="padding: 3px 8px; font-size: 11px; cursor: pointer;
+               background: var(--ui-input-bg); color: var(--ui-text);
+               border: 1px solid var(--ui-border); border-radius: var(--ui-radius);
+               font-family: inherit;">tinyZoom</button>
+    </div>
     <div id="startupPhases" style="margin-top: 6px; font-size: 11px; color: var(--ui-muted); line-height: 1.5; font-family: monospace;"></div>
     <div class="actions"><button class="close" id="settingsClose">Done</button></div>
   </div>
@@ -4659,11 +4694,107 @@ function fmtDate(ts) {
     },
     sourceEvents: {
       loaded: 0, errored: 0, abort: 0,
-      byZoom: {},   // { [z]: { loaded, errored } } — only for tile events
+      loading: 0,   // 'dataloading' — request initiated (vs completed)
+      byZoom: {},   // { [z]: { loaded, errored, loading } } — tile events
       loadedByStatusOk: 0,
       errorByStatus: {}, // { [status]: count }
-      recent: [],   // { t, kind, source, z, x, y, status?, msg? } bounded 40
+      recent: [],   // { t, kind, source, z, x, y, status?, msg? } bounded 60
     },
+    // Map lifecycle / movement events. Used to correlate "user
+    // panned at T" → "z=5 bundled tile loaded at T+50ms" so we can
+    // see exactly what pan/zoom triggers that a manual update()
+    // does not.
+    lifecycle: {
+      load: null,        // timestamp of map 'load' event
+      idle: 0,           // count of 'idle' events
+      lastIdleAt: null,
+      moves: 0,
+      moveends: 0,
+      zoomends: 0,
+      lastMoveAt: null,
+      lastZoomendAt: null,
+      lastMoveendAt: null,
+      recent: [],   // { t, kind } bounded 40
+    },
+    // Manual debug trigger results — populated when user calls
+    // window._dbgTrigger(name). Lets us A/B different approaches
+    // without changing the deployed code.
+    debugTriggers: [],   // { t, name, before, after }
+  };
+  // Window-exposed debug triggers. Call from console:
+  //   _dbgTrigger('update')      — sourceCache.update()
+  //   _dbgTrigger('clear')       — clearTiles() then update()
+  //   _dbgTrigger('reload')      — source.setTiles([same url])
+  //   _dbgTrigger('pan')         — map.panBy([1, 0])
+  //   _dbgTrigger('zoom')        — map.zoomTo(map.getZoom() + 0.0001)
+  // Snapshots load/error counts before + after so we can see which
+  // mechanism actually triggers MapLibre to walk parents + render.
+  window._dbgTrigger = function (name) {
+    const fd = window._tileFlowDiag;
+    if (!fd) return 'no diag';
+    if (typeof map === 'undefined') return 'no map';
+    const snap = () => ({
+      loaded: fd.sourceEvents.loaded,
+      errored: fd.sourceEvents.errored,
+      loading: fd.sourceEvents.loading,
+      transform: fd.transform.total,
+    });
+    const before = snap();
+    let result = '';
+    try {
+      if (name === 'update') {
+        const tr = map.transform;
+        for (const id of Object.keys(map.style.sourceCaches)) {
+          map.style.sourceCaches[id].update(tr);
+        }
+        map.triggerRepaint();
+        result = 'ok';
+      } else if (name === 'clear') {
+        for (const id of Object.keys(map.style.sourceCaches)) {
+          const sc = map.style.sourceCaches[id];
+          if (typeof sc.clearTiles === 'function') sc.clearTiles();
+        }
+        const tr = map.transform;
+        for (const id of Object.keys(map.style.sourceCaches)) {
+          map.style.sourceCaches[id].update(tr);
+        }
+        map.triggerRepaint();
+        result = 'ok';
+      } else if (name === 'reload') {
+        const url = location.origin + '/tiles/{z}/{x}/{y}.pbf';
+        for (const id of ['base', 'local']) {
+          const src = map.getSource(id);
+          if (src && typeof src.setTiles === 'function') src.setTiles([url]);
+        }
+        result = 'ok';
+      } else if (name === 'pan') {
+        map.panBy([1, 0]);
+        result = 'ok';
+      } else if (name === 'zoom') {
+        map.zoomTo(map.getZoom() + 0.0001);
+        result = 'ok';
+      } else {
+        result = 'unknown';
+      }
+    } catch (e) {
+      result = 'threw: ' + (e && e.message || e);
+    }
+    // Capture after-state after a 500ms settle.
+    setTimeout(() => {
+      const after = snap();
+      fd.debugTriggers.push({
+        t: Date.now(), name, result,
+        before, after,
+        delta: {
+          loaded: after.loaded - before.loaded,
+          errored: after.errored - before.errored,
+          loading: after.loading - before.loading,
+          transform: after.transform - before.transform,
+        },
+      });
+      if (fd.debugTriggers.length > 10) fd.debugTriggers.shift();
+    }, 500);
+    return `triggered: ${name} → ${result}`;
   };
   window._loadStaticRegions = loadStaticRegions;
   window._maybeStaticTileUrl = function (url) {
@@ -5586,9 +5717,27 @@ function fmtDate(ts) {
       fd.sourceEvents.loadedByStatusOk++;
       const zKey = c.z;
       fd.sourceEvents.byZoom[zKey] = fd.sourceEvents.byZoom[zKey]
-        || { loaded: 0, errored: 0 };
+        || { loaded: 0, errored: 0, loading: 0 };
       fd.sourceEvents.byZoom[zKey].loaded++;
       pushEvt({ kind: 'load', source: src, z: c.z, x: c.x, y: c.y });
+    });
+    // 'dataloading' fires when a tile request is INITIATED — vs
+    // 'data' which fires on completion. Comparing the two tells us
+    // whether a particular trigger (pan, zoom, manual update())
+    // actually causes MapLibre to fire NEW tile requests vs just
+    // re-rendering existing tile state.
+    map.on('dataloading', (e) => {
+      if (!e || e.dataType !== 'source' || !e.tile) return;
+      const src = e.sourceId || '?';
+      if (src !== 'base' && src !== 'local') return;
+      const c = e.tile.tileID && e.tile.tileID.canonical;
+      if (!c) return;
+      fd.sourceEvents.loading++;
+      const zKey = c.z;
+      fd.sourceEvents.byZoom[zKey] = fd.sourceEvents.byZoom[zKey]
+        || { loaded: 0, errored: 0, loading: 0 };
+      fd.sourceEvents.byZoom[zKey].loading++;
+      pushEvt({ kind: 'init', source: src, z: c.z, x: c.x, y: c.y });
     });
     // map.on('error') already exists above for console logging; add
     // a second handler so we can record per-tile errors structurally.
@@ -5608,6 +5757,35 @@ function fmtDate(ts) {
       const sk = status == null ? 'none' : String(status);
       fd.sourceEvents.errorByStatus[sk] = (fd.sourceEvents.errorByStatus[sk] || 0) + 1;
       pushEvt({ kind: 'err', source: src, z: c.z, x: c.x, y: c.y, status, msg });
+    });
+    // Lifecycle / movement events. Correlation target — when the
+    // user pans, we expect new tile-loading events shortly after;
+    // when we manually trigger update(), we want to see whether it
+    // does or doesn't produce the same downstream pattern.
+    const pushLc = (kind) => {
+      fd.lifecycle.recent.push({ t: Date.now(), kind });
+      if (fd.lifecycle.recent.length > 40) fd.lifecycle.recent.shift();
+    };
+    map.on('load', () => { fd.lifecycle.load = Date.now(); pushLc('load'); });
+    map.on('idle', () => {
+      fd.lifecycle.idle++;
+      fd.lifecycle.lastIdleAt = Date.now();
+      pushLc('idle');
+    });
+    map.on('move', () => {
+      fd.lifecycle.moves++;
+      fd.lifecycle.lastMoveAt = Date.now();
+      // Don't push every move — they fire continuously during drag.
+    });
+    map.on('moveend', () => {
+      fd.lifecycle.moveends++;
+      fd.lifecycle.lastMoveendAt = Date.now();
+      pushLc('moveend');
+    });
+    map.on('zoomend', () => {
+      fd.lifecycle.zoomends++;
+      fd.lifecycle.lastZoomendAt = Date.now();
+      pushLc('zoomend');
     });
   }
 
@@ -10503,8 +10681,23 @@ function fmtDate(ts) {
             lines.push(`  transform by zoom: ${tzStr}`);
           }
           lines.push(
-            `  source events: ${fd.sourceEvents.loaded} loaded / ` +
-            `${fd.sourceEvents.errored} errored`
+            `  source events: ${fd.sourceEvents.loading} loading / ` +
+            `${fd.sourceEvents.loaded} loaded / ${fd.sourceEvents.errored} errored`
+          );
+          // Lifecycle / movement counters. If the user pans and the
+          // map starts rendering, we want to see what fired:
+          //   loads increased? → MapLibre walked parents on pan
+          //   loadings increased? → MapLibre fired new requests
+          //   neither? → something purely visual / re-render
+          const lc = fd.lifecycle;
+          const now = Date.now();
+          const ageS = (t) => t ? `${((now - t) / 1000).toFixed(1)}s ago` : '—';
+          lines.push(
+            `  lifecycle: load=${ageS(lc.load)}  idle=${lc.idle} (last ${ageS(lc.lastIdleAt)})`
+          );
+          lines.push(
+            `  movement: moves=${lc.moves} moveends=${lc.moveends} zoomends=${lc.zoomends}  ` +
+            `lastMove=${ageS(lc.lastMoveAt)}  lastMoveend=${ageS(lc.lastMoveendAt)}`
           );
           // Per-zoom load/error split. If z=5 has loaded events and
           // z=10 has only errored events, the bundled fallback is
@@ -10515,10 +10708,10 @@ function fmtDate(ts) {
             const seStr = seKeys
               .map((z) => {
                 const v = fd.sourceEvents.byZoom[z];
-                return `z${z}:${v.loaded}L/${v.errored}E`;
+                return `z${z}:${v.loading ?? 0}i/${v.loaded}L/${v.errored}E`;
               })
               .join(' ');
-            lines.push(`  events by zoom: ${seStr}`);
+            lines.push(`  events by zoom: ${seStr}  (i=loading L=loaded E=errored)`);
           }
           // Error status breakdown — tells us what error codes
           // MapLibre is seeing (correlates with 204 / 404 / network
@@ -10550,17 +10743,42 @@ function fmtDate(ts) {
           // error semantics question.
           if (fd.sourceEvents.recent.length) {
             lines.push(`  recent source events (newest first, ${fd.sourceEvents.recent.length}):`);
-            const now = Date.now();
-            const tail = fd.sourceEvents.recent.slice(-15);
+            const now2 = Date.now();
+            const tail = fd.sourceEvents.recent.slice(-20);
             for (let i = tail.length - 1; i >= 0; i--) {
               const r = tail[i];
-              const ago = ((now - r.t) / 1000).toFixed(1);
-              const kind = r.kind === 'load' ? '✓load' : '✗err';
+              const ago = ((now2 - r.t) / 1000).toFixed(1);
+              const kind = r.kind === 'load' ? '✓load'
+                : r.kind === 'init' ? '→init'
+                : '✗err';
               const sx = `${r.source.padEnd(5)} z=${r.z} x=${r.x} y=${r.y}`;
               const tail2 = r.kind === 'err'
                 ? `  status=${r.status ?? 'none'} ${r.msg || ''}`
                 : '';
               lines.push(`    -${ago}s  ${kind}  ${sx}${tail2}`);
+            }
+          }
+          // Lifecycle event timeline — pan/move/zoom timestamps so we
+          // can correlate with the source-event timestamps above.
+          if (lc.recent.length) {
+            lines.push(`  recent lifecycle (newest first, ${lc.recent.length}):`);
+            const tail = lc.recent.slice(-10);
+            for (let i = tail.length - 1; i >= 0; i--) {
+              const r = tail[i];
+              const ago = ((now - r.t) / 1000).toFixed(1);
+              lines.push(`    -${ago}s  ${r.kind}`);
+            }
+          }
+          // Debug trigger history — shows what each _dbgTrigger(name)
+          // call did (before/after counts + delta). Lets us A/B
+          // different "kick map" approaches without ship-ing code.
+          if (fd.debugTriggers.length) {
+            lines.push(`  debug triggers (newest first):`);
+            for (let i = fd.debugTriggers.length - 1; i >= 0; i--) {
+              const d = fd.debugTriggers[i];
+              const ago = ((now - d.t) / 1000).toFixed(1);
+              const delta = `Δ load:+${d.delta.loaded} err:+${d.delta.errored} init:+${d.delta.loading} xform:+${d.delta.transform}`;
+              lines.push(`    -${ago}s  ${d.name}  → ${d.result}  ${delta}`);
             }
           }
         }
@@ -10791,6 +11009,22 @@ function fmtDate(ts) {
           }
         });
       }
+    }
+
+    // Wire the tile-flow debug trigger buttons to window._dbgTrigger.
+    // The result is recorded into _tileFlowDiag.debugTriggers and
+    // surfaced in the [tile flow] dump, so the user can press a
+    // button, copy logs, and see exactly what the trigger did.
+    for (const dbgBtn of document.querySelectorAll('.dbg-trigger-btn')) {
+      dbgBtn.addEventListener('click', () => {
+        const name = dbgBtn.dataset.trigger;
+        if (typeof window._dbgTrigger !== 'function') return;
+        const r = window._dbgTrigger(name);
+        if (statusEl) {
+          statusEl.textContent = r;
+          setTimeout(() => { statusEl.textContent = ''; }, 2500);
+        }
+      });
     }
   }
 
@@ -12339,42 +12573,6 @@ function fmtDate(ts) {
   window._serveStaticTile = _serveStaticTile;
   if (typeof window._markStaticReady === 'function') {
     window._markStaticReady();
-  }
-
-  // Initial-load parent-walk kick. The custom protocol's status=204
-  // error semantics are correct for steady-state behavior — MapLibre
-  // treats those tiles as errored and shows their over-zoom parent
-  // on the NEXT source-cache update (pan/zoom triggers one
-  // naturally). The pain is the FIRST update: it ran before the
-  // initial tile requests had a chance to error, so when they did
-  // error nothing re-ran _updateRetainedTiles to walk parents and
-  // bring in the bundled z<=5 fallback. Result: blank until the
-  // first user pan/zoom.
-  //
-  // Flipping status to 404 would trigger update() per-error inside
-  // MapLibre's catch block, but at high zoom over undownloaded
-  // areas the cascade (every parent also 404s, every parent fires
-  // another update) breaks rendering. One coalesced kick after the
-  // initial burst settles avoids both the blank-on-load and the
-  // cascade.
-  if (typeof map !== 'undefined') {
-    const kickSourceCaches = () => {
-      try {
-        if (!map.style || !map.style.sourceCaches) return;
-        const tr = map.transform;
-        for (const id of Object.keys(map.style.sourceCaches)) {
-          const sc = map.style.sourceCaches[id];
-          if (sc && typeof sc.update === 'function') sc.update(tr);
-        }
-        if (typeof map.triggerRepaint === 'function') map.triggerRepaint();
-      } catch {}
-    };
-    // 250ms gives the queued static-region requests time to resolve
-    // (the 204-error path is fast, ~50-150ms based on our diag) so
-    // the update sees them as errored and walks parents.
-    const scheduleKick = () => setTimeout(kickSourceCaches, 250);
-    if (map.loaded && map.loaded()) scheduleKick();
-    else map.once('load', scheduleKick);
   }
 
   async function performRegionDownload({ id, bbox, minZoom, maxZoom, isRefresh }) {
