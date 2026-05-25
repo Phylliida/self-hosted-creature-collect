@@ -43,6 +43,7 @@ read both shapes identically.
 
 import argparse
 import gzip
+import importlib.util
 import io
 import json
 import math
@@ -54,6 +55,26 @@ import urllib.error
 from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+
+
+# Dynamic-load build-poi-trigram-index.py since the filename has hyphens
+# (not import-able with `import`). We call its build_trigram_bin() once
+# per region right after poi.bin lands on disk, so a fresh region build
+# always ships a sibling poi-trigram.bin. Older builds without it still
+# work — the client treats poi-trigram.bin as optional and falls back to
+# a linear scan when absent.
+def _load_trigram_builder():
+    here = Path(__file__).resolve().parent
+    script = here / "build-poi-trigram-index.py"
+    if not script.exists():
+        return None
+    spec = importlib.util.spec_from_file_location("build_poi_trigram_index", script)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.build_trigram_bin
+
+
+_BUILD_TRIGRAM_BIN = _load_trigram_builder()
 
 
 # ---------- PMTiles v3 encoder (inline; ~150 lines) ----------
@@ -340,11 +361,17 @@ def build_region(region, region_dir, ctx):
     sched_path = region_dir / "schedule.json"
     addr_path = region_dir / "addresses.bin"
     pmt_path = region_dir / "tiles.pmtiles"
+    trigram_path = region_dir / "poi-trigram.bin"
 
-    # Resume support — skip regions where all six files exist already.
-    expected = (walk_path, poi_path, hn_path, sched_path, addr_path, pmt_path)
+    # Resume support — skip regions where all expected files exist
+    # already. poi-trigram.bin is only required-for-skip when the
+    # builder is available (a region without the builder dependency
+    # shouldn't fail to resume).
+    expected = [walk_path, poi_path, hn_path, sched_path, addr_path, pmt_path]
+    if _BUILD_TRIGRAM_BIN is not None:
+        expected.append(trigram_path)
     if all(p.exists() for p in expected):
-        return {
+        result = {
             "walk": walk_path.stat().st_size,
             "poi": poi_path.stat().st_size,
             "housenumbers": hn_path.stat().st_size,
@@ -353,6 +380,9 @@ def build_region(region, region_dir, ctx):
             "tiles": pmt_path.stat().st_size,
             "skipped": True,
         }
+        if trigram_path.exists():
+            result["poi_trigram"] = trigram_path.stat().st_size
+        return result
 
     sizes = {}
     sizes["walk"] = fetch_to_file(f"{ctx['server']}/walk-graph?{q}", walk_path)
@@ -361,6 +391,20 @@ def build_region(region, region_dir, ctx):
     # Schedule (JSON, not binary) — areas without transit return 0 bytes.
     sizes["schedule"] = fetch_to_file(f"{ctx['server']}/schedule?{q}", sched_path)
     sizes["addresses"] = fetch_to_file(f"{ctx['server']}/addresses?{q}", addr_path)
+
+    # Trigram inverted-index sibling to poi.bin. Built locally from the
+    # just-fetched poi.bin — no extra HTTP round-trip. Only runs when
+    # poi.bin actually has content (skip empty regions) and when the
+    # builder script is importable. Soft-fail: log + carry on rather
+    # than failing the whole region build.
+    if (_BUILD_TRIGRAM_BIN is not None
+            and poi_path.exists() and poi_path.stat().st_size > 32
+            and not trigram_path.exists()):
+        try:
+            stats = _BUILD_TRIGRAM_BIN(poi_path, trigram_path)
+            sizes["poi_trigram"] = stats["bytes"]
+        except Exception as exc:
+            print(f"  poi-trigram.bin failed: {exc}", file=sys.stderr)
 
     # Tiles: collect from mbtiles, write a fresh pmtiles archive.
     tiles_iter = list(extract_tiles_for_bbox(

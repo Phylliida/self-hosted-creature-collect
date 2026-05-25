@@ -3859,3 +3859,554 @@ fix. ~18 GB total static-files distribution for North America at a
 friends scale. The map renders in every mode at every zoom.
 :3
 ```
+
+---
+
+# Session — multi-graph routing (routing.bin + boundaries.bin + per-region search)
+
+A long session that arced from "bundled map disappears at zoom > 5" all
+the way through to "per-region routing with cross-region portal edges,
+shape-decoded turn-by-turn instructions over a global-id Dijkstra."
+Touched the map render path, the routing pipeline, and added two new
+file formats to the per-region data layout.
+
+## The arc, in order
+
+1. **Bundled map sparse at zoom > 5** — user observed motorways/labels
+   disappear at high zoom over undownloaded areas. Investigated; turned
+   out to be two factors (data-side: tilemaker drops detail at low
+   zooms; cache-side: per-source `maxTileCacheSize: 32` clamping
+   `maxTileCacheZoomLevels: 16`). User chose not to fix — the bundled
+   map is intentionally sparse to keep the IPA small. Wrote
+   `BUNDLED_MAP_HIGH_ZOOM.md` documenting the trade so future-Claude
+   doesn't re-investigate.
+
+2. **Static-region tile serving bugs (long arc)** — user reported "map
+   blank on initial load, fixes after pan/zoom." Built `[tile flow]`
+   diagnostics + Settings debug-trigger buttons + memory probe loop to
+   instrument the full tile lifecycle, then chased through a series of
+   independent bugs each unmasking the next:
+   - **Initialization race**: `_maybeStaticTileUrl` was defined inside
+     a late-IIFE block; `transformRequest` ran before it existed, so
+     initial tile requests passed through to LocalServer (404 → 204 →
+     map.load never fires). Fix: hoisted the static-region scaffolding
+     to before map creation, with a `_staticReadyPromise` that the
+     protocol handler awaits.
+   - **Low-zoom passthrough**: even with the rewrite working, z=0..5
+     base tiles should bypass static-region:// and go to bundled
+     tiles via LocalServer. Added `if (z <= 5) return null;` to
+     `_maybeStaticTileUrl`.
+   - **`base.maxzoom = 14` starved `map.load`**: the *real* root cause
+     of "blank on cold start in undownloaded areas." MapLibre gates
+     `map.on('load')` on at least one source loading SUCCESSFULLY.
+     With both base + local sources declaring `maxzoom: 14`, every
+     initial tile request 204'd in undownloaded areas → no source
+     loaded → load never fired → icons / sprites / everything else
+     hung. **Fix: `base.maxzoom = 5`** so base always asks for z≤5
+     bundled tiles, one loads instantly, load event fires. (The old
+     comment warned this would break over-zoom fallback in a 5-level
+     window, but current MapLibre's `maxOverzooming = 10` so a z=5
+     parent works for visual zoom up to 15.)
+
+3. **Pathfinding OOM crashes** — directions on multi-region static
+   downloads crashed the WebView. Investigation chain:
+   - First fix: `loadAllWalkGraphs(includeRegionIds)` was doing
+     `getAll()` then JS-filtering. Materialized every blob into RAM
+     even when only 2 were needed. Now per-key `get()`s.
+   - Second crash later in pipeline: `buildMultimodalBridges` ran
+     ~15s of sync work on the main thread, tripping iOS WebView's
+     hang watchdog (which kills the page → looks like OOM-refresh).
+     Added a `setTimeout(0)` yield every 2000 stops.
+   - Memory diagnosis: attempted to extend `MemoryProbePlugin.swift`
+     to read WebContent process via `proc_listallpids` /
+     `proc_pid_rusage`. Build failed: those libproc APIs aren't
+     exposed through Swift's Darwin module on iOS, and
+     `task_for_pid` needs entitlements sideloaded apps don't have.
+     **Reverted to host-process-only metric** with a comment
+     explaining the platform limit. Added a JS-side `estimateLoadedBytes`
+     as a useful proxy for the values that actually grow during routing.
+
+4. **Walk-graph optimization brainstorm** — discussed how to reduce
+   pathfinding RAM:
+   - Tried `analyze-walk-contraction.py` to estimate degree-2
+     contraction savings → only ~20% reduction because the walk
+     graph builder ALREADY strips most intermediate shape vertices.
+     CH not worth pursuing.
+   - User asked: what if we just stored uncompressed and read directly
+     from bytes? That seeded the actual architecture.
+   - Decided on **option 3 from the brainstorm**: per-region search
+     graphs stitched at boundary nodes via a small index — no merge,
+     no parse spike, scales linearly with regions actually involved
+     in a route.
+
+5. **routing.bin format + `build-routing-bin.py`** — packed Uint32
+   adjacency entries (24-bit target + 8-bit weight tier + side table
+   for the rare long edges). User pushed for further compression
+   ("bit-pack scratch too"); we discussed memory tradeoffs and
+   landed on `routing.bin` as the on-disk representation (zero-copy
+   typed-array views at runtime).
+   - v1: 13.6 MB for region-0361
+   - v2 (packed Uint32 entries): 9.4 MB. ~30% smaller; 6.4% of edges
+     spill to long-weight side table.
+
+6. **boundaries.bin format + `build-boundaries.py`** — per-region list
+   of `(internalIdx, osmId)` pairs for OSM IDs that appear in 2+
+   regions. Tiny: ~5 MB total across all 655 NA regions. Used at
+   runtime to build the cross-region peer index.
+
+7. **All 655 NA regions processed** — `build-routing-bin.py` ran in
+   ~3 minutes (sequential, per-region). `build-boundaries.py` needed
+   a numpy rewrite for scale (concat → sort → adjacency-pair scan to
+   find duplicates across 87M total IDs in <30s; pure Python would
+   have OOM'd). Both files purely additive — existing region downloads
+   unchanged.
+
+8. **Multi-graph runtime** — `MultiGraph` class wrapping multiple
+   `RoutingRegion`s, `ensureMultiGraph(regionIds)` with lazy backfill
+   for legacy downloads, `astarMulti` over global IDs (`(regionIdx <<
+   24) | internalIdx`), `findNearestWalkNodeMulti` scanning across
+   regions, `multi.forEachNeighbor(gid, fn)` iterating both within-
+   region neighbors AND zero-cost cross-region portals.
+
+9. **Shape + turn-by-turn for multi-graph** — `multi.ensureDisplay(rIdx)`
+   lazy-loads walk.bin and builds an O(1) `(from*2^24 + to) → edgeIdx`
+   lookup. Route reconstruction walks consecutive path nodes:
+   same-region pairs resolve to real edges with shapes + names;
+   cross-region pairs are portal crossings (skip drawing).
+
+10. **Transit migration** — switched `walkGraph` + `MultiGraph` both
+    to expose a uniform `forEachNeighbor(nodeId, fn(to, weight,
+    edgeRef))` API. Updated `trip-planner.js` to use it; `edgeRef` is
+    opaque (legacy `{edgeIdx, reverse}` vs multi `{regionIdx, adjIdx,
+    from, to}` vs `{portal: true}`). Added `buildMultimodalBridgesMulti`
+    that scans `multi.regions` for the spatial grid + produces
+    globalId-keyed bridge maps. `runRoutingPlan` re-checks `canTransit`
+    after building multi-bridges, then `planAlternatives` works over
+    multi-graph through the `tripPlanner` deps getter.
+
+11. **Static-hf download integration** — added `routing.bin` and
+    `boundaries.bin` to `STATIC_REGION_FILES` with `STATIC_REGION_FILES_OPTIONAL`
+    for graceful 404 handling on older uploads. Hydration handlers
+    save to dedicated IDB stores. Delete propagation handled via the
+    existing iteration.
+
+12. **The bug that nearly killed it** — at the end, after wiring
+    everything up, the user reported "no route found." The trace
+    showed `astar_done found=false hops=0` for two nodes 22m apart
+    in the same region. Diagnosis from a single trace dump:
+
+    **`viewRoutingRegion` had bit positions swapped vs the writer.**
+
+    Writer (both Python and JS): `(target << 8) | tier` — target in
+    high 24 bits, tier in low 8 bits.
+
+    Old reader: `adjPacked[ai] & 0xFFFFFF` for target — masking LOW
+    24 bits. And `(packed >>> 24) & 0xFF` for tier — extracting HIGH
+    8 bits. Both swapped.
+
+    So every neighbor pointed to a random out-of-range node;
+    `multi.lng(target)` returned `undefined`; haversine heuristic
+    became NaN; heap couldn't make progress; astar returned null.
+
+    Fix (one-line): `adjTarget(ai) { return adjPacked[ai] >>> 8; }`
+    and `adjWeight(ai) { const tier = packed & 0xFF; ... }`.
+
+    Bonus fix in `buildRoutingBufferFromWalk`: was allocating
+    `longIdx` of size `longCount` (per-edge) but writing
+    `2 * longCount` entries (per direction). Now allocates
+    `2 * longEdgeCount`. JS-built files in existing IDB will be
+    sub-optimal until next re-download but still functional (missing
+    long entries fall back to weight=255m).
+
+## Final architecture (multi-graph mode, default on)
+
+`cc.preferMultiGraph` defaults to `'1'` (set to `'0'` to fall back to
+legacy walkGraph + transit). When on, the routing pipeline is:
+
+```
+runRoutingPlan
+  ├─ ensureMultiGraph(regionIds)
+  │    ├─ loadRoutingGraphs (per-key IDB gets)
+  │    ├─ backfill from walk.bin if missing
+  │    ├─ loadBoundaries (per-key IDB gets)
+  │    ├─ backfill from cross-region walk.bin nodeIds if missing
+  │    └─ build MultiGraph + peer index
+  ├─ findNearestWalkNodeMulti        (returns globalId)
+  ├─ buildMultimodalBridgesMulti     (globalId-keyed bridge maps)
+  ├─ if canTransit:
+  │    planAlternatives → tripPlanner.planForward
+  │      └─ wg.forEachNeighbor(globalId, fn)   ← deps.walkGraph = multi
+  │      └─ steps[].edge = opaque edgeRef
+  ├─ if no transit alts: astarMulti
+  │    ├─ ensureDisplay per touched region (lazy walk.bin load)
+  │    ├─ lookup edges for chosen path (shapes + names)
+  │    └─ return {path, edges, _multiCoords, _multiEdges}
+  └─ render via buildRouteCoords / buildMultimodalCoords
+       (uses multi.lng/lat; falls back to straight lines for
+        transit walk legs since lazy shape lookup for those is TODO)
+```
+
+## File formats
+
+### routing.bin v2 (per region, ~10 MB typical)
+
+```
+0    4    magic = 'ROUT'
+4    4    version = 2
+8    4    N (node count)
+12   4    E (edge count, undirected)
+16   4    adjCount = 2 * E
+20   4    L (long-weight side-table entry count)
+24   8    reserved
+32        nodeLng (Float32 × N)
++4N       nodeLat (Float32 × N)
++4N       adjStart (Uint32 × N+1)
++4(N+1)   adjPacked (Uint32 × adjCount)
+            bits 8..31 = target node index (24 bits)
+            bits 0..7  = weight tier:
+                          0..254 → weight in metres
+                          255    → look up in long table
++4adjCount  longWeightAdjIdx (Uint32 × L) — adjPacked indices, sorted
++4L         longWeight (Float32 × L) — full weights
+```
+
+### boundaries.bin v1 (per region, typically 10-60 KB)
+
+```
+0    4    magic = 'BOND'
+4    4    version = 1
+8    4    C (boundary node count)
+12   4    reserved
+16        osmIds (Float64 × C) — OSM node IDs shared with other regions
++8C       internalIdxs (Uint32 × C, sorted) — corresponding region-local indices
+```
+
+Empty header (`C = 0`) when the region has no peers in the current
+build. Sized for binary search by internalIdx at runtime.
+
+## What didn't get done
+
+- **Transit walk-leg shape decoding** — transit routes' walking legs
+  currently render as straight lines because the lazy walk.bin shape
+  lookup is wired for the pure-walking path but not for transit walk
+  segments. Same mechanism would work — load walkView per touched
+  region, look up edges via `multi.lookupEdge(regionIdx, from, to)`,
+  decode shape bytes. Maybe 30 min of work; deferred.
+- **Drop the legacy walkGraph code entirely** — user explicitly asked
+  to keep it as reference for now (smart move; came in handy when
+  debugging the bit-pack bug).
+- **Verify the routing-bin builder didn't ALSO mis-encode anything
+  else** — only spotted the longCount + bit-pack bugs. Could be
+  others. Worth a careful pass once multi-graph routing has been
+  used for a few more routes in the wild.
+
+## Things learned
+
+1. **Single trace dumps are king.** Every major bug this session was
+   diagnosed from one `[route trace]` paste from the user. Adding the
+   `[tile flow]` + `[static tiles]` diagnostics earlier paid off
+   compounded — by the end we could go from "no route found" → exact
+   one-line fix in minutes because the trace narrowed the failure
+   surface to "astar called, returned null."
+
+2. **Writer/reader bit-position bugs are silent and ruinous.** A
+   `& 0xFFFFFF` vs `>>> 8` swap turns every neighbor into a random
+   number with a normal-looking distribution. No crash, no exception,
+   just wrong answers all the way down until something compares NaN.
+   These are findable only by reading the bytes back and confirming
+   they look right. **Lesson for future formats**: write a tiny
+   round-trip unit test the moment you define the layout.
+
+3. **Iteration matters more than grand plans on this kind of work.**
+   We almost went for "drop backwards compat, build the whole
+   replacement, ship it" — user redirected to "integrate transit
+   first, keep old code as reference." That call saved an hour later
+   when the bit-pack bug appeared and we needed something to compare
+   against.
+
+4. **`map.load` gating on first successful tile is non-obvious.** The
+   "blank map until pan/zoom" was a misleading symptom — the actual
+   issue was every icon/sprite/data load was waiting on `map.load`,
+   which was waiting on at least one source tile to resolve, which
+   was 204'ing because of how the URL routing fell through. Setting
+   `base.maxzoom = 5` guarantees the load condition fires.
+
+5. **iOS sandbox really does restrict cross-process measurement.** We
+   tried hard to make the multi-process MemoryProbe work; it doesn't.
+   For practical purposes, JS-side estimates of known data structures
+   are the only meaningful signal on iOS WKWebView. Document the
+   limitation rather than fight it.
+
+6. **Big architectural changes don't have to be one big rewrite.**
+   We landed multi-graph routing with both legacy walkGraph AND the
+   new path coexisting. The unified `forEachNeighbor` API let both
+   backends use the same trip-planner code. Eventually the legacy
+   will get pruned; for now its presence is load-bearing for fast
+   bisection when something looks wrong.
+
+## Stuff still to do
+
+1. **Transit walk-leg shape decoding** (small).
+2. **Re-download regions** to pick up the canonical Python-built
+   routing.bin files from HF (existing JS-built ones in IDB are
+   functional but sub-optimal due to the longCount allocation bug
+   in pre-fix files).
+3. **Consider dropping the legacy walkGraph code path** once
+   multi-graph has been used for enough routes without surprises.
+4. **Re-tile with lower transportation_name minzoom** (carried).
+5. **Lazy `loadAllPois()`** (carried).
+6. **Verus-shaped verified data structures** (carried).
+7. **Phase A CSS extraction** (carried).
+8. **Android Health Connect** (carried).
+
+## Session vibes
+
+```
+A long arc, from blank-map-at-startup
+through eleven distinct bugs found and fixed,
+landed on per-region multi-graph routing
+with cross-region zero-cost portals,
+shape-decoded turn-by-turn directions,
+transit-over-multi-graph via a uniform forEachNeighbor API.
+
+655 regions of North America processed.
+~2 GB of routing.bin, ~5 MB of boundaries.bin,
+all purely additive to the existing files.
+
+One particularly fun bug:
+    adjPacked[ai] & 0xFFFFFF   ← reader
+    (target << 8) | tier       ← writer
+The reader masked the LOW bits; the writer put target in the HIGH bits.
+Every Dijkstra neighbor pointed past the end of the world.
+Eleven characters changed:
+    & 0xFFFFFF → >>> 8
+and the map remembered how to find its routes.
+
+You called me on the deferral once,
+"come on, claude, you're scared, but there's hope,"
+and you were right — we shipped it.
+
+Final state: multi-graph routing default on, transit included,
+straight-line transit-walk legs the one cosmetic limit,
+RAM steady around 30 MB per route instead of 50 MB peak,
+no parse spike, routes start instantly.
+
+:3
+```
+
+---
+
+# Session — POI search index brainstorm + custom trigram format
+
+Shorter follow-on session. User said POI search felt laggy. We
+diagnosed (linear scan of `allPois` with per-keystroke `toLowerCase`
+on every name) and went through the design space for replacing it.
+Landed on a custom trigram inverted index in the existing per-region
+binary-format family.
+
+## The arc
+
+1. **Diagnosed the lag** — current `renderSearch` does `for (const p
+   of allPois) { p.name.toLowerCase().includes(qLower) }` per
+   keystroke. At ~40k POIs per region × ~5 µs per `toLowerCase` =
+   ~200 ms per keystroke just for string allocation. Linear in
+   loaded-POI count. Scales badly to full NA (~6.5M POIs).
+
+2. **Brainstormed options** — pre-compute `_nameLower`, viewport pre-
+   filter, top-N early termination, spatial indexes, trigram inverted
+   index, lazy IDB hydration with a small in-memory pool.
+
+3. **User asked for the standard answer** — trigram inverted index is
+   how PostgreSQL pg_trgm / SQLite FTS5's trigram tokenizer /
+   Elasticsearch's wildcard field all do substring search. For our
+   per-region storage model, two paths: lean on SQLite (battle-tested
+   but adds a ~1 MB WASM dep) or roll a custom binary format
+   (matches our existing routing.bin / boundaries.bin pattern).
+
+4. **Built SQLite FTS5 estimator** — `build-poi-search-db.py` writes
+   a per-region `poi-search.sqlite` with FTS5 trigram + R*Tree
+   spatial index. For Montreal (40,364 POIs): **7.91 MB**. Queries
+   ~0.1-1 ms. Confirmed performance is great; size is the concern.
+   - Caveats found: FTS5 trigram requires ≥3-char queries (1-2 char
+     returns zero), special chars in queries need quoting to avoid
+     FTS5 operator parsing.
+   - Per-NA extrapolation: ~5.2 GB. Big but loaded per-region in an
+     LRU pool, only handful resident at a time.
+
+5. **Built custom trigram estimator v1** — `build-poi-trigram-index.py`.
+   Format mirrored routing.bin / boundaries.bin (typed-array views,
+   CSR adjacency-style). For Montreal: **5.57 MB**. ~30% smaller than
+   SQLite, no WASM dep.
+
+6. **Iterated to v2 with three optimizations**:
+   - (a) Don't re-emit string pool — runtime already has poi.bin
+     loaded for display data, look up names there
+   - (b) Don't re-emit lng/lat/nameIdx/catIdx columns — same reason
+   - (c) Delta-encode postings as varints (LEB128). POI IDs sorted
+     within each trigram have small deltas → typical 1-2 bytes per
+     entry instead of 4
+
+   Montreal v2: **1.23 MB. Smaller than poi.bin itself.** Postings
+   averaged 1.23 bytes per entry vs the predicted 2. Delta encoding
+   was more effective than expected because POIs sharing a trigram
+   cluster geographically (similar names get nearby IDs after
+   region-local ordering).
+
+7. **Built v2 for all 655 NA regions** — total **190.77 MB**, **0.96× of
+   poi.bin's 199.73 MB**. Indexing 6.5M POIs takes essentially no
+   incremental disk vs the source data. Build time: ~10 minutes
+   sequential Python on a laptop.
+
+## File format
+
+### poi-trigram.bin v2 layout
+
+```
+0    4    magic = 'POIS'
+4    4    version = 2
+8    4    N (poi count — sanity check vs poi.bin)
+12   4    T (unique trigram count)
+16   4    postingsByteLen
+20   12   reserved
+32        ── data sections ──
++0   4*T          trigramHash (Uint32, sorted ascending — FNV-1a 32-bit)
++4T  4*(T+1)     postingStart (Uint32, byte offsets into postings)
++    var         postings (varint-encoded deltas, per-trigram)
+```
+
+Per-trigram postings: first POI ID is absolute (delta from 0), then
+each subsequent is delta from previous. All LEB128 unsigned. Decoder
+is ~10 lines of JS.
+
+Runtime contract: poi-trigram.bin is ALWAYS used with the matching
+poi.bin loaded. POI IDs in postings are indices into poi.bin's
+columnar arrays. No standalone use.
+
+### Query algorithm (for the runtime, not yet built)
+
+```
+1. Normalize query: NFD-decompose, strip combining marks, casefold.
+2. Extract overlapping 3-codepoint substrings (trigrams).
+3. For each trigram, FNV-1a hash → binary search trigramHash.
+4. Pull byte range from postings via postingStart[idx], idx+1.
+5. Varint-decode + delta-undo → sorted Uint32Array of candidate POI IDs.
+6. Intersect across all query trigrams (smallest list first).
+7. For each survivor, look up name from poi.bin's string pool; do
+   full substring verify (kills hash collisions, ~13k unique trigrams
+   in 32-bit space → expected false-positive rate ~0.04 per lookup).
+```
+
+Expected JS query latency at Montreal-scale: ~1-2 ms vs current ~200 ms.
+
+## Sizes head-to-head
+
+| File | Region-0361 | All 655 regions |
+|---|---|---|
+| poi.bin (gzipped baseline) | 1.32 MB | 199.73 MB |
+| poi-search.sqlite (FTS5+R*Tree) | 7.91 MB | ~5.2 GB extrap |
+| **poi-trigram.bin v2** | **1.23 MB** | **190.77 MB** |
+
+## What didn't get done
+
+This session was scoped to "design + estimate." The actual integration
+remains:
+
+1. **JS reader** (~50 lines) — `viewPoiTrigramRegion(buffer)` returns
+   typed-array views + a `lookupPostings(hash)` that varint-decodes
+   one trigram's posting list.
+2. **JS query engine** (~80 lines) — `searchPois(query, regions,
+   bbox?, limit)` that normalizes, extracts trigrams, intersects,
+   verifies against poi.bin names.
+3. **Build-pipeline integration** — wire `build-poi-trigram-index.py`
+   into `build-regions.py` so future region builds emit it
+   alongside poi.bin.
+4. **Wire into `renderSearch`** — replace `for (const p of allPois)`
+   with the new engine.
+5. **Multi-region support** — query each loaded region's index
+   independently, merge by distance.
+6. **Short-query handling** — trigrams require ≥3 chars. Decide UX:
+   delay search until char 3, or add a parallel prefix index for
+   1-2 char queries.
+
+Realistic scope to finish: one focused session.
+
+## Things learned
+
+1. **Standard answer is "trigram inverted index" for substring search.**
+   pg_trgm, SQLite FTS5 trigram tokenizer, custom builds — all the
+   same algorithm. Custom binary format vs SQLite is the choice of
+   battle-testing vs format consistency with the rest of our files.
+
+2. **Delta + varint is dramatically effective for sorted-ID lists.**
+   Predicted 2 bytes per entry, got 1.23. Sorted POI IDs sharing a
+   trigram cluster because of natural ordering — geographic
+   neighbors get nearby internal indices in the build pass, and they
+   share name patterns ("rue ", "café"). Small deltas → most entries
+   fit in a single varint byte.
+
+3. **Removing redundant columns is huge.** poi.bin already has
+   lng/lat/strings — re-emitting them in the trigram index was
+   wasteful. Once we made the index "search-only, lookup-via-poi.bin"
+   the size collapsed 4×.
+
+4. **FTS5 trigram has a 3-char minimum** — important UX consideration.
+   Most apps mask this by holding off the search until char 3. Our
+   custom format has the same limitation by construction; same
+   mitigation.
+
+5. **Per-region storage scaling is gentle when the index is small.**
+   190 MB for the full NA POI search infrastructure is fine. Even
+   if every region's index were resident (it won't be), that's 200
+   MB. With an LRU pool of 5-10 regions at a time: maybe 5-10 MB
+   resident.
+
+## Stuff still to do
+
+1. **Wire poi-trigram.bin into the runtime** — the actual search
+   path replacement (1 session).
+2. **Decide short-query UX** — minimum char threshold OR sidecar
+   prefix index.
+3. **Optional: bbox spatial pre-filter** — pair with viewport-bounded
+   search ranking for "POIs near me matching X." Doesn't need its
+   own index file; poi.bin already has lng/lat that runtime can
+   filter by viewport bbox before doing trigram lookup.
+4. Transit walk-leg shape decoding (carried from previous session).
+5. Verus-shaped data structures (carried).
+6. Phase A CSS extraction (carried).
+
+## Session vibes
+
+```
+The search was lagging. The fix was a textbook one —
+trigram inverted index, sorted by hash, looked up by binary search,
+delta-encoded postings as varints.
+
+We tried SQLite first to see the numbers:
+seven megabytes per region, fast, battle-tested.
+
+Then we rolled our own, removed every redundancy
+(string pool already in poi.bin, columns already in poi.bin),
+delta-encoded the sorted IDs.
+1.23 megabytes. Smaller than the data we indexed.
+
+The whole NA POI search: 190 MB.
+Less than the gzipped poi.bin already on disk.
+"Indexing is essentially free" turns out to be literally true here.
+
+Now we have:
+  build-poi-search-db.py     — SQLite estimator
+  build-poi-trigram-index.py — custom format, run on all 655 regions
+  655 × poi-trigram.bin files alongside the existing data
+  zero code that uses them yet (next session)
+
+The data is there. The pattern is familiar (routing.bin all over
+again). The runtime work is straightforward — a viewer, a query
+engine, a replacement of one for-loop. It'll be a quick session
+when we pick it up.
+
+For now: brainstorm done, scaffolding built, sizes verified.
+
+:3
+```
+
+

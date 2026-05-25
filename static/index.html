@@ -4048,11 +4048,18 @@ const POI_FIELDS = [
 const POI_DB_NAME = 'cc.pois.v2';
 function openPoiDB() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(POI_DB_NAME, 1);
+    // v2 adds the `trigram` store for poi-trigram.bin (per-region inverted
+    // substring-search index, sibling to poi.bin). The whole-file blob is
+    // kept raw; viewPoiTrigramRegion gives zero-copy typed-array views
+    // over it at search time.
+    const req = indexedDB.open(POI_DB_NAME, 2);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains('regions')) {
         db.createObjectStore('regions', { keyPath: 'regionId' });
+      }
+      if (!db.objectStoreNames.contains('trigram')) {
+        db.createObjectStore('trigram', { keyPath: 'regionId' });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -4078,6 +4085,28 @@ async function deletePoisByRegion(regionId) {
   const db = await openPoiDB();
   const tx = db.transaction('regions', 'readwrite');
   tx.objectStore('regions').delete(regionId);
+  await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
+  db.close();
+}
+async function savePoiTrigramRegion(regionId, buffer) {
+  const db = await openPoiDB();
+  const tx = db.transaction('trigram', 'readwrite');
+  tx.objectStore('trigram').put({ regionId, buffer });
+  await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
+  db.close();
+}
+async function loadAllPoiTrigramBuffers() {
+  const db = await openPoiDB();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction('trigram', 'readonly').objectStore('trigram').getAll();
+    req.onsuccess = () => { resolve(req.result); db.close(); };
+    req.onerror = () => reject(req.error);
+  });
+}
+async function deletePoiTrigramByRegion(regionId) {
+  const db = await openPoiDB();
+  const tx = db.transaction('trigram', 'readwrite');
+  tx.objectStore('trigram').delete(regionId);
   await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
   db.close();
 }
@@ -4138,10 +4167,92 @@ function hydratePoiRegion(regionId, buffer) {
       name: ni >= 0 ? stringPool[ni] : '',
       category: ci >= 0 ? stringPool[ci] : '',
       regionId,
+      // poi-trigram.bin's posting lists reference POIs by this index
+      // into poi.bin's columnar arrays. Carrying it on the hydrated
+      // object lets the search engine resolve a (regionId, internalIdx)
+      // hit back to a full POI without scanning allPois.
+      _internalIdx: i,
       props,
     };
   }
   return out;
+}
+
+// Zero-copy viewer for poi-trigram.bin v2 (see build-poi-trigram-index.py).
+// Layout: header(32) | trigramHash(U32×T sorted) | postingStart(U32×T+1)
+//         | postings(varint deltas, per-trigram).
+// lookupPostings(hash) binary-searches the hash table, varint-decodes
+// + delta-undoes the matching trigram's postings, and returns a
+// Uint32Array of POI IDs (indices into the sibling poi.bin's columnar
+// arrays). Hash collisions are filtered by the caller via substring
+// verify against poi.bin names.
+function viewPoiTrigramRegion(buffer) {
+  if (!buffer || buffer.byteLength < 32) {
+    return {
+      N: 0, T: 0,
+      trigramHash: new Uint32Array(0),
+      postingStart: new Uint32Array(0),
+      postings: new Uint8Array(0),
+      lookupPostings() { return null; },
+    };
+  }
+  const view = new DataView(buffer);
+  const magic = String.fromCharCode(
+    view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+  if (magic !== 'POIS') throw new Error('poi-trigram.bin: bad magic ' + magic);
+  const version = view.getUint32(4, true);
+  if (version !== 2) throw new Error('poi-trigram.bin: unsupported version ' + version);
+  const N = view.getUint32(8, true);
+  const T = view.getUint32(12, true);
+  const postingsByteLen = view.getUint32(16, true);
+  let off = 32;
+  const trigramHash = new Uint32Array(buffer, off, T); off += 4 * T;
+  const postingStart = new Uint32Array(buffer, off, T + 1); off += 4 * (T + 1);
+  const postings = new Uint8Array(buffer, off, postingsByteLen);
+  return {
+    N, T, trigramHash, postingStart, postings,
+    lookupPostings(hash) {
+      // Binary search the sorted Uint32 trigram-hash table.
+      let lo = 0, hi = T - 1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >>> 1;
+        const v = trigramHash[mid];
+        if (v === hash) {
+          const start = postingStart[mid];
+          const end = postingStart[mid + 1];
+          // Varint decode + delta-undo. First entry is absolute; each
+          // subsequent is delta from previous. Postings are sorted
+          // ascending so deltas are non-negative.
+          // We don't know the count in advance — count varint
+          // terminator bytes (top bit clear) in the byte range.
+          let count = 0;
+          for (let p = start; p < end; p++) {
+            if ((postings[p] & 0x80) === 0) count++;
+          }
+          const ids = new Uint32Array(count);
+          let p = start;
+          let prev = 0;
+          for (let i = 0; i < count; i++) {
+            let val = 0;
+            let shift = 0;
+            while (true) {
+              const b = postings[p++];
+              val |= (b & 0x7F) << shift;
+              if ((b & 0x80) === 0) break;
+              shift += 7;
+            }
+            // >>> 0 because JS `|` and `<<` are signed; the chained
+            // OR-shifts can wrap negative for high IDs. Force unsigned.
+            prev = (prev + val) >>> 0;
+            ids[i] = prev;
+          }
+          return ids;
+        }
+        if (v < hash) lo = mid + 1; else hi = mid - 1;
+      }
+      return null;
+    },
+  };
 }
 
 async function loadAllPois() {
@@ -8641,8 +8752,11 @@ function fmtDate(ts) {
     }
     const ref = lastKnownPos || (() => { const c = map.getCenter(); return { lng: c.lng, lat: c.lat }; })();
     const poiHits = [];
-    for (const p of allPois) {
-      if (ql && !(p.name && p.name.toLowerCase().includes(ql))) continue;
+    // Trigram-indexed substring search when q is non-empty; when empty
+    // we want all named POIs sorted by distance (the original behavior
+    // for the "no query, show nearest" starting suggestions).
+    const poiPool = ql ? searchPois(q) : allPois;
+    for (const p of poiPool) {
       if (!ql && p.name === undefined) continue;
       poiHits.push({ p, d: haversineKm(ref.lat, ref.lng, p.lat, p.lng) });
     }
@@ -9431,6 +9545,173 @@ function fmtDate(ts) {
   // hydrateAddressRegion for the record shape.
   let allAddresses = await loadAllAddresses();
 
+  // ── Trigram POI search index ──
+  // Per-region inverted index over POI names/categories. Loaded once
+  // at startup from IDB, kept in memory as zero-copy typed-array
+  // views (~200-500 KB per region; a few MB total for typical
+  // downloaded coverage). When the user types in the search box, we
+  // hash the query's trigrams, intersect their posting lists per
+  // region, then verify the survivor POIs against the actual name.
+  // Replaces a per-keystroke linear scan of allPois (~200ms at 40k
+  // POIs) with a binary-search-and-intersect path (~1-2ms).
+  const _trigramByRegion = new Map();   // regionId -> view from viewPoiTrigramRegion
+  const _poisByRegion = new Map();      // regionId -> Array<poi>, indexed by p._internalIdx
+  const _utf8Enc = new TextEncoder();
+
+  function _rebuildPoisByRegion() {
+    _poisByRegion.clear();
+    for (const p of allPois) {
+      if (p == null || p._internalIdx == null) continue;
+      let arr = _poisByRegion.get(p.regionId);
+      if (!arr) { arr = []; _poisByRegion.set(p.regionId, arr); }
+      arr[p._internalIdx] = p;
+    }
+  }
+  _rebuildPoisByRegion();
+
+  async function _loadAllPoiTrigrams() {
+    try {
+      const records = await loadAllPoiTrigramBuffers();
+      _trigramByRegion.clear();
+      for (const rec of records) {
+        if (!rec || !rec.buffer || rec.buffer.byteLength < 32) continue;
+        try {
+          _trigramByRegion.set(rec.regionId, viewPoiTrigramRegion(rec.buffer));
+        } catch (e) {
+          console.warn('poi-trigram hydrate failed', rec.regionId, e);
+        }
+      }
+    } catch (e) {
+      console.warn('poi-trigram load failed', e);
+    }
+  }
+  await _loadAllPoiTrigrams();
+
+  // NFD-decompose + strip combining marks + lowercase. Mirrors
+  // build-poi-trigram-index.py's normalize(); the ß→ss substitution
+  // catches the one common Latin character where Python's casefold
+  // diverges from JS's toLowerCase. Diacritic-insensitive search
+  // ("cafe" → "Café") is a bonus over the previous toLowerCase-only
+  // scan.
+  function _searchNormalize(s) {
+    if (!s) return '';
+    return s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/ß/g, 'ss');
+  }
+
+  // Iterate codepoints (Python-style), not UTF-16 units, so emoji /
+  // CJK in names count as one position each — matching the index.
+  function _searchTrigrams(text) {
+    const chars = Array.from(text);
+    if (chars.length < 3) return [];
+    const out = new Array(chars.length - 2);
+    for (let i = 0; i < chars.length - 2; i++) {
+      out[i] = chars[i] + chars[i + 1] + chars[i + 2];
+    }
+    return out;
+  }
+
+  // 32-bit FNV-1a over the UTF-8 bytes of the trigram.
+  function _searchHashTrigram(tg) {
+    const bytes = _utf8Enc.encode(tg);
+    let h = 0x811C9DC5;
+    for (let i = 0; i < bytes.length; i++) {
+      h ^= bytes[i];
+      h = Math.imul(h, 0x01000193);
+    }
+    return h >>> 0;
+  }
+
+  // Sorted-array intersection. Both inputs are Uint32Array; returns
+  // a fresh sorted Uint32Array of values present in both.
+  function _intersectSortedU32(a, b) {
+    const al = a.length, bl = b.length;
+    if (!al || !bl) return new Uint32Array(0);
+    const out = new Uint32Array(Math.min(al, bl));
+    let i = 0, j = 0, k = 0;
+    while (i < al && j < bl) {
+      const av = a[i], bv = b[j];
+      if (av === bv) { out[k++] = av; i++; j++; }
+      else if (av < bv) i++;
+      else j++;
+    }
+    return out.subarray(0, k);
+  }
+
+  // POI substring search across all loaded regions. Returns
+  // Array<poi> in arbitrary order; callers sort by distance/etc.
+  //
+  // Strategy: for queries with ≥3 codepoints AND a trigram index
+  // loaded for the region, intersect posting lists per region and
+  // verify substring match against the POI name. Regions without a
+  // trigram index (older downloads predating the index format) still
+  // get scanned linearly so users don't silently lose results during
+  // the rollout window.
+  //
+  // Match semantics deliberately mirror the prior linear scan:
+  // substring of p.name (normalized) contains the full query
+  // (normalized). The new path is faster AND now diacritic-
+  // insensitive ("cafe" finds "Café Léon") since both sides
+  // normalize identically.
+  function searchPois(query) {
+    const qNorm = _searchNormalize(query || '');
+    if (!qNorm) return [];
+    const out = [];
+
+    const linearScan = (poolFilter) => {
+      for (const p of allPois) {
+        if (!p || !p.name) continue;
+        if (poolFilter && !poolFilter(p)) continue;
+        if (_searchNormalize(p.name).includes(qNorm)) out.push(p);
+      }
+    };
+
+    const chars = Array.from(qNorm);
+    if (chars.length < 3 || _trigramByRegion.size === 0) {
+      linearScan();
+      return out;
+    }
+
+    const hashes = Array.from(new Set(_searchTrigrams(qNorm).map(_searchHashTrigram)));
+    const triedRegions = new Set();
+
+    for (const [regionId, view] of _trigramByRegion) {
+      const pois = _poisByRegion.get(regionId);
+      if (!pois) continue;  // trigram present but POIs not hydrated; skip
+      triedRegions.add(regionId);
+      // Per-region intersection of every query trigram's posting list.
+      // Bail on the first lookup miss — the index is exhaustive, so a
+      // missing trigram means zero candidates.
+      let candidates = null;
+      let abort = false;
+      for (const h of hashes) {
+        const list = view.lookupPostings(h);
+        if (!list || list.length === 0) { abort = true; break; }
+        candidates = candidates ? _intersectSortedU32(candidates, list) : list;
+        if (candidates.length === 0) { abort = true; break; }
+      }
+      if (abort || !candidates) continue;
+      // Verify substring against the real name. Filters hash
+      // collisions AND POIs whose trigrams overlap with the query's
+      // trigrams in a different order than the query itself.
+      for (let i = 0; i < candidates.length; i++) {
+        const p = pois[candidates[i]];
+        if (!p || !p.name) continue;
+        if (_searchNormalize(p.name).includes(qNorm)) out.push(p);
+      }
+    }
+
+    // Sweep any regions WITHOUT a trigram index linearly so a partial
+    // rollout (some regions have trigrams, some don't) doesn't drop
+    // results from the un-indexed ones.
+    if (triedRegions.size < _poisByRegion.size) {
+      linearScan((p) => !triedRegions.has(p.regionId));
+    }
+
+    return out;
+  }
+  // Expose for diagnostics / future consumers.
+  window._searchPois = searchPois;
+
   // Hand creatures.js a locally-scoped POI query — the POI array lives
   // inside this IIFE and we don't want to scatter loadAllPois() calls.
   // Returns the nearest POI with a name within `maxMeters`, or null.
@@ -9587,9 +9868,12 @@ function fmtDate(ts) {
     const qLower = q.toLowerCase();
     const ref = lastKnownPos || (() => { const c = map.getCenter(); return { lng: c.lng, lat: c.lat }; })();
     const matches = [];
-    for (const p of allPois) {
+    // POI search: trigram-indexed when query is non-empty; falls back
+    // to scanning every POI when q is empty (the user just wants the
+    // category filter to surface every matching POI in range).
+    const poiPool = qLower ? searchPois(q) : allPois;
+    for (const p of poiPool) {
       if (filter && p.category !== filter) continue;
-      if (qLower && !(p.name && p.name.toLowerCase().includes(qLower))) continue;
       matches.push({ ...p, dist: haversineKm(ref.lat, ref.lng, p.lat, p.lng) });
     }
     // Favorite (custom-pin) matches: token-based against the user's
@@ -9911,14 +10195,16 @@ function fmtDate(ts) {
   const STATIC_REGION_FILES = [
     'walk.bin', 'poi.bin', 'housenumbers.bin',
     'schedule.json', 'addresses.bin', 'tiles.pmtiles',
-    // routing.bin (packed search-only adjacency) and boundaries.bin
-    // (per-region list of OSM IDs shared with adjacent regions) are
+    // routing.bin (packed search-only adjacency), boundaries.bin
+    // (per-region list of OSM IDs shared with adjacent regions), and
+    // poi-trigram.bin (inverted-index substring search for POIs) are
     // OPTIONAL — older HF uploads / regions built before these files
     // existed will 404 for them. The download handler treats 404 on
-    // these two as soft-fail; ensureMultiGraph will lazy-backfill
+    // these three as soft-fail; ensureMultiGraph will lazy-backfill
     // routing.bin from walk.bin in that case (boundaries needs other
-    // regions' walk.bin and is computed at first route).
-    'routing.bin', 'boundaries.bin',
+    // regions' walk.bin and is computed at first route). Missing
+    // poi-trigram.bin falls back to the linear-scan path in searchPois.
+    'routing.bin', 'boundaries.bin', 'poi-trigram.bin',
   ];
 
   function renderRegions() {
@@ -10031,6 +10317,8 @@ function fmtDate(ts) {
       hnRegions = [];  // force re-parse of remaining regions on next zoom-in
       allPois = allPois.filter(p => p.regionId !== id);
       allAddresses = allAddresses.filter(a => a.regionId !== id);
+      _rebuildPoisByRegion();
+      _trigramByRegion.delete(id);
       saveRegions(list.filter(x => x.id !== id));
       invalidateRegionSizes(id);
       renderRegions();
@@ -10060,6 +10348,7 @@ function fmtDate(ts) {
       await savePoiRegion(regionId, buffer);
       const hydrated = hydratePoiRegion(regionId, buffer);
       for (const poi of hydrated) allPois.push(poi);
+      _rebuildPoisByRegion();
       renderPoiStat();
       populateFilter();
       return N;
@@ -10734,11 +11023,18 @@ function fmtDate(ts) {
     return {
       N, E, adjCount, L,
       nodeLng, nodeLat, adjStart, adjPacked, longIdx, longWeight,
-      // Accessors for the packed adjacency.
-      adjTarget(ai) { return adjPacked[ai] & ROUTING_TARGET_MASK; },
+      // Accessors for the packed adjacency. Writer (both Python and JS)
+      // packs target into HIGH 24 bits and tier into LOW 8 bits:
+      //   (target << 8) | tier
+      // So we unpack target via >>> 8 and tier via & 0xFF. An earlier
+      // version had these swapped which silently corrupted every
+      // neighbor lookup (target was random, weight nonsense) — astar
+      // appeared to find no route because all neighbor coords came
+      // back NaN and the heap couldn't make progress.
+      adjTarget(ai) { return adjPacked[ai] >>> 8; },
       adjWeight(ai) {
         const packed = adjPacked[ai];
-        const tier = (packed >>> 24) & 0xFF;
+        const tier = packed & 0xFF;
         if (tier !== ROUTING_LONG_TIER) return tier;
         // Long-weight fallback: binary search longIdx for ai.
         let lo = 0, hi = L - 1;
@@ -10864,13 +11160,15 @@ function fmtDate(ts) {
     const adjPacked = new Uint32Array(adjCount);
     // Two passes — one to compute longCount (we need to size the long
     // table accurately), one to actually emit. Cheap (E iterations).
-    let longCount = 0;
+    // Each long edge contributes TWO adj entries (u→v and v→u), so
+    // we need 2 × longEdgeCount slots in the long table.
+    let longEdgeCount = 0;
     for (let i = 0; i < E; i++) {
       const w = walk.edgeWeight[i];
       const wr = Math.round(w);
-      if (wr < 0 || wr > 254) longCount++;
+      if (wr < 0 || wr > 254) longEdgeCount++;
     }
-    // Now allocate long arrays and fill adjacency.
+    const longCount = 2 * longEdgeCount;
     const longIdx = new Uint32Array(longCount);
     const longWeight = new Float32Array(longCount);
     let longCursor = 0;
@@ -13484,7 +13782,9 @@ function fmtDate(ts) {
   // /tiles/Z/X/Y.pbf flow serves them via the original SW pipeline.
   // Files that are OK to 404 on (older HF uploads may not have them).
   // For these, we skip + carry on rather than failing the whole region.
-  const STATIC_REGION_FILES_OPTIONAL = new Set(['routing.bin', 'boundaries.bin']);
+  const STATIC_REGION_FILES_OPTIONAL = new Set([
+    'routing.bin', 'boundaries.bin', 'poi-trigram.bin',
+  ]);
 
   async function downloadOneStaticRegion(regionId, onFile) {
     let totalBytes = 0;
@@ -13533,6 +13833,21 @@ function fmtDate(ts) {
             const hydrated = hydratePoiRegion(regionId, buffer);
             for (const poi of hydrated) allPois.push(poi);
             poisHydrated = hydrated.length;
+            // Keep the per-region poi lookup (for trigram search) in
+            // sync with allPois.
+            _rebuildPoisByRegion();
+          } else if (fname === 'poi-trigram.bin') {
+            // Inverted substring-search index, sibling to poi.bin.
+            // Store raw — viewPoiTrigramRegion is zero-copy at query
+            // time. Update the in-memory view map immediately so
+            // newly-downloaded regions don't need a reload before
+            // search picks them up.
+            await savePoiTrigramRegion(regionId, buffer);
+            try {
+              _trigramByRegion.set(regionId, viewPoiTrigramRegion(buffer));
+            } catch (e) {
+              console.warn(`[static region] ${regionId} poi-trigram view failed`, e);
+            }
           } else if (fname === 'walk.bin') {
             await saveWalkGraph(regionId, buffer);
             // Build + save the search-only routing.bin sibling so
@@ -13692,6 +14007,9 @@ function fmtDate(ts) {
     // handler does.
     try { await deletePoisByRegion(regionId); } catch {}
     try { allPois = allPois.filter((p) => p.regionId !== regionId); } catch {}
+    try { _rebuildPoisByRegion(); } catch {}
+    try { await deletePoiTrigramByRegion(regionId); } catch {}
+    try { _trigramByRegion.delete(regionId); } catch {}
     try { await deleteWalkGraphByRegion(regionId); } catch {}
     try { await deleteRoutingGraphByRegion(regionId); } catch {}
     try { await deleteBoundariesByRegion(regionId); } catch {}
@@ -14021,6 +14339,7 @@ function fmtDate(ts) {
       // POI/walk/hn arrays don't end up double-counting the region.
       allPois = allPois.filter(p => p.regionId !== id);
       allAddresses = allAddresses.filter(a => a.regionId !== id);
+      _rebuildPoisByRegion();
       unloadWalkGraph();
       hnRegions = [];
     }
