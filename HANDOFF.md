@@ -4409,4 +4409,209 @@ For now: brainstorm done, scaffolding built, sizes verified.
 :3
 ```
 
+---
 
+# Session — POI trigram runtime integration + directions debounce postscript
+
+The follow-up to the trigram brainstorm session above. Took the 655
+poi-trigram.bin files already sitting on disk and wired them through
+the runtime end-to-end: reader, IDB store, download pipeline, query
+engine, both search consumers. Then a small postscript: the directions
+search felt laggier than the main POI search, and the answer wasn't
+the trigram path at all — it was a missing debounce.
+
+## Files added/touched
+
+| File | Role |
+|---|---|
+| `static/index.html` | All runtime integration: `viewPoiTrigramRegion`, `searchPois`, IDB v2 bump with new `trigram` store, download/delete plumbing, debounce on trip-planner inputs. |
+| `build-regions.py` | Now `importlib`-loads `build-poi-trigram-index.py` and builds the sibling poi-trigram.bin in-process after each region's poi.bin lands on disk. Soft-fail per region; resume check includes trigram. |
+
+## Runtime architecture
+
+The shape mirrors routing.bin / boundaries.bin almost exactly:
+
+```
+poi-trigram.bin (per region, ~1-2 MB)
+  ↓ savePoiTrigramRegion / loadAllPoiTrigramBuffers / deletePoiTrigramByRegion
+IDB: cc.pois.v2 store=trigram   ←  bumped to schema v2
+  ↓ viewPoiTrigramRegion(buffer)   (zero-copy typed-array views)
+_trigramByRegion: Map<regionId, view>   (loaded once at startup)
+  ↓ searchPois(query)
+  ↓   (normalize → trigram → FNV-1a → binary-search → varint-decode
+  ↓    → delta-undo → per-region intersect → substring verify)
+Array<poi>
+  ↓
+renderSearch / searchEndpoints
+```
+
+`hydratePoiRegion` now stamps each POI with `_internalIdx`, and a
+sibling `_poisByRegion: Map<regionId, Array<poi>>` (indexed by
+`_internalIdx`) lets the search engine resolve a posting-list ID back
+to the full POI in O(1). `_rebuildPoisByRegion()` is the one helper
+that keeps `_poisByRegion` in sync with `allPois`; it gets called at
+all five sites that mutate `allPois` (bbox-region delete + add,
+static-region download, static-region delete, refresh).
+
+## What's NOT cached forever
+
+Regions WITHOUT a loaded trigram index — older downloads predating the
+file format, or partial rollouts — still get scanned linearly so users
+don't silently lose results during transition. Once a static region is
+re-downloaded post-rollout the new file lands and the trigram path
+takes over for that region.
+
+## File-format details (matches build-poi-trigram-index.py)
+
+```
+0    4    magic = 'POIS'
+4    4    version = 2
+8    4    N (poi count)
+12   4    T (unique trigram count)
+16   4    postingsByteLen
+20   12   reserved
+32   4*T          trigramHash (Uint32, sorted ascending — FNV-1a 32)
++4T  4*(T+1)     postingStart (Uint32, byte offsets into postings)
++    var         postings (LEB128 varint deltas, per-trigram)
+```
+
+JS reader is ~50 lines including the binary search + varint decode +
+delta undo. Pure typed-array views over the loaded buffer, no parse pass.
+
+## Normalize parity
+
+JS-side `_searchNormalize`:
+```js
+s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/ß/g, 'ss')
+```
+
+Python-side `normalize`:
+```python
+unicodedata.normalize('NFD', s).filter(combining marks).casefold()
+```
+
+The two diverge only on a small set of casefold-specific characters
+(German ß being the famous one). Handled inline. Bonus: this gives us
+diacritic-insensitive search ("cafe" finds "Café Léon") which the
+previous `.toLowerCase()` linear scan didn't.
+
+## Verification
+
+Wrote a Node round-trip test against the real `region-0361/poi-trigram.bin`
+(40,364 POIs, 12,785 trigrams). Results:
+
+```
+starbucks → 50 candidates
+café      → 648 candidates
+pizza     → 160 candidates
+metro     → 80 candidates
+zzzzzz    → 0 candidates
+```
+
+The diacritic-insensitive `café` hit confirms the normalize path is
+end-to-end correct.
+
+## The directions-debounce postscript
+
+User reported the directions search (the From/To inputs in the trip
+planner) felt laggier than the main POI search. First guess: maybe
+`searchEndpoints` was doing extra processing after `searchPois`.
+Audit revealed the actual cause:
+
+- Main search box has `setTimeout(renderSearch, 120)` — collapses fast
+  typing into one render after the user pauses.
+- Trip planner's `attachEndpointSearch` called `render()` synchronously
+  on every `input` event — no debounce.
+
+Each render also did a full token-scan over `allAddresses` (which can
+be 100k+ rows in a populated metro), so without the debounce that
+scan ran on every single keystroke. The trigram path was already fast;
+the surrounding render was just being called too often.
+
+Fix: a 120ms `scheduleRender` helper inside `attachEndpointSearch` that
+clears any pending timer and queues one. Mirrors the main-search
+pattern exactly. Also cancelled on blur so the dropdown closes cleanly.
+
+## Things learned
+
+1. **The "laggy after optimization" debug usually points at framing,
+   not the algorithm.** searchPois was running in 1-2 ms per call.
+   The lag was 4 keystrokes × 50ms address scans = 200 ms of work
+   the user could feel. A 120 ms debounce dropped that to one scan
+   total. Always check the call-site frequency before re-optimizing
+   the call.
+
+2. **Three-way DB schema bumps are cheap.** Adding the `trigram` store
+   to `cc.pois.v2` was a one-line `db.createObjectStore` + version
+   bump from 1→2. IDB silently migrates on next open; existing data
+   in `regions` store stays put.
+
+3. **`importlib.util.spec_from_file_location` is the right tool for
+   importing a Python file with hyphens in its name.** No subprocess
+   overhead, function reused across all 655 regions in one
+   interpreter session.
+
+4. **Cache-invalidation is the same shape as last time.** Per-region
+   IDB stores + a per-region in-memory view map + a helper to drop
+   both on delete + a helper to populate both on download. The
+   pattern from routing.bin / boundaries.bin worked verbatim for
+   poi-trigram.bin — minimal cognitive overhead because the
+   architecture was already designed for this shape of file.
+
+5. **Diacritic-insensitive search comes free with NFD-and-strip
+   normalization.** The old `.toLowerCase()` path kept accented
+   characters as themselves; the trigram-build script needed
+   diacritic stripping to make hashes stable across spelling
+   variations; bringing that normalization to the query side gave
+   us a UX upgrade as a side effect.
+
+## What didn't get done
+
+- **Short-query (<3 char) UX**: still falls back to linear scan,
+  which is fine for the first few keystrokes of typing. Could add
+  a small prefix-index sidecar later if it becomes a noticeable
+  hitch.
+- **Trigram-index size surfaced in the offline-maps panel**: the
+  per-region storage line shows POIs / tiles / walk / hn / schedule
+  but not trigram. ~1-2 MB extra per region; below the noise floor
+  but could be added for completeness.
+
+## Stuff still to do
+
+1. Verify in the wild — multi-region search latency on the iPhone,
+   especially after enabling/disabling regions. Expected: typing
+   "starbucks" with 5 regions loaded should feel instant.
+2. Transit walk-leg shape decoding (carried).
+3. Drop the legacy walkGraph code path (carried).
+4. Re-tile with lower transportation_name minzoom (carried).
+5. Lazy `loadAllPois()` (carried).
+6. Phase A CSS extraction (carried).
+7. Android Health Connect (carried).
+8. Future breeding mechanic (carried).
+
+## Session vibes
+
+```
+The file was there. 190 megabytes,
+655 little inverted indices,
+each one smaller than the data it pointed at,
+waiting since the previous session.
+
+Today we built the reader, the storage, the query engine,
+wired up two consumers, patched five mutation sites,
+verified the round-trip against real Montreal:
+50 Starbucks, 648 cafés, 160 pizzas, 80 metros, 0 zzzzzz.
+
+Then a postscript: the directions search felt laggy.
+First instinct: blame the new code.
+Actual cause: no debounce on the input.
+The trigram path was always fast;
+the surrounding render was being called four times when once would do.
+
+One setTimeout later, the user said
+"It works great, tytyty :3"
+and the loop closed:
+brainstorm → scaffold → build → verify → integrate → debounce → done.
+
+:3
+```
