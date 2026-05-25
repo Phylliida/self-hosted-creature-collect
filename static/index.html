@@ -8800,6 +8800,15 @@ function fmtDate(ts) {
   function attachEndpointSearch(input, iconEl, which) {
     let dropdown = null;
     let suppressOpen = false;
+    // Each render fans out to searchPois + favorites + a full token
+    // scan over allAddresses (which can be 100k+ rows in a populated
+    // metro). On every keystroke that's enough to lag noticeably; the
+    // main search box already debounces 120ms so directions should too.
+    let renderTimer = null;
+    const scheduleRender = () => {
+      clearTimeout(renderTimer);
+      renderTimer = setTimeout(() => { renderTimer = null; render(); }, 120);
+    };
     const render = () => {
       const items = searchEndpoints(input.value);
       if (!items.length) { closeDropdown(); return; }
@@ -8841,9 +8850,12 @@ function fmtDate(ts) {
       if (which === 'from') routingFrom = null; else routingTo = null;
       iconEl.textContent = '○';
       updateRoutingGoState();
-      render();
+      scheduleRender();
     });
-    input.addEventListener('blur', () => { setTimeout(closeDropdown, 150); });
+    input.addEventListener('blur', () => {
+      clearTimeout(renderTimer); renderTimer = null;
+      setTimeout(closeDropdown, 150);
+    });
   }
   attachEndpointSearch(routingFromInput, routingFromIcon, 'from');
   attachEndpointSearch(routingToInput, routingToIcon, 'to');
