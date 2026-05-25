@@ -4249,22 +4249,110 @@ async function deleteScheduleByRegion(regionId) {
 const WALK_DB_NAME = 'cc.walk.v5';
 function openWalkDB() {
   return new Promise((resolve, reject) => {
-    // Bumped to v2 to trigger onupgradeneeded for users whose v1 DB
-    // was created without the `regions` store (older code path
-    // didn't create it in upgrade, leaving the DB technically v1
-    // but missing the store — saveWalkGraph would then throw
-    // "'regions' is not a known object store name"). The contains
-    // check below makes the upgrade idempotent.
-    const req = indexedDB.open(WALK_DB_NAME, 2);
+    // v3 added `routing` (per-region routing.bin = packed CSR adjacency).
+    // v4 adds `boundaries` (per-region boundaries.bin = list of OSM IDs
+    //   shared with adjacent regions). Together they enable the
+    //   multi-graph routing path: load multiple regions' routing.bin
+    //   as independent search graphs, stitch them at boundary nodes
+    //   via boundaries.bin's OSM-id-to-internal-idx mapping, and run
+    //   Dijkstra over globally-indexed nodes without ever building a
+    //   merged graph.
+    // walk.bin (in `regions`) is still kept around as the source of
+    // display data (edge shapes/names) for rendering chosen routes.
+    const req = indexedDB.open(WALK_DB_NAME, 4);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains('regions')) {
         db.createObjectStore('regions', { keyPath: 'regionId' });
       }
+      if (!db.objectStoreNames.contains('routing')) {
+        db.createObjectStore('routing', { keyPath: 'regionId' });
+      }
+      if (!db.objectStoreNames.contains('boundaries')) {
+        db.createObjectStore('boundaries', { keyPath: 'regionId' });
+      }
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
+}
+async function saveRoutingGraph(regionId, buffer) {
+  const db = await openWalkDB();
+  const tx = db.transaction('routing', 'readwrite');
+  tx.objectStore('routing').put({ regionId, buffer });
+  await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
+  db.close();
+}
+async function loadRoutingGraphs(includeRegionIds) {
+  // Mirror of loadAllWalkGraphs: optional Set<regionId> filter, falls
+  // back to getAll. Returns an array of { regionId, buffer } records.
+  const db = await openWalkDB();
+  try {
+    if (includeRegionIds && includeRegionIds.size > 0) {
+      const ids = Array.from(includeRegionIds);
+      const tx = db.transaction('routing', 'readonly');
+      const store = tx.objectStore('routing');
+      const results = [];
+      await Promise.all(ids.map((id) => new Promise((resolve) => {
+        const req = store.get(id);
+        req.onsuccess = () => { if (req.result) results.push(req.result); resolve(); };
+        req.onerror = () => resolve();
+      })));
+      return results;
+    }
+    return await new Promise((resolve, reject) => {
+      const req = db.transaction('routing', 'readonly').objectStore('routing').getAll();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+async function deleteRoutingGraphByRegion(regionId) {
+  const db = await openWalkDB();
+  const tx = db.transaction('routing', 'readwrite');
+  tx.objectStore('routing').delete(regionId);
+  await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
+  db.close();
+}
+async function saveBoundaries(regionId, buffer) {
+  const db = await openWalkDB();
+  const tx = db.transaction('boundaries', 'readwrite');
+  tx.objectStore('boundaries').put({ regionId, buffer });
+  await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
+  db.close();
+}
+async function loadBoundaries(includeRegionIds) {
+  const db = await openWalkDB();
+  try {
+    if (includeRegionIds && includeRegionIds.size > 0) {
+      const ids = Array.from(includeRegionIds);
+      const tx = db.transaction('boundaries', 'readonly');
+      const store = tx.objectStore('boundaries');
+      const results = [];
+      await Promise.all(ids.map((id) => new Promise((resolve) => {
+        const req = store.get(id);
+        req.onsuccess = () => { if (req.result) results.push(req.result); resolve(); };
+        req.onerror = () => resolve();
+      })));
+      return results;
+    }
+    return await new Promise((resolve, reject) => {
+      const req = db.transaction('boundaries', 'readonly').objectStore('boundaries').getAll();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+async function deleteBoundariesByRegion(regionId) {
+  const db = await openWalkDB();
+  const tx = db.transaction('boundaries', 'readwrite');
+  tx.objectStore('boundaries').delete(regionId);
+  await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
+  db.close();
 }
 // Each region is stored as the raw binary blob returned by /walk-graph,
 // structured-cloned into IDB with zero parsing overhead (see viewWalkRegion).
@@ -8762,26 +8850,51 @@ function fmtDate(ts) {
         staticTotal: staticRegions.length,
         ids: Array.from(allIds).slice(0, 20),
       });
-      _routeTrace('route:ensure_walk_start');
-      await ensureWalkGraph(allIds.size ? allIds : undefined);
-      _routeTrace('route:ensure_walk_done', {
-        nodes: walkGraph.nodeCount,
-        edges: walkGraph.edgeCount,
-        loadedRegions: walkGraphLoadedRegions.size,
-      });
-      if (walkGraph.nodeCount === 0) {
+      // preferMulti = use the no-merge multi-graph path. Skip the
+      // legacy walkGraph rebuild entirely when on (saves the 4-5 s
+      // parse + merge spike and ~40 MB of merged graph). Transit
+      // routing isn't wired into multi-graph yet, so when preferMulti
+      // is on we skip the transit attempt below and go straight to
+      // multi-graph astar.
+      //
+      // Default is ON. Explicit opt-out via cc.preferMultiGraph='0'
+      // (e.g., for testing the legacy path or if a route fails on
+      // the multi-graph side and you want to compare). Read once per
+      // route; logged to trace.
+      const preferMulti = (() => {
+        try { return localStorage.getItem('cc.preferMultiGraph') !== '0'; }
+        catch { return true; }
+      })();
+      if (!preferMulti) {
+        _routeTrace('route:ensure_walk_start');
+        await ensureWalkGraph(allIds.size ? allIds : undefined);
+        _routeTrace('route:ensure_walk_done', {
+          nodes: walkGraph.nodeCount,
+          edges: walkGraph.edgeCount,
+          loadedRegions: walkGraphLoadedRegions.size,
+        });
+      } else {
+        _routeTrace('route:ensure_walk_skipped_for_multi');
+      }
+      if (!preferMulti && walkGraph.nodeCount === 0) {
         alert('No walking graph for this region yet — save the area first.');
         return;
       }
       _routeTrace('route:find_nearest_start');
-      const start = findNearestWalkNode(from.lng, from.lat);
-      const end = findNearestWalkNode(to.lng, to.lat);
+      const start = preferMulti
+        ? { id: null, distance: Infinity }
+        : findNearestWalkNode(from.lng, from.lat);
+      const end = preferMulti
+        ? { id: null, distance: Infinity }
+        : findNearestWalkNode(to.lng, to.lat);
       _routeTrace('route:find_nearest_done', {
         startId: start.id, startDist: Math.round(start.distance || 0),
         endId: end.id, endDist: Math.round(end.distance || 0),
       });
-      if (!start.id || !end.id) { alert('Could not find walkable path endpoints.'); return; }
-      if (start.distance > 500 || end.distance > 500) {
+      if (!preferMulti
+          && (!start.id || !end.id)) { alert('Could not find walkable path endpoints.'); return; }
+      if (!preferMulti
+          && (start.distance > 500 || end.distance > 500)) {
         alert('One of the endpoints is too far from any walking path.');
         return;
       }
@@ -8790,9 +8903,12 @@ function fmtDate(ts) {
       const toPoi = { name: to.name || '?', lng: to.lng, lat: to.lat };
       const walkWeight = currentWalkWeight();
       const transferSec = currentTransferSec();
-      const canTransit = scheduleIdx.stops.size > 0 && scheduleIdx.stopToWalkNode.size > 0;
+      const canTransit = !preferMulti
+        && scheduleIdx.stops.size > 0
+        && scheduleIdx.stopToWalkNode.size > 0;
       _routeTrace('route:plan_start', {
         canTransit,
+        preferMulti,
         transit: { stops: scheduleIdx.stops.size, stopToWalk: scheduleIdx.stopToWalkNode.size },
       });
       if (canTransit) {
@@ -8811,9 +8927,123 @@ function fmtDate(ts) {
           return;
         }
       }
-      _routeTrace('route:astar_start');
-      const route = astar(start.id, end.id);
-      _routeTrace('route:astar_done', { found: !!route });
+      // preferMulti was read at the top of the routing pipeline; we
+      // also used it to skip ensureWalkGraph above. If on, take the
+      // multi-graph route. If multi-graph build fails for any reason,
+      // we fall through to legacy astar — but that needs walkGraph,
+      // which we skipped building. In that failure case, do a late
+      // emergency build so the user still gets a route.
+      let route = null;
+      if (preferMulti) {
+        _routeTrace('route:multi_start');
+        const multi = await ensureMultiGraph(allIds);
+        if (multi) {
+          // Re-find endpoints over multi-graph (different node-id space).
+          const ms = findNearestWalkNodeMulti(from.lng, from.lat, multi);
+          const me = findNearestWalkNodeMulti(to.lng, to.lat, multi);
+          _routeTrace('route:multi_nearest', {
+            startGid: ms.id, startDist: Math.round(ms.distance || 0),
+            endGid: me.id, endDist: Math.round(me.distance || 0),
+          });
+          if (ms.id != null && me.id != null
+              && ms.distance <= 500 && me.distance <= 500) {
+            const mr = astarMulti(ms.id, me.id, multi);
+            _routeTrace('route:multi_astar_done', {
+              found: !!mr, hops: mr ? mr.path.length : 0,
+            });
+            if (mr) {
+              // Adapt the multi-graph result into the legacy renderer
+              // shape, but use lazy walk.bin lookup to pull real shape
+              // + name data for the chosen edges. ensureDisplay loads
+              // each touched region's walk.bin on first use; multiple
+              // routes touching the same region pay for it once.
+              const path = mr.path;
+              const touchedRegions = new Set();
+              for (const gid of path) touchedRegions.add(globalIdRegion(gid));
+              _routeTrace('route:multi_display_start', {
+                regions: Array.from(touchedRegions),
+              });
+              await Promise.all(
+                Array.from(touchedRegions).map((rIdx) => multi.ensureDisplay(rIdx))
+              );
+              _routeTrace('route:multi_display_done');
+              // Build per-edge metadata + curved coords. Each consecutive
+              // (gA, gB) in path is either:
+              //   - same region: real edge, look up shape + name
+              //   - different region: portal crossing (no visual edge)
+              const coords = [];
+              const edgeMeta = [];
+              coords.push([multi.lng(path[0]), multi.lat(path[0])]);
+              for (let i = 1; i < path.length; i++) {
+                const ga = path[i - 1];
+                const gb = path[i];
+                const rA = globalIdRegion(ga);
+                const rB = globalIdRegion(gb);
+                const fromLng = multi.lng(ga), fromLat = multi.lat(ga);
+                const toLng = multi.lng(gb),   toLat = multi.lat(gb);
+                if (rA === rB) {
+                  const e = multi.lookupEdge(rA, globalIdInternal(ga), globalIdInternal(gb));
+                  if (e && e.walkView) {
+                    const w = e.walkView;
+                    const weight = w.edgeWeight[e.edgeIdx];
+                    const ni = w.edgeNameIdx[e.edgeIdx];
+                    const name = ni >= 0 ? w.names[ni] : '';
+                    const shapeOff = w.edgeShapeOff[e.edgeIdx];
+                    const shape = shapeOff >= 0
+                      ? w.shapeBuf.subarray(shapeOff, shapeOff + w.edgeShapeLen[e.edgeIdx])
+                      : null;
+                    if (shape) {
+                      const origLng = e.reverse ? toLng : fromLng;
+                      const origLat = e.reverse ? toLat : fromLat;
+                      let pts = decodeShapeBlob(origLng, origLat, shape);
+                      if (e.reverse) pts = pts.reverse();
+                      for (const p of pts) coords.push(p);
+                    }
+                    edgeMeta.push({
+                      edgeIdx: e.edgeIdx, reverse: e.reverse,
+                      regionIdx: rA, name, weight,
+                    });
+                  } else {
+                    // Edge couldn't be resolved — render as straight.
+                    edgeMeta.push({ edgeIdx: -1, reverse: false, regionIdx: rA, name: '', weight: 0 });
+                  }
+                } else {
+                  // Portal crossing: zero-cost virtual edge. No shape,
+                  // no name. coords[from] == coords[to] geometrically.
+                  edgeMeta.push({ portal: true, edgeIdx: -1, reverse: false, name: '', weight: 0 });
+                }
+                coords.push([toLng, toLat]);
+              }
+              route = {
+                path, edges: edgeMeta, distance: mr.distance,
+                _multiCoords: coords,
+                _multiEdges: edgeMeta,
+              };
+            }
+          }
+        }
+        if (!route) _routeTrace('route:multi_fallback');
+      }
+      if (!route) {
+        // Emergency fallback when multi-graph mode failed and we
+        // skipped the walkGraph build — restore it before astar.
+        if (preferMulti && !walkGraphLoaded) {
+          _routeTrace('route:ensure_walk_emergency');
+          await ensureWalkGraph(allIds.size ? allIds : undefined);
+          const s = findNearestWalkNode(from.lng, from.lat);
+          const e = findNearestWalkNode(to.lng, to.lat);
+          start.id = s.id; start.distance = s.distance;
+          end.id = e.id; end.distance = e.distance;
+          if (!start.id || !end.id
+              || start.distance > 500 || end.distance > 500) {
+            alert('Could not find walkable path endpoints.');
+            return;
+          }
+        }
+        _routeTrace('route:astar_start');
+        route = astar(start.id, end.id);
+        _routeTrace('route:astar_done', { found: !!route });
+      }
       if (!route) { alert('No route found between those points.'); return; }
       renderDirections(route, from, toPoi);
       _routeTrace('route:render_done');
@@ -9790,6 +10020,8 @@ function fmtDate(ts) {
       await deletePoisByRegion(id);
       await deleteScheduleByRegion(id);
       await deleteWalkGraphByRegion(id);
+      await deleteRoutingGraphByRegion(id);
+      await deleteBoundariesByRegion(id);
       await deleteHousenumbersByRegion(id);
       await deleteAddressesByRegion(id);
       await rebuildScheduleIndex();
@@ -9905,6 +10137,334 @@ function fmtDate(ts) {
   }
   let walkGraph = emptyWalkGraph();
 
+  // ── Multi-graph routing ──────────────────────────────────────────
+  // The "option 3" architecture: instead of merging multiple regions
+  // into one walkGraph at parse time (slow + memory-spiky), keep each
+  // region's routing.bin as an independent search graph. Dijkstra
+  // operates over a "global node id" space:
+  //     globalId = (regionIdx << 24) | internalIdx
+  // The MultiGraph object holds:
+  //   - regions[]: array of { regionId, routingView, boundariesView }
+  //   - boundaryPeers: Map<globalId, globalId[]> — cross-region edges.
+  //     Built at MultiGraph load time from each region's boundaries.bin
+  //     (or rebuilt from walk.bin nodeIds for legacy downloads that
+  //     don't have boundaries.bin yet — the lazy-backfill path also
+  //     persists the computed result back to IDB).
+  // The peer index makes cross-region traversal a single Map lookup
+  // per popped node during Dijkstra.
+  function packGlobalId(regionIdx, internalIdx) {
+    return (((regionIdx & 0xFF) << 24) | (internalIdx & 0xFFFFFF)) >>> 0;
+  }
+  function globalIdRegion(globalId)   { return (globalId >>> 24) & 0xFF; }
+  function globalIdInternal(globalId) { return globalId & 0xFFFFFF; }
+
+  // Slot to hold the currently-active MultiGraph (or null when we're
+  // using the legacy walkGraph path). ensureMultiGraph populates it;
+  // unloadWalkGraph clears it.
+  let multiGraph = null;
+
+  async function ensureMultiGraph(includeRegionIds) {
+    // Returns a MultiGraph if all requested regions have routing.bin
+    // available, else null (caller falls back to the legacy walkGraph
+    // path). Cached as `multiGraph` so subsequent routes reuse it
+    // when the region set is unchanged.
+    if (multiGraph
+        && setsEqual(multiGraph.regionIds, includeRegionIds)) {
+      return multiGraph;
+    }
+    if (!includeRegionIds || includeRegionIds.size === 0) return null;
+    let routingRecords = await loadRoutingGraphs(includeRegionIds);
+    if (routingRecords.length !== includeRegionIds.size) {
+      // Some region's routing.bin is missing — lazy-backfill from
+      // walk.bin. Existing downloads from before the routing.bin
+      // pipeline hit this path on first multi-graph use.
+      const have = new Set(routingRecords.map((r) => r.regionId));
+      const needIds = new Set();
+      for (const id of includeRegionIds) if (!have.has(id)) needIds.add(id);
+      _routeTrace('multi:backfill_routing:start', { count: needIds.size });
+      const walkRecords = await loadAllWalkGraphs(needIds);
+      for (const wr of walkRecords) {
+        try {
+          const walk = viewWalkRegion(wr.buffer);
+          const routingBuf = buildRoutingBufferFromWalk(walk);
+          await saveRoutingGraph(wr.regionId, routingBuf);
+          routingRecords.push({ regionId: wr.regionId, buffer: routingBuf });
+        } catch (e) {
+          console.warn(`[multi] routing.bin build failed for ${wr.regionId}`, e);
+        }
+      }
+      _routeTrace('multi:backfill_routing:done', {
+        nowHave: routingRecords.length,
+      });
+      if (routingRecords.length !== includeRegionIds.size) {
+        _routeTrace('multi:missing_routing', {
+          wanted: includeRegionIds.size,
+          have: routingRecords.length,
+        });
+        return null;
+      }
+    }
+    // Load boundaries.bin for each region. Build & persist on the fly
+    // for any region that doesn't have one yet (legacy download).
+    const boundariesRecords = await loadBoundaries(includeRegionIds);
+    const boundariesByRegion = new Map();
+    for (const r of boundariesRecords) boundariesByRegion.set(r.regionId, r.buffer);
+    const regionsNeedingBoundaries = [];
+    for (const id of includeRegionIds) {
+      if (!boundariesByRegion.has(id)) regionsNeedingBoundaries.push(id);
+    }
+    if (regionsNeedingBoundaries.length) {
+      _routeTrace('multi:backfill_boundaries:start', {
+        count: regionsNeedingBoundaries.length,
+      });
+      // Need each region's nodeIds (Float64) from walk.bin to compute
+      // boundaries. Load just the IDs section — cheaper than a full
+      // viewWalkRegion since we skip edges/weights/names/shapes.
+      const walkRecords = await loadAllWalkGraphs(includeRegionIds);
+      const regionIdsMap = new Map();
+      for (const wr of walkRecords) {
+        const view = new DataView(wr.buffer);
+        const N = view.getUint32(8, true);
+        regionIdsMap.set(wr.regionId, new Float64Array(wr.buffer, 48, N));
+      }
+      const sharedIds = findSharedOsmIdsAcrossRegions(regionIdsMap);
+      for (const id of includeRegionIds) {
+        const nodeIds = regionIdsMap.get(id);
+        if (!nodeIds) continue;
+        const buf = buildBoundariesBufferForRegion(nodeIds, sharedIds);
+        boundariesByRegion.set(id, buf);
+        try { await saveBoundaries(id, buf); } catch {}
+      }
+      _routeTrace('multi:backfill_boundaries:done', {
+        shared: sharedIds.size,
+      });
+    }
+    // Build the MultiGraph. regionIdx is the order regions appear in
+    // includeRegionIds — stable for the life of this MultiGraph since
+    // we cache by exact region-set equality.
+    const regions = [];
+    const orderedIds = Array.from(includeRegionIds);
+    for (let regionIdx = 0; regionIdx < orderedIds.length; regionIdx++) {
+      const regionId = orderedIds[regionIdx];
+      const routingRec = routingRecords.find((r) => r.regionId === regionId);
+      if (!routingRec) return null;  // shouldn't happen given length check
+      const routingView = viewRoutingRegion(routingRec.buffer);
+      const boundariesBuf = boundariesByRegion.get(regionId);
+      const boundariesView = viewBoundariesRegion(boundariesBuf);
+      regions.push({
+        regionId, regionIdx,
+        routingView, boundariesView,
+      });
+    }
+    // Cross-region peer index. Each OSM ID that appears in 2+ regions
+    // becomes a set of globalIds (one per containing region). Each
+    // globalId in the set is a zero-cost neighbor of every OTHER
+    // globalId in the same set.
+    const peersByGlobalId = new Map();
+    const osmToGlobals = new Map();
+    for (const r of regions) {
+      const bv = r.boundariesView;
+      for (let i = 0; i < bv.C; i++) {
+        const osmId = bv.osmIds[i];
+        const internal = bv.internalIdxs[i];
+        const gid = packGlobalId(r.regionIdx, internal);
+        let arr = osmToGlobals.get(osmId);
+        if (!arr) { arr = []; osmToGlobals.set(osmId, arr); }
+        arr.push(gid);
+      }
+    }
+    for (const [, arr] of osmToGlobals) {
+      if (arr.length < 2) continue;
+      for (const gid of arr) {
+        const others = arr.filter((g) => g !== gid);
+        peersByGlobalId.set(gid, others);
+      }
+    }
+    multiGraph = {
+      regions,
+      regionIds: new Set(orderedIds),
+      peersByGlobalId,
+      get nodeCount() {
+        let n = 0;
+        for (const r of regions) n += r.routingView.N;
+        return n;
+      },
+      // Decompose a globalId, dispatch coord lookup to its region.
+      lng(globalId) {
+        const r = regions[globalIdRegion(globalId)];
+        return r ? r.routingView.nodeLng[globalIdInternal(globalId)] : NaN;
+      },
+      lat(globalId) {
+        const r = regions[globalIdRegion(globalId)];
+        return r ? r.routingView.nodeLat[globalIdInternal(globalId)] : NaN;
+      },
+      hasNode(globalId) {
+        const r = regions[globalIdRegion(globalId)];
+        if (!r) return false;
+        const i = globalIdInternal(globalId);
+        return i >= 0 && i < r.routingView.N;
+      },
+      forEachNeighbor(globalId, fn) {
+        const r = regions[globalIdRegion(globalId)];
+        if (!r) return;
+        const i = globalIdInternal(globalId);
+        const rv = r.routingView;
+        const a0 = rv.adjStart[i];
+        const a1 = rv.adjStart[i + 1];
+        for (let ai = a0; ai < a1; ai++) {
+          const target = rv.adjTarget(ai);
+          const weight = rv.adjWeight(ai);
+          const targetGid = packGlobalId(r.regionIdx, target);
+          fn(targetGid, weight);
+        }
+        // Cross-region "portal" edges to peer globalIds (same physical
+        // OSM node in adjacent regions). Zero-cost since they're the
+        // same location, just indexed in different regions.
+        const peers = peersByGlobalId.get(globalId);
+        if (peers) {
+          for (let p = 0; p < peers.length; p++) fn(peers[p], 0);
+        }
+      },
+      // ── Display-data lazy load ─────────────────────────────────
+      // Routing graph (routing.bin) has no shape/name data — those
+      // live in walk.bin and are only needed when we actually render
+      // a chosen path. ensureDisplay(regionIdx) loads walk.bin from
+      // IDB on first need, parses via viewWalkRegion, and builds an
+      // (from*2^24 + to) → edgeIdx index so the path-rendering pass
+      // can resolve edge details in O(1) per edge.
+      //
+      // Cached on the MultiGraph so subsequent routes touching the
+      // same regions don't re-parse. Memory: ~14 MB per region's
+      // walkView + ~5 MB per region's edge index. Only paid when a
+      // route actually displays.
+      async ensureDisplay(regionIdx) {
+        const r = regions[regionIdx];
+        if (!r) return null;
+        if (r._displayPromise) return r._displayPromise;
+        r._displayPromise = (async () => {
+          const recs = await loadAllWalkGraphs(new Set([r.regionId]));
+          if (!recs.length) return null;
+          const walkView = viewWalkRegion(recs[0].buffer);
+          // Build (from,to) → edgeIdx lookup. Pack both endpoints into
+          // one Number key. Max N per region < 2^24 so from*2^24 + to
+          // is a safe integer.
+          const edgeIndex = new Map();
+          const N = walkView.nodeLng.length;
+          const ef = walkView.edgeFrom;
+          const et = walkView.edgeTo;
+          for (let i = 0; i < ef.length; i++) {
+            edgeIndex.set(ef[i] * 0x1000000 + et[i], i);
+          }
+          r.walkView = walkView;
+          r.edgeIndex = edgeIndex;
+          return { walkView, edgeIndex };
+        })();
+        return r._displayPromise;
+      },
+      // Look up an edge in region by its endpoint pair (any direction).
+      // Returns { edgeIdx, reverse, walkView } or null if no edge
+      // exists (e.g., cross-region portal pair). Assumes ensureDisplay
+      // for this region was already awaited.
+      lookupEdge(regionIdx, fromInternal, toInternal) {
+        const r = regions[regionIdx];
+        if (!r || !r.edgeIndex) return null;
+        const fwd = r.edgeIndex.get(fromInternal * 0x1000000 + toInternal);
+        if (fwd !== undefined) {
+          return { edgeIdx: fwd, reverse: false, walkView: r.walkView };
+        }
+        const rev = r.edgeIndex.get(toInternal * 0x1000000 + fromInternal);
+        if (rev !== undefined) {
+          return { edgeIdx: rev, reverse: true, walkView: r.walkView };
+        }
+        return null;
+      },
+    };
+    _routeTrace('multi:built', {
+      regions: regions.length,
+      nodes: multiGraph.nodeCount,
+      boundaryPeers: peersByGlobalId.size,
+    });
+    return multiGraph;
+  }
+
+  function unloadMultiGraph() {
+    multiGraph = null;
+  }
+
+  // Find the nearest globally-indexed walk node to (lng, lat) by
+  // scanning every loaded region. For each region we do a tight
+  // typed-array loop over nodeLng/nodeLat — same cost-per-node as the
+  // existing findNearestWalkNode, just scaled by region count.
+  function findNearestWalkNodeMulti(lng, lat, multi) {
+    let best = -1, bestD2 = Infinity;
+    for (const r of multi.regions) {
+      const rv = r.routingView;
+      const lngs = rv.nodeLng;
+      const lats = rv.nodeLat;
+      const N = rv.N;
+      for (let i = 0; i < N; i++) {
+        const dLng = lngs[i] - lng;
+        const dLat = lats[i] - lat;
+        const d2 = dLng * dLng + dLat * dLat;
+        if (d2 < bestD2) {
+          bestD2 = d2;
+          best = packGlobalId(r.regionIdx, i);
+        }
+      }
+    }
+    if (best === -1) return { id: null, distance: Infinity };
+    // Approximate metres from squared-degrees: tan-ish at our latitudes,
+    // good enough for the "is it too far" sanity check (cap at 500m).
+    const m = Math.sqrt(bestD2) * 111000;
+    return { id: best, distance: m };
+  }
+
+  // A* over the multi-graph. Same algorithm as walkGraph's `astar`
+  // but uses (globalId) keys instead of merged-graph indices, and
+  // calls `multi.forEachNeighbor` rather than the cursor-based
+  // neighborStart/End/To API (which doesn't fit cleanly when each
+  // node can have both within-region neighbors and cross-region
+  // portal peers). Returns `{ path: [globalIds], distance }` —
+  // edges aren't tracked for now (rendering uses straight lines
+  // between path nodes; shape data will come from lazy walk.bin
+  // lookup in a follow-up).
+  function astarMulti(startGid, goalGid, multi) {
+    if (!multi.hasNode(startGid) || !multi.hasNode(goalGid)) return null;
+    const goalLng = multi.lng(goalGid);
+    const goalLat = multi.lat(goalGid);
+    const gScore = new Map();
+    const came = new Map();
+    gScore.set(startGid, 0);
+    const open = new MinHeap();
+    open.push([0, startGid]);
+    let iter = 0;
+    while (open.size) {
+      iter++;
+      if (iter > 1000000) return null;
+      const [_, current] = open.pop();
+      if (current === goalGid) {
+        const path = [current];
+        let c = current;
+        while (came.has(c)) {
+          c = came.get(c);
+          path.unshift(c);
+        }
+        return { path, distance: gScore.get(goalGid) };
+      }
+      const curG = gScore.get(current);
+      multi.forEachNeighbor(current, (to, w) => {
+        const tentative = curG + w;
+        if (tentative < (gScore.get(to) ?? Infinity)) {
+          came.set(to, current);
+          gScore.set(to, tentative);
+          const h = haversineM(multi.lng(to), multi.lat(to), goalLng, goalLat);
+          open.push([tentative + h, to]);
+        }
+      });
+    }
+    return null;
+  }
+
   async function fetchAndSaveWalkGraph(regionId, bbox, statusEl) {
     try {
       if (statusEl) statusEl.textContent = 'walk graph: downloading…';
@@ -9937,6 +10497,15 @@ function fmtDate(ts) {
       const nodeCount = view.getUint32(8, true);
       if (statusEl) statusEl.textContent = `walk graph: saving (${nodeCount.toLocaleString()} nodes)…`;
       await saveWalkGraph(regionId, buffer);
+      // Build routing.bin sibling — see equivalent block in
+      // downloadOneStaticRegion for rationale.
+      try {
+        const walk = viewWalkRegion(buffer);
+        const routingBuf = buildRoutingBufferFromWalk(walk);
+        await saveRoutingGraph(regionId, routingBuf);
+      } catch (e) {
+        console.warn(`[walk-graph] ${regionId} routing.bin build failed`, e);
+      }
       return nodeCount;
     } catch (err) {
       console.error('walk-graph fetch failed:', err);
@@ -10107,6 +10676,231 @@ function fmtDate(ts) {
   //  - name_idx: 1/2/4-byte fixed width chosen from the region's M
   //  - shapes: 1-bit "has shape" bitmap + sparse (u32 off, u16 len) pairs,
   //    only for the ~10% of edges that actually have a shape blob.
+  // routing.bin v2 reader. Zero-copy: typed-array views directly over
+  // the loaded buffer, no parsing pass. Layout matches build-routing-bin.py:
+  //   header(32) | nodeLng(F32×N) | nodeLat(F32×N) | adjStart(U32×N+1)
+  //   | adjPacked(U32×2E) | longWeightAdjIdx(U32×L) | longWeight(F32×L)
+  // adjPacked entry: bits 0..23 = target node idx, bits 24..31 = weight
+  // byte (0..254 = weight in metres; 255 = look up in long-weight table).
+  const ROUTING_LONG_TIER = 0xFF;
+  const ROUTING_TARGET_MASK = 0xFFFFFF;
+  function viewRoutingRegion(buffer) {
+    const view = new DataView(buffer);
+    const magic = String.fromCharCode(
+      view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+    if (magic !== 'ROUT') throw new Error('routing.bin: bad magic ' + magic);
+    const version = view.getUint32(4, true);
+    if (version !== 2) throw new Error('routing.bin: unsupported version ' + version);
+    const N = view.getUint32(8, true);
+    const E = view.getUint32(12, true);
+    const adjCount = view.getUint32(16, true);
+    const L = view.getUint32(20, true);
+    if (adjCount !== 2 * E) {
+      throw new Error(`routing.bin: adjCount ${adjCount} != 2*E ${2 * E}`);
+    }
+    let off = 32;
+    const nodeLng = new Float32Array(buffer, off, N); off += 4 * N;
+    const nodeLat = new Float32Array(buffer, off, N); off += 4 * N;
+    const adjStart = new Uint32Array(buffer, off, N + 1); off += 4 * (N + 1);
+    const adjPacked = new Uint32Array(buffer, off, adjCount); off += 4 * adjCount;
+    const longIdx = L ? new Uint32Array(buffer, off, L) : new Uint32Array(0);
+    off += 4 * L;
+    const longWeight = L ? new Float32Array(buffer, off, L) : new Float32Array(0);
+    return {
+      N, E, adjCount, L,
+      nodeLng, nodeLat, adjStart, adjPacked, longIdx, longWeight,
+      // Accessors for the packed adjacency.
+      adjTarget(ai) { return adjPacked[ai] & ROUTING_TARGET_MASK; },
+      adjWeight(ai) {
+        const packed = adjPacked[ai];
+        const tier = (packed >>> 24) & 0xFF;
+        if (tier !== ROUTING_LONG_TIER) return tier;
+        // Long-weight fallback: binary search longIdx for ai.
+        let lo = 0, hi = L - 1;
+        while (lo <= hi) {
+          const mid = (lo + hi) >>> 1;
+          const v = longIdx[mid];
+          if (v === ai) return longWeight[mid];
+          if (v < ai) lo = mid + 1; else hi = mid - 1;
+        }
+        // Shouldn't happen if file is well-formed; fall back to "tier-as-meters"
+        // which gives 255 — a reasonable upper bound.
+        return ROUTING_LONG_TIER;
+      },
+    };
+  }
+
+  // boundaries.bin v1 reader. Zero-copy: typed-array views directly
+  // over the file. Layout matches build-boundaries.py:
+  //   header(16) | osmIds(F64×C) | internalIdxs(U32×C)
+  // internalIdxs is sorted ascending so callers can binary-search by
+  // internal node index ("is this node a boundary?"). osmIds[i]
+  // corresponds to internalIdxs[i] — parallel SoA layout.
+  function viewBoundariesRegion(buffer) {
+    if (!buffer || buffer.byteLength < 16) {
+      return { C: 0, osmIds: new Float64Array(0), internalIdxs: new Uint32Array(0) };
+    }
+    const view = new DataView(buffer);
+    const magic = String.fromCharCode(
+      view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+    if (magic !== 'BOND') throw new Error('boundaries.bin: bad magic ' + magic);
+    const version = view.getUint32(4, true);
+    if (version !== 1) throw new Error('boundaries.bin: unsupported version ' + version);
+    const C = view.getUint32(8, true);
+    if (C === 0) {
+      return { C: 0, osmIds: new Float64Array(0), internalIdxs: new Uint32Array(0) };
+    }
+    const osmIds = new Float64Array(buffer, 16, C);
+    const internalIdxs = new Uint32Array(buffer, 16 + 8 * C, C);
+    return { C, osmIds, internalIdxs };
+  }
+
+  // Build a boundaries.bin v1 buffer for ONE region, given:
+  //   thisRegionIds:  Float64Array of OSM IDs for this region (from walk.bin)
+  //   sharedIds:      Set<number> of OSM IDs that appear in ≥2 regions
+  // The Set is computed by the caller from all loaded regions' IDs;
+  // see buildBoundariesAcrossRegions below.
+  function buildBoundariesBufferForRegion(thisRegionIds, sharedIds) {
+    const N = thisRegionIds.length;
+    // First pass: count this region's boundary nodes.
+    let count = 0;
+    for (let i = 0; i < N; i++) {
+      if (sharedIds.has(thisRegionIds[i])) count++;
+    }
+    const headerBytes = 16;
+    const totalBytes = headerBytes + 8 * count + 4 * count;
+    const buf = new ArrayBuffer(totalBytes);
+    const dv = new DataView(buf);
+    // Header.
+    dv.setUint8(0, 0x42); dv.setUint8(1, 0x4F); dv.setUint8(2, 0x4E); dv.setUint8(3, 0x44);
+    dv.setUint32(4, 1, true);
+    dv.setUint32(8, count, true);
+    dv.setUint32(12, 0, true);  // reserved
+    if (count === 0) return buf;
+    // Second pass: emit entries in internalIdx-ascending order (which
+    // is already the natural order we encounter them).
+    const osmIdsOut = new Float64Array(buf, headerBytes, count);
+    const idxsOut = new Uint32Array(buf, headerBytes + 8 * count, count);
+    let cursor = 0;
+    for (let i = 0; i < N; i++) {
+      const oid = thisRegionIds[i];
+      if (sharedIds.has(oid)) {
+        osmIdsOut[cursor] = oid;
+        idxsOut[cursor] = i;
+        cursor++;
+      }
+    }
+    return buf;
+  }
+
+  // Given a Map<regionId, Float64Array of OSM IDs>, identify the OSM
+  // IDs that appear in ≥2 regions and return them as a Set. Used to
+  // build boundaries.bin for client-side backfill when boundaries.bin
+  // files weren't included with the region download (e.g., older
+  // downloads that pre-date the boundaries.bin pipeline).
+  function findSharedOsmIdsAcrossRegions(regionIdsMap) {
+    const seen = new Set();
+    const shared = new Set();
+    for (const ids of regionIdsMap.values()) {
+      for (let i = 0; i < ids.length; i++) {
+        const oid = ids[i];
+        if (seen.has(oid)) shared.add(oid);
+        else seen.add(oid);
+      }
+    }
+    return shared;
+  }
+
+  // Build a routing.bin v2 buffer from a walk.bin parsed region.
+  // Used client-side to seed routing.bin for already-downloaded regions
+  // that pre-date the routing.bin pipeline. Same algorithm as
+  // build-routing-bin.py — kept in sync structurally.
+  function buildRoutingBufferFromWalk(walk) {
+    const N = walk.nodeLng.length;
+    const E = walk.edgeFrom.length;
+    if (N > 0xFFFFFF) {
+      throw new Error('region exceeds 24-bit target limit (16M nodes); cannot build routing.bin');
+    }
+    // Pass 1: per-node adjacency counts.
+    const counts = new Uint32Array(N);
+    for (let i = 0; i < E; i++) {
+      counts[walk.edgeFrom[i]]++;
+      counts[walk.edgeTo[i]]++;
+    }
+    // Pass 2: CSR offsets via prefix sum.
+    const adjStart = new Uint32Array(N + 1);
+    let total = 0;
+    for (let i = 0; i < N; i++) {
+      adjStart[i] = total;
+      total += counts[i];
+    }
+    adjStart[N] = total;
+    const adjCount = total;
+    const adjPacked = new Uint32Array(adjCount);
+    // Two passes — one to compute longCount (we need to size the long
+    // table accurately), one to actually emit. Cheap (E iterations).
+    let longCount = 0;
+    for (let i = 0; i < E; i++) {
+      const w = walk.edgeWeight[i];
+      const wr = Math.round(w);
+      if (wr < 0 || wr > 254) longCount++;
+    }
+    // Now allocate long arrays and fill adjacency.
+    const longIdx = new Uint32Array(longCount);
+    const longWeight = new Float32Array(longCount);
+    let longCursor = 0;
+    const cursor = new Uint32Array(N);
+    for (let i = 0; i < E; i++) {
+      const u = walk.edgeFrom[i];
+      const v = walk.edgeTo[i];
+      const w = walk.edgeWeight[i];
+      const wr = Math.round(w);
+      const useLong = wr < 0 || wr > 254;
+      const tier = useLong ? ROUTING_LONG_TIER : wr;
+      const pu = adjStart[u] + cursor[u]++;
+      adjPacked[pu] = ((v & ROUTING_TARGET_MASK) << 8) | tier;
+      if (useLong) {
+        longIdx[longCursor] = pu;
+        longWeight[longCursor] = w;
+        longCursor++;
+      }
+      const pv = adjStart[v] + cursor[v]++;
+      adjPacked[pv] = ((u & ROUTING_TARGET_MASK) << 8) | tier;
+      if (useLong) {
+        longIdx[longCursor] = pv;
+        longWeight[longCursor] = w;
+        longCursor++;
+      }
+    }
+    // Compose into one buffer.
+    const headerBytes = 32;
+    const totalBytes = headerBytes
+      + 4 * N + 4 * N                  // lng + lat
+      + 4 * (N + 1)                    // adjStart
+      + 4 * adjCount                   // adjPacked
+      + 4 * longCount + 4 * longCount; // longIdx + longWeight
+    const buf = new ArrayBuffer(totalBytes);
+    const dv = new DataView(buf);
+    // Header.
+    dv.setUint8(0, 0x52); dv.setUint8(1, 0x4F); dv.setUint8(2, 0x55); dv.setUint8(3, 0x54);
+    dv.setUint32(4, 2, true);
+    dv.setUint32(8, N, true);
+    dv.setUint32(12, E, true);
+    dv.setUint32(16, adjCount, true);
+    dv.setUint32(20, longCount, true);
+    // Body.
+    let off = headerBytes;
+    new Float32Array(buf, off, N).set(walk.nodeLng); off += 4 * N;
+    new Float32Array(buf, off, N).set(walk.nodeLat); off += 4 * N;
+    new Uint32Array(buf, off, N + 1).set(adjStart); off += 4 * (N + 1);
+    new Uint32Array(buf, off, adjCount).set(adjPacked); off += 4 * adjCount;
+    if (longCount) {
+      new Uint32Array(buf, off, longCount).set(longIdx); off += 4 * longCount;
+      new Float32Array(buf, off, longCount).set(longWeight);
+    }
+    return buf;
+  }
+
   function viewWalkRegion(buffer) {
     const view = new DataView(buffer);
     const N = view.getUint32(8, true);
@@ -10496,6 +11290,7 @@ function fmtDate(ts) {
     walkGraph = emptyWalkGraph();
     walkGraphLoaded = false;
     walkGraphLoadedRegions = new Set();
+    unloadMultiGraph();
     buildMultimodalBridges();
     updateMemBadge();
   }
@@ -11406,7 +12201,13 @@ function fmtDate(ts) {
     const goalLat = walkGraph.lat(goalId);
     const gScore = new Map();
     const came = new Map();
-    // per-target → { edgeIdx, reverse } used to get there.
+    // per-target → packed Uint32 of (reverse << 31) | edgeIdx. Was an
+    // object {edgeIdx, reverse} per entry — for routes visiting tens
+    // of thousands of nodes that's tens of thousands of small object
+    // allocations and the corresponding GC churn. Packing into a
+    // number means no per-step heap allocation; values stored in the
+    // Map are primitives. Saves ~30-40 bytes per visited node plus
+    // GC pressure that was visible in flamegraphs.
     const edgeUsed = new Map();
     gScore.set(startId, 0);
     const open = new MinHeap();
@@ -11422,7 +12223,11 @@ function fmtDate(ts) {
         let c = current;
         while (came.has(c)) {
           const prev = came.get(c);
-          edges.unshift(edgeUsed.get(c));
+          const packed = edgeUsed.get(c);
+          edges.unshift({
+            edgeIdx: packed & 0x7FFFFFFF,
+            reverse: (packed & 0x80000000) !== 0,
+          });
           c = prev;
           path.unshift(c);
         }
@@ -11439,7 +12244,7 @@ function fmtDate(ts) {
         const tentative = curG + w;
         if (tentative < (gScore.get(to) ?? Infinity)) {
           came.set(to, current);
-          edgeUsed.set(to, { edgeIdx: eIdx, reverse });
+          edgeUsed.set(to, ((reverse ? 0x80000000 : 0) | eIdx) >>> 0);
           gScore.set(to, tentative);
           const h = haversineM(walkGraph.lng(to), walkGraph.lat(to), goalLng, goalLat);
           open.push([tentative + h, to]);
@@ -11450,6 +12255,11 @@ function fmtDate(ts) {
   }
 
   function buildRouteCoords(route) {
+    // Multi-graph fast path — astarMulti pre-computed straight-line
+    // coords from the global-id path. Shape data isn't tracked yet
+    // (TODO: lazy walk.bin lookup for the chosen edges); the route
+    // renders as straight segments between consecutive nodes.
+    if (route && route._multiCoords) return route._multiCoords.slice();
     const coords = [];
     if (!route || !route.path.length) return coords;
     const firstIdx = route.path[0];
@@ -11683,6 +12493,53 @@ function fmtDate(ts) {
 
   function instructionsFor(route) {
     if (!route || route.path.length < 2) return [];
+    // Multi-graph route — edge metadata (name + weight) comes from
+    // the route._multiEdges array populated in runRoutingPlan after
+    // ensureDisplay loaded each region's walk.bin. Reuse the same
+    // turn-detection logic as the legacy path but source coords from
+    // _multiCoords / the route.path globalIds via the multiGraph.
+    if (route._multiEdges) {
+      const steps = [];
+      const multi = multiGraph;
+      const getCoord = (gid) => ({ lng: multi.lng(gid), lat: multi.lat(gid) });
+      let curName = '';
+      let curDist = 0;
+      let lastBearing = null;
+      for (let i = 0; i < route._multiEdges.length; i++) {
+        const e = route._multiEdges[i];
+        // Skip portal crossings entirely — they're zero-cost virtual
+        // edges that don't affect the walking instructions.
+        if (e.portal) continue;
+        const fromN = getCoord(route.path[i]);
+        const toN = getCoord(route.path[i + 1]);
+        const bearing = bearingDeg(fromN, toN);
+        const name = e.name || '';
+        const weight = e.weight || haversineM(fromN.lng, fromN.lat, toN.lng, toN.lat);
+        if (steps.length === 0) {
+          steps.push({ action: 'start', name, distance: 0 });
+          lastBearing = bearing;
+          curDist = weight;
+          curName = name;
+          continue;
+        }
+        const nameChanged = name && curName && name !== curName;
+        const turnDelta = ((bearing - lastBearing + 540) % 360) - 180;
+        const sharp = Math.abs(turnDelta) > 30;
+        if (nameChanged || sharp) {
+          steps[steps.length - 1].distance += curDist;
+          const dir = turnDelta > 30 ? 'turn right' : turnDelta < -30 ? 'turn left' : 'continue';
+          steps.push({ action: dir, name, distance: 0 });
+          curDist = weight;
+          curName = name;
+        } else {
+          curDist += weight;
+        }
+        lastBearing = bearing;
+      }
+      if (steps.length) steps[steps.length - 1].distance += curDist;
+      steps.push({ action: 'arrive', name: '', distance: 0 });
+      return steps;
+    }
     const steps = [];
     let curName = route.edges[0] ? walkGraph.edgeName(route.edges[0].edgeIdx) : '';
     let curDist = 0;
@@ -12505,6 +13362,18 @@ function fmtDate(ts) {
             poisHydrated = hydrated.length;
           } else if (fname === 'walk.bin') {
             await saveWalkGraph(regionId, buffer);
+            // Build + save the search-only routing.bin sibling so
+            // future routes can use the slim/fast path. Cheap to do
+            // here: walk.bin is already parsed for the save anyway,
+            // and the conversion is O(N+E). Failure is non-fatal —
+            // routing falls back to the walk.bin slow path.
+            try {
+              const walk = viewWalkRegion(buffer);
+              const routingBuf = buildRoutingBufferFromWalk(walk);
+              await saveRoutingGraph(regionId, routingBuf);
+            } catch (e) {
+              console.warn(`[static region] ${regionId} routing.bin build failed`, e);
+            }
           } else if (fname === 'housenumbers.bin') {
             await saveHousenumberRegion(regionId, buffer);
           } else if (fname === 'addresses.bin') {
@@ -12637,6 +13506,8 @@ function fmtDate(ts) {
     try { await deletePoisByRegion(regionId); } catch {}
     try { allPois = allPois.filter((p) => p.regionId !== regionId); } catch {}
     try { await deleteWalkGraphByRegion(regionId); } catch {}
+    try { await deleteRoutingGraphByRegion(regionId); } catch {}
+    try { await deleteBoundariesByRegion(regionId); } catch {}
     try { unloadWalkGraph(); } catch {}
     try { await deleteHousenumbersByRegion(regionId); } catch {}
     try { hnRegions = []; } catch {}
