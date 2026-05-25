@@ -9919,6 +9919,14 @@ function fmtDate(ts) {
   const STATIC_REGION_FILES = [
     'walk.bin', 'poi.bin', 'housenumbers.bin',
     'schedule.json', 'addresses.bin', 'tiles.pmtiles',
+    // routing.bin (packed search-only adjacency) and boundaries.bin
+    // (per-region list of OSM IDs shared with adjacent regions) are
+    // OPTIONAL — older HF uploads / regions built before these files
+    // existed will 404 for them. The download handler treats 404 on
+    // these two as soft-fail; ensureMultiGraph will lazy-backfill
+    // routing.bin from walk.bin in that case (boundaries needs other
+    // regions' walk.bin and is computed at first route).
+    'routing.bin', 'boundaries.bin',
   ];
 
   function renderRegions() {
@@ -13319,6 +13327,10 @@ function fmtDate(ts) {
   // with no extra plumbing. tiles.pmtiles stays raw and is served on
   // unpacked into the SW's tiles-v1 cache so MapLibre's existing
   // /tiles/Z/X/Y.pbf flow serves them via the original SW pipeline.
+  // Files that are OK to 404 on (older HF uploads may not have them).
+  // For these, we skip + carry on rather than failing the whole region.
+  const STATIC_REGION_FILES_OPTIONAL = new Set(['routing.bin', 'boundaries.bin']);
+
   async function downloadOneStaticRegion(regionId, onFile) {
     let totalBytes = 0;
     let poisHydrated = 0;
@@ -13326,6 +13338,12 @@ function fmtDate(ts) {
       const url = window._regionFileUrl(regionId, fname);
       const resp = await fetch(url);
       if (!resp.ok) {
+        if (STATIC_REGION_FILES_OPTIONAL.has(fname) && resp.status === 404) {
+          // Older HF uploads predate routing.bin / boundaries.bin.
+          // Skip — ensureMultiGraph's lazy-backfill path will compute
+          // them from walk.bin on first routing use.
+          continue;
+        }
         throw new Error(`HTTP ${resp.status} ${fname}`);
       }
       const blob = await resp.blob();
@@ -13364,9 +13382,12 @@ function fmtDate(ts) {
             await saveWalkGraph(regionId, buffer);
             // Build + save the search-only routing.bin sibling so
             // future routes can use the slim/fast path. Cheap to do
-            // here: walk.bin is already parsed for the save anyway,
-            // and the conversion is O(N+E). Failure is non-fatal —
-            // routing falls back to the walk.bin slow path.
+            // here: walk.bin is already parsed for the save anyway.
+            // This is a SAFETY NET — newer HF uploads ship the pre-
+            // built routing.bin alongside walk.bin, and that explicit
+            // file (processed in its own branch below) overwrites
+            // whatever we built here. The fallback matters when HF
+            // 404s on routing.bin (older uploads).
             try {
               const walk = viewWalkRegion(buffer);
               const routingBuf = buildRoutingBufferFromWalk(walk);
@@ -13374,6 +13395,17 @@ function fmtDate(ts) {
             } catch (e) {
               console.warn(`[static region] ${regionId} routing.bin build failed`, e);
             }
+          } else if (fname === 'routing.bin') {
+            // Pre-built search-only graph (see build-routing-bin.py).
+            // Save directly — the JS viewer is zero-copy and there's
+            // no per-region hydration into other stores needed.
+            await saveRoutingGraph(regionId, buffer);
+          } else if (fname === 'boundaries.bin') {
+            // Pre-computed boundary nodes (OSM IDs shared with adjacent
+            // regions). Used by ensureMultiGraph to build the cross-
+            // region peer index. Save raw; viewBoundariesRegion is
+            // zero-copy over this buffer at routing time.
+            await saveBoundaries(regionId, buffer);
           } else if (fname === 'housenumbers.bin') {
             await saveHousenumberRegion(regionId, buffer);
           } else if (fname === 'addresses.bin') {
