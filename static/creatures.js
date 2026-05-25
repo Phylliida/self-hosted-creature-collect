@@ -1888,6 +1888,370 @@
     }
   }
 
+  // ── Evolution requirements ──
+  // We replace PIF's native level / item / move conditions with a flat
+  // candy economy. Cost scales with where the source sits in its
+  // evolution line:
+  //   3+ stage chain (e.g. Bulbasaur → Ivysaur → Venusaur):
+  //     base form's evolution costs  25 candy
+  //     middle form's evolution     50 candy
+  //     (a hypothetical 4-stage line's third evolution would cost 100)
+  //   2-stage chain (e.g. Tangela / Lapras / Magikarp):
+  //     50 candy default, with Magikarp → Gyarados special-cased to 100
+  //     as the "rare big payoff" so the cheap fishing-rod catch doesn't
+  //     make the legendary trivial.
+  // Methods that natively require an item (`Item`, `TradeItem`,
+  // `DayHoldItem`) keep the item requirement on top of the candy cost.
+  // Level / move / stat-based methods drop their condition entirely —
+  // candy is the only currency.
+  const MAGIKARP_SPECIES_ID = 129;
+  const _EVO_ITEM_METHODS = new Set(['Item', 'TradeItem', 'DayHoldItem']);
+
+  // BFS forward from the family root, recording each species' depth
+  // from root and the max depth reached. Used to bucket the evolving
+  // species into 25 / 50 / 100 candy tiers.
+  function _chainPositionFor(srcSpeciesId) {
+    if (!global.Species || !global.Species.familyOf || !global.Species.evolutionsFor) {
+      return { totalStages: 1, depthFromRoot: 0 };
+    }
+    const family = global.Species.familyOf(srcSpeciesId);
+    if (!family || !family.length) return { totalStages: 1, depthFromRoot: 0 };
+    const root = family[0];
+    const depth = new Map();
+    depth.set(root, 0);
+    const queue = [root];
+    let maxDepth = 0;
+    while (queue.length) {
+      const cur = queue.shift();
+      const d = depth.get(cur);
+      if (d > maxDepth) maxDepth = d;
+      for (const e of global.Species.evolutionsFor(cur)) {
+        const t = e.target;
+        if (depth.has(t)) continue;
+        depth.set(t, d + 1);
+        queue.push(t);
+      }
+    }
+    return {
+      totalStages: maxDepth + 1,
+      depthFromRoot: depth.has(srcSpeciesId) ? depth.get(srcSpeciesId) : 0,
+    };
+  }
+
+  function _evolutionCandyCost(srcSpeciesId) {
+    if (srcSpeciesId === MAGIKARP_SPECIES_ID) return 100;
+    const { totalStages, depthFromRoot } = _chainPositionFor(srcSpeciesId);
+    if (totalStages >= 3) {
+      const tier = [25, 50, 100];
+      return tier[depthFromRoot] != null ? tier[depthFromRoot] : 100;
+    }
+    return 50;
+  }
+
+  function _evolutionItemRequirement(method, param) {
+    if (!_EVO_ITEM_METHODS.has(method)) return null;
+    if (typeof param !== 'string' || !param) return null;
+    return param;
+  }
+
+  // ── Hold-to-confirm evolve overlay ──
+  // One DOM node, lazily built on first use, reused for every
+  // confirmation. Hold-to-confirm semantics: yes button drives a CSS
+  // ring fill over 5s; releasing early cancels; full hold fires the
+  // committed action (no-op for now — wired up when the actual evolve
+  // action lands).
+  const EVOLVE_CONFIRM_HOLD_MS = 5000;
+  let _evolveConfirmEl = null;
+  let _evolveHoldTimer = null;
+  let _evolveCurrent = null;
+
+  function _ensureEvolveConfirmEl() {
+    if (_evolveConfirmEl) return _evolveConfirmEl;
+    const root = document.createElement('div');
+    root.id = 'ccEvolveConfirm';
+    root.innerHTML = `
+      <div class="evolve-card" role="dialog" aria-modal="true">
+        <div class="evolve-title" data-evolve-title></div>
+        <div class="evolve-arrow" data-evolve-arrow></div>
+        <div class="evolve-cost" data-evolve-cost></div>
+        <div class="evolve-actions">
+          <button type="button" class="evolve-no" data-evolve-no>No</button>
+          <button type="button" class="evolve-yes" data-evolve-yes>
+            <svg viewBox="0 0 100 100" aria-hidden="true">
+              <circle class="ring-track" cx="50" cy="50" r="40"></circle>
+              <circle class="ring-progress" cx="50" cy="50" r="40"></circle>
+            </svg>
+            <span>Yes</span>
+          </button>
+        </div>
+        <div class="evolve-hint">Hold "Yes" to confirm</div>
+      </div>
+    `;
+    document.body.appendChild(root);
+
+    const noBtn = root.querySelector('[data-evolve-no]');
+    const yesBtn = root.querySelector('[data-evolve-yes]');
+    noBtn.addEventListener('click', closeEvolveConfirm);
+    // Cancel-on-backdrop: tap outside the card dismisses.
+    root.addEventListener('click', (e) => {
+      if (e.target === root) closeEvolveConfirm();
+    });
+
+    const cancelHold = () => {
+      if (_evolveHoldTimer) {
+        clearTimeout(_evolveHoldTimer);
+        _evolveHoldTimer = null;
+      }
+      yesBtn.classList.remove('holding');
+    };
+    const startHold = (e) => {
+      // Ignore extra pointers (e.g. second finger) once a hold is live.
+      if (_evolveHoldTimer) return;
+      e.preventDefault();
+      yesBtn.classList.add('holding');
+      _evolveHoldTimer = setTimeout(async () => {
+        _evolveHoldTimer = null;
+        const current = _evolveCurrent;
+        closeEvolveConfirm();
+        if (!current) return;
+        try {
+          const updated = await performEvolution({
+            creatureId: current.creatureId,
+            srcSpeciesId: current.srcSpeciesId,
+            method: current.method,
+            param: current.param,
+            newA: current.newA,
+            newB: current.newB,
+          });
+          if (!updated) return;
+          // Re-render the detail view in place so the player sees the
+          // evolved creature immediately. findCreature re-reads the
+          // capture record we just rewrote, so the rendered species /
+          // sprite / evolution options all reflect the new state.
+          const fresh = findCreature(current.creatureId);
+          if (fresh) {
+            try { renderDetail(fresh); } catch (e) {
+              _logCreatureError('evolve/renderDetail', e);
+            }
+          }
+        } catch (e) {
+          _logCreatureError('evolve/perform', e);
+        }
+      }, EVOLVE_CONFIRM_HOLD_MS);
+    };
+    // Pointer events cover mouse + touch + pen; the cancel variants
+    // catch finger-slide-off-button and gesture interruptions.
+    yesBtn.addEventListener('pointerdown', startHold);
+    yesBtn.addEventListener('pointerup', cancelHold);
+    yesBtn.addEventListener('pointercancel', cancelHold);
+    yesBtn.addEventListener('pointerleave', cancelHold);
+    yesBtn.addEventListener('lostpointercapture', cancelHold);
+
+    // Esc to close — useful on desktop where the user has a keyboard.
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && root.classList.contains('show')) {
+        closeEvolveConfirm();
+      }
+    });
+
+    _evolveConfirmEl = root;
+    return root;
+  }
+
+  function openEvolveConfirm({ creatureId, srcSpeciesId, targetName, method, param, newA, newB }) {
+    const root = _ensureEvolveConfirmEl();
+    const cost = _evolutionCandyCost(srcSpeciesId);
+    const rootId = candyRootFor(srcSpeciesId);
+    const rootName = (rootId != null && speciesNameFor) ? speciesNameFor(rootId) : '';
+    const srcName = speciesNameFor ? speciesNameFor(srcSpeciesId) : `#${srcSpeciesId}`;
+    root.querySelector('[data-evolve-title]').textContent = 'Evolve?';
+    root.querySelector('[data-evolve-arrow]').textContent =
+      `${srcName} → ${targetName}`;
+
+    const item = _evolutionItemRequirement(method, param);
+    const ICON_PX = 24;
+    const col = (rootId || 0) % CANDY_SHEET_COLS;
+    const row = Math.floor((rootId || 0) / CANDY_SHEET_COLS);
+    const candyIcon =
+      `<span class="candy-tally-icon" `
+      + `style="background-position: -${col * ICON_PX}px -${row * ICON_PX}px" `
+      + `title="${escapeHtml(rootName + ' candy')}" `
+      + `aria-label="${escapeHtml(rootName + ' candy')}"></span>`
+      + ` <b>×${cost}</b>`;
+    const costEl = root.querySelector('[data-evolve-cost]');
+    if (item) {
+      costEl.innerHTML = `${escapeHtml(_formatItemName(item))} + ${candyIcon}`;
+    } else {
+      costEl.innerHTML = candyIcon;
+    }
+
+    _evolveCurrent = { creatureId, srcSpeciesId, targetName, method, param, newA, newB };
+    root.classList.add('show');
+  }
+
+  function closeEvolveConfirm() {
+    if (!_evolveConfirmEl) return;
+    if (_evolveHoldTimer) {
+      clearTimeout(_evolveHoldTimer);
+      _evolveHoldTimer = null;
+    }
+    const yesBtn = _evolveConfirmEl.querySelector('[data-evolve-yes]');
+    if (yesBtn) yesBtn.classList.remove('holding');
+    _evolveConfirmEl.classList.remove('show');
+    _evolveCurrent = null;
+  }
+
+  // Does the player currently have enough candy + (item if required)
+  // to evolve from this species via this method? Used to gate the
+  // tap handler on each "Evolves to" row.
+  function _canAffordEvolution(srcSpeciesId, method, param) {
+    if (srcSpeciesId == null) return false;
+    const cost = _evolutionCandyCost(srcSpeciesId);
+    const rootId = candyRootFor(srcSpeciesId);
+    const candy = readCandy();
+    const have = (rootId != null && candy[String(rootId)]) || 0;
+    if (have < cost) return false;
+    const itemKey = _evolutionItemRequirement(method, param);
+    if (itemKey) {
+      const bag = readBag();
+      if ((bag[itemKey] || 0) < 1) return false;
+    }
+    return true;
+  }
+
+  // Pick the variant slot for the evolved creature.
+  //
+  //   - If the unevolved creature was on a custom artist's variant AND
+  //     the evolved fusion has a variant by the SAME artist (matched on
+  //     credit string equality), keep that artist.
+  //   - Otherwise (autogen source, no matching artist, or any error
+  //     looking artists up), pick uniformly at random from the evolved
+  //     fusion's available custom variants.
+  //   - If the evolved fusion has zero custom variants, return null
+  //     (autogen).
+  async function _pickEvolvedVariant(oldA, oldB, oldVariant, newA, newB) {
+    if (!global.Sprites || !global.Sprites.getCellVariantCount) return null;
+    let newCount = 0;
+    try { newCount = await global.Sprites.getCellVariantCount(newA, newB); }
+    catch { newCount = 0; }
+    if (!newCount || newCount <= 0) return null;
+
+    let oldArtist = null;
+    if (typeof oldVariant === 'number' && oldVariant >= 0
+        && global.Sprites.getSpriteCreditForSlot) {
+      try {
+        oldArtist = await global.Sprites.getSpriteCreditForSlot(oldA, oldB, oldVariant);
+      } catch { oldArtist = null; }
+    }
+    if (oldArtist && global.Sprites.getSpriteCreditForSlot) {
+      // Look up every new-fusion slot's artist in parallel; first
+      // matching slot wins. Same-name match catches "Slawter" === "Slawter";
+      // mismatches just fall through to the random branch.
+      const credits = await Promise.all(
+        Array.from({ length: newCount }, (_, s) =>
+          global.Sprites.getSpriteCreditForSlot(newA, newB, s).catch(() => null))
+      );
+      for (let s = 0; s < credits.length; s++) {
+        if (credits[s] && credits[s] === oldArtist) return s;
+      }
+    }
+    return Math.floor(Math.random() * newCount);
+  }
+
+  // Apply an evolution: deduct candy + (item if required), mutate the
+  // capture record's species + variant, mark the new fusion seen.
+  // Returns the updated creature object on success, null on failure
+  // (e.g. affordability changed mid-confirm). Async because variant
+  // picking awaits Sprites.getSpriteCreditForSlot lookups.
+  async function performEvolution({ creatureId, srcSpeciesId, method, param, newA, newB }) {
+    if (creatureId == null || srcSpeciesId == null) return null;
+    if (!_canAffordEvolution(srcSpeciesId, method, param)) return null;
+
+    const list = readCapturedCreatures();
+    const idx = list.findIndex((x) => x && x.id === creatureId);
+    if (idx < 0) return null;
+    const c = list[idx];
+
+    // Resolve the new variant BEFORE mutating anything — if it throws
+    // we want to bail without having charged the player.
+    let newVariant = null;
+    try {
+      newVariant = await _pickEvolvedVariant(
+        c.speciesA, c.speciesB, c.variant, newA, newB);
+    } catch (e) {
+      _logCreatureError('performEvolution/pickVariant', e);
+      return null;
+    }
+
+    // Deduct cost. Item first because consumeItem is atomic + returns
+    // false on shortfall; candy second so the order matches the
+    // affordability check above.
+    const itemKey = _evolutionItemRequirement(method, param);
+    if (itemKey) {
+      if (!consumeItem(itemKey, 1)) return null;
+    }
+    const cost = _evolutionCandyCost(srcSpeciesId);
+    const rootId = candyRootFor(srcSpeciesId);
+    if (rootId != null) {
+      const candy = readCandyRaw();
+      const k = String(rootId);
+      const next = (candy[k] || 0) - cost;
+      if (next > 0) candy[k] = next;
+      else delete candy[k];
+      writeCandy(candy);
+    }
+
+    // Mutate the capture. Nickname / size / tags / caughtAt all carry
+    // over since they're keyed on c.id (untouched). c.name re-derives
+    // to the new fusion's canonical name (nicknames still take priority
+    // wherever displayName is consulted).
+    const updated = {
+      ...c,
+      speciesA: newA,
+      speciesB: newB,
+      variant: newVariant,
+      name: fusionName(newA, newB),
+    };
+    list[idx] = updated;
+    writeCapturedCreatures(list);
+
+    // Pokédex gets the new fusion (+ its variant) on first evolution.
+    try { markFusionSeen(newA, newB, null, newVariant); } catch {}
+
+    return updated;
+  }
+
+  // Compose the requirement HTML shown in the detail-view "Evolves to"
+  // rows. Returns HTML (NOT plain text) because we render the family-
+  // rooted candy as the same CSS-sprite icon used in the candy tally.
+  // The caller must NOT escapeHtml() the result.
+  // Examples (rendered):
+  //   [candy-icon] ×25
+  //   Fire Stone + [candy-icon] ×25
+  function formatEvolutionRequirementHtml(srcSpeciesId, method, param) {
+    const cost = _evolutionCandyCost(srcSpeciesId);
+    const rootId = candyRootFor(srcSpeciesId);
+    const rootName = (rootId != null && speciesNameFor)
+      ? speciesNameFor(rootId) : '';
+    // Same sprite math as candyTallyHtml — 24px cells in the bundled
+    // candies.png sheet, positioned by background-position.
+    const ICON_PX = 24;
+    const col = (rootId || 0) % CANDY_SHEET_COLS;
+    const row = Math.floor((rootId || 0) / CANDY_SHEET_COLS);
+    const candyLabel = rootName ? `${rootName} candy` : 'candy';
+    const tooltip = `${cost} ${candyLabel}`;
+    const iconHtml =
+      `<span class="candy-tally-icon" `
+      + `style="background-position: -${col * ICON_PX}px -${row * ICON_PX}px" `
+      + `title="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}"></span>`
+      + ` <b>×${cost}</b>`;
+    const item = _evolutionItemRequirement(method, param);
+    if (item) {
+      return `${escapeHtml(_formatItemName(item))} + ${iconHtml}`;
+    }
+    return iconHtml;
+  }
+
   function formatSize(sizeM) {
     if (sizeM == null) return '';
     const imperial = localStorage.getItem('cc.units') === 'mi';
@@ -2867,6 +3231,10 @@
       }
       #creatureInventory .evo-row .evo-req {
         font-size: 11px; color: var(--ui-muted, #666); flex-shrink: 0;
+        display: inline-flex; align-items: center; gap: 3px;
+      }
+      #creatureInventory .evo-row .evo-req b {
+        color: var(--ui-text, #111); font-weight: 600; font-size: 12px;
       }
       #creatureInventory .detail-family {
         margin: 6px 0 8px;
@@ -2922,6 +3290,154 @@
       #creatureInventory .evo-row.silhouette .evo-art img,
       #creatureInventory .family-cell.silhouette img {
         filter: brightness(0);
+      }
+      /* Evolution row is tappable when the player can actually afford
+         the evolution (right candy + item). Touch devices don't show
+         :hover, so we render the affordable state with a persistent
+         accent border AND a trailing tap chevron so the user knows
+         the row is interactive without having to test-tap it. */
+      #creatureInventory .evo-row.evo-ready {
+        cursor: pointer;
+        border: 1px solid var(--ui-accent, #3b7fdf);
+        background: color-mix(in srgb, var(--ui-accent, #3b7fdf) 8%, var(--ui-hover, rgba(0,0,0,0.04)));
+        transition: background 120ms ease, transform 120ms ease;
+      }
+      #creatureInventory .evo-row.evo-ready::after {
+        content: '›';
+        color: var(--ui-accent, #3b7fdf);
+        font-size: 18px;
+        font-weight: 700;
+        line-height: 1;
+        margin-left: 2px;
+        flex-shrink: 0;
+      }
+      #creatureInventory .evo-row.evo-ready:hover,
+      #creatureInventory .evo-row.evo-ready:focus-visible {
+        background: color-mix(in srgb, var(--ui-accent, #3b7fdf) 16%, transparent);
+        outline: none;
+      }
+      #creatureInventory .evo-row.evo-ready:active {
+        transform: scale(0.98);
+      }
+      /* Hold-to-confirm overlay. Sits above the inventory sheet
+         (which is already z-index: 30-ish); inside this overlay we
+         keep things simple — centered card, no-button left, yes-button
+         on the right with an SVG progress ring that fills as the user
+         holds. Releasing before the ring completes cancels. */
+      #ccEvolveConfirm {
+        position: fixed; inset: 0;
+        z-index: 60;
+        background: rgba(0, 0, 0, 0.55);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 150ms ease;
+      }
+      #ccEvolveConfirm.show {
+        display: flex;
+        opacity: 1;
+        pointer-events: auto;
+      }
+      #ccEvolveConfirm .evolve-card {
+        background: var(--ui-bg, #fff);
+        color: var(--ui-text, #111);
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
+        border-radius: var(--ui-radius, 12px);
+        padding: 18px 20px;
+        max-width: 320px;
+        width: calc(100% - 32px);
+        text-align: center;
+        box-shadow: var(--ui-shadow, 0 6px 24px rgba(0,0,0,0.25));
+      }
+      #ccEvolveConfirm .evolve-title {
+        font-size: 15px;
+        font-weight: 600;
+        margin: 0 0 4px;
+      }
+      #ccEvolveConfirm .evolve-arrow {
+        font-size: 13px;
+        color: var(--ui-muted, #666);
+        margin: 0 0 14px;
+      }
+      #ccEvolveConfirm .evolve-cost {
+        display: inline-flex; align-items: center; gap: 4px;
+        margin: 0 0 18px;
+        font-size: 13px;
+      }
+      #ccEvolveConfirm .evolve-cost b {
+        font-weight: 600;
+        color: var(--ui-text, #111);
+        font-size: 14px;
+      }
+      #ccEvolveConfirm .evolve-actions {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 24px;
+      }
+      #ccEvolveConfirm .evolve-no {
+        background: transparent;
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
+        color: var(--ui-text, #111);
+        border-radius: var(--ui-radius, 8px);
+        padding: 8px 14px;
+        font-size: 13px;
+        font-family: inherit;
+        cursor: pointer;
+      }
+      /* Hold-to-confirm button: SVG ring around a Yes label. The ring
+         is two circles — a faint track + the foreground stroke whose
+         dashoffset animates from circumference to 0 over the hold
+         duration. CSS transition handles the animation; JS only
+         toggles a .holding class on press/release. */
+      #ccEvolveConfirm .evolve-yes {
+        position: relative;
+        width: 72px; height: 72px;
+        background: var(--ui-accent, #3b7fdf);
+        color: var(--ui-accent-text, #fff);
+        border: 1px solid var(--ui-accent-border, transparent);
+        border-radius: 50%;
+        font-size: 13px;
+        font-weight: 600;
+        font-family: inherit;
+        cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+        touch-action: none;     /* prevent scroll-while-hold on iOS */
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      #ccEvolveConfirm .evolve-yes svg {
+        position: absolute; inset: -6px;
+        width: calc(100% + 12px); height: calc(100% + 12px);
+        transform: rotate(-90deg);  /* progress starts at 12 o'clock */
+        pointer-events: none;
+      }
+      #ccEvolveConfirm .evolve-yes .ring-track {
+        fill: none;
+        stroke: var(--ui-border, rgba(0,0,0,0.15));
+        stroke-width: 3;
+      }
+      #ccEvolveConfirm .evolve-yes .ring-progress {
+        fill: none;
+        stroke: var(--ui-accent, #3b7fdf);
+        stroke-width: 4;
+        stroke-linecap: round;
+        /* circumference of r=40 → 2πr ≈ 251.33; full = no progress */
+        stroke-dasharray: 251.33;
+        stroke-dashoffset: 251.33;
+        transition: stroke-dashoffset 0ms linear;
+      }
+      #ccEvolveConfirm .evolve-yes.holding .ring-progress {
+        stroke-dashoffset: 0;
+        transition: stroke-dashoffset 5000ms linear;
+      }
+      #ccEvolveConfirm .evolve-hint {
+        font-size: 11px;
+        color: var(--ui-muted, #666);
+        margin: 12px 0 0;
       }
       #creatureInventory .pokedex-view { display: none; }
       #creatureInventory .pokedex-view.show { display: flex; flex-direction: column; }
@@ -6855,14 +7371,35 @@
             const targetName = (global.Species && seen)
               ? `${global.Species.nameFor(e.newA)} × ${global.Species.nameFor(e.newB)}`
               : '???';
-            return `<div class="evo-row${seen ? '' : ' silhouette'}" data-evo-idx="${i}">
+            // The side that's actually evolving (A or B) determines
+            // which species' candy bucket gets billed.
+            const srcSpeciesId = e.source === 'A' ? c.speciesA : c.speciesB;
+            // formatEvolutionRequirementHtml returns raw HTML (candy
+            // icon sprite); the caller is responsible for any user-
+            // input escaping inside the helper itself.
+            const reqHtml = formatEvolutionRequirementHtml(srcSpeciesId, e.method, e.param);
+            // Affordable rows become tappable buttons that open the
+            // hold-to-confirm overlay. Unaffordable rows render as
+            // passive (no cursor change, no hover state). Note: we
+            // intentionally don't gate on `seen` — the user can spend
+            // their candy on an unseen target; the confirm dialog
+            // shows "???" as the target name in that case, matching
+            // the row's own silhouette presentation.
+            const affordable = _canAffordEvolution(srcSpeciesId, e.method, e.param);
+            const cls = ['evo-row'];
+            if (!seen) cls.push('silhouette');
+            if (affordable) cls.push('evo-ready');
+            const tapAttrs = affordable
+              ? ` role="button" tabindex="0" aria-label="Evolve into ${escapeHtml(targetName)}"`
+              : '';
+            return `<div class="${cls.join(' ')}" data-evo-idx="${i}"${tapAttrs}>
               <span class="evo-arrow">→</span>
               <div class="evo-art">
                 <span class="evo-art-placeholder" aria-hidden="true">•</span>
                 <img alt="">
               </div>
               <div class="evo-name">${escapeHtml(targetName)}</div>
-              <div class="evo-req">${escapeHtml(formatEvolutionMethod(e.method, e.param))}</div>
+              <div class="evo-req">${reqHtml}</div>
             </div>`;
           }).join('')}
         </div>`;
@@ -6904,20 +7441,43 @@
         });
       }
     }
-    // Async-load each evolution row's sprite from IDB (no network).
-    if (global.SpriteStore && evoEntries.length) {
+    // Async-load each evolution row's sprite from IDB (no network),
+    // and wire up the tap-to-confirm handler for affordable rows.
+    if (evoEntries.length) {
       for (let i = 0; i < evoEntries.length; i++) {
         const e = evoEntries[i];
         const row = body.querySelector(`.evo-row[data-evo-idx="${i}"]`);
         if (!row) continue;
-        const img = row.querySelector('.evo-art img');
-        if (!img) continue;
-        // `undefined` variant → "best available" (custom slot 0 if
-        // any, else autogen). Evolution previews aren't tied to a
-        // specific variant the user has seen.
-        global.SpriteStore.showSprite(img, e.newA, e.newB, undefined, {
-          onReady: () => row.classList.add('evo-art-ready'),
-        });
+        if (global.SpriteStore) {
+          const img = row.querySelector('.evo-art img');
+          if (img) {
+            // `undefined` variant → "best available" (custom slot 0 if
+            // any, else autogen). Evolution previews aren't tied to a
+            // specific variant the user has seen.
+            global.SpriteStore.showSprite(img, e.newA, e.newB, undefined, {
+              onReady: () => row.classList.add('evo-art-ready'),
+            });
+          }
+        }
+        if (row.classList.contains('evo-ready')) {
+          const srcSpeciesId = e.source === 'A' ? c.speciesA : c.speciesB;
+          const seen = isFusionSeen(e.newA, e.newB);
+          const targetName = seen && global.Species
+            ? `${global.Species.nameFor(e.newA)} × ${global.Species.nameFor(e.newB)}`
+            : '???';
+          const openConfirm = () => openEvolveConfirm({
+            creatureId: c.id, srcSpeciesId, targetName,
+            method: e.method, param: e.param,
+            newA: e.newA, newB: e.newB,
+          });
+          row.addEventListener('click', openConfirm);
+          row.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Enter' || ev.key === ' ') {
+              ev.preventDefault();
+              openConfirm();
+            }
+          });
+        }
       }
     }
     const nameEl = body.querySelector('.detail-name-clickable');
