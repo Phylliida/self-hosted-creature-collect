@@ -15,13 +15,22 @@
 // No meter-to-second conversion inside this module.
 //
 // `deps`:
-//   walkGraph        Typed-array graph exposing index-based accessors:
-//                      hasNode(idx), lng(idx), lat(idx),
-//                      neighborStart(idx), neighborEnd(idx),
-//                      neighborTo(ai), neighborEdge(ai), neighborReverse(ai),
-//                      edgeWeight(e), edgeWalkSec(e),
-//                      edgeName(e), edgeShape(e).
-//                    Node identifiers are internal uint32 indices (not OSM IDs).
+//   walkGraph        Graph exposing a small accessor API:
+//                      hasNode(nodeId), lng(nodeId), lat(nodeId),
+//                      forEachNeighbor(nodeId, fn) where
+//                        fn(toNodeId, weightMetres, edgeRef) is called per
+//                        outgoing edge. edgeRef is opaque to the planner —
+//                        whatever shape walkGraph wants (legacy uses
+//                        {edgeIdx, reverse}; multi-graph uses
+//                        {regionIdx, adjIdx, from, to} or {portal: true}).
+//                    Node identifiers are opaque too: legacy uses internal
+//                    uint32 indices, multi-graph uses packed globalIds.
+//                    Whatever they are, they must be safe for use as a
+//                    Map key (numbers + string concat) and round-trippable
+//                    via String→Number.
+//   walkSpeedMps     metres/second walking speed for converting an edge's
+//                    weight (in metres) into seconds. Optional; defaults
+//                    to 1.3.
 //   scheduleIdx      { stopPatterns, patternBboxStops, stopToWalkNode,
 //                      walkNodeToStops }
 //   MinHeap          class
@@ -51,6 +60,7 @@
 
   function create(deps) {
     const { MinHeap } = deps;
+    const walkSpeedMps = deps.walkSpeedMps || 1.3;
 
     // ---- forward: depart at t0, find fastest arrival ------------------
 
@@ -77,17 +87,18 @@
 
         if (key[0] === 'w') {
           const nid = +key.slice(2);
-          const ns = wg.neighborStart(nid), ne = wg.neighborEnd(nid);
-          for (let i = ns; i < ne; i++) {
-            const to = wg.neighborTo(i);
-            const edgeIdx = wg.neighborEdge(i);
-            const reverse = wg.neighborReverse(i);
-            const walkSec = wg.edgeWalkSec(edgeIdx);
+          // forEachNeighbor unifies the legacy walkGraph + multi-graph
+          // adapters. edgeRef is opaque (legacy uses {edgeIdx, reverse};
+          // multi uses {regionIdx, adjIdx, ...}) — we pass it through
+          // unchanged to the step so the renderer can resolve display
+          // data later.
+          wg.forEachNeighbor(nid, (to, weight, edgeRef) => {
+            const walkSec = weight / walkSpeedMps;
             relax('w:' + to, cost + walkSec * walkWeight, t + walkSec, {
-              prev: key, type: 'walk', edge: { edgeIdx, reverse },
+              prev: key, type: 'walk', edge: edgeRef,
               fromNode: nid, toNode: to, tDep: t, tArr: t + walkSec,
             });
-          }
+          });
           for (const [stopId, walkSec] of (si.walkNodeToStops.get(nid) || [])) {
             relax('s:' + stopId, cost + walkSec * walkWeight, t + walkSec, {
               prev: key, type: 'access', stopId, walkSec, fromNode: nid,
@@ -160,21 +171,26 @@
 
         if (key[0] === 'w') {
           const nid = +key.slice(2);
-          const ns = wg.neighborStart(nid), ne = wg.neighborEnd(nid);
-          for (let i = ns; i < ne; i++) {
-            const to = wg.neighborTo(i);
-            const edgeIdx = wg.neighborEdge(i);
-            const rev = wg.neighborReverse(i);
-            const walkSec = wg.edgeWalkSec(edgeIdx);
-            // In reverse search we're traversing neighbour→nid backward in time;
-            // in forward order the leg runs to→nid, so the stored direction
-            // bit needs to be flipped.
+          // Same uniform iteration as planForward. For the direction
+          // flip on the legacy walkGraph, we mutate the edgeRef copy
+          // since the multi-graph version has no reverse bit (edges
+          // are bidirectional by construction). The renderer treats
+          // an absent reverse bit as forward.
+          wg.forEachNeighbor(nid, (to, weight, edgeRef) => {
+            const walkSec = weight / walkSpeedMps;
+            // In reverse search we traverse neighbour→nid backward in
+            // time; in forward order the leg runs to→nid, so flip the
+            // legacy direction bit when present.
+            let flipped = edgeRef;
+            if (edgeRef && 'reverse' in edgeRef) {
+              flipped = { ...edgeRef, reverse: !edgeRef.reverse };
+            }
             relax('w:' + to, cost + walkSec * walkWeight, t - walkSec, {
-              next: key, type: 'walk', edge: { edgeIdx, reverse: !rev },
+              next: key, type: 'walk', edge: flipped,
               fromNode: to, toNode: nid,
               tDep: t - walkSec, tArr: t,
             });
-          }
+          });
           for (const [stopId, walkSec] of (si.walkNodeToStops.get(nid) || [])) {
             relax('s:' + stopId, cost + walkSec * walkWeight, t - walkSec, {
               next: key, type: 'egress', stopId, walkSec, toNode: nid,

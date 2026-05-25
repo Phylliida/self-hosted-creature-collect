@@ -8852,19 +8852,31 @@ function fmtDate(ts) {
       });
       // preferMulti = use the no-merge multi-graph path. Skip the
       // legacy walkGraph rebuild entirely when on (saves the 4-5 s
-      // parse + merge spike and ~40 MB of merged graph). Transit
-      // routing isn't wired into multi-graph yet, so when preferMulti
-      // is on we skip the transit attempt below and go straight to
-      // multi-graph astar.
+      // parse + merge spike and ~40 MB of merged graph). When transit
+      // alternatives are available the multi-graph bridges are built
+      // over the loaded routing.bin data (no walkGraph needed).
       //
       // Default is ON. Explicit opt-out via cc.preferMultiGraph='0'
-      // (e.g., for testing the legacy path or if a route fails on
-      // the multi-graph side and you want to compare). Read once per
+      // (e.g., to test the legacy path for comparison). Read once per
       // route; logged to trace.
       const preferMulti = (() => {
         try { return localStorage.getItem('cc.preferMultiGraph') !== '0'; }
         catch { return true; }
       })();
+      // In multi-graph mode we want the routing graph available BEFORE
+      // we run findNearest / canTransit detection — bridges build over
+      // it and trip-planner iterates its neighbors. Build it eagerly
+      // here so the rest of the pipeline can rely on multiGraph != null.
+      let multi = null;
+      if (preferMulti) {
+        _routeTrace('route:ensure_multi_start');
+        multi = await ensureMultiGraph(allIds);
+        _routeTrace('route:ensure_multi_done', {
+          built: !!multi,
+          regions: multi ? multi.regions.length : 0,
+          nodes: multi ? multi.nodeCount : 0,
+        });
+      }
       if (!preferMulti) {
         _routeTrace('route:ensure_walk_start');
         await ensureWalkGraph(allIds.size ? allIds : undefined);
@@ -8873,28 +8885,32 @@ function fmtDate(ts) {
           edges: walkGraph.edgeCount,
           loadedRegions: walkGraphLoadedRegions.size,
         });
-      } else {
-        _routeTrace('route:ensure_walk_skipped_for_multi');
+      } else if (!multi) {
+        _routeTrace('route:ensure_walk_emergency_no_multi');
+        await ensureWalkGraph(allIds.size ? allIds : undefined);
       }
-      if (!preferMulti && walkGraph.nodeCount === 0) {
+      if (!multi && walkGraph.nodeCount === 0) {
         alert('No walking graph for this region yet — save the area first.');
         return;
       }
+      // Find walk-graph endpoints. When multi is active we use
+      // findNearestWalkNodeMulti (returns globalId); otherwise the
+      // legacy index-based finder.
       _routeTrace('route:find_nearest_start');
-      const start = preferMulti
-        ? { id: null, distance: Infinity }
+      const start = multi
+        ? findNearestWalkNodeMulti(from.lng, from.lat, multi)
         : findNearestWalkNode(from.lng, from.lat);
-      const end = preferMulti
-        ? { id: null, distance: Infinity }
+      const end = multi
+        ? findNearestWalkNodeMulti(to.lng, to.lat, multi)
         : findNearestWalkNode(to.lng, to.lat);
       _routeTrace('route:find_nearest_done', {
         startId: start.id, startDist: Math.round(start.distance || 0),
         endId: end.id, endDist: Math.round(end.distance || 0),
       });
-      if (!preferMulti
-          && (!start.id || !end.id)) { alert('Could not find walkable path endpoints.'); return; }
-      if (!preferMulti
-          && (start.distance > 500 || end.distance > 500)) {
+      if (start.id == null || end.id == null) {
+        alert('Could not find walkable path endpoints.'); return;
+      }
+      if (start.distance > 500 || end.distance > 500) {
         alert('One of the endpoints is too far from any walking path.');
         return;
       }
@@ -8903,8 +8919,19 @@ function fmtDate(ts) {
       const toPoi = { name: to.name || '?', lng: to.lng, lat: to.lat };
       const walkWeight = currentWalkWeight();
       const transferSec = currentTransferSec();
-      const canTransit = !preferMulti
-        && scheduleIdx.stops.size > 0
+      // For multi-graph transit we need to (re)build the bridges over
+      // the multi-graph so scheduleIdx.stopToWalkNode is keyed by
+      // globalIds. The legacy walkGraph bridges (if any were built
+      // earlier) get overwritten — fine because we'll be running
+      // trip-planner with multiGraph anyway.
+      if (multi && scheduleIdx.stops.size > 0) {
+        // Rebuild only if not already multi-keyed (cheap check: does
+        // any current stopToWalkNode entry's node value look like a
+        // globalId for a loaded region?). Simpler: always rebuild,
+        // it's bounded and cheap relative to actual routing.
+        await buildMultimodalBridgesMulti(multi);
+      }
+      const canTransit = scheduleIdx.stops.size > 0
         && scheduleIdx.stopToWalkNode.size > 0;
       _routeTrace('route:plan_start', {
         canTransit,
@@ -8927,119 +8954,84 @@ function fmtDate(ts) {
           return;
         }
       }
-      // preferMulti was read at the top of the routing pipeline; we
-      // also used it to skip ensureWalkGraph above. If on, take the
-      // multi-graph route. If multi-graph build fails for any reason,
-      // we fall through to legacy astar — but that needs walkGraph,
-      // which we skipped building. In that failure case, do a late
-      // emergency build so the user still gets a route.
+      // Walking-only path. When transit returned no useful options
+      // (or canTransit was false), fall through here. In multi-graph
+      // mode we run astarMulti; in legacy mode we run astar.
       let route = null;
-      if (preferMulti) {
-        _routeTrace('route:multi_start');
-        const multi = await ensureMultiGraph(allIds);
-        if (multi) {
-          // Re-find endpoints over multi-graph (different node-id space).
-          const ms = findNearestWalkNodeMulti(from.lng, from.lat, multi);
-          const me = findNearestWalkNodeMulti(to.lng, to.lat, multi);
-          _routeTrace('route:multi_nearest', {
-            startGid: ms.id, startDist: Math.round(ms.distance || 0),
-            endGid: me.id, endDist: Math.round(me.distance || 0),
+      if (multi) {
+        _routeTrace('route:multi_astar_invoke');
+        const mr = astarMulti(start.id, end.id, multi);
+        _routeTrace('route:multi_astar_done', {
+          found: !!mr, hops: mr ? mr.path.length : 0,
+        });
+        if (mr) {
+          // Lazy-load walk.bin for each region the path crosses; gives
+          // us shape + name lookups for curve rendering + turn-by-turn.
+          const path = mr.path;
+          const touchedRegions = new Set();
+          for (const gid of path) touchedRegions.add(globalIdRegion(gid));
+          _routeTrace('route:multi_display_start', {
+            regions: Array.from(touchedRegions),
           });
-          if (ms.id != null && me.id != null
-              && ms.distance <= 500 && me.distance <= 500) {
-            const mr = astarMulti(ms.id, me.id, multi);
-            _routeTrace('route:multi_astar_done', {
-              found: !!mr, hops: mr ? mr.path.length : 0,
-            });
-            if (mr) {
-              // Adapt the multi-graph result into the legacy renderer
-              // shape, but use lazy walk.bin lookup to pull real shape
-              // + name data for the chosen edges. ensureDisplay loads
-              // each touched region's walk.bin on first use; multiple
-              // routes touching the same region pay for it once.
-              const path = mr.path;
-              const touchedRegions = new Set();
-              for (const gid of path) touchedRegions.add(globalIdRegion(gid));
-              _routeTrace('route:multi_display_start', {
-                regions: Array.from(touchedRegions),
-              });
-              await Promise.all(
-                Array.from(touchedRegions).map((rIdx) => multi.ensureDisplay(rIdx))
-              );
-              _routeTrace('route:multi_display_done');
-              // Build per-edge metadata + curved coords. Each consecutive
-              // (gA, gB) in path is either:
-              //   - same region: real edge, look up shape + name
-              //   - different region: portal crossing (no visual edge)
-              const coords = [];
-              const edgeMeta = [];
-              coords.push([multi.lng(path[0]), multi.lat(path[0])]);
-              for (let i = 1; i < path.length; i++) {
-                const ga = path[i - 1];
-                const gb = path[i];
-                const rA = globalIdRegion(ga);
-                const rB = globalIdRegion(gb);
-                const fromLng = multi.lng(ga), fromLat = multi.lat(ga);
-                const toLng = multi.lng(gb),   toLat = multi.lat(gb);
-                if (rA === rB) {
-                  const e = multi.lookupEdge(rA, globalIdInternal(ga), globalIdInternal(gb));
-                  if (e && e.walkView) {
-                    const w = e.walkView;
-                    const weight = w.edgeWeight[e.edgeIdx];
-                    const ni = w.edgeNameIdx[e.edgeIdx];
-                    const name = ni >= 0 ? w.names[ni] : '';
-                    const shapeOff = w.edgeShapeOff[e.edgeIdx];
-                    const shape = shapeOff >= 0
-                      ? w.shapeBuf.subarray(shapeOff, shapeOff + w.edgeShapeLen[e.edgeIdx])
-                      : null;
-                    if (shape) {
-                      const origLng = e.reverse ? toLng : fromLng;
-                      const origLat = e.reverse ? toLat : fromLat;
-                      let pts = decodeShapeBlob(origLng, origLat, shape);
-                      if (e.reverse) pts = pts.reverse();
-                      for (const p of pts) coords.push(p);
-                    }
-                    edgeMeta.push({
-                      edgeIdx: e.edgeIdx, reverse: e.reverse,
-                      regionIdx: rA, name, weight,
-                    });
-                  } else {
-                    // Edge couldn't be resolved — render as straight.
-                    edgeMeta.push({ edgeIdx: -1, reverse: false, regionIdx: rA, name: '', weight: 0 });
-                  }
-                } else {
-                  // Portal crossing: zero-cost virtual edge. No shape,
-                  // no name. coords[from] == coords[to] geometrically.
-                  edgeMeta.push({ portal: true, edgeIdx: -1, reverse: false, name: '', weight: 0 });
+          await Promise.all(
+            Array.from(touchedRegions).map((rIdx) => multi.ensureDisplay(rIdx))
+          );
+          _routeTrace('route:multi_display_done');
+          // Build per-edge metadata + curved coords. Same as before
+          // — same-region pair = real edge with shape; cross-region
+          // = zero-cost portal crossing.
+          const coords = [];
+          const edgeMeta = [];
+          coords.push([multi.lng(path[0]), multi.lat(path[0])]);
+          for (let i = 1; i < path.length; i++) {
+            const ga = path[i - 1];
+            const gb = path[i];
+            const rA = globalIdRegion(ga);
+            const rB = globalIdRegion(gb);
+            const fromLng = multi.lng(ga), fromLat = multi.lat(ga);
+            const toLng = multi.lng(gb),   toLat = multi.lat(gb);
+            if (rA === rB) {
+              const e = multi.lookupEdge(rA, globalIdInternal(ga), globalIdInternal(gb));
+              if (e && e.walkView) {
+                const w = e.walkView;
+                const weight = w.edgeWeight[e.edgeIdx];
+                const ni = w.edgeNameIdx[e.edgeIdx];
+                const name = ni >= 0 ? w.names[ni] : '';
+                const shapeOff = w.edgeShapeOff[e.edgeIdx];
+                const shape = shapeOff >= 0
+                  ? w.shapeBuf.subarray(shapeOff, shapeOff + w.edgeShapeLen[e.edgeIdx])
+                  : null;
+                if (shape) {
+                  const origLng = e.reverse ? toLng : fromLng;
+                  const origLat = e.reverse ? toLat : fromLat;
+                  let pts = decodeShapeBlob(origLng, origLat, shape);
+                  if (e.reverse) pts = pts.reverse();
+                  for (const p of pts) coords.push(p);
                 }
-                coords.push([toLng, toLat]);
+                edgeMeta.push({
+                  edgeIdx: e.edgeIdx, reverse: e.reverse,
+                  regionIdx: rA, name, weight,
+                });
+              } else {
+                edgeMeta.push({ edgeIdx: -1, reverse: false, regionIdx: rA, name: '', weight: 0 });
               }
-              route = {
-                path, edges: edgeMeta, distance: mr.distance,
-                _multiCoords: coords,
-                _multiEdges: edgeMeta,
-              };
+            } else {
+              edgeMeta.push({ portal: true, edgeIdx: -1, reverse: false, name: '', weight: 0 });
             }
+            coords.push([toLng, toLat]);
           }
+          route = {
+            path, edges: edgeMeta, distance: mr.distance,
+            _multiCoords: coords,
+            _multiEdges: edgeMeta,
+          };
         }
         if (!route) _routeTrace('route:multi_fallback');
       }
-      if (!route) {
-        // Emergency fallback when multi-graph mode failed and we
-        // skipped the walkGraph build — restore it before astar.
-        if (preferMulti && !walkGraphLoaded) {
-          _routeTrace('route:ensure_walk_emergency');
-          await ensureWalkGraph(allIds.size ? allIds : undefined);
-          const s = findNearestWalkNode(from.lng, from.lat);
-          const e = findNearestWalkNode(to.lng, to.lat);
-          start.id = s.id; start.distance = s.distance;
-          end.id = e.id; end.distance = e.distance;
-          if (!start.id || !end.id
-              || start.distance > 500 || end.distance > 500) {
-            alert('Could not find walkable path endpoints.');
-            return;
-          }
-        }
+      if (!route && !multi) {
+        // Legacy walkGraph path — only when multi-graph isn't active
+        // (e.g., user set cc.preferMultiGraph='0'). start/end here are
+        // internal walkGraph indices from the legacy findNearestWalkNode.
         _routeTrace('route:astar_start');
         route = astar(start.id, end.id);
         _routeTrace('route:astar_done', { found: !!route });
@@ -10129,6 +10121,23 @@ function fmtDate(ts) {
       neighborTo(ai)   { return this._adjTo[ai]; },
       neighborEdge(ai) { return this._adjEdge[ai] & 0x7FFFFFFF; },
       neighborReverse(ai) { return (this._adjEdge[ai] & 0x80000000) !== 0; },
+      // Callback-based iteration parallels MultiGraph.forEachNeighbor so
+      // trip-planner.js can use one uniform API. fn receives
+      // (toNodeId, weightMetres, edgeRef) where edgeRef = {edgeIdx, reverse}
+      // here — the legacy walkGraph shape that downstream display code
+      // (edgeShape / edgeName lookups) already understands.
+      forEachNeighbor(i, fn) {
+        const start = this._adjStart[i];
+        const end   = this._adjStart[i + 1];
+        for (let ai = start; ai < end; ai++) {
+          const to = this._adjTo[ai];
+          const packed = this._adjEdge[ai];
+          const edgeIdx = packed & 0x7FFFFFFF;
+          const reverse = (packed & 0x80000000) !== 0;
+          const w = this._edgeWeight[edgeIdx];
+          fn(to, w, { edgeIdx, reverse });
+        }
+      },
       edgeWeight(e)    { return this._edgeWeight[e]; },
       edgeWalkSec(e)   { return this._edgeWeight[e] / WALK_SPEED_MPS; },
       edgeName(e) {
@@ -10312,6 +10321,14 @@ function fmtDate(ts) {
         const i = globalIdInternal(globalId);
         return i >= 0 && i < r.routingView.N;
       },
+      // Uniform neighbor-iteration API. fn receives:
+      //   (toGlobalId, weightMetres, edgeRef)
+      // edgeRef shapes for multi-graph:
+      //   within-region:  { regionIdx, adjIdx, from, to }
+      //   cross-region:   { portal: true }
+      // Downstream display code uses `multi.lookupEdge(regionIdx,from,to)`
+      // when it needs shape/name data — adjIdx is plenty info to
+      // reconstruct the edge endpoints via adjPacked.
       forEachNeighbor(globalId, fn) {
         const r = regions[globalIdRegion(globalId)];
         if (!r) return;
@@ -10323,14 +10340,14 @@ function fmtDate(ts) {
           const target = rv.adjTarget(ai);
           const weight = rv.adjWeight(ai);
           const targetGid = packGlobalId(r.regionIdx, target);
-          fn(targetGid, weight);
+          fn(targetGid, weight, { regionIdx: r.regionIdx, adjIdx: ai, from: i, to: target });
         }
         // Cross-region "portal" edges to peer globalIds (same physical
         // OSM node in adjacent regions). Zero-cost since they're the
         // same location, just indexed in different regions.
         const peers = peersByGlobalId.get(globalId);
         if (peers) {
-          for (let p = 0; p < peers.length; p++) fn(peers[p], 0);
+          for (let p = 0; p < peers.length; p++) fn(peers[p], 0, { portal: true });
         }
       },
       // ── Display-data lazy load ─────────────────────────────────
@@ -12197,10 +12214,15 @@ function fmtDate(ts) {
 
   // Bind the pure-Dijkstra planner (static/trip-planner.js) to our mutable
   // walkGraph + scheduleIdx. Getters keep references fresh across rebuilds.
+  // The walkGraph getter returns multiGraph when it's active (preferMulti
+  // mode) so trip-planner's forEachNeighbor iteration runs over the
+  // per-region routing.bin views with cross-region portal edges. When
+  // multiGraph is null we fall back to the legacy merged walkGraph.
   tripPlanner = TripPlanner.create({
-    get walkGraph()   { return walkGraph;   },
+    get walkGraph() { return multiGraph || walkGraph; },
     get scheduleIdx() { return scheduleIdx; },
     MinHeap,
+    walkSpeedMps: WALK_SPEED_MPS,
   });
 
   function astar(startId, goalId) {
@@ -12294,23 +12316,37 @@ function fmtDate(ts) {
 
   function buildMultimodalCoords(route) {
     // For each leg, emit a pair {coords, style} so the renderer can draw them distinctly.
+    // wg here is the ACTIVE walk graph — multiGraph when we're in
+    // multi-graph mode, the legacy walkGraph otherwise. Both expose
+    // hasNode/lng/lat with whatever node-id encoding they use
+    // (globalId vs internal idx); the renderer just passes nodes
+    // through opaquely. edgeShape only exists on the legacy walkGraph;
+    // in multi mode we fall back to straight-line segments here and
+    // rely on the route-level _multiCoords (pure-walk paths) or
+    // future lazy walk.bin shape lookups for curves.
+    const wg = multiGraph || walkGraph;
     const styled = [];
     for (const leg of route.legs) {
       if (leg.type === 'walk') {
         const coords = [];
         for (let i = 0; i < leg.edges.length; i++) {
           const { edge, fromNode, toNode } = leg.edges[i];
-          if (!walkGraph.hasNode(fromNode) || !walkGraph.hasNode(toNode)) continue;
-          const fromLng = walkGraph.lng(fromNode), fromLat = walkGraph.lat(fromNode);
-          const toLng   = walkGraph.lng(toNode),   toLat   = walkGraph.lat(toNode);
+          if (!wg.hasNode(fromNode) || !wg.hasNode(toNode)) continue;
+          const fromLng = wg.lng(fromNode), fromLat = wg.lat(fromNode);
+          const toLng   = wg.lng(toNode),   toLat   = wg.lat(toNode);
           if (i === 0) coords.push([fromLng, fromLat]);
-          const shape = walkGraph.edgeShape(edge.edgeIdx);
-          if (shape) {
-            const origLng = edge.reverse ? toLng : fromLng;
-            const origLat = edge.reverse ? toLat : fromLat;
-            let pts = decodeShapeBlob(origLng, origLat, shape);
-            if (edge.reverse) pts = pts.reverse();
-            for (const p of pts) coords.push(p);
+          // Legacy edge ref carries edgeIdx + reverse for direct shape
+          // lookup. Multi-graph edge ref carries {regionIdx,...} and
+          // no built-in shape lookup yet — skip curve, draw straight.
+          if (typeof wg.edgeShape === 'function' && edge && 'edgeIdx' in edge) {
+            const shape = wg.edgeShape(edge.edgeIdx);
+            if (shape) {
+              const origLng = edge.reverse ? toLng : fromLng;
+              const origLat = edge.reverse ? toLat : fromLat;
+              let pts = decodeShapeBlob(origLng, origLat, shape);
+              if (edge.reverse) pts = pts.reverse();
+              for (const p of pts) coords.push(p);
+            }
           }
           coords.push([toLng, toLat]);
         }
@@ -12318,8 +12354,8 @@ function fmtDate(ts) {
       } else if (leg.type === 'access' || leg.type === 'egress') {
         const stop = scheduleIdx.stops.get(leg.stopId);
         const nid = leg.type === 'access' ? leg.fromNode : leg.toNode;
-        if (stop && walkGraph.hasNode(nid)) {
-          const nLng = walkGraph.lng(nid), nLat = walkGraph.lat(nid);
+        if (stop && wg.hasNode(nid)) {
+          const nLng = wg.lng(nid), nLat = wg.lat(nid);
           styled.push({ kind: 'walk', coords: leg.type === 'access'
             ? [[nLng, nLat], [stop.lng, stop.lat]]
             : [[stop.lng, stop.lat], [nLng, nLat]] });
@@ -12424,13 +12460,26 @@ function fmtDate(ts) {
   // Totals for the top-of-step-list breakdown row.
   function tripTotalsHtml(route) {
     let walkSec = 0, walkMeters = 0, transitSec = 0;
+    const wg = multiGraph || walkGraph;
     for (const leg of route.legs) {
       const dur = leg.tArr - leg.tDep;
       if (leg.type === 'transit') {
         transitSec += dur;
       } else if (leg.type === 'walk') {
         walkSec += dur;
-        for (const { edge } of leg.edges) walkMeters += walkGraph.edgeWeight(edge.edgeIdx);
+        // Edge ref shape varies (legacy: {edgeIdx, reverse}; multi:
+        // {regionIdx, adjIdx, from, to}). Legacy can read weight from
+        // the merged edge array; multi falls back to haversine over
+        // the endpoint coords (good enough for a UI summary).
+        for (const { edge, fromNode, toNode } of leg.edges) {
+          if (edge && 'edgeIdx' in edge && typeof walkGraph.edgeWeight === 'function'
+              && walkGraph.edgeWeight && walkGraph._edgeWeight.length) {
+            walkMeters += walkGraph.edgeWeight(edge.edgeIdx);
+          } else if (wg.hasNode(fromNode) && wg.hasNode(toNode)) {
+            walkMeters += haversineM(wg.lng(fromNode), wg.lat(fromNode),
+                                      wg.lng(toNode), wg.lat(toNode));
+          }
+        }
       } else {  // access / egress
         walkSec += dur;
         walkMeters += leg.distance || 0;
@@ -12451,10 +12500,19 @@ function fmtDate(ts) {
     const pivot = route.pivotDate ? new Date(route.pivotDate) : new Date();
     const userGtfsIdx = todayInfo(pivot).gtfsIdx;
     const steps = [];
+    const wg = multiGraph || walkGraph;
     route.legs.forEach((leg, legIdx) => {
       if (leg.type === 'walk') {
         let meters = 0;
-        for (const { edge } of leg.edges) meters += walkGraph.edgeWeight(edge.edgeIdx);
+        // Same edge-ref-shape handling as tripTotalsHtml.
+        for (const { edge, fromNode, toNode } of leg.edges) {
+          if (edge && 'edgeIdx' in edge && walkGraph._edgeWeight.length) {
+            meters += walkGraph.edgeWeight(edge.edgeIdx);
+          } else if (wg.hasNode(fromNode) && wg.hasNode(toNode)) {
+            meters += haversineM(wg.lng(fromNode), wg.lat(fromNode),
+                                  wg.lng(toNode), wg.lat(toNode));
+          }
+        }
         steps.push({ kind: 'walk', text: `Walk ${Math.round(meters)} m`,
                      dep: leg.tDep, arr: leg.tArr });
       } else if (leg.type === 'access') {
@@ -12977,6 +13035,103 @@ function fmtDate(ts) {
       }
     }
     _routeTrace('bridges:done', { linked, processed });
+  }
+
+  // Multi-graph variant: bridge transit stops to the nearest globalId
+  // across all loaded regions. Same algorithm as buildMultimodalBridges
+  // (spatial grid + per-stop nearest lookup) but the grid cells store
+  // packed Uint32 globalIds and the resulting maps are keyed by
+  // globalId. Mutates scheduleIdx.stopToWalkNode + walkNodeToStops in
+  // place — trip-planner.js doesn't care whether the keys are walkGraph
+  // internal indices or globalIds, just that they round-trip through
+  // String() and that si.walkNodeToStops.get(nid) returns the right
+  // peers.
+  async function buildMultimodalBridgesMulti(multi) {
+    _routeTrace('bridgesMulti:start', {
+      regions: multi.regions.length,
+      stops: scheduleIdx.stops.size,
+    });
+    scheduleIdx.stopToWalkNode = new Map();
+    scheduleIdx.walkNodeToStops = new Map();
+    if (!scheduleIdx.stops.size) {
+      _routeTrace('bridgesMulti:short_circuit');
+      return;
+    }
+    const GRID = 1000;
+    // Cell counts first, then exact-sized Uint32 arrays storing
+    // globalIds. Same memory-frugal pattern as the legacy bridges.
+    const cellCounts = new Map();
+    for (const r of multi.regions) {
+      const lngs = r.routingView.nodeLng;
+      const lats = r.routingView.nodeLat;
+      const N = r.routingView.N;
+      for (let i = 0; i < N; i++) {
+        const k = Math.round(lngs[i] * GRID) + ',' + Math.round(lats[i] * GRID);
+        cellCounts.set(k, (cellCounts.get(k) || 0) + 1);
+      }
+    }
+    _routeTrace('bridgesMulti:cells_counted', { cells: cellCounts.size });
+    const walkGrid = new Map();
+    const cellCursors = new Map();
+    for (const k of cellCounts.keys()) {
+      walkGrid.set(k, new Uint32Array(cellCounts.get(k)));
+      cellCursors.set(k, 0);
+    }
+    for (const r of multi.regions) {
+      const lngs = r.routingView.nodeLng;
+      const lats = r.routingView.nodeLat;
+      const N = r.routingView.N;
+      for (let i = 0; i < N; i++) {
+        const k = Math.round(lngs[i] * GRID) + ',' + Math.round(lats[i] * GRID);
+        const arr = walkGrid.get(k);
+        const pos = cellCursors.get(k);
+        arr[pos] = packGlobalId(r.regionIdx, i);
+        cellCursors.set(k, pos + 1);
+      }
+    }
+    cellCounts.clear();
+    cellCursors.clear();
+    _routeTrace('bridgesMulti:grid_filled');
+    const MAX_LINK_M = 500;
+    let linked = 0;
+    let processed = 0;
+    const YIELD_EVERY = 2000;
+    const TRACE_EVERY = 5000;
+    for (const [stopId, stop] of scheduleIdx.stops) {
+      const cx = Math.round(stop.lng * GRID);
+      const cy = Math.round(stop.lat * GRID);
+      let best = -1, bestD = Infinity;
+      for (let dx = -2; dx <= 2; dx++) {
+        for (let dy = -2; dy <= 2; dy++) {
+          const cell = walkGrid.get((cx + dx) + ',' + (cy + dy));
+          if (!cell) continue;
+          for (let i = 0; i < cell.length; i++) {
+            const gid = cell[i];
+            const d = haversineM(multi.lng(gid), multi.lat(gid), stop.lng, stop.lat);
+            if (d < bestD) { bestD = d; best = gid; }
+          }
+        }
+      }
+      if (best !== -1 && bestD <= MAX_LINK_M) {
+        const walkSec = bestD / WALK_SPEED_MPS;
+        scheduleIdx.stopToWalkNode.set(stopId, { node: best, walkSec });
+        if (!scheduleIdx.walkNodeToStops.has(best)) {
+          scheduleIdx.walkNodeToStops.set(best, []);
+        }
+        scheduleIdx.walkNodeToStops.get(best).push([stopId, walkSec]);
+        linked++;
+      }
+      processed++;
+      if (processed % YIELD_EVERY === 0) {
+        await new Promise((r) => setTimeout(r, 0));
+      }
+      if (processed % TRACE_EVERY === 0) {
+        _routeTrace('bridgesMulti:progress', {
+          processed, linked, totalStops: scheduleIdx.stops.size,
+        });
+      }
+    }
+    _routeTrace('bridgesMulti:done', { linked, processed });
   }
   // Extract wall-clock components of an instant as seen in a given IANA time zone.
   function walltimeInTz(d, tz) {
