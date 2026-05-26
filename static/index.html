@@ -12389,6 +12389,42 @@ function fmtDate(ts) {
         };
         lines.push(renderLine('list',    ip.renders.list,    false));
         lines.push(renderLine('pokedex', ip.renders.pokedex, true));
+        // Detail-view open timing — different phase shape from list /
+        // pokedex (no virtualizer; the user-perceived latency is
+        // dispatch + sync + header-sprite paint).
+        if (ip.renders.detail) {
+          const r = ip.renders.detail;
+          const last = r.lastBreakdown;
+          const head = `  ${'detail'.padEnd(8)} calls=${r.calls} `
+            + `last=${fmtMs(r.lastMs)} max=${fmtMs(r.maxMs)}`;
+          if (!last) {
+            lines.push(head);
+          } else {
+            const phases = [
+              `dispatch=${fmtMs(last.dispatchMs)}`,
+              `sync=${fmtMs(last.syncMs)}`,
+              `header=${last.headerSpriteMs == null
+                ? '—' : fmtMs(last.headerSpriteMs)}`,
+              `evo=${last.slowestEvoSpriteMs == null
+                ? '—' : fmtMs(last.slowestEvoSpriteMs)}`,
+            ].join(' ');
+            lines.push(`${head}  [${phases}]  evoRows=${last.evoRowCount}`);
+          }
+          if (r.recent && r.recent.length) {
+            const slow = r.recent.slice()
+              .sort((a, b) => b.totalMs - a.totalMs).slice(0, 3);
+            const now = Date.now();
+            const fmtAgo = (t) => `${Math.round((now - t) / 1000)}s ago`;
+            lines.push(`  detail slowest (last ${r.recent.length}):`);
+            for (const b of slow) {
+              lines.push(`    ${fmtAgo(b.t).padEnd(8)} ${fmtMs(b.totalMs).padStart(7)} `
+                + `disp=${fmtMs(b.dispatchMs)} sync=${fmtMs(b.syncMs)} `
+                + `header=${b.headerSpriteMs == null ? '—' : fmtMs(b.headerSpriteMs)} `
+                + `evo=${b.slowestEvoSpriteMs == null ? '—' : fmtMs(b.slowestEvoSpriteMs)} `
+                + `rows=${b.evoRowCount}`);
+            }
+          }
+        }
         // Recent slow renders (top N by totalMs) from each ring. Useful
         // for spotting the outlier behind a stuttery search session.
         const slowest = (recent) => recent.slice()

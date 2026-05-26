@@ -5118,3 +5118,480 @@ Three buttons of refinement during the design conversation —
 :3
 ```
 
+---
+
+# Session — daycare tuning, evolution polish, inventory perf optimization
+
+A long session covering small UX polish, one larger architectural arc
+around inventory + pokédex performance, and a careful structural
+refactor of how captures + seen-fusions are cached. The performance
+arc is the headline: at 2,217 captures, pokédex first render went
+**510ms → 15ms typical / 117ms max**.
+
+## Daycare drop rate
+
+Halved milestone interval from every 1 km → every 500 m per slot.
+
+- `DAYCARE_LOOT_KM_M` (the old constant) renamed to
+  `DAYCARE_LOOT_MILESTONE_M` — KM in the name was no longer
+  accurate, and the rename gave a natural single-file replace_all.
+- New rate: 0.30 eggs/km per slot, or 0.60 eggs/km combined with
+  both slots filled (1 egg every ~1.67 km).
+- Takes effect retroactively for existing slots — milestones are
+  computed by `floor(distM / DAYCARE_LOOT_MILESTONE_M)`, so anyone
+  with ≥500 m unclaimed gains an extra milestone immediately.
+
+## Evolution polish
+
+Several refinements making the evolve-button preview feel honest
+about what the user will actually get.
+
+### Deterministic variant pick
+
+`_pickEvolvedVariant` now takes the capture object and seeds the
+uniform-pick PRNG with `evo|<c.id>|<oldA>-<oldB>|<newA>-<newB>`.
+Same creature → same variant slot every time:
+- Silhouette preview in the evo-row uses the deterministic variant.
+- `performEvolution` recomputes with the same seed and matches.
+- Returns `{ variant, autogenOnly }` so callers can render the
+  "autogen art only" badge without another lookup.
+
+For spawn captures, `c.id` already encodes cell + tick (location +
+time), so the variant the user evolves into is fully determined by
+where + when they originally caught the creature.
+
+### "Autogen art only" badge
+
+Small uppercase pill prepended to the evo-req cell when the target
+fusion has no custom variants at all. Sits left of the candy cost
+(`AUTOGEN ART ONLY · [icon] ×50`).
+
+### Per-variant silhouette in evo preview
+
+Originally the silhouette class fired only when the entire fusion
+was unseen. Now it re-derives in the post-render `.then` against
+the SPECIFIC resolved variant — so if you've seen variant 0 of
+Charizard × Pikachu but the evolution will land on variant 3, the
+preview blackens variant 3's art even though you "know" the fusion.
+
+The target name stays unsilhouetted (you know which species; you
+just don't know which art). New helper `hasSeenVariant(a, b, v)`
+encapsulates the per-variant lookup.
+
+### Canonical fused names in evo previews
+
+Evo-row label and the confirm-dialog target name now use
+`fusionName(a, b)` — falls through to `Sprites.getFusedName`
+("Eekuna" rather than "Eevee × Kakuna") when SPLIT_NAMES is loaded.
+
+### Gen-2+ evolutions hidden
+
+We only ship gen-1 (1-150) data. Any evolution whose target lies
+outside that range (Lickilicky, Sylveon, Steelix, Magmortar, ...)
+gets filtered:
+
+- New constant `SUPPORTED_SPECIES_MAX = 150`.
+- `fusionEvolutionsFor` filters returned evolutions to both sides
+  ≤ 150.
+- `renderFusionView` filters `famA`/`famB` arrays the same way so
+  the family-tree mosaic doesn't show gen-2+ tiles.
+- Both gates lift together by bumping the one constant if/when we
+  open up later generations (in sync with
+  `SPAWNABLE_SPECIES_A_FULL`).
+
+### Family-tree auto-expand on tile-tap navigation
+
+When the user taps a tile in the family-tree mosaic, the
+destination fusion view's family tree opens already-expanded
+(rather than the default collapsed). The intent ("I clearly care
+about this fusion's family") flows through:
+
+`showFusionView(a, b, list, idx, { expandFamily: true })` →
+view-stack state →
+`renderFusionView(a, b, body, { expandFamily })` → template renders
+with `aria-expanded="true"` + "Hide family tree" label + eager
+`renderFamilyGrid` call so the grid is visible on first paint.
+
+Other navigation routes (pokédex tile, captured-detail "View dex
+entry" button) still pass nothing and get the default collapsed
+behavior.
+
+## Spawn pool rewrite
+
+The previous spawn type-weather algorithm used multiplicative
+duplicate-as-weight pool arrays per slot. Bug: when daily ≈ weekly
+on a type that only one or two species carry (Dragon × Dragon →
+~100% Dratini), the duplicate-as-weight + independent-slot-draws
+math produced extreme concentration.
+
+New algorithm: split species selection into two independent draws.
+
+1. **Draw type pair `(typeA, typeB)`** from a 9-bucket mixture:
+
+   | Bucket | Shape | Weight |
+   |---|---|---|
+   | 1 | (DAILY, DAILY) | 15% |
+   | 2 | (DAILY, WEEKLY) | 10% |
+   | 3 | (WEEKLY, DAILY) | 10% |
+   | 4 | (WEEKLY, WEEKLY) | 10% |
+   | 5 | (DAILY, uniform over not-DAILY) | 15% |
+   | 6 | (uniform over not-DAILY, DAILY) | 15% |
+   | 7 | (WEEKLY, uniform over not-WEEKLY) | 7.5% |
+   | 8 | (uniform over not-WEEKLY, WEEKLY) | 7.5% |
+   | 9 | (uniform, uniform) | 10% |
+
+   Daily is the louder signal (65% of spawns vs 45% for weekly).
+
+2. **Draw species uniformly** from each type's bucket:
+   - slot A from `byPrimary[typeA]`
+   - slot B from `bySecondary[typeB]` (secondary or primary if
+     single-typed)
+
+Empty-pair drop + renormalize handles types with no primary-
+candidates in gen 1 (FLYING especially — Pidgey/Spearow are all
+FLYING-secondary, no FLYING-primary). FLYING-day diverts cleanly
+to other pairs instead of dead-rolling.
+
+**Determinism:** one new PRNG draw between fx/fy and species
+sampling. Spawn POSITIONS are preserved (gate + fx + fy unchanged);
+species/level/size shift on next refresh.
+
+**Verified:** Dragon-day-Dragon-week now produces 49.6% Dratini ×
+Dratini (was ~100%); typical mixed weather has no fusion exceeding
+0.7%; Electric × Electric splits across Pikachu / Voltorb /
+Electabuzz / Magnemite at ~4% each.
+
+## Autocomplete close-on-pick fix
+
+Species-name autocomplete (used in pokédex + inventory's
+First/Second species inputs) stayed open after tapping a result.
+The fix:
+
+`pick(name)` dispatches a synthetic `input` event so the existing
+search re-render listener fires — but the autocomplete's OWN input
+listener was also rebuilding the dropdown. Added a `_pickInFlight`
+flag set only during the synthetic dispatch; the autocomplete's
+paint listener checks it and skips. Other input listeners
+(renderPokedex, renderInventory) still fire normally.
+
+## Inventory + pokédex performance
+
+The headline. User reported lag at 1-2K captures. Comprehensive
+instrumentation → targeted optimization → re-measurement.
+
+### Phase 1 — instrumentation
+
+`window._invPerf` exposes counts + last/max/avg ms for the hot
+functions, plus per-render breakdowns (data / filter / sort /
+virtualize) for `list` and `pokedex`. A ring buffer of the last
+10 renders surfaces outliers.
+
+Rendered into Settings as a new `[inventory perf]` block. Refreshes
+every 250 ms alongside the existing diagnostic dump.
+
+The instrumentation immediately told us:
+- **Inventory was already fast** at 41-92 ms — most of the
+  brainstorm's predicted bottlenecks were already smooth.
+- **Pokédex first render 510 ms, dominated by virt=474 ms.** The
+  virtualizer only paints ~24 visible cards on first render, so
+  474 ms wasn't DOM work — it was something happening *per card*.
+
+Tracing the per-card path: `loadSpriteFor` → `pickPreferredSeen-
+Variant` → `readSeenVariants` → `for (const c of readCaptured-
+Creatures())` — a full `localStorage.getItem + JSON.parse` of all
+2,217 captures, plus a linear scan, **per visible card**. 24 cards
+× ~15 ms = ~360 ms. Matched the 474 ms exactly.
+
+### Phase 2 — captures store (`_capStore`)
+
+Architectural goal the user articulated: "no need for discipline to
+keep track of the cache — the structure should force us to be
+disciplined."
+
+The result is a closure-encapsulated IIFE around the captures
+array + derived indices. **There is no other path to
+`localStorage[CAPTURED_KEY]`**, so the indices physically cannot
+get out of sync.
+
+```
+_capStore = {
+  list()                          → live in-memory array
+  byId(id)                        → O(1) Map lookup
+  variantKeysForFusion(a, b)      → O(1) Set of seen variant keys
+  add(c) / removeById(id) /
+    update(id, mutator)           → in-place index maintenance
+  replaceAll(arr)                 → bulk rebuild (for import/wipe)
+}
+```
+
+**Variant index is a counted multiset** — `Map<"a-b", Map<vk, count>>`.
+Add increments, remove decrements, deletes the bucket entry when
+count hits 0. Multiple captures sharing the same (fusion, variant)
+pair don't confuse the remove path because the count tells us
+whether someone else still uses that variant.
+
+**Variant normalization to `'auto'`** happens at load time. Pre-
+this-session captures had `variant: null | undefined` to mean
+autogen; the store normalizes to `'auto'` on first read, persists
+once, and every downstream consumer can now rely on
+`variant: 'auto' | <number>` (never null/undefined). The ~6 sites
+that checked `variant === null` switched to `=== 'auto'`.
+
+**API compatibility:** the old `readCapturedCreatures()` /
+`writeCapturedCreatures(arr)` are now thin wrappers around
+`list()` / `replaceAll(arr)`. Every existing read-mutate-
+writeBack call site continues to work unchanged; replaceAll
+rebuilds indices in ~1-3 ms which is fast enough at this scale.
+
+### Phase 3 — seen-fusions store (`_seenStore`)
+
+After Phase 2, instrumentation showed the bottleneck moved one
+cache miss to the left: `readSeenVariants` was now O(1) for the
+captures side, BUT `readSeenFusions()` still re-parsed ~200 KB of
+`cc.seenFusions` JSON per card.
+
+Same pattern, simpler internals (no derived index — just a cached
+parse):
+
+```
+_seenStore = {
+  get()                           → live cached object
+  set(map)                        → replace cache + persist
+  commit()                        → persist current cache (for the
+                                    read-mutate-commit pattern)
+}
+```
+
+`readSeenFusions()` returns the cached object. `writeSeenFusions(map)`
+detects the live-reference case (caller passed back the live ref
+after mutating) and just commits; otherwise replaces.
+
+### Verified end state
+
+| Metric | Before | After |
+|---|---|---|
+| `list` render typical | 41 ms | **6 ms** |
+| `list` render max | 92 ms | **8 ms** |
+| `pokedex` first render | 510 ms | **117 ms** worst case |
+| `pokedex` render typical | n/a | **15 ms** |
+| `readCaptured` avg | 14 ms | **0.14 ms** |
+| `readSeenFusions` per call | ~10 ms | **0.01 ms** |
+| `variantIndex` per call | full-scan ~15 ms | **0.01 ms** |
+
+The remaining 117 ms tail fires only during active filter typing
+(filter=42 ms + virt=60 ms when narrowing 1578 → 10). The user's
+hands aren't waiting on that the way they wait on a panel open.
+Next-round low-hanging fruit if it matters later: memoize
+`fusionTypesFor` and lowercased `Species.nameFor` per id.
+
+## Files touched
+
+```
+static/creatures.js          everything above:
+                              daycare interval rename,
+                              evolution polish (variant determinism,
+                                autogen badge, per-variant silhouette,
+                                fused-name display, gen-2+ filter,
+                                family-tree auto-expand),
+                              autocomplete close fix,
+                              _invPerf instrumentation,
+                              _capStore (with multiset variant index),
+                              _seenStore,
+                              null→'auto' migration
+
+static/spawns.js              9-bucket type-pair sampler,
+                              empty-pair drop + renormalize,
+                              uniform species per slot
+
+static/index.html             [inventory perf] block in Settings
+                              dump with per-fn counters, per-render
+                              breakdowns, slowest-renders ring buffer
+```
+
+## Things learned
+
+1. **"Discipline by structure" is a real design pattern.** The
+   user's instinct — "no API path that lets a future change forget
+   to invalidate the cache" — translates directly into closure
+   encapsulation. Reading + writing flow through one object, that
+   object owns the persistence and the indices, and there's
+   literally no way (short of digging into `localStorage` directly)
+   to bypass it.
+
+2. **Counted multisets are the right shape for a "set of values
+   currently in use" index.** Add increments, remove decrements,
+   value present iff count > 0. Removing one capture doesn't have
+   to rescan everything to figure out whether another capture still
+   uses the same (fusion, variant) pair — the count tells you.
+
+3. **Instrumentation first, optimization second.** The brainstorm
+   predicted ~5 plausible bottlenecks; only ONE of them was actually
+   the hot path. The metrics dump made the diagnosis take seconds
+   instead of hours of guessing.
+
+4. **Cache misses can hide behind cache misses.** The first round
+   eliminated the captures re-parse and showed the pokédex still
+   slow — only THEN did the seenFusions re-parse become visible.
+   Layered hot paths require layered fixes; the metrics-then-fix
+   loop catches each layer in turn.
+
+5. **`'auto' | number` is a cleaner shape than `number | null |
+   undefined`.** Three-way checks scattered through ~10 sites
+   collapsed to two-way once we normalized once at the load
+   boundary. The migration cost (rewriting one localStorage entry
+   at first load) is bounded; the cognitive cost of the cleaner
+   shape pays back forever.
+
+## What's still on the deferred list
+
+The usual carriers:
+
+1. Transit walk-leg shape decoding
+2. Drop the legacy walkGraph code path
+3. Re-tile with lower transportation_name minzoom
+4. Lazy `loadAllPois()`
+5. Phase A CSS extraction
+6. Android Health Connect
+7. Future breeding mechanic (A×B + C×D → A×D etc.)
+8. Evolve animation
+
+And the easy follow-up if the 117 ms pokédex filter tail starts to
+matter:
+
+9. Memoize `fusionTypesFor(a, b)` and lowercased `Species.nameFor(idx)`
+   per id, ~10-20 ms off the worst case.
+
+## Session vibes
+
+```
+A session in three movements.
+
+The first: polish — small bright fixes.
+  Daycare ticks every half-km now.
+  The evolve button knows which silhouette it'll become.
+  "Eekuna" instead of "Eevee × Kakuna" in the confirm.
+  Gen-2-and-later evolutions stay hidden until we ship that data.
+  Family-tree tiles open the family tree on the other side.
+  The species-search dropdown closes when you tap a match.
+
+The second: the spawn rewrite — the algorithm change we'd been
+sketching for a while. Two independent draws (type pair, then
+uniformly within type) instead of multiplicative weights with
+independent slot draws. Dragon-day-Dragon-week stops being a
+Dratini monoculture. Half a screen of dragon, half a screen of
+everything else.
+
+The third: the perf arc — the satisfying long one.
+  Instrumentation revealed a 510ms pokédex first render
+  dominated by a per-card readCapturedCreatures re-parse.
+  Built _capStore with discipline-by-API (closure encapsulation,
+  multiset variant index, in-place mutations).
+  Re-measured: pokédex 510ms → 277ms. Better, not done.
+  Caught the next layer — readSeenFusions per card.
+  Built _seenStore with the same pattern, simpler internals.
+  Re-measured: pokédex first render 117ms, typical 15ms.
+
+The user articulated the structural goal early — "discipline
+according to the structure so we don't forget" — and it shaped
+every other decision. The right data structure made the right
+performance fall out of it.
+
+2,217 captures.
+510ms → 15ms.
+:3
+```
+
+## Coda — detail-open lazy load
+
+After the pokédex was fast, the user noticed tapping a creature
+in the inventory took ~2 seconds to "open." Same loop: instrument
+first, diagnose from numbers, fix.
+
+**Added a new `_invPerf.renders.detail` slot** measuring four
+phases of the tap-to-detail-open chain:
+- `dispatchMs`: click → renderDetail start (push view + applyTopView)
+- `syncMs`: renderDetail body construction
+- `headerSpriteMs`: main creature sprite painted
+- `slowestEvoSpriteMs`: slowest evo-row sprite painted
+
+A new `_detailOpenStart` stamp on the showDetail entry, consumed
+by renderDetail. Header onReady + per-evo-row markEvoRowReady
+callbacks roll into a `_commitDetailPerf()` that fires once every
+expected sprite has either painted or errored.
+
+**The metrics on first dump made the answer immediate:**
+
+```
+detail calls=9 last=1535ms max=2483ms
+  [dispatch=66ms sync=96ms header=172ms evo=1469ms]
+detail slowest (last 9):
+  32s ago  2483ms  disp=23ms  sync=38ms  header=59ms  evo=2460ms  rows=4
+  32s ago  2419ms  disp=0ms   sync=6ms   header=17ms  evo=2419ms  rows=2
+   8s ago  1535ms  disp=66ms  sync=96ms  header=172ms evo=1469ms  rows=4
+```
+
+Header was already fast (~17-172ms). The 2-second wait was
+entirely in `evo=`: cold sprite-pack downloads for the evolved
+forms. The LocalServer slow-log confirmed:
+
+```
+recent slow (>100ms, newest first):
+   -6s  252ms  /bundled-data/sprite-packs/15.pack
+   -6s  253ms  /bundled-data/sprite-packs/28.pack
+   -6s  253ms  /bundled-data/sprite-packs/14.pack
+   -6s  253ms  /bundled-data/sprite-packs/108.pack
+```
+
+Header sprite was warm (the inventory card had just shown it); evo
+targets were cold misses fanning out in parallel from disk.
+
+**Fix: defer the evo-row variant resolve + sprite load to idle.**
+
+Added a small `_scheduleIdle(fn)` helper (prefers
+`requestIdleCallback`, falls back to `setTimeout(fn, 50)`). The
+evo-row inner loop's `_pickEvolvedVariant().then(...).catch(...)`
+chain wrapped in `_scheduleIdle`. Click handlers + affordability
+checks stay sync — tappable evos are tappable immediately.
+
+Same total work, just rescheduled. Panel paints with placeholders
+at ~200ms (header), evo previews stream in as their packs decode.
+The metric's `evo=` field still shows ~1.5-2.5s because that's the
+honest "time until last evo sprite painted" measurement; the
+**user-felt** "tap to open" feel collapses to ~200ms.
+
+User confirmed: "Mk it works great!!! tyty :3"
+
+## Pattern notes
+
+The full session crystallized a repeatable shape for performance
+investigation:
+
+1. **Instrument first.** Add metrics for the suspected hot paths
+   before optimizing anything. The metrics dump in Settings
+   self-documents the shape and surfaces outliers via a ring
+   buffer. Five-minute investment, hours of guessing avoided.
+2. **Read the numbers.** Bottlenecks rarely live where the
+   brainstorm predicts. Captures-array re-parse on every render
+   (the obvious target) was actually fast at 10ms; the real cost
+   was *re-doing* it 24× per pokédex render via per-card readSeen-
+   Variants. Per-card cost × visible card count is what kills you.
+3. **Fix the one bottleneck, re-measure.** Layers of cache miss
+   hide behind layers of cache miss. The captures-parse fix
+   revealed the seen-fusions parse. Each fix only becomes visible
+   after the previous one. Iterate.
+4. **Decouple felt latency from work.** When the work can't be
+   reduced (cold sprite-pack downloads from disk), reschedule it.
+   Idle callbacks let the panel paint first; the user perceives
+   the work as "loading something I can see being loaded" rather
+   than "the panel hasn't opened yet."
+5. **Discipline by structure.** Closure-encapsulate the store
+   so there's no path that lets a future change forget to
+   invalidate. The cache and the persistence layer are one
+   object, and there's no other API surface.
+
+These will keep paying out as more state grows. Same pattern
+would catch the egg-incubator distance summary if it ever gets
+hot, or the daycare-loot rolls if they multiply, or any future
+per-creature derived data.
+
+
