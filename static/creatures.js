@@ -62,6 +62,10 @@
       readNicknames:   { calls: 0, totalMs: 0, lastMs: 0, maxMs: 0 },
       getInventory:    { calls: 0, totalMs: 0, lastMs: 0, maxMs: 0, lastSize: 0 },
       sortedCreatures: { calls: 0, totalMs: 0, lastMs: 0, maxMs: 0, lastSize: 0 },
+      capStoreLoad:    { calls: 0, totalMs: 0, lastMs: 0, maxMs: 0, lastSize: 0 },
+      variantIndex:    { calls: 0, totalMs: 0, lastMs: 0, maxMs: 0 },
+      seenStoreLoad:   { calls: 0, totalMs: 0, lastMs: 0, maxMs: 0, lastSize: 0 },
+      readSeenFusions: { calls: 0, totalMs: 0, lastMs: 0, maxMs: 0, lastSize: 0 },
     },
     renders: {
       list: {
@@ -230,21 +234,175 @@
   // before gets these too on next load).
   const STARTER_BAG = { poke_ball: 2 };
 
-  // Captured inventory lives as an array of entries keyed by their own
-  // `id`. We intentionally store speciesA/B (not the derived display
-  // name) so names update if/when the species-names list loads later.
+  // ── Captures store ──
+  // The single source of truth for the captured-creatures array AND
+  // the derived indices that point into it (byId, variantsByFusion).
+  // Discipline is enforced by the API: there's no other path to
+  // mutate localStorage[CAPTURED_KEY], so indices physically cannot
+  // get out of sync with the array.
+  //
+  // Reads return the live in-memory array — no JSON.parse per call,
+  // no full-array scan per index lookup. Writes go through replaceAll
+  // (rebuilds indices, used by the existing array-mutation pattern)
+  // or the granular add/update/removeById methods (in-place index
+  // maintenance for hot paths).
+  //
+  // Variant index is a counted multiset — Map<"a-b", Map<vk, count>>.
+  // The count tracks how many captures currently share a (fusion,
+  // variant) pair, so removeById can decrement without rescanning to
+  // check whether another capture still uses that variant.
+  //
+  // Captures' `variant` field is normalized to 'auto' | <number> at
+  // load time — null and undefined (legacy autogen captures) both
+  // become 'auto', and the (one-time) normalization persists, so
+  // every downstream consumer can rely on the canonical shape.
+  const _capStore = (() => {
+    let _list = null;
+    let _byId = null;
+    let _variantsByFusion = null;  // Map<"a-b", Map<vk, count>>
+
+    function _variantKey(v) {
+      if (typeof v === 'number' && v >= 0) return String(v);
+      return 'auto';
+    }
+    function _normalizeVariant(c) {
+      if (c && (c.variant === null || c.variant === undefined)) {
+        c.variant = 'auto';
+        return true;
+      }
+      return false;
+    }
+    function _addToIndices(c) {
+      if (!c) return;
+      if (c.id != null) _byId.set(c.id, c);
+      if (c.speciesA == null || c.speciesB == null) return;
+      const k = `${c.speciesA}-${c.speciesB}`;
+      let bucket = _variantsByFusion.get(k);
+      if (!bucket) { bucket = new Map(); _variantsByFusion.set(k, bucket); }
+      const vk = _variantKey(c.variant);
+      bucket.set(vk, (bucket.get(vk) || 0) + 1);
+    }
+    function _removeFromIndices(c) {
+      if (!c) return;
+      if (c.id != null) _byId.delete(c.id);
+      if (c.speciesA == null || c.speciesB == null) return;
+      const k = `${c.speciesA}-${c.speciesB}`;
+      const bucket = _variantsByFusion.get(k);
+      if (!bucket) return;
+      const vk = _variantKey(c.variant);
+      const count = bucket.get(vk);
+      if (count == null) return;
+      if (count <= 1) bucket.delete(vk);
+      else bucket.set(vk, count - 1);
+      if (bucket.size === 0) _variantsByFusion.delete(k);
+    }
+    function _persist() {
+      try { localStorage.setItem(CAPTURED_KEY, JSON.stringify(_list)); }
+      catch (e) { _logCreatureError('capStore/persist', e); }
+    }
+    function _ensureLoaded() {
+      if (_list !== null) return;
+      const t0 = performance.now();
+      let parsed = [];
+      try {
+        const raw = localStorage.getItem(CAPTURED_KEY);
+        parsed = raw ? JSON.parse(raw) : [];
+      } catch { parsed = []; }
+      _list = Array.isArray(parsed) ? parsed : [];
+      _byId = new Map();
+      _variantsByFusion = new Map();
+      // Normalize + index in one pass. If any normalization happened
+      // (legacy null/undefined → 'auto') we persist once so the
+      // on-disk shape converges.
+      let dirty = false;
+      for (const c of _list) {
+        if (_normalizeVariant(c)) dirty = true;
+        _addToIndices(c);
+      }
+      if (dirty) _persist();
+      _perfMark(_invPerf.fn.capStoreLoad, t0, { lastSize: _list.length });
+    }
+
+    return {
+      list() { _ensureLoaded(); return _list; },
+      byId(id) { _ensureLoaded(); return _byId.get(id) || null; },
+      // Returns a fresh Set of variant keys ('auto' | '0' | '1' | ...)
+      // currently captured for this fusion. Caller may union with
+      // seenFusions[key].variants to get the full "ever-seen" set.
+      // Empty Set when no captures of this fusion exist yet.
+      variantKeysForFusion(a, b) {
+        _ensureLoaded();
+        const t0 = performance.now();
+        const bucket = _variantsByFusion.get(`${a}-${b}`);
+        const out = bucket ? new Set(bucket.keys()) : new Set();
+        _perfMark(_invPerf.fn.variantIndex, t0);
+        return out;
+      },
+      // Granular mutations — O(1) index maintenance. Use these in
+      // hot paths (capture from spawn, evolve, daycare claim, etc.)
+      // for the perf win. The existing read-mutate-replaceAll pattern
+      // also works and goes through this same store, just with O(N)
+      // index rebuild via replaceAll.
+      add(capture) {
+        _ensureLoaded();
+        _normalizeVariant(capture);
+        _list.push(capture);
+        _addToIndices(capture);
+        _persist();
+      },
+      removeById(id) {
+        _ensureLoaded();
+        const idx = _list.findIndex((c) => c && c.id === id);
+        if (idx < 0) return null;
+        const removed = _list.splice(idx, 1)[0];
+        _removeFromIndices(removed);
+        _persist();
+        return removed;
+      },
+      update(id, mutator) {
+        _ensureLoaded();
+        const c = _byId.get(id);
+        if (!c) return null;
+        // Remove from indices first so we can re-add against the
+        // post-mutation species/variant (which may have changed).
+        _removeFromIndices(c);
+        mutator(c);
+        _normalizeVariant(c);
+        _addToIndices(c);
+        _persist();
+        return c;
+      },
+      // Bulk replace — for import / wipe flows AND for the legacy
+      // "read mutate write" pattern via writeCapturedCreatures(arr).
+      // O(N) index rebuild; runs ~1-3ms at 2K captures.
+      replaceAll(arr) {
+        _list = Array.isArray(arr) ? arr.slice() : [];
+        _byId = new Map();
+        _variantsByFusion = new Map();
+        for (const c of _list) {
+          _normalizeVariant(c);
+          _addToIndices(c);
+        }
+        _persist();
+      },
+    };
+  })();
+  if (typeof window !== 'undefined') window._capStore = _capStore;
+
+  // Captured inventory: thin wrappers that route through the store.
+  // The original API surface is preserved so every existing call site
+  // (read-mutate-replaceAll, findCreature, save-export, etc.) keeps
+  // working unchanged. The wrappers also bump the readCaptured perf
+  // counter so the Settings dump shows how many times we'd have
+  // re-parsed the JSON under the pre-cache implementation.
   function readCapturedCreatures() {
     const t0 = performance.now();
-    let out;
-    try {
-      const raw = localStorage.getItem(CAPTURED_KEY);
-      out = raw ? JSON.parse(raw) : [];
-    } catch { out = []; }
+    const out = _capStore.list();
     _perfMark(_invPerf.fn.readCaptured, t0, { lastSize: out.length });
     return out;
   }
   function writeCapturedCreatures(arr) {
-    localStorage.setItem(CAPTURED_KEY, JSON.stringify(arr));
+    _capStore.replaceAll(arr);
   }
 
   // Candy: earned per-capture, keyed by EVOLUTION-FAMILY ROOT (a
@@ -583,10 +741,10 @@
       speciesA: egg.speciesA,
       speciesB: egg.speciesB,
       // Variant resolution requires the per-cell custom-art table
-      // which is async-loaded. For hatched eggs we leave this null
+      // which is async-loaded. For hatched eggs we leave this 'auto'
       // so the renderer falls back to autogen art; a follow-up
       // could resolve a variant at hatch time if desired.
-      variant: null,
+      variant: 'auto',
       level: 1,
       sizeM: typeof egg.sizeM === 'number' ? egg.sizeM : 1.0,
       caughtAt: {
@@ -1388,7 +1546,7 @@
       id: e.id,
       speciesA: e.speciesA,
       speciesB: e.speciesB,
-      variant: (typeof e.variant === 'number') ? e.variant : null,
+      variant: (typeof e.variant === 'number') ? e.variant : 'auto',
       level: e.level,
       sizeM: e.sizeM,
       name: fusionName(e.speciesA, e.speciesB),
@@ -1417,17 +1575,66 @@
     }
   }
 
+  // ── Seen-fusions store ──
   // Pokédex storage: every fusion we've ever opened the battle screen
-  // for, even if it wasn't caught. Captured creatures are backfilled
-  // into this set on first read so existing players don't lose history.
+  // for, even if it wasn't caught. Like _capStore, this is a closure
+  // around the in-memory parsed object — readSeenFusions returns the
+  // live reference, writeSeenFusions updates cache + persists. There's
+  // no other path to localStorage[SEEN_FUSIONS_KEY], so the cache can
+  // never get out of sync.
+  //
+  // The existing read-mutate-write pattern continues to work: callers
+  // get the live object, mutate it in place, then writeSeenFusions to
+  // commit. With no derived indices to maintain, this is simpler than
+  // _capStore — just a cached parse.
+  //
+  // Captured creatures are backfilled into this set on first read so
+  // existing players don't lose history.
+  const _seenStore = (() => {
+    let _map = null;
+    function _ensureLoaded() {
+      if (_map !== null) return;
+      const t0 = performance.now();
+      try {
+        const raw = localStorage.getItem(SEEN_FUSIONS_KEY);
+        _map = raw ? JSON.parse(raw) : {};
+      } catch { _map = {}; }
+      if (!_map || typeof _map !== 'object') _map = {};
+      _perfMark(_invPerf.fn.seenStoreLoad, t0,
+                { lastSize: Object.keys(_map).length });
+    }
+    function _persist() {
+      try { localStorage.setItem(SEEN_FUSIONS_KEY, JSON.stringify(_map)); }
+      catch (e) { _logCreatureError('seenStore/persist', e); }
+    }
+    return {
+      get() { _ensureLoaded(); return _map; },
+      set(map) {
+        // Used by callers that build a fresh object (rare). The live-
+        // reference + mutate-then-commit pattern uses commit() instead.
+        _map = (map && typeof map === 'object') ? map : {};
+        _persist();
+      },
+      // Persist the current cache. Callers that mutated the live ref
+      // returned by get() call this to commit.
+      commit() { _ensureLoaded(); _persist(); },
+    };
+  })();
+  if (typeof window !== 'undefined') window._seenStore = _seenStore;
+
   function readSeenFusions() {
-    try {
-      const raw = localStorage.getItem(SEEN_FUSIONS_KEY);
-      return raw ? JSON.parse(raw) : {};
-    } catch { return {}; }
+    const t0 = performance.now();
+    const out = _seenStore.get();
+    _perfMark(_invPerf.fn.readSeenFusions, t0,
+              { lastSize: Object.keys(out).length });
+    return out;
   }
   function writeSeenFusions(map) {
-    try { localStorage.setItem(SEEN_FUSIONS_KEY, JSON.stringify(map)); } catch {}
+    // If the caller passed back the live reference (the read-mutate-
+    // write pattern), this is just commit + persist. If they passed a
+    // fresh object, replace the cache.
+    if (map === _seenStore.get()) _seenStore.commit();
+    else _seenStore.set(map);
   }
   function markFusionSeen(a, b, spawn, variant) {
     if (a == null || b == null) return;
@@ -1467,22 +1674,17 @@
   }
   // Returns a Set of seen variant keys for a fusion. Set members are
   // 'auto' (for the autogen sprite) or stringified integers for
-  // custom variant indices. Backfills from captures with a variant
-  // field on first call (lazy migration so legacy users get
-  // something sensible).
+  // custom variant indices. Sources: seenFusions[key].variants (every
+  // fusion the trainer has opened a battle screen for) ∪ the captures
+  // store's variant index (every variant they've actually caught).
+  // O(1) per fusion lookup — used to be a full scan of the captures
+  // array per call, which was the pokédex first-render hotspot.
   function readSeenVariants(a, b) {
     const seen = readSeenFusions();
     const key = `${a}-${b}`;
-    const out = new Set();
+    const out = _capStore.variantKeysForFusion(a, b);
     if (seen[key] && seen[key].variants) {
       for (const k of Object.keys(seen[key].variants)) out.add(k);
-    }
-    // Backfill from captures — anything with c.variant set tells us
-    // exactly which variant was seen at capture time.
-    for (const c of readCapturedCreatures()) {
-      if (c.speciesA !== a || c.speciesB !== b) continue;
-      if (typeof c.variant === 'number' && c.variant >= 0) out.add(String(c.variant));
-      else if (c.variant === null) out.add('auto');
     }
     return out;
   }
@@ -1514,15 +1716,17 @@
       return c;
     }
     for (const c of list) {
-      if (typeof c.variant === 'number' || c.variant === null) continue;
+      // Variant is now canonicalized to 'auto' | <number> at store
+      // load time, so anything already in either shape is migrated.
+      if (typeof c.variant === 'number' || c.variant === 'auto') continue;
       if (c.speciesA == null || c.speciesB == null) continue;
       const cnt = await countFor(c.speciesA, c.speciesB);
-      const slot = cnt > 0 ? 0 : null;
+      const slot = cnt > 0 ? 0 : 'auto';
       c.variant = slot;
       const fkey = `${c.speciesA}-${c.speciesB}`;
       if (!seen[fkey]) seen[fkey] = { firstSeen: (c.caughtAt && c.caughtAt.timestamp) || Date.now() };
       if (!seen[fkey].variants) seen[fkey].variants = {};
-      const vKey = slot === null ? 'auto' : String(slot);
+      const vKey = slot === 'auto' ? 'auto' : String(slot);
       if (!seen[fkey].variants[vKey]) {
         seen[fkey].variants[vKey] = (c.caughtAt && c.caughtAt.timestamp) || Date.now();
       }
@@ -1537,7 +1741,7 @@
 
   // Manual migration helper exposed via Settings → "Re-mark custom
   // art" button. For every capture currently flagged as autogen
-  // (c.variant === null) where the cell now reports custom variants,
+  // (c.variant === 'auto') where the cell now reports custom variants,
   // promote the capture to slot 0 (the artist's primary) and mark
   // that variant as seen in seenFusions. Idempotent: re-running does
   // nothing once every capture is in sync. Temporary — added to clean
@@ -1563,7 +1767,7 @@
     }
     let scanned = 0, promoted = 0;
     for (const c of list) {
-      if (c.variant !== null) continue;
+      if (c.variant !== 'auto') continue;
       if (c.speciesA == null || c.speciesB == null) continue;
       scanned++;
       const cnt = await countFor(c.speciesA, c.speciesB);
@@ -1605,11 +1809,12 @@
   // Has the trainer seen this exact (a, b, variant) combination? Used
   // by the evolution preview to silhouette future variants the trainer
   // hasn't witnessed yet, even when other variants of the same fusion
-  // are known. variant === null means autogen; numeric means a custom
-  // slot index.
+  // are known. `variant` is the canonical capture shape — 'auto' for
+  // autogen, numeric for a custom slot. Legacy callers passing null
+  // (pre-normalization) are still tolerated.
   function hasSeenVariant(a, b, variant) {
     const seen = readSeenVariants(a, b);
-    if (variant === null) return seen.has('auto');
+    if (variant === 'auto' || variant === null) return seen.has('auto');
     if (typeof variant === 'number' && variant >= 0) return seen.has(String(variant));
     return false;
   }
@@ -2305,13 +2510,13 @@
   //     creature gives the same answer.
   async function _pickEvolvedVariant(c, oldA, oldB, oldVariant, newA, newB) {
     if (!global.Sprites || !global.Sprites.getCellVariantCount) {
-      return { variant: null, autogenOnly: true };
+      return { variant: 'auto', autogenOnly: true };
     }
     let newCount = 0;
     try { newCount = await global.Sprites.getCellVariantCount(newA, newB); }
     catch { newCount = 0; }
     if (!newCount || newCount <= 0) {
-      return { variant: null, autogenOnly: true };
+      return { variant: 'auto', autogenOnly: true };
     }
 
     let oldArtist = null;
@@ -7097,12 +7302,12 @@
           const date = cap.caughtAt && cap.caughtAt.timestamp
             ? new Date(cap.caughtAt.timestamp).toLocaleDateString()
             : '';
-          // Variant attribution: starts as "autogen" (when null) or
+          // Variant attribution: starts as "autogen" (when 'auto') or
           // "#N" (when a numeric custom slot). For numeric slots we
           // async-resolve the artist credit below and swap the text
           // in place once the credits bundle returns the name.
           let variantLabel = '';
-          if (cap.variant === null) variantLabel = 'autogen';
+          if (cap.variant === 'auto') variantLabel = 'autogen';
           else if (typeof cap.variant === 'number') variantLabel = `#${cap.variant + 1}`;
           // Ordered HTML chunks joined by " · " separators. Each chunk
           // is fully escaped so user-controlled text can't sneak in.

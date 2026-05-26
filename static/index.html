@@ -12356,6 +12356,24 @@ function fmtDate(ts) {
                           (s) => `size=${s.lastSize}`));
         lines.push(fnLine('sortedCreats',  ip.fn.sortedCreatures,
                           (s) => `size=${s.lastSize}`));
+        // capStoreLoad fires exactly once per session — the JSON.parse
+        // + index build cost. variantIndex fires per pickPreferred-
+        // SeenVariant / hasSeenVariant call and should be O(1).
+        if (ip.fn.capStoreLoad) {
+          lines.push(fnLine('capStoreLoad',  ip.fn.capStoreLoad,
+                            (s) => `size=${s.lastSize}`));
+        }
+        if (ip.fn.variantIndex) {
+          lines.push(fnLine('variantIndex',  ip.fn.variantIndex));
+        }
+        if (ip.fn.seenStoreLoad) {
+          lines.push(fnLine('seenStoreLoad', ip.fn.seenStoreLoad,
+                            (s) => `size=${s.lastSize}`));
+        }
+        if (ip.fn.readSeenFusions) {
+          lines.push(fnLine('readSeenFus',   ip.fn.readSeenFusions,
+                            (s) => `size=${s.lastSize}`));
+        }
         const renderLine = (name, r, hasSort) => {
           const last = r.lastBreakdown;
           const head = `  ${name.padEnd(8)} calls=${r.calls} `
