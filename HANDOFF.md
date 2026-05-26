@@ -4882,3 +4882,239 @@ and the pokédex remembers what you became.
 :3
 ```
 
+---
+
+# Session — Evolved tag, family-tree navigation, spawn-pool rewrite
+
+A polish-and-fix session, three arcs. The new evolution system from
+last session made one bug visible (Dragon-day spawning ~100% Dratini)
+and surfaced a navigation gap (family-tree tiles not tappable). Plus
+a quality-of-life tag for filtering evolved captures.
+
+## "Evolved" built-in tag
+
+Added to `BUILTIN_TAGS` next to `Pure`. Auto-applied to any fusion
+where at least one side is past its base form.
+
+Definition needs care: Pichu is a pre-base baby (not actually
+evolved), Pikachu is the candy-root (base), Raichu is evolved. The
+helper `_isEvolvedSpecies(idx)` BFS-walks forward from the species'
+**candy root** (which already encodes "babies are skipped") and
+returns true only if `idx` is reachable. So:
+
+| Species | candyRoot | reachable from candyRoot? | Evolved? |
+|---|---|---|---|
+| Pichu | Pikachu | no (Pichu is BEHIND Pikachu) | **no** |
+| Pikachu | Pikachu | self | **no** |
+| Raichu | Pikachu | yes | **yes** |
+| Bulbasaur | Bulbasaur | self | **no** |
+| Venusaur | Bulbasaur | yes | **yes** |
+| Magikarp | Magikarp | self | **no** |
+| Gyarados | Magikarp | yes | **yes** |
+
+Memoized per species id since the tag predicate runs across every
+capture during filter re-renders.
+
+Filter chips have AND-semantics, so `Evolved + Pure` finds your
+fully-evolved same-species fusions; `Evolved + a custom tag` narrows
+to evolved members of that tag.
+
+## Family-tree tiles → fusion-view navigation
+
+The family-tree mosaic in the pokédex entry was view-only. Now every
+non-current tile is a button that pushes the corresponding fusion's
+pokédex entry onto the view stack — click, Enter, Space all work.
+
+- Persistent affordances: `cursor: pointer`, hover/focus tint via
+  `color-mix(in srgb, var(--ui-accent), 14%)`, `:active` `scale(0.95)`
+  for tactile press feedback.
+- Silhouette tiles ARE tappable — destination shows the silhouette
+  pokédex entry, consistent with the tile's appearance.
+- The "current" tile is the one exception (you're already on that
+  entry); stays non-tappable with the existing accent border.
+
+Implementation is a single `.tappable` class added in the cell
+template + a small loop after `gridEl.innerHTML = ...` that wires
+click/keydown to `showFusionView(a, b)`. The existing carousel +
+back-button machinery handles popping back to wherever you started.
+
+## Spawn-pool rewrite (the big one)
+
+The previous spawn algorithm used multiplicative type-weights with
+duplicate-as-weight pool arrays: each species pushed
+`1 × (35 if primary === daily) × (25 if primary === weekly)` times.
+Independent slot draws.
+
+**The bug:** when daily and weekly hit the same type, both pools
+heavily favor the same dominant species, AND the slots draw
+independently — so you get pure-species fusions like
+Dratini × Dratini ~100% of the time on Dragon-day-Dragon-week. Even
+on different types, single-species types (Dratini for DRAGON, Jynx
+for ICE, etc.) over-concentrate.
+
+### The new algorithm
+
+Split species selection into two independent draws:
+
+**Draw 1 — type pair `(typeA, typeB)`** from a 9-bucket mixture:
+
+| Bucket | Shape | Weight |
+|---|---|---|
+| 1 | (DAILY, DAILY) | 15% |
+| 2 | (DAILY, WEEKLY) | 10% |
+| 3 | (WEEKLY, DAILY) | 10% |
+| 4 | (WEEKLY, WEEKLY) | 10% |
+| 5 | (DAILY, uniform over not-DAILY) | 15% |
+| 6 | (uniform over not-DAILY, DAILY) | 15% |
+| 7 | (WEEKLY, uniform over not-WEEKLY) | 7.5% |
+| 8 | (uniform over not-WEEKLY, WEEKLY) | 7.5% |
+| 9 | (uniform, uniform) | 10% |
+
+Aggregates: 65% of spawns have DAILY in at least one slot, 45% have
+WEEKLY. Daily is the stronger signal (user's tuning preference).
+
+**Draw 2 — uniform species per slot** from the chosen type's bucket:
+- slot A from species with `primary == typeA`
+- slot B from species with `secondary == typeB` (or `primary` if
+  single-typed)
+
+### Empty-bucket handling
+
+In gen 1 some types have zero primary-pool species (FLYING is the
+big one — all flying-types in gen 1 are FLYING-secondary). The
+sampler **drops** any `(a, b)` pair where `byPrimary[a]` or
+`bySecondary[b]` is empty, then **renormalizes** the survivors. So
+FLYING-day diverts its weight cleanly to other pairs instead of
+producing dead rolls.
+
+### Implementation shape
+
+```
+_buildTypeIndices()       byPrimary[t] / bySecondary[t] — built once
+                          from species data, no weather dependency
+
+getTypePairSampler()      cached per "daily|weekly" key; builds the
+                          dropped+renormalized CDF as a flat array
+                          of {a, b, cum} entries (last cum pinned
+                          to exactly 1 to guard against fp drift)
+
+_sampleTypePair(s, r)     binary search the CDF given a [0,1) draw
+```
+
+### Determinism considerations
+
+One extra PRNG draw between fx/fy and species sampling for the type-
+pair pick. Subsequent draws (level, sizeM, bornOffset, variantSeed)
+shift by one position. **Spawn positions are preserved** because
+the spawn-or-not gate + fx + fy are unchanged. Live uncaught spawns
+will get new species/level/size on next refresh (20-minute lifetime,
+brief transition). Spawn IDs (cell+tick) and already-caught creatures
+are untouched.
+
+`DAY_SALT` deliberately NOT bumped — bumping it would also reroll
+positions, which is unnecessarily disruptive.
+
+### Verification
+
+Simulated 500k spawns per scenario against real gen-1 type data:
+
+| Scenario | Top result |
+|---|---|
+| Dragon-day, Dragon-week | 49.6% Dratini×Dratini (was ~100%) |
+| Fire-day, Water-week | top fusion is 0.69% (well spread) |
+| Electric-day, Electric-week | 4 species share ~4% slots each |
+
+Dragon×Dragon stays elevated because Dratini is the only DRAGON-
+primary in gen 1; once we open up `SPAWNABLE_SPECIES_A_FULL` (gen 1-4)
+the distribution dilutes further naturally.
+
+## Files touched
+
+```
+static/spawns.js         spawn algorithm rewrite, ~80 lines net
+                         (removed: getWeightedPools + duplicate-pool
+                          machinery; added: type indices, 9-bucket
+                          mixture sampler, type-pair drawing)
+
+static/creatures.js      Evolved tag predicate + helper
+                         family-grid cells now tappable + CSS
+                         affordances (.tappable class, hover, active)
+```
+
+## Things learned
+
+1. **Independent-draws over weighted single-pool is the cleanest
+   fix.** The old design's bug was that BOTH slot draws independently
+   over-weighted the same dominant species → pure-species fusions
+   dominated. The new design picks the *type combination* first
+   (where the mixture can include uniform fallbacks), THEN draws
+   species uniformly within type. Same mechanism PIF uses for type
+   inheritance, so the weather meaning ("DRAGON day") still maps
+   cleanly to "the fusion's primary is DRAGON."
+
+2. **Empty-bucket drop + renormalize is the right empty-set policy.**
+   Without it, FLYING-day rolls in slot A produce nothing in gen 1
+   and the spawn falls through silently. With it, that weight cleanly
+   redistributes. The cost is a per-scenario cumulative array
+   recompute on weather change (~324 entries, fast).
+
+3. **The "Pichu is not evolved" subtlety is worth getting right.**
+   The naive "has-a-pre-evolution" test would tag Pichu as evolved
+   (it has none, but neither does Pikachu in our definition). Using
+   the existing `candyRootFor` walk encodes the "babies don't count"
+   rule we already use everywhere else.
+
+4. **Tappable affordance needs both states.** Initial pass had only
+   `:hover` on tappable family-cells — but touch devices don't fire
+   `:hover` until tap. Adding `cursor: pointer` + `:active` scale
+   gave a felt-tactile press on mobile without requiring an
+   exploratory tap to discover interactivity.
+
+## Stuff still to do
+
+1. Verify the spawn-pool rewrite in the wild — particularly the
+   Dragon-day-Dragon-week scenario the user originally flagged.
+2. Consider opening up `SPAWNABLE_SPECIES_A_FULL` (gen 1-4) to
+   further dilute single-species over-concentration on rare-type
+   weather. Requires bumping `bulkDownload`'s `indexTo` to 509.
+3. Transit walk-leg shape decoding (carried).
+4. Drop the legacy walkGraph code path (carried).
+5. Re-tile with lower transportation_name minzoom (carried).
+6. Lazy `loadAllPois()` (carried).
+7. Phase A CSS extraction (carried).
+8. Android Health Connect (carried).
+9. Future breeding mechanic (carried).
+10. Evolve animation (deferred from last session).
+
+## Session vibes
+
+```
+Three arcs, each small and clean:
+
+  A tag (Evolved) — one helper, one entry, careful about babies.
+  A click handler — making the mosaic actually go places.
+  A spawn rewrite — independent draws fix the concentration bug.
+
+The third was the real work. Old algorithm:
+  pool slots, duplicate-as-weight, 35× × 25×, draw both independently.
+  → Dragon-day-Dragon-week: 100% Dratini.
+
+New algorithm:
+  draw the type combo first from a 9-bucket mixture,
+  then sample species uniformly from each type's bucket.
+  → Dragon-day-Dragon-week: 50% Dratini, the rest sprinkled.
+
+Half a screen of dragon, and half a screen of everything else.
+Daily stronger than weekly (15% vs 10% on diagonals;
+DAILY×other 15% vs WEEKLY×other 7.5%) per the user's instinct
+that today's type should be louder than this-week's.
+
+Three buttons of refinement during the design conversation —
+  bump DAILY,DAILY down to 15% from 20%
+  put 5% in WEEKLY,any
+  no wait, reduce WEEKLY,WEEKLY to 10%, daily should be louder
+— each one moving toward the right shape.
+
+:3
+```
+

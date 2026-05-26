@@ -206,48 +206,146 @@
     };
   }
 
-  // Build (and cache) two weighted species pools for the current
-  // weather — one for slot A, one for slot B. Per Infinite Fusion
-  // typing rules the fusion's primary type comes from A and its
-  // secondary from B (or B's primary if B is single-typed). So each
-  // slot is weighted by the type it actually CONTRIBUTES to the fusion:
-  //   - poolA: weight by species.primary
-  //   - poolB: weight by species.secondary || species.primary
-  // This way Scyther (BUG/FLYING) is FLYING-boosted only when in slot
-  // B, and BUG-boosted only when in slot A. Returns null when types
-  // data isn't loaded — callers should treat that as "spawning
-  // disabled until data is downloaded".
-  let _cachedPoolKey = null;
-  let _cachedPools = null;
-  function getWeightedPools() {
+  // ── Type-pair sampler ──
+  // Replaces the older multiplicative-weight duplicate-pool design,
+  // which produced extreme concentration when daily ≈ weekly on a
+  // type that only one or two species carry (e.g. Dragon-day-Dragon-
+  // week → ~100% Dratini). The new design splits species selection
+  // into TWO independent draws:
+  //
+  //   1) Draw a (typeA, typeB) pair from a 9-bucket mixture (weights
+  //      defined below). Most buckets pin one or both slots to the
+  //      daily or weekly type; one bucket is fully uniform.
+  //
+  //   2) Once typeA + typeB are chosen, uniformly sample slot A from
+  //      species with primary == typeA, and slot B from species with
+  //      secondary == typeB (or primary if single-typed). Matches the
+  //      fusion's actual type-inheritance rule: fusion.primary =
+  //      slotA.primary, fusion.secondary = slotB.secondary || primary.
+  //
+  // The empty-pair drop step (a pair where either pool is empty) makes
+  // types like FLYING (no FLYING-primary species in gen 1) cleanly
+  // divert their weight to other pairs instead of producing dead rolls.
+
+  // Cell A: byPrimary[t] = list of spawnable species whose primary == t.
+  // Cell B: bySecondary[t] = list of spawnable species whose secondary
+  // (or primary, if single-typed) == t. Built once when species data
+  // is available; doesn't depend on weather.
+  let _byPrimary = null;
+  let _bySecondary = null;
+  function _buildTypeIndices() {
+    if (_byPrimary && _bySecondary) return true;
     const Species = global.Species;
-    if (!Species || !Species.typesFor) return null;
-    const w = currentWeather();
-    const key = `${w.daily}|${w.weekly}`;
-    if (key === _cachedPoolKey && _cachedPools) return _cachedPools;
+    if (!Species || !Species.typesFor) return false;
     const probe = Species.typesFor(SPAWNABLE_SPECIES_A[0]);
-    if (!probe || !probe.length) return null;
-    const poolA = [];
+    if (!probe || !probe.length) return false;
+    const byPrimary = Object.create(null);
+    const bySecondary = Object.create(null);
+    for (const t of TYPES) { byPrimary[t] = []; bySecondary[t] = []; }
     for (const sp of SPAWNABLE_SPECIES_A) {
       const types = Species.typesFor(sp) || [];
-      const primary = types[0];
-      let wA = 1;
-      if (primary === w.daily)  wA *= 35;
-      if (primary === w.weekly) wA *= 25;
-      for (let i = 0; i < wA; i++) poolA.push(sp);
+      if (!types.length) continue;
+      byPrimary[types[0]].push(sp);
     }
-    const poolB = [];
     for (const sp of SPAWNABLE_SPECIES_B) {
       const types = Species.typesFor(sp) || [];
-      const secondary = types[1] || types[0];
-      let wB = 1;
-      if (secondary === w.daily)  wB *= 35;
-      if (secondary === w.weekly) wB *= 25;
-      for (let i = 0; i < wB; i++) poolB.push(sp);
+      if (!types.length) continue;
+      bySecondary[types[1] || types[0]].push(sp);
     }
-    _cachedPoolKey = key;
-    _cachedPools = { poolA, poolB };
-    return _cachedPools;
+    _byPrimary = byPrimary;
+    _bySecondary = bySecondary;
+    return true;
+  }
+
+  // Bucket weights — see header comment for the full table. Sums to 1.
+  // Daily is the stronger signal: 65% of spawns involve DAILY in at
+  // least one slot, 45% involve WEEKLY.
+  const BUCKET_W_DD = 0.15;   // 1: (DAILY, DAILY)
+  const BUCKET_W_DW = 0.10;   // 2: (DAILY, WEEKLY)
+  const BUCKET_W_WD = 0.10;   // 3: (WEEKLY, DAILY)
+  const BUCKET_W_WW = 0.10;   // 4: (WEEKLY, WEEKLY)
+  const BUCKET_W_DX = 0.15;   // 5: (DAILY, uniform over not-DAILY)
+  const BUCKET_W_XD = 0.15;   // 6: (uniform over not-DAILY, DAILY)
+  const BUCKET_W_WX = 0.075;  // 7: (WEEKLY, uniform over not-WEEKLY)
+  const BUCKET_W_XW = 0.075;  // 8: (uniform over not-WEEKLY, WEEKLY)
+  const BUCKET_W_UU = 0.10;   // 9: (uniform, uniform)
+
+  let _cachedSamplerKey = null;
+  let _cachedSampler = null;
+  function getTypePairSampler() {
+    if (!_buildTypeIndices()) return null;
+    const w = currentWeather();
+    const key = `${w.daily}|${w.weekly}`;
+    if (key === _cachedSamplerKey && _cachedSampler) return _cachedSampler;
+
+    const daily = w.daily;
+    const weekly = w.weekly;
+    const N = TYPES.length;
+    const otherD = N - 1;   // count of types other than DAILY (== TYPES.length - 1)
+    const otherW = N - 1;   // count of types other than WEEKLY
+
+    // Weight of one concrete (a, b) pair under the mixture. Each
+    // bucket either pins exactly one pair (buckets 1-4) or spreads
+    // uniformly over a subset (buckets 5-9); we sum the contributions.
+    // When daily == weekly the daily- and weekly-anchored buckets
+    // collapse onto the same pair, which is fine — that's exactly how
+    // "extra-strong same-type weather" should land.
+    const weightOf = (a, b) => {
+      let v = 0;
+      if (a === daily  && b === daily)  v += BUCKET_W_DD;
+      if (a === daily  && b === weekly) v += BUCKET_W_DW;
+      if (a === weekly && b === daily)  v += BUCKET_W_WD;
+      if (a === weekly && b === weekly) v += BUCKET_W_WW;
+      if (a === daily  && b !== daily)  v += BUCKET_W_DX / otherD;
+      if (a !== daily  && b === daily)  v += BUCKET_W_XD / otherD;
+      if (a === weekly && b !== weekly) v += BUCKET_W_WX / otherW;
+      if (a !== weekly && b === weekly) v += BUCKET_W_XW / otherW;
+      v += BUCKET_W_UU / (N * N);
+      return v;
+    };
+
+    // Compose the full (a, b) distribution, dropping pairs where
+    // either pool is empty (so e.g. FLYING-day diverts cleanly instead
+    // of rolling species-less). Renormalize the survivors into a
+    // cumulative distribution for fast binary-search sampling.
+    const entries = [];
+    let total = 0;
+    for (const a of TYPES) {
+      if (!_byPrimary[a].length) continue;
+      for (const b of TYPES) {
+        if (!_bySecondary[b].length) continue;
+        const wv = weightOf(a, b);
+        if (wv <= 0) continue;
+        entries.push({ a, b, w: wv });
+        total += wv;
+      }
+    }
+    if (!entries.length || total <= 0) return null;
+    let cum = 0;
+    for (const e of entries) {
+      cum += e.w / total;
+      e.cum = cum;
+    }
+    // Floating-point drift guard: pin the last cum to exactly 1 so a
+    // PRNG draw of 0.9999… can never fall past the end.
+    entries[entries.length - 1].cum = 1;
+
+    const sampler = { byPrimary: _byPrimary, bySecondary: _bySecondary, entries };
+    _cachedSamplerKey = key;
+    _cachedSampler = sampler;
+    return sampler;
+  }
+
+  // Sample one (a, b) type pair given a uniform [0,1) draw r.
+  function _sampleTypePair(sampler, r) {
+    const entries = sampler.entries;
+    let lo = 0, hi = entries.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (entries[mid].cum < r) lo = mid + 1;
+      else hi = mid;
+    }
+    return entries[lo];
   }
 
   // Per-tick PRNG seed for one cell. Mixes cell coordinates with the
@@ -272,15 +370,18 @@
     const fy = arng();
     const lat = (cellX + fx) / SCALE - 90;
     const lng = (cellY + fy) / SCALE - 180;
-    // Type-weather sampling: A is picked from a pool weighted by each
-    // species' primary type (what A contributes to the fusion); B from
-    // a pool weighted by secondary types (what B contributes). Pools
-    // are null when types data isn't loaded — bail with no spawn so
-    // the user is nudged to download data; creatures.js shows a banner.
-    const pools = getWeightedPools();
-    if (!pools) return null;
-    const speciesA = pools.poolA[Math.floor(arng() * pools.poolA.length)];
-    const speciesB = pools.poolB[Math.floor(arng() * pools.poolB.length)];
+    // Type-weather sampling: draw a (typeA, typeB) pair from the 9-
+    // bucket mixture (see getTypePairSampler), then uniformly sample
+    // each slot from species of the chosen type. Sampler is null when
+    // types data isn't loaded — bail with no spawn so the user is
+    // nudged to download data; creatures.js shows a banner.
+    const sampler = getTypePairSampler();
+    if (!sampler) return null;
+    const pair = _sampleTypePair(sampler, arng());
+    const poolA = sampler.byPrimary[pair.a];
+    const poolB = sampler.bySecondary[pair.b];
+    const speciesA = poolA[Math.floor(arng() * poolA.length)];
+    const speciesB = poolB[Math.floor(arng() * poolB.length)];
     const level = expDistr(5, 50, arng()) + 1;
     const sizeM = 0.15 + arng() * 2.0;
     // Deterministic intra-tick birth offset (0..TICK_MS-1 ms) so spawns
