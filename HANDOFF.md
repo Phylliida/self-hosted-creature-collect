@@ -4615,3 +4615,270 @@ brainstorm → scaffold → build → verify → integrate → debounce → done
 
 :3
 ```
+
+---
+
+# Session — evolution mechanic (the one we've been deferring since session 2)
+
+The feature carried on every "stuff still to do" list since the
+Pokéstops session. Today it landed end-to-end: candy economy, tap-
+to-evolve, hold-to-confirm overlay, real mutation of the capture
+record, variant picking with same-artist preference, pokédex
+registration, in-place detail-view refresh.
+
+## What landed
+
+### Candy economy (replaces level / move / item conditions)
+
+Replaced PIF's native evolution conditions with a flat candy
+economy. The user-facing rule:
+
+- 3+ stage chain (e.g. Bulbasaur → Ivysaur → Venusaur):
+  - base form's evolution costs **25** candy
+  - middle form's evolution costs **50** candy
+  - hypothetical 4-stage line's third evolution would cost 100
+- 2-stage chain (e.g. Tangela, Rattata, Eevee branches):
+  - **50** candy default
+  - **Magikarp → Gyarados** special-cased to **100** as the "rare
+    big payoff" so the cheap fishing-rod catch doesn't make
+    Gyarados trivial
+- Methods that natively require an item (`Item`, `TradeItem`,
+  `DayHoldItem`) keep the item requirement ON TOP of the candy cost.
+  All other methods (Level, HasMove, AttackGreater, etc.) drop their
+  condition entirely.
+
+Chain depth is computed by walking forward from the family root and
+tracking BFS depth, so branching chains (Eevee → 8 forms) treat each
+path correctly — Eevee is depth 0 of a 2-stage line and costs 50
+regardless of which branch the user evolves into.
+
+### Requirement display — candy icons inline
+
+The "Evolves to" detail-view rows used to show "Lv 16" / "Use
+Thunderstone". Now they show the same CSS-sprite candy icon used in
+the candy tally, followed by `×N`:
+
+```
+→ Charizard            [Charmander candy] ×50
+→ Vaporeon             Water Stone + [Eevee candy] ×50
+→ Gyarados             [Magikarp candy] ×100
+```
+
+The formatter `formatEvolutionRequirementHtml` returns raw HTML
+(escaping its own user inputs); the call site stops escaping the
+result. Tooltip / aria-label preserve the full text for screen
+readers.
+
+### Tappable evo-row + visual affordance
+
+When the player can afford an evolution (right candy bucket has
+enough AND any required item is in the bag), the evo-row becomes a
+button:
+
+- `evo-ready` class toggles persistent accent border + tinted
+  background
+- trailing `›` chevron at the right edge
+- `:active` scale(0.98) for tactile press feedback
+- `role="button" tabindex="0"` for accessibility
+- click / Enter / Space all open the confirm overlay
+
+**Originally gated on `seen`** so silhouette rows weren't tappable.
+The user spotted that this blocked evolving toward fusions they
+hadn't witnessed yet — even with the candy. Dropped the gate; the
+confirm dialog just shows "???" as the target name for unseen
+targets, matching the row's own silhouette presentation.
+
+### Hold-to-confirm overlay
+
+Lazy-built one DOM node (`#ccEvolveConfirm`), reused for every
+confirmation. Card shows: "Evolve?" title, `Charmeleon → Charizard`
+arrow line, cost preview, No button, Yes button (108×108 px with
+SVG ring around it), "Hold 'Yes' to confirm" hint.
+
+**Yes button hold logic** — pure CSS animation driven by a class
+toggle:
+
+```css
+.ring-progress {
+  stroke-dasharray: 251.33;
+  stroke-dashoffset: 251.33;   /* full circle = no progress */
+  transition: stroke-dashoffset 0ms linear;
+}
+.evolve-yes.holding .ring-progress {
+  stroke-dashoffset: 0;
+  transition: stroke-dashoffset 5000ms linear;
+}
+```
+
+pointerdown adds `.holding` → SVG ring strokes around the button
+over exactly 5 s. pointerup / pointercancel / pointerleave /
+lostpointercapture remove the class → ring snaps back to empty
+(the base 0ms transition). A `setTimeout(5000)` fires the action on
+full hold. JS only toggles classes + runs the timer; the animation
+itself is GPU-composited.
+
+Cancel paths: No button, backdrop tap, Escape key, any pointer-cancel
+variant. Multiple finger pointerdowns while a hold is live are
+ignored (one-finger only).
+
+### performEvolution — the actual mutation
+
+The confirm completion callback now calls `performEvolution()`
+which:
+
+1. Re-checks affordability (defends against stale state mid-confirm).
+2. Picks the new variant via `_pickEvolvedVariant()` BEFORE
+   charging anything — bails on error without billing the player.
+3. Atomically deducts: item via `consumeItem()`, then candy from
+   the family-root bucket (deleted from map when count hits 0, to
+   match consumeItem's style).
+4. Mutates the capture record by id — preserves nickname, size,
+   tags, caughtAt; updates `speciesA`, `speciesB`, `variant`, and
+   `name` (the canonical fused name; nicknames still take priority
+   in `displayName`).
+5. Calls `markFusionSeen(newA, newB, null, newVariant)` so the
+   pokédex registers the new fusion + the chosen variant immediately.
+
+After success the hold-to-confirm timer's callback calls
+`findCreature(id)` to re-read the rewritten capture, then
+`renderDetail(fresh)` to repaint the detail view in place. User
+lands on the same screen but it's now the evolved creature, the
+evolved row is gone (replaced by the next-stage evolutions if any),
+and the candy tally reflects the new balance.
+
+### Variant picker — same artist preferred
+
+`_pickEvolvedVariant(oldA, oldB, oldVariant, newA, newB)`:
+
+- If old was a custom variant: look up its artist via
+  `Sprites.getSpriteCreditForSlot(oldA, oldB, oldVariant)`.
+- Enumerate the new fusion's slots in parallel; first slot whose
+  artist string equals the old artist wins (exact match — same name
+  or same `#N` fallback string).
+- Otherwise (autogen source, no match, or new fusion has no
+  custom variants): uniformly random slot, or null if the new
+  fusion is autogen-only.
+
+Mirrors the user's intent: if Slawter drew both Charmander × Pikachu
+and Charmeleon × Pikachu, evolving the Slawter Charmander × Pikachu
+to Charmeleon keeps you on Slawter's art. Otherwise you get a
+surprise from the available pool.
+
+## Files touched
+
+```
+static/creatures.js   (everything above:
+                        cost helpers, requirement formatter,
+                        affordability check, tap-state CSS,
+                        hold-to-confirm overlay JS + CSS,
+                        performEvolution + variant picker,
+                        evo-row click wiring,
+                        108px (1.5×) yes-button bump)
+```
+
+No new files; everything lives next to the existing capture / candy
+plumbing in `creatures.js`.
+
+## Things learned
+
+1. **Affordability has two senses.** "Can afford it AND has seen
+   the target" gates too strictly when the second part is just
+   "do we know what to draw." Dropping the seen-gate fixed a real
+   user-blocked path (can't evolve toward an unseen fusion);
+   showing "???" in the confirm matches the silhouette row's own
+   presentation, so no spoilers are added by enabling the button.
+
+2. **CSS-driven hold-to-confirm is half the code.** Toggling one
+   class drives a `transition: stroke-dashoffset 5000ms` end-to-end.
+   JS is just the timer + the class toggle + cancel handlers. No
+   rAF loops, no per-frame state. The trick is making the BASE rule
+   have `transition: 0ms` so cancellation snaps back to empty
+   instantly — feels right because it's discrete-state, not a
+   half-finished animation.
+
+3. **Variant-by-artist is the right default.** The user collected
+   each fusion variant intentionally — keeping the artist preserves
+   their aesthetic choice through evolutions. Random uniform on
+   miss is fine; it surfaces art they might not have seen yet.
+
+4. **`performEvolution` order matters.** Pick the new variant
+   FIRST (which can throw on missing manifest data), THEN charge
+   the player. The atomic deduct-and-mutate is straightforward
+   after that. Re-checking affordability inside `performEvolution`
+   guards against stale UI state if something changed during the
+   5-second hold (unlikely but harmless).
+
+5. **In-place re-render beats pop-and-push for state changes.**
+   `renderDetail(findCreature(c.id))` repaints the entire detail
+   body with the fresh capture record. The view-stack stays intact,
+   back navigation still works, no animation flicker, no scroll-
+   position loss.
+
+## What's deliberately NOT built
+
+- **Evolve animation.** Currently the detail view just repaints to
+  the evolved form. A flash / sparkle / sprite-morph would be a
+  natural polish but the user explicitly said "for now, just hop
+  back to the pokemon screen but it's the evolved one." Polish for
+  later.
+- **Pop-and-rebuild of the inventory grid behind the detail view.**
+  The grid auto-refreshes from `readCapturedCreatures()` on pop;
+  the virtualized cards may briefly show cached versions until
+  scrolled past. Hasn't been reported as an issue.
+- **Item-required evolution showing both costs in the confirm
+  dialog header.** Currently shows `Fire Stone + [icon] ×50`. Could
+  be made more prominent. The current layout works; revisit if the
+  user finds it cramped.
+- **Evolution chains beyond gen 1.** Chain-depth logic is generic
+  (BFS from root) so any future dataset with longer chains "just
+  works" — the `[25, 50, 100]` tier array would simply extend.
+
+## Stuff still to do
+
+1. Verify in the wild — evolve a few creatures, check pokédex
+   updates, check candy deduction, check the inventory grid
+   refreshes correctly after pop.
+2. Evolve animation (deferred polish).
+3. Transit walk-leg shape decoding (carried).
+4. Drop the legacy walkGraph code path (carried).
+5. Re-tile with lower transportation_name minzoom (carried).
+6. Lazy `loadAllPois()` (carried).
+7. Phase A CSS extraction (carried).
+8. Android Health Connect (carried).
+9. Future breeding mechanic — daycare eggs are in; cross-species
+   breeding is the next big gameplay piece.
+
+## Session vibes
+
+```
+The feature carried on every TODO list since the Pokéstops session.
+"Evolve mechanic: still on the deferred list." Six sessions in a row.
+
+Today the user asked, and we built it in one arc:
+  cost helpers   (25/50/100 by chain depth, Magikarp special-cased)
+  display swap   (candy icon + count, item-aware)
+  affordability  (candy bucket + bag check)
+  tappable row   (with the friendly chevron and the press-scale)
+  hold overlay   (5-second CSS ring fill driven by one class toggle)
+  variant picker (same artist preferred, random uniform on miss)
+  mutation       (atomic deduct, mark seen, in-place refresh)
+
+One scope correction along the way: I'd gated tap on `seen` which
+locked the user out of evolving toward fusions they hadn't witnessed
+even with the candy. They spotted it. Drop the gate; show "???" in
+the confirm; ship.
+
+Bumped the yes circle to 108px (1.5×) on user request. The ring
+animation scales for free — the SVG viewBox doesn't change; only the
+container does.
+
+Magikarp now costs 100 candy.
+Charmander costs 25.
+Eevee costs 50, whichever stone you happen to have.
+And when you confirm, the candy comes out of the bucket
+and the new sprite slides into place
+and the pokédex remembers what you became.
+
+:3
+```
+
