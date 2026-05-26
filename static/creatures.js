@@ -3394,12 +3394,12 @@
          toggles a .holding class on press/release. */
       #ccEvolveConfirm .evolve-yes {
         position: relative;
-        width: 72px; height: 72px;
+        width: 108px; height: 108px;
         background: var(--ui-accent, #3b7fdf);
         color: var(--ui-accent-text, #fff);
         border: 1px solid var(--ui-accent-border, transparent);
         border-radius: 50%;
-        font-size: 13px;
+        font-size: 15px;
         font-weight: 600;
         font-family: inherit;
         cursor: pointer;
@@ -3410,8 +3410,8 @@
         -webkit-tap-highlight-color: transparent;
       }
       #ccEvolveConfirm .evolve-yes svg {
-        position: absolute; inset: -6px;
-        width: calc(100% + 12px); height: calc(100% + 12px);
+        position: absolute; inset: -9px;
+        width: calc(100% + 18px); height: calc(100% + 18px);
         transform: rotate(-90deg);  /* progress starts at 12 o'clock */
         pointer-events: none;
       }
