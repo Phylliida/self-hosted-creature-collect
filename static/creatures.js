@@ -76,6 +76,15 @@
         calls: 0, totalMs: 0, lastMs: 0, maxMs: 0,
         lastBreakdown: null, recent: [],
       },
+      // Detail-view "tap to open" timing. totalMs = click → header
+      // sprite ready (the moment the panel actually looks finished).
+      // The breakdown carries each phase so we can see which segment
+      // dominates: dispatch (click → renderDetail start), sync (body
+      // construction), header sprite paint, slowest evo-row settle.
+      detail: {
+        calls: 0, totalMs: 0, lastMs: 0, maxMs: 0,
+        lastBreakdown: null, recent: [],
+      },
     },
   };
   if (typeof window !== 'undefined') window._invPerf = _invPerf;
@@ -97,6 +106,22 @@
     slot.lastBreakdown = breakdown;
     slot.recent.push(breakdown);
     if (slot.recent.length > _INV_PERF_RING) slot.recent.shift();
+  }
+
+  // Idle-time scheduler. Used to defer non-critical sprite loads
+  // (evo-row previews especially) until after the panel has actually
+  // painted — the header sprite gets to fire first, then the evo
+  // previews stream in instead of blocking initial paint.
+  //
+  // iOS 16.4+ ships requestIdleCallback. Older WebKit falls back to
+  // setTimeout with a tiny delay — close enough to "after this frame"
+  // for our purposes.
+  function _scheduleIdle(fn) {
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(fn, { timeout: 500 });
+    } else {
+      setTimeout(fn, 50);
+    }
   }
   const CANDY_KEY = 'cc.candy.v1';
   // Candy is keyed by an evolution-family ROOT species index — every
@@ -6124,6 +6149,13 @@
   }
 
   function showDetail(id, list, idx, opts) {
+    // Stamp the moment the user tapped (or whatever code called us)
+    // so renderDetail's perf instrumentation can split out "dispatch
+    // overhead" (push view → applyTopView → _populateTrack → ...)
+    // from the actual sync render cost. Reset to null after each
+    // renderDetail consumes it to keep stamps from leaking across
+    // unrelated entries.
+    _invPerf._detailOpenStart = performance.now();
     const state = { view: 'detail', id };
     if (Array.isArray(list) && typeof idx === 'number') {
       state.list = list;
@@ -7780,6 +7812,39 @@
   function renderDetail(c, targetBody) {
     const panel = document.getElementById('creatureInventory');
     if (!panel) return;
+    // Perf tracking — consume the showDetail tap timestamp (if any)
+    // and stamp local landmarks. `_dispatchMs` = click → renderDetail
+    // start. We finalize the metric record once the header sprite +
+    // every expected evo-row sprite have either painted or errored.
+    const _tStart = performance.now();
+    const _tClick = _invPerf._detailOpenStart;
+    _invPerf._detailOpenStart = null;
+    const _dispatchMs = (_tClick != null) ? (_tStart - _tClick) : 0;
+    let _committed = false;
+    const _perfState = {
+      t: Date.now(),
+      dispatchMs: _dispatchMs,
+      syncMs: 0,
+      headerSpriteMs: null,
+      slowestEvoSpriteMs: null,
+      evoRowCount: 0,
+      headerReady: false,
+      evoRowsReady: 0,
+      totalMs: 0,
+    };
+    function _commitDetailPerf() {
+      if (_committed) return;
+      // Commit when header is ready AND every evo-row has either
+      // signalled ready or errored. headerSpriteMs and slowestEvoSpriteMs
+      // are relative to renderDetail start, not to the click — to
+      // get user-perceived latency add dispatchMs.
+      if (!_perfState.headerReady) return;
+      if (_perfState.evoRowsReady < _perfState.evoRowCount) return;
+      _committed = true;
+      _perfState.totalMs = (performance.now() - _tStart)
+        + _perfState.dispatchMs;
+      _perfMarkRender(_invPerf.renders.detail, _perfState);
+    }
     const body = targetBody || panel.querySelector('.detail-body');
     // Revoke any in-flight sprite URLs from the previous render so
     // we don't leak blobs when the detail view is re-rendered (every
@@ -7938,18 +8003,58 @@
         });
       }
     }
-    // Async-load each evolution row's sprite from IDB (no network),
-    // and wire up the tap-to-confirm handler for affordable rows.
+    // Perf — sync DOM + event-listener wiring is done; anything
+    // after this point is async (sprite loads + evo-row Promise
+    // chains). Set syncMs + evoRowCount BEFORE any fallback commits
+    // so the metric record has the correct counts even when fallback
+    // fires before the evo loop runs.
+    _perfState.syncMs = performance.now() - _tStart;
+    _perfState.evoRowCount = evoEntries.length;
+    // If no header sprite is going to fire (no SpriteStore loaded,
+    // or no img element), commit the header phase now so the metric
+    // can still finalize.
+    if (!global.SpriteStore || c.speciesA == null || c.speciesB == null
+        || !body.querySelector('.detail-art-img')) {
+      _perfState.headerReady = true;
+      _perfState.headerSpriteMs = _perfState.syncMs;
+      _commitDetailPerf();
+    }
+    // Lazy-load each evolution row's sprite. The variant resolve +
+    // sprite load are deferred to an idle callback so the panel paints
+    // first (header sprite + the rest of the body) — evo previews
+    // then stream in as cold sprite-pack downloads complete, instead
+    // of blocking the panel-open feel for the ~1-2s it takes to fetch
+    // them all. Same idea as the inventory virtualizer's
+    // load-sprite-per-visible-card pattern, just adapted for the
+    // detail view (which doesn't virtualize but still benefits from
+    // staging the work).
+    //
+    // Click handlers are attached SYNCHRONOUSLY below so affordable
+    // evo rows are tappable immediately on panel open — only the
+    // sprite preview waits for idle.
     if (evoEntries.length) {
       for (let i = 0; i < evoEntries.length; i++) {
         const e = evoEntries[i];
         const row = body.querySelector(`.evo-row[data-evo-idx="${i}"]`);
-        if (!row) continue;
+        if (!row) { _perfState.evoRowsReady++; _commitDetailPerf(); continue; }
         // Resolve the deterministic variant slot the user will get if
         // they evolve. Used for the preview sprite here AND inside
         // performEvolution — same seed both sides, same slot. The
         // silhouette (when target is unseen) thus blackens the SPECIFIC
         // future sprite, not an arbitrary best-available variant.
+        let _evoCommitted = false;
+        const markEvoRowReady = () => {
+          if (_evoCommitted) return;
+          _evoCommitted = true;
+          const elapsed = performance.now() - _tStart;
+          if (_perfState.slowestEvoSpriteMs == null
+              || elapsed > _perfState.slowestEvoSpriteMs) {
+            _perfState.slowestEvoSpriteMs = elapsed;
+          }
+          _perfState.evoRowsReady++;
+          _commitDetailPerf();
+        };
+        _scheduleIdle(() => {
         _pickEvolvedVariant(c, c.speciesA, c.speciesB, c.variant, e.newA, e.newB)
           .then(({ variant, autogenOnly }) => {
             // Silhouette the preview when the SPECIFIC variant the user
@@ -7966,9 +8071,16 @@
               const img = row.querySelector('.evo-art img');
               if (img) {
                 global.SpriteStore.showSprite(img, e.newA, e.newB, variant, {
-                  onReady: () => row.classList.add('evo-art-ready'),
+                  onReady: () => {
+                    row.classList.add('evo-art-ready');
+                    markEvoRowReady();
+                  },
                 });
+              } else {
+                markEvoRowReady();
               }
+            } else {
+              markEvoRowReady();
             }
             // Autogen-only badge: shown left of the cost when the target
             // fusion has no custom variants at all. Idempotent — bail if
@@ -7983,8 +8095,12 @@
               }
             }
           })
-          .catch((err) => _logCreatureError(
-            `renderDetail/evoRow/${e.newA}-${e.newB}`, err));
+          .catch((err) => {
+            _logCreatureError(
+              `renderDetail/evoRow/${e.newA}-${e.newB}`, err);
+            markEvoRowReady();
+          });
+        });  // _scheduleIdle
         if (row.classList.contains('evo-ready')) {
           const srcSpeciesId = e.source === 'A' ? c.speciesA : c.speciesB;
           const seen = isFusionSeen(e.newA, e.newB);
@@ -8048,6 +8164,13 @@
           onReady: () => {
             if (ph) ph.style.display = 'none';
             img.style.display = 'block';
+            // Perf — first paint of the main creature sprite. This is
+            // the visual "the detail view has loaded" moment.
+            if (_perfState.headerSpriteMs == null) {
+              _perfState.headerSpriteMs = performance.now() - _tStart;
+              _perfState.headerReady = true;
+              _commitDetailPerf();
+            }
           },
         });
       }
