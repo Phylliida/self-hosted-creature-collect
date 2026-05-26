@@ -39,6 +39,61 @@
   const CAPTURED_KEY = 'cc.capturedCreatures';
   const CAUGHT_SPAWNS_KEY = 'cc.caughtSpawnIds';
   const SEEN_FUSIONS_KEY = 'cc.seenFusions';
+
+  // ── Inventory + pokédex performance metrics ──
+  // Counters + per-call timing for the hot functions that fire on
+  // every search keystroke / filter chip toggle / sort change. Read
+  // from the Settings diagnostic dump ([inventory perf] block in
+  // index.html) to surface where the time is actually going as the
+  // capture count grows.
+  //
+  // Overhead per wrapped call: one performance.now() pair + a few
+  // arithmetic ops (~0.5-1 µs). Negligible vs. the work being timed.
+  //
+  // Each fn slot tracks { calls, totalMs, lastMs, maxMs } so the dump
+  // can show avg = total/calls, last, and max. The per-render slots
+  // additionally carry { lastBreakdown, recent[] } — a ring buffer of
+  // the last 10 renders with their phase breakdown for outlier
+  // investigation.
+  const _INV_PERF_RING = 10;
+  const _invPerf = {
+    fn: {
+      readCaptured:    { calls: 0, totalMs: 0, lastMs: 0, maxMs: 0, lastSize: 0 },
+      readNicknames:   { calls: 0, totalMs: 0, lastMs: 0, maxMs: 0 },
+      getInventory:    { calls: 0, totalMs: 0, lastMs: 0, maxMs: 0, lastSize: 0 },
+      sortedCreatures: { calls: 0, totalMs: 0, lastMs: 0, maxMs: 0, lastSize: 0 },
+    },
+    renders: {
+      list: {
+        calls: 0, totalMs: 0, lastMs: 0, maxMs: 0,
+        lastBreakdown: null, recent: [],
+      },
+      pokedex: {
+        calls: 0, totalMs: 0, lastMs: 0, maxMs: 0,
+        lastBreakdown: null, recent: [],
+      },
+    },
+  };
+  if (typeof window !== 'undefined') window._invPerf = _invPerf;
+
+  function _perfMark(slot, t0, extra) {
+    const dt = performance.now() - t0;
+    slot.calls++;
+    slot.totalMs += dt;
+    slot.lastMs = dt;
+    if (dt > slot.maxMs) slot.maxMs = dt;
+    if (extra) Object.assign(slot, extra);
+    return dt;
+  }
+  function _perfMarkRender(slot, breakdown) {
+    slot.calls++;
+    slot.totalMs += breakdown.totalMs;
+    slot.lastMs = breakdown.totalMs;
+    if (breakdown.totalMs > slot.maxMs) slot.maxMs = breakdown.totalMs;
+    slot.lastBreakdown = breakdown;
+    slot.recent.push(breakdown);
+    if (slot.recent.length > _INV_PERF_RING) slot.recent.shift();
+  }
   const CANDY_KEY = 'cc.candy.v1';
   // Candy is keyed by an evolution-family ROOT species index — every
   // species in a family contributes to (and reads from) the same
@@ -179,10 +234,14 @@
   // `id`. We intentionally store speciesA/B (not the derived display
   // name) so names update if/when the species-names list loads later.
   function readCapturedCreatures() {
+    const t0 = performance.now();
+    let out;
     try {
       const raw = localStorage.getItem(CAPTURED_KEY);
-      return raw ? JSON.parse(raw) : [];
-    } catch { return []; }
+      out = raw ? JSON.parse(raw) : [];
+    } catch { out = []; }
+    _perfMark(_invPerf.fn.readCaptured, t0, { lastSize: out.length });
+    return out;
   }
   function writeCapturedCreatures(arr) {
     localStorage.setItem(CAPTURED_KEY, JSON.stringify(arr));
@@ -552,12 +611,13 @@
     return entry;
   }
 
-  // Daycare loot. Each slot earns one milestone of loot per kilometer
-  // walked while occupied. Milestone N's loot is deterministic in
-  // (slot.id, slot.addedAt, N) — no roll history is stored, just the
-  // list of milestone indices the user has already claimed. Removing
-  // the slot wipes both, so removeFromDaycare auto-claims any
-  // outstanding loot before deletion.
+  // Daycare loot. Each slot earns one milestone of loot every
+  // DAYCARE_LOOT_MILESTONE_M metres walked while occupied. Milestone
+  // N's loot is deterministic in (slot.id, slot.addedAt, N) — no roll
+  // history is stored, just the list of milestone indices the user
+  // has already claimed. Removing the slot wipes both, so
+  // removeFromDaycare auto-claims any outstanding loot before
+  // deletion.
   //
   // The table is intentionally small for v1: a single "test orb" item
   // so the surface area (UI, animations, claim flow, settings reset)
@@ -565,7 +625,12 @@
   // Settings → "Repopulate daycare test loot" wipes claimed indices
   // across all slots, regenerating the same loot stream (same seed
   // → same items) so the user can re-tap them.
-  const DAYCARE_LOOT_KM_M = 1000;
+  //
+  // Rate history: was 1000 m (1 milestone/km) → 500 m (2/km). At the
+  // current 0.75/0.15/0.10 candy/egg/item table that gives 0.30 eggs
+  // per km per slot, or 0.60 eggs/km combined when both slots are
+  // filled (one egg every ~1.67 km of walking).
+  const DAYCARE_LOOT_MILESTONE_M = 500;
   // Daycare loot is one of three kinds, rolled deterministically per
   // milestone via the slot's seed. Probabilities sum to 1.0:
   //   0.00–0.75  candy   — 1 candy in the daycare pokémon's family
@@ -825,7 +890,7 @@
 
   function _daycareEarnedCount(slot) {
     if (!slot) return 0;
-    return Math.floor((slot.distM || 0) / DAYCARE_LOOT_KM_M);
+    return Math.floor((slot.distM || 0) / DAYCARE_LOOT_MILESTONE_M);
   }
 
   function _daycareUnclaimedLoot(slot) {
@@ -1318,7 +1383,8 @@
   // Legacy captures without a `variant` field render with the autogen
   // sprite (their original look — IDB still has that blob).
   function getInventoryCreatures() {
-    return readCapturedCreatures().map((e) => ({
+    const t0 = performance.now();
+    const out = readCapturedCreatures().map((e) => ({
       id: e.id,
       speciesA: e.speciesA,
       speciesB: e.speciesB,
@@ -1329,6 +1395,8 @@
       caughtAt: e.caughtAt,
       tags: Array.isArray(e.tags) ? e.tags.slice() : [],
     }));
+    _perfMark(_invPerf.fn.getInventory, t0, { lastSize: out.length });
+    return out;
   }
 
   // Resolve a spawn's deterministic variantSeed (uniform [0,1)) to a
@@ -1534,6 +1602,18 @@
   function isFusionSeen(a, b) {
     return readSeenFusions().hasOwnProperty(`${a}-${b}`);
   }
+  // Has the trainer seen this exact (a, b, variant) combination? Used
+  // by the evolution preview to silhouette future variants the trainer
+  // hasn't witnessed yet, even when other variants of the same fusion
+  // are known. variant === null means autogen; numeric means a custom
+  // slot index.
+  function hasSeenVariant(a, b, variant) {
+    const seen = readSeenVariants(a, b);
+    if (variant === null) return seen.has('auto');
+    if (typeof variant === 'number' && variant >= 0) return seen.has(String(variant));
+    return false;
+  }
+
   // Lowest-indexed variant slot the trainer has actually seen for this
   // fusion. Returns: a number (numeric slot), null (only autogen seen),
   // or undefined (nothing seen — caller should fall back to defaults).
@@ -1676,10 +1756,22 @@
     return `<div class="candy-tally">${parts.join(' · ')}</div>`;
   }
 
+  // Top supported species id. The bundled data set covers gen 1 (1-150);
+  // gen-2-and-later targets (Lickilicky, Aipom's evolutions, etc.) get
+  // filtered out below so the user doesn't see evolve buttons that
+  // would lead to species we have no sprite / type / name data for.
+  // Bump this in lockstep with `SPAWNABLE_SPECIES_A_FULL` if/when we
+  // open up later generations.
+  const SUPPORTED_SPECIES_MAX = 150;
+
   function fusionEvolutionsFor(a, b) {
-    return global.Species && global.Species.fusionEvolutionsFor
-      ? global.Species.fusionEvolutionsFor(a, b)
-      : [];
+    if (!global.Species || !global.Species.fusionEvolutionsFor) return [];
+    const all = global.Species.fusionEvolutionsFor(a, b);
+    // Drop any evolution whose target species is past the supported
+    // range. Both sides of the resulting fusion must be in-range —
+    // even one out-of-range half breaks sprite + name + type lookups.
+    return all.filter((e) =>
+      e.newA <= SUPPORTED_SPECIES_MAX && e.newB <= SUPPORTED_SPECIES_MAX);
   }
 
   // Windowed virtualizer for the pokédex / inventory grids. Renders
@@ -1900,11 +1992,14 @@
     gridEl.innerHTML = cells.join('');
     // Wire up tap-to-navigate. Pulls the cell's (a, b) and pushes the
     // fusion sub-view onto the stack — the existing carousel + back-
-    // button machinery handles popping back to this entry.
+    // button machinery handles popping back to this entry. Pass
+    // expandFamily so the destination opens with its OWN family tree
+    // already unfolded — the user is obviously interested in the
+    // family relationships if they just tapped a family tile.
     gridEl.querySelectorAll('.family-cell.tappable').forEach((cell) => {
       const a = +cell.dataset.a;
       const b = +cell.dataset.b;
-      const navigate = () => showFusionView(a, b);
+      const navigate = () => showFusionView(a, b, null, null, { expandFamily: true });
       cell.addEventListener('click', navigate);
       cell.addEventListener('keydown', (ev) => {
         if (ev.key === 'Enter' || ev.key === ' ') {
@@ -2024,10 +2119,12 @@
   // ── Hold-to-confirm evolve overlay ──
   // One DOM node, lazily built on first use, reused for every
   // confirmation. Hold-to-confirm semantics: yes button drives a CSS
-  // ring fill over 5s; releasing early cancels; full hold fires the
-  // committed action (no-op for now — wired up when the actual evolve
-  // action lands).
-  const EVOLVE_CONFIRM_HOLD_MS = 5000;
+  // ring fill over EVOLVE_CONFIRM_HOLD_MS; releasing early cancels;
+  // full hold fires the committed evolve action. Keep the CSS
+  // transition duration on .evolve-yes.holding .ring-progress in
+  // sync with this constant so the ring completes exactly as the
+  // timer fires.
+  const EVOLVE_CONFIRM_HOLD_MS = 2500;
   let _evolveConfirmEl = null;
   let _evolveHoldTimer = null;
   let _evolveCurrent = null;
@@ -2186,22 +2283,36 @@
     return true;
   }
 
-  // Pick the variant slot for the evolved creature.
+  // Pick the variant slot for the evolved creature, deterministically.
+  // The same creature passed in twice (e.g. silhouette preview during
+  // detail-view render + actual evolution on confirm) returns the same
+  // slot — so the "what you'll evolve into" silhouette matches the
+  // sprite the user actually gets.
   //
-  //   - If the unevolved creature was on a custom artist's variant AND
-  //     the evolved fusion has a variant by the SAME artist (matched on
-  //     credit string equality), keep that artist.
-  //   - Otherwise (autogen source, no matching artist, or any error
-  //     looking artists up), pick uniformly at random from the evolved
-  //     fusion's available custom variants.
-  //   - If the evolved fusion has zero custom variants, return null
-  //     (autogen).
-  async function _pickEvolvedVariant(oldA, oldB, oldVariant, newA, newB) {
-    if (!global.Sprites || !global.Sprites.getCellVariantCount) return null;
+  // Returns { variant: number|null, autogenOnly: bool }:
+  //   - variant is the slot index, or null when the target fusion has
+  //     no custom variants at all (autogen).
+  //   - autogenOnly mirrors the null-variant case as a boolean so the
+  //     caller can render the "autogen art only" badge without
+  //     another lookup.
+  //
+  // Variant selection rule:
+  //   - If the source variant has an attributed artist AND the target
+  //     fusion has a variant by the SAME artist (string equality),
+  //     keep that artist.
+  //   - Otherwise pick uniformly via a deterministic PRNG seeded from
+  //     the capture id + species pair, so re-running for the same
+  //     creature gives the same answer.
+  async function _pickEvolvedVariant(c, oldA, oldB, oldVariant, newA, newB) {
+    if (!global.Sprites || !global.Sprites.getCellVariantCount) {
+      return { variant: null, autogenOnly: true };
+    }
     let newCount = 0;
     try { newCount = await global.Sprites.getCellVariantCount(newA, newB); }
     catch { newCount = 0; }
-    if (!newCount || newCount <= 0) return null;
+    if (!newCount || newCount <= 0) {
+      return { variant: null, autogenOnly: true };
+    }
 
     let oldArtist = null;
     if (typeof oldVariant === 'number' && oldVariant >= 0
@@ -2211,18 +2322,26 @@
       } catch { oldArtist = null; }
     }
     if (oldArtist && global.Sprites.getSpriteCreditForSlot) {
-      // Look up every new-fusion slot's artist in parallel; first
-      // matching slot wins. Same-name match catches "Slawter" === "Slawter";
-      // mismatches just fall through to the random branch.
       const credits = await Promise.all(
         Array.from({ length: newCount }, (_, s) =>
           global.Sprites.getSpriteCreditForSlot(newA, newB, s).catch(() => null))
       );
       for (let s = 0; s < credits.length; s++) {
-        if (credits[s] && credits[s] === oldArtist) return s;
+        if (credits[s] && credits[s] === oldArtist) {
+          return { variant: s, autogenOnly: false };
+        }
       }
     }
-    return Math.floor(Math.random() * newCount);
+    // Deterministic uniform pick. Capture id (for spawn captures this
+    // already encodes cell + tick, i.e. location + time) plus the
+    // species transition makes the seed unique per evolution step.
+    const seed = c && c.id != null
+      ? `evo|${c.id}|${oldA}-${oldB}|${newA}-${newB}`
+      : `evo|anon|${oldA}-${oldB}|${newA}-${newB}|${Math.random()}`;
+    const rng = (global.Spawns && global.Spawns.getRng)
+      ? global.Spawns.getRng(seed)
+      : Math.random;
+    return { variant: Math.floor(rng() * newCount), autogenOnly: false };
   }
 
   // Apply an evolution: deduct candy + (item if required), mutate the
@@ -2240,11 +2359,14 @@
     const c = list[idx];
 
     // Resolve the new variant BEFORE mutating anything — if it throws
-    // we want to bail without having charged the player.
+    // we want to bail without having charged the player. The
+    // deterministic seed comes from the capture id, so this returns
+    // the same slot the silhouette preview already showed.
     let newVariant = null;
     try {
-      newVariant = await _pickEvolvedVariant(
-        c.speciesA, c.speciesB, c.variant, newA, newB);
+      const resolved = await _pickEvolvedVariant(
+        c, c.speciesA, c.speciesB, c.variant, newA, newB);
+      newVariant = resolved.variant;
     } catch (e) {
       _logCreatureError('performEvolution/pickVariant', e);
       return null;
@@ -2430,12 +2552,22 @@
       ).join('');
       list.classList.add('show');
     }
+    // True only during the synthetic `input` event dispatched by
+    // pick(). The autocomplete's own input listener checks it and
+    // skips paint(), which would otherwise re-show the dropdown
+    // immediately (the freshly-filled species name matches itself).
+    // Other input listeners (renderPokedex, renderInventory) still
+    // fire and re-render the grid normally.
+    let _pickInFlight = false;
     function pick(name) {
       input.value = name;
       list.classList.remove('show');
       list.innerHTML = '';
-      // Fire `input` so the existing renderPokedex listener re-runs.
-      input.dispatchEvent(new Event('input', { bubbles: true }));
+      // Fire `input` so the existing renderPokedex listener re-runs,
+      // gated against our own paint re-show.
+      _pickInFlight = true;
+      try { input.dispatchEvent(new Event('input', { bubbles: true })); }
+      finally { _pickInFlight = false; }
     }
     function setActive(idx) {
       const items = list.querySelectorAll('.ac-item');
@@ -2444,7 +2576,10 @@
       if (el) el.scrollIntoView({ block: 'nearest' });
       activeIdx = idx;
     }
-    input.addEventListener('input', paint);
+    input.addEventListener('input', () => {
+      if (_pickInFlight) return;
+      paint();
+    });
     input.addEventListener('focus', paint);
     // Delay hide so a tap on a suggestion fires before blur.
     input.addEventListener('blur', () => setTimeout(() => list.classList.remove('show'), 120));
@@ -2481,10 +2616,14 @@
   // single entry can be cleared ("reset to species name") by deleting the
   // key without disturbing the others.
   function readNicknames() {
+    const t0 = performance.now();
+    let out;
     try {
       const raw = localStorage.getItem('cc.creatureNicknames');
-      return raw ? JSON.parse(raw) : {};
-    } catch { return {}; }
+      out = raw ? JSON.parse(raw) : {};
+    } catch { out = {}; }
+    _perfMark(_invPerf.fn.readNicknames, t0);
+    return out;
   }
   function writeNickname(id, nickname) {
     const map = readNicknames();
@@ -2605,6 +2744,7 @@
   }
 
   function sortedCreatures() {
+    const t0 = performance.now();
     const key = readSortKey();
     const dir = readSortDir();
     const sign = dir === 'asc' ? 1 : -1;
@@ -2629,6 +2769,7 @@
       if (bv == null) return -1;
       return sign * (av - bv);
     });
+    _perfMark(_invPerf.fn.sortedCreatures, t0, { lastSize: copy.length });
     return copy;
   }
 
@@ -3303,6 +3444,23 @@
       #creatureInventory .evo-row .evo-req b {
         color: var(--ui-text, #111); font-weight: 600; font-size: 12px;
       }
+      /* AUTOGEN ART ONLY badge — appears left of the cost in the
+         evo-req cell when the evolution target has no custom variants.
+         Heads-up that the user won't get any hand-drawn art for this
+         particular evolution. */
+      #creatureInventory .evo-row .evo-req .evo-autogen-only {
+        font-size: 9px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        font-weight: 600;
+        color: var(--ui-muted, #888);
+        opacity: 0.9;
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
+        border-radius: 4px;
+        padding: 1px 4px;
+        margin-right: 4px;
+        line-height: 1.2;
+      }
       #creatureInventory .detail-family {
         margin: 6px 0 8px;
       }
@@ -3511,7 +3669,8 @@
       }
       #ccEvolveConfirm .evolve-yes.holding .ring-progress {
         stroke-dashoffset: 0;
-        transition: stroke-dashoffset 5000ms linear;
+        /* Keep in sync with EVOLVE_CONFIRM_HOLD_MS. */
+        transition: stroke-dashoffset 2500ms linear;
       }
       #ccEvolveConfirm .evolve-hint {
         font-size: 11px;
@@ -5774,12 +5933,17 @@
     pushView(state);
   }
 
-  function showFusionView(a, b, list, idx) {
+  function showFusionView(a, b, list, idx, opts) {
     const state = { view: 'fusion', a, b };
     if (Array.isArray(list) && typeof idx === 'number') {
       state.list = list;
       state.idx = idx;
     }
+    // Optional UX flags carried on the state so they survive carousel
+    // navigation through cached slots. expandFamily: open the family
+    // tree by default (used when navigating in from a family-tree
+    // tile — the user obviously already cares about the family).
+    if (opts && opts.expandFamily) state.expandFamily = true;
     pushView(state);
   }
 
@@ -5869,7 +6033,7 @@
       if (!c) return null;
       renderDetail(c, body);
     } else if (view === 'fusion') {
-      renderFusionView(item.a, item.b, body);
+      renderFusionView(item.a, item.b, body, { expandFamily: !!item.expandFamily });
     }
     slot.appendChild(body);
     _slotCache.set(key, slot);
@@ -6740,9 +6904,10 @@
     body.querySelectorAll('.daycare-slot[data-id] .daycare-loot-pill').forEach((btn) => {
       btn.addEventListener('click', (e) => _onPillClick(e, btn));
     });
-    // Mid-walk new milestones: when distM crosses a kilometer
-    // boundary, _accumulateDaycareDistance dispatches
-    // cc-daycare-loot-tick with the slot id + new milestone numbers.
+    // Mid-walk new milestones: when distM crosses a milestone
+    // boundary (DAYCARE_LOOT_MILESTONE_M), _accumulateDaycareDistance
+    // dispatches cc-daycare-loot-tick with the slot id + new milestone
+    // numbers.
     // Append a fresh pill (with .appearing slide-in) for each new
     // milestone so the user sees it without a full re-render. If
     // the slot already had its visible-pill quota filled, the new
@@ -6894,9 +7059,10 @@
     });
   }
 
-  function renderFusionView(a, b, targetBody) {
+  function renderFusionView(a, b, targetBody, opts) {
     const panel = document.getElementById('creatureInventory');
     if (!panel) return;
+    const expandFamily = !!(opts && opts.expandFamily);
     const body = targetBody || panel.querySelector('.fusion-body');
     if (!body) return;
     // Revoke leftover sprite URLs from the previous render before we
@@ -7013,22 +7179,41 @@
     let familyHtml = '';
     let famA = null, famB = null;
     if (global.Species && global.Species.familyOf) {
-      famA = global.Species.familyOf(a);
-      famB = global.Species.familyOf(b);
+      // Trim the family arrays to the supported species range so the
+      // mosaic doesn't render tiles for fusions we have no data for
+      // (Lickilicky, Sylveon, Steelix, etc.). Matches the
+      // fusionEvolutionsFor filter — once we open up later generations,
+      // both gates lift together by bumping SUPPORTED_SPECIES_MAX.
+      famA = global.Species.familyOf(a)
+        .filter((id) => id <= SUPPORTED_SPECIES_MAX);
+      famB = global.Species.familyOf(b)
+        .filter((id) => id <= SUPPORTED_SPECIES_MAX);
       if (famA.length > 1 || famB.length > 1) {
+        const ariaExp = expandFamily ? 'true' : 'false';
+        const toggleText = expandFamily
+          ? 'Hide family tree'
+          : `View family tree (${famA.length}×${famB.length})`;
+        const gridHiddenAttr = expandFamily ? '' : ' hidden';
         familyHtml = `<div class="detail-family">
-          <button class="family-toggle" type="button" aria-expanded="false">
-            View family tree (${famA.length}×${famB.length})
+          <button class="family-toggle" type="button" aria-expanded="${ariaExp}">
+            ${toggleText}
           </button>
-          <div class="family-grid" hidden></div>
+          <div class="family-grid"${gridHiddenAttr}></div>
         </div>`;
       }
     }
+    // When the trainer hasn't seen this fusion at all (now reachable
+    // via the family-tree tile navigation — previously the pokédex
+    // grid only listed seen entries), silhouette the header art the
+    // same way the variant grid + family-tree cells silhouette unseen
+    // entries. The catch-all `.silhouette img` CSS rule blackens any
+    // descendant img.
+    const headerSilhouette = !isFusionSeen(a, b);
     body.innerHTML = `
       <div class="detail-name-row">
         ${fusedName ? `<div class="detail-fused-name">${escapeHtml(fusedName)}</div>` : speciesPairHtml}
       </div>
-      <div class="detail-art">
+      <div class="detail-art${headerSilhouette ? ' silhouette' : ''}">
         <span class="detail-art-placeholder" aria-hidden="true">•</span>
         <img class="detail-art-img" alt="" style="display:none">
       </div>
@@ -7056,11 +7241,17 @@
 
     // Family-tree expand/collapse: lazy-renders the grid on first
     // expand so we don't pay for it on entries the user never
-    // unfolds.
+    // unfolds. When the caller asked for expandFamily (e.g. when
+    // navigating in from a family-tree tile elsewhere) we render
+    // eagerly so the grid is visible on first paint.
     if (famA && famB && famHasContent(famA, famB)) {
       const toggle = body.querySelector('.family-toggle');
       const grid = body.querySelector('.family-grid');
       if (toggle && grid) {
+        if (expandFamily) {
+          renderFamilyGrid(grid, famA, famB, a, b);
+          grid.dataset.rendered = '1';
+        }
         toggle.addEventListener('click', () => {
           const expanded = toggle.getAttribute('aria-expanded') === 'true';
           if (expanded) {
@@ -7198,10 +7389,12 @@
   }
 
   function renderPokedex() {
+    const _tTotal = performance.now();
     const panel = document.getElementById('creatureInventory');
     if (!panel) return;
     updateFilterIndicators(panel, POKEDEX_FILTER_SELECTORS);
     renderPokedexTagFilterRow();
+    const _tData = performance.now();
     const seen = readSeenFusions();
     const caught = caughtFusionsSet();
     let entries = Object.keys(seen).map((key) => {
@@ -7214,6 +7407,9 @@
         caught: caught.has(key),
       };
     });
+    const _dataMs = performance.now() - _tData;
+    const _inputN = entries.length;
+    const _tFilter = performance.now();
 
     const filterType = readPokedexFilterType();
     const filterTypeA = readPokedexFilterTypeA();
@@ -7262,6 +7458,8 @@
       nameOfLower(e.a).includes(qAny) || nameOfLower(e.b).includes(qAny));
     if (qA) entries = entries.filter((e) => nameOfLower(e.a).includes(qA));
     if (qB) entries = entries.filter((e) => nameOfLower(e.b).includes(qB));
+    const _filterMs = performance.now() - _tFilter;
+    const _tSort = performance.now();
 
     const sortKey = readPokedexSortKey();
     const sortDir = readPokedexSortDir();
@@ -7275,6 +7473,7 @@
       // 'recent': firstSeen
       return sign * (x.firstSeen - y.firstSeen);
     });
+    const _sortMs = performance.now() - _tSort;
 
     const totalSeen = entries.length;
     const totalCaught = caught.size;
@@ -7295,6 +7494,12 @@
         ? 'No seen creatures match those filters.'
         : 'No creatures seen yet — go exploring!';
       grid.innerHTML = `<div class="creature-empty">${escapeHtml(msg)}</div>`;
+      _perfMarkRender(_invPerf.renders.pokedex, {
+        t: Date.now(),
+        dataMs: _dataMs, filterMs: _filterMs, sortMs: _sortMs, virtualizeMs: 0,
+        totalMs: performance.now() - _tTotal,
+        inputN: _inputN, outputN: 0, empty: true,
+      });
       return;
     }
 
@@ -7306,6 +7511,7 @@
     // sheet in applyTopView's 'pokedex' case before the first render,
     // so the live value is already correct on re-entry.
     _lastPokedexEntries = entries;
+    const _tVirt = performance.now();
     virtualizeGrid({
       scrollEl: sheet,
       gridEl: grid,
@@ -7356,6 +7562,13 @@
           onReady: () => card.classList.add('ready'),
         });
       },
+    });
+    const _virtMs = performance.now() - _tVirt;
+    _perfMarkRender(_invPerf.renders.pokedex, {
+      t: Date.now(),
+      dataMs: _dataMs, filterMs: _filterMs, sortMs: _sortMs, virtualizeMs: _virtMs,
+      totalMs: performance.now() - _tTotal,
+      inputN: _inputN, outputN: entries.length,
     });
   }
 
@@ -7447,9 +7660,9 @@
           <div class="detail-evos-label">Evolves to</div>
           ${evoEntries.map((e, i) => {
             const seen = isFusionSeen(e.newA, e.newB);
-            const targetName = (global.Species && seen)
-              ? `${global.Species.nameFor(e.newA)} × ${global.Species.nameFor(e.newB)}`
-              : '???';
+            // Canonical fused name ("Eekuna") via SPLIT_NAMES, falling
+            // back to "A × B" when the name table isn't loaded yet.
+            const targetName = seen ? fusionName(e.newA, e.newB) : '???';
             // The side that's actually evolving (A or B) determines
             // which species' candy bucket gets billed.
             const srcSpeciesId = e.source === 'A' ? c.speciesA : c.speciesB;
@@ -7527,23 +7740,52 @@
         const e = evoEntries[i];
         const row = body.querySelector(`.evo-row[data-evo-idx="${i}"]`);
         if (!row) continue;
-        if (global.SpriteStore) {
-          const img = row.querySelector('.evo-art img');
-          if (img) {
-            // `undefined` variant → "best available" (custom slot 0 if
-            // any, else autogen). Evolution previews aren't tied to a
-            // specific variant the user has seen.
-            global.SpriteStore.showSprite(img, e.newA, e.newB, undefined, {
-              onReady: () => row.classList.add('evo-art-ready'),
-            });
-          }
-        }
+        // Resolve the deterministic variant slot the user will get if
+        // they evolve. Used for the preview sprite here AND inside
+        // performEvolution — same seed both sides, same slot. The
+        // silhouette (when target is unseen) thus blackens the SPECIFIC
+        // future sprite, not an arbitrary best-available variant.
+        _pickEvolvedVariant(c, c.speciesA, c.speciesB, c.variant, e.newA, e.newB)
+          .then(({ variant, autogenOnly }) => {
+            // Silhouette the preview when the SPECIFIC variant the user
+            // will evolve into hasn't been seen — even if other variants
+            // of the same fusion are known. The initial-render
+            // `silhouette` class (added when isFusionSeen was false) is
+            // re-derived here against the resolved variant.
+            if (hasSeenVariant(e.newA, e.newB, variant)) {
+              row.classList.remove('silhouette');
+            } else {
+              row.classList.add('silhouette');
+            }
+            if (global.SpriteStore) {
+              const img = row.querySelector('.evo-art img');
+              if (img) {
+                global.SpriteStore.showSprite(img, e.newA, e.newB, variant, {
+                  onReady: () => row.classList.add('evo-art-ready'),
+                });
+              }
+            }
+            // Autogen-only badge: shown left of the cost when the target
+            // fusion has no custom variants at all. Idempotent — bail if
+            // the badge is already there (defensive against re-renders).
+            if (autogenOnly) {
+              const req = row.querySelector('.evo-req');
+              if (req && !req.querySelector('.evo-autogen-only')) {
+                const badge = document.createElement('span');
+                badge.className = 'evo-autogen-only';
+                badge.textContent = 'autogen art only';
+                req.prepend(badge);
+              }
+            }
+          })
+          .catch((err) => _logCreatureError(
+            `renderDetail/evoRow/${e.newA}-${e.newB}`, err));
         if (row.classList.contains('evo-ready')) {
           const srcSpeciesId = e.source === 'A' ? c.speciesA : c.speciesB;
           const seen = isFusionSeen(e.newA, e.newB);
-          const targetName = seen && global.Species
-            ? `${global.Species.nameFor(e.newA)} × ${global.Species.nameFor(e.newB)}`
-            : '???';
+          // Same canonical-fused-name treatment as the row label so the
+          // confirm dialog shows "Eekuna" not "Eevee × Kakuna".
+          const targetName = seen ? fusionName(e.newA, e.newB) : '???';
           const openConfirm = () => openEvolveConfirm({
             creatureId: c.id, srcSpeciesId, targetName,
             method: e.method, param: e.param,
@@ -7849,6 +8091,7 @@
   }
 
   function renderList(listEl) {
+    const _tTotal = performance.now();
     renderWeatherBar();
     renderSaveReminder();
     const panel = document.getElementById('creatureInventory');
@@ -7856,7 +8099,11 @@
     renderInvTagFilterRow();
     const searchEl = document.getElementById('creatureSearch');
     const q = (searchEl && searchEl.value || '').trim().toLowerCase();
+    const _tData = performance.now();
     let items = sortedCreatures();
+    const _dataMs = performance.now() - _tData;
+    const _inputN = items.length;
+    const _tFilter = performance.now();
     if (q) {
       // Match against both nickname (what the user sees) and species name,
       // so a renamed creature can still be found by its original name.
@@ -7911,6 +8158,7 @@
         return selectedTags.every((t) => eff.includes(t));
       });
     }
+    const _filterMs = performance.now() - _tFilter;
     if (!items.length) {
       if (listEl._virtCleanup) listEl._virtCleanup();
       const filteredOut = q || qA || qB || filterType || filterTypeA || filterTypeB || selectedTags.length;
@@ -7918,6 +8166,12 @@
         ? 'No creatures match those filters.'
         : 'No creatures yet — go exploring!';
       listEl.innerHTML = `<div class="creature-empty">${msg}</div>`;
+      _perfMarkRender(_invPerf.renders.list, {
+        t: Date.now(),
+        dataMs: _dataMs, filterMs: _filterMs, virtualizeMs: 0,
+        totalMs: performance.now() - _tTotal,
+        inputN: _inputN, outputN: 0, empty: true,
+      });
       return;
     }
     const sheet = listEl.closest('.sheet');
@@ -7927,6 +8181,7 @@
     // in applyTopView's 'browse' case before the first render so the
     // live value is already correct on re-entry from a sub-view.
     _lastInventoryItems = items;
+    const _tVirt = performance.now();
     virtualizeGrid({
       scrollEl: sheet,
       gridEl: listEl,
@@ -7976,6 +8231,13 @@
           },
         });
       },
+    });
+    const _virtMs = performance.now() - _tVirt;
+    _perfMarkRender(_invPerf.renders.list, {
+      t: Date.now(),
+      dataMs: _dataMs, filterMs: _filterMs, virtualizeMs: _virtMs,
+      totalMs: performance.now() - _tTotal,
+      inputN: _inputN, outputN: items.length,
     });
   }
 
@@ -8435,11 +8697,12 @@
   }
 
   // Credit `d` meters at time `ts` to: today's distance summary, every
-  // occupied daycare slot (firing cc-daycare-loot-tick on km crossings),
-  // and every occupied incubator egg (firing cc-incubator-tick on hatch
-  // completion). The shared write path for both GPS-driven (haversine
-  // between fixes) and pedometer-driven (CMPedometer cumulative meters
-  // while the app was closed) accumulation.
+  // occupied daycare slot (firing cc-daycare-loot-tick on milestone
+  // crossings — DAYCARE_LOOT_MILESTONE_M m apart), and every occupied
+  // incubator egg (firing cc-incubator-tick on hatch completion). The
+  // shared write path for both GPS-driven (haversine between fixes)
+  // and pedometer-driven (CMPedometer cumulative meters while the app
+  // was closed) accumulation.
   function _creditMeters(d, ts) {
     if (!Number.isFinite(d) || d <= 0) return;
     const k = _localDayKey(ts);
@@ -8450,9 +8713,9 @@
     if (slots.length) {
       const ticks = [];
       for (const s of slots) {
-        const before = Math.floor((s.distM || 0) / DAYCARE_LOOT_KM_M);
+        const before = Math.floor((s.distM || 0) / DAYCARE_LOOT_MILESTONE_M);
         s.distM += d;
-        const after = Math.floor(s.distM / DAYCARE_LOOT_KM_M);
+        const after = Math.floor(s.distM / DAYCARE_LOOT_MILESTONE_M);
         if (after > before) {
           const newNs = [];
           for (let n = before + 1; n <= after; n++) newNs.push(n);

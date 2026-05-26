@@ -12334,6 +12334,69 @@ function fmtDate(ts) {
           }
         }
       }
+      // Inventory + pokédex perf metrics — wraps the hot functions
+      // and renders so we can see where the time goes as the capture
+      // count grows. Per-function counters plus the last ~10 list /
+      // pokédex render breakdowns. See creatures.js's _invPerf block
+      // for the data shape.
+      const ip = window._invPerf;
+      if (ip) {
+        const fmtMs = (n) => `${n.toFixed(1)}ms`;
+        const fnLine = (label, s, extra) => {
+          const avg = s.calls ? (s.totalMs / s.calls).toFixed(2) : '—';
+          const tail = extra ? `  ${extra(s)}` : '';
+          return `  ${label.padEnd(15)} calls=${s.calls} last=${fmtMs(s.lastMs)} `
+            + `max=${fmtMs(s.maxMs)} avg=${avg}ms${tail}`;
+        };
+        lines.push(`[inventory perf]`);
+        lines.push(fnLine('readCaptured',  ip.fn.readCaptured,
+                          (s) => `size=${s.lastSize}`));
+        lines.push(fnLine('readNicknames', ip.fn.readNicknames));
+        lines.push(fnLine('getInventory',  ip.fn.getInventory,
+                          (s) => `size=${s.lastSize}`));
+        lines.push(fnLine('sortedCreats',  ip.fn.sortedCreatures,
+                          (s) => `size=${s.lastSize}`));
+        const renderLine = (name, r, hasSort) => {
+          const last = r.lastBreakdown;
+          const head = `  ${name.padEnd(8)} calls=${r.calls} `
+            + `last=${fmtMs(r.lastMs)} max=${fmtMs(r.maxMs)}`;
+          if (!last) return head;
+          const phases = [
+            `data=${fmtMs(last.dataMs)}`,
+            `filter=${fmtMs(last.filterMs)}`,
+            hasSort ? `sort=${fmtMs(last.sortMs)}` : null,
+            `virt=${fmtMs(last.virtualizeMs)}`,
+          ].filter(Boolean).join(' ');
+          return `${head}  [${phases}]  ${last.inputN}→${last.outputN}`;
+        };
+        lines.push(renderLine('list',    ip.renders.list,    false));
+        lines.push(renderLine('pokedex', ip.renders.pokedex, true));
+        // Recent slow renders (top N by totalMs) from each ring. Useful
+        // for spotting the outlier behind a stuttery search session.
+        const slowest = (recent) => recent.slice()
+          .sort((a, b) => b.totalMs - a.totalMs).slice(0, 3);
+        const slowList = slowest(ip.renders.list.recent);
+        const slowPdx = slowest(ip.renders.pokedex.recent);
+        const now = Date.now();
+        const fmtAgo = (t) => `${Math.round((now - t) / 1000)}s ago`;
+        if (slowList.length) {
+          lines.push(`  list slowest (last ${ip.renders.list.recent.length}):`);
+          for (const b of slowList) {
+            lines.push(`    ${fmtAgo(b.t).padEnd(8)} ${fmtMs(b.totalMs).padStart(7)} `
+              + `data=${fmtMs(b.dataMs)} filter=${fmtMs(b.filterMs)} `
+              + `virt=${fmtMs(b.virtualizeMs)} ${b.inputN}→${b.outputN}`);
+          }
+        }
+        if (slowPdx.length) {
+          lines.push(`  pokedex slowest (last ${ip.renders.pokedex.recent.length}):`);
+          for (const b of slowPdx) {
+            lines.push(`    ${fmtAgo(b.t).padEnd(8)} ${fmtMs(b.totalMs).padStart(7)} `
+              + `data=${fmtMs(b.dataMs)} filter=${fmtMs(b.filterMs)} `
+              + `sort=${fmtMs(b.sortMs)} virt=${fmtMs(b.virtualizeMs)} `
+              + `${b.inputN}→${b.outputN}`);
+          }
+        }
+      }
       // Script versions — each .js file declares its own SCRIPT_VERSION
       // and pushes it into window._scriptVersions on load. The server
       // parses the same constants from disk via /script-versions.
