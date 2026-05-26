@@ -1081,11 +1081,56 @@
   //                 Implies the chip is interactive (built-ins
   //                 without onToggle stay read-only).
   // Add new ones by appending here.
+  // "Evolved" predicate helper. A species counts as evolved iff it's
+  // reachable forward from its candy root — so Pichu (pre-base baby)
+  // is NOT evolved, Pikachu (candy root, base) is NOT evolved, and
+  // Raichu (post-candy-root) IS evolved. The candyRootFor() walk
+  // already encodes "babies are skipped"; we just lift that into a
+  // boolean. Memoized per species id because the tag predicate runs
+  // across every capture during filter re-renders.
+  const _isEvolvedCache = new Map();
+  function _isEvolvedSpecies(idx) {
+    if (idx == null) return false;
+    if (_isEvolvedCache.has(idx)) return _isEvolvedCache.get(idx);
+    if (!global.Species || !global.Species.evolutionsFor
+        || !global.Species.familyOf) return false;
+    const root = candyRootFor(idx);
+    if (root == null || root === idx) {
+      _isEvolvedCache.set(idx, false);
+      return false;
+    }
+    // BFS forward from the candy root. Reaching idx means it's a
+    // post-base form; not reaching it means it's a pre-base baby
+    // (Pichu, Cleffa, etc.) which we deliberately don't count.
+    const seen = new Set([root]);
+    const queue = [root];
+    while (queue.length) {
+      const cur = queue.shift();
+      if (cur === idx) {
+        _isEvolvedCache.set(idx, true);
+        return true;
+      }
+      for (const e of global.Species.evolutionsFor(cur)) {
+        if (seen.has(e.target)) continue;
+        seen.add(e.target);
+        queue.push(e.target);
+      }
+    }
+    _isEvolvedCache.set(idx, false);
+    return false;
+  }
+
   const BUILTIN_TAGS = [
     {
       name: 'Pure',
       description: 'Same species on both sides (no fusion).',
       predicate: (c) => c && c.speciesA != null && c.speciesA === c.speciesB,
+    },
+    {
+      name: 'Evolved',
+      description: 'At least one side is past its base form.',
+      predicate: (c) => c
+        && (_isEvolvedSpecies(c.speciesA) || _isEvolvedSpecies(c.speciesB)),
     },
     {
       name: 'Daycare',
@@ -1837,15 +1882,37 @@
           : '???';
         const cls = `family-cell`
           + (isCurrent ? ' current' : '')
-          + (seen ? '' : ' silhouette');
+          + (seen ? '' : ' silhouette')
+          + (isCurrent ? '' : ' tappable');
+        // Non-current cells become buttons that navigate to the
+        // corresponding fusion's pokédex entry. Silhouettes are still
+        // tappable — the destination view will show ??? data, which is
+        // consistent with the cell itself being a silhouette.
+        const tapAttrs = isCurrent ? '' : ' role="button" tabindex="0"';
         cells.push(`<div class="${cls}" `
-          + `data-a="${a}" data-b="${b}" title="${escapeHtml(title)}">`
+          + `data-a="${a}" data-b="${b}" `
+          + `title="${escapeHtml(title)}"${tapAttrs}>`
           + `<span class="family-cell-placeholder" aria-hidden="true">·</span>`
           + `<img alt="">`
           + `</div>`);
       }
     }
     gridEl.innerHTML = cells.join('');
+    // Wire up tap-to-navigate. Pulls the cell's (a, b) and pushes the
+    // fusion sub-view onto the stack — the existing carousel + back-
+    // button machinery handles popping back to this entry.
+    gridEl.querySelectorAll('.family-cell.tappable').forEach((cell) => {
+      const a = +cell.dataset.a;
+      const b = +cell.dataset.b;
+      const navigate = () => showFusionView(a, b);
+      cell.addEventListener('click', navigate);
+      cell.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') {
+          ev.preventDefault();
+          navigate();
+        }
+      });
+    });
     if (!global.SpriteStore) return;
     gridEl.querySelectorAll('.family-cell').forEach((cell) => {
       const a = +cell.dataset.a;
@@ -3272,6 +3339,18 @@
       #creatureInventory .family-cell.current {
         border-color: var(--ui-accent, #888);
         box-shadow: 0 0 0 1px var(--ui-accent, #888);
+      }
+      #creatureInventory .family-cell.tappable {
+        cursor: pointer;
+        transition: background 120ms ease, transform 120ms ease;
+      }
+      #creatureInventory .family-cell.tappable:hover,
+      #creatureInventory .family-cell.tappable:focus-visible {
+        background: color-mix(in srgb, var(--ui-accent, #3b7fdf) 14%, var(--ui-hover, rgba(0,0,0,0.04)));
+        outline: none;
+      }
+      #creatureInventory .family-cell.tappable:active {
+        transform: scale(0.95);
       }
       #creatureInventory .family-cell .family-cell-placeholder {
         font-size: 12px; color: var(--ui-muted, #666);
