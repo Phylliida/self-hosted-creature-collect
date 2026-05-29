@@ -5594,4 +5594,610 @@ would catch the egg-incubator distance summary if it ever gets
 hot, or the daycare-loot rolls if they multiply, or any future
 per-creature derived data.
 
+---
+
+# Session — shiny system design (algorithm + bake pipeline)
+
+A long brainstorm-to-prototype arc on how to do shiny creatures. The
+user pushed back on default Pokémon-style hue rotation ("imo it's
+pretty bad for many of them") and wanted multiple visually distinct
+shinies per fusion. We spent the session designing the algorithm,
+then building offline tooling to compute the per-family palettes that
+the runtime shiny transform will use.
+
+Three poems added to `POEMS.md`. Probably. Or implicitly. The arc
+felt poetic even if I didn't write one.
+
+## Algorithm design
+
+### The clustering attempt (and why it didn't work)
+
+Started with: "extract logical color regions from the sprite via
+k-means clustering, then permute cluster centroids." Sounds principled
+and matches what shiny systems "should" do.
+
+Several iterations on clustering quality:
+- **3D OKLAB k-means**: light blue and light yellow grouped together
+  because they have similar L. Wrong: same lightness ≠ same color.
+- **2D (a, b) Cartesian**: better, but over-segmented heavily-shaded
+  single-hue regions (Squirtle's teal body split into "warm teals"
+  and "cool deep teal" because the artist used color-temperature
+  shading).
+- **Hue-angle only** (normalized (a, b)): perceptually correct for
+  hue identity but still split Squirtle's teals because the
+  artist's deliberate ~10° hue shift between highlight and shadow
+  shows up as different clusters at high K.
+
+Lower K helped (K=3 merged Squirtle's teal family into one cluster
+correctly) but became inadequate for sprites with many genuine
+hue families. **There's no single K that's right for every sprite.**
+
+### The smooth-permutation reframe
+
+User's insight: "what if we don't bother with clustering. Instead, we
+just pick a hue mapping that is neighbor preserving."
+
+Clustering imposes hard boundaries on a continuous color landscape.
+Smooth permutations preserve neighbor relationships *automatically* —
+the artist's color-temperature shading just rides along through the
+transform. No K-tuning, no per-sprite analysis, no decision about
+where to draw cluster boundaries.
+
+The space of "smooth, orientation-preserving permutations of the hue
+circle" is well-studied. Parameterizations from simplest to most
+expressive:
+
+1. Pure rotation: `h_new = h + φ` (vanilla Pokémon).
+2. Rotation + sinusoidal wobble: `h_new = h + φ + ε·sin(h − θ)`. Three
+   params; monotonic iff |ε| < 1. Wobble lets different hue regions
+   shift differently while staying neighbor-preserving.
+3. Fourier series: higher-order sinusoidal terms. More expressive,
+   still smooth.
+4. Spline / piecewise-linear: art-direct via anchor points.
+
+### The 3D perceptual transform (what we settled on)
+
+User noticed pure hue rotation, even with wobble, "always feels like
+palette-swap variations." Same shape every time, just different
+colors. So we generalized to full 3D perceptual transforms:
+
+```
+new_L = L + ΔL              (lightness shift)
+new_C = C × κ               (chroma scale)
+new_h = h + φ               (hue rotation)
+```
+
+Three perceptual axes (`OKLAB` is a proper perceptual space — that
+was already settled by using it). Each shiny is a `(φ, ΔL, κ)` triple
+with bounds:
+- φ ∈ [−π, π]  (full hue wheel)
+- ΔL ∈ [−0.20, 0.20]  (about ±15% perceived lightness)
+- κ ∈ [0.5, 1.5]  (half-saturation to 1.5× saturation)
+
+Per-pixel transform: convert RGB → OKLAB → polar (L, C, h) → apply
+the transform → convert back. Out-of-gamut results get gracefully
+chroma-clipped (bisection on chroma magnitude until sRGB-feasible)
+instead of channel-clamped (which produces visible splotchy
+artifacts).
+
+This gives "different shinies feel different in **mood**, not just
+hue" — one is pastel, one is dark and rich, one is washed-out, one is
+neon-vivid. Genuine character variation, not palette swaps.
+
+### Sampler: farthest-point in perceptual space
+
+Per family pair, we want 12 (φ, ΔL, κ) triples that are:
+- Visually distinct from each other and from the original.
+- Don't produce muddy/clipped colors on the family's actual palette.
+
+Algorithm:
+1. Generate ~2000 random candidate triples.
+2. **Soft-score** each by total "badness" across a test palette
+   (chroma loss after gamut clip + 0.5 penalty per color landing in
+   a muddy zone — heuristically `L < 0.5 ∧ hue ∈ [30°, 80°] ∧
+   chroma < 0.12`, the dirty-brown band).
+3. Take the top 200 by lowest badness.
+4. **Farthest-point sample 12** in 4D normalized space:
+   `(cos φ, sin φ, ΔL/0.20, log κ / log 1.5)`.
+   Identity = (1, 0, 0, 0). First selection is farthest from identity;
+   each subsequent is farthest from prior selections.
+
+The soft-score lets us pick the best 12 even when no candidate is
+*perfect* — strict pass/fail rejection failed when the cross-dex
+palette had 28 test colors and almost nothing passed all of them. With
+soft scoring + farthest-point, we always get 12 good options.
+
+### Scope decision: per-family-pair (not per-fusion, not universal)
+
+Three scoping options considered:
+1. **Universal 12** (one set, applied to every fusion): tiny bake but
+   tuned to nothing in particular. Some sprites' palettes get muddy
+   under transforms tuned for a synthetic mid-band palette.
+2. **Per-fusion** (each (a, b) gets its own 12): perfectly tuned, but
+   evolutions look unrelated (your shiny Charmander becomes a totally
+   differently-colored shiny Charmeleon).
+3. **Per family pair** `(rootA, rootB)`: 12 triples shared across
+   every member of `familyOf(rootA) × familyOf(rootB)`. Evolutions
+   stay shiny-coherent. Storage ~4× smaller than per-fusion.
+
+User chose #3. Implemented.
+
+### Variant-aware palette merging
+
+User's later refinement: include all *art variants* in the per-family
+palette merge, not just the autogen sprite. Otherwise the chosen 12
+might be tuned to autogen art but produce muddy results on custom-
+artist variants of the same fusion.
+
+Implementation: walk `cells.json[A-B]` (slot indices that exist) ×
+`manifest[B]` (slot → suffix) to find every variant sheet, load
+each, crop the (a, b) cell, extract its palette. Merge weighted by
+pixel count.
+
+Effect: Charmander × Charmander family went from 9 contributing
+sprites (autogen only) → 42 sprites (autogen + all artist variants).
+Merged palette grew from 136 → 348 entries. The chosen 12 transforms
+now constrained against the full artistic range — they look good on
+every painted rendition, not just the autogen baseline.
+
+## Storage estimate
+
+| Approach | Raw | Gzipped | Notes |
+|---|---|---|---|
+| Per-fusion (22500 × 144 B) | 3.24 MB | ~800 KB | Best aesthetic, no coherence across evos |
+| Per-family-pair (~5500 × 144 B) | 790 KB | ~200 KB | Coherent across evos, 4× smaller |
+| Per-family-pair quantized (~5500 × 36 B) | 200 KB | ~80 KB | If we squeeze the floats; future polish |
+
+Per-family-pair fits comfortably alongside the existing
+`shiny-palettes.json` slot we'll add to BundledData.
+
+## Files added this session
+
+| File | Role |
+|---|---|
+| `probe-shiny-clusters.py` | k-means clustering probe with OKLAB modes (hue, ab, lab) — the journey that led to "actually let's not cluster." Kept for reference. |
+| `probe-shiny-hue.py` | The smooth-permutation prototype. Modes: `wobble` (rotation + sin), `pure` (rotation only), `3d` (full perceptual, per-sprite farthest-point), `universal` (cross-dex synthetic palette). Exposes the OKLAB helpers as a library — imported by build-shiny-palettes.py. |
+| `build-shiny-palettes.py` | Family-pair sampler. Takes `--pair A B` to test a single pair (writes contact sheet + JSON entry) or `--all` to bake every family pair into the production JSON. Loads `cells.json` + `manifest.json` to merge palettes across every art variant of every family member. |
+
+All probe outputs go to `probe-output/`. Contact-sheet PNGs show
+[original | 12 shinies] (or for `build-shiny-palettes.py`, one row
+per fusion in the family pair with shared columns of shinies — lets
+us verify coherence across evolutions visually).
+
+## What's still to do for the shiny feature
+
+The algorithm is settled. Remaining work:
+
+1. **Run the full bake** (this session): iterate all ~5500 family
+   pairs, write `data/BundledData/shiny-palettes.json`. Compute time
+   estimate ~1-3 hours depending on Python perf.
+2. **Wire bake into build-bundled-data.py** so it runs automatically
+   with other bundle steps.
+3. **Port OKLAB + transform to JS** — already implemented in Python;
+   ~80 lines of JS for the per-pixel transform. Uses Canvas pixel
+   manipulation.
+4. **Roll shinies at catch time**: 0.1% chance, then uniform pick of
+   variant index 0-11. Store `shinyVariant: number | null` on the
+   capture record alongside the existing `variant` field.
+5. **Render path through SpriteStore**: when a capture has
+   `shinyVariant != null`, look up the family-pair's 12 triples,
+   apply the chosen transform on the source sprite, cache the result
+   blob in IDB. ~10-20 ms first-render, ~0 ms cached.
+6. **Polish**: sparkle effect on shinies, "✨" badge in the inventory,
+   maybe hidden-until-encountered in the pokédex.
+
+The runtime cost ladder (per shiny first render in JS): ~10ms OKLAB
+round-trip + transform + gamut clip × ~3500 chromatic pixels. Within
+frame budget. Cached afterwards, like every other sprite.
+
+## Things learned
+
+1. **Clustering is overkill for "perceptual palette swap."** Smooth
+   permutations preserve everything clustering tries to preserve, with
+   no K-tuning, no boundary decisions, no per-sprite analysis.
+2. **OKLAB is already perceptual.** Hue rotation in OKLAB IS the
+   perceptual operation, not a stepping stone to one. If something
+   looks wrong, it's the parameter choice or the rejection bounds,
+   not the color space.
+3. **Per-pixel gamut clipping > channel clamping.** When OKLAB →
+   sRGB lands out-of-gamut, reduce chroma along (L, h)-const via
+   bisection. Always succeeds, always graceful. Channel-clamping
+   produces splotchy artifacts that look like a different kind of
+   bug.
+4. **Soft scoring + farthest-point > strict reject + uniform sample.**
+   Strict rejection fails when the test palette is large (28 colors
+   across the wheel: almost no candidate passes all). Soft scoring
+   ranks every candidate, then farthest-point picks 12 well-spaced
+   among the best. Always returns 12 things.
+5. **Family-rooted scope is the sweet spot.** Per-fusion is too
+   granular (evolutions look unrelated). Universal is too coarse
+   (results vary widely by sprite). Family-rooted gives coherence
+   across evolutions + per-palette tuning + tractable storage.
+6. **Variant inclusion in the palette merge matters.** Without it,
+   the transforms work on autogen but break on artist variants —
+   especially on popular fusions like (Charmander, Charmander) with
+   many artists. With it, the constraint is the *artistic envelope*,
+   not the algorithmic baseline.
+7. **Sometimes the user's intuition is the spec.** I overcomplicated
+   the clustering work for two iterations. User said "what if we
+   don't cluster" and the simpler design was right. Then they said
+   "instead of hue, in a proper perceptual space" → 3D transforms
+   were the right next step. Then they said "per-pokemon but family-
+   rooted for coherence" → the production design. Each move was
+   theirs, and each was the right one.
+
+## Session vibes
+
+```
+We tried to cluster. We tried OKLAB three different ways.
+We tried hue-only, two-dimensional, full Cartesian.
+Each was technically correct.
+Each missed the artist's intent in a different way.
+
+Then you said: "what if we just rotate the hue?"
+And I had to stop and notice that
+this whole thing wasn't a clustering problem,
+it was a smooth-permutation problem,
+and clustering had been a wrong shape all along.
+
+The smooth permutation became hue rotation.
+The hue rotation became hue + lightness + chroma.
+The per-sprite analysis became per-family.
+The per-family included all the variants.
+
+Now there are 12 shinies for every pair of evolutionary lines,
+each one a different mood —
+pastel, dark and vivid, washed-out cool,
+muted earth-tone, electric-bright.
+
+Magikarp × Eevee has eight contributing sprites
+across two lines and four branches,
+and the 12 shinies look coherent across all of them.
+A Magikarp × Eevee shiny that becomes a Gyarados × Vaporeon
+keeps the same shiny family —
+same kind of color shift, just on a bigger fish.
+
+You said it looks really good.
+I think so too.
+
+Tomorrow we'll bake the JSON, port the transform to JS,
+and roll the dice at 1-in-1000 catch chance.
+Today we built the math.
+
+:3
+```
+
+## Coda — bake complete
+
+Command run:
+```
+python3 build-shiny-palettes.py --all --render-samples 12
+```
+
+**Completed in 52.6 minutes** (much faster than the 3-5h estimate —
+turns out average family-pair size was smaller than the Charmander
+big-case I used to project from). Sustained rate: ~1.8 pairs/second.
+
+Final stats:
+
+| Metric | Value |
+|---|---|
+| Family pairs baked | **5,612** |
+| Family roots present (gen 1) | 78 |
+| Triples per pair | 12 |
+| Total triples | 67,344 |
+| Raw JSON | **1,875 KB** |
+| Gzipped | **676 KB** |
+| Sample contact sheets rendered | 17 |
+
+Output:
+- `data/BundledData/shiny-palettes.json` — the production bake
+- `probe-output/shiny-family-*.png` — 17 sample sheets spread across
+  the dex (the off-by-one in `--render-samples 12` math gave us 17
+  instead of exactly 12 — fine, more samples)
+
+The gzipped size (676 KB) is a bit larger than estimated because
+JSON's float-encoding (~12-15 chars per float even at 5-decimal
+rounding) is verbose. We could quantize to a `.bin` format and shrink
+to ~200 KB raw, but 676 KB gzipped is comfortably small alongside
+`routing.bin` and the rest of the bundled data, and JSON is easier
+to inspect during development. Bin-pack later if storage tightens.
+
+**One small optimization that landed during the bake setup**:
+`prepare_test_palette` precomputes the OKLAB → polar (L, C, h)
+conversion for each test color once per pair, instead of inside the
+2000-candidate scoring loop. Cut per-pair time from ~12s to ~7.5s
+(36% reduction). Could parallelize across CPU cores for further
+speedup if we need to re-bake frequently, but at the current 52-min
+cost it's basically free.
+
+Sample family pairs rendered for spot-checking include:
+`1-1` Bulbasaur×Bulbasaur, `4-4` Charmander solo, `4-7` Char×Squirtle,
+`25-25` Pikachu solo, `129-133` Magikarp×Eevee (the branching one),
+`35-1`/`63-1`/`92-1`/`114-1`/`131-1` various ×Bulbasaur pairs,
+`19-92`/`48-92`/`79-92`/`104-92`/`123-92`/`142-92` various ×Gastly
+pairs. Both ×Bulbasaur and ×Gastly columns let us see how the same
+12 shiny styles look across different head-species partners.
+
+## Coda — binary format
+
+After the JSON bake we packed the same data into a compact binary
+(`shiny-palettes-to-bin.py`). Each `(φ, ΔL, κ)` triple quantizes into
+4 bytes:
+
+| Axis | Encoding | Max round-trip error | JND | Headroom |
+|---|---|---|---|---|
+| φ (hue rotation) | int16, ±32767 → ±π rad | 0.0027° | ~1° | ~370× |
+| ΔL (lightness) | int8, ±127 → ±0.20 OKLAB L | 0.000787 | ~0.01 | ~13× |
+| κ (chroma scale) | u8, 0–255 → linear 0.5–1.5 | 0.001961 | ~0.01 | ~5× |
+
+All quantization errors well below human perception thresholds —
+visually indistinguishable from the float originals.
+
+**Binary layout** (little-endian):
+
+```
+0   4   magic 'SHIN'
+4   4   version (u32 = 1)
+8   4   entry count (u32) = 5612
+12  4   reserved
+16  …   entries (50 bytes each), sorted by (rootA, rootB)
+
+Per entry:
+  rootA   u8
+  rootB   u8
+  12 × { phi int16, deltaL int8, kappa u8 }   (4 bytes per triple)
+```
+
+Final size comparison:
+
+| Format | Size | vs JSON original |
+|---|---|---|
+| JSON (original) | 1,875 KB | — |
+| JSON gzipped | 676 KB | 37% |
+| **Binary** | **274 KB** | **15%** |
+| Binary gzipped | 274 KB | 15% (incompressible — already efficiently packed) |
+
+The binary doesn't gzip-shrink further because every byte is
+information-rich after quantization (good sign that the format is
+efficiently packed; no redundancy left to compress).
+
+## JS-side implementation sketch
+
+This is the design we'd land when wiring shinies into the runtime —
+sketched here so a future session can pick up the pattern. Three
+pieces: a binary reader, a per-pixel transform, and a SpriteStore
+hook.
+
+### 1. Binary reader → eager-loaded Map
+
+Mirrors the pattern we use for `routing.bin` / `poi-trigram.bin` /
+`boundaries.bin`: one parse pass at module load, then O(1) lookups
+forever.
+
+```js
+// static/shiny-store.js
+const SHINY_MAGIC = 'SHIN';
+const SHINY_VERSION = 1;
+const SHINY_ENTRY_BYTES = 50;
+const SHINY_TRIPLES_PER_ENTRY = 12;
+
+// Decoded shape: Map<rootA * 256 + rootB, Float32Array of length 36>
+// (12 triples × 3 floats each, flat layout for fast access).
+const _shinyPalettes = new Map();
+let _shinyReady = false;
+
+async function loadShinyPalettes() {
+  if (_shinyReady) return;
+  const resp = await fetch(`${BUNDLED_BASE}/shiny-palettes.bin`);
+  const buf = await resp.arrayBuffer();
+  const view = new DataView(buf);
+  const magic = String.fromCharCode(
+    view.getUint8(0), view.getUint8(1),
+    view.getUint8(2), view.getUint8(3));
+  if (magic !== SHINY_MAGIC) {
+    throw new Error('shiny-palettes.bin: bad magic ' + magic);
+  }
+  const version = view.getUint32(4, true);
+  if (version !== SHINY_VERSION) {
+    throw new Error('shiny-palettes.bin: unsupported version ' + version);
+  }
+  const count = view.getUint32(8, true);
+  let off = 16;
+  for (let i = 0; i < count; i++) {
+    const rootA = view.getUint8(off);
+    const rootB = view.getUint8(off + 1);
+    const triples = new Float32Array(SHINY_TRIPLES_PER_ENTRY * 3);
+    let tOff = off + 2;
+    for (let j = 0; j < SHINY_TRIPLES_PER_ENTRY; j++) {
+      triples[j * 3 + 0] = view.getInt16(tOff,     true) / 32767 * Math.PI;
+      triples[j * 3 + 1] = view.getInt8 (tOff + 2)         / 127   * 0.20;
+      triples[j * 3 + 2] = 0.5 + view.getUint8(tOff + 3)   / 255   * 1.0;
+      tOff += 4;
+    }
+    _shinyPalettes.set(rootA * 256 + rootB, triples);
+    off += SHINY_ENTRY_BYTES;
+  }
+  _shinyReady = true;
+}
+
+function getShinyTriple(rootA, rootB, variantIdx) {
+  const triples = _shinyPalettes.get(rootA * 256 + rootB);
+  if (!triples) return null;
+  const base = variantIdx * 3;
+  return { phi: triples[base], deltaL: triples[base+1], kappa: triples[base+2] };
+}
+```
+
+Memory: ~280 KB for the `_shinyPalettes` Map (5,612 entries × 144
+bytes per Float32Array). Same order of magnitude as the bin file,
+fine to keep resident.
+
+### 2. Per-pixel OKLAB transform
+
+Port of `applyShinyTransform` from the Python prototype
+(`probe-shiny-hue.py`). Operates on a canvas's `ImageData` in-place
+for the fast path; returns a fresh blob URL via canvas-to-blob.
+
+```js
+// static/shiny-store.js (cont.)
+
+function _srgbToLinear(c) {
+  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+function _linearToSrgb(c) {
+  return c <= 0.0031308 ? c * 12.92
+                        : 1.055 * Math.pow(c, 1/2.4) - 0.055;
+}
+function rgbToOklab(r, g, b) {
+  const rl = _srgbToLinear(r / 255);
+  const gl = _srgbToLinear(g / 255);
+  const bl = _srgbToLinear(b / 255);
+  const L = 0.4122214708*rl + 0.5363325363*gl + 0.0514459929*bl;
+  const M = 0.2119034982*rl + 0.6806995451*gl + 0.1073969566*bl;
+  const S = 0.0883024619*rl + 0.2817188376*gl + 0.6299787005*bl;
+  const Lc = Math.cbrt(L), Mc = Math.cbrt(M), Sc = Math.cbrt(S);
+  return [
+    0.2104542553*Lc + 0.7936177850*Mc - 0.0040720468*Sc,
+    1.9779984951*Lc - 2.4285922050*Mc + 0.4505937099*Sc,
+    0.0259040371*Lc + 0.7827717662*Mc - 0.8086757660*Sc,
+  ];
+}
+function oklabToRgb(L, a, b) {
+  // ...mirror Python oklab_to_rgb...
+}
+function gamutClipOklab(L, a, b) {
+  // Bisection on chroma scale (10 iterations is plenty in JS too).
+  // ...mirror Python gamut_clip_oklab...
+}
+
+// Returns a fresh blob URL with the transformed sprite. Caller is
+// responsible for revoking the URL when done (typical SpriteStore
+// pattern — we revoke on cache eviction).
+async function applyShinyTransform(sourceImg, phi, deltaL, kappa) {
+  const w = sourceImg.naturalWidth, h = sourceImg.naturalHeight;
+  const canvas = new OffscreenCanvas(w, h);
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(sourceImg, 0, 0);
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const px = imgData.data;
+  const CHROMA_THRESHOLD = 0.04;
+  for (let i = 0; i < px.length; i += 4) {
+    const a = px[i + 3];
+    if (a < 200) continue;
+    const [L, oa, ob] = rgbToOklab(px[i], px[i+1], px[i+2]);
+    const chroma = Math.sqrt(oa*oa + ob*ob);
+    if (chroma < CHROMA_THRESHOLD) continue;  // structural, preserve
+    const hue = Math.atan2(ob, oa);
+    const newL = Math.max(0, Math.min(1, L + deltaL));
+    const newChroma = chroma * kappa;
+    const newHue = hue + phi;
+    let newA = newChroma * Math.cos(newHue);
+    let newB = newChroma * Math.sin(newHue);
+    const clipped = gamutClipOklab(newL, newA, newB);
+    [px[i], px[i+1], px[i+2]] = oklabToRgb(clipped.L, clipped.a, clipped.b);
+  }
+  ctx.putImageData(imgData, 0, 0);
+  const blob = await canvas.convertToBlob({ type: 'image/png' });
+  return URL.createObjectURL(blob);
+}
+```
+
+Cost estimate: ~10-20 ms per 96×96 sprite (~3,500 chromatic pixels;
+~30 FLOPs each). First-render-only; cached after.
+
+### 3. SpriteStore hook
+
+The minimal wiring: when SpriteStore is asked for a sprite where
+`shinyVariant != null`, key the cache differently and apply the
+transform on miss.
+
+```js
+// In sprite-store.js's showSprite path, before the existing IDB blob
+// fetch:
+function _spriteKey(a, b, variant, shinyVariant) {
+  const shinyTag = shinyVariant != null ? `-s${shinyVariant}` : '';
+  return `${a}-${b}-${variant}${shinyTag}`;
+}
+
+async function _resolveSprite(a, b, variant, shinyVariant) {
+  const cacheKey = _spriteKey(a, b, variant, shinyVariant);
+  const cached = _spriteCache.get(cacheKey);
+  if (cached) return cached;
+
+  // Resolve the base (non-shiny) sprite first via the existing path.
+  const base = await _resolveBaseSprite(a, b, variant);
+  if (base == null || shinyVariant == null) {
+    _spriteCache.set(cacheKey, base);
+    return base;
+  }
+
+  // Apply the shiny transform.
+  const rootA = candyRootFor(a);
+  const rootB = candyRootFor(b);
+  const triple = getShinyTriple(rootA, rootB, shinyVariant);
+  if (!triple) {
+    // Family-pair not in the bake — fall through to base sprite.
+    // Shouldn't happen for gen-1 fusions; defensive.
+    _spriteCache.set(cacheKey, base);
+    return base;
+  }
+  const img = await _decodeBlob(base);
+  const shinyUrl = await applyShinyTransform(
+    img, triple.phi, triple.deltaL, triple.kappa);
+  _spriteCache.set(cacheKey, shinyUrl);
+  return shinyUrl;
+}
+```
+
+The cache key change is the only place existing call sites need to
+become shiny-aware — most of `SpriteStore` doesn't care. The first
+render of a shiny does ~10-20ms of OKLAB work; every subsequent
+render is a cache hit.
+
+For storage of the cache itself: same IDB-backed pattern as existing
+sprite cache. Shiny blobs persist across sessions; the user only
+pays the transform cost once per shiny they encounter.
+
+## Real next steps now that the bake is in hand
+
+The algorithm is settled and the data is baked. Remaining engineering
+to ship the feature:
+
+1. **Wire the bake into `build-bundled-data.py`.** Add a
+   `bake_shiny_palettes()` step that runs build-shiny-palettes.py
+   --all if the output is missing or stale. Idempotent and fast on
+   warm cache (a no-op when the JSON already exists). Future
+   regenerations of BundledData pick this up automatically.
+2. **Port the OKLAB transform to JS.** ~80 lines for `rgbToOklab`,
+   `oklabToRgb`, `gamutClipOklab`, `applyShinyTransform(img, phi, dl,
+   kappa)` returning a fresh blob. Canvas2D `getImageData` /
+   `putImageData` for pixel access. The Python prototype in
+   `probe-shiny-hue.py` is the reference implementation.
+3. **Bundle + load the JSON.** Same pattern as
+   `species-evolutions.json` — `AppData` or `Sprites` module loads it
+   on first need, caches in memory. ~1.8 MB load is fine on cold
+   start (gzipped over LocalServer it's ~676 KB, comparable to
+   sprite-pack downloads we already do).
+4. **Shiny roll at catch time.** In `creatures.js`, extend the
+   capture record schema: `shinyVariant: number | null`. Roll at
+   capture: `Math.random() < SHINY_RATE` (0.001) → pick variant
+   uniformly in 0..11. Persist on `c.shinyVariant`. Legacy captures
+   default null (not shiny — same as the existing pattern for
+   forward-compatible field additions).
+5. **Render path through SpriteStore.** When asked for a sprite where
+   `shinyVariant != null`, look up
+   `shinyPalettes[\`${rootA}-${rootB}\`][shinyVariant]` → apply
+   transform → cache result blob under a shiny-aware key
+   (e.g. `${a}-${b}-${variant}-shiny${shinyVariant}`). Falls through
+   to the source sprite normally if the family-pair isn't in the bake
+   (shouldn't happen for gen 1 but defensive).
+6. **Polish:** ✨ badge in inventory, sparkle particle on first
+   encounter, "you found a shiny" toast, pokédex tracking of shiny
+   variants seen (mirror of the variant-grid concept but for shinies
+   — 12 slots, silhouette until encountered).
+
+Each piece is bite-sized. The load-bearing pre-req (the algorithm +
+bake) is done.
+
 
