@@ -475,6 +475,43 @@
     }
     return family[i];
   }
+  // Test-only override toggle (Settings → "Force shiny catches"). When
+  // on, every shiny roll succeeds; the variant index is still uniformly
+  // random so different captures show different shinies. Reads
+  // localStorage each call — settings can flip mid-session.
+  function _forceShinyOn() {
+    try { return localStorage.getItem('cc.forceShiny') === '1'; }
+    catch { return false; }
+  }
+
+  // Per-player shiny roll. Unlike the rest of the encounter RNG (which
+  // is deterministic in spawn id so two players see the same level /
+  // size / variant), shinies are independent per player and decided at
+  // the moment the user opens the encounter screen. The roll is
+  // persisted on the marker record so re-tapping the same encounter
+  // doesn't re-roll the chance.
+  //
+  // rec.shinyVariant resolves to either null (not shiny — vast majority
+  // of cases) or an integer in [0, 11] (which of the 12 shiny styles
+  // for the family pair). Idempotent: once set, never re-rolled.
+  function _rollShinyForRecord(rec) {
+    if (!rec || rec.shinyVariant !== undefined) return;
+    const rate = (global.ShinyStore && global.ShinyStore.RATE) || 0.001;
+    const count = (global.ShinyStore && global.ShinyStore.VARIANT_COUNT) || 12;
+    const hit = _forceShinyOn() || (Math.random() < rate);
+    rec.shinyVariant = hit ? Math.floor(Math.random() * count) : null;
+  }
+
+  // Standalone roll for capture paths that don't have a marker record
+  // (egg hatch, daycare loot). Same per-player semantics — independent
+  // chance, decided at the moment the creature comes into being.
+  function _rollFreshShinyVariant() {
+    const rate = (global.ShinyStore && global.ShinyStore.RATE) || 0.001;
+    const count = (global.ShinyStore && global.ShinyStore.VARIANT_COUNT) || 12;
+    const hit = _forceShinyOn() || (Math.random() < rate);
+    return hit ? Math.floor(Math.random() * count) : null;
+  }
+
   function awardCandyForCapture(speciesA, speciesB) {
     if (speciesA == null || speciesB == null) return;
     const rootA = candyRootFor(speciesA);
@@ -770,6 +807,10 @@
       // so the renderer falls back to autogen art; a follow-up
       // could resolve a variant at hatch time if desired.
       variant: 'auto',
+      // Per-player shiny roll happens at hatch (the moment the player
+      // first sees the creature) — independent of any other player who
+      // had a sibling egg from the same daycare loot.
+      shinyVariant: _rollFreshShinyVariant(),
       level: 1,
       sizeM: typeof egg.sizeM === 'number' ? egg.sizeM : 1.0,
       caughtAt: {
@@ -1572,6 +1613,7 @@
       speciesA: e.speciesA,
       speciesB: e.speciesB,
       variant: (typeof e.variant === 'number') ? e.variant : 'auto',
+      shinyVariant: (typeof e.shinyVariant === 'number') ? e.shinyVariant : null,
       level: e.level,
       sizeM: e.sizeM,
       name: fusionName(e.speciesA, e.speciesB),
@@ -5317,6 +5359,48 @@
       /* While throwing, hide the action panel so the player can't
          spam clicks during the animation. */
       #battleScreen.throwing .battle-actions { pointer-events: none; opacity: 0.4; }
+
+      /* Shiny indicator: small twinkling sparkle in the corner of the
+         art container. The shiny color shift itself lives in the
+         sprite blob (baked offline + applied via ShinyStore at render
+         time); this badge is just a hint so the player knows what
+         they're looking at. */
+      #creatureInventory .creature-card { position: relative; }
+      #creatureInventory .detail-art { position: relative; }
+      #creatureInventory .creature-card .shiny-badge,
+      #creatureInventory .detail-art .shiny-badge {
+        position: absolute;
+        top: 4px; right: 4px;
+        font-size: 14px;
+        line-height: 1;
+        z-index: 3;
+        pointer-events: none;
+        filter: drop-shadow(0 1px 2px rgba(0,0,0,0.45));
+        animation: shiny-twinkle 2.4s ease-in-out infinite;
+      }
+      #creatureInventory .detail-art .shiny-badge {
+        top: 8px; right: 8px;
+        font-size: 22px;
+      }
+      #battleScreen .battle-sprite-wrap .shiny-badge {
+        position: absolute;
+        top: 0; right: -4px;
+        font-size: 24px;
+        line-height: 1;
+        opacity: 0;
+        pointer-events: none;
+        filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5));
+        transition: opacity 0.2s ease;
+      }
+      #battleScreen.battle-sprite-ready.battle-sprite-shiny
+        .battle-sprite-wrap .shiny-badge {
+        opacity: 1;
+        animation: shiny-twinkle 2.4s ease-in-out infinite;
+      }
+      @keyframes shiny-twinkle {
+        0%, 100% { opacity: 0.75; transform: scale(1); }
+        50%      { opacity: 1.0;  transform: scale(1.15) rotate(8deg); }
+      }
     `;
     document.head.appendChild(s);
   }
@@ -7128,6 +7212,7 @@
       // for legacy captures saved before per-capture variant tracking.
       const v = (typeof c.variant === 'number') ? c.variant : undefined;
       global.SpriteStore.showSprite(img, c.speciesA, c.speciesB, v, {
+        shinyVariant: c.shinyVariant,
         onReady: () => {
           if (ph) ph.style.display = 'none';
           img.removeAttribute('hidden');
@@ -7974,9 +8059,10 @@
       <div class="detail-name-row" data-mode="view">
         <div class="detail-name detail-name-clickable" role="button" tabindex="0" title="tap to rename">${escapeHtml(name)}</div>
       </div>
-      <div class="detail-art">
+      <div class="detail-art${c.shinyVariant != null ? ' shiny' : ''}">
         <span class="detail-art-placeholder" aria-hidden="true">${escapeHtml(c.emoji || '•')}</span>
         <img class="detail-art-img" alt="" style="display:none">
+        ${c.shinyVariant != null ? '<span class="shiny-badge" aria-label="shiny">✨</span>' : ''}
       </div>
       ${pokedexLinkHtml}
       ${speciesLine}
@@ -8071,6 +8157,9 @@
               const img = row.querySelector('.evo-art img');
               if (img) {
                 global.SpriteStore.showSprite(img, e.newA, e.newB, variant, {
+                  // Shiny stays consistent across the evolution — same
+                  // family pair, same triple, just on the evolved sprite.
+                  shinyVariant: c.shinyVariant,
                   onReady: () => {
                     row.classList.add('evo-art-ready');
                     markEvoRowReady();
@@ -8161,6 +8250,7 @@
         // autogen) via undefined.
         const v = (typeof c.variant === 'number') ? c.variant : undefined;
         global.SpriteStore.showSprite(img, c.speciesA, c.speciesB, v, {
+          shinyVariant: c.shinyVariant,
           onReady: () => {
             if (ph) ph.style.display = 'none';
             img.style.display = 'block';
@@ -8532,11 +8622,16 @@
               (i ? '<span class="sep">·</span>' : '') + `<span>${escapeHtml(s)}</span>`
             ).join('')}</div>`
           : '';
+        const shinyBadgeHtml = (c.shinyVariant != null)
+          ? `<span class="shiny-badge" aria-label="shiny">✨</span>`
+          : '';
+        if (c.shinyVariant != null) card.classList.add('shiny');
         card.innerHTML =
           `<div class="art">`
           + `<span class="art-placeholder" aria-hidden="true">${escapeHtml(c.emoji || '•')}</span>`
           + `<img class="art-img" alt="">`
           + `</div>`
+          + shinyBadgeHtml
           + `<div class="name">${escapeHtml(displayName(c))}</div>`
           + statsHtml;
         return card;
@@ -8553,6 +8648,7 @@
         // default-variant picker (custom v0 / autogen) via undefined.
         const v = (typeof c.variant === 'number') ? c.variant : undefined;
         global.SpriteStore.showSprite(img, c.speciesA, c.speciesB, v, {
+          shinyVariant: c.shinyVariant,
           onReady: () => {
             if (ph) ph.style.display = 'none';
             img.style.display = 'block';
@@ -9238,6 +9334,7 @@
       <div class="battle-sprite-wrap">
         <div class="battle-sprite-placeholder"></div>
         <img class="battle-sprite" alt="" draggable="false">
+        <span class="shiny-badge" aria-label="shiny">✨</span>
         <div class="battle-thrown-ball" hidden>
           <img class="ball-half ball-bottom" alt="">
           <img class="ball-half ball-top" alt="">
@@ -9272,6 +9369,11 @@
     // so the pokédex can silhouette variants they haven't yet seen.
     // Variant resolution is async; do it in the background.
     const _seenRec = _markers.get(spawn.id);
+    // Decide shininess for THIS player at the moment they engage the
+    // encounter. Lives on the marker record so the battle sprite, the
+    // post-throw capture record, and any re-open of the same encounter
+    // all see the same answer.
+    _rollShinyForRecord(_seenRec);
     if (_seenRec && 'variant' in _seenRec) {
       markFusionSeen(spawn.speciesA, spawn.speciesB, spawn, _seenRec.variant);
     } else {
@@ -9355,13 +9457,18 @@
       const variantPromise = (rec && 'variant' in rec)
         ? Promise.resolve(rec.variant)
         : resolveSpawnVariant(spawn);
+      const shinyVariant = (rec && typeof rec.shinyVariant === 'number')
+        ? rec.shinyVariant : null;
       variantPromise.then((variant) => {
         if (_currentBattleSpawn !== spawn) return;
         global.SpriteStore.showSprite(
           img, spawn.speciesA, spawn.speciesB, variant, {
+            shinyVariant,
             onReady: () => {
               if (_currentBattleSpawn !== spawn) return;
               el.classList.add('battle-sprite-ready');
+              if (shinyVariant != null) el.classList.add('battle-sprite-shiny');
+              else el.classList.remove('battle-sprite-shiny');
             },
           },
         );
@@ -9381,6 +9488,7 @@
       // these. URL ownership is the cache's problem now — nothing to
       // revoke here.
       el.classList.remove('battle-sprite-ready');
+      el.classList.remove('battle-sprite-shiny');
       el.classList.remove('throwing');
       // Cancel + reset every element the throw flow animates with
       // fill:'forwards'. The break-out path already does this at
@@ -9458,12 +9566,20 @@
     const variant = (rec && 'variant' in rec)
       ? rec.variant
       : await resolveSpawnVariant(spawn);
+    // shinyVariant was rolled in openBattleScreen at the moment this
+    // player tapped the spawn. If somehow we got here without an
+    // encounter open (instant-catch debug path, future automation),
+    // roll fresh so the field is never undefined on persisted records.
+    const shinyVariant = (rec && typeof rec.shinyVariant === 'number')
+      ? rec.shinyVariant
+      : (rec && rec.shinyVariant === null ? null : _rollFreshShinyVariant());
     const entry = {
       id: `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       spawnId: spawn.id,
       speciesA: spawn.speciesA,
       speciesB: spawn.speciesB,
       variant,
+      shinyVariant,
       level: spawn.level,
       sizeM: spawn.sizeM,
       caughtAt: {
@@ -10472,6 +10588,16 @@
     // the table isn't downloaded yet — display falls back to "A × B".
     if (global.Sprites && global.Sprites.ensureSplitNamesLoaded) {
       global.Sprites.ensureSplitNamesLoaded().catch(() => {});
+    }
+    // Eager-load the shiny palette bundle so the shiny transform path
+    // through SpriteStore has its lookup table ready by the time any
+    // capture renders. Also wire candyRootFor as the family resolver
+    // so per-family shinies stay coherent across evolutions.
+    if (global.ShinyStore) {
+      global.ShinyStore.setRootResolver(candyRootFor);
+      global.ShinyStore.load().catch((e) => {
+        console.warn('shiny palettes failed to load', e);
+      });
     }
     _installedMap = map;
     // Theme switches reload the entire MapLibre style, which drops

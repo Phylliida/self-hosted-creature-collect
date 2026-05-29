@@ -50,9 +50,11 @@
   // (touch on access = delete + re-insert, evict from the front).
   const cache = new Map();
 
-  function keyOf(a, b, variant) {
+  function keyOf(a, b, variant, shinyVariant) {
     const v = (typeof variant === 'number' && variant >= 0) ? variant : 'auto';
-    return `${a}-${b}:${v}`;
+    const s = (typeof shinyVariant === 'number' && shinyVariant >= 0)
+      ? `:s${shinyVariant}` : '';
+    return `${a}-${b}:${v}${s}`;
   }
 
   function evictUntilUnder(target) {
@@ -83,8 +85,8 @@
   //   - status='transient' → Promise rejected, entry removed from cache,
   //                          caller (showSprite) registers the img for
   //                          retryPoll to revisit.
-  function spriteUrl(a, b, variant) {
-    const key = keyOf(a, b, variant);
+  function spriteUrl(a, b, variant, shinyVariant) {
+    const key = keyOf(a, b, variant, shinyVariant);
     if (cache.has(key)) {
       touch(key);
       return cache.get(key);
@@ -92,9 +94,20 @@
     evictUntilUnder(MAX_ENTRIES);
     const p = (async () => {
       const r = await global.Sprites.getSpriteBlobAttempt(a, b, variant);
-      if (r.status === 'ok')      return URL.createObjectURL(r.blob);
       if (r.status === 'missing') return null;
-      throw new Error('sprite fetch transient: ' + key);
+      if (r.status !== 'ok') throw new Error('sprite fetch transient: ' + key);
+      const isShiny = typeof shinyVariant === 'number' && shinyVariant >= 0;
+      if (!isShiny || !global.ShinyStore) return URL.createObjectURL(r.blob);
+      // Apply the shiny transform on a cache miss. On failure
+      // (palette bundle not loaded, family pair not in the bake,
+      // canvas decode error) fall back to the base sprite — the user
+      // still sees the creature, just non-shiny.
+      try {
+        const shinyUrl = await global.ShinyStore.transformBlob(
+          r.blob, a, b, shinyVariant);
+        if (shinyUrl) return shinyUrl;
+      } catch { /* fall through */ }
+      return URL.createObjectURL(r.blob);
     })();
     cache.set(key, p);
     // On rejection, evict so the next call kicks off a fresh fetch.
@@ -112,9 +125,12 @@
     if (!reqs || !reqs.length) return Promise.resolve();
     const misses = [];
     for (const r of reqs) {
-      const key = keyOf(r.a, r.b, r.variant);
+      const key = keyOf(r.a, r.b, r.variant, r.shinyVariant);
       if (cache.has(key)) continue;
-      misses.push({ a: r.a, b: r.b, variant: r.variant, key });
+      misses.push({
+        a: r.a, b: r.b, variant: r.variant,
+        shinyVariant: r.shinyVariant, key,
+      });
     }
     if (!misses.length) return Promise.resolve();
     evictUntilUnder(MAX_ENTRIES - misses.length);
@@ -129,11 +145,20 @@
       // misses, reject on transient so the cache evicts and the retry
       // loop kicks in via showSprite's catch.
       const urlP = batchP.then(
-        (results) => {
+        async (results) => {
           const r = results && results[i];
-          if (r && r.blob)               return URL.createObjectURL(r.blob);
           if (r && r.status === 'missing') return null;
-          throw new Error('sprite preload transient: ' + m.key);
+          if (!r || !r.blob) {
+            throw new Error('sprite preload transient: ' + m.key);
+          }
+          const isShiny = typeof m.shinyVariant === 'number' && m.shinyVariant >= 0;
+          if (!isShiny || !global.ShinyStore) return URL.createObjectURL(r.blob);
+          try {
+            const shinyUrl = await global.ShinyStore.transformBlob(
+              r.blob, m.a, m.b, m.shinyVariant);
+            if (shinyUrl) return shinyUrl;
+          } catch { /* fall through */ }
+          return URL.createObjectURL(r.blob);
         },
         () => { throw new Error('sprite preload batch rejected: ' + m.key); },
       );
@@ -199,8 +224,10 @@
       variant = await bestVariantFor(a, b);
       if (img._spriteGen !== gen) return;
     }
+    const shinyVariant = (typeof opts.shinyVariant === 'number' && opts.shinyVariant >= 0)
+      ? opts.shinyVariant : null;
     let url;
-    try { url = await spriteUrl(a, b, variant); }
+    try { url = await spriteUrl(a, b, variant, shinyVariant); }
     catch {
       // Transient failure — register for retry instead of giving up.
       if (img._spriteGen === gen) registerRetry(img, a, b, variant, opts, gen);

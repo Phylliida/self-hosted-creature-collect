@@ -3070,6 +3070,10 @@
       <label for="debugConsoleToggle">Debug console (errors overlay)</label>
       <input type="checkbox" id="debugConsoleToggle">
     </div>
+    <div class="row">
+      <label for="forceShinyToggle">Force shiny catches (testing)</label>
+      <input type="checkbox" id="forceShinyToggle">
+    </div>
     <div class="settings-subsection">
       <h4 class="settings-subsection-title">
         Visibility
@@ -3981,6 +3985,7 @@
 <script src="/static/spawns.js"></script>
 <script src="/static/sprites.js"></script>
 <script src="/static/sprite-store.js"></script>
+<script src="/static/shiny-store.js"></script>
 <script src="/static/appdata.js"></script>
 <script src="/static/species.js"></script>
 <script src="/static/creatures.js"></script>
@@ -14924,6 +14929,18 @@ function fmtDate(ts) {
       try { map.touchZoomRotate.enableRotation(); } catch {}
       try { map.touchPitch && map.touchPitch.enable && map.touchPitch.enable(); } catch {}
     }
+  }
+
+  // Test-only override: when on, every encounter rolls as shiny. The
+  // roll still happens on tap (so re-opening the same spawn keeps the
+  // same shiny variant), and only newly-encountered creatures are
+  // affected — anything already in the inventory is unchanged.
+  const forceShinyToggle = document.getElementById('forceShinyToggle');
+  if (forceShinyToggle) {
+    forceShinyToggle.checked = localStorage.getItem('cc.forceShiny') === '1';
+    forceShinyToggle.addEventListener('change', () => {
+      localStorage.setItem('cc.forceShiny', forceShinyToggle.checked ? '1' : '0');
+    });
   }
 
   const lockZoomToggle = document.getElementById('lockZoomToggle');
