@@ -66,6 +66,19 @@
       variantIndex:    { calls: 0, totalMs: 0, lastMs: 0, maxMs: 0 },
       seenStoreLoad:   { calls: 0, totalMs: 0, lastMs: 0, maxMs: 0, lastSize: 0 },
       readSeenFusions: { calls: 0, totalMs: 0, lastMs: 0, maxMs: 0, lastSize: 0 },
+      effectiveTags:   { calls: 0, totalMs: 0, lastMs: 0, maxMs: 0 },
+    },
+    // Per-built-in-tag stats. Keyed by tag name; populated right after
+    // BUILTIN_TAGS is defined further down. builtinTagsForCreature
+    // updates them per predicate call so we can see which tag is the
+    // hot one in a filter pass.
+    tagPredicates: {},
+    // One slot for the tag-filter chunk of the inventory render. Lets
+    // us isolate "the tag filter took X ms" from the total filterMs
+    // (which also includes name + type + species filters).
+    tagFilter: {
+      calls: 0, totalMs: 0, lastMs: 0, maxMs: 0,
+      lastInputN: 0, lastOutputN: 0, lastSelected: [],
     },
     renders: {
       list: {
@@ -789,41 +802,77 @@
   // pokédex, candy) see hatched-from-egg captures the same as
   // wild-caught ones, with a `fromEgg: true` flag for any future
   // origin-aware rendering.
-  function hatchEgg(eggId) {
+  // Pick a custom-art variant for a hatching egg. Deterministic in
+  // the egg id so re-hatching the same egg (shouldn't happen, but
+  // safer) always lands on the same variant. Falls back to 'auto'
+  // when the cell has no custom variants or the sprites module isn't
+  // ready yet.
+  async function _pickHatchVariant(speciesA, speciesB, eggId) {
+    if (!global.Sprites || !global.Sprites.getCellVariantCount) return 'auto';
+    try {
+      const count = await global.Sprites.getCellVariantCount(speciesA, speciesB);
+      if (!count || count <= 0) return 'auto';
+      const seed = `hatch|${eggId}|${speciesA}-${speciesB}`;
+      const rng = (global.Spawns && global.Spawns.getRng)
+        ? global.Spawns.getRng(seed)
+        : Math.random;
+      return Math.floor(rng() * count);
+    } catch (e) {
+      _logCreatureError(`pickHatchVariant/${speciesA}-${speciesB}`, e);
+      return 'auto';
+    }
+  }
+
+  async function hatchEgg(eggId) {
     if (!eggId) return null;
     const eggs = readEggs();
     const idx = eggs.findIndex((e) => e.id === eggId);
     if (idx < 0) return null;
     const egg = eggs[idx];
     if (!eggReadyToHatch(egg)) return null;
+    // Pick the variant BEFORE mutating any state so a transient
+    // sprites-module failure doesn't leave us with a half-hatched
+    // egg. Uniform pick across all custom variants for this fusion
+    // (falls back to 'auto' if there are none, same as wild catches).
+    const variant = await _pickHatchVariant(egg.speciesA, egg.speciesB, egg.id);
     const entry = {
       id: `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       spawnId: null,
       fromEgg: true,
       speciesA: egg.speciesA,
       speciesB: egg.speciesB,
-      // Variant resolution requires the per-cell custom-art table
-      // which is async-loaded. For hatched eggs we leave this 'auto'
-      // so the renderer falls back to autogen art; a follow-up
-      // could resolve a variant at hatch time if desired.
-      variant: 'auto',
+      variant,
       // Per-player shiny roll happens at hatch (the moment the player
       // first sees the creature) — independent of any other player who
       // had a sibling egg from the same daycare loot.
       shinyVariant: _rollFreshShinyVariant(),
       level: 1,
       sizeM: typeof egg.sizeM === 'number' ? egg.sizeM : 1.0,
-      caughtAt: {
-        timestamp: Date.now(),
-        // Hatched eggs have no specific lat/lng — the player
-        // walked across many points to incubate them. Leaving
-        // these null tells the encounter-info panel to render
-        // "Hatched from egg" instead of a place name.
-        lat: null,
-        lng: null,
-        poi: null,
-        place: null,
-      },
+      caughtAt: (() => {
+        // Stamp the player's current GPS position at the moment of
+        // hatch (typically: standing somewhere meaningful — home, a
+        // park, a Pokéstop). The egg's incubation happened across
+        // many points, but the hatch event is the one moment we can
+        // pin to a place. Falls back to null lat/lng when location
+        // isn't available (denied permission, no fix yet) — the
+        // encounter-info panel renders "Hatched from egg" in that
+        // case, same as before.
+        const poiApi = global.CreatureCollectAPI;
+        const lat = (typeof _userLat === 'number') ? _userLat : null;
+        const lng = (typeof _userLng === 'number') ? _userLng : null;
+        const poi = (lat != null && lng != null && poiApi && poiApi.findNearestNamedPoi)
+          ? poiApi.findNearestNamedPoi(lat, lng)
+          : null;
+        const place = (lat != null && lng != null && poiApi && poiApi.findNearestPlace)
+          ? poiApi.findNearestPlace(lat, lng)
+          : null;
+        return {
+          timestamp: Date.now(),
+          lat, lng,
+          poi: poi || null,
+          place: place || null,
+        };
+      })(),
     };
     const list = readCapturedCreatures();
     list.push(entry);
@@ -1251,14 +1300,32 @@
     } catch { return []; }
   }
   function writeDaycareSlots(arr) {
+    // Any write invalidates the id-snapshot used by isInDaycare so a
+    // subsequent read sees the new state immediately, not the stale
+    // cached Set from before the mutation.
+    _daycareIdsCache = null;
     try {
       localStorage.setItem(DAYCARE_SLOTS_KEY,
         JSON.stringify(arr.slice(0, DAYCARE_SLOT_COUNT)));
     } catch {}
   }
+  // Microtask-scoped Set of currently-occupied slot ids. Built once per
+  // filter pass instead of paying the full readDaycareSlots cost (JSON
+  // parse + normalize + dedup) on every isInDaycare check. Profile pre-
+  // cache showed Daycare predicate at ~30µs/call dominating the tag-
+  // filter pass; post-cache should drop to one parse per pass.
+  let _daycareIdsCache = null;
+  function _daycareIds() {
+    if (_daycareIdsCache) return _daycareIdsCache;
+    const ids = new Set();
+    for (const s of readDaycareSlots()) ids.add(s.id);
+    _daycareIdsCache = ids;
+    queueMicrotask(() => { _daycareIdsCache = null; });
+    return _daycareIdsCache;
+  }
   function isInDaycare(id) {
     if (!id) return false;
-    return readDaycareSlots().some((s) => s.id === id);
+    return _daycareIds().has(id);
   }
   function addToDaycare(id) {
     if (!id) return false;
@@ -1416,6 +1483,29 @@
       predicate: (c) => c && c.speciesA != null && c.speciesA === c.speciesB,
     },
     {
+      name: 'Shiny',
+      description: 'Rolled shiny when first encountered (rare).',
+      predicate: (c) => c && typeof c.shinyVariant === 'number',
+    },
+    {
+      name: 'Hatched',
+      description: 'Hatched from an egg rather than caught in the wild.',
+      predicate: (c) => c && c.fromEgg === true,
+    },
+    {
+      name: 'Evolvable',
+      description: 'Has an available evolution you can afford right now.',
+      predicate: (c) => {
+        if (!c || c.speciesA == null || c.speciesB == null) return false;
+        const evos = fusionEvolutionsFor(c.speciesA, c.speciesB);
+        if (!evos.length) return false;
+        return evos.some((e) => {
+          const srcSpeciesId = e.source === 'A' ? c.speciesA : c.speciesB;
+          return _canAffordEvolution(srcSpeciesId, e.method, e.param);
+        });
+      },
+    },
+    {
       name: 'Evolved',
       description: 'At least one side is past its base form.',
       predicate: (c) => c
@@ -1423,7 +1513,7 @@
     },
     {
       name: 'Daycare',
-      description: 'In the daycare. Tap on a creature\u2019s detail page to add or remove (max 2 at a time).',
+      description: 'In the daycare. Tap on a creature’s detail page to add or remove (max 2 at a time).',
       predicate: (c) => c && c.id != null && isInDaycare(c.id),
       visible: (c) => {
         if (!c || c.id == null) return false;
@@ -1443,12 +1533,35 @@
     },
   ];
   const BUILTIN_TAG_NAMES = new Set(BUILTIN_TAGS.map((b) => b.name));
+  // Seed the per-tag perf slot for every built-in declared above.
+  // Done here (not at _invPerf init) because BUILTIN_TAGS is defined
+  // later in the file.
+  for (const b of BUILTIN_TAGS) {
+    _invPerf.tagPredicates[b.name] =
+      { calls: 0, totalMs: 0, lastMs: 0, maxMs: 0, hits: 0 };
+  }
   function isBuiltinTag(name) { return BUILTIN_TAG_NAMES.has(name); }
   function builtinByName(name) {
     return BUILTIN_TAGS.find((b) => b.name === name) || null;
   }
+  // Per-predicate timing here is hot — N captures × M built-ins
+  // predicates per filter pass, ~10K calls for 2K captures. Inlining
+  // performance.now() bookends costs ~100 ns per call (~1 ms per
+  // pass), worth it for the visibility into which built-in dominates.
   function builtinTagsForCreature(c) {
-    return BUILTIN_TAGS.filter((b) => b.predicate(c)).map((b) => b.name);
+    const out = [];
+    for (const b of BUILTIN_TAGS) {
+      const t0 = performance.now();
+      const hit = b.predicate(c);
+      const dt = performance.now() - t0;
+      const s = _invPerf.tagPredicates[b.name];
+      s.calls++;
+      s.totalMs += dt;
+      s.lastMs = dt;
+      if (dt > s.maxMs) s.maxMs = dt;
+      if (hit) { s.hits++; out.push(b.name); }
+    }
+    return out;
   }
   // Whether a built-in tag's CHIP should appear in the picker for a
   // given creature. Defaults to the predicate (matches the legacy
@@ -1465,12 +1578,15 @@
   // legacy data from before Pure existed) are filtered out so the
   // built-in's predicate stays authoritative.
   function effectiveTagsForCreature(c) {
+    const t0 = performance.now();
     const stored = Array.isArray(c.tags) ? c.tags : [];
     const builtin = builtinTagsForCreature(c);
-    return Array.from(new Set([
+    const out = Array.from(new Set([
       ...builtin,
       ...stored.filter((t) => !BUILTIN_TAG_NAMES.has(t)),
     ]));
+    _perfMark(_invPerf.fn.effectiveTags, t0);
+    return out;
   }
   // The ordered list of all tag names that should appear in pickers
   // (Tags menu, detail picker, inventory filter row): built-ins first
@@ -2537,6 +2653,19 @@
     _evolveCurrent = null;
   }
 
+  // Caches `{candy, bag}` for one synchronous chunk of work, then
+  // clears itself via a microtask so the next event-loop turn (post-
+  // capture, post-evolve, etc.) gets fresh state. Lets the "Evolvable"
+  // builtin tag's predicate run across thousands of captures during a
+  // filter pass without re-parsing localStorage per check.
+  let _affordSnapshot = null;
+  function _affordabilitySnapshot() {
+    if (_affordSnapshot) return _affordSnapshot;
+    _affordSnapshot = { candy: readCandy(), bag: readBag() };
+    queueMicrotask(() => { _affordSnapshot = null; });
+    return _affordSnapshot;
+  }
+
   // Does the player currently have enough candy + (item if required)
   // to evolve from this species via this method? Used to gate the
   // tap handler on each "Evolves to" row.
@@ -2544,14 +2673,11 @@
     if (srcSpeciesId == null) return false;
     const cost = _evolutionCandyCost(srcSpeciesId);
     const rootId = candyRootFor(srcSpeciesId);
-    const candy = readCandy();
+    const { candy, bag } = _affordabilitySnapshot();
     const have = (rootId != null && candy[String(rootId)]) || 0;
     if (have < cost) return false;
     const itemKey = _evolutionItemRequirement(method, param);
-    if (itemKey) {
-      const bag = readBag();
-      if ((bag[itemKey] || 0) < 1) return false;
-    }
+    if (itemKey && (bag[itemKey] || 0) < 1) return false;
     return true;
   }
 
@@ -5371,22 +5497,19 @@
       #creatureInventory .detail-art .shiny-badge {
         position: absolute;
         top: 4px; right: 4px;
-        font-size: 14px;
-        line-height: 1;
+        width: 16px; height: 16px;
         z-index: 3;
         pointer-events: none;
         filter: drop-shadow(0 1px 2px rgba(0,0,0,0.45));
-        animation: shiny-twinkle 2.4s ease-in-out infinite;
       }
       #creatureInventory .detail-art .shiny-badge {
         top: 8px; right: 8px;
-        font-size: 22px;
+        width: 26px; height: 26px;
       }
       #battleScreen .battle-sprite-wrap .shiny-badge {
         position: absolute;
-        top: 0; right: -4px;
-        font-size: 24px;
-        line-height: 1;
+        top: -4px; right: -6px;
+        width: 30px; height: 30px;
         opacity: 0;
         pointer-events: none;
         filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5));
@@ -5395,11 +5518,6 @@
       #battleScreen.battle-sprite-ready.battle-sprite-shiny
         .battle-sprite-wrap .shiny-badge {
         opacity: 1;
-        animation: shiny-twinkle 2.4s ease-in-out infinite;
-      }
-      @keyframes shiny-twinkle {
-        0%, 100% { opacity: 0.75; transform: scale(1); }
-        50%      { opacity: 1.0;  transform: scale(1.15) rotate(8deg); }
       }
     `;
     document.head.appendChild(s);
@@ -6687,10 +6805,13 @@
     _setupEggDragDrop(body);
     // Hatch buttons.
     body.querySelectorAll('.slot-hatch').forEach((btn) => {
-      btn.addEventListener('click', (ev) => {
+      btn.addEventListener('click', async (ev) => {
         ev.stopPropagation();
         const eggId = btn.dataset.hatchId;
-        const entry = hatchEgg(eggId);
+        // hatchEgg is async — it awaits the per-cell custom-variant
+        // count so the rolled variant lands on the entry before
+        // first persist.
+        const entry = await hatchEgg(eggId);
         if (!entry) return;
         renderEggs();
         // Send the user to the new capture's detail page, matching
@@ -8062,7 +8183,7 @@
       <div class="detail-art${c.shinyVariant != null ? ' shiny' : ''}">
         <span class="detail-art-placeholder" aria-hidden="true">${escapeHtml(c.emoji || '•')}</span>
         <img class="detail-art-img" alt="" style="display:none">
-        ${c.shinyVariant != null ? '<span class="shiny-badge" aria-label="shiny">✨</span>' : ''}
+        ${c.shinyVariant != null ? '<svg class="shiny-badge" aria-label="shiny"><use href="#shinyIcon"/></svg>' : ''}
       </div>
       ${pokedexLinkHtml}
       ${speciesLine}
@@ -8570,11 +8691,24 @@
     // that no longer exist are pruned at deleteTag() time so this
     // list is always fresh.
     const selectedTags = readInvTagFilter();
+    const _tTagFilter = performance.now();
+    const _tagInputN = items.length;
     if (selectedTags.length) {
       items = items.filter((c) => {
         const eff = effectiveTagsForCreature(c);
         return selectedTags.every((t) => eff.includes(t));
       });
+    }
+    const _tagFilterMs = performance.now() - _tTagFilter;
+    {
+      const tf = _invPerf.tagFilter;
+      tf.calls++;
+      tf.totalMs += _tagFilterMs;
+      tf.lastMs = _tagFilterMs;
+      if (_tagFilterMs > tf.maxMs) tf.maxMs = _tagFilterMs;
+      tf.lastInputN = _tagInputN;
+      tf.lastOutputN = items.length;
+      tf.lastSelected = selectedTags.slice();
     }
     const _filterMs = performance.now() - _tFilter;
     if (!items.length) {
@@ -8586,7 +8720,7 @@
       listEl.innerHTML = `<div class="creature-empty">${msg}</div>`;
       _perfMarkRender(_invPerf.renders.list, {
         t: Date.now(),
-        dataMs: _dataMs, filterMs: _filterMs, virtualizeMs: 0,
+        dataMs: _dataMs, filterMs: _filterMs, tagFilterMs: _tagFilterMs, virtualizeMs: 0,
         totalMs: performance.now() - _tTotal,
         inputN: _inputN, outputN: 0, empty: true,
       });
@@ -8623,7 +8757,7 @@
             ).join('')}</div>`
           : '';
         const shinyBadgeHtml = (c.shinyVariant != null)
-          ? `<span class="shiny-badge" aria-label="shiny">✨</span>`
+          ? `<svg class="shiny-badge" aria-label="shiny"><use href="#shinyIcon"/></svg>`
           : '';
         if (c.shinyVariant != null) card.classList.add('shiny');
         card.innerHTML =
@@ -8659,7 +8793,7 @@
     const _virtMs = performance.now() - _tVirt;
     _perfMarkRender(_invPerf.renders.list, {
       t: Date.now(),
-      dataMs: _dataMs, filterMs: _filterMs, virtualizeMs: _virtMs,
+      dataMs: _dataMs, filterMs: _filterMs, tagFilterMs: _tagFilterMs, virtualizeMs: _virtMs,
       totalMs: performance.now() - _tTotal,
       inputN: _inputN, outputN: items.length,
     });
@@ -9334,7 +9468,7 @@
       <div class="battle-sprite-wrap">
         <div class="battle-sprite-placeholder"></div>
         <img class="battle-sprite" alt="" draggable="false">
-        <span class="shiny-badge" aria-label="shiny">✨</span>
+        <svg class="shiny-badge" aria-label="shiny"><use href="#shinyIcon"/></svg>
         <div class="battle-thrown-ball" hidden>
           <img class="ball-half ball-bottom" alt="">
           <img class="ball-half ball-top" alt="">
