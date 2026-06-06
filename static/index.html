@@ -2625,6 +2625,23 @@
 </script>
 </head>
 <body>
+<!-- Inline SVG symbol library: define once, reference via <use href="#id"/>
+     wherever an icon is needed. Hidden via display:none — only the
+     symbols are consumed. Add new icons by extending the inner <defs>. -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="shinyIcon" viewBox="0 0 24 24">
+    <!-- Large star, lower-left/center. -->
+    <path d="M9 5 L10.55 11.45 L17 13 L10.55 14.55 L9 21 L7.45 14.55 L1 13 L7.45 11.45 Z"
+          fill="#FFFFFF" stroke="#000000" stroke-width=".8" stroke-linejoin="round"/>
+    <!-- Medium star, upper-right. -->
+    <path d="M18 .5 L18.92 4.08 L22.5 5 L18.92 5.92 L18 9.5 L17.08 5.92 L13.5 5 L17.08 4.08 Z"
+          fill="#FFFFFF" stroke="#000000" stroke-width=".65" stroke-linejoin="round"/>
+    <!-- Small star, upper-left. -->
+    <path d="M4 2.5 L4.5 4.5 L6.5 5 L4.5 5.5 L4 7.5 L3.5 5.5 L1.5 5 L3.5 4.5 Z"
+          fill="#FFFFFF" stroke="#000000" stroke-width=".5" stroke-linejoin="round"/>
+  </symbol>
+</svg>
+
 <!-- On-screen error console. Captures uncaught errors, unhandled
      promise rejections, console.error calls, and SW registration
      failures, then renders them as a fixed-position overlay at the
@@ -12379,6 +12396,38 @@ function fmtDate(ts) {
           lines.push(fnLine('readSeenFus',   ip.fn.readSeenFusions,
                             (s) => `size=${s.lastSize}`));
         }
+        if (ip.fn.effectiveTags) {
+          lines.push(fnLine('effectiveTags', ip.fn.effectiveTags));
+        }
+        // Aggregate tag-filter pass: total ms spent in the chip-filter
+        // step of the inventory render, plus which chips were active.
+        if (ip.tagFilter) {
+          const tf = ip.tagFilter;
+          const avg = tf.calls ? (tf.totalMs / tf.calls).toFixed(2) : '—';
+          const sel = (tf.lastSelected && tf.lastSelected.length)
+            ? `[${tf.lastSelected.join(',')}]` : '[none]';
+          lines.push(`  ${'tagFilter'.padEnd(15)} calls=${tf.calls} `
+            + `last=${fmtMs(tf.lastMs)} max=${fmtMs(tf.maxMs)} avg=${avg}ms  `
+            + `${tf.lastInputN}→${tf.lastOutputN} sel=${sel}`);
+        }
+        // Per-built-in-tag breakdown. The hot one across N captures is
+        // what to optimize first. `hits` is the count of captures the
+        // predicate returned true for so far (cumulative across all
+        // calls — gives a sense of cardinality, useful when reasoning
+        // about whether a tag's expensive computation is worth caching).
+        if (ip.tagPredicates) {
+          const names = Object.keys(ip.tagPredicates);
+          if (names.length) {
+            lines.push(`[tag predicates]`);
+            for (const name of names) {
+              const s = ip.tagPredicates[name];
+              const avg = s.calls ? (s.totalMs / s.calls).toFixed(3) : '—';
+              lines.push(`  ${name.padEnd(11)} calls=${s.calls} `
+                + `hits=${s.hits} total=${fmtMs(s.totalMs)} `
+                + `avg=${avg}ms max=${fmtMs(s.maxMs)}`);
+            }
+          }
+        }
         const renderLine = (name, r, hasSort) => {
           const last = r.lastBreakdown;
           const head = `  ${name.padEnd(8)} calls=${r.calls} `
@@ -12387,6 +12436,8 @@ function fmtDate(ts) {
           const phases = [
             `data=${fmtMs(last.dataMs)}`,
             `filter=${fmtMs(last.filterMs)}`,
+            // Sub-component of filter: how much of it was tag chips.
+            last.tagFilterMs != null ? `tagFilter=${fmtMs(last.tagFilterMs)}` : null,
             hasSort ? `sort=${fmtMs(last.sortMs)}` : null,
             `virt=${fmtMs(last.virtualizeMs)}`,
           ].filter(Boolean).join(' ');
@@ -12441,8 +12492,10 @@ function fmtDate(ts) {
         if (slowList.length) {
           lines.push(`  list slowest (last ${ip.renders.list.recent.length}):`);
           for (const b of slowList) {
+            const tagPart = b.tagFilterMs != null
+              ? `tagFilter=${fmtMs(b.tagFilterMs)} ` : '';
             lines.push(`    ${fmtAgo(b.t).padEnd(8)} ${fmtMs(b.totalMs).padStart(7)} `
-              + `data=${fmtMs(b.dataMs)} filter=${fmtMs(b.filterMs)} `
+              + `data=${fmtMs(b.dataMs)} filter=${fmtMs(b.filterMs)} ${tagPart}`
               + `virt=${fmtMs(b.virtualizeMs)} ${b.inputN}→${b.outputN}`);
           }
         }
