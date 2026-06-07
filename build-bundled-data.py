@@ -205,15 +205,52 @@ def alpha_scan_custom_sheet(sheet_path: Path, cols: int, max_height: int) -> lis
     return bodies
 
 
+_NAT_DEX_MAPPING_RE = re.compile(r"(\d+)\s*=>\s*(\d+)")
+
+
 def build_split_names() -> list:
-    """Parse SplitNames.rb into [prefix, suffix] array indexed by
-    national-dex number. Index 0 is the placeholder ['', '']."""
+    """Parse SplitNames.rb and re-emit a [prefix, suffix] array indexed
+    by **PIF id_number**. The source SPLIT_NAMES table is positional by
+    *national dex*, and PIF's runtime translates PIF id_number → national
+    dex via NAT_DEX_MAPPING (declared in the same file) before lookup —
+    see FusedSpecies.rb's calculate_name. We mirror that here at build
+    time so the client can keep doing a simple `table[id]` lookup.
+
+    Gen 1 and most of gen 2 have id_number == national_dex; gen 3+
+    diverges (Mawile national 303 → PIF 300, etc.) — without the
+    translation Mawile fusions inherit Skitty's suffix."""
     path = (INFINITEFUSION / "Data" / "Scripts" / "052_InfiniteFusion"
             / "Fusion" / "SplitNames.rb")
-    out = []
     text = path.read_text(encoding="utf-8", errors="replace")
+
+    # 1. The positional [prefix, suffix] table — national-dex indexed.
+    natdex_table: list[list[str]] = []
     for m in SPLIT_NAMES_RE.finditer(text):
-        out.append([m.group(1), m.group(2)])
+        natdex_table.append([m.group(1), m.group(2)])
+
+    # 2. The PIF id_number → national_dex map, parsed out of the same
+    #    file. We scope to the NAT_DEX_MAPPING = { ... } block so a
+    #    stray `=>` elsewhere in the file doesn't bleed in.
+    pif_to_nat: dict[int, int] = {}
+    mapping_match = re.search(
+        r"NAT_DEX_MAPPING\s*=\s*\{(.*?)\}",
+        text, re.DOTALL,
+    )
+    if mapping_match:
+        block = mapping_match.group(1)
+        for m in _NAT_DEX_MAPPING_RE.finditer(block):
+            pif_to_nat[int(m.group(1))] = int(m.group(2))
+    else:
+        print("  ⚠ NAT_DEX_MAPPING block not found in SplitNames.rb")
+
+    # 3. Build the output array indexed by PIF id, length MAX_SPECIES+1.
+    #    For each allowed PIF species, translate to national dex (if it
+    #    differs) and read SplitNames at that position.
+    out: list[list[str]] = [["", ""] for _ in range(MAX_SPECIES + 1)]
+    for pif_id in ALLOWED_SPECIES:
+        nat_id = pif_to_nat.get(pif_id, pif_id)
+        if 0 < nat_id < len(natdex_table):
+            out[pif_id] = list(natdex_table[nat_id])
     return out
 
 
