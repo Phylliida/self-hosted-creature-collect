@@ -1188,14 +1188,25 @@
     return { rootA, rootB };
   }
 
+  // Ditto is the wildcard: its candy converts INTO any other family
+  // at 1-for-1 instead of 2-for-1, reflecting Ditto's "becomes
+  // anything" identity. The discount only applies when Ditto is the
+  // SOURCE — converting other-family candy INTO Ditto candy stays
+  // at the regular 2:1 rate.
+  const DITTO_SPECIES_ID = 132;
+  function _daycareConvertCost(fromRoot) {
+    return fromRoot === DITTO_SPECIES_ID ? 1 : 2;
+  }
+
   // Apply any pending candy conversions for one slot. Mutates the
   // slot's convertedCount* counters in place; also mutates persistent
   // candy state via writeCandy when a conversion fires. Returns true
   // if the slot was touched (so the caller knows to persist).
   //
   // Conversion semantics:
-  //   - convertDir='A' → spend 2 × rootA candy for 1 × rootB candy
-  //   - convertDir='B' → spend 2 × rootB candy for 1 × rootA candy
+  //   - convertDir='A' → spend N × rootA candy for 1 × rootB candy
+  //   - convertDir='B' → spend N × rootB candy for 1 × rootA candy
+  //     where N = 1 when source is Ditto, 2 otherwise
   //   - 1 milestone = 1 conversion attempt
   //   - Milestones expire silently if source candy is insufficient
   //     (the counter still advances; the conversion just doesn't fire)
@@ -1213,9 +1224,10 @@
     const toRoot   = (dir === 'A') ? roots.rootB : roots.rootA;
     const candy = readCandyRaw();
     const have = candy[String(fromRoot)] || 0;
-    const possible = Math.min(pending, Math.floor(have / 2));
+    const cost = _daycareConvertCost(fromRoot);
+    const possible = Math.min(pending, Math.floor(have / cost));
     if (possible > 0) {
-      const spent = possible * 2;
+      const spent = possible * cost;
       const next = have - spent;
       if (next > 0) candy[String(fromRoot)] = next;
       else delete candy[String(fromRoot)];
@@ -1247,26 +1259,31 @@
   }
 
   // One conversion toggle button. `side` is 'A' (left, A→B) or 'B'
-  // (right, B→A). Visualises the 2-for-1 rate explicitly: two source
-  // candies stacked on top, an arrow, one target candy below. Active
-  // state is set via `slot.convertDir`. Icons shrink to 18 px so the
-  // three-icon stack stays compact enough to flank the 72 px sprite.
+  // (right, B→A). Visualises the conversion rate explicitly: N source
+  // candies stacked on top, an arrow, one target candy below — where
+  // N = _daycareConvertCost(fromRoot) (1 for Ditto, 2 otherwise).
+  // Active state is set via `slot.convertDir`. Icons shrink to 18 px
+  // so the stack stays compact enough to flank the 72 px sprite.
   function _convertBtnHtml(slot, rootA, rootB, side) {
     const isActive = slot && slot.convertDir === side;
     const fromRoot = (side === 'A') ? rootA : rootB;
     const toRoot   = (side === 'A') ? rootB : rootA;
+    const cost = _daycareConvertCost(fromRoot);
     const cls = 'daycare-convert-btn' + (isActive ? ' active' : '');
     const ICON_PX = 18;
     const fromStyle = _candyIconStyle(fromRoot, ICON_PX);
     const toStyle   = _candyIconStyle(toRoot, ICON_PX);
     const fromName = global.Species ? global.Species.nameFor(fromRoot) : `#${fromRoot}`;
     const toName   = global.Species ? global.Species.nameFor(toRoot)   : `#${toRoot}`;
-    const label = `Convert ${fromName} candy to ${toName} candy (2 → 1 per 500 m)`;
+    const label = `Convert ${fromName} candy to ${toName} candy (${cost} → 1 per 500 m)`;
+    let sourceIcons = '';
+    for (let i = 0; i < cost; i++) {
+      sourceIcons += `<span class="convert-icon" style="${fromStyle}" aria-hidden="true"></span>`;
+    }
     return `<button class="${cls}" type="button" data-convert-side="${side}"`
       + ` aria-pressed="${isActive ? 'true' : 'false'}"`
       + ` aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">`
-      + `<span class="convert-icon" style="${fromStyle}" aria-hidden="true"></span>`
-      + `<span class="convert-icon" style="${fromStyle}" aria-hidden="true"></span>`
+      + sourceIcons
       + `<span class="convert-arrow" aria-hidden="true">↓</span>`
       + `<span class="convert-icon" style="${toStyle}" aria-hidden="true"></span>`
       + `</button>`;
