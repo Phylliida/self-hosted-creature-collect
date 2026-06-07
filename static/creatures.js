@@ -33,7 +33,12 @@
   // row N // cols, same indexing as eggs.png.
   const CANDY_CELL_PX = 40;
   const CANDY_SHEET_COLS = 10;
-  const CANDY_SHEET_ROWS = 16;
+  // Row count must match (MAX_SPECIES // 10) + 1 in species_pool.py.
+  // With MAX_SPECIES=429 the sheet is 43 rows × 40px = 1720px tall.
+  // Bump this whenever the species set extends to a higher PIF id —
+  // otherwise CSS background-size scales the sheet wrong and cells
+  // land on the wrong rows.
+  const CANDY_SHEET_ROWS = 43;
 
   const STORAGE_KEY = 'cc.creatureMode';
   const CAPTURED_KEY = 'cc.capturedCreatures';
@@ -1076,9 +1081,12 @@
   // render at PILL_CELL_PX so the sheet's per-cell math is uniform
   // across all kinds.
   const PILL_CELL_PX = 28;
-  // eggs.png layout — kept in sync with build-bundled-data.py.
+  // eggs.png layout — kept in sync with build-bundled-data.py. Row
+  // count must match (MAX_SPECIES // 10) + 1. With MAX_SPECIES=429 the
+  // sheet is 43 rows × 160px = 6880px tall. Bump this whenever the
+  // species set extends to a higher PIF id.
   const EGGS_SHEET_COLS = 10;
-  const EGGS_SHEET_ROWS = 16;
+  const EGGS_SHEET_ROWS = 43;
 
   function _lootIconStyle(loot) {
     if (!loot) return '';
@@ -1164,6 +1172,104 @@
   function _daycareEarnedCount(slot) {
     if (!slot) return 0;
     return Math.floor((slot.distM || 0) / DAYCARE_LOOT_MILESTONE_M);
+  }
+
+  // Resolve a slot's family roots from the capture record. Returns
+  // { rootA, rootB } or null when the creature is gone, the species
+  // data isn't loaded yet, or the two halves share a root (Pure
+  // fusion — there's nothing to convert between).
+  function _daycareConversionRoots(slot) {
+    if (!slot || !slot.id) return null;
+    const c = findCreature(slot.id);
+    if (!c || c.speciesA == null || c.speciesB == null) return null;
+    const rootA = candyRootFor(c.speciesA);
+    const rootB = candyRootFor(c.speciesB);
+    if (rootA == null || rootB == null || rootA === rootB) return null;
+    return { rootA, rootB };
+  }
+
+  // Apply any pending candy conversions for one slot. Mutates the
+  // slot's convertedCount* counters in place; also mutates persistent
+  // candy state via writeCandy when a conversion fires. Returns true
+  // if the slot was touched (so the caller knows to persist).
+  //
+  // Conversion semantics:
+  //   - convertDir='A' → spend 2 × rootA candy for 1 × rootB candy
+  //   - convertDir='B' → spend 2 × rootB candy for 1 × rootA candy
+  //   - 1 milestone = 1 conversion attempt
+  //   - Milestones expire silently if source candy is insufficient
+  //     (the counter still advances; the conversion just doesn't fire)
+  function _applyDaycareConversionsToSlot(slot) {
+    if (!slot || !slot.convertDir) return false;
+    const roots = _daycareConversionRoots(slot);
+    if (!roots) return false;
+    const earned = _daycareEarnedCount(slot);
+    const dir = slot.convertDir;
+    const counterKey = (dir === 'A') ? 'convertedCountA' : 'convertedCountB';
+    const consumed = slot[counterKey] || 0;
+    const pending = earned - consumed;
+    if (pending <= 0) return false;
+    const fromRoot = (dir === 'A') ? roots.rootA : roots.rootB;
+    const toRoot   = (dir === 'A') ? roots.rootB : roots.rootA;
+    const candy = readCandyRaw();
+    const have = candy[String(fromRoot)] || 0;
+    const possible = Math.min(pending, Math.floor(have / 2));
+    if (possible > 0) {
+      const spent = possible * 2;
+      const next = have - spent;
+      if (next > 0) candy[String(fromRoot)] = next;
+      else delete candy[String(fromRoot)];
+      candy[String(toRoot)] = (candy[String(toRoot)] || 0) + possible;
+      writeCandy(candy);
+    }
+    // Consume all pending milestones whether or not they fired — the
+    // toggle means "convert if able at each tick", not "bank
+    // conversions for later".
+    slot[counterKey] = earned;
+    return true;
+  }
+
+  // CSS for a single candy cell from candies.png at an arbitrary
+  // display size — _lootIconStyle hardcodes PILL_CELL_PX (28), but
+  // the daycare convert buttons want smaller (22). Same math, just
+  // parameterised.
+  function _candyIconStyle(rootId, px) {
+    const col = (rootId || 0) % CANDY_SHEET_COLS;
+    const row = Math.floor((rootId || 0) / CANDY_SHEET_COLS);
+    return `background-image: url('${BUNDLED_BASE}/candies.png');`
+      + `background-size: ${px * CANDY_SHEET_COLS}px ${px * CANDY_SHEET_ROWS}px;`
+      + `background-position: -${col * px}px -${row * px}px;`
+      + `background-repeat: no-repeat;`
+      + `image-rendering: pixelated;`
+      + `image-rendering: crisp-edges;`
+      + `width: ${px}px; height: ${px}px;`
+      + `display: inline-block;`;
+  }
+
+  // One conversion toggle button. `side` is 'A' (left, A→B) or 'B'
+  // (right, B→A). Visualises the 2-for-1 rate explicitly: two source
+  // candies stacked on top, an arrow, one target candy below. Active
+  // state is set via `slot.convertDir`. Icons shrink to 18 px so the
+  // three-icon stack stays compact enough to flank the 72 px sprite.
+  function _convertBtnHtml(slot, rootA, rootB, side) {
+    const isActive = slot && slot.convertDir === side;
+    const fromRoot = (side === 'A') ? rootA : rootB;
+    const toRoot   = (side === 'A') ? rootB : rootA;
+    const cls = 'daycare-convert-btn' + (isActive ? ' active' : '');
+    const ICON_PX = 18;
+    const fromStyle = _candyIconStyle(fromRoot, ICON_PX);
+    const toStyle   = _candyIconStyle(toRoot, ICON_PX);
+    const fromName = global.Species ? global.Species.nameFor(fromRoot) : `#${fromRoot}`;
+    const toName   = global.Species ? global.Species.nameFor(toRoot)   : `#${toRoot}`;
+    const label = `Convert ${fromName} candy to ${toName} candy (2 → 1 per 500 m)`;
+    return `<button class="${cls}" type="button" data-convert-side="${side}"`
+      + ` aria-pressed="${isActive ? 'true' : 'false'}"`
+      + ` aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">`
+      + `<span class="convert-icon" style="${fromStyle}" aria-hidden="true"></span>`
+      + `<span class="convert-icon" style="${fromStyle}" aria-hidden="true"></span>`
+      + `<span class="convert-arrow" aria-hidden="true">↓</span>`
+      + `<span class="convert-icon" style="${toStyle}" aria-hidden="true"></span>`
+      + `</button>`;
   }
 
   function _daycareUnclaimedLoot(slot) {
@@ -1262,7 +1368,10 @@
 
   function _normalizeSlot(v) {
     if (typeof v === 'string' && v) {
-      return { id: v, addedAt: Date.now(), distM: 0, claimed: [] };
+      return {
+        id: v, addedAt: Date.now(), distM: 0, claimed: [],
+        convertDir: null, convertedCountA: 0, convertedCountB: 0,
+      };
     }
     if (v && typeof v === 'object' && typeof v.id === 'string' && v.id) {
       // `claimed` is the set of milestone indices (1, 2, 3, ...) the
@@ -1272,11 +1381,25 @@
       const claimed = Array.from(new Set(
         rawClaimed.filter((n) => Number.isInteger(n) && n >= 1)
       )).sort((a, b) => a - b);
+      // Candy conversion: tri-state direction toggle. When non-null,
+      // each milestone tick (every DAYCARE_LOOT_MILESTONE_M metres)
+      // attempts to spend 2 of the source family's candy for 1 of the
+      // target's. Mutually exclusive — at most one direction active.
+      // The two `convertedCount*` counters track how many milestones
+      // each direction has consumed (regardless of whether the
+      // conversion succeeded — milestones expire silently if the
+      // player ran out of source candy at that moment).
+      const dir = (v.convertDir === 'A' || v.convertDir === 'B') ? v.convertDir : null;
       return {
         id: v.id,
         addedAt: typeof v.addedAt === 'number' ? v.addedAt : Date.now(),
         distM: typeof v.distM === 'number' && v.distM >= 0 ? v.distM : 0,
         claimed,
+        convertDir: dir,
+        convertedCountA: Number.isInteger(v.convertedCountA) && v.convertedCountA >= 0
+          ? v.convertedCountA : 0,
+        convertedCountB: Number.isInteger(v.convertedCountB) && v.convertedCountB >= 0
+          ? v.convertedCountB : 0,
       };
     }
     return null;
@@ -4416,6 +4539,12 @@
         color: var(--ui-muted, #666);
         font-style: italic;
       }
+      #creatureInventory .daycare-slot-art-row {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+      }
       #creatureInventory .daycare-slot-art {
         position: relative;
         width: 72px;
@@ -4423,6 +4552,58 @@
         display: flex;
         align-items: center;
         justify-content: center;
+      }
+      /* Conversion toggle — two stacked 22px candy icons with a tiny
+         arrow between (so the button visually narrates "this becomes
+         that"). Default state is dim; tap promotes to an accented
+         ring and full opacity. Mutually exclusive across the two
+         buttons in a slot; the click handler toggles the .active
+         class locally. */
+      #creatureInventory .daycare-convert-btn {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1px;
+        padding: 4px 3px;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        background: transparent;
+        cursor: pointer;
+        /* Default "off" state: reduced opacity + grayscale so the
+           candy icons read as obviously disabled, not just dim. iOS
+           WKWebView's sticky :hover would otherwise keep the button
+           looking faintly bright after a tap-to-disable; gating the
+           hover bump behind @media(hover:hover) below avoids that. */
+        opacity: 0.4;
+        filter: grayscale(0.85);
+        transition: opacity 0.12s ease, filter 0.12s ease,
+                    border-color 0.12s ease, background-color 0.12s ease,
+                    transform 0.08s ease;
+        -webkit-tap-highlight-color: transparent;
+      }
+      @media (hover: hover) {
+        #creatureInventory .daycare-convert-btn:hover {
+          opacity: 0.75;
+          filter: grayscale(0.5);
+        }
+      }
+      #creatureInventory .daycare-convert-btn:active {
+        transform: scale(0.94);
+      }
+      #creatureInventory .daycare-convert-btn.active {
+        opacity: 1;
+        filter: none;
+        border-color: var(--ui-accent, #2a8);
+        background: color-mix(in srgb, var(--ui-accent, #2a8) 12%, transparent);
+      }
+      #creatureInventory .daycare-convert-btn .convert-arrow {
+        font-size: 10px;
+        line-height: 1;
+        color: var(--ui-muted, #888);
+      }
+      #creatureInventory .daycare-convert-btn.active .convert-arrow {
+        color: var(--ui-accent, #2a8);
       }
       #creatureInventory .daycare-slot-art-placeholder {
         width: 16px; height: 16px;
@@ -7307,10 +7488,23 @@
           // addToDaycare. Format with the same _formatMeters helper
           // used by the calendar / today's-distance card.
           const distLabel = _formatMeters(it.slot.distM || 0);
+          // Convert toggles surface only when the two halves have
+          // distinct candy roots — Pure fusions have nothing to swap
+          // between. Roots resolve via candyRootFor so e.g.
+          // Charmeleon × Squirtle still reads as Charmander/Squirtle.
+          const rootA = candyRootFor(c.speciesA);
+          const rootB = candyRootFor(c.speciesB);
+          const convertable = rootA != null && rootB != null && rootA !== rootB;
+          const leftBtn = convertable ? _convertBtnHtml(it.slot, rootA, rootB, 'A') : '';
+          const rightBtn = convertable ? _convertBtnHtml(it.slot, rootA, rootB, 'B') : '';
           return `<div class="daycare-slot" data-id="${escapeHtml(c.id)}">`
+            + `<div class="daycare-slot-art-row">`
+            + leftBtn
             + `<div class="daycare-slot-art">`
             + `<div class="daycare-slot-art-placeholder"></div>`
             + `<img class="daycare-slot-art-img" alt="" hidden>`
+            + `</div>`
+            + rightBtn
             + `</div>`
             + `<div class="daycare-slot-name">${escapeHtml(name)}</div>`
             + `<div class="daycare-slot-dist">${distLabel}</div>`
@@ -7355,6 +7549,36 @@
           if (id) showDetail(id);
         });
       }
+      // Conversion toggles — tap to enable that direction, tap again to
+      // disable. Mutually exclusive: enabling one direction disables
+      // the other. State persists per-slot in localStorage; the active
+      // class flips locally without re-rendering the whole panel.
+      slot.querySelectorAll('.daycare-convert-btn').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const side = btn.dataset.convertSide;
+          if (side !== 'A' && side !== 'B') return;
+          const slots = readDaycareSlots();
+          const target = slots.find((s) => s && s.id === id);
+          if (!target) return;
+          const nextDir = (target.convertDir === side) ? null : side;
+          target.convertDir = nextDir;
+          // Snap the counter for the newly-enabled direction to the
+          // current earned-milestone count so future ticks count from
+          // *now* — no retroactive conversions for milestones that
+          // accumulated while the toggle was off.
+          if (nextDir === 'A') target.convertedCountA = _daycareEarnedCount(target);
+          if (nextDir === 'B') target.convertedCountB = _daycareEarnedCount(target);
+          writeDaycareSlots(slots);
+          // Local UI update: flip active on both buttons in this slot.
+          slot.querySelectorAll('.daycare-convert-btn').forEach((other) => {
+            const otherSide = other.dataset.convertSide;
+            const active = otherSide === nextDir;
+            other.classList.toggle('active', active);
+            other.setAttribute('aria-pressed', active ? 'true' : 'false');
+          });
+        });
+      });
       const c = findCreature(id);
       if (!c || !global.SpriteStore) return;
       if (c.speciesA == null || c.speciesB == null) return;
@@ -9311,6 +9535,9 @@
           for (let n = before + 1; n <= after; n++) newNs.push(n);
           ticks.push({ slotId: s.id, newNs });
         }
+        // Candy conversion (independent of loot — both share the same
+        // milestone heartbeat but track their own counters).
+        _applyDaycareConversionsToSlot(s);
       }
       writeDaycareSlots(slots);
       if (ticks.length && typeof window !== 'undefined') {
