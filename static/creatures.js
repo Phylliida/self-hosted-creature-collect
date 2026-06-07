@@ -2144,22 +2144,54 @@
     return `<div class="candy-tally">${parts.join(' · ')}</div>`;
   }
 
-  // Top supported species id. The bundled data set covers gen 1 (1-150);
-  // gen-2-and-later targets (Lickilicky, Aipom's evolutions, etc.) get
-  // filtered out below so the user doesn't see evolve buttons that
-  // would lead to species we have no sprite / type / name data for.
-  // Bump this in lockstep with `SPAWNABLE_SPECIES_A_FULL` if/when we
-  // open up later generations.
-  const SUPPORTED_SPECIES_MAX = 150;
+  // The bundled data set covers gen 1 (1-150) PLUS specific gen-2/3/4
+  // additions chosen to bring every type to >=5 base-form non-legendary
+  // representatives. The pool is sparse (gen 1 contiguous + scattered
+  // extras using PIF's internal ids, which diverge from national dex
+  // numbering for gen 3+ — see species_pool.py for the canonical
+  // mapping). Keep this in lockstep with species_pool.py +
+  // SPAWNABLE_SPECIES_A in spawns.js.
+  const SUPPORTED_SPECIES_EXTRAS = [
+    // Gen 2 families (PIF id = national for these)
+    179, 180, 181,    // Mareep, Flaaffy, Ampharos
+    200, 255,         // Misdreavus, Mismagius
+    214,              // Heracross
+    215, 262,         // Sneasel, Weavile
+    220, 221, 274,    // Swinub, Piloswine, Mamoswine
+    227,              // Skarmory
+    209, 210,         // Snubbull, Granbull
+    198, 256,         // Murkrow, Honchkrow
+    228, 229,         // Houndour, Houndoom
+    // Gen 3 families (PIF ids — diverge from national)
+    300,              // Mawile
+    390, 391, 333,    // Aron, Lairon, Aggron
+    405, 357,         // Shuppet, Banette
+    311, 312, 313,    // Duskull, Dusclops, Dusknoir
+    427, 428, 429,    // Snorunt, Glalie, Froslass
+    395, 396, 336,    // Bagon, Shelgon, Salamence
+    291, 292, 293,    // Beldum, Metang, Metagross
+    310,              // Absol         (Dark, standalone)
+    421,              // Sableye       (Dark/Ghost, standalone)
+    // Gen 4 families
+    295,              // Spiritomb
+    297, 298, 299,    // Gible, Gabite, Garchomp
+  ];
+  const SUPPORTED_SPECIES_SET = (() => {
+    const s = new Set();
+    for (let i = 1; i <= 150; i++) s.add(i);
+    for (const id of SUPPORTED_SPECIES_EXTRAS) s.add(id);
+    return s;
+  })();
+  const SUPPORTED_SPECIES_MAX = 429;  // max id in the set, for callers that need a numeric ceiling
 
   function fusionEvolutionsFor(a, b) {
     if (!global.Species || !global.Species.fusionEvolutionsFor) return [];
     const all = global.Species.fusionEvolutionsFor(a, b);
-    // Drop any evolution whose target species is past the supported
-    // range. Both sides of the resulting fusion must be in-range —
-    // even one out-of-range half breaks sprite + name + type lookups.
+    // Drop any evolution whose target species is outside the supported
+    // pool. Both sides of the resulting fusion must be in-pool — even
+    // one out-of-pool half breaks sprite / type / name lookups.
     return all.filter((e) =>
-      e.newA <= SUPPORTED_SPECIES_MAX && e.newB <= SUPPORTED_SPECIES_MAX);
+      SUPPORTED_SPECIES_SET.has(e.newA) && SUPPORTED_SPECIES_SET.has(e.newB));
   }
 
   // Windowed virtualizer for the pokédex / inventory grids. Renders
@@ -7622,15 +7654,15 @@
     let familyHtml = '';
     let famA = null, famB = null;
     if (global.Species && global.Species.familyOf) {
-      // Trim the family arrays to the supported species range so the
+      // Trim the family arrays to the supported species set so the
       // mosaic doesn't render tiles for fusions we have no data for
       // (Lickilicky, Sylveon, Steelix, etc.). Matches the
-      // fusionEvolutionsFor filter — once we open up later generations,
-      // both gates lift together by bumping SUPPORTED_SPECIES_MAX.
+      // fusionEvolutionsFor filter — both gates extend together by
+      // editing SUPPORTED_SPECIES_EXTRAS.
       famA = global.Species.familyOf(a)
-        .filter((id) => id <= SUPPORTED_SPECIES_MAX);
+        .filter((id) => SUPPORTED_SPECIES_SET.has(id));
       famB = global.Species.familyOf(b)
-        .filter((id) => id <= SUPPORTED_SPECIES_MAX);
+        .filter((id) => SUPPORTED_SPECIES_SET.has(id));
       if (famA.length > 1 || famB.length > 1) {
         const ariaExp = expandFamily ? 'true' : 'false';
         const toggleText = expandFamily

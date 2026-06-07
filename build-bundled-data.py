@@ -68,7 +68,16 @@ except ImportError:
     sys.exit(1)
 
 # ── Constants ────────────────────────────────────────────────────────────
-MAX_SPECIES = 150
+#
+# Allowed species pool lives in `species_pool.py` so every script in the
+# pipeline (sprite packs, candy art, egg art) sees the same set. Layout
+# is sparse — gen 1 contiguous 1..150 plus specific gen-2/3/4 picks.
+# Sheet crop heights still derive from MAX_SPECIES (the largest id we
+# need to position) — positional cells between gen 1 and the highest
+# extra stay in the sheet but are mostly transparent (PNG compresses
+# them away).
+from species_pool import ALLOWED_SPECIES, ALLOWED_SET, MAX_SPECIES  # noqa: E402
+
 CELL_PX = 96
 
 # Sheets are 0-indexed: cell 0 is intentionally empty (so the natural
@@ -76,17 +85,17 @@ CELL_PX = 96
 # present, the sheet needs to contain cells 0..N inclusive, so the
 # row count is (N // cols) + 1, not ceil(N / cols).
 
-# Autogen sheets are 10 cols × 51 rows of 96px cells (covers up to
-# species 509). For species 1..150 we need rows 0..15 = 16 rows.
+# Autogen sheets are 10 cols × 51 rows of 96px cells in source (covers
+# up to species 509). For MAX_SPECIES=478 we need rows 0..47 = 48 rows.
 AUTOGEN_COLS = 10
 AUTOGEN_ROWS_NEEDED = (MAX_SPECIES // AUTOGEN_COLS) + 1
-AUTOGEN_HEIGHT_NEEDED = AUTOGEN_ROWS_NEEDED * CELL_PX  # 1536
+AUTOGEN_HEIGHT_NEEDED = AUTOGEN_ROWS_NEEDED * CELL_PX
 
-# Custom sheets are 20 cols × 29 rows (covers up to species 579).
-# For species 1..150 we need rows 0..7 = 8 rows.
+# Custom sheets are 20 cols × 29 rows in source (covers up to species
+# 579). For MAX_SPECIES=478 we need rows 0..23 = 24 rows.
 CUSTOM_COLS = 20
 CUSTOM_ROWS_NEEDED = (MAX_SPECIES // CUSTOM_COLS) + 1
-CUSTOM_HEIGHT_NEEDED = CUSTOM_ROWS_NEEDED * CELL_PX  # 768
+CUSTOM_HEIGHT_NEEDED = CUSTOM_ROWS_NEEDED * CELL_PX
 
 ROOT = Path(__file__).resolve().parent
 INFINITEFUSION = ROOT / "data" / "InfiniteFusion"
@@ -178,12 +187,12 @@ def trim_alpha(img: "Image.Image"):
 
 def alpha_scan_custom_sheet(sheet_path: Path, cols: int, max_height: int) -> list[int]:
     """Open a custom variant sheet and return the list of body indices
-    (1..MAX_SPECIES) whose 96×96 cell has any opaque pixel above
+    (from ALLOWED_SPECIES) whose 96×96 cell has any opaque pixel above
     ALPHA_MIN. Used to populate cells.json so the runtime can pick a
     variant slot for each fusion without alpha-scanning at startup."""
     sheet = Image.open(sheet_path).convert("RGBA")
     bodies: list[int] = []
-    for body in range(1, MAX_SPECIES + 1):
+    for body in ALLOWED_SPECIES:
         col = body % cols
         row = body // cols
         x0, y0 = col * CELL_PX, row * CELL_PX
@@ -231,7 +240,7 @@ def build_credits() -> dict:
             a = int(m.group(1))
             b = int(m.group(2))
             variant = m.group(3)
-            if not (1 <= a <= MAX_SPECIES and 1 <= b <= MAX_SPECIES):
+            if a not in ALLOWED_SET or b not in ALLOWED_SET:
                 continue
             d = out.setdefault(f"{a}-{b}", {})
             d.setdefault(variant, artist)
@@ -267,9 +276,11 @@ def load_species_dat() -> dict:
 
 
 def build_species_names() -> list:
-    """Lowercase species names ordered by id_number, slots 1..MAX_SPECIES.
-    Output mirrors the pokemon.txt format the client expects (1-indexed
-    array; index 0 is the species with id_number 1)."""
+    """Lowercase species names indexed by national-dex number for every
+    species in ALLOWED_SET. Output is a contiguous 1-indexed array of
+    length MAX_SPECIES; slots whose id isn't in ALLOWED_SET get the
+    empty string (the client's `nameFor` returns `#N` for empty slots
+    and `allSpecies` skips them, so they don't pollute autocomplete)."""
     species = load_species_dat()
     by_id_num: dict[int, str] = {}
     for entry in species.values():
@@ -277,20 +288,21 @@ def build_species_names() -> list:
         name = entry.get("real_name") or entry.get("id")
         if not isinstance(idn, int) or not name:
             continue
-        if 1 <= idn <= MAX_SPECIES:
+        if idn in ALLOWED_SET:
             by_id_num[idn] = str(name).lower()
-    return [by_id_num.get(i, f"species_{i}") for i in range(1, MAX_SPECIES + 1)]
+    return [by_id_num.get(i, "") for i in range(1, MAX_SPECIES + 1)]
 
 
 def build_species_types() -> dict:
-    """Map id_number → [primary_type, secondary_type|null] for ids 1..MAX_SPECIES.
-    PIF stores @types as either a single symbol or a 2-element array of
-    symbols on each Species; we normalise to always-array-of-2."""
+    """Map id_number → [primary_type, secondary_type|null] for ids in
+    ALLOWED_SET. PIF stores @types as either a single symbol or a
+    2-element array of symbols on each Species; we normalise to
+    always-array-of-2."""
     species = load_species_dat()
     out: dict[str, list] = {}
     for entry in species.values():
         idn = entry.get("id_number")
-        if not isinstance(idn, int) or not (1 <= idn <= MAX_SPECIES):
+        if not isinstance(idn, int) or idn not in ALLOWED_SET:
             continue
         # PIF's GameData::Species exposes @type1 / @type2 (recent
         # essentials) OR @types as an array. Handle both shapes.
@@ -325,16 +337,18 @@ def _id_symbol_to_number_map(species: dict) -> dict[str, int]:
 
 def build_species_evolutions() -> dict:
     """Map source id_number → [[target_id_number, method, param], ...]
-    for sources 1..MAX_SPECIES. Targets can fall outside that range
-    (the client filters at display time). PIF stores @evolutions on
-    each Species as [[target_symbol, method_symbol, param, prevolution?],
-    ...]; we drop prevolution rows and resolve target symbols → numbers."""
+    for sources in ALLOWED_SET. Targets are also filtered to
+    ALLOWED_SET — an evolution pointing at an out-of-pool species is
+    dropped (the client couldn't render it anyway). PIF stores
+    @evolutions on each Species as [[target_symbol, method_symbol,
+    param, prevolution?], ...]; we drop prevolution rows and resolve
+    target symbols → numbers."""
     species = load_species_dat()
     sym_to_num = _id_symbol_to_number_map(species)
     out: dict[str, list] = {}
     for entry in species.values():
         idn = entry.get("id_number")
-        if not isinstance(idn, int) or not (1 <= idn <= MAX_SPECIES):
+        if not isinstance(idn, int) or idn not in ALLOWED_SET:
             continue
         evos = entry.get("evolutions") or []
         rows: list = []
@@ -349,7 +363,7 @@ def build_species_evolutions() -> dict:
             method = ev[1]
             param = ev[2] if len(ev) >= 3 else None
             target_num = sym_to_num.get(str(target_sym))
-            if target_num is None:
+            if target_num is None or target_num not in ALLOWED_SET:
                 continue
             rows.append([target_num, str(method), param])
         if rows:
@@ -423,11 +437,12 @@ def build_sprites_and_manifest() -> tuple[dict, dict]:
     # progress and hasn't wedged. Final newline printed after the
     # loop so the next "→" status line lands cleanly.
     is_tty = sys.stdout.isatty()
-    for head in range(1, MAX_SPECIES + 1):
+    total = len(ALLOWED_SPECIES)
+    for done, head in enumerate(ALLOWED_SPECIES, start=1):
         if is_tty:
             print(
-                f"\r  cropping sprite sheets: {head}/{MAX_SPECIES} "
-                f"({head * 100 // MAX_SPECIES}%)",
+                f"\r  cropping sprite sheets: {done}/{total} "
+                f"(head={head}, {done * 100 // total}%)",
                 end="", flush=True,
             )
         # Autogen: just crop the source sheet down to the first
@@ -462,7 +477,7 @@ def build_eggs_sheet() -> tuple[int, int]:
     cells_missing)."""
     if not EGGS_DIR.is_dir():
         print(f"  ⚠ no Eggs directory at {EGGS_DIR}, skipping")
-        return (0, MAX_SPECIES)
+        return (0, len(ALLOWED_SPECIES))
 
     sheet = Image.new(
         "RGBA",
@@ -470,7 +485,7 @@ def build_eggs_sheet() -> tuple[int, int]:
         (0, 0, 0, 0),
     )
     present = 0
-    for species in range(1, MAX_SPECIES + 1):
+    for species in ALLOWED_SPECIES:
         path = EGGS_DIR / f"{species}.png"
         if not path.is_file():
             continue
@@ -497,7 +512,7 @@ def build_eggs_sheet() -> tuple[int, int]:
         src = EGGS_DIR / src_name
         if src.is_file():
             shutil.copyfile(src, OUT_DIR / dst_name)
-    return (present, MAX_SPECIES - present)
+    return (present, len(ALLOWED_SPECIES) - present)
 
 
 def copy_evo_items(evos: dict) -> int:
@@ -747,7 +762,7 @@ def main() -> None:
     write_json(OUT_DIR / "split-names.json", split_names)
     print(f"  {len(split_names)} entries")
 
-    print("→ Filtering credits to 1..150 fusions...")
+    print(f"→ Filtering credits to {len(ALLOWED_SPECIES)} allowed species' fusions...")
     credits = build_credits()
     write_json(OUT_DIR / "credits.json", credits)
     print(f"  {len(credits)} fusion cells with at least one credit")

@@ -59,7 +59,11 @@
   // small LRU so a pokédex view bouncing between heads doesn't
   // re-decode the same sheet repeatedly.
   const MAX_SHEET_CACHE = 8;
-  const SPECIES_MAX = 150;
+  // Upper bound on species ids the bundle covers. Loop limits + a
+  // few display strings use this. Set to PIF's max id in our pool
+  // (Froslass = 429). Gen-1-only operations should use the dedicated
+  // SPECIES_MAX_DIM = 150 instead.
+  const SPECIES_MAX = 429;
 
   let _dbPromise = null;
   let _customManifest = null;     // species id (string) -> [variant suffixes]

@@ -118,11 +118,37 @@
   // SPAWNABLE_SPECIES_A_FULL below AND bump bulkDownload's indexTo to
   // 509 in static/index.html (three call sites).
   const SPAWNABLE_SPECIES_A = [
+    // Gen 1 base forms (non-legendary, non-baby) — 74 species.
     1, 4, 7, 10, 13, 16, 19, 21, 23, 25, 27, 29, 32, 35, 37, 39, 41,
     43, 46, 48, 50, 52, 54, 56, 58, 60, 63, 66, 69, 72, 74, 77, 79,
     81, 83, 84, 86, 88, 90, 92, 95, 96, 98, 100, 102, 104, 106, 107,
     108, 109, 111, 113, 114, 115, 116, 118, 120, 122, 123, 124, 125,
     126, 127, 128, 129, 131, 132, 133, 137, 138, 140, 142, 143, 147,
+    // Gen 2/3/4 type-coverage extras — 19 species. Picked to bring
+    // every type to >=5 base-form representatives. IDs are PIF
+    // internal — gen 3+ diverges from national dex (Mawile is PIF 300
+    // not national 303, etc.). Keep in sync with
+    // SUPPORTED_SPECIES_EXTRAS in creatures.js + species_pool.py.
+    179,  // Mareep      (Electric)
+    198,  // Murkrow     (Dark/Flying)
+    200,  // Misdreavus  (Ghost)
+    209,  // Snubbull    (Fairy)
+    214,  // Heracross   (Bug/Fighting)
+    215,  // Sneasel     (Dark/Ice)
+    220,  // Swinub      (Ice/Ground)
+    227,  // Skarmory    (Steel/Flying)
+    228,  // Houndour    (Dark/Fire)
+    291,  // Beldum      (Steel/Psychic)
+    295,  // Spiritomb   (Ghost/Dark)
+    297,  // Gible       (Dragon/Ground)
+    300,  // Mawile      (Steel/Fairy)
+    310,  // Absol       (Dark)
+    311,  // Duskull     (Ghost)
+    390,  // Aron        (Steel/Rock)
+    395,  // Bagon       (Dragon)
+    405,  // Shuppet     (Ghost)
+    421,  // Sableye     (Dark/Ghost)
+    427,  // Snorunt     (Ice)
   ];
   const SPAWNABLE_SPECIES_B = SPAWNABLE_SPECIES_A;
   // Drop-in replacement for SPAWNABLE_SPECIES_A when expanding to the

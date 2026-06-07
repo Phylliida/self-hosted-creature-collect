@@ -11,18 +11,22 @@ Layout (all little-endian):
   off  size   field
   ──── ────── ────────────────────────────────────────────────
   0    4      magic 'SHIN'
-  4    4      version (uint32 = 1)
+  4    4      version (uint32 = 2)
   8    4      entry count (uint32)
   12   4      reserved (zero)
   16   …      entries
 
-  Per entry (50 bytes):
-    rootA: uint8                     # family-root species id A
-    rootB: uint8                     # family-root species id B
+  Per entry (52 bytes):
+    rootA: uint16                    # family-root species id A (PIF id, up to 503)
+    rootB: uint16                    # family-root species id B
     triples[12]: each 4 bytes
       phi:    int16  → val / 32767 * π   in radians, range ±π
       deltaL: int8   → val / 127 * 0.20  in OKLAB L, range ±0.20
       kappa:  uint8  → 0.5 + val / 255   in [0.5, 1.5]
+
+  Version history:
+    v1 (2026-05) — rootA/rootB were uint8 (gen-1 only, max id 150)
+    v2 (2026-06) — rootA/rootB are uint16 (now covers PIF ids up to 503)
 
 Entries are written sorted by (rootA, rootB) so a JS reader can
 binary-search if it wants, though a Map<rootA*256+rootB, triples>
@@ -45,9 +49,9 @@ from pathlib import Path
 
 
 MAGIC = b'SHIN'
-VERSION = 1
+VERSION = 2
 HEADER_BYTES = 16
-ENTRY_BYTES = 2 + 12 * 4  # 50
+ENTRY_BYTES = 4 + 12 * 4  # 52 (v2: rootA/rootB became uint16)
 
 DELTA_L_RANGE = 0.20
 KAPPA_MIN, KAPPA_MAX = 0.5, 1.5
@@ -90,13 +94,13 @@ def pack(data, out_path):
     buf += MAGIC
     buf += struct.pack('<III', VERSION, len(keys), 0)
     for (a, b, raw_key) in keys:
-        if a > 255 or b > 255:
-            raise ValueError(f'species id out of u8 range: {raw_key}')
+        if a > 0xFFFF or b > 0xFFFF:
+            raise ValueError(f'species id out of u16 range: {raw_key}')
         triples = data[raw_key]
         if len(triples) != 12:
             raise ValueError(
                 f'expected 12 triples for {raw_key}, got {len(triples)}')
-        buf += struct.pack('<BB', a, b)
+        buf += struct.pack('<HH', a, b)
         for (phi, dl, kp) in triples:
             buf += encode_triple(phi, dl, kp)
 
@@ -119,8 +123,8 @@ def verify(json_data, bin_path):
     max_dk = 0.0
     off = HEADER_BYTES
     for _ in range(count):
-        a, b = struct.unpack_from('<BB', buf, off)
-        off += 2
+        a, b = struct.unpack_from('<HH', buf, off)
+        off += 4
         key = f'{a}-{b}'
         orig = json_data.get(key)
         if not orig:

@@ -53,10 +53,9 @@ except ImportError:
           "shell.nix and re-enter the shell.", file=sys.stderr)
     sys.exit(1)
 
-# Mirror constants from build-bundled-data.py + static/sprites.js
-# (kept in sync by hand — there are only three of them and they
-# haven't changed in years).
-MAX_SPECIES = 150
+# Shared species pool — same set every pipeline script uses.
+from species_pool import ALLOWED_SPECIES, ALLOWED_SET, MAX_SPECIES  # noqa: E402
+
 CELL_PX = 96
 AUTOGEN_COLS = 10
 CUSTOM_COLS = 20
@@ -153,7 +152,7 @@ def _build_one_pack(
     entries = []  # list of (a, variant, png_bytes)
 
     # Pass 1 — autogen cells. variant = -1 sentinel.
-    for a in range(1, MAX_SPECIES + 1):
+    for a in ALLOWED_SPECIES:
         png = _crop_autogen_cell(autogen_sheet, a)
         if png is None:
             continue
@@ -229,14 +228,14 @@ def build_sprite_packs() -> tuple[int, int]:
             b = int(key[dash + 1:])
         except ValueError:
             continue
-        if a < 1 or a > MAX_SPECIES or b < 1 or b > MAX_SPECIES:
+        if a not in ALLOWED_SET or b not in ALLOWED_SET:
             continue
         cells_by_head.setdefault(b, {})[a] = variant_indices
 
     PACKS_DIR.mkdir(parents=True, exist_ok=True)
     pack_count = 0
     total_cells = 0
-    for b in range(1, MAX_SPECIES + 1):
+    for b in ALLOWED_SPECIES:
         manifest_for_b = manifest.get(str(b)) or []
         cells_for_b = cells_by_head.get(b, {})
         pack_bytes = _build_one_pack(b, manifest_for_b, cells_for_b)

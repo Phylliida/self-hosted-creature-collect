@@ -27,8 +27,9 @@ except ImportError:
           "shell.nix and re-enter the shell.", file=sys.stderr)
     sys.exit(1)
 
-# ── Constants — kept in sync with build-bundled-data.py ────────────────
-MAX_SPECIES = 150
+# Shared species pool.
+from species_pool import ALLOWED_SPECIES, ALLOWED_SET, MAX_SPECIES  # noqa: E402
+
 EGG_PX = 160
 EGG_COLS = 10
 
@@ -47,20 +48,21 @@ EVOLUTIONS_PATH = OUT_DIR / "species-evolutions.json"
 
 
 def _load_family_roots() -> dict[int, int]:
-    """Return {species_id: family_root_id} for species 1..MAX_SPECIES.
+    """Return {species_id: family_root_id} for every species in
+    ALLOWED_SPECIES.
 
     Mirrors the JS `familyOf` walk: for each species, follow
     pre-evolutions (reverse of species-evolutions.json) back to the
-    earliest ancestor reachable in our 1..150 dataset. Babies > 150
-    aren't ingested as sources so the walk terminates at the gen-1
-    root naturally — same outcome candyRootFor produces in
-    creatures.js for our truncated-to-gen-1 data.
+    earliest ancestor reachable in our allowed dataset. Babies outside
+    ALLOWED aren't ingested as sources so the walk terminates at the
+    base form naturally — same outcome candyRootFor produces in
+    creatures.js.
 
     Used to paste root candies into non-root family-member cells so
     e.g. Ivysaur's and Venusaur's cells both show Bulbasaur's candy
     art."""
     if not EVOLUTIONS_PATH.is_file():
-        return {s: s for s in range(1, MAX_SPECIES + 1)}
+        return {s: s for s in ALLOWED_SPECIES}
     with open(EVOLUTIONS_PATH) as f:
         evos = json.load(f)
     rev: dict[int, list[int]] = {}
@@ -72,7 +74,7 @@ def _load_family_roots() -> dict[int, int]:
             target = int(evo[0])
             rev.setdefault(target, []).append(src)
     roots: dict[int, int] = {}
-    for s in range(1, MAX_SPECIES + 1):
+    for s in ALLOWED_SPECIES:
         cur = s
         seen = {cur}
         while True:
@@ -448,7 +450,7 @@ def build_candies_sheet() -> tuple[int, int]:
         print(f"error: eggs.png not found at {EGGS_PATH}. Run "
               "build-bundled-data.py first to compose the egg sheet.",
               file=sys.stderr)
-        return (0, MAX_SPECIES)
+        return (0, len(ALLOWED_SPECIES))
 
     eggs_sheet = Image.open(EGGS_PATH).convert("RGBA")
     family_roots = _load_family_roots()
@@ -464,7 +466,7 @@ def build_candies_sheet() -> tuple[int, int]:
     # even when several members share a root (Eevee → 8 evolutions
     # all reuse the Eevee candy).
     root_candies: dict[int, "Image.Image"] = {}
-    for species in range(1, MAX_SPECIES + 1):
+    for species in ALLOWED_SPECIES:
         root = family_roots.get(species, species)
         if root in root_candies:
             continue
@@ -478,7 +480,7 @@ def build_candies_sheet() -> tuple[int, int]:
     # no source art at any fallback tier (rare; visible in the
     # output sheet so we can spot what still needs fixing).
     filled = 0
-    for species in range(1, MAX_SPECIES + 1):
+    for species in ALLOWED_SPECIES:
         root = family_roots.get(species, species)
         candy = root_candies.get(root)
         if candy is None:
@@ -489,13 +491,13 @@ def build_candies_sheet() -> tuple[int, int]:
         filled += 1
 
     out.save(CANDIES_PATH, optimize=True)
-    return (filled, MAX_SPECIES - filled)
+    return (filled, len(ALLOWED_SPECIES) - filled)
 
 
 def main() -> None:
     print(f"→ Composing candies sprite sheet from {EGGS_PATH.name}...")
     filled, missing = build_candies_sheet()
-    if filled == 0 and missing == MAX_SPECIES:
+    if filled == 0 and missing == len(ALLOWED_SPECIES):
         sys.exit(1)
     print(f"  {filled} candy cells filled, {missing} blank "
           f"→ {CANDIES_PATH}")
