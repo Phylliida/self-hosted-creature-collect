@@ -272,7 +272,11 @@
   // sprites still render.
   const VARIANT_SUMMARY_KEY = '__summary__';
   const CREDITS_BUNDLE_KEY = '__credits__';
-  const SPLIT_NAMES_KEY = '__splitnames__';
+  // Key bumped 2026-06-07 when split-names.json migrated to PIF-id
+  // indexing (was national-dex indexed). Old key's data is left in
+  // IDB harmlessly; the new key starts empty so _ensureSplitNames
+  // re-fetches via _downloadSplitNames on next call.
+  const SPLIT_NAMES_KEY = '__splitnames_v2__';
   const MANIFEST_KEY = '__manifest__';
   const CELLS_KEY = '__cells__';
   const SPECIES_MAX_DIM = 150;
