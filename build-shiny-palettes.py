@@ -52,7 +52,10 @@ _spec.loader.exec_module(probe)
 
 # ── Family expansion ────────────────────────────────────────────────
 
-SUPPORTED_SPECIES_MAX = 150
+# Allowed species set comes from species_pool — the same set
+# build-bundled-data.py uses when emitting evolutions/cells.
+from species_pool import ALLOWED_SET as _ALLOWED_SET, ALLOWED_SPECIES as _ALLOWED_SPECIES
+SUPPORTED_SPECIES_MAX = max(_ALLOWED_SPECIES)
 
 
 def load_evolutions(bundle_dir):
@@ -92,7 +95,7 @@ def family_of(species_id, evos, rev):
         node = queue.pop(0)
         if node in visited:
             continue
-        if node > SUPPORTED_SPECIES_MAX:
+        if node not in _ALLOWED_SET:
             continue
         visited.add(node)
         family.append(node)
@@ -307,12 +310,12 @@ def render_family_pair_sheet(sprites_dir, family_a, family_b, params,
 
 # ── CLI ─────────────────────────────────────────────────────────────
 
-def enumerate_family_roots(evos, rev, max_species=SUPPORTED_SPECIES_MAX):
-    """Return sorted list of family-root species IDs in the supported
-    range. A root is a species whose `family_of(...)` returns itself
-    as the first element (no predecessor)."""
+def enumerate_family_roots(evos, rev, max_species=None):
+    """Return sorted list of family-root species IDs across the
+    ALLOWED species set. A root is a species whose `family_of(...)`
+    returns itself as the first element (no predecessor)."""
     roots = []
-    for sp in range(1, max_species + 1):
+    for sp in _ALLOWED_SPECIES:
         fam = family_of(sp, evos, rev)
         if fam and fam[0] == sp:
             roots.append(sp)

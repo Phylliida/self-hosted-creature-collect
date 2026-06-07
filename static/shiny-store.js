@@ -2,15 +2,15 @@
 // applies the per-family-pair (φ, ΔL, κ) OKLAB transform to source
 // sprite blobs to produce shiny variants.
 //
-// Bin layout (mirrored from shiny-palettes-to-bin.py):
+// Bin layout (mirrored from shiny-palettes-to-bin.py, format v2):
 //   0  4   magic 'SHIN'
-//   4  4   version (u32 = 1)
+//   4  4   version (u32 = 2)
 //   8  4   entry count (u32)
 //   12 4   reserved
-//   16 …   entries (50 bytes each), sorted by (rootA, rootB)
+//   16 …   entries (52 bytes each), sorted by (rootA, rootB)
 //     Per entry:
-//       rootA u8
-//       rootB u8
+//       rootA u16   (covers PIF ids up to 503)
+//       rootB u16
 //       12 × { phi int16, deltaL int8, kappa u8 }
 //
 // φ ∈ [-π, π], ΔL ∈ [-0.20, 0.20] in OKLAB L, κ ∈ [0.5, 1.5].
@@ -37,9 +37,9 @@
     .replace(/\/$/, '');
 
   const MAGIC = 'SHIN';
-  const VERSION = 1;
+  const VERSION = 2;
   const HEADER_BYTES = 16;
-  const ENTRY_BYTES = 50;
+  const ENTRY_BYTES = 52;  // v2: rootA/rootB are uint16 (was uint8)
   const TRIPLES_PER_ENTRY = 12;
   const DELTA_L_RANGE = 0.20;
   const KAPPA_MIN = 0.5;
@@ -69,7 +69,9 @@
     if (typeof fn === 'function') _rootResolver = fn;
   }
 
-  function _key(rootA, rootB) { return rootA * 256 + rootB; }
+  // 16-bit key: enough headroom for PIF's id space (currently up to
+  // 503). Was 8-bit in v1 of the bin format.
+  function _key(rootA, rootB) { return rootA * 65536 + rootB; }
 
   async function load() {
     if (_ready) return true;
@@ -101,10 +103,10 @@
       }
       let off = HEADER_BYTES;
       for (let i = 0; i < count; i++) {
-        const rootA = view.getUint8(off);
-        const rootB = view.getUint8(off + 1);
+        const rootA = view.getUint16(off,     true);
+        const rootB = view.getUint16(off + 2, true);
         const triples = new Float32Array(TRIPLES_PER_ENTRY * 3);
-        let tOff = off + 2;
+        let tOff = off + 4;
         for (let j = 0; j < TRIPLES_PER_ENTRY; j++) {
           triples[j * 3 + 0] = view.getInt16(tOff,     true) / 32767 * Math.PI;
           triples[j * 3 + 1] = view.getInt8 (tOff + 2)         / 127   * DELTA_L_RANGE;

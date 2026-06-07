@@ -48,8 +48,9 @@ from generate_candy_images import (
     _load_family_roots,
 )
 
-# Constants — kept in sync with build-bundled-data.py.
-MAX_SPECIES = 150
+# Shared species pool.
+from species_pool import ALLOWED_SPECIES, ALLOWED_SET, MAX_SPECIES  # noqa: E402
+
 EGG_PX = 160
 EGG_COLS = 10
 
@@ -130,7 +131,7 @@ def fill_egg_fallbacks() -> tuple[int, int]:
         print(f"error: eggs.png not found at {EGGS_PATH}. Run "
               "build-bundled-data.py first to compose the egg sheet.",
               file=sys.stderr)
-        return (0, MAX_SPECIES)
+        return (0, len(ALLOWED_SPECIES))
 
     eggs_sheet = Image.open(EGGS_PATH).convert("RGBA")
     family_roots = _load_family_roots()
@@ -139,7 +140,7 @@ def fill_egg_fallbacks() -> tuple[int, int]:
     # Cache by root id so e.g. Eevee's eight evolutions all reuse
     # one Eevee egg.
     root_eggs: dict[int, "Image.Image"] = {}
-    for species in range(1, MAX_SPECIES + 1):
+    for species in ALLOWED_SPECIES:
         root = family_roots.get(species, species)
         if root in root_eggs:
             continue
@@ -152,7 +153,7 @@ def fill_egg_fallbacks() -> tuple[int, int]:
     # source art at any tier (rare with the current data).
     out = Image.new("RGBA", eggs_sheet.size, (0, 0, 0, 0))
     filled = 0
-    for species in range(1, MAX_SPECIES + 1):
+    for species in ALLOWED_SPECIES:
         root = family_roots.get(species, species)
         cell = root_eggs.get(root)
         if cell is None:
@@ -163,13 +164,13 @@ def fill_egg_fallbacks() -> tuple[int, int]:
         filled += 1
 
     out.save(EGGS_PATH, optimize=True)
-    return (filled, MAX_SPECIES - filled)
+    return (filled, len(ALLOWED_SPECIES) - filled)
 
 
 def main() -> None:
     print(f"→ Filling fallbacks in {EGGS_PATH.name}...")
     filled, blank = fill_egg_fallbacks()
-    if filled == 0 and blank == MAX_SPECIES:
+    if filled == 0 and blank == len(ALLOWED_SPECIES):
         sys.exit(1)
     print(f"  {filled} egg cells filled, {blank} blank → {EGGS_PATH}")
 
