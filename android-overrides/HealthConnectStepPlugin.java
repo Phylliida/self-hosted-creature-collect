@@ -67,7 +67,6 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.MoreExecutors;
 
 import java.time.Instant;
 import java.util.HashSet;
