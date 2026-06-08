@@ -149,12 +149,19 @@ jobs:
           # androidx.health.connect:connect-client — Health Connect SDK
           # used by HealthConnectStepPlugin.java for background step +
           # distance aggregation (Android counterpart to iOS's
-          # CMPedometer). 1.1.0-alpha10 is the latest stable-enough
-          # release at the time of writing; the API is settled and the
-          # `connect-client` artifact provides the Java-friendly
-          # ListenableFuture surface the plugin uses.
+          # CMPedometer).
+          #
+          # Pinned at 1.0.0-alpha11 because anything newer (1.1.0-alpha08+)
+          # bumps the required compileSdk to 35, and Capacitor 6 ships
+          # AGP 8.2.1 which caps compileSdk at 34. The Java-friendly
+          # ListenableFuture surface + every API the plugin uses
+          # (getOrCreate, getSdkStatus, aggregateAsync, PermissionController,
+          # HealthPermission, StepsRecord/DistanceRecord) is already in
+          # the 1.0 line, so the downgrade is feature-neutral. When
+          # Capacitor bumps to AGP 8.3+ (likely Capacitor 7) we can
+          # move up to a current 1.1.x.
           if "androidx.health.connect:connect-client" not in text:
-              extras.append('    implementation "androidx.health.connect:connect-client:1.1.0-alpha10"')
+              extras.append('    implementation "androidx.health.connect:connect-client:1.0.0-alpha11"')
           if not extras:
               print("  already present, no change")
               sys.exit(0)
