@@ -45,6 +45,15 @@ EXTRA_SPECIES: list[int] = [
     # Gen 4 families
     295,              # Spiritomb                          (national 442)
     297, 298, 299,    # Gible, Gabite, Garchomp            (national 443, 444, 445)
+    # Eeveelutions — the rest of Eevee's family. Eevee/Vaporeon/Jolteon/
+    # Flareon are already in gen 1; we're filling in the post-gen-1 forms.
+    196,              # Espeon                             (national 196 — Psychic)
+    197,              # Umbreon                            (national 197 — Dark)
+    271,              # Leafeon                            (national 470 — Grass)
+    272,              # Glaceon                            (national 471 — Ice)
+    339,              # Sylveon                            (national 700 — Fairy)
+    # Nosepass line — pure Rock base + its Rock/Steel evolution
+    325, 326,         # Nosepass, Probopass                (national 299, 476)
 ]
 
 GEN1_RANGE = range(1, 151)

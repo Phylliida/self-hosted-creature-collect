@@ -149,6 +149,7 @@
     405,  // Shuppet     (Ghost)
     421,  // Sableye     (Dark/Ghost)
     427,  // Snorunt     (Ice)
+    325,  // Nosepass    (Rock)
   ];
   const SPAWNABLE_SPECIES_B = SPAWNABLE_SPECIES_A;
   // Drop-in replacement for SPAWNABLE_SPECIES_A when expanding to the

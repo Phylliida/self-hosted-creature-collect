@@ -2315,6 +2315,15 @@
     // Gen 4 families
     295,              // Spiritomb
     297, 298, 299,    // Gible, Gabite, Garchomp
+    // Eeveelutions — completes Eevee's family (Vaporeon/Jolteon/Flareon
+    // already in gen 1).
+    196,              // Espeon        (Psychic)
+    197,              // Umbreon       (Dark)
+    271,              // Leafeon       (Grass)
+    272,              // Glaceon       (Ice)
+    339,              // Sylveon       (Fairy)
+    // Nosepass line
+    325, 326,         // Nosepass, Probopass
   ];
   const SUPPORTED_SPECIES_SET = (() => {
     const s = new Set();
