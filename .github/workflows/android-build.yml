@@ -146,6 +146,15 @@ jobs:
           # version sweeps.
           if "play-services-location" not in text:
               extras.append('    implementation "com.google.android.gms:play-services-location:21.3.0"')
+          # androidx.health.connect:connect-client — Health Connect SDK
+          # used by HealthConnectStepPlugin.java for background step +
+          # distance aggregation (Android counterpart to iOS's
+          # CMPedometer). 1.1.0-alpha10 is the latest stable-enough
+          # release at the time of writing; the API is settled and the
+          # `connect-client` artifact provides the Java-friendly
+          # ListenableFuture surface the plugin uses.
+          if "androidx.health.connect:connect-client" not in text:
+              extras.append('    implementation "androidx.health.connect:connect-client:1.1.0-alpha10"')
           if not extras:
               print("  already present, no change")
               sys.exit(0)
@@ -177,11 +186,16 @@ jobs:
           #    - FOREGROUND_SERVICE          : required to startForeground at all.
           #    - FOREGROUND_SERVICE_LOCATION : Android 14+ requires this for
           #      a service that declares foregroundServiceType="location".
+          #    - health.READ_STEPS / READ_DISTANCE : Health Connect data
+          #      types HealthConnectStepPlugin reads. Both are subject to
+          #      a user-visible grant flow launched by the plugin.
           perms = (
               '    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n'
               '    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n'
               '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n'
               '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />\n'
+              '    <uses-permission android:name="android.permission.health.READ_STEPS" />\n'
+              '    <uses-permission android:name="android.permission.health.READ_DISTANCE" />\n'
           )
           if "ACCESS_FINE_LOCATION" not in text:
               new = re.sub(r'(<manifest\b[^>]*>\s*\n)', r'\1' + perms, text, count=1)
@@ -190,7 +204,25 @@ jobs:
                   sys.exit(1)
               text = new
               changed = True
-              print("  added location + foreground-service permissions")
+              print("  added location + foreground-service + health-connect permissions")
+          # 1b) <queries> block — Android 11+ requires apps to declare
+          #     which package names they intend to interact with via
+          #     intents. Health Connect's provider package needs to be
+          #     listed or createRequestPermissionResultContract() can't
+          #     resolve the permission-grant activity.
+          queries_tag = (
+              '    <queries>\n'
+              '        <package android:name="com.google.android.apps.healthdata" />\n'
+              '    </queries>\n'
+          )
+          if "com.google.android.apps.healthdata" not in text:
+              # Insert before the closing </manifest>. <queries> is a
+              # direct child of <manifest> (peer to <application>).
+              new = re.sub(r'(\s*</manifest>)', '\n' + queries_tag + r'\1', text, count=1)
+              if new != text:
+                  text = new
+                  changed = True
+                  print("  added Health Connect <queries> tag")
           # 2) Service declaration inside <application>. The plugin's
           #    foreground service holds the persistent notification that
           #    keeps location updates flowing in battery saver / Doze.
@@ -211,6 +243,30 @@ jobs:
               text = new
               changed = True
               print("  added LocationForegroundService declaration")
+          # 3) Health Connect permission-rationale activity-alias.
+          #    Android 14+'s Health Connect permission UI deep-links
+          #    back into the app via this intent-filter so the user
+          #    can review what data we read. Without it the grant
+          #    flow may complete with a permission-denied state even
+          #    when the user approved.
+          rationale_tag = (
+              '        <activity-alias\n'
+              '            android:name="ViewPermissionUsageActivity"\n'
+              '            android:exported="true"\n'
+              '            android:targetActivity=".MainActivity"\n'
+              '            android:permission="android.permission.START_VIEW_PERMISSION_USAGE">\n'
+              '            <intent-filter>\n'
+              '                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />\n'
+              '                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />\n'
+              '            </intent-filter>\n'
+              '        </activity-alias>\n'
+          )
+          if "ViewPermissionUsageActivity" not in text:
+              new = re.sub(r'(\s*</application>)', '\n' + rationale_tag + r'\1', text, count=1)
+              if new != text:
+                  text = new
+                  changed = True
+                  print("  added Health Connect permission-rationale activity-alias")
           if changed:
               p.write_text(text, encoding="utf-8")
           else:
@@ -270,6 +326,7 @@ jobs:
                   // the plugin classes are available when the WebView
                   // constructs Capacitor.Plugins.<Name>).
                   registerPlugin(BackgroundLocationPlugin.class);
+                  registerPlugin(HealthConnectStepPlugin.class);
                   super.onCreate(savedInstanceState);
                   // Capacitor wires WebViewAssetLoader for page-originated
                   // requests via WebViewClient. SW-originated requests
@@ -617,6 +674,30 @@ jobs:
           """, encoding="utf-8")
           print(f"  wrote {service}")
           PY
+          # Copy any *.java files from the android-overrides/ directory
+          # into the generated package tree. This is the same shape as
+          # ios-overrides/ — real source files that drop in at build
+          # time, no python-heredoc gymnastics. New native plugins
+          # should land here rather than as inline-in-YAML blobs.
+          # The package path is derived from capacitor.config.json's
+          # appId so the file's `package org.phylliidaassets...;` line
+          # has to match the appId (today: org.phylliidaassets.creaturecollect).
+          OVERRIDES_DIR=android-overrides
+          if [ -d "$OVERRIDES_DIR" ]; then
+            echo "── copying $OVERRIDES_DIR/*.java into package tree ──"
+            python3 - <<'PY'
+          import json, pathlib, shutil
+          cfg = json.loads(pathlib.Path("capacitor.config.json").read_text())
+          app_id = cfg["appId"]
+          pkg_dir = pathlib.Path("android/app/src/main/java") / pathlib.Path(*app_id.split("."))
+          pkg_dir.mkdir(parents=True, exist_ok=True)
+          src_dir = pathlib.Path("android-overrides")
+          for src in sorted(src_dir.glob("*.java")):
+              dst = pkg_dir / src.name
+              shutil.copyfile(src, dst)
+              print(f"  copied {src} → {dst}")
+          PY
+          fi
 
       - name: Debug — assets folder after cap sync
         run: |
