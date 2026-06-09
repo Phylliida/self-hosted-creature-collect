@@ -71,12 +71,6 @@ import java.time.Instant
 class HealthConnectStepPlugin : Plugin() {
 
     companion object {
-        // Health Connect's default provider package. Pre-installed on
-        // Android 14+ and via Play Store on Android 13. Older Android
-        // (< API 26) can't run Health Connect at all — variables.gradle
-        // bumps minSdkVersion to 26 to match.
-        private const val PROVIDER_PACKAGE = "com.google.android.apps.healthdata"
-
         // Fallback stride length used when DistanceRecord isn't
         // available for the window (some sources only emit steps).
         // 0.74 m is the average adult walking stride; could be wired
@@ -107,15 +101,16 @@ class HealthConnectStepPlugin : Plugin() {
 
     private fun tryInitClient() {
         if (client != null) return
+        // Health Connect 1.0.0-alpha11 doesn't have a stable
+        // `getSdkStatus` API (that landed in 1.1+). The robust
+        // availability check across versions is just "try to create
+        // the client and catch on failure" — getOrCreate throws
+        // IllegalStateException (or NoClassDefFoundError on truly
+        // ancient devices) when the Health Connect provider is
+        // missing. Both are caught by Throwable.
         try {
-            val status = HealthConnectClient.getSdkStatus(context, PROVIDER_PACKAGE)
-            if (status == HealthConnectClient.SDK_AVAILABLE) {
-                client = HealthConnectClient.getOrCreate(context)
-            }
+            client = HealthConnectClient.getOrCreate(context)
         } catch (_: Throwable) {
-            // SDK unavailable on this device. currentSnapshot() will
-            // report stepsAvailable=false and the page-side bridge
-            // hides the Settings toggle.
             client = null
         }
     }
@@ -229,21 +224,16 @@ class HealthConnectStepPlugin : Plugin() {
     // ─── helpers ─────────────────────────────────────────────────
 
     private fun currentSnapshot(): JSObject {
-        var sdkStatus = -1
-        try {
-            sdkStatus = HealthConnectClient.getSdkStatus(context, PROVIDER_PACKAGE)
-        } catch (_: Throwable) {
-            // Old API levels can't even probe Health Connect's status.
-            // variables.gradle should keep us above this floor in
-            // practice; defensive because Play Store install bumps
-            // can shift minSdk.
-        }
-        val available = (sdkStatus == HealthConnectClient.SDK_AVAILABLE)
+        // `client != null` is our availability signal in 1.0.x — see
+        // tryInitClient. Newer Health Connect versions expose a richer
+        // tri-state (available / not_installed / update_required) via
+        // getSdkStatus; when we bump the dep we can plumb that through.
+        val available = (client != null)
         val ret = JSObject()
         ret.put("stepsAvailable", available)
         ret.put("distanceAvailable", available)
         ret.put("authStatus", resolveAuthStatus(available))
-        ret.put("sdkStatus", sdkStatusToString(sdkStatus))
+        ret.put("sdkStatus", if (available) "available" else "unavailable")
         return ret
     }
 
@@ -268,12 +258,5 @@ class HealthConnectStepPlugin : Plugin() {
         } catch (_: Throwable) {
             "unknown"
         }
-    }
-
-    private fun sdkStatusToString(s: Int): String = when (s) {
-        HealthConnectClient.SDK_AVAILABLE -> "available"
-        HealthConnectClient.SDK_UNAVAILABLE -> "unavailable"
-        HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED -> "update_required"
-        else -> "unknown"
     }
 }
