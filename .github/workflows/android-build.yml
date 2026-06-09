@@ -110,6 +110,29 @@ jobs:
             n=$(find "$ASSETS_DIR/bundled-data/$d" -type f 2>/dev/null | wc -l)
             echo "    bundled-data/$d: $n files"
           done
+          # Bump minSdkVersion to 26 (Android 8.0) in variables.gradle.
+          # Required by androidx.health.connect:connect-client, which
+          # cannot run on older Android anyway (the Health Connect
+          # system app itself requires API 26+). The Capacitor 6
+          # default is minSdkVersion = 22; dropping API 22-25 means
+          # we lose nominal support for Android 5.1/6/7 — devices
+          # that are 9+ years old at this point. Acceptable trade.
+          echo "── bumping minSdkVersion 22 → 26 in variables.gradle ──"
+          python3 - <<'PY'
+          import pathlib, re
+          p = pathlib.Path("android/variables.gradle")
+          text = p.read_text(encoding="utf-8")
+          new = re.sub(
+              r"(minSdkVersion\s*=\s*)\d+",
+              r"\g<1>26",
+              text, count=1,
+          )
+          if new == text:
+              print("  WARNING: minSdkVersion line not found in variables.gradle")
+          else:
+              p.write_text(new, encoding="utf-8")
+              print("  done")
+          PY
           # Add an explicit androidx.webkit dependency to the app
           # module. Capacitor declares webkit with `implementation`
           # (not `api`) on its own module, which keeps it private to
