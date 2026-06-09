@@ -251,21 +251,25 @@ jobs:
           if "play-services-location" not in text:
               extras.append('    implementation "com.google.android.gms:play-services-location:21.3.0"')
           # androidx.health.connect:connect-client — Health Connect SDK
-          # used by HealthConnectStepPlugin.java for background step +
+          # used by HealthConnectStepPlugin.kt for background step +
           # distance aggregation (Android counterpart to iOS's
           # CMPedometer).
           #
-          # Pinned at 1.0.0-alpha11 because anything newer (1.1.0-alpha08+)
-          # bumps the required compileSdk to 35, and Capacitor 6 ships
-          # AGP 8.2.1 which caps compileSdk at 34. The Java-friendly
-          # ListenableFuture surface + every API the plugin uses
-          # (getOrCreate, getSdkStatus, aggregateAsync, PermissionController,
-          # HealthPermission, StepsRecord/DistanceRecord) is already in
-          # the 1.0 line, so the downgrade is feature-neutral. When
-          # Capacitor bumps to AGP 8.3+ (likely Capacitor 7) we can
-          # move up to a current 1.1.x.
+          # Pinned at 1.1.0-alpha07 because:
+          #   - 1.0.x only talks to the old "Health Connect (Beta)"
+          #     Play Store app, which Android 14+ has retired in favor
+          #     of a platform-integrated system service. Users on the
+          #     platform version get an "App update needed" error
+          #     against any 1.0.x build.
+          #   - 1.1.0-alpha08+ bumps the required compileSdk to 35,
+          #     and Capacitor 6 ships AGP 8.2.1 (caps at 34). alpha07
+          #     is the last release in the 1.1 line that still works
+          #     with compileSdk 34, so it's the only version that
+          #     simultaneously talks to platform Health Connect *and*
+          #     compiles against our current AGP. When Capacitor bumps
+          #     to AGP 8.3+ (Capacitor 7) we can move to a current 1.1.x.
           if "androidx.health.connect:connect-client" not in text:
-              extras.append('    implementation "androidx.health.connect:connect-client:1.0.0-alpha11"')
+              extras.append('    implementation "androidx.health.connect:connect-client:1.1.0-alpha07"')
           if not extras:
               print("  already present, no change")
               sys.exit(0)
