@@ -11,6 +11,92 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="collect">
 <meta name="theme-color" content="#a0c8f0">
+<!-- Build's bundle-id. Stamped at build time by
+     scripts/build-capacitor.sh; left as `__BUNDLE_ID__` when served
+     from Flask dev (the boot script below detects the unstamped
+     sentinel and skips). The cache-bust logic uses this to detect
+     when a user just installed a new build whose bundled-data files
+     differ from what's currently cached in localStorage / IDB. -->
+<meta name="cc-bundle-id" content="__BUNDLE_ID__">
+<script>
+// Cache-bust bundle-derived state on build change.
+//
+// The runtime caches bundle JSON files in two stores:
+//   - localStorage (species.js): cc.speciesNames, cc.speciesTypes,
+//     cc.speciesEvolutions
+//   - IndexedDB store `variants` in db `creature-sprites-v1`
+//     (sprites.js): __summary__, __credits__, __splitnames_v2__,
+//     __manifest__, __cells__
+// Both are sticky — once written they survive forever, including
+// across app updates. Without this fix, a user on a previous build
+// keeps their stale caches after installing a new APK/IPA, so
+// recently-added species + sprite credits silently don't show up
+// until they uninstall + reinstall.
+//
+// Runs synchronously in <head>, BEFORE any module <script> tags
+// further down the page execute. On mismatch we wipe localStorage
+// sync, kick off the IDB wipe async, and reload — so the modules
+// that load next get a clean slate.
+(function () {
+  var meta = document.querySelector('meta[name="cc-bundle-id"]');
+  if (!meta) return;
+  var current = meta.getAttribute('content') || '';
+  // Unstamped sentinel = Flask dev serving the raw file. Devs
+  // typically clear caches manually, so we skip the bust entirely.
+  if (!current || current.indexOf('__BUNDLE_ID') === 0) return;
+  var stored = '';
+  try { stored = localStorage.getItem('cc.bundleId') || ''; } catch (e) {}
+  if (stored === current) return;
+  console.log('[bundle-id] changed:',
+              stored || '(none)', '→', current,
+              '— wiping bundle-derived caches');
+  // localStorage — sync, fast.
+  try {
+    localStorage.removeItem('cc.speciesNames');
+    localStorage.removeItem('cc.speciesTypes');
+    localStorage.removeItem('cc.speciesEvolutions');
+  } catch (e) {}
+  // Persist the new marker eagerly so a failure in the IDB-clear
+  // path doesn't trap us in a reload loop. Trade-off: a kill between
+  // this line and IDB completion leaves stale IDB blobs, which would
+  // manifest as slightly-out-of-date sprite credits / variant counts
+  // until the NEXT bundle update. Acceptable for the simpler control
+  // flow.
+  try { localStorage.setItem('cc.bundleId', current); } catch (e) {}
+  // IDB — async; reload once it settles (success OR failure) so the
+  // modules that load below this script start from a clean slate.
+  function done() { try { location.reload(); } catch (e) {} }
+  try {
+    // Open without a version arg so we don't trigger onupgradeneeded
+    // here — that's sprites.js's job. If the DB doesn't exist yet
+    // (fresh install) we'll just see no stores and bail.
+    var req = indexedDB.open('creature-sprites-v1');
+    req.onupgradeneeded = function () {/* no stores to set up; sprites.js owns the schema */};
+    req.onsuccess = function (e) {
+      var db = e.target.result;
+      // Fresh install with no `variants` store yet — nothing to clear.
+      if (!db.objectStoreNames.contains('variants')) {
+        db.close(); done(); return;
+      }
+      try {
+        var tx = db.transaction(['variants'], 'readwrite');
+        var store = tx.objectStore('variants');
+        // KEEP IN SYNC with sprites.js (search for _KEY).
+        var keys = ['__summary__', '__credits__',
+                    '__splitnames_v2__', '__manifest__', '__cells__'];
+        for (var i = 0; i < keys.length; i++) store.delete(keys[i]);
+        tx.oncomplete = function () { db.close(); done(); };
+        tx.onerror    = function () { db.close(); done(); };
+      } catch (err) {
+        try { db.close(); } catch (_) {}
+        done();
+      }
+    };
+    req.onerror   = done;
+    req.onblocked = done;
+  } catch (e) { done(); }
+})();
+</script>
 <link href="/static/vendor/maplibre-gl.css" rel="stylesheet">
 <style>
   html, body {
