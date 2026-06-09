@@ -46,6 +46,28 @@ mkdir -p "$DIST/static" "$DIST/bundled-data"
 # absolute root paths by the client, so they live at webDir root.
 cp static/index.html "$DIST/index.html"
 cp static/sw.js "$DIST/sw.js"
+
+# Stamp the bundle-id sentinel in index.html. The inline boot script
+# in <head> reads `<meta name="cc-bundle-id">`, compares against
+# localStorage["cc.bundleId"], and wipes the bundle-derived caches
+# (localStorage species lists + IDB sprite-credit / split-name /
+# manifest / cells blobs) when they don't match. Without this stamp
+# the sentinel stays `__BUNDLE_ID__` and the boot script no-ops —
+# fine for Flask dev, broken for the user-visible APK/IPA paths.
+#
+# We stamp every build (not just bundled-data changes) — a fresh
+# bundle-id forces a wipe on each user-visible release. The wipe is
+# cheap (re-fetches a few MB of JSON from the bundle, which is local
+# storage on Capacitor) and erring on the side of busting too often
+# is much safer than the inverse.
+BUNDLE_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+if grep -q "__BUNDLE_ID__" "$DIST/index.html"; then
+  sed -i.bak "s|__BUNDLE_ID__|$BUNDLE_ID|g" "$DIST/index.html"
+  rm -f "$DIST/index.html.bak"
+  echo "Stamped bundle-id: $BUNDLE_ID"
+else
+  echo "WARN: no __BUNDLE_ID__ sentinel found in index.html — cache-bust will no-op for this build" >&2
+fi
 [ -f static/manifest.webmanifest ] && cp static/manifest.webmanifest "$DIST/manifest.webmanifest"
 
 # The full static tree under /static. We keep the duplicated index.html
