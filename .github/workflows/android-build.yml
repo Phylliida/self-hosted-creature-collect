@@ -133,6 +133,87 @@ jobs:
               p.write_text(new, encoding="utf-8")
               print("  done")
           PY
+          # Enable Kotlin in the Android project. Capacitor 6's default
+          # template is Java-only, but HealthConnectStepPlugin.kt and
+          # any future android-overrides/*.kt files need the kotlin-
+          # android Gradle plugin applied and the Kotlin stdlib +
+          # coroutines on the classpath.
+          #
+          # We touch two gradle files:
+          #   1. android/build.gradle (project-level) — add the Kotlin
+          #      Gradle plugin classpath.
+          #   2. android/app/build.gradle (app-level) — apply
+          #      kotlin-android, plus add stdlib + coroutines deps.
+          #
+          # Versions pinned alongside what Capacitor 6 expects. When
+          # bumping the Health Connect dep (which needs Capacitor 7 /
+          # AGP 8.3+ anyway), refresh these too.
+          KOTLIN_VERSION=1.9.10
+          KOTLINX_COROUTINES_VERSION=1.7.3
+          echo "── enabling Kotlin (v$KOTLIN_VERSION) in android project ──"
+          python3 - <<PY
+          import pathlib, re, sys
+
+          # ── project-level build.gradle: add kotlin-gradle-plugin classpath
+          proj = pathlib.Path("android/build.gradle")
+          ptext = proj.read_text(encoding="utf-8")
+          if "kotlin-gradle-plugin" not in ptext:
+              # Anchor on the buildscript { dependencies { ... } } block.
+              # Capacitor 6's template has exactly one classpath line
+              # inside this block; we tack on a sibling.
+              anchor = re.compile(
+                  r"(buildscript\s*\{\s*[\s\S]*?dependencies\s*\{\s*\n)(\s*classpath[^\n]*\n)",
+                  re.MULTILINE,
+              )
+              inject = '        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:${KOTLIN_VERSION}"\n'
+              new = anchor.sub(r"\1\2" + inject, ptext, count=1)
+              if new == ptext:
+                  print("  ERROR: couldn't find buildscript.dependencies anchor in android/build.gradle", file=sys.stderr)
+                  sys.exit(1)
+              proj.write_text(new, encoding="utf-8")
+              print("  patched android/build.gradle with kotlin-gradle-plugin classpath")
+          else:
+              print("  android/build.gradle already has kotlin-gradle-plugin")
+
+          # ── app-level build.gradle: apply kotlin-android plugin
+          app = pathlib.Path("android/app/build.gradle")
+          atext = app.read_text(encoding="utf-8")
+          changed = False
+          if "kotlin-android" not in atext:
+              # The plugin block at the top of app/build.gradle has
+              #   apply plugin: 'com.android.application'
+              # We append our plugin line right after it.
+              anchor = re.compile(r"(apply plugin: 'com\.android\.application'\s*\n)")
+              new = anchor.sub(r"\1apply plugin: 'kotlin-android'\n", atext, count=1)
+              if new == atext:
+                  print("  ERROR: couldn't find com.android.application plugin line in app/build.gradle", file=sys.stderr)
+                  sys.exit(1)
+              atext = new
+              changed = True
+              print("  applied kotlin-android plugin to app/build.gradle")
+
+          # Kotlin stdlib + coroutines deps. Same anchor as the other
+          # extra deps further down — capacitor-android project dep.
+          dep_anchor = re.compile(r"(implementation project\(':capacitor-android'\)\s*\n)")
+          extras = []
+          if "kotlin-stdlib" not in atext:
+              extras.append(f'    implementation "org.jetbrains.kotlin:kotlin-stdlib:${KOTLIN_VERSION}"')
+          if "kotlinx-coroutines-android" not in atext:
+              extras.append(f'    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:${KOTLINX_COROUTINES_VERSION}"')
+          if extras:
+              inject = "\n".join(extras) + "\n"
+              new = dep_anchor.sub(lambda m: m.group(1) + inject, atext, count=1)
+              if new == atext:
+                  print("  ERROR: couldn't find capacitor-android dep anchor in app/build.gradle", file=sys.stderr)
+                  sys.exit(1)
+              atext = new
+              changed = True
+              for line in extras:
+                  print(f"  added: {line.strip()}")
+
+          if changed:
+              app.write_text(atext, encoding="utf-8")
+          PY
           # Add an explicit androidx.webkit dependency to the app
           # module. Capacitor declares webkit with `implementation`
           # (not `api`) on its own module, which keeps it private to
@@ -704,17 +785,17 @@ jobs:
           """, encoding="utf-8")
           print(f"  wrote {service}")
           PY
-          # Copy any *.java files from the android-overrides/ directory
-          # into the generated package tree. This is the same shape as
-          # ios-overrides/ — real source files that drop in at build
-          # time, no python-heredoc gymnastics. New native plugins
-          # should land here rather than as inline-in-YAML blobs.
+          # Copy android-overrides/*.{java,kt} into the generated
+          # package tree. Same shape as ios-overrides/ — real source
+          # files that drop in at build time. New native plugins land
+          # here rather than as inline-in-YAML blobs.
+          #
           # The package path is derived from capacitor.config.json's
-          # appId so the file's `package org.phylliidaassets...;` line
-          # has to match the appId (today: org.phylliidaassets.creaturecollect).
+          # appId so each file's `package org.phylliidaassets...` line
+          # must match the appId (today: org.phylliidaassets.creaturecollect).
           OVERRIDES_DIR=android-overrides
           if [ -d "$OVERRIDES_DIR" ]; then
-            echo "── copying $OVERRIDES_DIR/*.java into package tree ──"
+            echo "── copying $OVERRIDES_DIR/*.{java,kt} into package tree ──"
             python3 - <<'PY'
           import json, pathlib, shutil
           cfg = json.loads(pathlib.Path("capacitor.config.json").read_text())
@@ -722,10 +803,11 @@ jobs:
           pkg_dir = pathlib.Path("android/app/src/main/java") / pathlib.Path(*app_id.split("."))
           pkg_dir.mkdir(parents=True, exist_ok=True)
           src_dir = pathlib.Path("android-overrides")
-          for src in sorted(src_dir.glob("*.java")):
-              dst = pkg_dir / src.name
-              shutil.copyfile(src, dst)
-              print(f"  copied {src} → {dst}")
+          for pattern in ("*.java", "*.kt"):
+              for src in sorted(src_dir.glob(pattern)):
+                  dst = pkg_dir / src.name
+                  shutil.copyfile(src, dst)
+                  print(f"  copied {src} → {dst}")
           PY
           fi
 
