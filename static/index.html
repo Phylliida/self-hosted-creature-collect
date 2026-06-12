@@ -178,6 +178,7 @@
   #panel,
   #poiCard,
   #settingsPanel .sheet,
+  #extrasPanel .sheet,
   #welcome .card,
   #routingPanel,
   #searchInput,
@@ -206,6 +207,7 @@
      (0,1,1,1). One rule, one place to edit. */
   #creatureInventory button.close.cc-x-btn,
   #settingsPanel button.close.cc-x-btn,
+  #extrasPanel button.close.cc-x-btn,
   #directionsPanel button.close.cc-x-btn,
   #routingPanel button.close.cc-x-btn,
   #poiCard button.close.cc-x-btn {
@@ -250,6 +252,7 @@
      orphaned without one. */
   #creatureInventory button.close.cc-x-btn:hover,
   #settingsPanel button.close.cc-x-btn:hover,
+  #extrasPanel button.close.cc-x-btn:hover,
   #directionsPanel button.close.cc-x-btn:hover,
   #routingPanel button.close.cc-x-btn:hover,
   #poiCard button.close.cc-x-btn:hover {
@@ -3042,6 +3045,7 @@
   <div class="sheet">
     <button class="close cc-x-btn" id="settingsXClose" type="button" aria-label="close">×</button>
     <h3>Settings</h3>
+    <button id="extrasBtn" type="button">✨ Extras</button>
     <div class="row theme-row">
       <label>Theme</label>
       <!-- Hidden select kept so existing code paths (import/export, change
@@ -4094,6 +4098,7 @@
 <script src="/static/species.js"></script>
 <script src="/static/creatures.js"></script>
 <script src="/static/live-update.js"></script>
+<script src="/static/extras.js"></script>
 <script>
 // Single source of truth for the app version. Bumped manually when shipping
 // a user-visible change (new features, data format upgrades, etc.). Shown
