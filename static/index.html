@@ -3210,6 +3210,7 @@
       <span>
         <button id="appDataBtn" type="button" style="padding: 6px 10px; font-size: 13px;">↓ app data</button>
         <button id="spritesClearBtn" type="button" style="padding: 6px 10px; font-size: 13px; margin-left: 4px;">clear sprites</button>
+        <button id="bundleCacheClearBtn" type="button" style="padding: 6px 10px; font-size: 13px; margin-left: 4px;" title="Wipe cached species lists, credits, and split-names. Useful when a new build's bundled data isn't showing up (rare — the boot script normally handles this automatically).">clear bundle cache</button>
       </span>
     </div>
     <!-- TEMP: one-shot migration for users whose captures were saved as
@@ -15411,6 +15412,61 @@ function fmtDate(ts) {
       } catch (e) {
         updateSpritesStatus(`error: ${e && e.message ? e.message : e}`);
       }
+    });
+  }
+
+  // Manual cache-bust button — wipes the same keys the boot script
+  // wipes on bundle-id change, but on demand. Useful if the auto-bust
+  // ever misses a build (or for testing). Mirrors the key list in the
+  // inline boot script in <head>; if either side changes, update both.
+  const bundleCacheClearBtn = document.getElementById('bundleCacheClearBtn');
+  if (bundleCacheClearBtn) {
+    bundleCacheClearBtn.addEventListener('click', async () => {
+      if (!confirm(
+        'Wipe cached bundle data?\n\n'
+        + 'This clears species names, types, evolutions, sprite credits, '
+        + 'and split-name caches, then reloads the app. Captures + '
+        + 'progress are untouched. The app re-downloads the bundle data '
+        + 'on next load (fast — the files are on-device).'
+      )) return;
+      // localStorage — sync.
+      try {
+        localStorage.removeItem('cc.speciesNames');
+        localStorage.removeItem('cc.speciesTypes');
+        localStorage.removeItem('cc.speciesEvolutions');
+        // Drop the bundle-id marker too so the boot script's auto-bust
+        // also fires on the next load, as a belt-and-suspenders.
+        localStorage.removeItem('cc.bundleId');
+      } catch {}
+      // IDB — async.
+      try {
+        await new Promise((resolve) => {
+          const req = indexedDB.open('creature-sprites-v1');
+          req.onupgradeneeded = () => {};
+          req.onsuccess = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains('variants')) {
+              db.close(); resolve(); return;
+            }
+            try {
+              const tx = db.transaction(['variants'], 'readwrite');
+              const store = tx.objectStore('variants');
+              for (const k of ['__summary__', '__credits__',
+                               '__splitnames_v2__', '__manifest__', '__cells__']) {
+                store.delete(k);
+              }
+              tx.oncomplete = () => { db.close(); resolve(); };
+              tx.onerror    = () => { db.close(); resolve(); };
+            } catch {
+              try { db.close(); } catch {}
+              resolve();
+            }
+          };
+          req.onerror   = () => resolve();
+          req.onblocked = () => resolve();
+        });
+      } catch {}
+      location.reload();
     });
   }
 
