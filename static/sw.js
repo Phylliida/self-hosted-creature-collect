@@ -10,6 +10,7 @@ const APP_SHELL = [
   '/static/great-ball.svg',
   '/static/ball-seam-glow.svg',
   '/static/trip-planner.js',
+  '/static/extras.js',
   '/static/vendor/maplibre-gl.css',
   '/static/vendor/maplibre-gl.js',
 ];
