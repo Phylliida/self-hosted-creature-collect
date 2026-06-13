@@ -1,6 +1,9 @@
 const SCRIPT_VERSION = 'auto';  // server stamps with mtime on serve
 const APP_CACHE = 'app-v1';
 const TILES_CACHE = 'tiles-v1';
+// Shell bump 2026-06-13 (#4): housenumber counting sort + chunked
+// schedule-index build. APP_SHELL entries are cache-first, so this
+// comment exists to change sw.js's bytes → reinstall → re-precache.
 
 const APP_SHELL = [
   '/',
