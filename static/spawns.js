@@ -438,6 +438,26 @@
   }
 
   // bbox is [west, south, east, north] (lng/lat MapLibre order).
+  // ── generateCellAtTick memo ─────────────────────────────────
+  // generateCellAtTick is a pure function of (cellX, cellY, tick) for
+  // a fixed sampler (weather bucket + species data), but each call
+  // pays a full xor4096 state init — a ~160-step seed loop plus a
+  // 512-step mix loop and a 128-slot array allocation — just to
+  // discover ~99.9% of cell-ticks host no spawn. refreshSpawnOverlay
+  // rescans the same ~440 cells × 21 ticks every few seconds, which
+  // measured 100-460ms per refresh on an iPhone ([main-thread stalls]
+  // mark 'spawn-refresh'). Memoizing makes steady-state refreshes Map
+  // hits; only tick rollover (once a minute) and newly-entered cells
+  // compute fresh. Entries are pruned as their tick leaves the scan
+  // window. The memo resets whenever the sampler object changes
+  // (weather rotation, species data (re)load) because species
+  // selection reads it; results computed while the sampler is missing
+  // are never cached, so spawns still appear once data loads.
+  let _ctMemo = new Map();          // "cx:cy:t" -> spawn object | null
+  let _ctMemoSampler = null;        // sampler identity memo was built against
+  let _ctMemoOldestTick = -1;       // ticks below this have been pruned
+  const CT_MEMO_HARD_CAP = 120000;  // teleport / zoom-out safety valve
+
   function spawnsInBbox(bbox, nowMs) {
     const [west, south, east, north] = bbox;
     const now = nowMs == null ? Date.now() : nowMs;
@@ -457,11 +477,31 @@
     // can still be alive in its dying seconds when the offset pushes
     // birth toward the end of that minute.
     const firstTick = curTick - LIFETIME_TICKS;
+    // Memo maintenance — see the block comment above _ctMemo.
+    const sampler = getTypePairSampler();
+    if (sampler !== _ctMemoSampler) {
+      _ctMemo.clear();
+      _ctMemoSampler = sampler;
+      _ctMemoOldestTick = firstTick;
+    } else if (firstTick > _ctMemoOldestTick) {
+      for (const k of _ctMemo.keys()) {
+        if (+k.slice(k.lastIndexOf(':') + 1) < firstTick) _ctMemo.delete(k);
+      }
+      _ctMemoOldestTick = firstTick;
+    }
+    if (_ctMemo.size > CT_MEMO_HARD_CAP) _ctMemo.clear();
     const out = [];
     for (let cx = minLatCell; cx <= maxLatCell; cx++) {
       for (let cy = minLngCell; cy <= maxLngCell; cy++) {
         for (let t = firstTick; t <= curTick; t++) {
-          const p = generateCellAtTick(cx, cy, t);
+          const key = cx + ':' + cy + ':' + t;
+          let p;
+          if (_ctMemo.has(key)) {
+            p = _ctMemo.get(key);
+          } else {
+            p = generateCellAtTick(cx, cy, t);
+            if (sampler) _ctMemo.set(key, p);
+          }
           if (!p) continue;
           if (now < p.startMs || now >= p.expireMs) continue;
           if (p.lat < south || p.lat > north

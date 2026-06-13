@@ -97,6 +97,116 @@
   } catch (e) { done(); }
 })();
 </script>
+<script>
+// ── Main-thread stall tracer ──────────────────────────────────
+// Records UI-thread freezes into window._ccStalls so "the app
+// hiccupped a minute ago" is answerable from the Settings
+// diagnostic dump ([main-thread stalls] block) instead of
+// guesswork. Runs from <head> so boot-time stalls are caught too.
+// Zero network, ~zero overhead: one observer + a 500ms heartbeat.
+//
+// Two layers:
+//   - PerformanceObserver('longtask') — Chrome/Android only.
+//     True per-task durations (>=50ms per spec) + buffered boot
+//     coverage. iOS WebKit doesn't implement it.
+//   - Heartbeat lag probe — everywhere, incl. iOS. An interval
+//     that measures how late it fires; event-loop delay IS the
+//     freeze the user feels. Ringed only where longtask is
+//     unavailable so Chrome doesn't double-report each freeze.
+(function () {
+  var RING_MAX = 40;       // stall entries kept
+  var TASK_MIN_MS = 100;   // longtasks below this are counted, not ringed
+  // A freeze shorter than HEARTBEAT_MS + LAG_MIN_MS can hide between
+  // ticks (worst case: it starts right after one), so 250+125 makes
+  // every ≥375ms freeze detectable and ~200ms ones usually visible.
+  // Cost per tick is a couple of comparisons — negligible.
+  var HEARTBEAT_MS = 250;
+  var LAG_MIN_MS = 125;    // heartbeat lateness that counts as a stall
+  var S = window._ccStalls = {
+    startedAt: Date.now(),
+    ring: [],         // { t: epoch ms, dur: ms, kind: 'task'|'lag', info }
+    taskCount: 0,     // all longtask entries (>=50ms)
+    taskMs: 0,        // their summed duration
+    lagCount: 0,      // heartbeat ticks late by >= LAG_MIN_MS
+    worstMs: 0,
+    longtaskSupported: false,
+  };
+  function record(kind, dur, info) {
+    S.ring.push({ t: Date.now(), dur: Math.round(dur), kind: kind, info: info || '' });
+    if (S.ring.length > RING_MAX) S.ring.shift();
+    if (dur > S.worstMs) S.worstMs = Math.round(dur);
+  }
+  // Named-operation timing hook — heavy functions self-report here
+  // (walk-graph rebuild, housenumber parse, schedule index, ...).
+  // Sync ops report true blocking time. Async ops are labeled
+  // '~wall' and include awaited IO, so a ~wall mark only proves a
+  // freeze when a lag/task entry lands at the same moment.
+  // Consecutive marks with the same label coalesce (dur=max, ×n)
+  // so a chatty caller can't flush the ring.
+  S.mark = function (label, ms) {
+    if (!(ms >= TASK_MIN_MS)) return;
+    var last = S.ring[S.ring.length - 1];
+    if (last && last.kind === 'mark' && last.info === label
+        && Date.now() - last.t < 3000) {
+      last.t = Date.now();
+      if (ms > last.dur) last.dur = Math.round(ms);
+      last.n = (last.n || 1) + 1;
+      return;
+    }
+    record('mark', ms, label);
+  };
+  // Feature-detect via supportedEntryTypes — observe({type}) with an
+  // unknown type is a silent no-op per spec (NOT a throw), so a
+  // try/catch around observe() would wrongly report support on
+  // iOS/Firefox and suppress the heartbeat ring there.
+  try {
+    if ((PerformanceObserver.supportedEntryTypes || []).indexOf('longtask') !== -1) {
+      var po = new PerformanceObserver(function (list) {
+        var entries = list.getEntries();
+        for (var i = 0; i < entries.length; i++) {
+          var en = entries[i];
+          S.taskCount++;
+          S.taskMs += en.duration;
+          if (en.duration < TASK_MIN_MS) continue;
+          // Attribution is usually just "self", but name iframes etc.
+          // when the browser knows more.
+          var attr = '';
+          try {
+            var a = en.attribution && en.attribution[0];
+            if (a && a.containerType && a.containerType !== 'window') {
+              attr = a.containerType + ' ' + (a.containerName || a.containerSrc || '');
+            }
+          } catch (_) {}
+          record('task', en.duration, attr);
+        }
+      });
+      po.observe({ type: 'longtask', buffered: true });
+      S.longtaskSupported = true;
+    }
+  } catch (_) { /* no PerformanceObserver at all — heartbeat covers it */ }
+  // Hidden tabs get clamped timers (that's suspension, not jank):
+  // skip ticks while hidden, and ignore the first tick after any
+  // visibility change so a resume doesn't log as a giant stall.
+  var expected = performance.now() + HEARTBEAT_MS;
+  var skipNext = false;
+  document.addEventListener('visibilitychange', function () {
+    skipNext = true;
+    expected = performance.now() + HEARTBEAT_MS;
+  });
+  setInterval(function () {
+    var now = performance.now();
+    var late = now - expected;
+    expected = now + HEARTBEAT_MS;
+    if (document.hidden) { skipNext = true; return; }
+    if (skipNext) { skipNext = false; return; }
+    if (late >= LAG_MIN_MS) {
+      S.lagCount++;
+      if (late > S.worstMs) S.worstMs = Math.round(late);
+      if (!S.longtaskSupported) record('lag', late, '');
+    }
+  }, HEARTBEAT_MS);
+})();
+</script>
 <link href="/static/vendor/maplibre-gl.css" rel="stylesheet">
 <style>
   html, body {
@@ -10985,6 +11095,7 @@ function fmtDate(ts) {
   // search on lng (viewport queries restrict to a narrow lng band, so a
   // sorted-by-lng index keeps per-moveend work to a few hundred points).
   function parseHousenumberRegion(regionId, buffer) {
+    const _t0 = performance.now();
     const view = new DataView(buffer);
     const N = view.getUint32(8, true);
     const M = view.getUint32(12, true);
@@ -11010,31 +11121,30 @@ function fmtDate(ts) {
       off += len;
     }
 
-    // Reconstruct f32 coords from the u16 quantisation, then sort by lng
+    // Reconstruct f32 coords from the u16 quantisation, sorted by lng
     // so the moveend handler can binary-search the narrow visible band.
+    // Sort order comes from a counting sort on the quantised lng
+    // column: lngRaw = bw + lngQ*step is monotonic in lngQ, so two
+    // O(N) integer passes give the same order the old comparator sort
+    // produced — minus the ~200ms Array.sort cost on a 589k-point
+    // region measured on-device ([main-thread stalls] 'hn-parse').
     const lngStep = (be - bw) / 65535;
     const latStep = (bn - bs) / 65535;
-    const indices = new Uint32Array(N);
-    for (let i = 0; i < N; i++) indices[i] = i;
-    const lngRaw = new Float32Array(N);
-    const latRaw = new Float32Array(N);
-    for (let i = 0; i < N; i++) {
-      lngRaw[i] = bw + lngQ[i] * lngStep;
-      latRaw[i] = bs + latQ[i] * latStep;
-    }
-    // Array.prototype.sort on typed arrays compares as numbers — faster
-    // than a .sort with a custom callback.
-    const order = Array.from(indices).sort((a, b) => lngRaw[a] - lngRaw[b]);
+    const counts = new Uint32Array(65537);
+    for (let i = 0; i < N; i++) counts[lngQ[i] + 1]++;
+    for (let b = 1; b <= 65536; b++) counts[b] += counts[b - 1];
     const lng = new Float32Array(N);
     const lat = new Float32Array(N);
     const strIdx = new Uint16Array(N);
     for (let i = 0; i < N; i++) {
-      const src = order[i];
-      lng[i] = lngRaw[src];
-      lat[i] = latRaw[src];
-      strIdx[i] = strIdxRaw[src];
+      const dst = counts[lngQ[i]]++;
+      lng[dst] = bw + lngQ[i] * lngStep;
+      lat[dst] = bs + latQ[i] * latStep;
+      strIdx[dst] = strIdxRaw[i];
     }
-    return { regionId, N, lng, lat, strIdx, strings };
+    const _res = { regionId, N, lng, lat, strIdx, strings };
+    if (window._ccStalls) window._ccStalls.mark('hn-parse n=' + N, performance.now() - _t0);
+    return _res;
   }
 
   function lngLowerBound(lng, target) {
@@ -11055,6 +11165,7 @@ function fmtDate(ts) {
       source.setData({ type: 'FeatureCollection', features: [] });
       return;
     }
+    const _t0 = performance.now();
     const bounds = map.getBounds();
     const w = bounds.getWest(), e = bounds.getEast();
     const s = bounds.getSouth(), n = bounds.getNorth();
@@ -11074,6 +11185,9 @@ function fmtDate(ts) {
       }
     }
     source.setData({ type: 'FeatureCollection', features });
+    if (window._ccStalls) {
+      window._ccStalls.mark('hn-update feats=' + features.length, performance.now() - _t0);
+    }
   }
 
   async function ensureHousenumbersLoaded() {
@@ -11522,6 +11636,7 @@ function fmtDate(ts) {
   const WALK_SPEED_MPS = 1.3;  // converts walk-edge meters → seconds
 
   async function rebuildWalkGraph(includeRegionIds) {
+    const _t0 = performance.now();
     _routeTrace('walk:rebuild:start', {
       include: includeRegionIds ? Array.from(includeRegionIds) : null,
     });
@@ -11698,6 +11813,9 @@ function fmtDate(ts) {
       nodes: nodeCount, edges: edgeCount,
       regions: justLoadedIds.length,
     });
+    if (window._ccStalls) {
+      window._ccStalls.mark('walkgraph-rebuild ~wall', performance.now() - _t0);
+    }
   }
 
   // Lazy load: the walk graph is memory-heavy (80-120 MB live for a country-
@@ -11899,6 +12017,7 @@ function fmtDate(ts) {
   _refreshSwLoadedVersion();
 
   function updateSpriteInflightBadge() {
+    const _t0 = performance.now();
     const el = document.getElementById('spriteInflightBadge');
     if (!el) return;
     const parts = [];
@@ -12601,6 +12720,32 @@ function fmtDate(ts) {
           }
         }
       }
+      // Main-thread stalls — fed by the tracer <script> in <head>.
+      // kind 'task' = PerformanceObserver longtask (Chrome/Android,
+      // real per-task durations); 'lag' = heartbeat probe lateness
+      // (the iOS fallback); 'mark' = a heavy function self-reporting
+      // its duration (the attribution layer). Sync marks are true
+      // blocking time; '~wall' marks include awaited IO and only
+      // prove a freeze when a lag/task entry has the same age.
+      const stalls = window._ccStalls;
+      if (stalls) {
+        lines.push(`[main-thread stalls]`);
+        lines.push(`  longtask API=${stalls.longtaskSupported ? 'yes' : 'no (heartbeat only)'}`
+          + `  tasks≥50ms=${stalls.taskCount} (${Math.round(stalls.taskMs)}ms total)`
+          + `  lagTicks=${stalls.lagCount}  worst=${stalls.worstMs}ms`
+          + `  since=${Math.round((Date.now() - stalls.startedAt) / 1000)}s`);
+        const recentStalls = stalls.ring.slice(-25).reverse();
+        if (!recentStalls.length) {
+          lines.push(`  none recorded ≥${stalls.longtaskSupported ? 100 : 125}ms`);
+        } else {
+          const nowStall = Date.now();
+          for (const e of recentStalls) {
+            lines.push(`  ${('-' + Math.round((nowStall - e.t) / 1000) + 's').padEnd(7)}`
+              + `${String(e.dur + 'ms').padStart(8)}  ${e.kind}`
+              + `${e.info ? ' ' + e.info : ''}${e.n > 1 ? ' ×' + e.n : ''}`);
+          }
+        }
+      }
       // Script versions — each .js file declares its own SCRIPT_VERSION
       // and pushes it into window._scriptVersions on load. The server
       // parses the same constants from disk via /script-versions.
@@ -12622,6 +12767,11 @@ function fmtDate(ts) {
       }
       pEl.textContent = lines.join('\n');
       pEl.style.whiteSpace = 'pre';
+      // Self-measure: if building this dump is itself janking the
+      // app while Settings is open, it shows up as its own mark.
+      if (window._ccStalls) {
+        window._ccStalls.mark('diag-dump', performance.now() - _t0);
+      }
     }
   }
   setInterval(() => {
@@ -13375,7 +13525,28 @@ function fmtDate(ts) {
     stopToWalkNode: new Map(),     // gtfs_stop_id -> {nodeId, distance}
     walkNodeToStops: new Map(),    // walk_node_id -> [[stop_id, distance], ...]
   };
-  async function rebuildScheduleIndex() {
+  // Serialized public entry: the inner build yields to the UI thread
+  // between chunks (see _maybeYield below), so two overlapping calls
+  // could otherwise interleave their half-built indexes. Chaining
+  // keeps the old effectively-serial semantics.
+  let _schedRebuildChain = Promise.resolve();
+  function rebuildScheduleIndex() {
+    _schedRebuildChain = _schedRebuildChain
+      .catch(() => {})
+      .then(() => _rebuildScheduleIndexInner());
+    return _schedRebuildChain;
+  }
+  async function _rebuildScheduleIndexInner() {
+    const _t0 = performance.now();
+    // Cooperative chunking: cap each synchronous slice at ~40ms so the
+    // 25k-stop boot build (measured 555ms+ in one block on an iPhone —
+    // [main-thread stalls] 'schedule-idx') paints frames while it works
+    // instead of freezing the map. `(++_op & 1023)` keeps the fast path
+    // to one increment+mask per item; the clock and the setTimeout(0)
+    // hop only happen when a slice actually exceeds its budget.
+    let _op = 0;
+    let _sliceStart = performance.now();
+    const _yieldToUi = () => new Promise((r) => setTimeout(r, 0));
     const idx = {
       osmToGtfs: new Map(), stopPatterns: new Map(),
       patterns: new Map(), tripsByPattern: new Map(),
@@ -13387,6 +13558,10 @@ function fmtDate(ts) {
     const all = await loadAllSchedules();
     for (const region of all) {
       for (const [gid, stop] of Object.entries(region.stops || {})) {
+        if ((++_op & 1023) === 0 && performance.now() - _sliceStart > 40) {
+          await _yieldToUi();
+          _sliceStart = performance.now();
+        }
         if (!idx.stops.has(gid)) {
           idx.stops.set(gid, { lng: stop.lng, lat: stop.lat, name: stop.name || '' });
         }
@@ -13396,6 +13571,10 @@ function fmtDate(ts) {
         }
       }
       for (const [gid, pairs] of Object.entries(region.stop_patterns || {})) {
+        if ((++_op & 1023) === 0 && performance.now() - _sliceStart > 40) {
+          await _yieldToUi();
+          _sliceStart = performance.now();
+        }
         let arr = idx.stopPatterns.get(gid);
         if (!arr) { arr = []; idx.stopPatterns.set(gid, arr); }
         for (const p of pairs) arr.push(p);
@@ -13429,6 +13608,10 @@ function fmtDate(ts) {
         return decodedShapes[idx_];
       };
       for (const row of (region.trips || [])) {
+        if ((++_op & 1023) === 0 && performance.now() - _sliceStart > 40) {
+          await _yieldToUi();
+          _sliceStart = performance.now();
+        }
         const [pat_id, timing_id, svc_idx, hs_idx, dir, first_dep, shape_idx] = row;
         const svc = services[svc_idx];
         if (!svc) continue;
@@ -13451,12 +13634,22 @@ function fmtDate(ts) {
     }
     // Build pattern -> [seq, stop_id] sorted list (only in-bbox stops)
     for (const [stopId, pairs] of idx.stopPatterns) {
+      if ((++_op & 1023) === 0 && performance.now() - _sliceStart > 40) {
+        await _yieldToUi();
+        _sliceStart = performance.now();
+      }
       for (const [patId, seq] of pairs) {
         if (!idx.patternBboxStops.has(patId)) idx.patternBboxStops.set(patId, []);
         idx.patternBboxStops.get(patId).push([seq, stopId]);
       }
     }
-    for (const arr of idx.patternBboxStops.values()) arr.sort((a, b) => a[0] - b[0]);
+    for (const arr of idx.patternBboxStops.values()) {
+      if ((++_op & 255) === 0 && performance.now() - _sliceStart > 40) {
+        await _yieldToUi();
+        _sliceStart = performance.now();
+      }
+      arr.sort((a, b) => a[0] - b[0]);
+    }
 
     // GTFS-shape lookups for drawing bus-routes polylines from the authoritative source.
     // shapeByPattern: pattern_id -> decoded [lng,lat][] (taken from any trip on the pattern)
@@ -13464,6 +13657,12 @@ function fmtDate(ts) {
     idx.shapeByPattern = new Map();
     idx.gtfsRouteByRefMode = new Map();
     for (const [patId, trips] of idx.tripsByPattern) {
+      // Lower mask here — each iteration may decode a base64+varint
+      // shape blob, so per-item cost is far above the other loops.
+      if ((++_op & 63) === 0 && performance.now() - _sliceStart > 40) {
+        await _yieldToUi();
+        _sliceStart = performance.now();
+      }
       for (const trip of trips) {
         if (typeof trip._getShape === 'function') {
           const s = trip._getShape();
@@ -13497,6 +13696,9 @@ function fmtDate(ts) {
     await refreshRoutesSource();
     if (typeof renderTransitModes  === 'function') renderTransitModes();
     if (typeof renderTransitRoutes === 'function') renderTransitRoutes();
+    if (window._ccStalls) {
+      window._ccStalls.mark('schedule-idx ~wall', performance.now() - _t0);
+    }
   }
 
   async function buildMultimodalBridges() {

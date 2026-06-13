@@ -10589,6 +10589,7 @@
     const moved = _lastRefreshLat == null
       || metersBetween(_userLat, _userLng, _lastRefreshLat, _lastRefreshLng) > 1;
     if (!moved && now - _lastRefreshAt < REFRESH_MIN_GAP_MS) return;
+    const _t0 = performance.now();
     _lastRefreshLat = _userLat;
     _lastRefreshLng = _userLng;
     _lastRefreshAt = now;
@@ -10645,6 +10646,9 @@
         _lastRefreshAt = 0;
         refreshSpawnOverlay();
       }, delay);
+    }
+    if (global._ccStalls) {
+      global._ccStalls.mark('spawn-refresh', performance.now() - _t0);
     }
   }
 
