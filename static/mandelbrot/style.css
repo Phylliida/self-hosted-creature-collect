@@ -236,16 +236,25 @@ footer {
 }
 
 #settings.fullscreen {
-    position: absolute;
-    top: 30px;
+    /* Pinned to the bottom of the screen as a centered "sheet" (fixed to
+       the viewport so it sits at the bottom regardless of ancestors),
+       scrollable when the controls are taller than the available space. */
+    position: fixed;
+    top: auto;
+    bottom: max(5px, env(safe-area-inset-bottom));
     left: 5px;
+    right: 5px;
+    margin: 0 auto;
+    max-width: min(540px, calc(100vw - 10px));
+    max-height: 55vh;
+    overflow-y: auto;
     z-index: 2;
-    border-radius: 5px;
-    max-width: 80vw;
-    background-color: rgba(0, 0, 0, 0.5);
+    border-radius: 8px;
+    padding: 8px;
+    background-color: rgba(0, 0, 0, 0.6);
     visibility: visible;
     opacity: 1;
-    transition: visibility 0.5s, opacity 0.5s linear;
+    transition: visibility 0.3s, opacity 0.3s linear;
 }
 #settings.hidden.fullscreen {
     visibility: hidden;

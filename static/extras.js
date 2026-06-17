@@ -374,15 +374,17 @@
   #fractalsBar #fracMenu.active { background: rgba(80, 140, 255, 0.85); }
   #fractalsBar #fractalsClose { font-size: 24px; }
 
-  #fracSavePrompt, #fracBrowsePanel {
-    position: absolute; inset: 0; z-index: 3; display: flex;
+  #fracSavePrompt, #fracBrowsePanel, #fracDelConfirm {
+    position: absolute; inset: 0; display: flex;
   }
-  #fracSavePrompt[hidden], #fracBrowsePanel[hidden] { display: none; }
-  #fracSavePrompt {
+  #fracSavePrompt, #fracBrowsePanel { z-index: 3; }
+  #fracDelConfirm { z-index: 4; }  /* above the browse panel it opens from */
+  #fracSavePrompt[hidden], #fracBrowsePanel[hidden], #fracDelConfirm[hidden] { display: none; }
+  #fracSavePrompt, #fracDelConfirm {
     align-items: center; justify-content: center;
     background: rgba(0, 0, 0, 0.55);
   }
-  #fracSavePrompt .frac-card {
+  #fracSavePrompt .frac-card, #fracDelConfirm .frac-card {
     background: var(--ui-bg, #fff); color: var(--ui-text, #111);
     border-radius: 12px; padding: 16px; width: min(320px, 86vw);
     box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
@@ -400,6 +402,22 @@
     background: var(--ui-input-bg, #f2f2f2); color: inherit;
   }
   .frac-card-actions button.primary { background: #4f8cff; color: #fff; border-color: #4f8cff; }
+
+  /* Hold-to-delete confirm */
+  .frac-card-sub {
+    font-size: 13px; color: var(--ui-muted, #888); text-align: center; margin-bottom: 12px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .frac-hold {
+    position: relative; overflow: hidden; width: 100%; display: block;
+    padding: 12px 14px; border-radius: 8px; border: none;
+    background: #e0524b; color: #fff; font: inherit; font-weight: 600;
+    cursor: pointer; user-select: none; -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent; touch-action: none;
+  }
+  .frac-hold-fill { position: absolute; top: 0; left: 0; bottom: 0; width: 0; background: #9e1c16; }
+  .frac-hold.holding .frac-hold-fill { width: 100%; transition: width 2s linear; }
+  .frac-hold-label { position: relative; z-index: 1; }
 
   #fracBrowsePanel { flex-direction: column; background: rgba(0, 0, 0, 0.82); }
   .frac-browse-head {
@@ -749,6 +767,19 @@
       '<div class="frac-browse-head"><span>Saved fractals</span>' +
         '<button id="fracBrowseClose" type="button" aria-label="close">&times;</button></div>' +
       '<div id="fracList"></div>' +
+    '</div>' +
+    '<div id="fracDelConfirm" hidden>' +
+      '<div class="frac-card">' +
+        '<div class="frac-card-title">Delete this fractal?</div>' +
+        '<div class="frac-card-sub" id="fracDelName"></div>' +
+        '<button id="fracDelHold" type="button" class="frac-hold">' +
+          '<span class="frac-hold-fill"></span>' +
+          '<span class="frac-hold-label">Hold to delete</span>' +
+        '</button>' +
+        '<div class="frac-card-actions">' +
+          '<button id="fracDelCancel" type="button">Cancel</button>' +
+        '</div>' +
+      '</div>' +
     '</div>';
   document.body.appendChild(fractalsWin);
   const fractalsFrame = fractalsWin.querySelector('#fractalsFrame');
@@ -915,10 +946,9 @@
         if (e.target === del) return;
         loadFractal(rec);
       });
-      del.addEventListener('click', async (e) => {
+      del.addEventListener('click', (e) => {
         e.stopPropagation();
-        await _fracDelete(rec.id);
-        renderBrowse();
+        openDelConfirm(rec);
       });
       fracList.appendChild(card);
     }
@@ -933,6 +963,43 @@
   fractalsWin.querySelector('#fracSaveCancel').addEventListener('click', () => _hide(fracSavePrompt));
   fractalsWin.querySelector('#fracBrowseClose').addEventListener('click', () => _hide(fracBrowsePanel));
   fracNameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSaveFractal(); });
+
+  // Delete needs a deliberate 2-second hold (not a single tap) so a saved
+  // fractal can't be lost by an accidental press. Releasing early cancels;
+  // the button fills as a progress cue.
+  const fracDelConfirm = fractalsWin.querySelector('#fracDelConfirm');
+  const fracDelName = fractalsWin.querySelector('#fracDelName');
+  const fracDelHold = fractalsWin.querySelector('#fracDelHold');
+  let _delTarget = null;
+  let _delTimer = null;
+  function _resetHold() {
+    if (_delTimer) { clearTimeout(_delTimer); _delTimer = null; }
+    fracDelHold.classList.remove('holding');
+  }
+  function openDelConfirm(rec) {
+    _delTarget = rec;
+    fracDelName.textContent = rec.name || 'Untitled';
+    _resetHold();
+    _show(fracDelConfirm);
+  }
+  function _startHold() {
+    if (_delTimer) return;
+    void fracDelHold.offsetWidth;  // restart the fill transition from 0
+    fracDelHold.classList.add('holding');
+    _delTimer = setTimeout(async () => {
+      _delTimer = null;
+      fracDelHold.classList.remove('holding');
+      const rec = _delTarget;
+      _delTarget = null;
+      _hide(fracDelConfirm);
+      if (rec) { try { await _fracDelete(rec.id); } catch (e) {} renderBrowse(); }
+    }, 2000);
+  }
+  fracDelHold.addEventListener('pointerdown', (e) => { e.preventDefault(); _startHold(); });
+  fracDelHold.addEventListener('pointerup', _resetHold);
+  fracDelHold.addEventListener('pointerleave', _resetHold);
+  fracDelHold.addEventListener('pointercancel', _resetHold);
+  fractalsWin.querySelector('#fracDelCancel').addEventListener('click', () => { _resetHold(); _hide(fracDelConfirm); });
 
   const $ = (id) => document.getElementById(id);
 
