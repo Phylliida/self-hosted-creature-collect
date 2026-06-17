@@ -41,9 +41,162 @@
   const CANDY_SHEET_ROWS = 43;
 
   const STORAGE_KEY = 'cc.creatureMode';
+  // The captured collection and the seen-fusions pokédex used to live in
+  // localStorage under these keys. They now live in IndexedDB (see the
+  // CSTORE_* block below) because the collection grows past the ~5 MB
+  // localStorage budget and was throwing QuotaExceededError on catch —
+  // the catch then silently failed to persist (creature lost on reload)
+  // and could be re-caught repeatedly. The keys are still referenced for
+  // the one-time localStorage→IDB migration and the legacy read fallback.
   const CAPTURED_KEY = 'cc.capturedCreatures';
   const CAUGHT_SPAWNS_KEY = 'cc.caughtSpawnIds';
   const SEEN_FUSIONS_KEY = 'cc.seenFusions';
+
+  // ── Collection store: IndexedDB ──────────────────────────────
+  // A single key-value object store holding the two big blobs that no
+  // longer fit in localStorage: the captured array and the seenFusions
+  // map. IDB's quota is hundreds of MB–GB, so the collection can grow
+  // without hitting the wall. Values are stored as live structured
+  // objects (IDB structured-clone), not JSON strings — no parse/stringify
+  // round-trip. Mirrors the tracker-DB helper pattern further down.
+  const CSTORE_DB = 'creature-collection-v1';
+  const CSTORE_DB_VERSION = 1;
+  const CSTORE_STORE = 'kv';
+  const CSTORE_CAPTURED = 'captured';
+  const CSTORE_SEEN = 'seenFusions';
+
+  let _cstoreDbPromise = null;
+  function _openCStoreDb() {
+    if (_cstoreDbPromise) return _cstoreDbPromise;
+    _cstoreDbPromise = new Promise((resolve, reject) => {
+      let req;
+      try { req = indexedDB.open(CSTORE_DB, CSTORE_DB_VERSION); }
+      catch (e) { reject(e); return; }
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(CSTORE_STORE)) {
+          db.createObjectStore(CSTORE_STORE);
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return _cstoreDbPromise;
+  }
+  function _cstoreGet(key) {
+    return _openCStoreDb().then((db) => new Promise((resolve, reject) => {
+      const tx = db.transaction(CSTORE_STORE, 'readonly');
+      const r = tx.objectStore(CSTORE_STORE).get(key);
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    }));
+  }
+  function _cstorePut(key, value) {
+    return _openCStoreDb().then((db) => new Promise((resolve, reject) => {
+      const tx = db.transaction(CSTORE_STORE, 'readwrite');
+      tx.objectStore(CSTORE_STORE).put(value, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    }));
+  }
+
+  // Coalesced, last-write-wins async writer for one IDB key. Mutations
+  // call schedule(); a single transaction is ever in flight, and if more
+  // mutations land while a write is running the next flush picks up the
+  // latest snapshot. No lost updates, no overlapping transactions, and a
+  // failed write is logged (not thrown) so a catch can never abort on it.
+  function _makeIdbWriter(key, getSnapshot) {
+    let writing = false;
+    let dirty = false;
+    async function flush() {
+      writing = true;
+      try {
+        while (dirty) {
+          dirty = false;
+          // getSnapshot() returns the live in-memory object; put() clones
+          // it synchronously at call time, so this captures the latest
+          // committed state.
+          await _cstorePut(key, getSnapshot());
+        }
+      } catch (e) {
+        _logCreatureError('cstore/write/' + key, e);
+      } finally {
+        writing = false;
+      }
+    }
+    return function schedule() {
+      dirty = true;
+      if (!writing) flush();
+    };
+  }
+
+  // Hydration gate. Reads stay synchronous (the stores cache everything
+  // in memory); this preloads that cache from IDB once at boot, runs the
+  // one-time localStorage→IDB migration, and only then lets writes touch
+  // IDB (so an early write can't clobber not-yet-loaded data).
+  let _cstoreHydrated = false;
+  let _cstoreHydratePromise = null;
+  function _safeLsGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
+  function _safeLsRemove(k) { try { localStorage.removeItem(k); } catch (_) {} }
+  function _hydrateCStore() {
+    if (_cstoreHydratePromise) return _cstoreHydratePromise;
+    _cstoreHydratePromise = (async () => {
+      let capIdb, seenIdb;
+      try { capIdb = await _cstoreGet(CSTORE_CAPTURED); }
+      catch (e) { _logCreatureError('cstore/hydrate/captured', e); }
+      try { seenIdb = await _cstoreGet(CSTORE_SEEN); }
+      catch (e) { _logCreatureError('cstore/hydrate/seen', e); }
+
+      // Pick the source: IDB if present, else migrate from localStorage.
+      let cap, capFromLs = false;
+      if (Array.isArray(capIdb)) {
+        cap = capIdb;
+      } else {
+        const raw = _safeLsGet(CAPTURED_KEY);
+        let parsed = null;
+        if (raw) { try { parsed = JSON.parse(raw); } catch { parsed = null; } }
+        if (Array.isArray(parsed)) { cap = parsed; capFromLs = true; }
+        else cap = [];
+      }
+      let seen, seenFromLs = false;
+      if (seenIdb && typeof seenIdb === 'object') {
+        seen = seenIdb;
+      } else {
+        const raw = _safeLsGet(SEEN_FUSIONS_KEY);
+        let parsed = null;
+        if (raw) { try { parsed = JSON.parse(raw); } catch { parsed = null; } }
+        if (parsed && typeof parsed === 'object') { seen = parsed; seenFromLs = true; }
+        else seen = {};
+      }
+
+      // Open the write gate now that we know what to load: from here on
+      // user mutations may persist to IDB. loadFromArray itself doesn't
+      // write — it returns whether legacy-variant normalization changed
+      // anything, so we fold that into the single migration write below.
+      _cstoreHydrated = true;
+      const capDirty = _capStore.loadFromArray(cap);
+      _seenStore.loadFromMap(seen);
+
+      // Persist + free localStorage. We write IDB and only delete the LS
+      // key after the write resolves, so a failed migration leaves the
+      // original data intact in localStorage as a fallback.
+      if (capFromLs || capDirty) {
+        try {
+          await _cstorePut(CSTORE_CAPTURED, _capStore.list());
+          if (capFromLs) _safeLsRemove(CAPTURED_KEY);
+        } catch (e) { _logCreatureError('cstore/migrate/captured', e); }
+      }
+      if (seenFromLs) {
+        try {
+          await _cstorePut(CSTORE_SEEN, _seenStore.get());
+          _safeLsRemove(SEEN_FUSIONS_KEY);
+        } catch (e) { _logCreatureError('cstore/migrate/seen', e); }
+      }
+    })();
+    return _cstoreHydratePromise;
+  }
+  function _whenReady() { return _cstoreHydratePromise || _hydrateCStore(); }
 
   // ── Inventory + pokédex performance metrics ──
   // Counters + per-call timing for the hot functions that fire on
@@ -339,34 +492,51 @@
       else bucket.set(vk, count - 1);
       if (bucket.size === 0) _variantsByFusion.delete(k);
     }
+    const _writeIdb = _makeIdbWriter(CSTORE_CAPTURED, () => _list);
     function _persist() {
-      try { localStorage.setItem(CAPTURED_KEY, JSON.stringify(_list)); }
-      catch (e) { _logCreatureError('capStore/persist', e); }
+      // Never write before hydration completes — an early write would
+      // clobber the not-yet-loaded collection in IDB. Mutations happen on
+      // user gestures well after boot, so this only guards the
+      // theoretical race; the catch path also awaits _whenReady().
+      if (!_cstoreHydrated) return;
+      _writeIdb();
     }
-    function _ensureLoaded() {
-      if (_list !== null) return;
+    // Authoritative load from a structured array (IDB hydrate, or the
+    // legacy localStorage bootstrap below). Rebuilds indices, normalizes
+    // legacy variants, and returns whether normalization changed anything
+    // so the caller can persist once. Does NOT itself persist.
+    function loadFromArray(arr) {
       const t0 = performance.now();
-      let parsed = [];
-      try {
-        const raw = localStorage.getItem(CAPTURED_KEY);
-        parsed = raw ? JSON.parse(raw) : [];
-      } catch { parsed = []; }
-      _list = Array.isArray(parsed) ? parsed : [];
+      _list = Array.isArray(arr) ? arr : [];
       _byId = new Map();
       _variantsByFusion = new Map();
-      // Normalize + index in one pass. If any normalization happened
-      // (legacy null/undefined → 'auto') we persist once so the
-      // on-disk shape converges.
       let dirty = false;
       for (const c of _list) {
         if (_normalizeVariant(c)) dirty = true;
         _addToIndices(c);
       }
-      if (dirty) _persist();
       _perfMark(_invPerf.fn.capStoreLoad, t0, { lastSize: _list.length });
+      return dirty;
+    }
+    function _ensureLoaded() {
+      if (_list !== null) return;
+      // Hydration hasn't populated the cache yet (a read raced ahead of
+      // the async IDB load — near-impossible in practice). Bootstrap
+      // synchronously from localStorage: correct on a first run where the
+      // data hasn't migrated yet, harmlessly empty afterwards (hydrate
+      // overwrites this the moment it resolves).
+      let parsed = [];
+      try {
+        const raw = _safeLsGet(CAPTURED_KEY);
+        parsed = raw ? JSON.parse(raw) : [];
+      } catch { parsed = []; }
+      loadFromArray(parsed);
     }
 
     return {
+      // Hydrate entry point — called once by _hydrateCStore with the
+      // authoritative array read from IDB (or migrated from LS).
+      loadFromArray,
       list() { _ensureLoaded(); return _list; },
       byId(id) { _ensureLoaded(); return _byId.get(id) || null; },
       // Returns a fresh Set of variant keys ('auto' | '0' | '1' | ...)
@@ -1915,22 +2085,31 @@
   // existing players don't lose history.
   const _seenStore = (() => {
     let _map = null;
-    function _ensureLoaded() {
-      if (_map !== null) return;
+    const _writeIdb = _makeIdbWriter(CSTORE_SEEN, () => _map);
+    // Authoritative load from a structured object (IDB hydrate, or the
+    // legacy localStorage bootstrap in _ensureLoaded).
+    function loadFromMap(map) {
       const t0 = performance.now();
-      try {
-        const raw = localStorage.getItem(SEEN_FUSIONS_KEY);
-        _map = raw ? JSON.parse(raw) : {};
-      } catch { _map = {}; }
-      if (!_map || typeof _map !== 'object') _map = {};
+      _map = (map && typeof map === 'object') ? map : {};
       _perfMark(_invPerf.fn.seenStoreLoad, t0,
                 { lastSize: Object.keys(_map).length });
     }
+    function _ensureLoaded() {
+      if (_map !== null) return;
+      // Pre-hydration safety net — see _capStore._ensureLoaded.
+      let parsed = null;
+      try {
+        const raw = _safeLsGet(SEEN_FUSIONS_KEY);
+        parsed = raw ? JSON.parse(raw) : {};
+      } catch { parsed = {}; }
+      loadFromMap(parsed);
+    }
     function _persist() {
-      try { localStorage.setItem(SEEN_FUSIONS_KEY, JSON.stringify(_map)); }
-      catch (e) { _logCreatureError('seenStore/persist', e); }
+      if (!_cstoreHydrated) return;  // never clobber before hydrate
+      _writeIdb();
     }
     return {
+      loadFromMap,
       get() { _ensureLoaded(); return _map; },
       set(map) {
         // Used by callers that build a fresh object (rare). The live-
@@ -1944,6 +2123,12 @@
     };
   })();
   if (typeof window !== 'undefined') window._seenStore = _seenStore;
+
+  // Both stores now exist — start the async IDB hydration (+ one-time
+  // localStorage→IDB migration) immediately, at script-eval time. This is
+  // many seconds before any user gesture can mutate the collection, so
+  // the in-memory caches are populated well before the first catch/read.
+  _hydrateCStore();
 
   function readSeenFusions() {
     const t0 = performance.now();
@@ -9968,6 +10153,10 @@
   // capture entry — the caller decides whether to close the battle
   // screen and/or open the inventory detail view.
   async function recordCaptureFromSpawn(spawn) {
+    // Make sure the collection has finished hydrating from IDB before we
+    // read-modify-write it, so a catch in the first moments after launch
+    // can't build on (and then persist) an empty list. No-op once loaded.
+    await _whenReady();
     const poiApi = global.CreatureCollectAPI;
     const poi = (poiApi && poiApi.findNearestNamedPoi)
       ? poiApi.findNearestNamedPoi(spawn.lat, spawn.lng)
@@ -10011,9 +10200,16 @@
     };
     const list = readCapturedCreatures();
     list.push(entry);
-    writeCapturedCreatures(list);
-    awardCandyForCapture(spawn.speciesA, spawn.speciesB);
-    markSpawnCaught(spawn.id);
+    writeCapturedCreatures(list);  // persists to IDB — no quota wall
+    // Candy + caught-spawn bookkeeping write small keys to localStorage.
+    // Guard each independently: a failure here (e.g. a transient quota
+    // error from some other oversized key) must NOT abort the catch and
+    // leave the spawn un-marked — that was the "catches it repeatedly"
+    // bug. The creature is already recorded above; just log and continue.
+    try { awardCandyForCapture(spawn.speciesA, spawn.speciesB); }
+    catch (e) { _logCreatureError('recordCapture/awardCandy', e); }
+    try { markSpawnCaught(spawn.id); }
+    catch (e) { _logCreatureError('recordCapture/markSpawnCaught', e); }
     removeMarker(spawn.id);
     if (list.length === 1 && navigator.storage && navigator.storage.persist) {
       navigator.storage.persist().catch(() => {});
@@ -10404,13 +10600,20 @@
   // both the single-marker path (loadMarkerSprite) and the bulk path
   // (addMarkersBatch) can share the DOM-update + URL-lifecycle code.
   function _logCreatureError(where, err) {
+    const msg = (err && err.message) ? err.message : String(err);
     window._spriteDiag = window._spriteDiag || {};
     window._spriteDiag.errorCount = (window._spriteDiag.errorCount || 0) + 1;
     window._spriteDiag.errors = window._spriteDiag.errors || [];
     if (window._spriteDiag.errors.length < 10) {
-      const msg = (err && err.message) ? err.message : String(err);
       window._spriteDiag.errors.push(`${where}: ${msg}`);
     }
+    // Also surface in the shared error ring that the Settings diagnostic
+    // dump renders (defined in index.html's <head>). Best-effort.
+    try {
+      if (typeof window !== 'undefined' && window._ccLogError) {
+        window._ccLogError('creatures:' + where, msg, err && err.stack);
+      }
+    } catch (_) {}
   }
 
   // Build the onReady callback that flips a marker from placeholder
@@ -10998,11 +11201,16 @@
 
   function install(map) {
     injectStyles();
-    backfillSeenFromCaptures();
-    // Fire-and-forget: backfills the `variant` field on legacy
-    // captures (and seedFusions[key].variants) on first load with
-    // this code. Idempotent via localStorage flag.
-    migrateLegacyCaptureVariants().catch(() => {});
+    // These read the captured + seenFusions stores, which now load
+    // asynchronously from IndexedDB. Defer them until hydration resolves
+    // so they operate on the real collection, not the empty pre-load
+    // cache. (Both are idempotent and re-run safely each boot.)
+    _whenReady().then(() => {
+      backfillSeenFromCaptures();
+      // Backfills the `variant` field on legacy captures (and
+      // seenFusions[key].variants). Idempotent via localStorage flag.
+      migrateLegacyCaptureVariants().catch(() => {});
+    });
     // Warm the in-memory daycare summary cache + run the legacy
     // localStorage→IDB migration for the per-day distance map.
     _ensureSummaryLoaded().catch(() => {});
@@ -11083,6 +11291,16 @@
   function getItemMeta(key) { return ITEMS[key] || null; }
   global.Creatures = {
     install, isEnabled: readEnabled,
+    // Collection persistence now lives in IndexedDB (creature-collection-v1).
+    // ready() resolves when the in-memory caches have hydrated + the
+    // one-time localStorage→IDB migration has run. Export/import in
+    // index.html await this, then read/write the collection through these
+    // accessors instead of touching localStorage directly.
+    ready: _whenReady,
+    getAllCaptured: () => readCapturedCreatures(),
+    replaceAllCaptured: (arr) => writeCapturedCreatures(arr),
+    getSeenFusions: () => readSeenFusions(),
+    setSeenFusions: (map) => { _seenStore.set(map); },
     getCandy: readCandy, getBag: readBag, getTags: readTags,
     grantItem, consumeItem, rollCollectibleItem, getItemMeta,
     timeSinceLastSave,
