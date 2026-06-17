@@ -1,0 +1,356 @@
+/**
+ * @author Bert Baron
+ */
+import * as fxp from "./fxp.js";
+import {smoothen, WorkerContext} from "./workerContext.js";
+
+/**
+ * Similar to MandelbrotPerturbation class. That one uses floating point numbers for fast calculations. Those numbers
+ * are typically very small, so we can't use them for deep zoom levels (above approx. 1e300) due to the limitations of
+ * the number type.
+ * In this class we use the FlP class that can handle much smaller numbers. Though not as fast as floating point it is
+ * still much faster than performing all calculations in BigInt.
+ *
+ * We should try to share code with MandelbrotPerturbation of course, but need to test if this doesn't affect performance
+ * as Javascript/jit optimization might be affected by the different types.
+ */
+export class MandelbrotPerturbationExtFloat {
+    /**
+     * @param {WorkerContext} ctx
+     */
+    constructor(ctx) {
+        this.ctx = ctx
+        this.paramHash = null
+        this.jobId = null
+        this.referencePoints = []
+        this.lastZq = 0
+    }
+
+    process(task){
+        this.max_iter = task.maxIter
+        const w = task.w
+        const h = task.h
+
+        const values = new Int32Array(w * h)
+        const smooth = task.smooth ? new Uint8ClampedArray(w * h) : null
+        const start = performance.now()
+        this.calculate(values, smooth, w, h, task.skipTopLeft, task)
+        const end = performance.now()
+
+        return {
+            type: 'answer',
+            task: task,
+            values: values,
+            smooth: smooth,
+            stats: {
+                time: end - start,
+                timeHighPrecision: this.ctx.stats.timeSpendInHighPrecision,
+                highPrecisionCalculations: this.ctx.stats.numberOfHighPrecisionPoints,
+                lowPrecisionMisses: this.ctx.stats.numberOfLowPrecisionMisses,
+            }
+        }
+    }
+
+    calculate(values, smooth, w, h, skipTopLeft, task) {
+        const stats = this.ctx.stats
+        const scale = task.precision
+        const bigScale = BigInt(scale)
+        const rmin = task.frameTopLeft[0]
+        const rmax = task.frameBottomRight[0]
+        const imin = task.frameTopLeft[1]
+        const imax = task.frameBottomRight[1]
+
+        // Size in the complex plane with implicit exponent 2^-scale
+        const cWidth = Number(rmax.subtract(rmin).bigInt)
+        const cHeight = Number(imax.subtract(imin).bigInt)
+        const refr = rmin.bigInt
+        const refi = imin.bigInt
+
+        const bailout = smooth ? 128 : 4
+
+        this.updateCache(task, cWidth, cHeight)
+
+        if (this.referencePoints.length === 0) {
+            const x = Math.trunc(w / 2)
+            const y = Math.trunc(h / 2)
+            const dr = (task.xOffset + x) / task.frameWidth * cWidth
+            const di = (task.yOffset + y) / task.frameHeight * cHeight
+            this.referencePoints.push(this.calculate_reference(refr, refi, dr, di, bigScale, scale, bailout))
+            if (this.ctx.shouldStop()) return
+        }
+
+        // We queue reference points in LRU order, the head pointing to the least recently successfully used reference point
+        let head = this.referencePoints.length - 1
+        for (let y = 0; y < h; y++) {
+            const di = (task.yOffset + y) / task.frameHeight * cHeight
+            const skipLeft = skipTopLeft && y % 2 === 0
+
+            for (let x = 0; x < w; x++) {
+                if (skipLeft && x % 2 === 0) {
+                    // skip
+                } else {
+                    const dr = (task.xOffset + x) / task.frameWidth * cWidth
+
+                    let found = false
+                    const offset = y * w + x
+
+                    const referencePoints = this.referencePoints
+                    const numRefs = referencePoints.length
+                    let refIndex = head
+                    for (let attempt = 0; attempt < numRefs; attempt++) {
+                        let referencePoint = referencePoints[refIndex]
+                        const refDr = referencePoint[0][0]
+                        const refDi = referencePoint[0][1]
+
+                        const iter = this.mandlebrot_perturbation(-scale, dr - refDr, di - refDi, this.max_iter, bailout, referencePoint[3], referencePoint[4])
+                        if (iter >= 0) {
+                            values[offset] = smoothen(smooth, offset, iter, this.lastZq)
+                            found = true
+                            stats.numberOfLowPrecisionPoints++
+                            if (refIndex < head) {
+                                head--
+                                referencePoints[refIndex] = referencePoints[head]
+                                referencePoints[head] = referencePoint
+                            } else if (refIndex > head) {
+                                for (let i = refIndex; i > head; i--) {
+                                    referencePoints[i] = referencePoints[i - 1]
+                                }
+                                referencePoints[head] = referencePoint
+                            }
+                            break
+                        }
+                        stats.numberOfLowPrecisionMisses++
+                        refIndex = (refIndex + 1) % numRefs
+                    }
+
+                    if (!found) {
+                        const newRef = this.calculate_reference(refr, refi, dr, di, bigScale, scale, bailout)
+                        values[offset] = smoothen(smooth, offset, newRef[1], newRef[2])
+                        this.referencePoints.unshift(newRef)
+                        this.referencePoints[0] = this.referencePoints[head]
+                        this.referencePoints[head] = newRef
+                        if (this.ctx.shouldStop()) return
+                    }
+                }
+            }
+            if (this.ctx.shouldStop()) return
+        }
+    }
+
+    updateCache(task, cWidth, cHeight) {
+        if (task.jobId !== this.jobId) {
+            this.jobId = task.jobId
+            if (this.paramHash !== task.paramHash || this.referencePoints.length === 0 || task.resetCaches) {
+                this.paramHash = task.paramHash
+                this.referencePoints = []
+            } else {
+                // Keep reference points that are within the total frame when job parameters did not change
+                const oldReferencePoints = this.referencePoints
+                this.referencePoints = []
+                const oldPrecision = this.precision
+                const newPrecision = task.precision
+                if (newPrecision === oldPrecision) {  // <= requires adjusting the reference points because implicit scale changes
+                    const deltar = Number(task.frameTopLeft[0].subtract(this.topLeft[0]).bigInt)
+                    const deltai = Number(task.frameTopLeft[1].subtract(this.topLeft[1]).bigInt)
+                    for (let referencePoint of oldReferencePoints) {
+                        const dr = referencePoint[0][0] - deltar
+                        const di = referencePoint[0][1] - deltai
+                        if (dr < cWidth && di < cHeight) {
+                            referencePoint[0] = [dr, di]
+                            this.referencePoints.push(referencePoint)
+                        }
+                    }
+                }
+            }
+            this.precision = task.precision
+            this.topLeft = task.frameTopLeft
+        }
+    }
+
+    /**
+     * Returns the iteration count (>= 0) with the squared escape radius in this.lastZq, or a negative
+     * number when the calculation could not be completed with this reference point.
+     *
+     * @param {number} dExp exp of dcr and dci (only used for debugging)
+     * @param {number} dcr
+     * @param {number} dci
+     * @param {number} max_iter
+     * @param {number} bailout
+     * @param {Float64Array} zs flattened reference sequence with stride 6: (zr, zi, zqErrorBound, eExpFactor, eExpDeltaFactor, eExp)
+     * @param {number} numZs number of points in zs
+     * @returns {number} iter
+     */
+    mandlebrot_perturbation(dExp, dcr, dci, max_iter, bailout, zs, numZs) {
+        const debug = this.debug === true
+        let exponents = null
+        let guessedExponents = null
+        if (debug) {
+            exponents = [Math.max(realExp(dcr, dExp), realExp(dci, dExp))]
+            guessedExponents = [dExp]
+        }
+
+        // ε₀ = δ
+        let ezr = dcr
+        let ezi = dci
+
+        let iter = -1
+        let zzq = 0
+        while (zzq <= bailout) {
+            if (iter++ === max_iter) {
+                this.lastZq = 0
+                return 2
+            }
+            if (iter >= numZs) {
+                this.lastZq = zzq
+                return -1
+            }
+
+            // Zₙ
+            const base = iter * 6
+            const eExpFactor = zs[base + 3]  // 2 ** eExp
+            const eExpDeltaFactor = zs[base + 4]  // 2 ** (eExp - newEExp)
+            if (eExpDeltaFactor !== 1) {  // multiplication by 1 is exact, skipping it shortens the dependency chain
+                ezr *= eExpDeltaFactor
+                ezi *= eExpDeltaFactor
+                dcr *= eExpDeltaFactor
+                dci *= eExpDeltaFactor
+            }
+            if (debug) {
+                const eExp = zs[base + 5]
+                exponents.push(Math.max(realExp(ezr, eExp), realExp(ezi, eExp)))
+                guessedExponents.push(eExp)
+            }
+
+            const zr = zs[base]
+            const zi = zs[base + 1]
+            const zqErrorBound = zs[base + 2]
+
+            // Z'ₙ = Zₙ + εₙ
+            const zzr = zr + ezr * eExpFactor
+            const zzi = zi + ezi * eExpFactor
+            zzq = zzr * zzr + zzi * zzi
+            if (zzq < zqErrorBound) {
+                this.lastZq = 0
+                return -1
+            }
+
+            // εₙ₊₁ = 2·zₙ·εₙ + εₙ² + δ = (2·zₙ + εₙ)·εₙ + δ
+            const zr_ezr_2 = zr + zzr
+            const zi_ezi_2 = zi + zzi
+            const _ezr = zr_ezr_2 * ezr - zi_ezi_2 * ezi
+            const _ezi = zr_ezr_2 * ezi + zi_ezi_2 * ezr
+            ezr = _ezr + dcr
+            ezi = _ezi + dci
+        }
+        if (debug) {
+            console.log(exponents.join(","))
+            console.log(guessedExponents.join(","))
+        }
+        this.lastZq = zzq
+        return iter + 4
+    }
+
+    /**
+     * @param {BigInt} refr fixed point reference point real part
+     * @param {BigInt} refi fixed point reference point imaginary part
+     * @param {number} dr the delta relative to the reference point real part as floating point with implicit exponent 2^-scale
+     * @param {number} di the delta relative to the reference point imaginary part as floating point with implicit exponent 2^-scale
+     * @param {BigInt} bigScale
+     * @param {number} scale
+     * @param {number} bailout
+     * @returns {[[number, number], number, number, Float64Array, number]} ((rr, ri), iter, zq, zs, numZs) where zs
+     * is the flattened reference sequence with stride 6: (zr, zi, zqErrorBound, eExpFactor, eExpDeltaFactor, eExp)
+     */
+    calculate_reference(refr, refi, dr, di, bigScale, scale, bailout) {
+        const start = performance.now()
+        const rr = refr + BigInt(Math.round(dr))
+        const ri = refi + BigInt(Math.round(di))
+        const [iter, zq, seq] = this.mandelbrot_high_precision(rr, ri, this.max_iter, bailout, bigScale, scale)
+        let lastExp = -scale
+
+        const iterations = seq.length
+        const zs = new Float64Array(iterations * 6)
+        for (let idx = 0, base = 0; idx < iterations; idx++, base += 6) {
+            // No mathematical proof whatsoever! It may be impossible to 'predict' the exponent of epsilon good enough,
+            // if it drifts more than approx. 1000 from the actual exp of the error, the results may become incorrect
+            const eExp = Math.round(Math.pow(idx / iterations, 1.75) * scale - scale)
+            const point = seq[idx]
+            zs[base] = point[0]
+            zs[base + 1] = point[1]
+            zs[base + 2] = point[2]
+            zs[base + 3] = 2 ** eExp
+            zs[base + 4] = 2 ** (lastExp - eExp)
+            zs[base + 5] = eExp
+            lastExp = eExp
+        }
+        const end = performance.now()
+        this.ctx.stats.timeSpendInHighPrecision += end - start
+        this.ctx.stats.numberOfHighPrecisionPoints++
+        return [[dr, di], iter, zq, zs, iterations]
+    }
+
+    /**
+     * @param {BigInt} re
+     * @param {BigInt} im
+     * @param {number} max_iter
+     * @param {number} bailout
+     * @param {BigInt} bigScale
+     * @param {number} scale
+     * @returns {[number, BigInt, [number, number, zq][]]} [iterations, zq, sequence] where sequence is a list of [zr, zi, zq] tuples
+     */
+    mandelbrot_high_precision(re, im, max_iter, bailout, bigScale, scale) {
+        const scale_1 = bigScale - 1n
+        // Fast fixed-point to float conversion: |z| is bounded by the bailout so the top ~500 bits
+        // (an exact power-of-two shift) carry all the precision a float64 can hold. Only (near-)zero
+        // values, which have fewer significant bits, need the exact but much slower conversion.
+        const preShift = bigScale - 500n
+        const preShiftFactor = 2 ** -500
+        const toFloat = (value) => {
+            const top = Number(value >> preShift)
+            return (top >= 9007199254740992 || top <= -9007199254740992) ? top * preShiftFactor : fxp.toNumber(value, scale)
+        }
+        let zr = 0n
+        let zi = 0n
+        let iter = -1
+        let zrq = 0n
+        let ziq = 0n
+        let zq = 0
+        const seq = []
+        while (zq <= bailout) {
+            if (iter++ === max_iter) {
+                return [2, 0, seq]
+            }
+            zi = (zr * zi >> scale_1) + im
+            zr = zrq - ziq + re
+            zrq = (zr * zr) >> bigScale
+            ziq = (zi * zi) >> bigScale
+            const z_real = toFloat(zr)
+            const z_imag = toFloat(zi)
+            zq = z_real * z_real + z_imag * z_imag
+            seq.push([z_real, z_imag, zq * 0.000001])
+        }
+        zi = (zr * zi >> scale_1) + im
+        zr = zrq - ziq + re
+        const z_real = toFloat(zr)
+        const z_imag = toFloat(zi)
+        seq.push([z_real, z_imag, z_real * z_real + z_imag * z_imag])
+        return [iter + 4, zq, seq]
+    }
+}
+
+const realExpBuffer = new Float64Array(1)
+const realExpData = new DataView(realExpBuffer.buffer)
+
+export function realExp(value, xExp) {
+    realExpBuffer[0] = value
+    let bits = realExpData.getUint32(4, true)
+    return ((bits & 0x7FF00000) >> 20) - 1023 + xExp
+}
+
+function binary(value, bits) {
+    let result = ''
+    for (let i = bits - 1; i >= 0; i--) {
+        result += (value & (1 << i)) ? '1' : '0'
+    }
+    return result
+}
