@@ -207,6 +207,33 @@
   }, HEARTBEAT_MS);
 })();
 </script>
+<!-- ── Global error ring ────────────────────────────────────────
+     A single in-memory buffer of recent errors, surfaced in the
+     Settings diagnostic dump ([errors] block). Lives in <head> so it
+     exists before any other script, and stays in memory rather than
+     localStorage (localStorage is the thing that fills up — persisting
+     errors there would fail exactly when we most want them). Fed by:
+       • the on-screen debug console below (window.onerror, unhandled
+         promise rejections, console.error),
+       • creatures.js's _logCreatureError (collection-store failures).
+     Anything can call window._ccLogError(label, message, stack). -->
+<script>
+(function () {
+  var MAX = 100;
+  var ring = window._ccErrors = window._ccErrors || [];
+  window._ccLogError = function (label, msg, stack) {
+    try {
+      ring.push({
+        t: Date.now(),
+        label: String(label == null ? '?' : label),
+        msg: String(msg == null ? '' : msg),
+        stack: stack ? String(stack).split('\n').slice(0, 4).join('\n') : '',
+      });
+      if (ring.length > MAX) ring.shift();
+    } catch (_) { /* never let logging throw */ }
+  };
+})();
+</script>
 <link href="/static/vendor/maplibre-gl.css" rel="stylesheet">
 <style>
   html, body {
@@ -2885,6 +2912,13 @@
     if (stack) line += '\n' + String(stack).split('\n').slice(0, 4).join('\n');
     entries.push(line);
     if (entries.length > MAX) entries = entries.slice(-MAX);
+    // Mirror into the persistent error ring so it shows in the Settings
+    // diagnostic dump even when this on-screen overlay is toggled off.
+    // Skip 'sw-state' — that's an informational once-per-load heartbeat,
+    // not an error, and would just clutter the [errors] block.
+    if (window._ccLogError && label !== 'sw-state') {
+      window._ccLogError(label, msg, stack);
+    }
     render();
   }
   closeBtn.onclick = function () {
@@ -6882,6 +6916,19 @@ function fmtDate(ts) {
   }
 
   async function buildBackupPayload() {
+    // The captured collection + seenFusions pokédex live in IndexedDB
+    // now (not localStorage). Make sure the store has hydrated, then read
+    // it through the Creatures API rather than localStorage, or the
+    // export would be empty on a migrated device.
+    if (window.Creatures && window.Creatures.ready) {
+      try { await window.Creatures.ready(); } catch (_) {}
+    }
+    const _captured = (window.Creatures && window.Creatures.getAllCaptured)
+      ? window.Creatures.getAllCaptured()
+      : JSON.parse(localStorage.getItem('cc.capturedCreatures') || '[]');
+    const _seenFusions = (window.Creatures && window.Creatures.getSeenFusions)
+      ? window.Creatures.getSeenFusions()
+      : JSON.parse(localStorage.getItem('cc.seenFusions') || '{}');
     return {
       version: 1,
       exportedAt: new Date().toISOString(),
@@ -6895,13 +6942,13 @@ function fmtDate(ts) {
       // gave them. Sort prefs and mode travel too so preferences land
       // on the new device. Sprite cache (IDB) is NOT exported; users
       // re-run the download on the target device.
-      captured: JSON.parse(localStorage.getItem('cc.capturedCreatures') || '[]'),
+      captured: _captured,
       creatureNicknames: JSON.parse(localStorage.getItem('cc.creatureNicknames') || '{}'),
       creatureSortBy: localStorage.getItem('cc.creatureSortBy'),
       creatureSortDir: localStorage.getItem('cc.creatureSortDir'),
       creatureMode: localStorage.getItem('cc.creatureMode'),
       caughtSpawnIds: JSON.parse(localStorage.getItem('cc.caughtSpawnIds') || '[]'),
-      seenFusions: JSON.parse(localStorage.getItem('cc.seenFusions') || '{}'),
+      seenFusions: _seenFusions,
       candy: JSON.parse(localStorage.getItem('cc.candy.v1') || '{}'),
       // Family-keyed candy schema with babies promoted (v2 of family
       // schema, v3 of candy overall). Older clients won't know about
@@ -6984,6 +7031,12 @@ function fmtDate(ts) {
     } else {
       data = fileOrData;
     }
+    // The captured collection + seenFusions live in IndexedDB; make sure
+    // the store is hydrated before we merge into it (we read the current
+    // contents through the Creatures API below, then write back via it).
+    if (window.Creatures && window.Creatures.ready) {
+      try { await window.Creatures.ready(); } catch (_) {}
+    }
     let favAdded = 0, favSkipped = 0, regAdded = 0;
     if (Array.isArray(data.favorites)) {
       const existing = new Set(favorites.map(f => f.id));
@@ -7034,7 +7087,9 @@ function fmtDate(ts) {
     // conflict (user just renamed something here — don't clobber it).
     let creaturesAdded = 0, creaturesSkipped = 0;
     if (Array.isArray(data.captured)) {
-      const existing = JSON.parse(localStorage.getItem('cc.capturedCreatures') || '[]');
+      const existing = (window.Creatures && window.Creatures.getAllCaptured)
+        ? window.Creatures.getAllCaptured().slice()
+        : JSON.parse(localStorage.getItem('cc.capturedCreatures') || '[]');
       const existingIds = new Set(existing.map((c) => c && c.id));
       const merged = existing.slice();
       for (const c of data.captured) {
@@ -7043,7 +7098,11 @@ function fmtDate(ts) {
         merged.push(c);
         creaturesAdded++;
       }
-      localStorage.setItem('cc.capturedCreatures', JSON.stringify(merged));
+      if (window.Creatures && window.Creatures.replaceAllCaptured) {
+        window.Creatures.replaceAllCaptured(merged);  // persists to IDB
+      } else {
+        localStorage.setItem('cc.capturedCreatures', JSON.stringify(merged));
+      }
     }
     if (data.creatureNicknames && typeof data.creatureNicknames === 'object') {
       const current = JSON.parse(localStorage.getItem('cc.creatureNicknames') || '{}');
@@ -7057,7 +7116,9 @@ function fmtDate(ts) {
       localStorage.setItem('cc.caughtSpawnIds', JSON.stringify([...existing]));
     }
     if (data.seenFusions && typeof data.seenFusions === 'object') {
-      const current = JSON.parse(localStorage.getItem('cc.seenFusions') || '{}');
+      const current = (window.Creatures && window.Creatures.getSeenFusions)
+        ? window.Creatures.getSeenFusions()
+        : JSON.parse(localStorage.getItem('cc.seenFusions') || '{}');
       // Merge: keep the earliest firstSeen, latest lastSeen.
       for (const [key, val] of Object.entries(data.seenFusions)) {
         if (!val) continue;
@@ -7070,7 +7131,11 @@ function fmtDate(ts) {
           cur.lastSeen = val.lastSeen;
         }
       }
-      localStorage.setItem('cc.seenFusions', JSON.stringify(current));
+      if (window.Creatures && window.Creatures.setSeenFusions) {
+        window.Creatures.setSeenFusions(current);  // persists to IDB
+      } else {
+        localStorage.setItem('cc.seenFusions', JSON.stringify(current));
+      }
     }
     // Candy: per-key max merge so re-importing the same backup is
     // idempotent and combining devices keeps whichever had more of
@@ -7146,7 +7211,9 @@ function fmtDate(ts) {
     // and a string-only legacy save imported into a fresh device
     // still gets sensible defaults (Date.now() / 0).
     if (Array.isArray(data.daycareSlots)) {
-      const captures = JSON.parse(localStorage.getItem('cc.capturedCreatures') || '[]');
+      const captures = (window.Creatures && window.Creatures.getAllCaptured)
+        ? window.Creatures.getAllCaptured()
+        : JSON.parse(localStorage.getItem('cc.capturedCreatures') || '[]');
       const validIds = new Set(captures.map((c) => c && c.id).filter(Boolean));
       const current = JSON.parse(localStorage.getItem('cc.daycareSlots.v1') || '[]');
       const merged = [];
@@ -9519,7 +9586,10 @@ function fmtDate(ts) {
       for (const n of ['cc.pois.v1', 'cc.pois.v2', 'cc.routes.v1', 'cc.routes.v2',
                        'cc.favorites.v1', 'cc.walk.v1', 'cc.walk.v2', 'cc.walk.v3',
                        'cc.walk.v4', 'cc.walk.v5', 'cc.schedule.v1',
-                       'cc.housenumbers.v1']) {
+                       'cc.housenumbers.v1',
+                       // Creature data DBs (collection now lives here).
+                       'creature-collection-v1', 'creature-tracker-v1',
+                       'creature-sprites-v1', 'creature-appdata-v1']) {
         if (!names.includes(n)) names.push(n);
       }
       log('deleting ' + names.length + ' IDB(s)…');
@@ -12743,6 +12813,26 @@ function fmtDate(ts) {
             lines.push(`  ${('-' + Math.round((nowStall - e.t) / 1000) + 's').padEnd(7)}`
               + `${String(e.dur + 'ms').padStart(8)}  ${e.kind}`
               + `${e.info ? ' ' + e.info : ''}${e.n > 1 ? ' ×' + e.n : ''}`);
+          }
+        }
+      }
+      // Errors — the global ring fed by window.onerror, unhandled
+      // promise rejections, console.error, and creatures.js's
+      // _logCreatureError. In-memory only (resets on reload), newest
+      // first. This is the "is anything throwing?" view.
+      const errs = window._ccErrors;
+      if (errs) {
+        lines.push(`[errors] ${errs.length} captured (since load)`);
+        if (!errs.length) {
+          lines.push(`  none`);
+        } else {
+          const nowErr = Date.now();
+          for (const e of errs.slice(-30).reverse()) {
+            const ago = `-${Math.round((nowErr - e.t) / 1000)}s`;
+            lines.push(`  ${ago.padEnd(7)} [${e.label}] ${e.msg}`);
+            if (e.stack) {
+              for (const sl of e.stack.split('\n')) lines.push(`           ${sl}`);
+            }
           }
         }
       }
