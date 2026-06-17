@@ -6979,6 +6979,15 @@ function fmtDate(ts) {
       daycare: (window.Creatures && window.Creatures.exportDaycareData)
         ? await window.Creatures.exportDaycareData()
         : null,
+      // Saved fractals (Extras → Fractals) live in their own IDB store
+      // (PNG previews are too big for localStorage). Carried along so a
+      // user's saved views travel with the rest of their save.
+      fractals: (window.ExtrasFractals && window.ExtrasFractals.all)
+        ? await window.ExtrasFractals.all()
+        : [],
+      // Last-viewed fractal permalink, so resuming on another device
+      // lands on the same view.
+      fractalLast: localStorage.getItem('cc.fractalLast.v1') || null,
     };
   }
 
@@ -7308,6 +7317,16 @@ function fmtDate(ts) {
     if (data.daycare && window.Creatures && window.Creatures.importDaycareData) {
       try { await window.Creatures.importDaycareData(data.daycare); }
       catch (e) { console.error('importDaycareData failed', e); }
+    }
+    // Saved fractals: union merge by id (skip duplicates).
+    if (Array.isArray(data.fractals) && window.ExtrasFractals && window.ExtrasFractals.importMerge) {
+      try { await window.ExtrasFractals.importMerge(data.fractals); }
+      catch (e) { console.error('importFractals failed', e); }
+    }
+    // Last-viewed fractal: the imported save wins so loading it resumes
+    // that view.
+    if (typeof data.fractalLast === 'string' && data.fractalLast) {
+      localStorage.setItem('cc.fractalLast.v1', data.fractalLast);
     }
     alert(
       `Imported: ${favAdded} favorite(s) (${favSkipped} skipped), ` +
