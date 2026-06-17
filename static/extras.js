@@ -357,16 +357,73 @@
     position: absolute; inset: 0; width: 100%; height: 100%;
     border: 0; display: block;
   }
-  #fractalsClose {
-    position: absolute; z-index: 1;
+  #fractalsBar {
+    position: absolute; z-index: 2;
     top: max(8px, env(safe-area-inset-top));
     right: max(8px, env(safe-area-inset-right));
-    width: 40px; height: 40px; border-radius: 50%;
+    display: flex; gap: 6px;
+  }
+  #fractalsBar button {
+    width: 38px; height: 38px; border-radius: 50%;
     border: none; background: rgba(0, 0, 0, 0.55); color: #fff;
-    font-size: 24px; line-height: 1; cursor: pointer;
+    font-size: 18px; line-height: 1; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
     -webkit-tap-highlight-color: transparent;
   }
-  #fractalsClose:hover { background: rgba(0, 0, 0, 0.75); }
+  #fractalsBar button:hover { background: rgba(0, 0, 0, 0.75); }
+  #fractalsBar #fracMenu.active { background: rgba(80, 140, 255, 0.85); }
+  #fractalsBar #fractalsClose { font-size: 24px; }
+
+  #fracSavePrompt, #fracBrowsePanel {
+    position: absolute; inset: 0; z-index: 3; display: flex;
+  }
+  #fracSavePrompt[hidden], #fracBrowsePanel[hidden] { display: none; }
+  #fracSavePrompt {
+    align-items: center; justify-content: center;
+    background: rgba(0, 0, 0, 0.55);
+  }
+  #fracSavePrompt .frac-card {
+    background: var(--ui-bg, #fff); color: var(--ui-text, #111);
+    border-radius: 12px; padding: 16px; width: min(320px, 86vw);
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+  }
+  .frac-card-title { font-size: 15px; font-weight: 600; margin-bottom: 10px; text-align: center; }
+  #fracName {
+    width: 100%; box-sizing: border-box; padding: 8px 10px; font-size: 15px;
+    border: 1px solid var(--ui-border, rgba(0, 0, 0, 0.2)); border-radius: 8px;
+    background: var(--ui-input-bg, #fff); color: inherit;
+  }
+  .frac-card-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+  .frac-card-actions button {
+    padding: 7px 14px; border-radius: 8px; font: inherit; cursor: pointer;
+    border: 1px solid var(--ui-border, rgba(0, 0, 0, 0.2));
+    background: var(--ui-input-bg, #f2f2f2); color: inherit;
+  }
+  .frac-card-actions button.primary { background: #4f8cff; color: #fff; border-color: #4f8cff; }
+
+  #fracBrowsePanel { flex-direction: column; background: rgba(0, 0, 0, 0.82); }
+  .frac-browse-head {
+    display: flex; align-items: center; justify-content: space-between; color: #fff;
+    padding: max(10px, env(safe-area-inset-top)) 14px 10px; font-size: 16px; font-weight: 600;
+  }
+  .frac-browse-head button { background: none; border: none; color: #fff; font-size: 26px; cursor: pointer; }
+  #fracList {
+    flex: 1; overflow-y: auto; padding: 8px 12px 16px; align-content: start;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px;
+  }
+  .frac-empty { color: #ccc; padding: 20px; text-align: center; grid-column: 1 / -1; }
+  .frac-item {
+    position: relative; background: rgba(255, 255, 255, 0.08);
+    border-radius: 10px; overflow: hidden; cursor: pointer;
+  }
+  .frac-thumb { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; display: block; background: #000; }
+  .frac-meta { padding: 6px 8px; color: #fff; }
+  .frac-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .frac-date { font-size: 11px; color: #bbb; }
+  .frac-del {
+    position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border-radius: 50%;
+    border: none; background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 15px; line-height: 1; cursor: pointer;
+  }
 
   @media (prefers-reduced-motion: reduce) {
     .extras-bubble, .dice-tile { animation: none; }
@@ -593,27 +650,289 @@
   // only spin up if the user actually opens it; once loaded we keep it
   // (just hide/show) so the zoom state survives reopening.
   const FRACTALS_SRC = '/static/mandelbrot/index.html';
+
+  // ── Saved-fractals store (IndexedDB) ──
+  // PNG previews can't live in localStorage (that's the very quota the
+  // creature collection was moved out of), so saved fractals get their
+  // own tiny IDB store. Record shape:
+  //   { id, name, search ('?params=...' permalink), preview (small PNG
+  //     data URL), createdAt }
+  // Exposed via window.ExtrasFractals so index.html's backup export/import
+  // can carry saved fractals inside the creature-collect save file.
+  const FRAC_DB = 'cc-extras-v1';
+  const FRAC_STORE = 'fractals';
+  let _fracDbP = null;
+  function _fracDb() {
+    if (_fracDbP) return _fracDbP;
+    _fracDbP = new Promise((resolve, reject) => {
+      let req;
+      try { req = indexedDB.open(FRAC_DB, 1); }
+      catch (e) { reject(e); return; }
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(FRAC_STORE)) {
+          db.createObjectStore(FRAC_STORE, { keyPath: 'id' });
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return _fracDbP;
+  }
+  function _fracAll() {
+    return _fracDb().then((db) => new Promise((resolve) => {
+      const out = [];
+      const tx = db.transaction(FRAC_STORE, 'readonly');
+      const cur = tx.objectStore(FRAC_STORE).openCursor();
+      cur.onsuccess = () => {
+        const c = cur.result;
+        if (!c) { out.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)); resolve(out); return; }
+        out.push(c.value); c.continue();
+      };
+      cur.onerror = () => resolve(out);
+    })).catch(() => []);
+  }
+  function _fracPut(rec) {
+    return _fracDb().then((db) => new Promise((resolve, reject) => {
+      const tx = db.transaction(FRAC_STORE, 'readwrite');
+      tx.objectStore(FRAC_STORE).put(rec);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    }));
+  }
+  function _fracDelete(id) {
+    return _fracDb().then((db) => new Promise((resolve) => {
+      const tx = db.transaction(FRAC_STORE, 'readwrite');
+      tx.objectStore(FRAC_STORE).delete(id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    }));
+  }
+  // Backup hook: carry saved fractals in the creature-collect save file.
+  // index.html's buildBackupPayload/importData call these.
+  window.ExtrasFractals = {
+    all: _fracAll,
+    importMerge: async (recs) => {
+      if (!Array.isArray(recs)) return;
+      const existing = await _fracAll();
+      const ids = new Set(existing.map((r) => r && r.id));
+      for (const r of recs) {
+        if (!r || !r.id || ids.has(r.id)) continue;
+        try { await _fracPut(r); } catch (e) { /* skip bad record */ }
+      }
+    },
+  };
+
+  // ── Window markup: iframe + a small top-right toolbar, a save-name
+  // prompt, and a browse panel (all overlaid within the window). ──
   const fractalsWin = document.createElement('div');
   fractalsWin.id = 'fractalsWindow';
-  const fractalsFrame = document.createElement('iframe');
-  fractalsFrame.id = 'fractalsFrame';
-  fractalsFrame.title = 'Fractal viewer';
-  const fractalsCloseBtn = document.createElement('button');
-  fractalsCloseBtn.id = 'fractalsClose';
-  fractalsCloseBtn.type = 'button';
-  fractalsCloseBtn.setAttribute('aria-label', 'close fractals');
-  fractalsCloseBtn.innerHTML = '&times;';
-  fractalsWin.appendChild(fractalsFrame);
-  fractalsWin.appendChild(fractalsCloseBtn);
+  fractalsWin.innerHTML =
+    '<iframe id="fractalsFrame" title="Fractal viewer"></iframe>' +
+    '<div id="fractalsBar">' +
+      '<button id="fracMenu" type="button" title="show/hide controls" aria-label="controls">&#9776;</button>' +
+      '<button id="fracSave" type="button" title="save this view" aria-label="save fractal">&#128190;</button>' +
+      '<button id="fracBrowse" type="button" title="saved fractals" aria-label="saved fractals">&#128193;</button>' +
+      '<button id="fractalsClose" type="button" title="close" aria-label="close fractals">&times;</button>' +
+    '</div>' +
+    '<div id="fracSavePrompt" hidden>' +
+      '<div class="frac-card">' +
+        '<div class="frac-card-title">Save this fractal</div>' +
+        '<input id="fracName" type="text" maxlength="60" placeholder="name it…" aria-label="fractal name">' +
+        '<div class="frac-card-actions">' +
+          '<button id="fracSaveCancel" type="button">Cancel</button>' +
+          '<button id="fracSaveOk" type="button" class="primary">Save</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+    '<div id="fracBrowsePanel" hidden>' +
+      '<div class="frac-browse-head"><span>Saved fractals</span>' +
+        '<button id="fracBrowseClose" type="button" aria-label="close">&times;</button></div>' +
+      '<div id="fracList"></div>' +
+    '</div>';
   document.body.appendChild(fractalsWin);
+  const fractalsFrame = fractalsWin.querySelector('#fractalsFrame');
+  const fracMenuBtn = fractalsWin.querySelector('#fracMenu');
+  const fracSavePrompt = fractalsWin.querySelector('#fracSavePrompt');
+  const fracNameInput = fractalsWin.querySelector('#fracName');
+  const fracBrowsePanel = fractalsWin.querySelector('#fracBrowsePanel');
+  const fracList = fractalsWin.querySelector('#fracList');
+  const _show = (el) => { el.hidden = false; };
+  const _hide = (el) => { el.hidden = true; };
+
+  // Same-origin reach into the fractal iframe (both are served from the
+  // app origin, so this is allowed and needs no postMessage).
+  function _idoc() {
+    try {
+      return fractalsFrame.contentDocument ||
+        (fractalsFrame.contentWindow && fractalsFrame.contentWindow.document) || null;
+    } catch (e) { return null; }
+  }
+  // Immersive layout: reuse the mandelbrot app's own .fullscreen CSS
+  // classes (canvas fills the window, settings float, footer hidden, dark
+  // theme) WITHOUT requestFullscreen — iOS blocks fullscreen on non-video
+  // elements, but toggling the classes works everywhere. The app's
+  // ResizeObserver on the canvas redraws at the new size. Start with the
+  // settings menu hidden so it's fractal-first.
+  function _applyImmersive() {
+    const d = _idoc();
+    if (!d) return;
+    ['mandelbrot', 'palette-canvas', 'settings', 'footer'].forEach((id) => {
+      const el = d.getElementById(id);
+      if (el) el.classList.add('fullscreen');
+    });
+    if (d.documentElement) d.documentElement.setAttribute('data-bs-theme', 'dark');
+    const s = d.getElementById('settings');
+    if (s) s.classList.add('hidden');
+    fracMenuBtn.classList.remove('active');
+  }
+  function toggleFracMenu() {
+    const d = _idoc();
+    if (!d) return;
+    const s = d.getElementById('settings');
+    if (!s) return;
+    const nowHidden = s.classList.toggle('hidden');
+    fracMenuBtn.classList.toggle('active', !nowHidden);
+  }
+  fractalsFrame.addEventListener('load', _applyImmersive);
+
+  // Last-viewed fractal state (the live '?params=' permalink), so closing
+  // and reopening the app returns to the same view. Tiny string (~300
+  // chars) → fine in localStorage; also exported in the save file
+  // (index.html reads cc.fractalLast.v1) so it travels across devices.
+  const LAST_KEY = 'cc.fractalLast.v1';
+  function _readLast() { try { return localStorage.getItem(LAST_KEY) || ''; } catch (e) { return ''; } }
+  function _saveLastState() {
+    const s = _currentSearch();
+    if (s) { try { localStorage.setItem(LAST_KEY, s); } catch (e) { /* ignore */ } }
+  }
   function openFractals() {
-    if (fractalsFrame.getAttribute('src') !== FRACTALS_SRC) {
-      fractalsFrame.setAttribute('src', FRACTALS_SRC);
+    if (!fractalsFrame.getAttribute('src')) {
+      // Resume the last-viewed fractal if we have one.
+      fractalsFrame.setAttribute('src', FRACTALS_SRC + (_readLast() || ''));
     }
     fractalsWin.classList.add('show');
   }
-  function closeFractals() { fractalsWin.classList.remove('show'); }
-  fractalsCloseBtn.addEventListener('click', closeFractals);
+  function closeFractals() {
+    _saveLastState();
+    fractalsWin.classList.remove('show');
+    _hide(fracSavePrompt);
+    _hide(fracBrowsePanel);
+  }
+  // The fractal app rewrites its URL (history.replaceState) as you pan/
+  // zoom — there's no event for that, so snapshot it on a light timer
+  // while the window is open, plus when the app is backgrounded/closed.
+  setInterval(() => { if (fractalsWin.classList.contains('show')) _saveLastState(); }, 4000);
+  window.addEventListener('pagehide', _saveLastState);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && fractalsWin.classList.contains('show')) _saveLastState();
+  });
+
+  // ── Save: snapshot the permalink + a small PNG of the 2D canvas ──
+  function _currentSearch() {
+    try {
+      return (fractalsFrame.contentWindow && fractalsFrame.contentWindow.location.search) || '';
+    } catch (e) { return ''; }
+  }
+  function _captureThumb() {
+    const d = _idoc();
+    if (!d) return null;
+    const src = d.getElementById('mandelbrot-canvas');
+    if (!src || !src.width || !src.height) return null;
+    const MAXW = 192;  // small on purpose so previews don't bloat the save
+    const scale = Math.min(1, MAXW / src.width);
+    const w = Math.max(1, Math.round(src.width * scale));
+    const h = Math.max(1, Math.round(src.height * scale));
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    try {
+      c.getContext('2d').drawImage(src, 0, 0, w, h);
+      // JPEG (not PNG): a 192px fractal PNG is ~38 KB — fractals are too
+      // detail-dense for PNG. JPEG at this size is visually identical and
+      // ~5× smaller (~6 KB), which matters since previews ride along in
+      // the exported save file. Same-origin canvas → not tainted.
+      return c.toDataURL('image/jpeg', 0.72);
+    } catch (e) { return null; }
+  }
+  function openSavePrompt() {
+    fracNameInput.value = '';
+    _show(fracSavePrompt);
+    setTimeout(() => { try { fracNameInput.focus(); } catch (e) {} }, 30);
+  }
+  async function doSaveFractal() {
+    const rec = {
+      id: 'frac-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+      name: (fracNameInput.value || '').trim() || 'Untitled fractal',
+      search: _currentSearch(),
+      preview: _captureThumb(),
+      createdAt: Date.now(),
+    };
+    _hide(fracSavePrompt);
+    try { await _fracPut(rec); } catch (e) { /* best-effort */ }
+  }
+
+  // ── Browse: list saved fractals; tap to load, × to delete ──
+  function loadFractal(rec) {
+    fractalsFrame.setAttribute('src', FRACTALS_SRC + (rec.search || ''));
+    _hide(fracBrowsePanel);
+  }
+  async function renderBrowse() {
+    const recs = await _fracAll();
+    fracList.innerHTML = '';
+    if (!recs.length) {
+      const empty = document.createElement('div');
+      empty.className = 'frac-empty';
+      empty.textContent = 'No saved fractals yet. Frame a view you like, then tap the disk icon.';
+      fracList.appendChild(empty);
+      return;
+    }
+    for (const rec of recs) {
+      const card = document.createElement('div');
+      card.className = 'frac-item';
+      const img = document.createElement('img');
+      img.className = 'frac-thumb';
+      img.alt = rec.name || 'fractal';
+      if (rec.preview) img.src = rec.preview;
+      const meta = document.createElement('div');
+      meta.className = 'frac-meta';
+      const nm = document.createElement('div');
+      nm.className = 'frac-name';
+      nm.textContent = rec.name || 'Untitled';
+      const dt = document.createElement('div');
+      dt.className = 'frac-date';
+      dt.textContent = new Date(rec.createdAt || Date.now()).toLocaleDateString();
+      meta.appendChild(nm);
+      meta.appendChild(dt);
+      const del = document.createElement('button');
+      del.className = 'frac-del';
+      del.type = 'button';
+      del.setAttribute('aria-label', 'delete');
+      del.innerHTML = '&times;';
+      card.appendChild(img);
+      card.appendChild(meta);
+      card.appendChild(del);
+      card.addEventListener('click', (e) => {
+        if (e.target === del) return;
+        loadFractal(rec);
+      });
+      del.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await _fracDelete(rec.id);
+        renderBrowse();
+      });
+      fracList.appendChild(card);
+    }
+  }
+  function openBrowse() { _show(fracBrowsePanel); renderBrowse(); }
+
+  fracMenuBtn.addEventListener('click', toggleFracMenu);
+  fractalsWin.querySelector('#fracSave').addEventListener('click', openSavePrompt);
+  fractalsWin.querySelector('#fracBrowse').addEventListener('click', openBrowse);
+  fractalsWin.querySelector('#fractalsClose').addEventListener('click', closeFractals);
+  fractalsWin.querySelector('#fracSaveOk').addEventListener('click', doSaveFractal);
+  fractalsWin.querySelector('#fracSaveCancel').addEventListener('click', () => _hide(fracSavePrompt));
+  fractalsWin.querySelector('#fracBrowseClose').addEventListener('click', () => _hide(fracBrowsePanel));
+  fracNameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSaveFractal(); });
 
   const $ = (id) => document.getElementById(id);
 
