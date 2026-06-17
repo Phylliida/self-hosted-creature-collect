@@ -889,6 +889,14 @@ let lastY = canvasElement.height / 2
 let dragStart = null
 // let dragged = false
 
+// Tap-to-zoom state. dragStart follows the pointer during a drag (it's
+// reset every move), so it can't tell a tap from a pan — these track the
+// gesture's ORIGINAL down point and whether it moved past the threshold.
+let tapDownPos = null
+let gestureMoved = false
+let multiTouchGesture = false
+const TAP_ZOOM_FACTOR = 2  // a single tap zooms in ~2x at the tapped point
+
 const scaleFactor = 1.1;
 
 function zoomWithClicks(clicks, cooldown) {
@@ -944,6 +952,9 @@ function onMouseDown(evt) {
     if (fractal.recordingFlight) return
     updateMousePos(evt)
     dragStart = [lastX, lastY]
+    tapDownPos = [lastX, lastY]
+    gestureMoved = false
+    multiTouchGesture = false
 }
 
 function onMouseMove(evt) {
@@ -955,6 +966,13 @@ function onMouseMove(evt) {
     }
 
     if (dragStart) {
+        // Mark the gesture as a pan (not a tap) once it moves past a small
+        // threshold from where it started — ~2% of canvas width.
+        if (tapDownPos) {
+            const mdx = lastX - tapDownPos[0], mdy = lastY - tapDownPos[1]
+            const tol = canvasElement.width * 0.02
+            if (mdx * mdx + mdy * mdy > tol * tol) gestureMoved = true
+        }
         const ptr = fractal.canvas2complex(lastX, lastY)
         const startPtr = fractal.canvas2complex(dragStart[0], dragStart[1])
         fractal.center = [fractal.center[0].add(startPtr[0].subtract(ptr[0])), fractal.center[1].add(startPtr[1].subtract(ptr[1]))]
@@ -989,8 +1007,19 @@ function panCanvas(dx, dy) {
 }
 
 function onMouseUp(evt) {
+    // A tap/click — no pan, no pinch — zooms in toward the tapped point.
+    // Done BEFORE updateMousePos because on touchend updateMousePos can't
+    // read coordinates (empty touches) and would clobber lastX/lastY; at
+    // this point they still hold the tap location.
+    if (tapDownPos && !gestureMoved && !multiTouchGesture && !fractal.recordingFlight) {
+        lastX = tapDownPos[0]
+        lastY = tapDownPos[1]
+        zoomWithFactor(TAP_ZOOM_FACTOR, 0)
+    }
     updateMousePos(evt)
     dragStart = null
+    tapDownPos = null
+    gestureMoved = false
 }
 
 function updateMousePos(evt) {
@@ -1151,6 +1180,8 @@ function initListeners() {
             onMouseDown(evt)
         }
         if (evt.touches.length === 2) {
+            // A pinch is not a tap — suppress tap-to-zoom for this gesture.
+            multiTouchGesture = true
             lastTouchDistance = Math.hypot(evt.touches[0].pageX - evt.touches[1].pageX, evt.touches[0].pageY - evt.touches[1].pageY)
             lastTouchCenter = [(evt.touches[0].pageX + evt.touches[1].pageX) / 2, (evt.touches[0].pageY + evt.touches[1].pageY) / 2]
         }
