@@ -108,9 +108,9 @@ class Mandelbrot {
         this.zoom = fxp.fromNumber(1)
         this.center = [fxp.fromNumber(-0.5), fxp.fromNumber(0)]
         this.max_iter = DEFAULT_ITERATIONS
-        this.smooth = true
+        this.smooth = false
         this.useGpu = false
-        this.supersample = false
+        this.supersample = true
         this.recordingFlight = false
         this.fractalType = 'mandelbrot'
         this.mirageAlpha = MIRAGE_DEFAULT_ALPHA
@@ -1070,6 +1070,7 @@ const appElement = document.getElementById('app')
 const iterationsElement = document.getElementById('max-iterations')
 const fullScreenButton = document.getElementById('fullscreen')
 const smoothToggle = document.getElementById('smooth')
+const supersampleToggle = document.getElementById('supersample')
 const fractalSelect = document.getElementById('fractal-select')
 const juliaToggle = document.getElementById('julia')
 const juliaParamsRow = document.getElementById('julia-params')
@@ -1198,6 +1199,12 @@ function initListeners() {
     })
     smoothToggle.addEventListener('change', (event) => {
         fractal.smooth = event.target.checked
+        // Smooth and supersample are mutually exclusive.
+        if (fractal.smooth && fractal.supersample) {
+            fractal.supersample = false
+            supersampleToggle.checked = false
+            fractal.resized()
+        }
         redraw()
     })
     fractalSelect.addEventListener('change', (event) => {
@@ -1380,8 +1387,13 @@ function initListeners() {
     document.getElementById("download-image").addEventListener('click', (event) => {
         downloadImage()
     })
-    document.getElementById("supersample").addEventListener('change', (event) => {
+    supersampleToggle.addEventListener('change', (event) => {
         fractal.supersample = event.target.checked
+        // Smooth and supersample are mutually exclusive.
+        if (fractal.supersample && fractal.smooth) {
+            fractal.smooth = false
+            smoothToggle.checked = false
+        }
         fractal.resized()
         redraw()
     })
@@ -1660,10 +1672,16 @@ function init() {
     if (initialUrlParams) {
         initFromParams(initialUrlParams)
     }
+    // Smooth and supersample are mutually exclusive; supersample is the
+    // default render mode when smooth is off. It isn't stored in the
+    // permalink, so derive it from the (possibly restored) smooth value
+    // BEFORE onResize so the offscreens are sized for it.
+    fractal.supersample = !fractal.smooth
     // resizeTmpCanvas()
     onResize()
     iterationsElement.value = fractal.max_iter
     smoothToggle.checked = fractal.smooth
+    supersampleToggle.checked = fractal.supersample
     updateFractalControls()
     fractal.initPallete()
     for (let component of components) {
@@ -1753,6 +1771,12 @@ class SettingsComponent {
         if (event.key === 's') {
             fractal.smooth = !fractal.smooth
             smoothToggle.checked = fractal.smooth
+            // Mutually exclusive with supersample.
+            if (fractal.smooth && fractal.supersample) {
+                fractal.supersample = false
+                supersampleToggle.checked = false
+                fractal.resized()
+            }
             redraw()
         }
         if (event.key === 'f') {
