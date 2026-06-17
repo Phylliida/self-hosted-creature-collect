@@ -2040,6 +2040,11 @@
       speciesB: e.speciesB,
       variant: (typeof e.variant === 'number') ? e.variant : 'auto',
       shinyVariant: (typeof e.shinyVariant === 'number') ? e.shinyVariant : null,
+      // Carry the egg-origin flag through so the 'Hatched' built-in tag
+      // predicate (c.fromEgg === true) can see it — the predicates run on
+      // this normalized object, not the raw stored record, so a dropped
+      // field silently disables the tag.
+      fromEgg: e.fromEgg === true,
       level: e.level,
       sizeM: e.sizeM,
       name: fusionName(e.speciesA, e.speciesB),

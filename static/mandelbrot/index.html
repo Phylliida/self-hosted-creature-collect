@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+    <title>Mandelbrot</title>
+    <meta charset="UTF-8"/>
+    <meta name="description"
+          content="Mobile-friendly online Mandelbrot viewer with full-screen mode, zoom up to 10¹⁵⁰⁰ and permalinks to bookmark or share. Native resolution on high-res displays, great for making wallpapers."/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <link rel="stylesheet" href="./style.css"/>
+    <link rel="canonical" href="https://bertbaron.github.io/mandelbrot/">
+    <!-- Google Analytics removed and Bootstrap vendored locally (was a
+         jsdelivr CDN link) so the fractal viewer runs fully offline
+         inside the bundled app — no network at runtime. -->
+    <link href="./vendor/bootstrap.min.css" rel="stylesheet">
+</head>
+<body id="app">
+<div id="main">
+    <div id="descripion" hidden>Mobile-friendely online Mandelbrot viewer with full-screen mode, pretty deep zoom and permalinks to bookmark or share.</div>
+    <div id="mandelbrot">
+        <canvas id="mandelbrot-canvas"></canvas>
+        <canvas id="progress-canvas" width="20" height="20"></canvas>
+        <button id="menu-toggle"></button>
+        <textarea id="debug" readonly hidden></textarea>
+        <label for="debug" hidden>Debug</label>
+        <canvas id="palette-canvas" hidden></canvas>
+    </div>
+    <div id="settings">
+        <div id="settings-container" class="container container-sm">
+            <div class="mb-2 mt-3 row">
+                <label for="max-iterations" class="col-form-label col col-sm-6">Max iterations</label>
+                <div class="col col-sm-6">
+                    <input id="max-iterations" type="number" class="form-control form-control-sm" value="1000"
+                           step="100" title="+/-"/>
+                </div>
+            </div>
+            <div class="mb-2 g-1 row">
+                <div class="col col-sm-6 form-check form-switch" data-bs-toggle="tooltip" data-bs-placement="left" title="Smooth coloring">
+                    <input id="smooth" class="form-check-input" type="checkbox" role="switch"/>
+                    <label for="smooth" class="form-check-label">Smooth</label>
+                </div>
+                <div class="col col-sm-6 form-check form-switch" data-bs-toggle="tooltip" data-bs-placement="left" title="Use physical pixels if different from display-pixels">
+                    <input id="fullres" class="form-check-input" type="checkbox" role="switch"/>
+                    <label for="fullres" class="form-check-labels">Hi DPI</label>
+                </div>
+            </div>
+            <div class="mb-2 g-1 row">
+                <div class="col col-sm-6 form-check form-switch" data-bs-toggle="tooltip" data-bs-placement="left" title="Use WebGPU, experimental">
+                    <input id="gpu" class="form-check-input"  type="checkbox" role="switch"/>
+                    <label for="gpu" class="form-check-labels">GPU (exp.)</label>
+                </div>
+                <div class="col col-sm-6" data-bs-toggle="tooltip" data-bs-placement="left" title="Fractal type (mirage renders on the CPU)">
+                    <select id="fractal-select" class="form-select form-select-sm">
+                        <option value="mandelbrot" selected>Mandelbrot</option>
+                        <option value="multibrot">Multibrot</option>
+                        <option value="burningship">Burning Ship</option>
+                        <option value="tricorn">Tricorn</option>
+                        <option value="phoenix">Phoenix</option>
+                        <option value="absfamily">Abs variants</option>
+                        <option value="gyre">Gyre</option>
+                        <option value="lyra">Lyra</option>
+                        <option value="kali">Kali</option>
+                        <option value="mirage">Mirage</option>
+                    </select>
+                </div>
+            </div>
+            <div class="mb-2 g-1 row">
+                <div class="col col-sm-6 form-check form-switch" data-bs-toggle="tooltip" data-bs-placement="left" title="Render the Julia set of the current view center">
+                    <input id="julia" class="form-check-input" type="checkbox" role="switch"/>
+                    <label for="julia" class="form-check-label">Julia mode</label>
+                </div>
+                <div class="col col-sm-6 form-check form-switch" data-bs-toggle="tooltip" data-bs-placement="left" title="Render at double resolution and downscale for smoother images (about 4x slower)">
+                    <input id="supersample" class="form-check-input" type="checkbox" role="switch"/>
+                    <label for="supersample" class="form-check-label">Supersample</label>
+                </div>
+            </div>
+            <div id="julia-params" class="mb-2 g-1 row" hidden>
+                <div class="col col-sm-6" data-bs-toggle="tooltip" data-bs-placement="left" title="Real part (x) of the Julia seed c. Drag to morph the Julia set">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <label for="julia-x-value" class="form-label mb-0">Julia x</label>
+                        <input id="julia-x-value" type="number" class="form-control form-control-sm mirage-value-input" step="any" value="0"/>
+                    </div>
+                    <input id="julia-x" type="range" class="form-range" min="-2" max="2" step="0.0005" value="0"/>
+                </div>
+                <div class="col col-sm-6" data-bs-toggle="tooltip" data-bs-placement="left" title="Imaginary part (i) of the Julia seed c. Drag to morph the Julia set">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <label for="julia-i-value" class="form-label mb-0">Julia i</label>
+                        <input id="julia-i-value" type="number" class="form-control form-control-sm mirage-value-input" step="any" value="0"/>
+                    </div>
+                    <input id="julia-i" type="range" class="form-range" min="-2" max="2" step="0.0005" value="0"/>
+                </div>
+            </div>
+            <div id="abs-params" class="mb-2 g-1 row" hidden>
+                <div class="col col-sm-6" data-bs-toggle="tooltip" data-bs-placement="left" title="Where the absolute values are applied in z² + c">
+                    <select id="abs-variant" class="form-select form-select-sm">
+                        <option value="celtic" selected>Celtic</option>
+                        <option value="buffalo">Buffalo</option>
+                        <option value="perpendicular">Perpendicular Mandelbrot</option>
+                        <option value="perpship">Perpendicular Burning Ship</option>
+                        <option value="perpceltic">Perpendicular Celtic</option>
+                        <option value="perpbuffalo">Perpendicular Buffalo</option>
+                    </select>
+                </div>
+            </div>
+            <div id="gyre-params" class="mb-2 g-1 row" hidden>
+                <div class="col col-sm-6" data-bs-toggle="tooltip" data-bs-placement="left" title="Rotation angle of the blend in degrees">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <label for="gyre-theta-value" class="form-label mb-0">Gyre θ°</label>
+                        <input id="gyre-theta-value" type="number" class="form-control form-control-sm mirage-value-input" step="any" value="90"/>
+                    </div>
+                    <input id="gyre-theta" type="range" class="form-range" min="-180" max="180" step="1" value="90"/>
+                </div>
+                <div class="col col-sm-6" data-bs-toggle="tooltip" data-bs-placement="left" title="How strongly the orbit is twisted near the origin. Type a value to go beyond the slider range">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <label for="gyre-beta-value" class="form-label mb-0">Gyre β</label>
+                        <input id="gyre-beta-value" type="number" class="form-control form-control-sm mirage-value-input" step="any" value="1.5"/>
+                    </div>
+                    <input id="gyre-beta" type="range" class="form-range" min="0" max="5" step="0.05" value="1.5"/>
+                </div>
+            </div>
+            <div id="lyra-params" class="mb-2 g-1 row" hidden>
+                <div class="col col-sm-12" data-bs-toggle="tooltip" data-bs-placement="left" title="Rhythm string of A's and B's: which parameter (a or b) drives each step of the cubic map">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <label for="lyra-sequence" class="form-label mb-0">Rhythm</label>
+                        <input id="lyra-sequence" type="text" class="form-control form-control-sm" style="width: 9em; text-align: right;" maxlength="16" value="AB"/>
+                    </div>
+                </div>
+            </div>
+            <div id="multibrot-params" class="mb-2 g-1 row" hidden>
+                <div class="col col-sm-6" data-bs-toggle="tooltip" data-bs-placement="left" title="The power d in z^d + c">
+                    <label id="multibrot-degree-label" for="multibrot-degree" class="form-label">Degree: 3</label>
+                    <input id="multibrot-degree" type="range" class="form-range" min="2" max="8" step="1" value="3"/>
+                </div>
+            </div>
+            <div id="phoenix-params" class="mb-2 g-1 row" hidden>
+                <div class="col col-sm-6" data-bs-toggle="tooltip" data-bs-placement="left" title="Feedback strength of the previous iterate. Type a value to go beyond the slider range">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <label for="phoenix-q-value" class="form-label mb-0">Phoenix q</label>
+                        <input id="phoenix-q-value" type="number" class="form-control form-control-sm mirage-value-input" step="any" value="-0.5"/>
+                    </div>
+                    <input id="phoenix-q" type="range" class="form-range" min="-1" max="1" step="0.01" value="-0.5"/>
+                </div>
+            </div>
+            <div id="mirage-params" class="mb-2 g-1 row" hidden>
+                <div class="col col-sm-6" data-bs-toggle="tooltip" data-bs-placement="left" title="How far each step drifts towards the mirrored square step. Type a value to go beyond the slider range">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <label id="mirage-alpha-label" for="mirage-alpha-value" class="form-label mb-0">Mirage α</label>
+                        <input id="mirage-alpha-value" type="number" class="form-control form-control-sm mirage-value-input" step="any" value="0.55"/>
+                    </div>
+                    <input id="mirage-alpha" type="range" class="form-range" min="0.05" max="1" step="0.05" value="0.55"/>
+                </div>
+                <div class="col col-sm-6" data-bs-toggle="tooltip" data-bs-placement="left" title="How strongly the orbit is blended with its mirror image near the origin. Type a value to go beyond the slider range">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <label id="mirage-beta-label" for="mirage-beta-value" class="form-label mb-0">Mirage β</label>
+                        <input id="mirage-beta-value" type="number" class="form-control form-control-sm mirage-value-input" step="any" value="1.9"/>
+                    </div>
+                    <input id="mirage-beta" type="range" class="form-range" min="0" max="5" step="0.05" value="1.9"/>
+                </div>
+            </div>
+            <div class="mb-2 g-1 row">
+                <div class="col col-sm-6">
+                    <button class="btn btn-success form-control form-control-sm" id="fullscreen" title="f">Fullscreen
+                    </button>
+                </div>
+                <div class="col col-sm-6">
+                    <button class="btn btn-success form-control form-control-sm" id="reset" title="backspace">Reset
+                    </button>
+                </div>
+            </div>
+            <div class="mb-2 g-1 row">
+                <div class="col col-sm-6">
+                    <div class="dropdown">
+                        <button id="palette-dropdown"
+                                class="btn btn-success form-control form-control-sm dropdown-toggle" type="button"
+                                data-bs-toggle="dropdown" aria-expanded="false">
+                            Palette
+                        </button>
+                        <ul id="palette-menu" class="dropdown-menu">
+                            <!-- filled by javascript -->
+                        </ul>
+                    </div>
+                </div>
+                <div class="col col-sm-6">
+                    <button id="lucky-button" class="btn btn-success form-control form-control-sm" type="button">
+                        I feel lucky
+                    </button>
+                </div>
+            </div>
+            <div class="mb-2 g-1 row">
+                <div class="col col-sm-6" data-bs-toggle="tooltip" data-bs-placement="left" title="Download the image with the location embedded in its metadata">
+                    <button id="download-image" class="btn btn-success form-control form-control-sm" type="button">
+                        Download
+                    </button>
+                </div>
+                <div class="col col-sm-6" data-bs-toggle="tooltip" data-bs-placement="left" title="Jump back to the location embedded in a downloaded image">
+                    <button id="resume-image" class="btn btn-success form-control form-control-sm" type="button">
+                        Resume
+                    </button>
+                    <input id="resume-file" type="file" accept="image/png" hidden/>
+                </div>
+            </div>
+            <div class="mb-2 g-1 row">
+                <div class="col col-sm-12" data-bs-toggle="tooltip" data-bs-placement="left" title="Record a video of the zoom flight from 1x down to the current view">
+                    <button id="record-flight" class="btn btn-success form-control form-control-sm" type="button">
+                        Record flight
+                    </button>
+                </div>
+            </div>
+            <div id="flight-progress-row" class="mb-2 g-1 row" hidden>
+                <div class="col col-sm-12">
+                    <div class="progress" style="height: 1.4em;">
+                        <div id="flight-progress-bar" class="progress-bar progress-bar-striped" role="progressbar" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="mb-2 g-1 row">
+                <div class="col col-sm-6">
+                    <label id="palette-density-label" for="palette-density" class="form-label">Palette density</label>
+                    <input id="palette-density" type="range" class="form-range" min="-25" max="25" step="1"
+                           value="1"/>
+                </div>
+                <div class="col col-sm-6">
+                    <label id="palette-rotate-label" for="palette-rotate" class="form-label">Palette rotation</label>
+                    <input id="palette-rotate" type="range" class="form-range" min="-180" max="180" step="1"
+                           value="0"/>
+                </div>
+            </div>
+            <div class="row collapse-ruler">
+                <div class="col">
+                    <hr class="hr-advanced"/>
+                </div>
+                <button type="button" class="col-auto" data-bs-toggle="collapse"
+                        data-bs-target="#infocollapse">Info
+                </button>
+            </div>
+            <div id="infocollapse" class="collapse">
+                <div>
+                    <div class="mb-0 row">
+                        <div class="col col-lg-3">
+                            <label>Zoom</label>
+                        </div>
+                        <div class="col col-lg-3">
+                            <span id="zoomValue"></span>
+                        </div>
+                    </div>
+                    <div class="mb-0 row">
+                        <div class="col col-lg-3">
+                            <label>Size</label>
+                        </div>
+                        <div class="col col-lg-3">
+                            <span id="sizeValue"></span>
+                        </div>
+                    </div>
+                    <div class="mb-0 row">
+                        <div class="col col-lg-3">
+                            <label>Render time</label>
+                        </div>
+                        <div class="col col-lg-3">
+                            <span id="renderTimeValue"></span>
+                        </div>
+                    </div>
+                    <hr/>
+                </div>
+            </div>
+            <div id="footer" class="row">
+                <footer>
+                    <a href="https://github.com/bertbaron/mandelbrot" target="_blank">
+                        Sources
+                    </a> |
+                    <a href="https://github.com/bertbaron/mandelbrot/issues" target="_blank">
+                        Issue Tracker
+                    </a>
+                </footer>
+            </div>
+        </div>
+        <div id="custom-palette-container" hidden class="container container-sm">
+            <div class="mb-2 mt-3 row">
+                <label for="custom-palette-name" class="col-form-label col col-sm-6">Palette Name</label>
+                <div class="col col-sm-6">
+                    <input id="custom-palette-name" type="text" class="form-control form-control-sm"
+                           placeholder="My Palette"/>
+                </div>
+            </div>
+            <div class="mb-2 row">
+                <label class="col-form-label col col-sm-6 d-none d-sm-block">Palette Colors</label>
+                <div class="col-12 col-sm-6" id="custom-palette-colors-container">
+                    <div id="custom-palette-colors"></div>
+                    <button id="add-custom-palette-color" class="btn btn-outline-primary btn-sm mt-2" type="button">+ Add Color</button>
+                </div>
+            </div>
+            <div class="mb-2 g-1 row">
+                <div class="col col-sm-6 form-check form-switch">
+                    <input id="custom-palette-mirror" class="form-check-input" type="checkbox" role="switch"/>
+                    <label for="custom-palette-mirror" class="form-check-label">Mirror Palette</label>
+                </div>
+            </div>
+            <div class="mb-2 g-1 row">
+                <div class="col col-sm-12 d-flex align-items-center">
+                    <canvas id="custom-palette-preview" class="custom-palette-preview"></canvas>
+                </div>
+            </div>
+            <div class="mb-2 g-1 row">
+                <div class="col col-sm-6">
+                    <button id="custom-palette-save" class="btn btn-success form-control form-control-sm" type="button">
+                        <span >💾</span> Save
+                    </button>
+                </div>
+                <div class="col col-sm-6">
+                    <button id="custom-palette-cancel" class="btn btn-secondary form-control form-control-sm" type="button">
+                        Cancel
+                    </button>
+                    <button id="custom-palette-delete" class="btn btn-outline-danger form-control form-control-sm custom-palette-delete-btn mt-2" type="button">
+                        <span >🗑</span> Delete
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="./index.js"></script>
+    <script src="./vendor/bootstrap.bundle.min.js"></script>
+</div>
+</body>
+</html>

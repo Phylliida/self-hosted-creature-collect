@@ -342,6 +342,31 @@
     margin-top: 10px; min-height: 26px;
   }
   .wheel-actions { display: flex; justify-content: center; margin-top: 6px; }
+  .extras-bubble:nth-child(9) { animation-delay: 0.32s; }
+
+  /* Fractals: a full-screen window holding the bundled mandelbrot
+     viewer in its own isolated iframe. Sits above the extras sheet
+     (z-index ladder elsewhere: settings/transit=30, extras=31,
+     favPanel=32; this overlays them all at 60). */
+  #fractalsWindow {
+    position: fixed; inset: 0; z-index: 60; background: #000;
+    display: none;
+  }
+  #fractalsWindow.show { display: block; }
+  #fractalsWindow iframe {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    border: 0; display: block;
+  }
+  #fractalsClose {
+    position: absolute; z-index: 1;
+    top: max(8px, env(safe-area-inset-top));
+    right: max(8px, env(safe-area-inset-right));
+    width: 40px; height: 40px; border-radius: 50%;
+    border: none; background: rgba(0, 0, 0, 0.55); color: #fff;
+    font-size: 24px; line-height: 1; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #fractalsClose:hover { background: rgba(0, 0, 0, 0.75); }
 
   @media (prefers-reduced-motion: reduce) {
     .extras-bubble, .dice-tile { animation: none; }
@@ -389,6 +414,10 @@
       <button class="extras-bubble" data-extra="wheel" type="button">
         <span class="bubble-icon">&#127905;&#65039;</span>
         <span>Decision<br>wheel</span>
+      </button>
+      <button class="extras-bubble" data-extra="fractals" type="button">
+        <span class="bubble-icon">&#127744;</span>
+        <span>Fractals</span>
       </button>
     </div>
 
@@ -556,6 +585,36 @@
   panel.innerHTML = PANEL_HTML;
   document.body.appendChild(panel);
 
+  // Fractals window: the bundled mandelbrot viewer (static/mandelbrot/)
+  // in an isolated iframe. Its own top-level element so it can cover the
+  // whole screen rather than live inside the small extras sheet. Fully
+  // self-contained here — no other file needs to know it exists. The
+  // iframe src is set lazily on first open so the fractal worker/WebGPU
+  // only spin up if the user actually opens it; once loaded we keep it
+  // (just hide/show) so the zoom state survives reopening.
+  const FRACTALS_SRC = '/static/mandelbrot/index.html';
+  const fractalsWin = document.createElement('div');
+  fractalsWin.id = 'fractalsWindow';
+  const fractalsFrame = document.createElement('iframe');
+  fractalsFrame.id = 'fractalsFrame';
+  fractalsFrame.title = 'Fractal viewer';
+  const fractalsCloseBtn = document.createElement('button');
+  fractalsCloseBtn.id = 'fractalsClose';
+  fractalsCloseBtn.type = 'button';
+  fractalsCloseBtn.setAttribute('aria-label', 'close fractals');
+  fractalsCloseBtn.innerHTML = '&times;';
+  fractalsWin.appendChild(fractalsFrame);
+  fractalsWin.appendChild(fractalsCloseBtn);
+  document.body.appendChild(fractalsWin);
+  function openFractals() {
+    if (fractalsFrame.getAttribute('src') !== FRACTALS_SRC) {
+      fractalsFrame.setAttribute('src', FRACTALS_SRC);
+    }
+    fractalsWin.classList.add('show');
+  }
+  function closeFractals() { fractalsWin.classList.remove('show'); }
+  fractalsCloseBtn.addEventListener('click', closeFractals);
+
   const $ = (id) => document.getElementById(id);
 
   // ────────────────────────────────────────────────────────────
@@ -602,7 +661,11 @@
   });
   bubbles.addEventListener('click', (e) => {
     const b = e.target.closest('.extras-bubble');
-    if (b) showTool(b.dataset.extra);
+    if (!b) return;
+    // Fractals opens its own full-screen window rather than an inline
+    // tool view inside the extras sheet.
+    if (b.dataset.extra === 'fractals') { openFractals(); return; }
+    showTool(b.dataset.extra);
   });
 
   // ────────────────────────────────────────────────────────────

@@ -1,0 +1,269 @@
+:root {
+    --sans-font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", "Liberation Sans", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+    /*font-size: 120%;*/
+}
+
+body {
+    margin: 0;
+    padding: 10px;
+}
+
+#main {
+    display: flex;
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+}
+
+#mandelbrot {
+    position: relative;
+    width: 800px;
+    height: 600px;
+    flex-shrink: 0;
+}
+
+#mandelbrot-canvas {
+    image-rendering: pixelated;
+    width: 100%;
+    height: 100%;
+}
+
+#progress-canvas {
+    position: absolute;
+    top: 5px;
+    left: 5px;
+    z-index: 1;
+}
+
+#menu-toggle {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 30px;
+    height: 30px;
+    z-index: 3;
+    /*border-radius: 5px;*/
+    border: none;
+    padding: 5px;
+    cursor: pointer;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: none;
+    /* white cross to indicate that this closes the menu */
+    background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M18.3 5.71a1 1 0 0 0-1.41 0L12 10.59 7.11 5.7A1 1 0 0 0 5.7 7.11L10.59 12l-4.89 4.89a1 1 0 1 0 1.41 1.41L12 13.41l4.89 4.89a1 1 0 0 0 1.41-1.41L13.41 12l4.89-4.89a1 1 0 0 0 .01-1.4z"/></svg>');
+}
+
+#palette-canvas {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 20px;
+    z-index: 1;
+}
+
+#settings {
+    margin: 20px;
+    padding: 10px;
+    min-width: 540px;
+}
+
+.collapse-ruler button {
+    height: 1.5rem;
+    font-size: 75%;
+    color: #818a91;
+    padding: .25rem .5rem;
+    background-color: transparent;
+    border: 0;
+    border-radius: .25rem;
+    margin-top: 0.25rem;
+}
+
+.collapse-ruler button:hover {
+    color: #fff;
+    background-color: #027de7;
+}
+
+.collapse-ruler .col {
+    padding-right: 0;
+}
+
+kbd {
+    display: inline-block;
+    padding: 2px 5px;
+    border: 1px solid #999;
+    border-radius: 3px;
+    background-color: #f7f7f7;
+    font-family: monospace;
+}
+
+footer {
+    font-family: var(--sans-font-family);
+    font-size: 80%;
+    text-align: center;
+    padding-top: 10px;
+}
+
+#debug {
+    font-size: inherit;
+    position: absolute;
+    top: 30px;
+    left: 5px;
+    z-index: 1;
+}
+
+
+#custom-palette-colors {
+    font-family: monospace;
+}
+
+.custom-palette-row {
+  cursor: grab;
+}
+
+.custom-palette-row.dragging {
+  opacity: 0.5;
+}
+
+.custom-palette-row.hidden-drag {
+  display: none !important;
+}
+
+.custom-palette-drag-handle {
+  cursor: grab;
+  user-select: none;
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  min-width: 2em;
+  text-align: center;
+}
+
+.custom-palette-color-input {
+  width: 3em;
+  min-width: 3em;
+  max-width: 3em;
+  padding: 0;
+  border: 1px solid #dee2e6;
+}
+
+#custom-palette-weight-input {
+    /*width: 3em;*/
+}
+
+.custom-palette-drop-indicator {
+  height: 0;
+  border-top: 2px solid #007bff;
+  margin: 0 0.5em;
+  pointer-events: none;
+}
+
+/*Rounded corners*/
+#custom-palette-preview {
+    border-radius: 5px;
+    height: 20px;
+    width: 100%;
+}
+
+/* Palette action buttons in dropdown */
+.palette-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+}
+
+.palette-action {
+  background: transparent;
+  border: none;
+  padding: 2px 6px;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.9em;
+  line-height: 1;
+}
+
+.palette-action:hover {
+  color: #ffdddd;
+  background: rgba(255,255,255,0.05);
+  border-radius: 3px;
+}
+
+/* Make dropdown items use flexbox so the label and actions align */
+.dropdown-item.flex-grow-1 {
+  display: flex;
+  align-items: center;
+}
+
+@media all and (max-width: 1200px) {
+    :root {
+        font-size: 5vw;
+    }
+    #main {
+        flex-direction: column;
+    }
+    #settings {
+        min-width: 100%;
+        max-width: min(800px, 100vw);
+        padding: 0;
+        margin: 0;
+    }
+
+    #mandelbrot {
+        width: min(800px, 100vw);
+        height: min(600px, 75svw);
+    }
+}
+
+@media all and (max-width: 800px) {
+    #main {
+        padding: 0;
+        margin-top: -10px; /* undo the container padding */
+    }
+}
+
+/*In full-screen mode only show the canvas and progress indicator*/
+#main:fullscreen {
+    position: relative;
+    display: block;
+    padding: 0;
+}
+
+#mandelbrot.fullscreen {
+    width: 100vw;
+    height: 100vh;
+    position: fixed;
+    top: 0;
+    left: 0;
+}
+
+#settings.fullscreen {
+    position: absolute;
+    top: 30px;
+    left: 5px;
+    z-index: 2;
+    border-radius: 5px;
+    max-width: 80vw;
+    background-color: rgba(0, 0, 0, 0.5);
+    visibility: visible;
+    opacity: 1;
+    transition: visibility 0.5s, opacity 0.5s linear;
+}
+#settings.hidden.fullscreen {
+    visibility: hidden;
+    opacity: 0;
+}
+#menu-toggle.fullscreen {
+    display: block;
+}
+#menu-toggle.hidden.fullscreen {
+    background: transparent;
+    border: none !important;
+    font-size:0;
+}
+#footer.fullscreen {
+    display: none;
+}
+
+.mirage-value-input {
+    width: 5.5em;
+    text-align: right;
+}
