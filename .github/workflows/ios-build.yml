@@ -20,7 +20,9 @@ on:
     paths:
       - 'static/**'
       - 'data/BundledData/**'
+      - 'data/UnicodeData/**'
       - 'scripts/build-capacitor.sh'
+      - 'scripts/build-unicode-data.py'
       - 'ios-overrides/**'
       - 'capacitor.config.json'
       - 'package.json'
@@ -62,6 +64,12 @@ jobs:
       # zoom tiles, fonts, icons, and species metadata baked in.
       - name: Build Capacitor webDir
         run: bash scripts/build-capacitor.sh
+
+      # Precompile the vendored NamesList.txt into the keyboard extension's
+      # compact, mmap-friendly dataset (blocks.json + chars.idx + names.blob).
+      # These artifacts are copied into the appex's resources further below.
+      - name: Build Unicode keyboard data
+        run: python3 scripts/build-unicode-data.py
 
       # The ios/ directory is gitignored — generate it fresh from
       # capacitor.config.json on every build. Idempotent: if it
@@ -168,6 +176,18 @@ jobs:
           else
             echo "GCDWebServer already in Podfile"
           fi
+
+          # Copy the custom-keyboard extension sources + precompiled Unicode
+          # data into the freshly-scaffolded iOS project. inject-into-xcodeproj.rb
+          # (below) creates the UnicodeKeyboard app-extension target from these.
+          mkdir -p ios/App/App/UnicodeKeyboard/UnicodeData
+          cp ios-overrides/keyboard/KeyboardViewController.swift ios/App/App/UnicodeKeyboard/
+          cp ios-overrides/keyboard/UnicodeStore.swift           ios/App/App/UnicodeKeyboard/
+          cp ios-overrides/keyboard/RecentsStore.swift           ios/App/App/UnicodeKeyboard/
+          cp ios-overrides/keyboard/SearchKeyboardView.swift     ios/App/App/UnicodeKeyboard/
+          cp ios-overrides/keyboard/Info.plist                   ios/App/App/UnicodeKeyboard/Info.plist
+          cp data/UnicodeData/blocks.json data/UnicodeData/chars.idx data/UnicodeData/names.blob \
+             ios/App/App/UnicodeKeyboard/UnicodeData/
 
           # Add Swift files to App.xcodeproj. xcodeproj gem ships with CocoaPods.
           ruby ios-overrides/inject-into-xcodeproj.rb

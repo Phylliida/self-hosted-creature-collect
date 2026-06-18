@@ -75,3 +75,81 @@ end
 
 project.save
 puts "Saved #{PROJECT_PATH}"
+
+# ───────────────────────────────────────────────────────────────────────────
+# Custom-keyboard app-extension target (UnicodeKeyboard).
+#
+# Capacitor scaffolds only the App target; a system-wide custom keyboard is a
+# separate app-extension target with its own bundle id, Info.plist and product,
+# embedded into App via a PlugIns copy-files phase. Idempotent: skips if the
+# target already exists. The keyboard's sources + UnicodeData/ resources are
+# copied into ios/App/App/UnicodeKeyboard/ by the build workflow before this
+# script runs.
+# ───────────────────────────────────────────────────────────────────────────
+puts ""
+puts "── keyboard extension target ──"
+
+KB_TARGET = 'UnicodeKeyboard'
+KB_BUNDLE_ID = 'org.phylliidaassets.creaturecollect.keyboard'
+KB_SOURCES = ['KeyboardViewController.swift', 'UnicodeStore.swift', 'RecentsStore.swift', 'SearchKeyboardView.swift']
+
+app_target = project.targets.find { |t| t.name == 'App' }
+abort('ERROR: App target not found') unless app_target
+
+if project.targets.any? { |t| t.name == KB_TARGET }
+  puts "  skip: target #{KB_TARGET} already exists"
+else
+  kb = project.new_target(:app_extension, KB_TARGET, :ios, '14.0')
+
+  # Build settings — mirror the unsigned-sideload setup used for the App target.
+  kb.build_configurations.each do |config|
+    bs = config.build_settings
+    bs['PRODUCT_BUNDLE_IDENTIFIER'] = KB_BUNDLE_ID
+    bs['PRODUCT_NAME'] = '$(TARGET_NAME)'
+    bs['INFOPLIST_FILE'] = 'App/UnicodeKeyboard/Info.plist'
+    bs['IPHONEOS_DEPLOYMENT_TARGET'] = '14.0'
+    bs['TARGETED_DEVICE_FAMILY'] = '1,2'
+    bs['SWIFT_VERSION'] = '5.0'
+    bs['GENERATE_INFOPLIST_FILE'] = 'NO'
+    bs['SKIP_INSTALL'] = 'NO'
+    bs['ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES'] = 'NO'
+    bs['CODE_SIGNING_ALLOWED'] = 'NO'
+    bs['CODE_SIGNING_REQUIRED'] = 'NO'
+    bs['CODE_SIGN_IDENTITY'] = ''
+    bs['LD_RUNPATH_SEARCH_PATHS'] = ['$(inherited)', '@executable_path/Frameworks', '@executable_path/../../Frameworks']
+  end
+
+  # Source files. The App group maps to ios/App/App, so the UnicodeKeyboard
+  # subgroup maps to ios/App/App/UnicodeKeyboard.
+  kb_group = project.main_group['App'].find_subpath('UnicodeKeyboard', true)
+  kb_group.set_source_tree('<group>')
+  KB_SOURCES.each do |fname|
+    ref = kb_group.new_reference(fname)
+    kb.source_build_phase.add_file_reference(ref)
+    puts "  source: #{fname}"
+  end
+
+  # Bundled Unicode dataset as a folder reference (copied recursively into the
+  # appex's Resources).
+  data_ref = kb_group.new_reference('UnicodeData')
+  data_ref.last_known_file_type = 'folder'
+  data_ref.source_tree = '<group>'
+  kb.resources_build_phase.add_file_reference(data_ref)
+  puts "  resource: UnicodeData/ (folder reference)"
+
+  # Make App depend on + embed the appex (PlugIns destination).
+  app_target.add_dependency(kb)
+  embed = app_target.copy_files_build_phases.find { |p| p.symbol_dst_subfolder_spec == :plug_ins }
+  unless embed
+    embed = app_target.new_copy_files_build_phase('Embed App Extensions')
+    embed.symbol_dst_subfolder_spec = :plug_ins
+  end
+  unless embed.files.any? { |bf| bf.file_ref == kb.product_reference }
+    build_file = embed.add_file_reference(kb.product_reference)
+    build_file.settings = { 'ATTRIBUTES' => ['RemoveHeadersOnCopy'] }
+  end
+  puts "  embedded appex into App + added target dependency"
+
+  project.save
+  puts "Saved #{PROJECT_PATH} with #{KB_TARGET} extension"
+end
