@@ -1,0 +1,3096 @@
+  <!DOCTYPE html>
+  <meta charset="utf-8">
+  <style>
+
+  .links path {
+    fill: none;
+    stroke: #666;
+    stroke-width: 1.5px;
+  }
+
+  .nodes circle {
+    fill: #ccc;
+    stroke: #fff;
+    stroke-width: 1.5px;
+  }
+
+  .nodes text {
+    fill: #000;
+    font: 10px sans-serif;
+    pointer-events: none;
+  }
+  
+  #drop_zone {
+  border: 5px solid blue;
+  width:  200px;
+  height: 100px;
+}
+
+ text {
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+    pointer-events: none;
+  }
+
+.container {
+    display: flex;
+    gap: 2rem;
+    width: 100%;
+    height: 100%;
+  }
+  
+  .button-container {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1rem;
+    min-width: 200px;
+    position: relative;
+  }
+
+  .extras-panel {
+    position: absolute;
+    left: calc(100% + 0.5rem);
+    top: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding: 1rem;
+    background: rgba(20, 20, 20, 0.95);
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 6px;
+    z-index: 10;
+    box-shadow: 0 0 12px rgba(0, 0, 0, 0.6);
+  }
+  .popup-wrapper {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+  .saving-panel {
+    position: absolute;
+    left: calc(100% + 0.5rem);
+    top: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding: 1rem;
+    background: rgba(20, 20, 20, 0.95);
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 6px;
+    z-index: 10;
+    box-shadow: 0 0 12px rgba(0, 0, 0, 0.6);
+  }
+
+  .mutation-graph-panel {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 240px;
+    background: rgba(10, 10, 10, 0.25);
+    border-top: 1px solid rgba(255, 255, 255, 0.2);
+    z-index: 5;
+    pointer-events: none;
+  }
+  .mutation-graph-handle {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 14px;
+    cursor: ns-resize;
+    background: rgba(255, 255, 255, 0.15);
+    pointer-events: auto;
+    touch-action: none;
+  }
+  .mutation-graph-handle:hover {
+    background: rgba(255, 255, 255, 0.4);
+  }
+  .mutation-graph-handle::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 40px;
+    height: 3px;
+    background: rgba(255, 255, 255, 0.5);
+    border-radius: 2px;
+  }
+  @media (pointer: coarse) {
+    .mutation-graph-handle {
+      height: 42px;
+    }
+    .mutation-graph-handle::after {
+      width: 60px;
+      height: 5px;
+    }
+  }
+  .mg-confirm-panel {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(20, 20, 20, 0.98);
+    border: 2px solid rgba(255, 255, 255, 0.4);
+    border-radius: 6px;
+    padding: 1.5rem 2rem;
+    z-index: 100;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.8);
+    color: rgba(255, 255, 255, 0.9);
+    text-align: center;
+  }
+  .mg-confirm-msg {
+    font-size: 16px;
+    margin-bottom: 1rem;
+  }
+  .mg-confirm-buttons {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: center;
+  }
+  .undo-redo-panel {
+    position: fixed;
+    top: 40px;
+    right: 1rem;
+    display: flex;
+    gap: 0.5rem;
+    z-index: 50;
+  }
+  .undo-redo-panel button {
+    padding: 0.4em 0.6em;
+    line-height: 0;
+  }
+  .undo-redo-panel button svg {
+    width: 22px;
+    height: 22px;
+    display: block;
+  }
+  #undoButton svg {
+    transform: scaleX(-1);
+  }
+  .mutation-graph-panel svg {
+    width: 100%;
+    height: 100%;
+  }
+  .mutation-graph-panel svg circle {
+    pointer-events: auto;
+  }
+  
+  .graph-container {
+    flex-grow: 1;
+    height: 100%;
+    position: relative;
+    min-width: 0;
+  }
+  svg {
+    width: 100%;
+    height: 100%;
+  }
+
+/* Add these rules to your existing CSS */
+html {
+    height: 100%;
+    overflow: hidden;
+    position: fixed;
+    width: 100%;
+    -webkit-overflow-scrolling: touch;
+}
+
+body {
+    background: #111;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    position: fixed;
+    width: 100%;
+    font-family: Arial, sans-serif;
+    -webkit-overflow-scrolling: touch;
+}
+ .defaultButton {
+    padding: 0.8em 2em;
+    font-size: 16px;
+    background: transparent;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    color: rgba(255, 255, 255, 0.4);
+    border-radius: 4px;
+    cursor: pointer;
+    position: relative;
+    transition: all 0.3s;
+    letter-spacing: 2px;
+}
+
+.selectedButton {
+    padding: 0.8em 2em;
+    font-size: 16px;
+    background: transparent;
+    border: 2px solid rgba(255, 255, 255, 0.8);
+    color: rgba(255, 255, 255, 0.9);
+    border-radius: 4px;
+    cursor: pointer;
+    position: relative;
+    transition: all 0.3s;
+    box-shadow: 0 0 3px rgba(255, 255, 255, 0.8),
+                0 0 10px rgba(255, 255, 255, 0.2);
+    text-shadow: 0 0 1px rgba(255, 255, 255, 0.8);
+    letter-spacing: 2px;
+}
+
+
+  </style>
+
+
+<div class="container">
+  <div class="button-container">
+<button id="mutateButton" class="defaultButton" onclick="setModifyingState(MUTATE_STATE);">MUTATE VERTEX (M)</button>
+<br />
+<button id="translateButton" class="defaultButton" onclick="setModifyingState(TRANSLATE_STATE);">TRANSLATE VERTEX (T)</button>
+<br />
+<button id="renameVertexButton" class="defaultButton" onclick="setModifyingState(RENAME_VERTEX_STATE);">RENAME VERTEX (R)</button>
+<input type="text" id="renameVertexLabel" value="0" onchange="CURRENT_VERTEX_LABEL=this.value;" class="defaultButton" />
+<br />
+<button id="createVertexButton" class="defaultButton" onclick="setModifyingState(CREATE_VERTEX_STATE);">CREATE VERTEX (V)</button>
+<br />
+<button id="createEdgeButton" class="defaultButton" onclick="setModifyingState(CREATE_EDGE_STATE);">CREATE EDGE (E)</button>
+<input type="text" id="createEdgeLabel" value="1" onchange="CURRENT_LINK_LABEL=this.value;" class="defaultButton" />
+<br />
+<button id="deleteVertexButton" class="defaultButton" onclick="setModifyingState(DELETE_VERTEX_STATE);">DELETE VERTEX (D)</button>
+<br /><br /><br /><br />
+<div class="selectedButton" >B Matrix</div>
+<br />
+<input id="bMatrixField" value="0" class="selectedButton" readonly=true />
+<br />
+<button id="extrasButton" class="defaultButton" onclick="toggleExtrasPanel();">EXTRAS</button>
+
+<div id="extrasPanel" class="extras-panel" style="display:none;">
+  <button id="freezeVertexButton" class="defaultButton" onclick="setModifyingState(FREEZE_VERTEX_STATE);">FREEZE VERTEX (F)</button>
+  <button id="principalFramingButton" class="defaultButton" onclick="applyPrincipalFraming();">PRINCIPAL FRAMING</button>
+  <button id="mutationGraphButton" class="defaultButton" onclick="toggleMutationGraph();">SHOW MUTATION GRAPH</button>
+  <button id="freezeMgButton" class="defaultButton" onclick="toggleMutationGraphFreeze();">FREEZE MUTATION GRAPH</button>
+  <button id="mgZoomInButton" class="defaultButton" onclick="mgZoomIn();">+ ZOOM MUTATION GRAPH</button>
+  <button id="mgZoomOutButton" class="defaultButton" onclick="mgZoomOut();">- ZOOM MUTATION GRAPH</button>
+  <button id="deleteMgButton" class="defaultButton" onclick="confirmDeleteMutationGraph();">DELETE MUTATION GRAPH</button>
+  <button id="savingButton" class="defaultButton" onclick="toggleSavingPanel();">SAVING</button>
+  <button id="undoRedoToggleButton" class="defaultButton" onclick="toggleUndoRedo();">UNDO/REDO BUTTONS</button>
+  <div id="savingPanel" class="saving-panel" style="display:none;">
+    <button id="exportPngButton" class="defaultButton" onclick="exportQuiverPng();">EXPORT DATA IMAGE (encoded in metadata)</button>
+    <button id="exportJsonButton" class="defaultButton" onclick="exportQuiverJson();">EXPORT JSON (alternative format)</button>
+    <button id="importPngButton" class="defaultButton" onclick="openImportDialog();">IMPORT DATA IMAGE OR JSON<br>(or drop here)</button>
+  </div>
+</div>
+
+<div id="mgConfirmPanel" class="mg-confirm-panel" style="display:none;">
+  <div class="mg-confirm-msg">Delete mutation graph?</div>
+  <div class="mg-confirm-buttons">
+    <button class="defaultButton" onclick="cancelDeleteMutationGraph();">CANCEL</button>
+    <button class="defaultButton" onclick="performDeleteMutationGraph();">DELETE</button>
+  </div>
+</div>
+
+ </div>
+
+  <div class="graph-container">
+      <svg width="3000" height="3000"></svg>
+      <div id="mutationGraphPanel" class="mutation-graph-panel" style="display:none;">
+        <div class="mutation-graph-handle" onmousedown="mgResizeStart(event)" ontouchstart="mgResizeStart(event)"></div>
+        <svg id="mutationGraphSvg"></svg>
+      </div>
+  </div>
+  </div>
+
+<div id="undoRedoPanel" class="undo-redo-panel" style="display:none;">
+  <button id="undoButton" class="defaultButton" onclick="undoAction();" title="Undo" aria-label="Undo">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M0 0h24v24H0z" fill="none"/><path fill="currentColor" fill-rule="evenodd" d="M16.47 3.47a.75.75 0 0 1 1.06 0l3 3a.75.75 0 0 1 0 1.06l-3 3a.75.75 0 1 1-1.06-1.06l1.72-1.72H9a4.25 4.25 0 0 0 0 8.5h7a.75.75 0 0 1 0 1.5H9a5.75 5.75 0 0 1 0-11.5h9.19l-1.72-1.72a.75.75 0 0 1 0-1.06" clip-rule="evenodd"/></svg>
+  </button>
+  <button id="redoButton" class="defaultButton" onclick="redoAction();" title="Redo" aria-label="Redo">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M0 0h24v24H0z" fill="none"/><path fill="currentColor" fill-rule="evenodd" d="M16.47 3.47a.75.75 0 0 1 1.06 0l3 3a.75.75 0 0 1 0 1.06l-3 3a.75.75 0 1 1-1.06-1.06l1.72-1.72H9a4.25 4.25 0 0 0 0 8.5h7a.75.75 0 0 1 0 1.5H9a5.75 5.75 0 0 1 0-11.5h9.19l-1.72-1.72a.75.75 0 0 1 0-1.06" clip-rule="evenodd"/></svg>
+  </button>
+</div>
+
+  <script src="vendor/quiver/d3.v7.min.js"></script>
+  <script src="vendor/quiver/dotparser.js"></script>
+<script src="vendor/quiver/require.min.js"></script>
+
+<script>
+function dropHandler(ev) {
+  // Prevent default behavior (Prevent file from being opened)
+  ev.preventDefault();
+
+  if (ev.dataTransfer.items) {
+    // Use DataTransferItemList interface to access the file(s)
+    for (var i = 0; i < ev.dataTransfer.items.length; i++) {
+      // If dropped items aren't files, reject them
+      if (ev.dataTransfer.items[i].kind === 'file') {
+        var file = ev.dataTransfer.items[i].getAsFile();
+        
+          parseDotFile(file, function(graph) {
+          
+            ForceGraph(graph);
+          });
+        console.log('... file[' + i + '].name = ' + file.name);
+      }
+    }
+  } else {
+    // Use DataTransfer interface to access the file(s)
+    for (var i = 0; i < ev.dataTransfer.files.length; i++) {
+      console.log('... file[' + i + '].name = ' + ev.dataTransfer.files[i].name);
+    }
+  }
+}
+
+function dragOverHandler(ev) {
+  // Prevent default behavior (Prevent file from being opened)
+  ev.preventDefault();
+}
+</script>
+
+<script>
+// Copyright 2021 Observable, Inc.
+// Released under the ISC license.
+// https://observablehq.com/@d3/force-directed-graph
+
+  var div = d3.select("body").append("div")
+     .attr("class", "tooltip-donut")
+     .style("opacity", 0);
+     
+     
+     
+var deleteKeyDown = false;
+
+
+
+     
+var nodeStrength;
+var linkStrength;
+
+var running = true;
+
+var MUTATE_STATE = "Mutate";
+var TRANSLATE_STATE = "Translate";
+var RENAME_VERTEX_STATE = "Rename";
+var CREATE_VERTEX_STATE = "Create vertex";
+var CREATE_EDGE_STATE = "Create edge";
+var DELETE_VERTEX_STATE = "Delete vertex";
+var DELETE_EDGE_STATE = "Delete edge";
+var FREEZE_VERTEX_STATE = "Freeze vertex";
+
+var modifyingState = MUTATE_STATE;
+
+function UpdateState() {
+    document.getElementById("mutateButton").className = (modifyingState == MUTATE_STATE) ? "selectedButton" : "defaultButton";
+    document.getElementById("translateButton").className = (modifyingState == TRANSLATE_STATE) ? "selectedButton" : "defaultButton";
+    document.getElementById("renameVertexButton").className = (modifyingState == RENAME_VERTEX_STATE) ? "selectedButton" : "defaultButton";
+    document.getElementById("renameVertexLabel").className = (modifyingState == RENAME_VERTEX_STATE) ? "selectedButton" : "defaultButton";
+    document.getElementById("createVertexButton").className = (modifyingState == CREATE_VERTEX_STATE) ? "selectedButton" : "defaultButton";
+    document.getElementById("createEdgeButton").className = (modifyingState == CREATE_EDGE_STATE) ? "selectedButton" : "defaultButton";
+    document.getElementById("createEdgeLabel").className = (modifyingState == CREATE_EDGE_STATE) ? "selectedButton" : "defaultButton";
+    document.getElementById("deleteVertexButton").className = (modifyingState == DELETE_VERTEX_STATE) ? "selectedButton" : "defaultButton";
+    document.getElementById("freezeVertexButton").className = (modifyingState == FREEZE_VERTEX_STATE) ? "selectedButton" : "defaultButton";
+    document.getElementById("extrasButton").className = (modifyingState == FREEZE_VERTEX_STATE) ? "selectedButton" : "defaultButton";
+}
+
+function toggleExtrasPanel() {
+    var panel = document.getElementById("extrasPanel");
+    var opening = panel.style.display === "none";
+    panel.style.display = opening ? "flex" : "none";
+    if (!opening) document.getElementById("savingPanel").style.display = "none";
+}
+
+function toggleSavingPanel() {
+    var panel = document.getElementById("savingPanel");
+    panel.style.display = (panel.style.display === "none") ? "flex" : "none";
+}
+
+var undoRedoEnabled = (typeof localStorage !== 'undefined' && localStorage.getItem("quiverUndoEnabled") === "1");
+var undoStack = [];
+var undoIndex = -1;
+var undoMaxSize = 8000;
+var suppressUndoRecord = false;
+
+function loadUndoStack() {
+    try {
+        var s = localStorage.getItem("quiverUndoStack");
+        undoStack = s ? JSON.parse(s) : [];
+        var i = localStorage.getItem("quiverUndoIndex");
+        undoIndex = i != null ? parseInt(i) : (undoStack.length - 1);
+    } catch (e) {
+        undoStack = []; undoIndex = -1;
+    }
+}
+
+function saveUndoStack() {
+    try {
+        localStorage.setItem("quiverUndoStack", JSON.stringify(undoStack));
+        localStorage.setItem("quiverUndoIndex", String(undoIndex));
+    } catch (e) {
+        // quota exceeded — drop oldest half and retry once
+        undoStack = undoStack.slice(undoStack.length >> 1);
+        undoIndex = undoStack.length - 1;
+        try {
+            localStorage.setItem("quiverUndoStack", JSON.stringify(undoStack));
+            localStorage.setItem("quiverUndoIndex", String(undoIndex));
+        } catch (e2) {}
+    }
+}
+
+function recordUndo(hash) {
+    if (!undoRedoEnabled || suppressUndoRecord) return;
+    if (undoStack[undoIndex] === hash) return;
+    if (undoIndex < undoStack.length - 1) undoStack = undoStack.slice(0, undoIndex + 1);
+    undoStack.push(hash);
+    if (undoStack.length > undoMaxSize) undoStack.shift();
+    undoIndex = undoStack.length - 1;
+    saveUndoStack();
+    updateUndoRedoButtons();
+}
+
+function undoAction() {
+    if (undoIndex <= 0) return;
+    undoIndex--;
+    suppressUndoRecord = true;
+    window.location.hash = undoStack[undoIndex];
+    saveUndoStack();
+    updateUndoRedoButtons();
+    setTimeout(function() { suppressUndoRecord = false; }, 300);
+}
+
+function redoAction() {
+    if (undoIndex >= undoStack.length - 1) return;
+    undoIndex++;
+    suppressUndoRecord = true;
+    window.location.hash = undoStack[undoIndex];
+    saveUndoStack();
+    updateUndoRedoButtons();
+    setTimeout(function() { suppressUndoRecord = false; }, 300);
+}
+
+function updateUndoRedoButtons() {
+    var undoBtn = document.getElementById("undoButton");
+    var redoBtn = document.getElementById("redoButton");
+    if (undoBtn) undoBtn.style.opacity = undoIndex > 0 ? "1" : "0.3";
+    if (redoBtn) redoBtn.style.opacity = undoIndex < undoStack.length - 1 ? "1" : "0.3";
+}
+
+function refreshUndoRedoVisibility() {
+    var panel = document.getElementById("undoRedoPanel");
+    if (panel) panel.style.display = undoRedoEnabled ? "flex" : "none";
+    var toggleBtn = document.getElementById("undoRedoToggleButton");
+    if (toggleBtn) toggleBtn.className = undoRedoEnabled ? "selectedButton" : "defaultButton";
+}
+
+function toggleUndoRedo() {
+    undoRedoEnabled = !undoRedoEnabled;
+    if (typeof localStorage !== 'undefined') {
+        localStorage.setItem("quiverUndoEnabled", undoRedoEnabled ? "1" : "0");
+    }
+    if (undoRedoEnabled) {
+        loadUndoStack();
+        if (window.location.hash && undoStack[undoIndex] !== window.location.hash) {
+            recordUndo(window.location.hash);
+        }
+    }
+    refreshUndoRedoVisibility();
+    updateUndoRedoButtons();
+}
+
+var mutationGraph = {
+    enabled: false,
+    baseSnap: null,
+    ops: [],
+    nodesBySig: {},
+    nodesList: [],
+    edges: [],
+    edgesKey: {},
+    currentSig: null,
+    nextLabel: 0
+};
+
+function quiverSig(nodes, links) {
+    var ids = nodes.map(n => n.id + "").sort();
+    var idToI = {};
+    for (var i = 0; i < ids.length; i++) idToI[ids[i]] = i;
+    var n = ids.length;
+    var b = [];
+    for (var i = 0; i < n; i++) {
+        var row = [];
+        for (var j = 0; j < n; j++) row.push("0");
+        b.push(row);
+    }
+    for (var k = 0; k < links.length; k++) {
+        var l = links[k];
+        var src = (l.source && l.source.id !== undefined) ? l.source.id : l.source;
+        var tgt = (l.target && l.target.id !== undefined) ? l.target.id : l.target;
+        var s = idToI[src + ""];
+        var t = idToI[tgt + ""];
+        b[s][t] = "" + l.label;
+        b[t][s] = "-" + l.label;
+    }
+    var frozenStr = ids.map(id => {
+        var node = nodes.find(nn => (nn.id + "") === id);
+        return node && node.frozen ? "1" : "0";
+    }).join("");
+    return frozenStr + "|" + b.map(r => r.join(",")).join(";");
+}
+
+function snapshotQuiver(nodes, links) {
+    return {
+        nodes: nodes.map(n => ({
+            id: n.id, color: n.color, x: n.x, y: n.y, label: n.label, frozen: n.frozen
+        })),
+        links: links.map(l => ({
+            source: (l.source && l.source.id !== undefined) ? l.source.id : l.source,
+            target: (l.target && l.target.id !== undefined) ? l.target.id : l.target,
+            color: l.color, label: l.label
+        }))
+    };
+}
+
+function addQuiverNode(sig, snap, initialPos) {
+    if (mutationGraph.nodesBySig[sig]) return mutationGraph.nodesBySig[sig];
+    var node = { id: sig, label: "" + mutationGraph.nextLabel++, snap: snap };
+    if (initialPos) {
+        node.x = initialPos.x;
+        node.y = initialPos.y;
+        if (mutationGraphFrozen) {
+            node.fx = initialPos.x;
+            node.fy = initialPos.y;
+        }
+    }
+    mutationGraph.nodesBySig[sig] = node;
+    mutationGraph.nodesList.push(node);
+    return node;
+}
+
+function addMutationEdge(a, b, label, vid) {
+    var key = a < b ? a + "##" + b : b + "##" + a;
+    if (mutationGraph.edgesKey[key]) return false;
+    mutationGraph.edgesKey[key] = true;
+    mutationGraph.edges.push({ source: a, target: b, label: label, vid: vid });
+    return true;
+}
+
+function recordMutationInGraph(beforeSnap, afterSnap, mutatedVertexId, mutatedLabel) {
+    if (!mutationGraph.enabled) return;
+    var beforeSig = quiverSig(beforeSnap.nodes, beforeSnap.links);
+    var afterSig = quiverSig(afterSnap.nodes, afterSnap.links);
+    var beforeNew = !mutationGraph.nodesBySig[beforeSig];
+    var afterNew = !mutationGraph.nodesBySig[afterSig];
+    addQuiverNode(beforeSig, beforeSnap);
+    var beforeNode = mutationGraph.nodesBySig[beforeSig];
+    var afterInitPos = null;
+    if (afterNew && beforeNode && beforeNode.x != null) {
+        afterInitPos = {
+            x: beforeNode.x + (Math.random() - 0.5) * 30,
+            y: beforeNode.y + (Math.random() - 0.5) * 30
+        };
+    }
+    addQuiverNode(afterSig, afterSnap, afterInitPos);
+    var fromIdx = -1;
+    for (var i = 0; i < mutationGraph.nodesList.length; i++) {
+        if (mutationGraph.nodesList[i].id === beforeSig) { fromIdx = i; break; }
+    }
+    mutationGraph.ops.push({ f: fromIdx, v: mutatedVertexId });
+    var edgeNew = false;
+    if (beforeSig !== afterSig) edgeNew = addMutationEdge(beforeSig, afterSig, mutatedLabel, mutatedVertexId);
+    mutationGraph.currentSig = afterSig;
+    if (beforeNew || afterNew || edgeNew) {
+        renderMutationGraph();
+    } else {
+        updateMutationGraphHighlight();
+    }
+}
+
+function mutateSnap(snap, vertexId) {
+    var nodes = snap.nodes;
+    var idToI = {};
+    var iToId = {};
+    for (var i = 0; i < nodes.length; i++) {
+        idToI[nodes[i].id] = i;
+        iToId[i] = nodes[i].id;
+    }
+    if (idToI[vertexId] === undefined) return snap;
+    var ncols = nodes.length;
+    var bMat = makeArr(ncols, i => makeArr(ncols, j => BigInt(0)));
+    for (var k = 0; k < snap.links.length; k++) {
+        var link = snap.links[k];
+        bMat[idToI[link.source]][idToI[link.target]] = BigInt(link.label);
+        bMat[idToI[link.target]][idToI[link.source]] = -BigInt(link.label);
+    }
+    var q = new Quiver(bMatrixToWeights(bMat));
+    q.mutate(idToI[vertexId], true);
+    var newLinks = [];
+    for (var i = 0; i < q.b_matrix.length; i++) {
+        for (var j = 0; j < q.b_matrix[i].length; j++) {
+            var value = q.b_matrix[i][j];
+            if (value > BigInt(0)) {
+                newLinks.push({
+                    source: iToId[i], target: iToId[j],
+                    color: "white", label: "" + value
+                });
+            }
+        }
+    }
+    return { nodes: nodes.map(n => ({...n})), links: newLinks };
+}
+
+function pathToSeed() {
+    if (mutationGraph.nodesList.length <= 1) return [];
+    var seedSig = mutationGraph.nodesList[0].id;
+    if (mutationGraph.currentSig === seedSig) return [];
+    var adj = {};
+    for (var i = 0; i < mutationGraph.edges.length; i++) {
+        var e = mutationGraph.edges[i];
+        var s = (e.source && e.source.id !== undefined) ? e.source.id : e.source;
+        var t = (e.target && e.target.id !== undefined) ? e.target.id : e.target;
+        if (!adj[s]) adj[s] = [];
+        if (!adj[t]) adj[t] = [];
+        adj[s].push({ to: t, vid: e.vid });
+        adj[t].push({ to: s, vid: e.vid });
+    }
+    var visited = {};
+    visited[mutationGraph.currentSig] = true;
+    var queue = [{ sig: mutationGraph.currentSig, path: [] }];
+    while (queue.length > 0) {
+        var cur = queue.shift();
+        if (cur.sig === seedSig) return cur.path;
+        var neighbors = adj[cur.sig] || [];
+        for (var i = 0; i < neighbors.length; i++) {
+            var nb = neighbors[i];
+            if (visited[nb.to]) continue;
+            visited[nb.to] = true;
+            queue.push({ sig: nb.to, path: cur.path.concat([+nb.vid]) });
+        }
+    }
+    return [];
+}
+
+function applyMutationSequence(snap, vids) {
+    var cur = snap;
+    for (var i = 0; i < vids.length; i++) cur = mutateSnap(cur, String(vids[i]));
+    return cur;
+}
+
+function serializeMutationGraph() {
+    if (!mutationGraph.baseSnap || mutationGraph.nodesList.length === 0) return null;
+    var opsFlat = [];
+    for (var i = 0; i < mutationGraph.ops.length; i++) {
+        opsFlat.push(mutationGraph.ops[i].f, +mutationGraph.ops[i].v);
+    }
+    var positionsFlat = [];
+    for (var i = 0; i < mutationGraph.nodesList.length; i++) {
+        var n = mutationGraph.nodesList[i];
+        if (n.fx != null && n.fy != null) {
+            positionsFlat.push(i, Math.round(n.fx), Math.round(n.fy));
+        }
+    }
+    var currentIdx = -1;
+    for (var i = 0; i < mutationGraph.nodesList.length; i++) {
+        if (mutationGraph.nodesList[i].id === mutationGraph.currentSig) { currentIdx = i; break; }
+    }
+    var result = [pathToSeed(), opsFlat, positionsFlat, currentIdx];
+    var zoomChanged = mutationGraphZoom !== 1.0;
+    if (customMutationGraphHeight !== null || zoomChanged) {
+        result.push(customMutationGraphHeight !== null ? Math.round(customMutationGraphHeight) : 240);
+    }
+    if (zoomChanged) result.push(Math.round(mutationGraphZoom * 1000) / 1000);
+    return result;
+}
+
+function restoreMutationGraph(data, currentSnap) {
+    var seedSnap = applyMutationSequence(currentSnap, data.t || []);
+    mutationGraph.baseSnap = seedSnap;
+    mutationGraph.ops = data.o || [];
+    mutationGraph.nodesBySig = {};
+    mutationGraph.nodesList = [];
+    mutationGraph.edges = [];
+    mutationGraph.edgesKey = {};
+    mutationGraph.nextLabel = 0;
+
+    var baseSig = quiverSig(seedSnap.nodes, seedSnap.links);
+    addQuiverNode(baseSig, seedSnap, { x: 0, y: 0 });
+
+    for (var i = 0; i < mutationGraph.ops.length; i++) {
+        var op = mutationGraph.ops[i];
+        var fromNode = mutationGraph.nodesList[op.f];
+        if (!fromNode) continue;
+        var newSnap = mutateSnap(fromNode.snap, op.v);
+        var newSig = quiverSig(newSnap.nodes, newSnap.links);
+        var initPos = null;
+        if (fromNode.x != null) {
+            initPos = {
+                x: fromNode.x + (Math.random() - 0.5) * 30,
+                y: fromNode.y + (Math.random() - 0.5) * 30
+            };
+        }
+        addQuiverNode(newSig, newSnap, initPos);
+        var vnode = fromNode.snap.nodes.find(n => n.id === op.v);
+        var label = vnode ? vnode.label : "";
+        if (fromNode.id !== newSig) addMutationEdge(fromNode.id, newSig, label, op.v);
+    }
+
+    var positions = data.p || {};
+    var anyPos = false;
+    for (var k in positions) {
+        var idx = parseInt(k);
+        var pos = positions[k];
+        if (mutationGraph.nodesList[idx]) {
+            mutationGraph.nodesList[idx].fx = pos[0];
+            mutationGraph.nodesList[idx].fy = pos[1];
+            mutationGraph.nodesList[idx].x = pos[0];
+            mutationGraph.nodesList[idx].y = pos[1];
+            anyPos = true;
+        }
+    }
+    mutationGraphFrozen = anyPos;
+    updateFreezeMgButtonText();
+
+    var ci = data.c != null ? data.c : 0;
+    if (mutationGraph.nodesList[ci]) {
+        mutationGraph.currentSig = mutationGraph.nodesList[ci].id;
+    } else {
+        mutationGraph.currentSig = mutationGraph.nodesList[0].id;
+    }
+    mutationGraph.enabled = true;
+    document.getElementById("mutationGraphPanel").style.display = "block";
+    document.getElementById("mutationGraphButton").textContent = "HIDE MUTATION GRAPH";
+    renderMutationGraph();
+}
+
+function triggerURLUpdate() {
+    if (!simulation) return;
+    var curNodes = simulation.nodes().map(n => ({
+        id: n.id, color: n.color, x: n.x, y: n.y, label: n.label, frozen: n.frozen
+    }));
+    var curLinks = nodeLinks.map(l => ({
+        source: l.source.id, target: l.target.id, color: l.color, label: l.label
+    }));
+    updateURL(curNodes, curLinks);
+}
+
+function resetMutationGraph() {
+    mutationGraph.nodesBySig = {};
+    mutationGraph.nodesList = [];
+    mutationGraph.edges = [];
+    mutationGraph.edgesKey = {};
+    mutationGraph.currentSig = null;
+    mutationGraph.nextLabel = 0;
+    if (mutationGraphSim) { mutationGraphSim.stop(); mutationGraphSim = null; }
+    if (mutationGraph.enabled) {
+        seedCurrentQuiver();
+        renderMutationGraph();
+    }
+}
+
+function seedCurrentQuiver() {
+    var curNodes = simulation.nodes().map(n => ({
+        id: n.id, color: n.color, x: n.x, y: n.y, label: n.label, frozen: n.frozen
+    }));
+    var curLinks = nodeLinks.map(l => ({
+        source: l.source.id, target: l.target.id, color: l.color, label: l.label
+    }));
+    var sig = quiverSig(curNodes, curLinks);
+    var snap = snapshotQuiver(curNodes, curLinks);
+    mutationGraph.baseSnap = snap;
+    mutationGraph.ops = [];
+    addQuiverNode(sig, snap);
+    mutationGraph.currentSig = sig;
+}
+
+var _crc32Table = null;
+function crc32(bytes) {
+    if (!_crc32Table) {
+        _crc32Table = new Uint32Array(256);
+        for (var n = 0; n < 256; n++) {
+            var c = n;
+            for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+            _crc32Table[n] = c >>> 0;
+        }
+    }
+    var crc = 0xFFFFFFFF;
+    for (var i = 0; i < bytes.length; i++) crc = (crc >>> 8) ^ _crc32Table[(crc ^ bytes[i]) & 0xFF];
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+function injectPngText(pngBytes, keyword, text) {
+    var keyBytes = new TextEncoder().encode(keyword);
+    var txtBytes = new TextEncoder().encode(text);
+    var dataLen = keyBytes.length + 1 + txtBytes.length;
+    var chunk = new Uint8Array(4 + 4 + dataLen + 4);
+    chunk[0] = (dataLen >>> 24) & 0xFF;
+    chunk[1] = (dataLen >>> 16) & 0xFF;
+    chunk[2] = (dataLen >>> 8) & 0xFF;
+    chunk[3] = dataLen & 0xFF;
+    chunk[4] = 0x74; chunk[5] = 0x45; chunk[6] = 0x58; chunk[7] = 0x74; // "tEXt"
+    var idx = 8;
+    for (var i = 0; i < keyBytes.length; i++) chunk[idx++] = keyBytes[i];
+    chunk[idx++] = 0;
+    for (var i = 0; i < txtBytes.length; i++) chunk[idx++] = txtBytes[i];
+    var crc = crc32(chunk.subarray(4, 8 + dataLen));
+    var ci = 8 + dataLen;
+    chunk[ci] = (crc >>> 24) & 0xFF;
+    chunk[ci + 1] = (crc >>> 16) & 0xFF;
+    chunk[ci + 2] = (crc >>> 8) & 0xFF;
+    chunk[ci + 3] = crc & 0xFF;
+
+    var pos = 8; // skip 8-byte signature
+    while (pos + 8 <= pngBytes.length) {
+        var len = (pngBytes[pos] << 24) | (pngBytes[pos + 1] << 16) | (pngBytes[pos + 2] << 8) | pngBytes[pos + 3];
+        var type = String.fromCharCode(pngBytes[pos + 4], pngBytes[pos + 5], pngBytes[pos + 6], pngBytes[pos + 7]);
+        if (type === "IEND") break;
+        pos += 12 + len;
+    }
+    var result = new Uint8Array(pngBytes.length + chunk.length);
+    result.set(pngBytes.subarray(0, pos), 0);
+    result.set(chunk, pos);
+    result.set(pngBytes.subarray(pos), pos + chunk.length);
+    return result;
+}
+
+function extractPngText(pngBytes, keyword) {
+    var keyBytes = new TextEncoder().encode(keyword);
+    var pos = 8;
+    while (pos + 8 <= pngBytes.length) {
+        var len = (pngBytes[pos] << 24) | (pngBytes[pos + 1] << 16) | (pngBytes[pos + 2] << 8) | pngBytes[pos + 3];
+        var type = String.fromCharCode(pngBytes[pos + 4], pngBytes[pos + 5], pngBytes[pos + 6], pngBytes[pos + 7]);
+        if (type === "tEXt") {
+            var ds = pos + 8;
+            var match = true;
+            for (var i = 0; i < keyBytes.length; i++) {
+                if (pngBytes[ds + i] !== keyBytes[i]) { match = false; break; }
+            }
+            if (match && pngBytes[ds + keyBytes.length] === 0) {
+                var ts = ds + keyBytes.length + 1;
+                var te = ds + len;
+                return new TextDecoder().decode(pngBytes.subarray(ts, te));
+            }
+        }
+        if (type === "IEND") break;
+        pos += 12 + len;
+    }
+    return null;
+}
+
+function ensureMutationGraphFrozen() {
+    if (!mutationGraph.enabled) return;
+    if (mutationGraphFrozen) return;
+    mutationGraphFrozen = true;
+    for (var i = 0; i < mutationGraph.nodesList.length; i++) {
+        var n = mutationGraph.nodesList[i];
+        n.fx = n.x;
+        n.fy = n.y;
+    }
+    updateFreezeMgButtonText();
+    if (mutationGraphSim) mutationGraphSim.alpha(0.05).restart();
+    triggerURLUpdate();
+}
+
+function renderSvgToImage(svgEl, w, h) {
+    return new Promise(function(resolve, reject) {
+        var clone = svgEl.cloneNode(true);
+        clone.setAttribute("width", w);
+        clone.setAttribute("height", h);
+        clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+        var svgStr = new XMLSerializer().serializeToString(clone);
+        var blob = new Blob([svgStr], { type: "image/svg+xml;charset=utf-8" });
+        var url = URL.createObjectURL(blob);
+        var img = new Image();
+        img.onload = function() { URL.revokeObjectURL(url); resolve(img); };
+        img.onerror = function(e) { URL.revokeObjectURL(url); reject(e); };
+        img.src = url;
+    });
+}
+
+function exportQuiverPng() {
+    ensureMutationGraphFrozen();
+    var mainSvg = document.querySelector(".graph-container > svg");
+    if (!mainSvg) return;
+    var mainRect = mainSvg.getBoundingClientRect();
+    var w = Math.round(mainRect.width), h = Math.round(mainRect.height);
+
+    var mgPanel = document.getElementById("mutationGraphPanel");
+    var mgVisible = mgPanel && mgPanel.style.display !== "none" && mutationGraph.enabled;
+    var mgSvgEl = mgVisible ? document.getElementById("mutationGraphSvg") : null;
+    var mgRect = mgPanel && mgVisible ? mgPanel.getBoundingClientRect() : null;
+
+    var promises = [renderSvgToImage(mainSvg, w, h)];
+    if (mgSvgEl) {
+        var mgSvgRect = mgSvgEl.getBoundingClientRect();
+        promises.push(renderSvgToImage(mgSvgEl, Math.round(mgSvgRect.width), Math.round(mgSvgRect.height)));
+    }
+
+    Promise.all(promises).then(function(images) {
+        var canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        var ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#111";
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(images[0], 0, 0, w, h);
+        if (images[1]) {
+            var mgX = mgRect.left - mainRect.left;
+            var mgY = mgRect.top - mainRect.top;
+            var mgW = mgRect.width, mgH = mgRect.height;
+            // Match on-screen styling: dark translucent backdrop + lighter top-bar strip.
+            ctx.fillStyle = "rgba(10,10,10,0.5)";
+            ctx.fillRect(mgX, mgY, mgW, mgH);
+            ctx.fillStyle = "rgba(255,255,255,0.15)";
+            ctx.fillRect(mgX, mgY, mgW, 14);
+            ctx.fillStyle = "rgba(255,255,255,0.5)";
+            ctx.fillRect(mgX + mgW / 2 - 20, mgY + 5, 40, 3);
+            ctx.drawImage(images[1], mgX, mgY, mgW, mgH);
+        }
+        canvas.toBlob(function(blob) {
+            blob.arrayBuffer().then(function(buf) {
+                var pngBytes = new Uint8Array(buf);
+                var hashStr = window.location.hash || "";
+                if (hashStr.charAt(0) === "#") hashStr = hashStr.substring(1);
+                var withMeta = injectPngText(pngBytes, "QuiverHash", hashStr);
+                var outBlob = new Blob([withMeta], { type: "image/png" });
+                var dlUrl = URL.createObjectURL(outBlob);
+                var a = document.createElement("a");
+                a.href = dlUrl;
+                a.download = "quiver.png";
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(function() { URL.revokeObjectURL(dlUrl); }, 200);
+            });
+        }, "image/png");
+    }).catch(function(e) {
+        alert("Failed to render for export");
+        console.error(e);
+    });
+}
+
+var pendingImportCenter = false;
+
+function centerMainQuiver() {
+    if (typeof simulation === 'undefined' || !simulation || typeof simulation.nodes !== 'function') return;
+    var nodes = simulation.nodes();
+    if (!nodes || nodes.length === 0) return;
+    var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (var i = 0; i < nodes.length; i++) {
+        var n = nodes[i];
+        if (n.x == null || n.y == null) continue;
+        if (n.x < minX) minX = n.x;
+        if (n.x > maxX) maxX = n.x;
+        if (n.y < minY) minY = n.y;
+        if (n.y > maxY) maxY = n.y;
+    }
+    if (minX === Infinity) return;
+    var dx = -(minX + maxX) / 2;
+    var dy = -(minY + maxY) / 2;
+    for (var i = 0; i < nodes.length; i++) {
+        var n = nodes[i];
+        if (n.x != null) n.x += dx;
+        if (n.y != null) n.y += dy;
+        if (n.fx != null) n.fx += dx;
+        if (n.fy != null) n.fy += dy;
+    }
+    simulation.alpha(0.05).restart();
+}
+
+function centerMutationGraph() {
+    if (!mutationGraph.enabled || mutationGraph.nodesList.length === 0) return;
+    var nodes = mutationGraph.nodesList;
+    var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (var i = 0; i < nodes.length; i++) {
+        var n = nodes[i];
+        if (n.x == null || n.y == null) continue;
+        if (n.x < minX) minX = n.x;
+        if (n.x > maxX) maxX = n.x;
+        if (n.y < minY) minY = n.y;
+        if (n.y > maxY) maxY = n.y;
+    }
+    if (minX === Infinity) return;
+    var svgEl = document.getElementById("mutationGraphSvg");
+    if (!svgEl) return;
+    var rect = svgEl.getBoundingClientRect();
+    var info = mgViewportInfo(rect.width, rect.height);
+    var dx = info.centerX - (minX + maxX) / 2;
+    var dy = info.centerY - (minY + maxY) / 2;
+    for (var i = 0; i < nodes.length; i++) {
+        var n = nodes[i];
+        if (n.x != null) n.x += dx;
+        if (n.y != null) n.y += dy;
+        if (n.fx != null) n.fx += dx;
+        if (n.fy != null) n.fy += dy;
+    }
+    if (mutationGraphSim) mutationGraphSim.alpha(0.05).restart();
+}
+
+function importQuiverPng(file) {
+    if (!file) return;
+    file.arrayBuffer().then(function(buf) {
+        var bytes = new Uint8Array(buf);
+        var hashStr = extractPngText(bytes, "QuiverHash");
+        if (!hashStr) {
+            alert("No quiver data found in this PNG");
+            return;
+        }
+        pendingImportCenter = true;
+        window.location.hash = "#" + hashStr;
+    });
+}
+
+function exportQuiverJson() {
+    ensureMutationGraphFrozen();
+    var hash = window.location.hash || "";
+    if (hash.charAt(0) === "#") hash = hash.substring(1);
+    if (!hash) {
+        alert("No quiver data to export");
+        return;
+    }
+    var parsed;
+    try {
+        parsed = JSON.parse(decodeURI(hash));
+    } catch (e) {
+        alert("Failed to parse current state: " + e.message);
+        return;
+    }
+    var n = (parsed[1] || []).length;
+    var weightsInner = (parsed[0] || "").replace(/_/g, "");
+    weightsInner = weightsInner.substring(1, weightsInner.length - 1);
+    var pieces = weightsInner.length > 0 ? weightsInner.split(",") : [];
+    var bMatrix = [];
+    for (var i = 0; i < n; i++) {
+        var row = [];
+        for (var j = 0; j < n; j++) {
+            var v = pieces[i * n + j];
+            row.push(v != null ? parseInt(v) : 0);
+        }
+        bMatrix.push(row);
+    }
+    var structured = {
+        bMatrix: bMatrix,
+        labels: parsed[1],
+        positions: parsed[2],
+        frozen: parsed[3]
+    };
+    if (parsed.length >= 8) {
+        var opsFlat = parsed[5] || [];
+        var ops = [];
+        for (var i = 0; i < opsFlat.length; i += 2) {
+            ops.push({ from: opsFlat[i], vertex: opsFlat[i + 1] });
+        }
+        var posFlat = parsed[6] || [];
+        var pinned = {};
+        for (var i = 0; i < posFlat.length; i += 3) {
+            pinned[posFlat[i]] = [posFlat[i + 1], posFlat[i + 2]];
+        }
+        structured.mutationGraph = {
+            pathToSeed: parsed[4] || [],
+            ops: ops,
+            pinned: pinned,
+            currentIdx: parsed[7]
+        };
+        if (parsed.length >= 9) structured.mutationGraph.height = parsed[8];
+        if (parsed.length >= 10) structured.mutationGraph.zoom = parsed[9];
+    }
+    var pretty = JSON.stringify(structured, null, 2);
+    var blob = new Blob([pretty], { type: "application/json" });
+    var dlUrl = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = dlUrl;
+    a.download = "quiver.json";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function() { URL.revokeObjectURL(dlUrl); }, 200);
+}
+
+function importQuiverJson(file) {
+    if (!file) return;
+    file.text().then(function(text) {
+        var data;
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            alert("Failed to parse JSON file: " + e.message);
+            return;
+        }
+        var weightsStr;
+        if (data.bMatrix) {
+            var flat = [];
+            for (var i = 0; i < data.bMatrix.length; i++) {
+                var row = data.bMatrix[i];
+                for (var j = 0; j < row.length; j++) flat.push(row[j] + "");
+            }
+            weightsStr = "____[" + flat.join(",") + "]____";
+        } else if (data.weights) {
+            weightsStr = data.weights;
+        } else {
+            alert("JSON is missing bMatrix");
+            return;
+        }
+        var arr = [weightsStr, data.labels, data.positions, data.frozen];
+        if (data.mutationGraph) {
+            var mg = data.mutationGraph;
+            arr.push(mg.pathToSeed || []);
+            var opsFlat = [];
+            var opsArr = mg.ops || [];
+            for (var i = 0; i < opsArr.length; i++) {
+                opsFlat.push(opsArr[i].from, opsArr[i].vertex);
+            }
+            arr.push(opsFlat);
+            var posFlat = [];
+            var pinned = mg.pinned || {};
+            for (var k in pinned) {
+                posFlat.push(parseInt(k), pinned[k][0], pinned[k][1]);
+            }
+            arr.push(posFlat);
+            arr.push(mg.currentIdx != null ? mg.currentIdx : 0);
+            var hasHeight = mg.height != null;
+            var hasZoom = mg.zoom != null;
+            if (hasHeight || hasZoom) arr.push(hasHeight ? mg.height : 240);
+            if (hasZoom) arr.push(mg.zoom);
+        }
+        pendingImportCenter = true;
+        window.location.hash = "#" + encodeURI(JSON.stringify(arr));
+    });
+}
+
+function importQuiverFile(file) {
+    if (!file) return;
+    var name = (file.name || "").toLowerCase();
+    if (name.endsWith(".json") || file.type === "application/json") {
+        importQuiverJson(file);
+    } else {
+        importQuiverPng(file);
+    }
+}
+
+function openImportDialog() {
+    var input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".png,image/png,.json,application/json";
+    input.onchange = function(e) {
+        if (e.target.files.length > 0) importQuiverFile(e.target.files[0]);
+    };
+    input.click();
+}
+
+function setupImportDrop() {
+    var btn = document.getElementById("importPngButton");
+    if (!btn) return;
+    btn.addEventListener("dragover", function(e) {
+        e.preventDefault(); e.stopPropagation();
+        btn.classList.add("selectedButton");
+        btn.classList.remove("defaultButton");
+    });
+    btn.addEventListener("dragleave", function(e) {
+        btn.classList.add("defaultButton");
+        btn.classList.remove("selectedButton");
+    });
+    btn.addEventListener("drop", function(e) {
+        e.preventDefault(); e.stopPropagation();
+        btn.classList.add("defaultButton");
+        btn.classList.remove("selectedButton");
+        if (e.dataTransfer.files.length > 0) importQuiverFile(e.dataTransfer.files[0]);
+    });
+}
+
+function confirmDeleteMutationGraph() {
+    if (mutationGraph.ops.length > 0 || mutationGraph.nodesList.length > 1) {
+        document.getElementById("mgConfirmPanel").style.display = "block";
+    } else {
+        performDeleteMutationGraph();
+    }
+}
+
+function cancelDeleteMutationGraph() {
+    document.getElementById("mgConfirmPanel").style.display = "none";
+}
+
+function performDeleteMutationGraph() {
+    document.getElementById("mgConfirmPanel").style.display = "none";
+    mutationGraph.enabled = false;
+    mutationGraph.baseSnap = null;
+    mutationGraph.ops = [];
+    mutationGraph.nodesBySig = {};
+    mutationGraph.nodesList = [];
+    mutationGraph.edges = [];
+    mutationGraph.edgesKey = {};
+    mutationGraph.currentSig = null;
+    mutationGraph.nextLabel = 0;
+    mutationGraphFrozen = false;
+    updateFreezeMgButtonText();
+    customMutationGraphHeight = null;
+    mutationGraphZoom = 1.0;
+    if (mutationGraphSim) { mutationGraphSim.stop(); mutationGraphSim = null; }
+    var panel = document.getElementById("mutationGraphPanel");
+    if (panel) {
+        panel.style.display = "none";
+        panel.style.height = "";
+    }
+    var btn = document.getElementById("mutationGraphButton");
+    if (btn) btn.textContent = "SHOW MUTATION GRAPH";
+    triggerURLUpdate();
+}
+
+function toggleMutationGraph() {
+    mutationGraph.enabled = !mutationGraph.enabled;
+    var panel = document.getElementById("mutationGraphPanel");
+    var btn = document.getElementById("mutationGraphButton");
+    if (mutationGraph.enabled) {
+        panel.style.display = "block";
+        btn.textContent = "HIDE MUTATION GRAPH";
+        seedCurrentQuiver();
+        renderMutationGraph();
+    } else {
+        panel.style.display = "none";
+        btn.textContent = "SHOW MUTATION GRAPH";
+    }
+}
+
+function loadQuiverSnap(snap) {
+    var posById = {};
+    if (simulation && typeof simulation.nodes === 'function') {
+        var curNodes = simulation.nodes();
+        for (var i = 0; i < curNodes.length; i++) {
+            posById[curNodes[i].id] = { x: curNodes[i].x, y: curNodes[i].y };
+        }
+    }
+    var mergedNodes = snap.nodes.map(n => {
+        var p = posById[n.id];
+        return p ? { ...n, x: p.x, y: p.y } : { ...n };
+    });
+    svg.selectAll("*").remove();
+    ForceGraph({
+        nodes: mergedNodes,
+        links: snap.links.map(l => ({...l}))
+    });
+}
+
+var mutationGraphSim = null;
+
+var mgImageSize = 60;
+
+function mgEscapeXml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+
+function snapToImage(snap) {
+    if (!snap || !snap.nodes || snap.nodes.length === 0) return null;
+    var nodes = snap.nodes, links = snap.links || [];
+    var nodeRadius = 30;
+
+    // Prefer current canvas positions (matches what's displayed); fall back to snap positions.
+    var curPos = {};
+    if (typeof simulation !== 'undefined' && simulation && typeof simulation.nodes === 'function') {
+        var sn = simulation.nodes();
+        for (var i = 0; i < sn.length; i++) curPos[sn[i].id] = { x: sn[i].x, y: sn[i].y };
+    }
+
+    var posById = {};
+    var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, anyPos = false;
+    for (var i = 0; i < nodes.length; i++) {
+        var n = nodes[i];
+        var cp = curPos[n.id];
+        var px = cp ? cp.x : n.x;
+        var py = cp ? cp.y : n.y;
+        if (px == null || py == null) continue;
+        posById[n.id] = { x: px, y: py, label: n.label, frozen: n.frozen };
+        if (px < minX) minX = px;
+        if (px > maxX) maxX = px;
+        if (py < minY) minY = py;
+        if (py > maxY) maxY = py;
+        anyPos = true;
+    }
+    if (!anyPos) return null;
+
+    var pad = nodeRadius + 10;
+    var contentW = Math.max(maxX - minX, 1);
+    var contentH = Math.max(maxY - minY, 1);
+    var vbW = contentW + pad * 2;
+    var vbH = contentH + pad * 2;
+    function tx(x) { return x - minX + pad; }
+    function ty(y) { return y - minY + pad; }
+
+    function intersect(cx, cy, tx_, ty_, r) {
+        var dx = tx_ - cx, dy = ty_ - cy;
+        var len = Math.sqrt(dx * dx + dy * dy);
+        if (len === 0) return { x: cx, y: cy };
+        return { x: cx + dx / len * r, y: cy + dy / len * r };
+    }
+
+    var parts = ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + vbW + ' ' + vbH + '">'];
+    parts.push('<defs><marker id="mgArrow" viewBox="0 -5 10 10" refX="10" refY="0" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,-5L10,0L0,5" fill="none" stroke="white" stroke-width="1"/></marker></defs>');
+
+    for (var i = 0; i < links.length; i++) {
+        var link = links[i];
+        var s = posById[link.source], t = posById[link.target];
+        if (!s || !t) continue;
+        var sx = tx(s.x), sy = ty(s.y), txp = tx(t.x), typ = ty(t.y);
+        var sp = intersect(sx, sy, txp, typ, nodeRadius);
+        var tp = intersect(txp, typ, sx, sy, nodeRadius);
+        parts.push('<line x1="' + sp.x + '" y1="' + sp.y + '" x2="' + tp.x + '" y2="' + tp.y + '" stroke="white" stroke-width="2" marker-end="url(#mgArrow)"/>');
+        if (link.label != null && link.label !== "") {
+            var mx = (sx + txp) / 2;
+            var my = (sy + typ) / 2 + 5;
+            parts.push('<text x="' + mx + '" y="' + my + '" font-family="sans-serif" font-size="25" text-anchor="middle" fill="white">' + mgEscapeXml(link.label) + '</text>');
+        }
+    }
+
+    for (var id in posById) {
+        var p = posById[id];
+        var fill = p.frozen ? "#555" : "black";
+        parts.push('<circle cx="' + tx(p.x) + '" cy="' + ty(p.y) + '" r="' + nodeRadius + '" fill="' + fill + '" stroke="white" stroke-width="2"/>');
+        if (p.label != null && p.label !== "") {
+            parts.push('<text x="' + tx(p.x) + '" y="' + (ty(p.y) + 8) + '" font-family="sans-serif" font-size="25" text-anchor="middle" fill="white">' + mgEscapeXml(p.label) + '</text>');
+        }
+    }
+
+    parts.push('</svg>');
+    return 'data:image/svg+xml;utf8,' + encodeURIComponent(parts.join(''));
+}
+
+var mgResize = { dragging: false, startY: 0, startH: 0 };
+var customMutationGraphHeight = null;
+var mutationGraphFrozen = false;
+var mutationGraphZoom = 1.0;
+
+var mgZoomAnchorY = 7;  // top middle of the resize handle (which is 14px tall)
+
+function mgViewportInfo(rectW, rectH) {
+    var k = mutationGraphZoom || 1;
+    var pad = mgImageSize / 2;
+    var ax = rectW / 2, ay = mgZoomAnchorY;
+    var handleEl = document.querySelector(".mutation-graph-handle");
+    var handleH = handleEl ? handleEl.getBoundingClientRect().height : 14;
+    var handleBottomCoord = (handleH - ay) / k + ay;
+    var visX0 = ax * (1 - 1 / k);
+    var visY0 = ay * (1 - 1 / k);
+    var visW = rectW / k;
+    var visH = rectH / k;
+    var minX = visX0 + pad;
+    var maxX = visX0 + visW - pad;
+    var minY = handleBottomCoord + pad;
+    var maxY = visY0 + visH - pad;
+    return {
+        anchorX: ax, anchorY: ay,
+        minX: minX, maxX: maxX,
+        minY: minY, maxY: maxY,
+        centerX: (minX + maxX) / 2,
+        centerY: (minY + maxY) / 2
+    };
+}
+
+function applyMutationGraphZoom() {
+    var svgNode = document.getElementById("mutationGraphSvg");
+    if (!svgNode) return;
+    var rect = svgNode.getBoundingClientRect();
+    var ax = rect.width / 2, ay = mgZoomAnchorY;
+    d3.select("#mutationGraphSvg").select("g.mg-viewport")
+        .attr("transform", "translate(" + ax + "," + ay + ") scale(" + mutationGraphZoom + ") translate(" + (-ax) + "," + (-ay) + ")");
+    if (mutationGraphSim) {
+        var info = mgViewportInfo(rect.width, rect.height);
+        mutationGraphSim.force("center", d3.forceCenter(info.centerX, info.centerY));
+        mutationGraphSim.alpha(0.1).restart();
+    }
+}
+
+function mgZoomIn() {
+    mutationGraphZoom *= 1.2;
+    applyMutationGraphZoom();
+    triggerURLUpdate();
+}
+
+function mgZoomOut() {
+    mutationGraphZoom /= 1.2;
+    applyMutationGraphZoom();
+    triggerURLUpdate();
+}
+
+function updateFreezeMgButtonText() {
+    var btn = document.getElementById("freezeMgButton");
+    if (btn) btn.textContent = mutationGraphFrozen ? "UNFREEZE MUTATION GRAPH" : "FREEZE MUTATION GRAPH";
+}
+
+function toggleMutationGraphFreeze() {
+    mutationGraphFrozen = !mutationGraphFrozen;
+    for (var i = 0; i < mutationGraph.nodesList.length; i++) {
+        var n = mutationGraph.nodesList[i];
+        if (mutationGraphFrozen) {
+            n.fx = n.x;
+            n.fy = n.y;
+        } else {
+            n.fx = null;
+            n.fy = null;
+        }
+    }
+    updateFreezeMgButtonText();
+    if (mutationGraphSim) mutationGraphSim.alpha(0.1).restart();
+    triggerURLUpdate();
+}
+function mgGetClientY(e) {
+    if (e.touches && e.touches.length > 0) return e.touches[0].clientY;
+    if (e.changedTouches && e.changedTouches.length > 0) return e.changedTouches[0].clientY;
+    return e.clientY;
+}
+function mgResizeStart(e) {
+    mgResize.dragging = true;
+    mgResize.startY = mgGetClientY(e);
+    mgResize.startH = document.getElementById('mutationGraphPanel').offsetHeight;
+    e.preventDefault();
+}
+function mgResizeMove(e) {
+    if (!mgResize.dragging) return;
+    var dy = mgResize.startY - mgGetClientY(e);
+    var newH = Math.max(80, Math.min(window.innerHeight - 50, mgResize.startH + dy));
+    document.getElementById('mutationGraphPanel').style.height = newH + 'px';
+    customMutationGraphHeight = newH;
+    if (mutationGraphSim) {
+        var rect = d3.select("#mutationGraphSvg").node().getBoundingClientRect();
+        var rectW = rect.width, rectH = newH;
+        var info = mgViewportInfo(rectW, rectH);
+        mutationGraphSim.force("center", d3.forceCenter(info.centerX, info.centerY));
+        if (!mutationGraphFrozen) {
+            for (var i = 0; i < mutationGraph.nodesList.length; i++) {
+                var d = mutationGraph.nodesList[i];
+                if (d.x < info.minX) d.x = info.minX;
+                if (d.x > info.maxX) d.x = info.maxX;
+                if (d.y < info.minY) d.y = info.minY;
+                if (d.y > info.maxY) d.y = info.maxY;
+            }
+        }
+        mutationGraphSim.alpha(0.05).restart();
+    }
+    applyMutationGraphZoom();
+    e.preventDefault();
+}
+function mgResizeEnd() {
+    var wasDragging = mgResize.dragging;
+    mgResize.dragging = false;
+    if (wasDragging) triggerURLUpdate();
+}
+document.addEventListener('mousemove', mgResizeMove);
+document.addEventListener('mouseup', mgResizeEnd);
+document.addEventListener('touchmove', mgResizeMove, { passive: false });
+document.addEventListener('touchend', mgResizeEnd);
+document.addEventListener('touchcancel', mgResizeEnd);
+
+function refreshMutationGraphThumbnails() {
+    if (!mutationGraph.enabled) return;
+    d3.select("#mutationGraphSvg").selectAll("image.mg-label")
+        .attr("href", d => snapToImage(d.snap));
+}
+
+function updateMutationGraphHighlight() {
+    var mSvg = d3.select("#mutationGraphSvg");
+    mSvg.selectAll("circle.mg-node")
+        .attr("stroke", d => d.id === mutationGraph.currentSig ? "#fff" : "rgba(255,255,255,0.4)")
+        .attr("stroke-width", d => d.id === mutationGraph.currentSig ? 3 : 1.5);
+}
+
+function renderMutationGraph() {
+    var mSvg = d3.select("#mutationGraphSvg");
+    mSvg.selectAll("*").remove();
+
+    var rect = mSvg.node().getBoundingClientRect();
+    var w = rect.width, h = rect.height;
+
+    // Use persistent objects so existing x/y/vx/vy survive across renders.
+    var nodes = mutationGraph.nodesList;
+    var links = mutationGraph.edges;
+
+    if (mutationGraphSim) mutationGraphSim.stop();
+
+    var mgNodeRadius = mgImageSize / 2;
+    var mgMinEdge = mgNodeRadius * 2 + 5;
+    var initInfo = mgViewportInfo(w, h);
+    mutationGraphSim = d3.forceSimulation(nodes)
+        .alpha(0.3)
+        .force("link", d3.forceLink(links).id(d => d.id).distance(Math.max(mgMinEdge + 25, 80)))
+        .force("charge", d3.forceManyBody().strength(-200))
+        .force("collide", d3.forceCollide(mgMinEdge / 2))
+        .force("center", d3.forceCenter(initInfo.centerX, initInfo.centerY));
+
+    var viewport = mSvg.append("g").attr("class", "mg-viewport");
+
+    var link = viewport.append("g")
+        .attr("stroke", "rgba(255,255,255,0.4)")
+        .attr("stroke-width", 1.5)
+        .selectAll("line").data(links).join("line");
+
+    var node = viewport.append("g")
+        .selectAll("circle").data(nodes).join("circle")
+        .attr("class", "mg-node")
+        .attr("r", mgImageSize / 2)
+        .attr("fill", "rgba(20,20,20,0.9)")
+        .attr("stroke", d => d.id === mutationGraph.currentSig ? "#fff" : "rgba(255,255,255,0.4)")
+        .attr("stroke-width", d => d.id === mutationGraph.currentSig ? 3 : 1.5)
+        .style("cursor", "pointer")
+        .on("click", function(event, d) {
+            if (event.defaultPrevented) return;
+            loadQuiverSnap(d.snap);
+            mutationGraph.currentSig = d.id;
+            updateMutationGraphHighlight();
+        })
+        .call(d3.drag()
+            .on("start", function(event, d) {
+                if (!event.active) mutationGraphSim.alphaTarget(0.2).restart();
+                d.fx = d.x; d.fy = d.y;
+            })
+            .on("drag", function(event, d) {
+                var r = mSvg.node().getBoundingClientRect();
+                var info = mgViewportInfo(r.width, r.height);
+                var nx = event.x, ny = event.y;
+                if (nx < info.minX) nx = info.minX;
+                if (nx > info.maxX) nx = info.maxX;
+                if (ny < info.minY) ny = info.minY;
+                if (ny > info.maxY) ny = info.maxY;
+                d.fx = nx; d.fy = ny;
+            })
+            .on("end", function(event, d) {
+                if (!event.active) mutationGraphSim.alphaTarget(0);
+                if (!mutationGraphFrozen) {
+                    d.fx = null;
+                    d.fy = null;
+                    return;
+                }
+                triggerURLUpdate();
+            }));
+
+    var label = viewport.append("g")
+        .selectAll("image").data(nodes).join("image")
+        .attr("class", "mg-label")
+        .attr("href", d => snapToImage(d.snap))
+        .attr("width", mgImageSize)
+        .attr("height", mgImageSize)
+        .style("pointer-events", "none");
+
+    var linkLabel = viewport.append("g")
+        .selectAll("text").data(links).join("text")
+        .attr("class", "mg-link-label")
+        .text(d => d.label != null ? d.label : "")
+        .attr("font-family", "sans-serif")
+        .attr("font-size", "16.5px")
+        .attr("text-anchor", "middle")
+        .attr("fill", "rgba(255,255,255,0.85)")
+        .attr("paint-order", "stroke")
+        .attr("stroke", "rgba(10,10,10,0.9)")
+        .attr("stroke-width", "3px")
+        .style("pointer-events", "none");
+
+    mutationGraphSim.on("tick", () => {
+        if (!mutationGraphFrozen) {
+            var r = mSvg.node().getBoundingClientRect();
+            var info = mgViewportInfo(r.width, r.height);
+            for (var i = 0; i < nodes.length; i++) {
+                var d = nodes[i];
+                if (d.x < info.minX) { d.x = info.minX; if (d.vx) d.vx = 0; }
+                if (d.x > info.maxX) { d.x = info.maxX; if (d.vx) d.vx = 0; }
+                if (d.y < info.minY) { d.y = info.minY; if (d.vy) d.vy = 0; }
+                if (d.y > info.maxY) { d.y = info.maxY; if (d.vy) d.vy = 0; }
+            }
+        }
+        link.attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+            .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+        linkLabel.attr("x", d => (d.source.x + d.target.x) / 2)
+                 .attr("y", d => (d.source.y + d.target.y) / 2 - 3);
+        node.attr("cx", d => d.x).attr("cy", d => d.y);
+        label.attr("x", d => d.x - mgImageSize / 2).attr("y", d => d.y - mgImageSize / 2);
+    });
+
+    applyMutationGraphZoom();
+}
+
+function applyPrincipalFraming() {
+    var currentNodes = simulation.nodes().map(node => ({
+        id: node.id,
+        color: node.color,
+        x: node.x,
+        y: node.y,
+        label: node.label,
+        frozen: node.frozen
+    }));
+    var currentLinks = nodeLinks.map(link => ({
+        source: link.source.id,
+        target: link.target.id,
+        color: link.color,
+        label: link.label
+    }));
+
+    var maxId = 0;
+    if (currentNodes.length > 0) {
+        maxId = Math.max(...currentNodes.map(n =>
+            parseInt((n.id + "").replace(/[^0-9]/g, '')) || 0
+        ));
+    }
+
+    var newNodes = [...currentNodes];
+    var newLinks = [...currentLinks];
+    var offset = 80;
+
+    for (var i = 0; i < currentNodes.length; i++) {
+        var orig = currentNodes[i];
+        if (orig.frozen) continue;
+        maxId += 1;
+        var newId = maxId.toString();
+        newNodes.push({
+            id: newId,
+            color: "white",
+            x: orig.x,
+            y: orig.y - offset,
+            label: orig.label + "'",
+            frozen: true
+        });
+        newLinks.push({
+            source: newId,
+            target: orig.id,
+            color: "white",
+            label: "1"
+        });
+    }
+
+    svg.selectAll("*").remove();
+    ForceGraph({ nodes: newNodes, links: newLinks });
+    resetMutationGraph();
+}
+
+function setModifyingState(state) {
+    modifyingState = state;
+    UpdateState();
+}
+
+
+function keyupHandle(e) {
+    if (document.activeElement.tagName === 'INPUT') {
+            return; // Exit the function if we're editing an input
+    }
+    if (e.code + "" == "KeyM") {
+        modifyingState = MUTATE_STATE;
+    }
+    if (e.code + "" == "KeyT") {
+        modifyingState = TRANSLATE_STATE;
+    }
+    if (e.code + "" == "KeyV") {
+        modifyingState = CREATE_VERTEX_STATE;
+    }
+    if (e.code + "" == "KeyR") {
+        modifyingState = RENAME_VERTEX_STATE;
+    }
+    if (e.code + "" == "KeyE") {
+        modifyingState = CREATE_EDGE_STATE;
+    }
+    if (e.code + "" == "KeyD") {
+        modifyingState = DELETE_VERTEX_STATE;
+    }
+    if (e.code + "" == "KeyC") {
+        modifyingState = DELETE_EDGE_STATE;
+    }
+    if (e.code + "" == "KeyF") {
+        modifyingState = FREEZE_VERTEX_STATE;
+    }
+
+    UpdateState();
+}
+
+function keydownHandle() {
+
+}
+
+var CURRENT_VERTEX_LABEL = "0";
+var CURRENT_LINK_LABEL = "1";
+
+var svg;
+var simulation;
+var nodeLinks;
+
+window.addEventListener('resize', () => {
+  const newWidth = window.innerWidth - 250;
+  const newHeight = window.innerHeight;
+  
+  svg
+    .attr("width", newWidth)
+    .attr("height", newHeight)
+    .attr("viewBox", [-newWidth / 2, -newHeight / 2, newWidth, newHeight]);
+    const currentNodes = simulation.nodes().map(node => ({
+          id: node.id,
+          color: node.color,
+          x: node.x,
+          y: node.y,
+          label: node.label,
+          frozen: node.frozen
+      }));
+
+      // Get current links
+      const currentLinks = nodeLinks.map(link => ({
+          source: link.source.id,
+          target: link.target.id,
+          color: link.color,
+          label: link.label
+      }));
+
+      // Clear existing SVG
+      svg.selectAll("*").remove();
+
+      // Create new force graph with updated data
+      ForceGraph({
+          nodes: currentNodes,
+          links: currentLinks
+      });
+});
+
+document.addEventListener('keypress', logKey);
+document.addEventListener('keydown', keydownHandle);
+document.addEventListener('keyup', keyupHandle);
+
+function pauseOrUnpause() {
+    if (!running) {
+        nodeStrength = forceNode.strength();
+        linkStrength = forceLink.strength();
+        forceNode.strength(0)
+        forceLink.strength(0)
+    }
+    else {
+        forceNode.strength(nodeStrength);
+        forceLink.strength(linkStrength);
+        simulation.alphaTarget(0).restart();
+    }
+}
+
+function logKey(e) {
+  if(e.code + "" === "KeyP")
+  {
+    running = !running;
+    pauseOrUnpause();
+  }
+}
+
+var forceNode;
+var forceLink;
+
+
+var simulation;
+
+function ForceGraph({
+  nodes, // an iterable of node objects (typically [{id}, …])
+  links // an iterable of link objects (typically [{source, target}, …])
+}, {
+  nodeId = d => d.id, // given d in nodes, returns a unique identifier (string)
+  nodeGroup = d => d.color, // given d in nodes, returns an (ordinal) value for color
+  nodeGroups, // an array of ordinal values representing the node groups
+  nodeTitle, // given d in nodes, a title string
+  nodeFill = "none", // node stroke fill (if not using a group color encoding)
+  nodeStroke = "#fff", // node stroke color
+  nodeStrokeWidth = 1.5, // node stroke width, in pixels
+  nodeStrokeOpacity = 1, // node stroke opacity
+  nodeRadius =  30, // node radius, in pixels
+  linkSource = ({source}) => source, // given d in links, returns a node identifier string
+  linkTarget = ({target}) => target, // given d in links, returns a node identifier string
+  linkStroke = "#999", // link stroke color
+  linkStrokeOpacity = 0.6, // link stroke opacity
+  linkStrokeWidth = 2, // given d in links, returns a stroke width in pixels
+  linkStrokeLinecap = "round", // link stroke linecap
+  colors = d3.schemeTableau10, // an array of color strings, for the node groups
+  invalidation // when this promise resolves, stop the simulation
+} = {}) {
+svg = d3.select("svg");
+
+// Clear existing SVG
+      svg.selectAll("*").remove();
+    nodeLinks = links;
+    console.log(JSON.stringify({"nodes": nodes, "links": links}));
+  // Compute values.
+  const N = d3.map(nodes, nodeId).map(intern);
+  const COLORMAP = d3.map(nodes, d => d.color).map(intern);
+  const LABELMAP = d3.map(nodes, d => d.label).map(intern);
+  const LABELLINKMAP = d3.map(links, d => d.label).map(intern);
+  const IDMAP = d3.map(links, d => d.id).map(intern);
+  const LS = d3.map(links, linkSource).map(intern);
+  const LT = d3.map(links, linkTarget).map(intern);
+  const FONTSIZE = d3.map(links, linkTarget).map(intern);
+  const LINKCOLOR = d3.map(links, l => l.color).map(intern);
+  if (nodeTitle === undefined) nodeTitle = (_, i) => N[i];
+  const T = nodeTitle == null ? null : d3.map(nodes, nodeTitle);
+  const G = nodeGroup == null ? null : d3.map(nodes, nodeGroup).map(intern);
+  const W = typeof linkStrokeWidth !== "function" ? null : d3.map(links, linkStrokeWidth);
+  
+  const EDGECOLOR = typeof linkStrokeWidth !== "function" ? null : d3.map(links, l => l.color);
+
+  // Replace the input nodes and links with mutable objects for the simulation.
+  nodes = d3.map(nodes, (node, i) => ({
+        id: N[i],
+        color: node.color,
+        // Initialize position if provided, otherwise undefined (simulation will assign random position)
+        x: node.x !== undefined ? node.x : undefined,
+        y: node.y !== undefined ? node.y : undefined,
+        // Also preserve fx/fy if provided (for fixed positions)
+        fx: node.x !== undefined ? node.x : undefined,
+        fy: node.y !== undefined ? node.y : undefined,
+        label: node.label !== undefined ? node.label : undefined,
+        frozen: node.frozen === true,
+  }));
+  links = d3.map(links, (_, i) => ({source: LS[i], target: LT[i], color: LINKCOLOR[i], label: LABELLINKMAP[i]}));
+  nodeLinks = links;
+  // Compute default domains.
+  if (G && nodeGroups === undefined) nodeGroups = d3.sort(G);
+
+  // Construct the scales.
+  const color = nodeGroup == null ? null : d3.scaleOrdinal(nodeGroups, colors);
+    
+  
+  
+  // Construct the forces.
+  forceNode = d3.forceManyBody();
+  forceLink = d3.forceLink(links).id(({index: i}) => N[i]).distance(200);
+  //if (nodeStrength !== undefined) forceNode.strength(nodeStrength);
+  //if (linkStrength !== undefined) forceLink.strength(linkStrength);
+
+const width = window.innerWidth - 250; // Subtract button container width + gap
+const height = window.innerHeight;
+
+  // Add boundary force
+  const boundaryForce = () => {
+    const padding = nodeRadius + 10; // Buffer space from edges
+    
+    for (let node of nodes) {
+      // Left boundary
+      if (node.x < -width/2 + padding) {
+        node.x = -width/2 + padding;
+        node.vx = Math.abs(node.vx) * 0.5; // Bounce with reduced velocity
+      }
+      // Right boundary
+      if (node.x > width/2 - padding) {
+        node.x = width/2 - padding;
+        node.vx = -Math.abs(node.vx) * 0.5;
+      }
+      // Top boundary
+      if (node.y < -height/2 + padding) {
+        node.y = -height/2 + padding;
+        node.vy = Math.abs(node.vy) * 0.5;
+      }
+      // Bottom boundary
+      if (node.y > height/2 - padding) {
+        node.y = height/2 - padding;
+        node.vy = -Math.abs(node.vy) * 0.5;
+      }
+    }
+  }
+
+  simulation = d3.forceSimulation(nodes)
+      .force("link", forceLink)
+      .force("charge", forceNode)
+      .force("center", d3.forceCenter())
+      .force("boundary", boundaryForce) // Add boundary force
+      .on("tick", ticked);
+
+  // Optional: Visualize the boundaries
+  svg.append("rect")
+    .attr("x", -width/2)
+    .attr("y", -height/2)
+    .attr("width", width)
+    .attr("height", height)
+    .attr("fill", "none")
+    .attr("stroke", "rgba(255,255,255,0.2)")
+    .attr("stroke-width", 1);
+  
+svg
+  .attr("width", width)
+  .attr("height", height)
+  .attr("viewBox", [-width / 2, -height / 2, width, height]);
+  
+svg.on("click", function(event) {
+   if (modifyingState === CREATE_VERTEX_STATE) {
+      const [x, y] = d3.pointer(event);
+      
+      // Get current node positions and data
+      const currentNodes = simulation.nodes().map(node => ({
+          id: node.id,
+          color: node.color,
+          x: node.x,
+          y: node.y,
+          label: node.label,
+          frozen: node.frozen
+      }));
+
+      // Generate new node ID (find max ID and increment)
+      
+      var newNodeId = "";
+      if (currentNodes.length == 0) {
+         newNodeId = "0";
+      }
+      else {
+          const maxId = Math.max(...currentNodes.map(node => 
+              parseInt((node.id + "").replace(/[^0-9]/g, '')) || 0
+          ));
+          var newNodeId = (maxId + 1).toString();
+      }
+
+      // Add new node
+      const newNode = {
+          id: newNodeId,
+          color: "white",
+          x: x,
+          y: y,
+          label: newNodeId,
+          frozen: false
+      };
+
+      // Create new nodes array with existing nodes and new node
+      const newNodes = [...currentNodes, newNode];
+
+      // Get current links
+      const currentLinks = links.map(link => ({
+          source: link.source.id,
+          target: link.target.id,
+          color: link.color,
+          label: link.label
+      }));
+
+      // Clear existing SVG
+      svg.selectAll("*").remove();
+
+      // Create new force graph with updated data
+      ForceGraph({
+          nodes: newNodes,
+          links: currentLinks
+      }, {
+          // ... any other options you want to pass
+      });
+      resetMutationGraph();
+   }
+});     // .attr("style", "max-width: 100%; height: auto; height: intrinsic;");
+  
+  svg.append("defs").selectAll("marker")
+    .data(["end"])
+    .enter().append("marker")
+    .attr("id", String)
+    .attr("viewBox", "0 -5 10 10")
+    .attr("refX", 10)
+    .attr("refY", 0)
+    .attr("markerWidth", 8)
+    .attr("markerHeight", 8)
+    .attr("orient", "auto")
+    .append("path")
+    .attr("fill", "none")           // Remove fill
+    .attr("stroke", "white")        // Add stroke
+    .attr("stroke-width", "1")      // Add stroke width
+    .attr("d", "M0,-5L10,0L0,5");   // Simple V shape
+  const link = svg.append("g")
+    .attr("stroke", linkStroke)
+    .attr("stroke-opacity", linkStrokeOpacity)
+    .attr("stroke-width", typeof linkStrokeWidth !== "function" ? linkStrokeWidth : null)
+    .attr("stroke-linecap", linkStrokeLinecap)
+    .selectAll("line")
+    .data(links)
+    .join("line")
+    .attr("marker-end", "url(#end)");  // Add this line to enable the arrow
+    
+    
+  var textLink = svg.selectAll("textlink")
+                            .data(links)
+                            .enter()
+                           .append("text");
+
+    var textLinks = textLink
+      .attr("x", function(d) { return (d.source.x+d.target.x)/2.0; })
+      .attr("y", function(d) { return (d.source.y+d.target.y)/2.0; })
+      .text( ({index: i}) => LABELLINKMAP[i])
+      .attr("font-family", "sans-serif")
+      .attr("font-size", "25px")
+      .attr("text-anchor", "middle")
+      .attr("fill", "white");
+
+  var node = svg.append("g")
+    .attr("class", "node")
+      .attr("fill", "none")  // Make the fill transparent
+      .attr("stroke", "white")  // Set the outline color to white
+      .attr("stroke-opacity", 1)
+      .attr("stroke-width", 2)  // Make the outline a bit thicker
+    .selectAll("circle")
+    .data(nodes)
+  .enter().append("circle")
+      .attr("r", nodeRadius)
+      .call(drag(simulation));
+      
+
+  
+  var text = svg.selectAll("textnode")
+                            .data(nodes)
+                            .enter()
+                           .append("text");
+
+    var textLabels = text
+      .attr("x", function(d) { return d.x; })
+      .attr("y", function(d) { return d.y; })
+      .text( ({index: i}) => LABELMAP[i])
+      .attr("font-family", "sans-serif")
+      .attr("font-size", "25px")
+      .attr("text-anchor", "middle")
+      .attr("fill", "white");
+  
+   /*
+    node
+    .join("text")
+        .attr("text-anchor", "middle")
+        .attr("dy", ".3em").text("Node Name To Display")
+        .text(({index: i}) => {console.log(LABELMAP[i]); return "games"; return LABELMAP[i];});
+    */
+    
+  link.attr("stroke", l => {return l.color;} );
+  if (W) link.attr("stroke-width", ({index: i}) => W[i]);
+  if (G) node.attr("stroke", ({index: i}) => COLORMAP[i]);  // Apply color to stroke instead of fill
+  if (G) node.attr("fill", d => d.frozen ? "#555" : "black");
+  if (T) node.append("title").text(({index: i}) => T[i]);
+  if (invalidation != null) invalidation.then(() => simulation.stop());
+
+  function intern(value) {
+    return value !== null && typeof value === "object" ? value.valueOf() : value;
+  }
+
+  function ticked() {
+  
+    function getIntersectionPoint(x1, y1, x2, y2, cx, cy, r) {
+        // Vector from center to end point
+        const dx = x2 - cx;
+        const dy = y2 - cy;
+        // Length of this vector
+        const length = Math.sqrt(dx * dx + dy * dy);
+        
+        if (length === 0) return { x: cx, y: cy };
+        
+        // Unit vector
+        const udx = dx / length;
+        const udy = dy / length;
+        
+        // Point on circle, moved back by 10 pixels to accommodate arrow
+        return {
+            x: cx + udx * (r),  // Subtract 10 pixels to make room for arrow
+            y: cy + udy * (r)
+        };
+    }
+
+    link
+        .attr("x1", d => {
+            const sourcePoint = getIntersectionPoint(
+                d.source.x, d.source.y,
+                d.target.x, d.target.y,
+                d.source.x, d.source.y,
+                nodeRadius
+            );
+            return sourcePoint.x;
+        })
+        .attr("y1", d => {
+            const sourcePoint = getIntersectionPoint(
+                d.source.x, d.source.y,
+                d.target.x, d.target.y,
+                d.source.x, d.source.y,
+                nodeRadius
+            );
+            return sourcePoint.y;
+        })
+        .attr("x2", d => {
+            const targetPoint = getIntersectionPoint(
+                d.target.x, d.target.y,
+                d.source.x, d.source.y,
+                d.target.x, d.target.y,
+                nodeRadius
+            );
+            return targetPoint.x;
+        })
+        .attr("y2", d => {
+            const targetPoint = getIntersectionPoint(
+                d.target.x, d.target.y,
+                d.source.x, d.source.y,
+                d.target.x, d.target.y,
+                nodeRadius
+            );
+            return targetPoint.y;
+        });
+
+    node
+        .attr("cx", d => d.x)
+        .attr("cy", d => d.y);
+        
+    textLabels
+        .attr("x", function(d) { return d.x; })
+        .attr("y", function(d) { return d.y+8; });
+        
+    textLinks
+        .attr("x", function(d) { return getLabelPosition(d.source, d.target).x; })
+        .attr("y", function(d) { return getLabelPosition(d.source, d.target).y; });
+}
+  /*
+  
+    link
+      .attr("x1", d => d.source.x)
+      .attr("y1", d => d.source.y)
+      .attr("x2", d => d.target.x)
+      .attr("y2", d => d.target.y);
+
+    node
+      .attr("cx", d => d.x)
+      .attr("cy", d => d.y);
+      
+      textLabels
+      .attr("x", function(d) { return d.x; })
+      .attr("y", function(d) { return d.y-15; });
+      
+      textLinks
+      .attr("x", function(d) { return getLabelPosition(d.source, d.target).x; })
+      .attr("y", function(d) { return getLabelPosition(d.source, d.target).y; });
+  }
+  */
+  
+  function getLabelPosition(source, target){
+    var avgX = (source.x+target.x)/2.0;
+    var avgY = (source.y+target.y)/2.0;
+    return {x: avgX, y: avgY+5};
+    var dx = source.x-target.x;
+    var dy = source.y-target.y;
+    var mag = Math.sqrt(dx*dx+dy*dy);
+    if (mag == 0) {
+        mag = 1.0;
+    }
+    var normX = dx/mag;
+    var normY = dy/mag;
+    // rotate vector 90 degrees
+    var shiftAmount = 10;
+    var shiftX = normY*shiftAmount;
+    var shiftY = -normX*shiftAmount;
+    var extraShift = 5;
+    // account for weird text going too high or too low
+    if (normX < 0) {
+        shiftY -= extraShift*normX;
+    }
+    else {
+        shiftY += extraShift*normX;
+    }
+    return {x: avgX+shiftX, y: avgY+shiftY};
+    
+  }
+
+  var startId;
+  
+  const dragLineGroup = svg.append("g");
+  const dragLine = dragLineGroup
+    .append("line")
+    .attr("class", "drag-line")
+    .attr("stroke", "rgba(255,255,255,0.3)")
+    .attr("stroke-width", 2)
+    .attr("stroke-dasharray", "5,5")
+    .style("display", "none");
+
+  function drag(simulation) {    
+    function dragstarted(event) {
+      if (!event.active) simulation.alphaTarget(0.3).restart();
+      if (modifyingState == TRANSLATE_STATE) {
+        
+        event.subject.fx = event.subject.x;
+        event.subject.fy = event.subject.y;
+      }
+      if (modifyingState == CREATE_EDGE_STATE) {
+        var sourceNode = event.subject;
+        startId = event.subject.id;
+         dragLine
+          .style("display", null)
+          .attr("x1", sourceNode.x)
+          .attr("y1", sourceNode.y)
+          .attr("x2", sourceNode.x)
+          .attr("y2", sourceNode.y);
+      }
+      if (modifyingState == MUTATE_STATE) {
+           if (event.subject.frozen) return;
+           var mutateId = event.subject.id;
+           // get bmat
+           var ncols = nodes.length;
+           var bMat = makeArr(ncols, i => makeArr(ncols, j => BigInt(0)));
+           var idToI = {};
+           var iToId = {};
+           for (var i = 0; i < nodes.length; i++) {
+             idToI[nodes[i].id] = i;
+             iToId[i] = nodes[i].id;
+           }
+           
+           nodeLinks.map(link => {
+                var i = idToI[link.source.id];
+                var j = idToI[link.target.id];
+                bMat[i][j] = BigInt(link.label);
+                bMat[j][i] = -BigInt(link.label);
+           });
+           
+           var q = new Quiver(bMatrixToWeights(bMat));
+           q.mutate(idToI[mutateId], true);
+           
+           var newLinks = [];
+           for (var i = 0; i < q.b_matrix.length; i++) {
+              for (var j = 0; j < q.b_matrix[i].length; j++) {
+                var value = q.b_matrix[i][j];
+                if (value > BigInt(0)) {
+                    newLinks.push({
+                        source: iToId[i],
+                        target: iToId[j],
+                        color: "white",
+                        label: "" + value
+                    });
+                }
+              }
+           }
+           
+           
+           
+        
+            const currentNodes = simulation.nodes().map(node => ({
+              id: node.id,
+              color: node.color,
+              x: node.x,
+              y: node.y,
+              label: node.label,
+              frozen: node.frozen
+            }));
+
+            if (mutationGraph.enabled) {
+                var beforeLinks = nodeLinks.map(l => ({
+                    source: l.source.id, target: l.target.id,
+                    color: l.color, label: l.label
+                }));
+                var beforeSnap = snapshotQuiver(currentNodes, beforeLinks);
+                var afterSnap = snapshotQuiver(currentNodes, newLinks);
+                recordMutationInGraph(beforeSnap, afterSnap, event.subject.id, event.subject.label);
+            }
+
+            setTimeout(() => {
+              // Clear existing SVG
+              svg.selectAll("*").remove();
+
+              // Create new force graph with updated data
+              ForceGraph({
+                  nodes: currentNodes,
+                  links: newLinks
+              });
+            }, 1);
+
+      }
+      if (modifyingState == RENAME_VERTEX_STATE) {
+            CURRENT_VERTEX_LABEL = document.getElementById("renameVertexLabel").value;
+            console.log("Renaming to: " + CURRENT_VERTEX_LABEL);
+            var resultNodes = [];
+            for (var i = 0; i < simulation.nodes().length; i++) {
+                var node = simulation.nodes()[i];
+                var newNode = {
+                      id: node.id,
+                      color: node.color,
+                      x: node.x,
+                      y: node.y,
+                      label: node.label,
+                      frozen: node.frozen
+                };
+                if (node.id == event.subject.id) {
+                    newNode.label = CURRENT_VERTEX_LABEL;
+                }
+                resultNodes.push(newNode);
+            }
+
+              // Get current links
+              const currentLinks = nodeLinks.map(link => ({
+                  source: link.source.id,
+                  target: link.target.id,
+                  color: link.color,
+                  label: link.label
+              }));
+                
+              setTimeout(() => {
+                  // Clear existing SVG
+                  svg.selectAll("*").remove();
+
+                  // Create new force graph with updated data
+                  ForceGraph({
+                      nodes: resultNodes,
+                      links: currentLinks
+                  });
+                  resetMutationGraph();
+              }, 1);
+      }
+      if (modifyingState == FREEZE_VERTEX_STATE) {
+          var id = event.subject.id;
+          var resultNodes = [];
+          for (var i = 0; i < simulation.nodes().length; i++) {
+              var node = simulation.nodes()[i];
+              var newNode = {
+                  id: node.id,
+                  color: node.color,
+                  x: node.x,
+                  y: node.y,
+                  label: node.label,
+                  frozen: node.frozen
+              };
+              if (node.id == id) {
+                  newNode.frozen = !node.frozen;
+              }
+              resultNodes.push(newNode);
+          }
+          const currentLinks = nodeLinks.map(link => ({
+              source: link.source.id,
+              target: link.target.id,
+              color: link.color,
+              label: link.label
+          }));
+          setTimeout(() => {
+              svg.selectAll("*").remove();
+              ForceGraph({
+                  nodes: resultNodes,
+                  links: currentLinks
+              });
+              resetMutationGraph();
+          }, 1);
+      }
+      if (modifyingState == DELETE_VERTEX_STATE) {
+          var id = event.subject.id;
+
+          var resultNodes = []
+
+          for(var i = 0; i < simulation.nodes().length; i++){
+            var node = simulation.nodes()[i];
+            if (node.id + "" !== id  + "") {
+                resultNodes.push({
+                  id: node.id,
+                  color: node.color,
+                  x: node.x,
+                  y: node.y,
+                  label: node.label,
+                  frozen: node.frozen
+                });
+            }
+          }
+
+            
+            var resultLinks = [];
+            
+            // Get current links
+            for(var i = 0; i < nodeLinks.length; i++) {
+                var link = nodeLinks[i];
+                if (link.source.id != id && link.target.id != id) {
+                    resultLinks.push({
+                      source: link.source.id,
+                      target: link.target.id,
+                      color: link.color,
+                      label: link.label
+                    });
+                }
+            }
+
+            setTimeout(() => {
+              // Clear existing SVG
+              svg.selectAll("*").remove();
+
+              // Create new force graph with updated data
+              ForceGraph({
+                  nodes: resultNodes,
+                  links: resultLinks
+              });
+              resetMutationGraph();
+            }, 1);
+
+      }
+
+    }
+
+    
+    
+    
+    function dragged(event) {
+      if (modifyingState == TRANSLATE_STATE) {
+
+        event.subject.fx = event.x;
+        event.subject.fy = event.y;
+        refreshMutationGraphThumbnails();
+
+      }
+      if (modifyingState == CREATE_EDGE_STATE) {
+        dragLine
+          .attr("x2", event.x)
+          .attr("y2", event.y);
+      }
+    }
+
+    function dragended(event) {
+      if (!event.active) simulation.alphaTarget(0);
+      
+      if (modifyingState == TRANSLATE_STATE) {
+    
+               // Update URL with new graph state after any changes
+        const currentNodes = simulation.nodes().map(node => ({
+            id: node.id,
+            color: node.color,
+            x: node.x,
+            y: node.y,
+            label: node.label,
+            frozen: node.frozen
+        }));
+        
+        const currentLinks = nodeLinks.map(link => ({
+            source: link.source.id,
+            target: link.target.id,
+            color: link.color,
+            label: link.label
+        }));
+        
+        updateURL(currentNodes, currentLinks);
+      }      
+      if (modifyingState == CREATE_EDGE_STATE && startId !== undefined) {
+            CURRENT_LINK_LABEL = document.getElementById("createEdgeLabel").value;
+            // Update the drag line
+            //dragLine
+            //  .attr("x2", event.x)
+            //  .attr("y2", event.y);
+
+            // Find if we're hovering over a potential target node
+            const [mx, my] = [event.x, event.y];
+            targetNode = null;
+            
+            node.each(function(d) {
+              const dx = mx - d.x;
+              const dy = my - d.y;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+              console.log("dist: " + dist + " to id " + d.id);
+              if (dist < nodeRadius*2 && d.id !== startId) {
+                targetNode = d;
+              }
+            });
+            if (targetNode !== null) {
+                var endId = targetNode.id;
+                setTimeout(() => {
+                    const currentNodes = simulation.nodes().map(node => ({
+                      id: node.id,
+                      color: node.color,
+                      x: node.x,
+                      y: node.y,
+                      label: node.label,
+                      frozen: node.frozen
+                  }));
+
+                  console.log(startId + " start id and " + endId + " endId");
+                  var present = false;
+                  var newLinks = [];
+                  for (var i = 0; i < nodeLinks.length; i++) {
+                    var link = nodeLinks[i];
+                    var newLink = {
+                      source: link.source.id,
+                      target: link.target.id,
+                      color: link.color,
+                      label: link.label
+                    };
+                    if ((link.source.id == startId && link.target.id == endId) ||
+                        (link.source.id == endId && link.target.id == startId)) {
+                        newLink.label = CURRENT_LINK_LABEL;
+                        present = true;
+                        newLink.source = startId;
+                        newLink.target = endId;
+                    }
+                    if (newLink.label !== "0") {
+                        newLinks.push(newLink);
+                    }
+                  }
+                  if (!present && CURRENT_LINK_LABEL !== "0") {
+                    newLinks.push( {
+                        source: startId,
+                        target: endId,
+                        color: "white",
+                        label: CURRENT_LINK_LABEL
+                    });
+                  }
+
+                  // Clear existing SVG
+                  svg.selectAll("*").remove();
+
+                  // Create new force graph with updated data
+                  ForceGraph({
+                      nodes: currentNodes,
+                      links: newLinks
+                  });
+                  resetMutationGraph();
+              }, 1);
+          }
+      }
+      
+      
+    }
+    forceNode.strength(0);
+    forceLink.strength(0);
+
+    return d3.drag()
+      .on("start", dragstarted)
+      .on("drag", dragged)
+      .on("end", dragended);
+  }
+  
+
+
+        // Update URL with new graph state after any changes
+        setTimeout(() => {
+            const currentNodes = simulation.nodes().map(node => ({
+                id: node.id,
+                color: node.color,
+                x: node.x,
+                y: node.y,
+                label: node.label,
+                frozen: node.frozen
+            }));
+            
+            const currentLinks = nodeLinks.map(link => ({
+                source: link.source.id,
+                target: link.target.id,
+                color: link.color,
+                label: link.label
+            }));
+            
+            updateURL(currentNodes, currentLinks);
+        }, 100);
+  return Object.assign(svg.node(), {scales: {color}});
+}
+</script>
+<script src="vendor/quiver/lzma_worker.js"></script>
+<script>
+
+// From https://stackoverflow.com/a/1573141/2924421
+function colourNameToHex(colour)
+{
+    var colours = {"aliceblue":"#f0f8ff","antiquewhite":"#faebd7","aqua":"#00ffff","aquamarine":"#7fffd4","azure":"#f0ffff",
+    "beige":"#f5f5dc","bisque":"#ffe4c4","black":"#000000","blanchedalmond":"#ffebcd","blue":"#0000ff","blueviolet":"#8a2be2","brown":"#a52a2a","burlywood":"#deb887",
+    "cadetblue":"#5f9ea0","chartreuse":"#7fff00","chocolate":"#d2691e","coral":"#ff7f50","cornflowerblue":"#6495ed","cornsilk":"#fff8dc","crimson":"#dc143c","cyan":"#00ffff",
+    "darkblue":"#00008b","darkcyan":"#008b8b","darkgoldenrod":"#b8860b","darkgray":"#a9a9a9","darkgreen":"#006400","darkkhaki":"#bdb76b","darkmagenta":"#8b008b","darkolivegreen":"#556b2f",
+    "darkorange":"#ff8c00","darkorchid":"#9932cc","darkred":"#8b0000","darksalmon":"#e9967a","darkseagreen":"#8fbc8f","darkslateblue":"#483d8b","darkslategray":"#2f4f4f","darkturquoise":"#00ced1",
+    "darkviolet":"#9400d3","deeppink":"#ff1493","deepskyblue":"#00bfff","dimgray":"#696969","dodgerblue":"#1e90ff",
+    "firebrick":"#b22222","floralwhite":"#fffaf0","forestgreen":"#228b22","fuchsia":"#ff00ff",
+    "gainsboro":"#dcdcdc","ghostwhite":"#f8f8ff","gold":"#ffd700","goldenrod":"#daa520","gray":"#808080","green":"#008000","greenyellow":"#adff2f",
+    "honeydew":"#f0fff0","hotpink":"#ff69b4",
+    "indianred ":"#cd5c5c","indigo":"#4b0082","ivory":"#fffff0","khaki":"#f0e68c",
+    "lavender":"#e6e6fa","lavenderblush":"#fff0f5","lawngreen":"#7cfc00","lemonchiffon":"#fffacd","lightblue":"#add8e6","lightcoral":"#f08080","lightcyan":"#e0ffff","lightgoldenrodyellow":"#fafad2",
+    "lightgrey":"#d3d3d3","lightgreen":"#90ee90","lightpink":"#ffb6c1","lightsalmon":"#ffa07a","lightseagreen":"#20b2aa","lightskyblue":"#87cefa","lightslategray":"#778899","lightsteelblue":"#b0c4de",
+    "lightyellow":"#ffffe0","lime":"#00ff00","limegreen":"#32cd32","linen":"#faf0e6",
+    "magenta":"#ff00ff","maroon":"#800000","mediumaquamarine":"#66cdaa","mediumblue":"#0000cd","mediumorchid":"#ba55d3","mediumpurple":"#9370d8","mediumseagreen":"#3cb371","mediumslateblue":"#7b68ee",
+    "mediumspringgreen":"#00fa9a","mediumturquoise":"#48d1cc","mediumvioletred":"#c71585","midnightblue":"#191970","mintcream":"#f5fffa","mistyrose":"#ffe4e1","moccasin":"#ffe4b5",
+    "navajowhite":"#ffdead","navy":"#000080",
+    "oldlace":"#fdf5e6","olive":"#808000","olivedrab":"#6b8e23","orange":"#ffa500","orangered":"#ff4500","orchid":"#da70d6",
+    "palegoldenrod":"#eee8aa","palegreen":"#98fb98","paleturquoise":"#afeeee","palevioletred":"#d87093","papayawhip":"#ffefd5","peachpuff":"#ffdab9","peru":"#cd853f","pink":"#ffc0cb","plum":"#dda0dd","powderblue":"#b0e0e6","purple":"#800080",
+    "rebeccapurple":"#663399","red":"#ff0000","rosybrown":"#bc8f8f","royalblue":"#4169e1",
+    "saddlebrown":"#8b4513","salmon":"#fa8072","sandybrown":"#f4a460","seagreen":"#2e8b57","seashell":"#fff5ee","sienna":"#a0522d","silver":"#c0c0c0","skyblue":"#87ceeb","slateblue":"#6a5acd","slategray":"#708090","snow":"#fffafa","springgreen":"#00ff7f","steelblue":"#4682b4",
+    "tan":"#d2b48c","teal":"#008080","thistle":"#d8bfd8","tomato":"#ff6347","turquoise":"#40e0d0",
+    "violet":"#ee82ee",
+    "wheat":"#f5deb3","white":"#ffffff","whitesmoke":"#f5f5f5",
+    "yellow":"#ffff00","yellowgreen":"#9acd32"};
+
+    if (typeof colours[colour.toLowerCase()] != 'undefined')
+        return colours[colour.toLowerCase()];
+
+    return colour;
+}
+
+
+function parseDotFile(file, callback) {
+    reader = new FileReader();
+    reader.onload = function(event) {
+        require(['dotparser'], function(dotparser){
+            var text = event.target.result;
+            var nodes = dotparser.parse(text);
+            //console.log(JSON.stringify(nodes));
+            var actualNodes = nodes[0]['children'];
+            //console.log(actualNodes.length);
+            var outputNodes = [];
+            var nodeLookup = {};
+            var edges = [];
+            for (var i = 0; i < actualNodes.length; i++) {
+                var node = actualNodes[i];
+                if (node['type'] == 'edge_stmt') {
+                    console.log(JSON.stringify(node));
+                    var edgeNodes = node['edge_list'];
+                    if (edgeNodes.length == 2) {
+                        var node1Id = edgeNodes[0]['id'];
+                        var node2Id = edgeNodes[1]['id'];
+                        var edgeData = {"source": node1Id, "target": node2Id, 'color': 'black'};
+                        if (!nodeLookup.hasOwnProperty(node1Id)) {
+                            var node1Data = {"id": node1Id};
+                            nodeLookup[node1Id] = node1Data;
+                            outputNodes.push(node1Data);
+                        }
+                        if (!nodeLookup.hasOwnProperty(node2Id)) {
+                            var node2Data = {"id": node2Id};
+                            nodeLookup[node2Id] = node2Data;
+                            outputNodes.push(node2Data);
+                        }
+                            
+                        
+                        if (node['attr_list']){
+                            var edgeAttrs = node['attr_list'];
+                            for (var j = 0; j < edgeAttrs.length; j++) {
+                                var edgeAttr = edgeAttrs[j];
+                                edgeData[edgeAttr['id']] = edgeAttr['eq'];
+                                if (edgeAttr['id'] === 'color') {
+                                    edgeData[edgeAttr['id']] = colourNameToHex("" + edgeAttr['eq']);
+                                }
+                                console.log("edge data:" + edgeAttr['id'] + " " + edgeAttr['eq']);
+                            }
+                        }
+                        edges.push(edgeData);
+                    }
+                }
+                else if(node['type'] == 'node_stmt'){
+                    var nodeId = node['node_id']['id'];
+                    console.log("node id: " + nodeId);
+                    if (!nodeLookup.hasOwnProperty(nodeId)) {
+                        console.log("Added");
+                        var nodeData = {"id": nodeId, 'color': 'black'};
+                        nodeLookup[nodeId] = nodeData;
+                        outputNodes.push(nodeData);
+                    }
+                        
+                    if (node['attr_list']){
+                        var nodeAttrs = node['attr_list'];
+                        for (var j = 0; j < nodeAttrs.length; j++) {
+                            var nodeAttr = nodeAttrs[j];
+                            var nodeData = nodeLookup[nodeId];
+                            console.log(JSON.stringify(nodeData));
+                            nodeData[nodeAttr['id']] = nodeAttr['eq'];
+                            if (nodeAttr['id'] === 'color') {
+                                nodeData[nodeAttr['id']] = colourNameToHex("" + nodeAttr['eq']);
+                            }
+                            console.log(nodeAttr['id'] + " " + nodeData[nodeAttr['id']]);
+                        }
+                    }
+                    
+                    console.log(JSON.stringify(node));
+                }
+                else {
+                        console.log(JSON.stringify(node));
+                }
+            }
+            callback({"nodes": outputNodes, "links": edges});
+        });
+    };
+    reader.readAsText(file);
+
+}
+  
+  
+  function mouseover(d) {
+     d3.select(this).transition()
+               .duration('50')
+               .attr('opacity', '.85');
+          div.transition()
+               .duration(50)
+               .style("opacity", 1);
+          let num = d.id + '%';
+          div.html(num)
+               .style("left", (d.pageX + 10) + "px")
+               .style("top", (d.pageY - 15) + "px");
+  }
+  
+  function mouseout(d) {
+  d3.select(this).transition()
+               .duration('50')
+               .attr('opacity', '1');
+          div.transition()
+               .duration('50')
+               .style("opacity", 0);
+  }
+  
+  function dragstarted(d) {
+    if (!d3.event.active) simulation.alphaTarget(0.3).restart();
+    d.fx = d.x;
+    d.fy = d.y;
+    
+  }
+
+  function dragged(d) {
+    d.fx = d3.event.x;
+    d.fy = d3.event.y;
+  }
+
+  function dragended(d) {
+    if (!d3.event.active) simulation.alphaTarget(0);
+    d.fx = null;
+    d.fy = null;
+  }
+  
+  
+  function makeArr(arrLen, func) {
+  return [...Array(arrLen).keys()].map(func);
+}
+
+function matMul(A, B) {
+    var n = A.length;
+    var m = A[0].length;
+    var l = B[0].length;
+    var res = makeArr(n, i => makeArr(l, j => BigInt(0)));
+    for(var i = 0; i < n; i++){
+        for (var j = 0; j < l; j++){
+            var val = [];
+            // dot A[i][k] with B[k][j]
+            for (var k = 0; k < m; k++){
+                var multVal = A[i][k]*B[k][j];
+                if (multVal != 0) {
+                    val.push(multVal)
+                }
+            }
+            var valSum = val.reduce((partialSum, a) => partialSum + a, BigInt(0));
+            res[i][j] = BigInt(valSum);
+        }
+    }
+    return res;
+}
+
+// n + (n-1) + (n-2) + ... + 2 + 1
+function additiveFactorial(n) {
+    return (n*n+n)/2;
+}
+
+function dimToNWeights(dim) {
+    return additiveFactorial(dim-1);
+}
+
+// inverse of additive factorial, also with a shift
+function nWeightsToDim(nWeights) {
+    return Math.round(Math.sqrt(8*nWeights+1)/2-1.0/2.0)+1;
+}
+
+function bMatrixToWeights(b_matrix) {
+    var weights = []
+    var dim = b_matrix.length;
+    for (var offset = 1; offset < dim; offset++) {
+        for (var i = 0; i < dim-offset; i++) {
+            weights.push(b_matrix[i][i+offset]);
+        }
+    }
+    return weights;
+}
+
+function weightsToBMatrix(weights) {
+    var dim = nWeightsToDim(weights.length);
+    var b_matrix = makeArr(dim, i => makeArr(dim, j => BigInt(0)));
+    // [0, 1]
+    // [1, 2]
+    // [2, 3] 
+    // ...
+    // [dim-2,dim-2+1]
+    // then
+    // [0, 2]
+    // [1, 3]
+    // ...
+    // [dim-3, dim-3+2]
+    // ...
+    // [0, dim-1]
+    var j = 0;
+    for (var offset = 1; offset < dim; offset++) {
+        for (var i = 0; i < dim-offset; i++) {
+            b_matrix[i][i+offset] = BigInt(weights[j]);
+            b_matrix[i+offset][i] = -BigInt(weights[j]); // at transpose position, put negative value
+            j += 1;
+        }
+    }
+    return b_matrix;
+}
+
+function BigIntMax(a, b) {
+    if (a >= b) { return a; }
+    else { return b; }
+}
+
+var Quiver;
+Quiver = function(weights){
+  this.b_matrix = weightsToBMatrix(weights);
+  var myQ = this;
+  
+  this.getWeights = function() {
+    return bMatrixToWeights(myQ.b_matrix);
+  };
+  
+  this.mutate = function(index, inplace) {
+    var quiv = myQ.b_matrix;
+    var ncols = quiv.length;
+    var incomingEdges = [];
+    // see https://arxiv.org/pdf/1608.05735.pdf on bottom of page 33
+    // we can use that formula
+    var k = index;
+    // J matrix is all 1s on diagonal except -1 at (mutateI, mutateI)
+    var JMat = makeArr(ncols, i => makeArr(ncols, j => BigInt(0)));
+    for (var i = 0; i < ncols; i++){
+        if (i == k) {
+            JMat[i][i] = BigInt(-1);
+        }
+        else {
+            JMat[i][i] = BigInt(1);
+        }
+    }
+
+    var EMat = makeArr(ncols, i => makeArr(ncols, j => BigInt(0)));
+    for (var i = 0; i < ncols; i++) {
+        EMat[i][k] = BigIntMax(BigInt(0), -quiv[i][k]);
+    }
+
+    var FMat = makeArr(ncols, i => makeArr(ncols, j => BigInt(0)));
+    for (var j = 0; j < ncols; j++) {
+        FMat[k][j] = BigIntMax(BigInt(0), quiv[k][j]);
+    }
+
+    var lhsMat = makeArr(ncols, i => makeArr(ncols, j => BigInt(0)));
+    var rhsMat = makeArr(ncols, i => makeArr(ncols, j => BigInt(0)));
+    for (var i = 0; i < ncols; i++) {
+        for (var j = 0; j < ncols; j++) {
+            lhsMat[i][j] = JMat[i][j] + EMat[i][j];
+            rhsMat[i][j] = JMat[i][j] + FMat[i][j];
+        }
+    }
+    var res = matMul(matMul(lhsMat, quiv), rhsMat);
+    if (inplace) {
+        myQ.b_matrix = res;
+    }
+    else {
+        return new Quiver(bMatrixToWeights(res));
+    }
+  };
+};
+
+// disable zoom on edit input field
+document.addEventListener('touchstart', function(event) {
+            if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {
+                event.target.style.fontSize = '16px';
+            }
+        });
+function compressToBase64(str) {
+    return new Promise((resolve) => {
+        LZMA.compress(str, 9, (result) => {
+            // Convert Uint8Array to base64
+            bufferToBase64(result).then(data => {
+                resolve(data);
+            });
+        });
+    });
+}
+
+function decompressFromBase64(base64Str) {
+    return new Promise((resolve) => {
+        LZMA.decompress(base64ToBytes(base64Str), (result) => {
+            console.log("got result: " + result);
+            resolve(result);
+        });
+    });
+}
+
+function base64ToBytes(base64Str) {
+    return Uint8Array.fromBase64(base64Str)
+}
+
+function compressState(obj) {
+    return compressToBase64(JSON.stringify(obj));
+}
+
+async function decompressState(compressed) {
+    try {
+        return JSON.parse(decompressFromBase64(compressed));
+    }
+    catch (e) {
+        console.error('Base64 decode error:', e);
+        return null;
+    }
+}
+
+
+var END_WEIGHTS_PREFIX = "]____"
+
+function GetBMatrix(nodes, links) {
+    var idToI = {};
+    for (var i = 0; i < nodes.length; i++) {
+        idToI[nodes[i].id + ""] = i;
+    }
+
+    // get bmat
+    var ncols = nodes.length;
+    var bMat = makeArr(ncols, i => makeArr(ncols, j => BigInt(0)));
+ 
+ 
+    links.map(link => {
+        var i = idToI[link.source + ""];
+        var j = idToI[link.target + ""];
+        bMat[i][j] = BigInt(link.label);
+        bMat[j][i] = -BigInt(link.label);
+   });
+   return bMat;
+
+}
+
+var curHash = "";
+function updateURL(nodes, links) {
+    var names = nodes.map(n => n.label);
+    var pos = nodes.map(n => [Math.round(n.x), Math.round(n.y)]);
+    var frozen = nodes.map(n => n.frozen ? 1 : 0);
+
+    var bMat = GetBMatrix(nodes, links);
+   var weightsStrs = [];
+
+    var ncols = nodes.length;
+    for (var i = 0; i < ncols; i++) {
+        for (var j = 0; j < ncols; j++) {
+            weightsStrs.push(bMat[i][j] + "");
+        }
+    }
+   var weightsStr = "____[" + weightsStrs.join(",") + END_WEIGHTS_PREFIX;
+
+
+    var data = [weightsStr, names, pos, frozen];
+    var mgArr = serializeMutationGraph();
+    if (mgArr) for (var i = 0; i < mgArr.length; i++) data.push(mgArr[i]);
+
+    document.getElementById("bMatrixField").value = weightsStrs.join(",")
+
+    curHash = "#" + encodeURI(JSON.stringify(data));
+    window.location.hash = curHash;
+    recordUndo(curHash);
+}
+
+window.onhashchange =  function() {
+   if (window.location.hash !== curHash) {
+    console.log("loading from hash:" + window.location.hash);
+        loadGraphFromHash();
+   }
+};
+
+var tmpStrReplace = "__TMPCHARHERE";
+
+var specialChar = ".";
+function decodeURI(x) {
+    x = decodeURIComponent(x);
+    x = x.replaceAll(specialChar, tmpStrReplace).replaceAll(",", specialChar).replaceAll(tmpStrReplace, ",")
+    return x;
+}
+
+function encodeURI(x) {
+    x = x.replaceAll(specialChar, tmpStrReplace).replaceAll(",", specialChar).replaceAll(tmpStrReplace, ",")
+    return encodeURIComponent(x);
+}
+
+
+function loadGraphFromHash() {
+    if (window.location.hash) {
+            var hash = decodeURI(window.location.hash).substring(1); // remove the #
+            console.log("Got hash:" + hash);
+            var parsed = JSON.parse(hash);
+            var edgesStr = parsed[0], names = parsed[1], pos = parsed[2], frozen = parsed[3] || [];
+            var mgData = null;
+            if (parsed.length >= 8) {
+                var tArr = parsed[4] || [];
+                var opsFlat = parsed[5] || [];
+                var posFlat = parsed[6] || [];
+                var cIdx = parsed[7];
+                var opsRebuilt = [];
+                for (var oi = 0; oi < opsFlat.length; oi += 2) {
+                    opsRebuilt.push({ f: opsFlat[oi], v: String(opsFlat[oi + 1]) });
+                }
+                var posRebuilt = {};
+                for (var pi = 0; pi < posFlat.length; pi += 3) {
+                    posRebuilt[posFlat[pi]] = [posFlat[pi + 1], posFlat[pi + 2]];
+                }
+                mgData = { t: tArr, o: opsRebuilt, p: posRebuilt, c: cIdx };
+                if (parsed.length >= 9) {
+                    customMutationGraphHeight = parsed[8];
+                    var mgPanel = document.getElementById("mutationGraphPanel");
+                    if (mgPanel) mgPanel.style.height = customMutationGraphHeight + "px";
+                }
+                if (parsed.length >= 10) {
+                    mutationGraphZoom = parsed[9];
+                }
+            }
+            var nodes = [];
+
+            for (var i = 0; i < names.length; i++) {
+                nodes.push({
+                    x: parseFloat(pos[i][0]),
+                    y: parseFloat(pos[i][1]),
+                    label: names[i].trim() + "",
+                    id: i + "",
+                    color: "white",
+                    frozen: frozen[i] == 1,
+                });
+            }
+            
+            edgesStr = edgesStr.replaceAll("_", "");
+            edgesStr = edgesStr.substring(1);
+            edgesStr = edgesStr.substring(0, edgesStr.length - 1);
+            pieces = edgesStr.split(",");
+            console.log("pieces:" + pieces);
+            resultEdgesWeights = [];
+            for (var i = 0; i < pieces.length; i++) {
+                resultEdgesWeights.push(BigInt(pieces[i]));
+            }
+            var ncols = Math.ceil(Math.sqrt(resultEdgesWeights.length));
+            var bMat = makeArr(ncols, i => makeArr(ncols, j => BigInt(0)));
+            var ind = 0;
+            for (var i = 0; i < ncols; i++) {
+                for (var j = 0; j < ncols; j++) {
+                    bMat[i][j] = pieces[ind];
+                    ind += 1;
+                    if (pieces.length <= ind) {
+                        break;
+                    }
+                }
+            }
+            
+           var newLinks = [];
+           for (var i = 0; i < bMat.length; i++) {
+              for (var j = 0; j < bMat.length; j++) {
+                var value = bMat[i][j];
+                if (value > BigInt(0)) {
+                    newLinks.push({
+                        source: i + "",
+                        target: j + "",
+                        color: "white",
+                        label: "" + value
+                    });
+                }
+              }
+           }
+            
+              // Create new force graph with updated data
+              ForceGraph({
+                  nodes: nodes,
+                  links: newLinks
+              });
+              if (mgData) {
+                  var currentSnap = {
+                      nodes: nodes.map(n => ({...n})),
+                      links: newLinks.map(l => ({...l}))
+                  };
+                  restoreMutationGraph(mgData, currentSnap);
+              }
+              if (pendingImportCenter) {
+                  pendingImportCenter = false;
+                  centerMainQuiver();
+                  if (mgData) centerMutationGraph();
+                  triggerURLUpdate();
+              }
+              return true;
+    }
+    else {
+        return false;
+    }
+} 
+
+document.addEventListener("DOMContentLoaded", async function(event) {
+    setModifyingState(MUTATE_STATE);
+    setupImportDrop();
+    if (undoRedoEnabled) loadUndoStack();
+    refreshUndoRedoVisibility();
+    updateUndoRedoButtons();
+    if (!loadGraphFromHash()) {
+        ForceGraph({
+            "nodes": [
+                {"id":"0","color":"white","x":74,"y":12,"label":"0"},
+                {"id":"1","color":"white","x":-106,"y":83,"label":"1"},
+                {"id":"2","color":"white","x":-77,"y":-112,"label":"2"}
+            ],
+            "links": [
+                {"source": "0", "target": "1", "color": "white", "label": 1},
+                {"source": "1", "target": "2", "color": "white", "label": 1},
+                {"source": "2", "target": "0", "color": "white", "label": 1}
+            ]
+        });
+    }
+});
+
+
+  
+</script>
+</html>

@@ -3192,7 +3192,7 @@
   <div class="sheet">
     <button class="close cc-x-btn" id="settingsXClose" type="button" aria-label="close">×</button>
     <h3>Settings</h3>
-    <button id="extrasBtn" type="button">✨ Extras</button>
+    <button id="extrasBtn" type="button">Extras</button>
     <div class="row theme-row">
       <label>Theme</label>
       <!-- Hidden select kept so existing code paths (import/export, change
@@ -4247,6 +4247,7 @@
 <script src="/static/live-update.js"></script>
 <script src="/static/extras.js"></script>
 <script src="/static/extras-vibration.js"></script>
+<script src="/static/extras-apps.js"></script>
 <script>
 // Single source of truth for the app version. Bumped manually when shipping
 // a user-visible change (new features, data format upgrades, etc.). Shown
@@ -7063,6 +7064,14 @@ function fmtDate(ts) {
       // Last-viewed fractal permalink, so resuming on another device
       // lands on the same view.
       fractalLast: localStorage.getItem('cc.fractalLast.v1') || null,
+      // Saved synth songs + quivers (Extras → Synth / Quiver) live in their
+      // own IDB store like fractals; carried along so they travel with the save.
+      songs: (window.ExtrasSongs && window.ExtrasSongs.all)
+        ? await window.ExtrasSongs.all()
+        : [],
+      quivers: (window.ExtrasQuivers && window.ExtrasQuivers.all)
+        ? await window.ExtrasQuivers.all()
+        : [],
       // Active incense ({type, startMs}) so a burning incense keeps its
       // remaining time across devices / restarts.
       activeIncense: (window.Creatures && window.Creatures.getActiveIncense)
@@ -7429,6 +7438,15 @@ function fmtDate(ts) {
     if (Array.isArray(data.fractals) && window.ExtrasFractals && window.ExtrasFractals.importMerge) {
       try { await window.ExtrasFractals.importMerge(data.fractals); }
       catch (e) { console.error('importFractals failed', e); }
+    }
+    // Saved songs + quivers: union merge by id (skip duplicates).
+    if (Array.isArray(data.songs) && window.ExtrasSongs && window.ExtrasSongs.importMerge) {
+      try { await window.ExtrasSongs.importMerge(data.songs); }
+      catch (e) { console.error('importSongs failed', e); }
+    }
+    if (Array.isArray(data.quivers) && window.ExtrasQuivers && window.ExtrasQuivers.importMerge) {
+      try { await window.ExtrasQuivers.importMerge(data.quivers); }
+      catch (e) { console.error('importQuivers failed', e); }
     }
     // Last-viewed fractal: the imported save wins so loading it resumes
     // that view.

@@ -2382,6 +2382,10 @@
     }
     return set;
   }
+  // Do we already own (have captured) this fusion?
+  function isFusionOwned(a, b) {
+    return caughtFusionsSet().has(`${a}-${b}`);
+  }
 
   // Default display name for a fusion. Prefers the canonical fused
   // name from SPLIT_NAMES (e.g. "Jigglyish") when the table is loaded,
@@ -6041,6 +6045,33 @@
         position: absolute; top: 8px; right: 8px;
         width: 26px; height: 26px;
         filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3));
+      }
+      #battleScreen .battle-new-badge {
+        position: absolute;
+        top: -10px; left: -8px;
+        padding: 3px 9px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #fff;
+        background: var(--ui-accent, #b6896c);
+        border-radius: 999px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+        text-shadow: 0 1px 1px rgba(0,0,0,0.35);
+        transform: rotate(-8deg);
+        transform-origin: center;
+        pointer-events: none;
+        white-space: nowrap;
+        animation: battleNewPop 0.32s ease;
+      }
+      @keyframes battleNewPop {
+        0%   { transform: rotate(-8deg) scale(0.5);  opacity: 0; }
+        70%  { transform: rotate(-8deg) scale(1.12); opacity: 1; }
+        100% { transform: rotate(-8deg) scale(1);    opacity: 1; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #battleScreen .battle-new-badge { animation: none; }
       }
       #battleScreen .battle-name {
         font-size: 17px; font-weight: 600;
@@ -10548,6 +10579,7 @@
         <div class="battle-burst" hidden></div>
       </div>
       <div class="battle-info">
+        <div class="battle-new-badge" hidden>New</div>
         <img class="battle-incense" alt="from incense" hidden>
         <div class="battle-name"></div>
         <div class="battle-stats"></div>
@@ -10570,6 +10602,9 @@
   function openBattleScreen(spawn) {
     const el = ensureBattleScreen();
     _currentBattleSpawn = spawn;
+    // Show the "New" badge unless we already OWN this fusion (have one in
+    // the collection) — independent of whether we've merely seen it before.
+    const isNewFusion = !isFusionOwned(spawn.speciesA, spawn.speciesB);
     // Mark fusion seen + record which variant the user actually saw,
     // so the pokédex can silhouette variants they haven't yet seen.
     // Variant resolution is async; do it in the background.
@@ -10594,6 +10629,18 @@
     const typesEl = el.querySelector('.battle-types');
     if (typesEl) {
       typesEl.innerHTML = typeChipsHtml(fusionTypesFor(spawn.speciesA, spawn.speciesB));
+    }
+    // "New" badge — a little tag on the info bubble's top-left corner when
+    // this is the first time we've seen this fusion. Replay the pop on each
+    // open by restarting the CSS animation.
+    const newBadge = el.querySelector('.battle-new-badge');
+    if (newBadge) {
+      newBadge.hidden = !isNewFusion;
+      if (isNewFusion) {
+        newBadge.style.animation = 'none';
+        void newBadge.offsetWidth; // force reflow so the pop restarts
+        newBadge.style.animation = '';
+      }
     }
     // Incense badge — a little type-coloured orb in the info bubble's
     // top-right when this spawn came from an active incense.

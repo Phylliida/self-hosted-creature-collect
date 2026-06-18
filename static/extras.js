@@ -1027,7 +1027,7 @@
     title.textContent = 'Extras';
     backBtn.hidden = true;
     bubbles.hidden = false;
-    for (const t of Object.values(tools)) t.el.hidden = true;
+    for (const t of Object.values(tools)) { if (t.el) t.el.hidden = true; }
   }
   function showTool(id) {
     const t = tools[id];
@@ -1035,7 +1035,7 @@
     title.textContent = t.name;
     backBtn.hidden = false;
     bubbles.hidden = true;
-    for (const [tid, tt] of Object.entries(tools)) tt.el.hidden = (tid !== id);
+    for (const [tid, tt] of Object.entries(tools)) { if (tt.el) tt.el.hidden = (tid !== id); }
     if (t.onShow) t.onShow();
   }
   $('extrasBtn').onclick = () => {
@@ -1054,6 +1054,10 @@
     // Fractals opens its own full-screen window rather than an inline
     // tool view inside the extras sheet.
     if (b.dataset.extra === 'fractals') { openFractals(); return; }
+    // Full-screen registered tools (def.open) open their own window rather
+    // than an inline sheet view.
+    const reg = tools[b.dataset.extra];
+    if (reg && typeof reg.open === 'function') { reg.open(); return; }
     showTool(b.dataset.extra);
   });
 
@@ -1064,7 +1068,8 @@
   // Extras tool without bloating this file. The module supplies a bubble
   // icon/label and a build(view) callback that populates + wires its own view.
   // Generic on purpose — nothing tool-specific lives here.
-  //   def = { id, name, icon (HTML entity ok), label (HTML), build(view), onShow? }
+  //   def = { id, name, icon (HTML entity ok), label (HTML), build(view), onShow? } — inline tool, OR
+  //   def = { id, name, icon, label, open() }  — full-screen tool (opens its own window)
   global.ExtrasRegisterTool = function registerExtraTool(def) {
     if (!def || !def.id || tools[def.id]) return null;
     const btn = document.createElement('button');
@@ -1074,6 +1079,12 @@
     btn.innerHTML = '<span class="bubble-icon">' + (def.icon || '&#10024;') +
       '</span><span>' + (def.label || def.name || def.id) + '</span>';
     bubbles.appendChild(btn);
+
+    // Full-screen tool: opens its own window; no inline sheet view.
+    if (typeof def.open === 'function') {
+      tools[def.id] = { name: def.name || def.id, open: def.open };
+      return null;
+    }
 
     const view = document.createElement('div');
     view.id = 'extras_' + def.id;
@@ -1952,17 +1963,9 @@
       rolls.forEach((r, i) => tilesEl.appendChild(makeTile(r.n, r.v, '', i)));
       const sum = rolls.reduce((a, r) => a + r.v, 0);
       const total = showTotal(sum);
-      if (rolls.some((r) => r.n === 20 && r.v === 20)) {
-        flairEl.textContent = '✨ NAT 20! ✨';
-      } else if (rolls.every((r) => r.v === r.n)) {
-        flairEl.textContent = '💥 MAX ROLL!';
-      } else if (rolls.some((r) => r.n === 20 && r.v === 1)) {
-        flairEl.textContent = '💀 oof, nat 1';
-      } else if (rolls.every((r) => r.v === 1)) {
-        flairEl.textContent = '🫠 all ones...';
-      } else {
-        flairEl.textContent = '';
-      }
+      // Result flair (NAT 20 / MAX ROLL / nat 1 / all ones) removed — the
+      // pop-up celebratory messages were a bit intrusive; just show the roll.
+      flairEl.textContent = '';
       const desc = DICE.filter((n) => pool[n]).map((n) => pool[n] + 'd' + n).join(' + ');
       histAdd(desc + modSuffix() + ' → ' + total);
     }
@@ -1978,9 +1981,7 @@
         tilesEl.appendChild(makeTile(20, v, isKept ? '' : 'dropped', i));
       });
       const total = showTotal(kept);
-      if (kept === 20) flairEl.textContent = '✨ NAT 20! ✨';
-      else if (kept === 1) flairEl.textContent = '💀 oof, nat 1';
-      else flairEl.textContent = '';
+      flairEl.textContent = '';
       histAdd((keepHigh ? 'adv' : 'dis') + modSuffix() + ' → ' + total);
     }
 
@@ -2159,11 +2160,14 @@
       spinning = true;
       removeBtn.hidden = true;
       resultEl.textContent = '...';
+      // Honor reduced-motion with a gentler, shorter spin rather than an
+      // instant jump — the wheel should always visibly spin.
       const reduced = global.matchMedia
         && global.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      const duration = reduced ? 1 : 3400;
+      const duration = reduced ? 1400 : 3400;
       const start = rot;
-      const target = rot + (5 + Math.random() * 3) * 2 * Math.PI + Math.random() * 2 * Math.PI;
+      const turns = reduced ? (2 + Math.random()) : (5 + Math.random() * 3);
+      const target = start + turns * 2 * Math.PI + Math.random() * 2 * Math.PI;
       const t0 = performance.now();
       function frame(now) {
         const t = Math.min(1, (now - t0) / duration);
