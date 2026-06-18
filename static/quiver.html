@@ -238,6 +238,26 @@ body {
     letter-spacing: 2px;
 }
 
+  /* ── Mobile: keep the control panel slim + vertically scrollable so the
+     quiver gets most of the width and every button stays reachable. ── */
+  @media (max-width: 760px) {
+    .container { gap: 0.5rem; }
+    .button-container {
+      min-width: 0;
+      padding: 0.5rem;
+      gap: 0.35rem;
+      overflow-y: auto;
+      max-height: 100%;
+      -webkit-overflow-scrolling: touch;
+    }
+    .button-container br { display: none; }
+    .defaultButton, .selectedButton {
+      padding: 0.4em 0.6em;
+      font-size: 11px;
+      letter-spacing: 0.5px;
+    }
+    .extras-panel, .saving-panel { max-height: 78vh; overflow-y: auto; }
+  }
 
   </style>
 
@@ -1700,13 +1720,15 @@ var simulation;
 var nodeLinks;
 
 window.addEventListener('resize', () => {
-  const newWidth = window.innerWidth - 250;
-  const newHeight = window.innerHeight;
-  
+  const _gcR = document.querySelector('.graph-container');
+  const newWidth = (_gcR && _gcR.clientWidth) ? _gcR.clientWidth : (window.innerWidth - 250);
+  const newHeight = (_gcR && _gcR.clientHeight) ? _gcR.clientHeight : window.innerHeight;
+
   svg
     .attr("width", newWidth)
     .attr("height", newHeight)
-    .attr("viewBox", [-newWidth / 2, -newHeight / 2, newWidth, newHeight]);
+    // Default zoomed out ~2x so the whole quiver fits comfortably.
+    .attr("viewBox", [-newWidth, -newHeight, newWidth * 2, newHeight * 2]);
     const currentNodes = simulation.nodes().map(node => ({
           id: node.id,
           color: node.color,
@@ -1840,8 +1862,11 @@ svg = d3.select("svg");
   //if (nodeStrength !== undefined) forceNode.strength(nodeStrength);
   //if (linkStrength !== undefined) forceLink.strength(linkStrength);
 
-const width = window.innerWidth - 250; // Subtract button container width + gap
-const height = window.innerHeight;
+// Size the world box / viewBox from the actual graph area (the control-panel
+// width varies, especially on mobile) instead of a hard-coded 250px reserve.
+const _gc0 = document.querySelector('.graph-container');
+const width = (_gc0 && _gc0.clientWidth) ? _gc0.clientWidth : (window.innerWidth - 250);
+const height = (_gc0 && _gc0.clientHeight) ? _gc0.clientHeight : window.innerHeight;
 
   // Add boundary force
   const boundaryForce = () => {
@@ -1891,7 +1916,8 @@ const height = window.innerHeight;
 svg
   .attr("width", width)
   .attr("height", height)
-  .attr("viewBox", [-width / 2, -height / 2, width, height]);
+  // Default zoomed out ~2x so the whole quiver fits comfortably.
+  .attr("viewBox", [-width, -height, width * 2, height * 2]);
   
 svg.on("click", function(event) {
    if (modifyingState === CREATE_VERTEX_STATE) {
@@ -3092,5 +3118,33 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 
 
   
+</script>
+<script>
+// External SVG-thumbnail hook for the Extras "Quiver" window — returns a small
+// data:image/svg+xml preview of the current quiver so saved quivers show who's
+// who in the browse list (like the fractal previews). Synchronous.
+window.QuiverApp = window.QuiverApp || {};
+window.QuiverApp.thumbnail = function () {
+  try {
+    var svg = document.querySelector('.graph-container > svg');
+    if (!svg) return null;
+    var clone = svg.cloneNode(true);
+    clone.setAttribute('width', 240);
+    clone.setAttribute('height', 180);
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    clone.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    // Dark backdrop covering the viewBox so the preview matches the app.
+    var vb = (svg.getAttribute('viewBox') || '').split(/[\s,]+/).map(Number);
+    if (vb.length === 4 && vb.every(function (n) { return isFinite(n); })) {
+      var bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      bg.setAttribute('x', vb[0]); bg.setAttribute('y', vb[1]);
+      bg.setAttribute('width', vb[2]); bg.setAttribute('height', vb[3]);
+      bg.setAttribute('fill', '#111');
+      clone.insertBefore(bg, clone.firstChild);
+    }
+    var str = new XMLSerializer().serializeToString(clone);
+    return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(str);
+  } catch (e) { return null; }
+};
 </script>
 </html>
