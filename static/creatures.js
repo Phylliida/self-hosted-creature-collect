@@ -684,7 +684,9 @@
   // for the family pair). Idempotent: once set, never re-rolled.
   function _rollShinyForRecord(rec) {
     if (!rec || rec.shinyVariant !== undefined) return;
-    const rate = (global.ShinyStore && global.ShinyStore.RATE) || 0.001;
+    let rate = (global.ShinyStore && global.ShinyStore.RATE) || 0.001;
+    // Incense spawns roll shiny at double the normal rate.
+    if (rec.spawn && rec.spawn.incense) rate *= 2;
     const count = (global.ShinyStore && global.ShinyStore.VARIANT_COUNT) || 12;
     const hit = _forceShinyOn() || (Math.random() < rate);
     rec.shinyVariant = hit ? Math.floor(Math.random() * count) : null;
@@ -2045,6 +2047,9 @@
       // this normalized object, not the raw stored record, so a dropped
       // field silently disables the tag.
       fromEgg: e.fromEgg === true,
+      // Incense-origin flags, for the "From <type> Incense" detail line.
+      fromIncense: e.fromIncense === true,
+      incenseType: (typeof e.incenseType === 'string') ? e.incenseType : null,
       level: e.level,
       sizeM: e.sizeM,
       name: fusionName(e.speciesA, e.speciesB),
@@ -2495,11 +2500,68 @@
   for (const t of ALL_TYPES) {
     ITEMS[_incenseKey(t)] = {
       name: _titleCaseType(t) + ' Incense',
-      desc: 'Crafted from an egg. Attracts ' + _titleCaseType(t)
-        + '-type spawns. (Effect coming soon.)',
+      desc: 'Use it for 30 min of extra ' + _titleCaseType(t)
+        + '-type spawns (double shiny rate). Crafted from eggs.',
       icon: _incenseOrbIcon(TYPE_COLORS[t]),
       incenseType: t,
     };
+  }
+
+  // ── Active incense state ──
+  // Which incense is currently burning + when it started. Lives in
+  // localStorage (tiny) AND the save file, so it keeps running across app
+  // restarts until its 30 min are up. Pushed to the spawn engine via
+  // Spawns.setActiveIncense; the engine handles expiry + generation.
+  const ACTIVE_INCENSE_KEY = 'cc.activeIncense.v1';
+  function _incenseDurationMs() {
+    return (global.Spawns && global.Spawns.INCENSE_DURATION_MS) || (30 * 60 * 1000);
+  }
+  function readActiveIncense() {
+    let s = null;
+    try { s = JSON.parse(localStorage.getItem(ACTIVE_INCENSE_KEY) || 'null'); } catch { s = null; }
+    if (!s || typeof s.type !== 'string' || typeof s.startMs !== 'number') return null;
+    if (!TYPE_COLORS[s.type]) return null;
+    if (Date.now() >= s.startMs + _incenseDurationMs()) {
+      // Expired — clean up so the bag/overlay stop treating it as active.
+      try { localStorage.removeItem(ACTIVE_INCENSE_KEY); } catch (_) {}
+      if (global.Spawns && global.Spawns.setActiveIncense) global.Spawns.setActiveIncense(null);
+      return null;
+    }
+    return { type: s.type, startMs: s.startMs };
+  }
+  function incenseRemainingMs() {
+    const a = readActiveIncense();
+    return a ? Math.max(0, a.startMs + _incenseDurationMs() - Date.now()) : 0;
+  }
+  function _pushActiveIncenseToSpawns() {
+    if (global.Spawns && global.Spawns.setActiveIncense) {
+      global.Spawns.setActiveIncense(readActiveIncense());
+    }
+  }
+  // Consume one incense of `type` from the bag and start a fresh 30-min
+  // window (replacing any active incense — only one burns at a time).
+  function activateIncense(type) {
+    const key = _incenseKey(type);
+    const bag = readBag();
+    if ((bag[key] || 0) < 1) return false;
+    bag[key] -= 1;
+    if (bag[key] <= 0) delete bag[key];
+    writeBag(bag);
+    const state = { type, startMs: Date.now() };
+    try { localStorage.setItem(ACTIVE_INCENSE_KEY, JSON.stringify(state)); } catch (_) {}
+    if (global.Spawns && global.Spawns.setActiveIncense) global.Spawns.setActiveIncense(state);
+    if (typeof refreshSpawnOverlay === 'function') refreshSpawnOverlay();
+    return true;
+  }
+  // Save-import hook (index.html): adopt an active incense from a backup,
+  // honouring its original start time so the remaining window is correct.
+  function setActiveIncenseState(state) {
+    if (!state || typeof state.type !== 'string' || typeof state.startMs !== 'number') return;
+    if (!TYPE_COLORS[state.type]) return;
+    if (Date.now() >= state.startMs + _incenseDurationMs()) return; // already expired
+    try { localStorage.setItem(ACTIVE_INCENSE_KEY, JSON.stringify({ type: state.type, startMs: state.startMs })); } catch (_) {}
+    _pushActiveIncenseToSpawns();
+    if (typeof refreshSpawnOverlay === 'function') refreshSpawnOverlay();
   }
 
   function typeChipsHtml(types) {
@@ -4261,6 +4323,11 @@
         margin-top: 1px;
         opacity: 0.7;
       }
+      #creatureInventory .detail-incense-row {
+        display: flex; align-items: center; justify-content: center; gap: 5px;
+        font-size: 12px; margin-top: 0; margin-bottom: 7px;
+      }
+      #creatureInventory .detail-incense-orb { width: 16px; height: 16px; }
       #creatureInventory .detail-caught-clickable,
       #creatureInventory .fusion-encounter-clickable {
         cursor: pointer;
@@ -5238,6 +5305,24 @@
         color: var(--ui-muted, #666);
         font-size: 13px;
       }
+      /* Active-incense banner + per-item Use button. */
+      #creatureInventory .bag-incense-banner {
+        display: flex; align-items: center; gap: 10px; padding: 10px;
+        margin: 0 0 12px; border-radius: var(--ui-radius, 8px);
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+        border: 1px solid var(--ui-accent, #b06cff);
+      }
+      #creatureInventory .bag-incense-banner .bag-icon { width: 30px; height: 30px; align-self: center; }
+      #creatureInventory .bag-row-right {
+        display: flex; flex-direction: column; align-items: flex-end;
+        gap: 6px; align-self: center;
+      }
+      #creatureInventory .bag-use {
+        padding: 4px 12px; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+        color: #fff; border: none; border-radius: var(--ui-radius, 8px);
+        background: var(--ui-accent, #b06cff);
+      }
+      #creatureInventory .bag-use:active { transform: scale(0.96); }
       /* ── Craft ── */
       /* Matches the header nav buttons (Tags / Bag / Candy / …). */
       #creatureInventory .bag-craft {
@@ -5927,6 +6012,11 @@
         border-radius: var(--ui-radius, 8px);
         text-align: center;
         box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+      }
+      #battleScreen .battle-incense {
+        position: absolute; top: 8px; right: 8px;
+        width: 26px; height: 26px;
+        filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3));
       }
       #battleScreen .battle-name {
         font-size: 17px; font-weight: 600;
@@ -7698,9 +7788,25 @@
     // Craft launcher — always available (you craft from eggs, not from
     // bag contents), so it shows even when the bag is empty.
     const craftBtnHtml = `<button class="bag-craft" type="button">Craft incense</button>`;
-    const wireCraft = () => {
+    // Active-incense banner (if one is burning).
+    const active = readActiveIncense();
+    let bannerHtml = '';
+    if (active) {
+      const meta = ITEMS[_incenseKey(active.type)] || {};
+      const mins = Math.ceil(incenseRemainingMs() / 60000);
+      const tn = _titleCaseType(active.type);
+      bannerHtml = `<div class="bag-incense-banner">`
+        + (meta.icon ? `<img class="bag-icon" src="${escapeHtml(meta.icon)}" alt="">` : '')
+        + `<div class="bag-info"><div class="bag-name">${escapeHtml(tn)} Incense active</div>`
+        + `<div class="bag-desc">~${mins} min left · extra ${escapeHtml(tn)} spawns, double shiny</div></div>`
+        + `</div>`;
+    }
+    const wire = () => {
       const cb = body.querySelector('.bag-craft');
       if (cb) cb.addEventListener('click', showCraft);
+      body.querySelectorAll('.bag-use').forEach((btn) => {
+        btn.addEventListener('click', () => _confirmUseIncense(btn.dataset.incense));
+      });
     };
     const bag = readBag();
     const entries = Object.entries(bag)
@@ -7712,10 +7818,10 @@
         return na.localeCompare(nb);
       });
     if (!entries.length) {
-      body.innerHTML = craftBtnHtml + `
+      body.innerHTML = craftBtnHtml + bannerHtml + `
         <div class="bag-empty">Bag is empty.</div>
       `;
-      wireCraft();
+      wire();
       return;
     }
     const total = entries.reduce((sum, [, n]) => sum + n, 0);
@@ -7725,22 +7831,41 @@
       const iconHtml = meta.icon
         ? `<img class="bag-icon" src="${escapeHtml(meta.icon)}" alt="">`
         : '';
+      const useBtn = meta.incenseType
+        ? `<button class="bag-use" type="button" data-incense="${escapeHtml(meta.incenseType)}">Use</button>`
+        : '';
       return `
-        <div class="bag-row">
+        <div class="bag-row${meta.incenseType ? ' bag-row-incense' : ''}">
           ${iconHtml}
           <div class="bag-info">
             <div class="bag-name">${escapeHtml(meta.name)}</div>
             ${meta.desc ? `<div class="bag-desc">${escapeHtml(meta.desc)}</div>` : ''}
           </div>
-          <div class="bag-count">×${n}</div>
+          <div class="bag-row-right">
+            <div class="bag-count">×${n}</div>
+            ${useBtn}
+          </div>
         </div>
       `;
     }).join('');
-    body.innerHTML = craftBtnHtml + `
+    body.innerHTML = craftBtnHtml + bannerHtml + `
       <div class="bag-subtitle">${escapeHtml(subtitle)}</div>
       <div class="bag-list">${rows}</div>
     `;
-    wireCraft();
+    wire();
+  }
+  function _confirmUseIncense(type) {
+    if (!type || !TYPE_COLORS[type]) return;
+    const tn = _titleCaseType(type);
+    const active = readActiveIncense();
+    let msg = `Use ${tn} Incense?\n\nFor 30 minutes you'll see extra ${tn}-type spawns, with double the shiny rate.`;
+    if (active) {
+      const mins = Math.ceil(incenseRemainingMs() / 60000);
+      msg += `\n\nThis replaces your active ${_titleCaseType(active.type)} Incense (~${mins} min left).`;
+    }
+    if (!confirm(msg)) return;
+    if (activateIncense(type)) renderBag();
+    else alert(`You have no ${tn} Incense.`);
   }
 
   // ── Craft: convert an egg into incense ──
@@ -9026,6 +9151,16 @@
         + (placeStr ? `<div class="detail-caught-place">${escapeHtml(placeStr)}</div>` : '')
         + `</div>`;
     }
+    // "From <type> Incense" — its own row, between the Lv·size stats and
+    // the caught-location block.
+    const incenseHtml = c.fromIncense
+      ? `<div class="detail-incense-row">`
+        + ((c.incenseType && TYPE_COLORS[c.incenseType])
+          ? `<img class="detail-incense-orb" src="${escapeHtml(_incenseOrbIcon(TYPE_COLORS[c.incenseType]))}" alt="">`
+          : '')
+        + 'From ' + escapeHtml((c.incenseType ? _titleCaseType(c.incenseType) + ' ' : '') + 'Incense')
+        + `</div>`
+      : '';
     const typesHtml = (c.speciesA != null && c.speciesB != null)
       ? typeChipsHtml(fusionTypesFor(c.speciesA, c.speciesB))
       : '';
@@ -9091,6 +9226,7 @@
       ${speciesLine}
       ${typesHtml}
       ${statsHtml}
+      ${incenseHtml}
       ${caughtLine}
       ${candyTallyHtml(c.speciesA, c.speciesB)}
       ${detailTagsHtml(c)}
@@ -10383,6 +10519,7 @@
         <div class="battle-burst" hidden></div>
       </div>
       <div class="battle-info">
+        <img class="battle-incense" alt="from incense" hidden>
         <div class="battle-name"></div>
         <div class="battle-stats"></div>
         <div class="battle-types"></div>
@@ -10428,6 +10565,19 @@
     const typesEl = el.querySelector('.battle-types');
     if (typesEl) {
       typesEl.innerHTML = typeChipsHtml(fusionTypesFor(spawn.speciesA, spawn.speciesB));
+    }
+    // Incense badge — a little type-coloured orb in the info bubble's
+    // top-right when this spawn came from an active incense.
+    const incEl = el.querySelector('.battle-incense');
+    if (incEl) {
+      if (spawn.incense && spawn.incenseType && TYPE_COLORS[spawn.incenseType]) {
+        incEl.src = _incenseOrbIcon(TYPE_COLORS[spawn.incenseType]);
+        incEl.title = _titleCaseType(spawn.incenseType) + ' Incense';
+        incEl.hidden = false;
+      } else {
+        incEl.hidden = true;
+        incEl.removeAttribute('src');
+      }
     }
     const img = el.querySelector('img.battle-sprite');
     // Reset previous state — animation transforms, throwing flag —
@@ -10633,6 +10783,12 @@
         place: place || null,
       },
     };
+    // Tag incense-spawned catches so the detail view can show "From
+    // <type> Incense" (parallel to fromEgg's "Hatched from egg").
+    if (spawn.incense) {
+      entry.fromIncense = true;
+      if (typeof spawn.incenseType === 'string') entry.incenseType = spawn.incenseType;
+    }
     const list = readCapturedCreatures();
     list.push(entry);
     writeCapturedCreatures(list);  // persists to IDB — no quota wall
@@ -11636,6 +11792,9 @@
 
   function install(map) {
     injectStyles();
+    // Resume any incense still within its 30-min window from a previous
+    // session (state lives in localStorage / the save file).
+    _pushActiveIncenseToSpawns();
     // These read the captured + seenFusions stores, which now load
     // asynchronously from IndexedDB. Defer them until hydration resolves
     // so they operate on the real collection, not the empty pre-load
@@ -11736,6 +11895,10 @@
     replaceAllCaptured: (arr) => writeCapturedCreatures(arr),
     getSeenFusions: () => readSeenFusions(),
     setSeenFusions: (map) => { _seenStore.set(map); },
+    // Active incense (carried in the save file so the 30-min window
+    // survives device hops + app restarts).
+    getActiveIncense: readActiveIncense,
+    setActiveIncenseState,
     getCandy: readCandy, getBag: readBag, getTags: readTags,
     grantItem, consumeItem, rollCollectibleItem, getItemMeta,
     timeSinceLastSave,

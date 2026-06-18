@@ -581,6 +581,145 @@
     return out;
   }
 
+  // ── Incense spawns (independent deterministic pull) ───────────
+  // A second normal-density stream that runs ONLY while the player has an
+  // incense active, layered on top of the regular spawns (so you see ~2×
+  // the pokémon). Same separate-code-path approach as legendaries — the
+  // base generateCellAtTick is untouched.
+  //
+  // Type rule: one slot is always the incense type; the other is 40%
+  // any-uniform / 30% the weekly type / 30% the daily type. Then species
+  // are sampled from the same type pools as normal. Seeded from (cell,
+  // tick, incenseType) — NOT the player or activation time — so any two
+  // players with the same incense type active see the same pokémon at the
+  // same cells/ticks (for ticks both their 30-min windows cover).
+  //
+  // Active window: 30 minutes from activation. The full extra stream shows
+  // up immediately on activation (it fills the normal 20-min alive window
+  // at once, no ramp-up) and hard-cuts when the 30 minutes are up. State
+  // lives in the save file (creatures.js) and is pushed here via
+  // setActiveIncense so it survives app restarts.
+  const INCENSE_DURATION_MS = 30 * 60 * 1000;   // 30 min active
+  const INCENSE_SALT = 0x12CE45EE;              // 'inCENSE' — distinct seed namespace
+  let _activeIncense = null;                    // { type, startMs } | null
+  function setActiveIncense(state) {
+    const next = (state && typeof state.type === 'string'
+      && typeof state.startMs === 'number') ? { type: state.type, startMs: state.startMs } : null;
+    const key = next ? next.type + '|' + next.startMs : null;
+    if (key !== _incMemoKey) { _incMemo.clear(); _incMemoKey = key; _incMemoOldest = -1; }
+    _activeIncense = next;
+  }
+  function getActiveIncense() { return _activeIncense; }
+  function incenseActiveAt(nowMs) {
+    if (!_activeIncense) return null;
+    const now = nowMs == null ? Date.now() : nowMs;
+    if (now >= _activeIncense.startMs + INCENSE_DURATION_MS) return null;
+    return _activeIncense;
+  }
+
+  function incenseCellTickSeed(cellX, cellY, tick, typeIdx) {
+    const curX = goodMod(cellX, LAT_MOD);
+    const curY = goodMod(cellY, LON_MOD);
+    return (Math.round(
+      ((curX + 1) * LAT_MOD + (curY + 1) * LAT_MOD * LON_MOD) * 7477
+    ) + (((tick ^ INCENSE_SALT) >>> 0) + Math.imul(typeIdx + 1, 0x9E3779B1)) * 983) | 0;
+  }
+  function generateIncenseCellAtTick(cellX, cellY, tick, incenseType) {
+    if (!_buildTypeIndices()) return null;
+    const typeIdx = TYPES.indexOf(incenseType);
+    if (typeIdx < 0) return null;
+    const arng = getxor4069(incenseCellTickSeed(cellX, cellY, tick, typeIdx));
+    if (arng() >= SPAWN_CHANCE_PER_TICK) return null;
+    const fx = arng();
+    const fy = arng();
+    const lat = (cellX + fx) / SCALE - 90;
+    const lng = (cellY + fy) / SCALE - 180;
+    // The non-incense slot: 40% any-uniform, 30% weekly, 30% daily.
+    const w = currentWeather(tick * TICK_MS);
+    const rt = arng();
+    let otherType;
+    if (rt < 0.40) otherType = TYPES[Math.floor(arng() * TYPES.length)];
+    else if (rt < 0.70) otherType = w.weekly;
+    else otherType = w.daily;
+    // Place the incense type in whichever slot yields non-empty pools
+    // (some types have no primary- or no secondary-form species). When
+    // both placements work, a coin flip decides; when neither does (rare
+    // awkward combo), drop the spawn — same "empty pair" handling as the
+    // normal sampler.
+    const byP = _byPrimary, byS = _bySecondary;
+    const v1 = byP[incenseType].length > 0 && byS[otherType].length > 0; // [incense, other]
+    const v2 = byP[otherType].length > 0 && byS[incenseType].length > 0; // [other, incense]
+    const coin = arng();
+    let typeA, typeB;
+    if (v1 && v2) { if (coin < 0.5) { typeA = incenseType; typeB = otherType; } else { typeA = otherType; typeB = incenseType; } }
+    else if (v1) { typeA = incenseType; typeB = otherType; }
+    else if (v2) { typeA = otherType; typeB = incenseType; }
+    else return null;
+    const poolA = byP[typeA], poolB = byS[typeB];
+    const speciesA = poolA[Math.floor(arng() * poolA.length)];
+    const speciesB = poolB[Math.floor(arng() * poolB.length)];
+    const level = expDistr(5, 50, arng()) + 1;
+    const sizeM = 0.15 + arng() * 2.0;
+    const bornOffset = Math.floor(arng() * TICK_MS);
+    const startMs = tick * TICK_MS + bornOffset;
+    const variantSeed = arng();
+    return {
+      // typeIdx in the trailing slot (where normal/legendary ids carry a
+      // 0) keeps the tick at parts[3] for isSpawnIdStale while making the
+      // id unique per incense type — so catching a Fire-incense spawn
+      // doesn't shadow a Water-incense spawn at the same cell/tick.
+      id: 'I:' + cellX + ':' + cellY + ':' + tick + ':' + typeIdx,
+      lat, lng, speciesA, speciesB, level, sizeM, variantSeed,
+      startMs, expireMs: startMs + LIFETIME_MS,
+      incense: true, incenseType: incenseType,
+    };
+  }
+  // Memo mirrors _ctMemo — incense generation is ~normal-density, so an
+  // un-memoized rescan would double the per-refresh cost while active.
+  let _incMemo = new Map();
+  let _incMemoKey = null;        // "type|startMs" identity the memo was built for
+  let _incMemoOldest = -1;
+  function incenseSpawnsInBbox(bbox, nowMs) {
+    const now = nowMs == null ? Date.now() : nowMs;
+    const inc = incenseActiveAt(now);
+    if (!inc) return [];
+    if (!_buildTypeIndices()) return [];
+    const [west, south, east, north] = bbox;
+    const curTick = currentTick(now);
+    const minLatCell = Math.floor((south + 90) * SCALE);
+    const maxLatCell = Math.ceil((north + 90) * SCALE);
+    const minLngCell = Math.floor((west + 180) * SCALE);
+    const maxLngCell = Math.ceil((east + 180) * SCALE);
+    if ((maxLatCell - minLatCell + 1) * (maxLngCell - minLngCell + 1) > MAX_CELLS) return [];
+    // Fill the whole normal alive window the instant you activate (so the
+    // extra spawns show up immediately, not after a 20-minute ramp), then
+    // hard-cut when the 30-minute window ends (handled by incenseActiveAt).
+    const firstTick = curTick - LIFETIME_TICKS;
+    if (firstTick > _incMemoOldest) {
+      for (const k of _incMemo.keys()) {
+        if (+k.slice(k.lastIndexOf(':') + 1) < firstTick) _incMemo.delete(k);
+      }
+      _incMemoOldest = firstTick;
+    }
+    if (_incMemo.size > CT_MEMO_HARD_CAP) _incMemo.clear();
+    const out = [];
+    for (let cx = minLatCell; cx <= maxLatCell; cx++) {
+      for (let cy = minLngCell; cy <= maxLngCell; cy++) {
+        for (let t = firstTick; t <= curTick; t++) {
+          const mk = cx + ':' + cy + ':' + t;
+          let p;
+          if (_incMemo.has(mk)) p = _incMemo.get(mk);
+          else { p = generateIncenseCellAtTick(cx, cy, t, inc.type); _incMemo.set(mk, p); }
+          if (!p) continue;
+          if (now < p.startMs || now >= p.expireMs) continue;
+          if (p.lat < south || p.lat > north || p.lng < west || p.lng > east) continue;
+          out.push(p);
+        }
+      }
+    }
+    return out;
+  }
+
   function spawnsInBbox(bbox, nowMs) {
     const [west, south, east, north] = bbox;
     const now = nowMs == null ? Date.now() : nowMs;
@@ -638,6 +777,10 @@
     // normal shape, so the marker/encounter pipeline handles them as-is.
     const legs = legendariesInBbox(bbox, now);
     for (let i = 0; i < legs.length; i++) out.push(legs[i]);
+    // Fold in the incense stream — only non-empty while an incense is
+    // active. Normal density, so this is what doubles the spawn count.
+    const inc = incenseSpawnsInBbox(bbox, now);
+    for (let i = 0; i < inc.length; i++) out.push(inc[i]);
     return out;
   }
 
@@ -653,6 +796,15 @@
       const ltick = +lparts[3];
       if (!Number.isFinite(ltick)) return true;
       return ltick < currentLegTick(nowMs) - LEG_LIFETIME_TICKS;
+    }
+    // Incense IDs ('I:cx:cy:tick:0') ride the normal minute-tick scale +
+    // 20-min window (the incense activation window is enforced separately
+    // at generation time).
+    if (id.startsWith('I:')) {
+      const iparts = id.split(':');
+      const itick = +iparts[3];
+      if (!Number.isFinite(itick)) return true;
+      return itick < currentTick(nowMs) - LIFETIME_TICKS;
     }
     const parts = id.split(':');
     if (parts.length < 3) return true;
@@ -670,6 +822,10 @@
     // any future legendary-specific UI).
     legendariesInBbox, generateLegendaryAtTick, currentLegTick,
     LEG_TICK_MS, LEG_LIFETIME_MS,
+    // Incense stream — creatures.js sets the active state (from the save
+    // file); spawnsInBbox folds it in while active.
+    setActiveIncense, getActiveIncense, incenseSpawnsInBbox,
+    generateIncenseCellAtTick, INCENSE_DURATION_MS,
     // Exposed so other deterministic features (e.g. daycare loot,
     // future event drops) can seed their own streams from a stable,
     // proven PRNG rather than each rolling their own hash.
