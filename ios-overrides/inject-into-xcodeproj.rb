@@ -119,10 +119,15 @@ else
     bs['LD_RUNPATH_SEARCH_PATHS'] = ['$(inherited)', '@executable_path/Frameworks', '@executable_path/../../Frameworks']
   end
 
-  # Source files. The App group maps to ios/App/App, so the UnicodeKeyboard
-  # subgroup maps to ios/App/App/UnicodeKeyboard.
-  kb_group = project.main_group['App'].find_subpath('UnicodeKeyboard', true)
-  kb_group.set_source_tree('<group>')
+  # A real (path-bearing) group at App/UnicodeKeyboard so file references resolve
+  # to ios/App/App/UnicodeKeyboard/<file>. Do NOT use find_subpath here: it
+  # creates a name-only *virtual* group (no path), which makes references resolve
+  # against the parent App group's dir (ios/App/App/<file>), dropping the
+  # UnicodeKeyboard/ segment — that mislocated the bundled data folder.
+  app_source_group = project.main_group['App']
+  kb_group = app_source_group.groups.find { |g| g.display_name == 'UnicodeKeyboard' }
+  kb_group ||= app_source_group.new_group('UnicodeKeyboard', 'UnicodeKeyboard')
+
   KB_SOURCES.each do |fname|
     ref = kb_group.new_reference(fname)
     kb.source_build_phase.add_file_reference(ref)
@@ -133,7 +138,6 @@ else
   # appex's Resources).
   data_ref = kb_group.new_reference('UnicodeData')
   data_ref.last_known_file_type = 'folder'
-  data_ref.source_tree = '<group>'
   kb.resources_build_phase.add_file_reference(data_ref)
   puts "  resource: UnicodeData/ (folder reference)"
 
