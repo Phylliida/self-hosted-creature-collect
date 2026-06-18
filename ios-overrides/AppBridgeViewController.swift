@@ -37,5 +37,6 @@ class AppBridgeViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(MemoryProbePlugin())
         bridge?.registerPluginInstance(LocalServerDiagPlugin())
         bridge?.registerPluginInstance(MotionPedometerPlugin())
+        bridge?.registerPluginInstance(HapticPatternPlugin())
     }
 }
