@@ -27,6 +27,7 @@
   global._scriptVersions['extras-vibration.js'] = SCRIPT_VERSION;
 
   const STORE_KEY = 'cc.vibration.v1';
+  const SAVED_KEY = 'cc.vibration.saved.v1';
   const TARGET_WINDOW = 2.0; // seconds; loop holds ~this many seconds of cycles
 
   const DEFAULTS = {
@@ -69,6 +70,28 @@
   }
   function persist() {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {}
+  }
+
+  // ── saved named patterns ──
+  let saved = readSaved();
+  function readSaved() {
+    try { return JSON.parse(localStorage.getItem(SAVED_KEY)) || []; }
+    catch (e) { return []; }
+  }
+  function persistSaved() {
+    try { localStorage.setItem(SAVED_KEY, JSON.stringify(saved)); } catch (e) {}
+  }
+  // The "feel" fields that make up a pattern (everything except session prefs
+  // like the auto-stop timer).
+  const FEEL_KEYS = ['waveform', 'freq', 'intensity', 'sharpness', 'depth', 'duty'];
+  function featureSettings() {
+    const o = {};
+    FEEL_KEYS.forEach(k => { o[k] = state[k]; });
+    return o;
+  }
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
 
   // ── runtime ──
@@ -260,6 +283,17 @@
     .vib-foot select { padding: 7px; font-size: 13px; }
     .vib-note { font-size: 12px; opacity: .65; margin: 10px 0 0; line-height: 1.4; }
     .vib-unsupported { font-size: 14px; opacity: .8; line-height: 1.5; text-align: center; padding: 18px 6px; }
+    .vib-saverow { display: flex; gap: 6px; margin-bottom: 8px; }
+    .vib-saverow input { flex: 1; min-width: 0; }
+    .vib-savebtn { padding: 8px 14px; border: none; border-radius: 8px; cursor: pointer;
+      color: #fff; background: var(--vib-accent); font-size: 13px; }
+    .vib-saved-item { display: inline-flex; align-items: stretch; }
+    .vib-saved-item .vib-chip { border-radius: 999px 0 0 999px; }
+    .vib-del { border: 1px solid rgba(127,127,127,0.35); border-left: none;
+      border-radius: 0 999px 999px 0; background: transparent; color: inherit;
+      cursor: pointer; padding: 0 9px; font-size: 14px; opacity: .7; }
+    .vib-del:hover { color: #e05a6b; opacity: 1; }
+    .vib-empty { font-size: 12px; opacity: .55; }
     `;
     const style = document.createElement('style');
     style.id = 'vib-css';
@@ -321,6 +355,13 @@
           </select>
         </div>
         <p class="vib-note"></p>
+
+        <div class="vib-sub">Saved patterns</div>
+        <div class="vib-saverow">
+          <input class="vib-savename" type="text" maxlength="28" placeholder="name this pattern" aria-label="pattern name">
+          <button class="vib-savebtn" type="button">Save</button>
+        </div>
+        <div class="vib-chips vib-savedlist"></div>
       </div>
     `;
 
@@ -334,6 +375,9 @@
       dutyRow: view.querySelector('.vib-duty'),
       autostop: view.querySelector('.vib-autostop'),
       note: view.querySelector('.vib-note'),
+      saveName: view.querySelector('.vib-savename'),
+      saveBtn: view.querySelector('.vib-savebtn'),
+      savedList: view.querySelector('.vib-savedlist'),
       ranges: Array.from(view.querySelectorAll('input[type="range"]')),
       outs: {},
     };
@@ -382,6 +426,23 @@
       if (playing) armAutostop();
     });
 
+    // ── saved patterns ──
+    els.saveBtn.addEventListener('click', () => {
+      const name = (els.saveName.value || '').trim();
+      if (!name) { els.saveName.focus(); return; }
+      saveCurrent(name);
+      els.saveName.value = '';
+    });
+    els.saveName.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); els.saveBtn.click(); }
+    });
+    els.savedList.addEventListener('click', (e) => {
+      const del = e.target.closest('[data-del]');
+      if (del) { deleteSaved(del.dataset.del); return; }
+      const item = e.target.closest('[data-load]');
+      if (item) loadSaved(item.dataset.load);
+    });
+
     // ── lifecycle: always stop when leaving / backgrounding ──
     new MutationObserver(() => { if (view.hidden && playing) stop(); })
       .observe(view, { attributes: true, attributeFilter: ['hidden'] });
@@ -389,6 +450,7 @@
     global.addEventListener('pagehide', () => { if (playing) stop(); });
 
     syncInputs();
+    renderSaved();
     detectSupport();
   }
 
@@ -457,6 +519,41 @@
     els.dutyRow.hidden = !(state.waveform === 'square' || state.waveform === 'pulse');
     if (els.autostop) els.autostop.value = String(state.autostopMin);
     drawViz(computeEnvelope(state));
+  }
+
+  // ── saved patterns: render / save / load / delete ──
+  function renderSaved() {
+    if (!els.savedList) return;
+    if (!saved.length) {
+      els.savedList.innerHTML =
+        '<span class="vib-empty">No saved patterns yet — dial in a feel you like and tap Save.</span>';
+      return;
+    }
+    els.savedList.innerHTML = saved.map(r =>
+      '<span class="vib-saved-item">'
+      + '<button class="vib-chip" data-load="' + r.id + '" type="button">' + escapeHtml(r.name) + '</button>'
+      + '<button class="vib-del" data-del="' + r.id + '" type="button" aria-label="delete ' + escapeHtml(r.name) + '">&times;</button>'
+      + '</span>').join('');
+  }
+  function saveCurrent(name) {
+    const id = 'p' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36);
+    saved.unshift({ id: id, name: name, s: featureSettings() });
+    if (saved.length > 50) saved = saved.slice(0, 50);
+    persistSaved();
+    renderSaved();
+  }
+  function loadSaved(id) {
+    const rec = saved.find(r => r.id === id);
+    if (!rec) return;
+    Object.assign(state, rec.s);
+    persist();
+    syncInputs();
+    playing ? throttledApply() : drawViz(computeEnvelope(state));
+  }
+  function deleteSaved(id) {
+    saved = saved.filter(r => r.id !== id);
+    persistSaved();
+    renderSaved();
   }
 
   // ── visualization ──
