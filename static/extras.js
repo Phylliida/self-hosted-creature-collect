@@ -1058,6 +1058,35 @@
   });
 
   // ────────────────────────────────────────────────────────────
+  // External-tool registration hook
+  // ────────────────────────────────────────────────────────────
+  // Lets a separate, self-contained script (loaded AFTER this one) add its own
+  // Extras tool without bloating this file. The module supplies a bubble
+  // icon/label and a build(view) callback that populates + wires its own view.
+  // Generic on purpose — nothing tool-specific lives here.
+  //   def = { id, name, icon (HTML entity ok), label (HTML), build(view), onShow? }
+  global.ExtrasRegisterTool = function registerExtraTool(def) {
+    if (!def || !def.id || tools[def.id]) return null;
+    const btn = document.createElement('button');
+    btn.className = 'extras-bubble';
+    btn.type = 'button';
+    btn.dataset.extra = def.id;
+    btn.innerHTML = '<span class="bubble-icon">' + (def.icon || '&#10024;') +
+      '</span><span>' + (def.label || def.name || def.id) + '</span>';
+    bubbles.appendChild(btn);
+
+    const view = document.createElement('div');
+    view.id = 'extras_' + def.id;
+    view.hidden = true;
+    panel.querySelector('.sheet').appendChild(view);
+
+    tools[def.id] = { name: def.name || def.id, el: view, onShow: def.onShow };
+    try { if (typeof def.build === 'function') def.build(view); }
+    catch (e) { console.error('ExtrasRegisterTool: build failed for ' + def.id, e); }
+    return view;
+  };
+
+  // ────────────────────────────────────────────────────────────
   // Shared helpers
   // ────────────────────────────────────────────────────────────
   function fmtNum(n) {
