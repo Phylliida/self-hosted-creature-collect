@@ -134,8 +134,10 @@
     .exapp-card-row { display: flex; gap: 8px; }
     .exapp-card-row .exapp-btn { flex: 1; text-align: center; }
     .exapp-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
-    .exapp-item { display: flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.08);
-      border-radius: 8px; padding: 2px 4px 2px 12px; }
+    .exapp-item { display: flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.08);
+      border-radius: 8px; padding: 4px 4px 4px 8px; }
+    .exapp-thumb { width: 54px; height: 40px; object-fit: contain; border-radius: 4px;
+      background: #111; flex: none; }
     .exapp-item-name { flex: 1; min-width: 0; text-align: left; background: none; border: none;
       color: #fff; font-size: 14px; cursor: pointer; padding: 8px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .exapp-item-meta { font-size: 11px; opacity: .5; margin-right: 2px; white-space: nowrap; }
@@ -252,6 +254,7 @@
       }
       listEl.innerHTML = items.map((r) =>
         '<div class="exapp-item">'
+        + ((r.data && r.data.thumb) ? '<img class="exapp-thumb" src="' + r.data.thumb + '" alt="">' : '')
         + '<button class="exapp-item-name" data-load="' + r.id + '" type="button">' + escapeHtml(r.name) + '</button>'
         + '<span class="exapp-item-meta">' + fmtDate(r.createdAt) + '</span>'
         + '<button class="exapp-del" data-del="' + r.id + '" type="button" aria-label="delete">&times;</button>'
@@ -297,7 +300,9 @@
     try { if (typeof win.triggerURLUpdate === 'function') win.triggerURLUpdate(); } catch (e) {}
     let hash = '';
     try { hash = win.location.hash || ''; } catch (e) { return null; }
-    return { hash: hash };
+    let thumb = null;
+    try { if (win.QuiverApp && win.QuiverApp.thumbnail) thumb = win.QuiverApp.thumbnail(); } catch (e) {}
+    return { hash: hash, thumb: thumb };
   }
   function applyQuiver(frameEl, win, data) {
     frameEl.src = QUIVER_SRC + ((data && data.hash) ? data.hash : '');
