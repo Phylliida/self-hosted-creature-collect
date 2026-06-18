@@ -177,9 +177,12 @@ public class HapticPatternPlugin: CAPPlugin, CAPBridgedPlugin {
 
     private func startPlayer(with pattern: CHHapticPattern, loop: Bool, loopEnd: Double) throws {
         try? player?.stop(atTime: CHHapticTimeImmediate)
-        guard let engine = engine else { throw CHHapticError(.engineNotRunning) }
+        guard let engine = engine else {
+            throw NSError(domain: "HapticPattern", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "haptic engine not running"])
+        }
         let p = try engine.makeAdvancedPlayer(with: pattern)
-        p.isLoopEnabled = loop
+        p.loopEnabled = loop
         if loop { p.loopEnd = loopEnd }
         try p.start(atTime: CHHapticTimeImmediate)
         player = p
