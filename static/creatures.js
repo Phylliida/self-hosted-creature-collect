@@ -2158,6 +2158,26 @@
     if (map === _seenStore.get()) _seenStore.commit();
     else _seenStore.set(map);
   }
+  // Resolve + persist a first-sighting's POI/place during idle time, off
+  // the encounter critical path (see markFusionSeen). Re-reads the store
+  // so it writes onto the latest state; bails if the entry vanished or was
+  // already enriched.
+  function _deferSeenPlaceEnrich(key, lat, lng) {
+    const run = () => {
+      const poiApi = global.CreatureCollectAPI;
+      if (!poiApi) return;
+      const seen = readSeenFusions();
+      const rec = seen[key];
+      if (!rec || rec.poi !== undefined) return; // gone, or already enriched
+      rec.poi = poiApi.findNearestNamedPoi ? (poiApi.findNearestNamedPoi(lat, lng) || null) : null;
+      rec.place = poiApi.findNearestPlace ? (poiApi.findNearestPlace(lat, lng) || null) : null;
+      writeSeenFusions(seen);
+    };
+    const ric = global.requestIdleCallback;
+    if (typeof ric === 'function') ric(run, { timeout: 2000 });
+    else setTimeout(run, 0);
+  }
+
   function markFusionSeen(a, b, spawn, variant) {
     if (a == null || b == null) return;
     const seen = readSeenFusions();
@@ -2171,16 +2191,13 @@
       if (seen[key].lat == null) {
         seen[key].lat = spawn.lat;
         seen[key].lng = spawn.lng;
-        const poiApi = global.CreatureCollectAPI;
-        if (poiApi && poiApi.findNearestNamedPoi) {
-          seen[key].poi = poiApi.findNearestNamedPoi(spawn.lat, spawn.lng) || null;
-        }
-        // City + country come from the already-loaded vector tile
-        // `place` source — pure local lookup, no network. Stored
-        // once on first sighting alongside the POI.
-        if (poiApi && poiApi.findNearestPlace) {
-          seen[key].place = poiApi.findNearestPlace(spawn.lat, spawn.lng) || null;
-        }
+        // POI + place resolution is a linear scan over every loaded POI
+        // (haversine each) — up to ~1s with a big POI set. It only feeds
+        // the pokédex "first seen here" sub-view, which is read much
+        // later, so running it here would stall the battle screen from
+        // even appearing on the first sighting of a fusion. Defer it to
+        // idle time; it persists itself once resolved.
+        _deferSeenPlaceEnrich(key, spawn.lat, spawn.lng);
       }
     }
     // Per-variant tracking. `variant` is a number (custom variant
@@ -9896,8 +9913,13 @@
   // last refresh was very recent. We can't dedupe by tick alone because
   // spawns expire mid-tick (a spawn born at tick T expires at T+5min,
   // which lands between ticks), so we cap the gap at REFRESH_MIN_GAP_MS
-  // — GPS-fix storms collapse but expirations land within ~5 seconds.
-  const REFRESH_MIN_GAP_MS = 5000;
+  // — GPS-fix storms collapse but new births / expirations land quickly.
+  // Kept below SPAWN_REFRESH_MS so the stationary timer is never deduped.
+  const REFRESH_MIN_GAP_MS = 2000;
+  // How often the stationary timer re-checks for new births / expiries.
+  // The refresh is cheap when nothing changed (memoized scan + a marker
+  // diff), so a few seconds keeps spawns appearing promptly without churn.
+  const SPAWN_REFRESH_MS = 3000;
   let _lastRefreshLat = null;
   let _lastRefreshLng = null;
   let _lastRefreshAt = 0;
@@ -11516,11 +11538,11 @@
     updateMarkerScale();
     _zoomHandler = updateMarkerScale;
     map.on('zoom', _zoomHandler);
-    // Safety net for tick rollover — GPS updates drive most refreshes,
-    // but a stationary user still needs new births / expiries to land
-    // promptly. Dedupe in refresh keeps this near-free when nothing
-    // has changed.
-    _overlayTimer = setInterval(refreshSpawnOverlay, 20 * 1000);
+    // Drives spawn appearance for a stationary user — GPS updates handle
+    // the moving case, but standing still we need new births / expiries to
+    // land promptly. Dedupe in refresh keeps this near-free when nothing
+    // has changed (warm memoized scan + a no-op marker diff).
+    _overlayTimer = setInterval(refreshSpawnOverlay, SPAWN_REFRESH_MS);
   }
 
   function detachSpawnOverlay() {

@@ -7071,12 +7071,40 @@ function fmtDate(ts) {
 
   async function exportData() {
     const data = await buildBackupPayload();
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const json = JSON.stringify(data, null, 2);
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    const filename = `creature-collect-${stamp}.json`;
+    // Native app (Capacitor): the browser `<a download>` + blob-URL trick
+    // is a no-op in Android's WebView (and unreliable on iOS), so write
+    // the file with the Filesystem plugin and hand it to the OS share
+    // sheet instead. Web keeps the anchor download below.
+    const cap = window.Capacitor;
+    if (cap && cap.isNativePlatform && cap.isNativePlatform()) {
+      try {
+        const Fs = cap.Plugins && cap.Plugins.Filesystem;
+        const Share = cap.Plugins && cap.Plugins.Share;
+        if (!Fs || !Share) throw new Error('Filesystem/Share plugin unavailable');
+        // Cache dir is covered by Capacitor's FileProvider, so the share
+        // sheet can hand the file:// URI to other apps (Files/Drive/etc.).
+        const res = await Fs.writeFile({
+          path: filename, data: json, directory: 'CACHE', encoding: 'utf8',
+        });
+        await Share.share({
+          title: filename,
+          files: [res.uri],
+          dialogTitle: 'Export creature-collect save',
+        });
+      } catch (e) {
+        console.error('native export failed', e);
+        alert('Export failed: ' + (e && e.message ? e.message : e));
+      }
+      return;
+    }
+    const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
     a.href = url;
-    a.download = `creature-collect-${stamp}.json`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
