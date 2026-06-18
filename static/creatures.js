@@ -2383,6 +2383,124 @@
     ELECTRIC: '#F7D02C', PSYCHIC:  '#F95587', ICE:      '#96D9D6',
     DRAGON:   '#6F35FC', DARK:     '#705746', FAIRY:    '#D685AD',
   };
+  const ALL_TYPES = Object.keys(TYPE_COLORS);
+
+  // Offensive type chart, stored as the set of defenders each attacking
+  // type is REDUCED against (not-very-effective 0.5× ∪ no-effect 0×).
+  // That's all the craft filter needs: an egg type is "neutral or
+  // effective against" an incense type T iff T is NOT in this set for
+  // that egg type. (Gen 6+ chart, includes Fairy.)
+  const _TYPE_REDUCED = {
+    NORMAL:   ['ROCK', 'STEEL', 'GHOST'],
+    FIRE:     ['FIRE', 'WATER', 'ROCK', 'DRAGON'],
+    WATER:    ['WATER', 'GRASS', 'DRAGON'],
+    ELECTRIC: ['ELECTRIC', 'GRASS', 'DRAGON', 'GROUND'],
+    GRASS:    ['FIRE', 'GRASS', 'POISON', 'FLYING', 'BUG', 'DRAGON', 'STEEL'],
+    ICE:      ['FIRE', 'WATER', 'ICE', 'STEEL'],
+    FIGHTING: ['POISON', 'FLYING', 'PSYCHIC', 'BUG', 'FAIRY', 'GHOST'],
+    POISON:   ['POISON', 'GROUND', 'ROCK', 'GHOST', 'STEEL'],
+    GROUND:   ['GRASS', 'BUG', 'FLYING'],
+    FLYING:   ['ELECTRIC', 'ROCK', 'STEEL'],
+    PSYCHIC:  ['PSYCHIC', 'STEEL', 'DARK'],
+    BUG:      ['FIRE', 'FIGHTING', 'POISON', 'FLYING', 'GHOST', 'STEEL', 'FAIRY'],
+    ROCK:     ['FIGHTING', 'GROUND', 'STEEL'],
+    GHOST:    ['DARK', 'NORMAL'],
+    DRAGON:   ['STEEL', 'FAIRY'],
+    DARK:     ['FIGHTING', 'DARK', 'FAIRY'],
+    STEEL:    ['FIRE', 'WATER', 'ELECTRIC', 'STEEL'],
+    FAIRY:    ['FIRE', 'POISON', 'STEEL'],
+  };
+  const _TYPE_REDUCED_SETS = (() => {
+    const out = {};
+    for (const t of ALL_TYPES) out[t] = new Set(_TYPE_REDUCED[t] || []);
+    return out;
+  })();
+  // One of the egg's types being neutral-or-effective vs the incense type
+  // qualifies it (a dual-type egg only needs one workable type).
+  function eggTypesNeutralOrEffectiveVs(eggTypes, incenseType) {
+    if (!eggTypes || !eggTypes.length) return false;
+    for (const et of eggTypes) {
+      const reduced = _TYPE_REDUCED_SETS[et];
+      // Unknown attacking type → treat as neutral (don't hide eggs).
+      if (!reduced || !reduced.has(incenseType)) return true;
+    }
+    return false;
+  }
+  // Super-effective (2×) sets per attacking type — used for the craft
+  // bonus: each of an egg's types that is super-effective against the
+  // incense type adds +1 to the yield (1× base → 2× one match → 3× two).
+  const _TYPE_STRONG = {
+    NORMAL:   [],
+    FIRE:     ['GRASS', 'ICE', 'BUG', 'STEEL'],
+    WATER:    ['FIRE', 'GROUND', 'ROCK'],
+    ELECTRIC: ['WATER', 'FLYING'],
+    GRASS:    ['WATER', 'GROUND', 'ROCK'],
+    ICE:      ['GRASS', 'GROUND', 'FLYING', 'DRAGON'],
+    FIGHTING: ['NORMAL', 'ICE', 'ROCK', 'DARK', 'STEEL'],
+    POISON:   ['GRASS', 'FAIRY'],
+    GROUND:   ['FIRE', 'ELECTRIC', 'POISON', 'ROCK', 'STEEL'],
+    FLYING:   ['GRASS', 'FIGHTING', 'BUG'],
+    PSYCHIC:  ['FIGHTING', 'POISON'],
+    BUG:      ['GRASS', 'PSYCHIC', 'DARK'],
+    ROCK:     ['FIRE', 'ICE', 'FLYING', 'BUG'],
+    GHOST:    ['PSYCHIC', 'GHOST'],
+    DRAGON:   ['DRAGON'],
+    DARK:     ['PSYCHIC', 'GHOST'],
+    STEEL:    ['ICE', 'ROCK', 'FAIRY'],
+    FAIRY:    ['FIGHTING', 'DRAGON', 'DARK'],
+  };
+  const _TYPE_STRONG_SETS = (() => {
+    const out = {};
+    for (const t of ALL_TYPES) out[t] = new Set(_TYPE_STRONG[t] || []);
+    return out;
+  })();
+  // Incense yield from an egg: 1 base, +1 for each of the egg's (deduped)
+  // types that is super-effective against the incense type → 1× / 2× / 3×.
+  function craftMultiplier(eggTypes, incenseType) {
+    let mult = 1;
+    if (!eggTypes) return mult;
+    for (const et of eggTypes) {
+      const strong = _TYPE_STRONG_SETS[et];
+      if (strong && strong.has(incenseType)) mult += 1;
+    }
+    return mult;
+  }
+
+  // ── Incense items (one per type) ──
+  // Crafted from eggs (Bag → Craft). The capture/use mechanic lands
+  // later; for now they're collectible bag items whose art is a shaded
+  // orb in the type colour.
+  function _incenseKey(type) { return 'incense_' + type.toLowerCase(); }
+  function _titleCaseType(t) { return t.charAt(0) + t.slice(1).toLowerCase(); }
+  function _incenseOrbIcon(color) {
+    // Shaded orb: a top-left highlight, the type colour, and a dark rim.
+    const svg =
+      "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'>" +
+      "<defs>" +
+      "<radialGradient id='o' cx='35%' cy='30%' r='75%'>" +
+      "<stop offset='0%' stop-color='#ffffff' stop-opacity='0.95'/>" +
+      "<stop offset='42%' stop-color='" + color + "'/>" +
+      "<stop offset='100%' stop-color='" + color + "'/>" +
+      "</radialGradient>" +
+      "<radialGradient id='r' cx='50%' cy='50%' r='50%'>" +
+      "<stop offset='62%' stop-color='#000000' stop-opacity='0'/>" +
+      "<stop offset='100%' stop-color='#000000' stop-opacity='0.5'/>" +
+      "</radialGradient>" +
+      "</defs>" +
+      "<circle cx='20' cy='20' r='18' fill='url(#o)'/>" +
+      "<circle cx='20' cy='20' r='18' fill='url(#r)'/>" +
+      "</svg>";
+    return 'data:image/svg+xml,' + encodeURIComponent(svg);
+  }
+  for (const t of ALL_TYPES) {
+    ITEMS[_incenseKey(t)] = {
+      name: _titleCaseType(t) + ' Incense',
+      desc: 'Crafted from an egg. Attracts ' + _titleCaseType(t)
+        + '-type spawns. (Effect coming soon.)',
+      icon: _incenseOrbIcon(TYPE_COLORS[t]),
+      incenseType: t,
+    };
+  }
 
   function typeChipsHtml(types) {
     if (!types || !types.length) return '';
@@ -3890,6 +4008,7 @@
       #creatureInventory .daycare-back,
       #creatureInventory .eggs-back,
       #creatureInventory .bag-back,
+      #creatureInventory .craft-back,
       #creatureInventory .tags-back {
         background: none;
         border: none;
@@ -3940,6 +4059,7 @@
       #creatureInventory .daycare-back:hover,
       #creatureInventory .eggs-back:hover,
       #creatureInventory .bag-back:hover,
+      #creatureInventory .craft-back:hover,
       #creatureInventory .tags-back:hover {
         color: var(--ui-accent, #888);
       }
@@ -5118,6 +5238,104 @@
         color: var(--ui-muted, #666);
         font-size: 13px;
       }
+      /* ── Craft ── */
+      /* Matches the header nav buttons (Tags / Bag / Candy / …). */
+      #creatureInventory .bag-craft {
+        display: flex; align-items: center; justify-content: center;
+        width: fit-content; margin: 0 auto 12px; padding: 5px 10px;
+        font-family: inherit; font-size: 12px; line-height: 1; cursor: pointer;
+        background: transparent; color: var(--ui-text, #111);
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
+        border-radius: var(--ui-radius, 8px);
+      }
+      #creatureInventory .bag-craft:hover { background: var(--ui-hover, rgba(0,0,0,0.04)); }
+      #creatureInventory .craft-view { display: none; }
+      #creatureInventory .craft-view.show { display: flex; flex-direction: column; }
+      #creatureInventory .craft-hint {
+        font-size: 12px; color: var(--ui-muted, #666);
+        text-align: center; margin: 0 0 12px;
+      }
+      #creatureInventory .craft-strip {
+        display: flex; gap: 10px; overflow-x: auto; padding: 4px 2px 12px;
+        scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch;
+      }
+      #creatureInventory .craft-orb {
+        flex: 0 0 auto; scroll-snap-align: center;
+        display: flex; flex-direction: column; align-items: center; gap: 4px;
+        width: 92px; padding: 10px 6px; cursor: pointer;
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+        border: 1px solid var(--ui-hairline, rgba(0,0,0,0.08));
+        border-radius: var(--ui-radius, 10px); font: inherit;
+      }
+      #creatureInventory .craft-orb:active { transform: scale(0.96); }
+      #creatureInventory .craft-orb-img { width: 54px; height: 54px; }
+      #creatureInventory .craft-orb-name {
+        font-size: 13px; font-weight: 600; color: var(--ui-text, #111);
+      }
+      #creatureInventory .craft-orb-count { font-size: 11px; color: var(--ui-muted, #666); }
+      #creatureInventory .craft-chosen { text-align: center; margin: 0 0 10px; }
+      #creatureInventory .craft-chip {
+        display: inline-flex; align-items: center; gap: 6px;
+        font-size: 14px; font-weight: 600; color: var(--ui-text, #111);
+      }
+      #creatureInventory .craft-chip-orb { width: 22px; height: 22px; }
+      #creatureInventory .craft-empty {
+        padding: 20px 12px; text-align: center;
+        color: var(--ui-muted, #666); font-size: 13px;
+      }
+      #creatureInventory .craft-egg-list { display: flex; flex-direction: column; gap: 6px; }
+      #creatureInventory .craft-egg {
+        display: flex; align-items: center; gap: 10px; width: 100%;
+        padding: 8px 10px; cursor: pointer; text-align: left; font: inherit;
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+        border: 1px solid var(--ui-hairline, rgba(0,0,0,0.08));
+        border-radius: var(--ui-radius, 8px);
+      }
+      #creatureInventory .craft-egg:active { transform: scale(0.99); }
+      #creatureInventory .craft-egg-art {
+        width: 56px; height: 56px; flex: 0 0 auto; position: relative;
+      }
+      #creatureInventory .craft-egg-art.big { width: 72px; height: 72px; }
+      /* 2×/3× yield badge in the top-right of the egg art (and the
+         confirm orb). */
+      #creatureInventory .craft-egg-mult {
+        position: absolute; top: -4px; right: -4px;
+        min-width: 18px; height: 18px; padding: 0 4px; box-sizing: border-box;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 11px; font-weight: 700; line-height: 1; color: #fff;
+        background: #e6a400; border: 1.5px solid #fff; border-radius: 9px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.35);
+      }
+      #creatureInventory .craft-orb-wrap { position: relative; display: inline-block; }
+      #creatureInventory .craft-egg-mult.on-orb { top: -2px; right: -2px; }
+      #creatureInventory .craft-egg-info { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+      #creatureInventory .craft-egg-name {
+        font-size: 14px; font-weight: 600; color: var(--ui-text, #111);
+      }
+      #creatureInventory .craft-confirm { text-align: center; padding: 10px 8px; }
+      #creatureInventory .craft-confirm-row {
+        display: flex; align-items: center; justify-content: center; gap: 14px; margin-bottom: 14px;
+      }
+      #creatureInventory .craft-arrow { font-size: 26px; color: var(--ui-muted, #888); }
+      #creatureInventory .craft-confirm-orb, #creatureInventory .craft-done-orb { width: 72px; height: 72px; }
+      #creatureInventory .craft-confirm-text, #creatureInventory .craft-done-text {
+        font-size: 14px; color: var(--ui-text, #111); line-height: 1.4; margin-bottom: 16px;
+      }
+      #creatureInventory .craft-warn { font-size: 12px; color: #c0392b; }
+      #creatureInventory .craft-confirm-actions {
+        display: flex; gap: 10px; justify-content: center;
+      }
+      #creatureInventory .craft-confirm-actions button {
+        padding: 9px 18px; font: inherit; font-weight: 600; cursor: pointer;
+        border-radius: var(--ui-radius, 8px); border: 1px solid var(--ui-hairline, rgba(0,0,0,0.15));
+        background: var(--ui-input-bg, #f2f2f2); color: var(--ui-text, #111);
+      }
+      #creatureInventory .craft-confirm-actions .craft-do,
+      #creatureInventory .craft-confirm-actions .craft-more {
+        background: linear-gradient(135deg, #7a5cff, #b06cff); color: #fff; border: none;
+      }
+      #creatureInventory .craft-done { text-align: center; padding: 16px 8px; }
+      #creatureInventory .craft-done-orb { margin-bottom: 12px; }
       #creatureInventory .tags-view { display: none; }
       #creatureInventory .tags-view.show { display: flex; flex-direction: column; }
       #creatureInventory .tags-title {
@@ -6082,6 +6300,11 @@
           <h3 class="subview-title">Bag</h3>
           <div class="bag-body"></div>
         </div>
+        <div class="craft-view">
+          <button class="craft-back" type="button" aria-label="back">←</button>
+          <h3 class="subview-title craft-title">Craft</h3>
+          <div class="craft-body"></div>
+        </div>
         <div class="tags-view">
           <button class="tags-back" type="button" aria-label="back">←</button>
           <h3 class="subview-title">Tags</h3>
@@ -6387,6 +6610,7 @@
     panel.querySelector('.daycare-back').addEventListener('click', popView);
     panel.querySelector('.eggs-back').addEventListener('click', popView);
     panel.querySelector('.bag-back').addEventListener('click', popView);
+    panel.querySelector('.craft-back').addEventListener('click', _craftBack);
     panel.querySelector('.tags-back').addEventListener('click', popView);
     renderHeaderActions(panel);
     // Re-render when the user toggles the icon-vs-text preference in
@@ -6519,6 +6743,7 @@
     panel.querySelector('.daycare-view').classList.remove('show');
     panel.querySelector('.eggs-view').classList.remove('show');
     panel.querySelector('.bag-view').classList.remove('show');
+    panel.querySelector('.craft-view').classList.remove('show');
     panel.querySelector('.tags-view').classList.remove('show');
     // Post-catch context follows the active stack frame: the Done
     // button surfaces ONLY while the user is on the specific detail
@@ -6613,6 +6838,10 @@
       case 'bag':
         renderBag();
         panel.querySelector('.bag-view').classList.add('show');
+        return;
+      case 'craft':
+        renderCraft();
+        panel.querySelector('.craft-view').classList.add('show');
         return;
       case 'tags':
         renderTags();
@@ -7466,6 +7695,13 @@
     if (!panel) return;
     const body = panel.querySelector('.bag-body');
     if (!body) return;
+    // Craft launcher — always available (you craft from eggs, not from
+    // bag contents), so it shows even when the bag is empty.
+    const craftBtnHtml = `<button class="bag-craft" type="button">Craft incense</button>`;
+    const wireCraft = () => {
+      const cb = body.querySelector('.bag-craft');
+      if (cb) cb.addEventListener('click', showCraft);
+    };
     const bag = readBag();
     const entries = Object.entries(bag)
       .filter(([, n]) => n > 0)
@@ -7476,9 +7712,10 @@
         return na.localeCompare(nb);
       });
     if (!entries.length) {
-      body.innerHTML = `
+      body.innerHTML = craftBtnHtml + `
         <div class="bag-empty">Bag is empty.</div>
       `;
+      wireCraft();
       return;
     }
     const total = entries.reduce((sum, [, n]) => sum + n, 0);
@@ -7499,10 +7736,203 @@
         </div>
       `;
     }).join('');
-    body.innerHTML = `
+    body.innerHTML = craftBtnHtml + `
       <div class="bag-subtitle">${escapeHtml(subtitle)}</div>
       <div class="bag-list">${rows}</div>
     `;
+    wireCraft();
+  }
+
+  // ── Craft: convert an egg into incense ──
+  // 3 steps inside one 'craft' view: pick an incense type (swipe the
+  // orb strip), pick a valid egg (its type must be neutral-or-effective
+  // against the chosen incense type), confirm. Eggs currently in an
+  // incubator slot are excluded (they're committed to hatching). The
+  // craft-view back button steps backward, then exits to the bag.
+  let _craftState = { step: 1, type: null, eggId: null };
+  function showCraft() {
+    _craftState = { step: 1, type: null, eggId: null };
+    pushView({ view: 'craft' });
+  }
+  function _craftBack() {
+    if (_craftState.step > 1) {
+      _craftState.step -= 1;
+      if (_craftState.step < 2) _craftState.type = null;
+      if (_craftState.step < 3) _craftState.eggId = null;
+      renderCraft();
+    } else {
+      popView();
+    }
+  }
+  function removeEggById(id) {
+    const arr = readEggs();
+    const idx = arr.findIndex((e) => e && e.id === id);
+    if (idx < 0) return false;
+    arr.splice(idx, 1);
+    writeEggs(arr);
+    return true;
+  }
+  // Eggs eligible to be crafted into incense of `type`: not currently in
+  // an incubator slot, and at least one of the egg's fusion types is
+  // neutral-or-effective against `type`.
+  function _craftableEggsFor(type) {
+    const slotted = new Set((readIncubator() || []).filter(Boolean));
+    return readEggs().filter((e) => {
+      if (slotted.has(e.id)) return false;
+      const types = (global.Species && global.Species.fusionTypesFor)
+        ? global.Species.fusionTypesFor(e.speciesA, e.speciesB) : [];
+      return eggTypesNeutralOrEffectiveVs(types, type);
+    });
+  }
+  function _craftSetTitle(text) {
+    const panel = document.getElementById('creatureInventory');
+    const t = panel && panel.querySelector('.craft-view .craft-title');
+    if (t) t.textContent = text;
+  }
+  function renderCraft() {
+    const panel = document.getElementById('creatureInventory');
+    if (!panel) return;
+    const body = panel.querySelector('.craft-body');
+    if (!body) return;
+    const st = _craftState;
+
+    // Step 1 — choose an incense type from the swipeable orb strip.
+    if (st.step === 1 || !st.type) {
+      _craftSetTitle('Choose incense');
+      const orbs = ALL_TYPES.map((t) => {
+        const color = TYPE_COLORS[t];
+        const n = _craftableEggsFor(t).length;
+        return `
+          <button class="craft-orb" type="button" data-type="${t}">
+            <img class="craft-orb-img" src="${escapeHtml(_incenseOrbIcon(color))}" alt="">
+            <span class="craft-orb-name">${escapeHtml(_titleCaseType(t))}</span>
+            <span class="craft-orb-count">${n} egg${n === 1 ? '' : 's'}</span>
+          </button>`;
+      }).join('');
+      body.innerHTML = `
+        <div class="craft-hint">Swipe and tap an incense to craft.</div>
+        <div class="craft-strip">${orbs}</div>
+      `;
+      body.querySelectorAll('.craft-orb').forEach((b) => {
+        b.addEventListener('click', () => {
+          _craftState = { step: 2, type: b.dataset.type, eggId: null };
+          renderCraft();
+        });
+      });
+      return;
+    }
+
+    // Step 2 — choose a valid egg for the chosen incense type.
+    if (st.step === 2) {
+      _craftSetTitle(_titleCaseType(st.type) + ' Incense');
+      const eggs = _craftableEggsFor(st.type);
+      if (!eggs.length) {
+        body.innerHTML = `
+          <div class="craft-chosen">${_incenseChipHtml(st.type)}</div>
+          <div class="craft-empty">No eggs whose type is neutral or effective against
+            ${escapeHtml(_titleCaseType(st.type))}. (Eggs in the incubator can't be crafted.)</div>
+        `;
+        return;
+      }
+      const tiles = eggs.map((e) => {
+        const artStyle = _eggArtBackgroundCss(_eggArtSpecies(e), 56);
+        const name = fusionName(e.speciesA, e.speciesB);
+        const types = (global.Species && global.Species.fusionTypesFor)
+          ? global.Species.fusionTypesFor(e.speciesA, e.speciesB) : [];
+        const mult = craftMultiplier(types, st.type);
+        const badge = mult > 1
+          ? `<span class="craft-egg-mult">${mult}&times;</span>` : '';
+        return `
+          <button class="craft-egg" type="button" data-egg="${escapeHtml(e.id)}">
+            <div class="craft-egg-art" style="${artStyle}">${badge}</div>
+            <div class="craft-egg-info">
+              <div class="craft-egg-name">${escapeHtml(name)}</div>
+              ${typeChipsHtml(types)}
+            </div>
+          </button>`;
+      }).join('');
+      body.innerHTML = `
+        <div class="craft-chosen">${_incenseChipHtml(st.type)}</div>
+        <div class="craft-hint">Tap an egg to convert it. A type super-effective against
+          ${escapeHtml(_titleCaseType(st.type))} yields <b>2&times;</b> incense; two
+          super-effective types yield <b>3&times;</b>.</div>
+        <div class="craft-egg-list">${tiles}</div>
+      `;
+      body.querySelectorAll('.craft-egg').forEach((b) => {
+        b.addEventListener('click', () => {
+          _craftState = { step: 3, type: st.type, eggId: b.dataset.egg };
+          renderCraft();
+        });
+      });
+      return;
+    }
+
+    // Step 3 — confirm conversion.
+    _craftSetTitle('Confirm');
+    const egg = readEggs().find((e) => e.id === st.eggId);
+    if (!egg) { _craftState = { step: 1, type: null, eggId: null }; renderCraft(); return; }
+    const name = fusionName(egg.speciesA, egg.speciesB);
+    const artStyle = _eggArtBackgroundCss(_eggArtSpecies(egg), 72);
+    const eggTypes = (global.Species && global.Species.fusionTypesFor)
+      ? global.Species.fusionTypesFor(egg.speciesA, egg.speciesB) : [];
+    const mult = craftMultiplier(eggTypes, st.type);
+    const yieldLabel = mult + '× ' + _titleCaseType(st.type) + ' Incense';
+    const orbMult = mult > 1 ? `<span class="craft-egg-mult on-orb">${mult}&times;</span>` : '';
+    body.innerHTML = `
+      <div class="craft-confirm">
+        <div class="craft-confirm-row">
+          <div class="craft-egg-art big" style="${artStyle}"></div>
+          <span class="craft-arrow">&rarr;</span>
+          <span class="craft-orb-wrap">
+            <img class="craft-confirm-orb" src="${escapeHtml(_incenseOrbIcon(TYPE_COLORS[st.type]))}" alt="">
+            ${orbMult}
+          </span>
+        </div>
+        <div class="craft-confirm-text">Convert <b>${escapeHtml(name)}</b> egg into
+          <b>${escapeHtml(yieldLabel)}</b>?<br>
+          <span class="craft-warn">This permanently consumes the egg.</span></div>
+        <div class="craft-confirm-actions">
+          <button class="craft-cancel" type="button">Cancel</button>
+          <button class="craft-do" type="button">Convert</button>
+        </div>
+      </div>
+    `;
+    body.querySelector('.craft-cancel').addEventListener('click', () => {
+      _craftState = { step: 2, type: st.type, eggId: null };
+      renderCraft();
+    });
+    body.querySelector('.craft-do').addEventListener('click', () => {
+      if (!removeEggById(st.eggId)) {
+        // Egg vanished (hatched/crafted in another tab) — bail gracefully.
+        _craftState = { step: 1, type: st.type, eggId: null };
+        renderCraft();
+        return;
+      }
+      grantItem(_incenseKey(st.type), mult);
+      _craftSetTitle('Crafted!');
+      body.innerHTML = `
+        <div class="craft-done">
+          <img class="craft-done-orb" src="${escapeHtml(_incenseOrbIcon(TYPE_COLORS[st.type]))}" alt="">
+          <div class="craft-done-text">Crafted <b>${escapeHtml(yieldLabel)}</b>!
+            It's in your bag.</div>
+          <div class="craft-confirm-actions">
+            <button class="craft-more" type="button">Craft another</button>
+            <button class="craft-tobag" type="button">Back to bag</button>
+          </div>
+        </div>
+      `;
+      body.querySelector('.craft-more').addEventListener('click', () => {
+        _craftState = { step: 1, type: null, eggId: null };
+        renderCraft();
+      });
+      body.querySelector('.craft-tobag').addEventListener('click', popView);
+    });
+  }
+  // Small inline incense chip (orb + label) for the chosen incense.
+  function _incenseChipHtml(type) {
+    return `<span class="craft-chip">`
+      + `<img class="craft-chip-orb" src="${escapeHtml(_incenseOrbIcon(TYPE_COLORS[type]))}" alt="">`
+      + `${escapeHtml(_titleCaseType(type))} Incense</span>`;
   }
 
   // Candy view: rows of species name + cumulative count. Sorted by

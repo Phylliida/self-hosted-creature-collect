@@ -458,6 +458,129 @@
   let _ctMemoOldestTick = -1;       // ticks below this have been pruned
   const CT_MEMO_HARD_CAP = 120000;  // teleport / zoom-out safety valve
 
+  // ── Legendary spawns (independent deterministic pull) ──────────
+  // Legendaries are deliberately NOT in the normal type/weather pool
+  // (which excludes them). They get their own parallel stream so they can
+  // have a very different cadence — far rarer, and lingering for a day so
+  // you can travel to one — without entangling the tuned normal-spawn
+  // density or its tight 20-minute scan window.
+  //
+  // Same fine cell grid (so a legendary lands on a precise spot), but
+  // coarse 6-hour birth ticks and a 1-day lifetime, so the scan walks only
+  // LEG_LIFETIME_TICKS coarse ticks. A cheap hash pre-filter skips the
+  // expensive PRNG seed for the ~99.9999% of cell-ticks with no legendary,
+  // so this adds negligible work to spawnsInBbox.
+  //
+  // Rarity is density-matched to the normal pool: a legendary is ~1/
+  // LEG_RARITY as likely to be standing in a given cell as a normal spawn,
+  // so of the creatures you actually encounter ~1/LEG_RARITY are legendary
+  // (the "1/4000 chance of a legendary" the design calls for) — regardless
+  // of how the longer lifetime inflates the raw standing count.
+  const LEG_TICK_MS = 6 * 60 * 60 * 1000;        // legendary birth granularity: 6 h
+  const LEG_LIFETIME_MS = 24 * 60 * 60 * 1000;   // legendaries linger ~1 day
+  const LEG_LIFETIME_TICKS = Math.ceil(LEG_LIFETIME_MS / LEG_TICK_MS);  // 4
+  const LEG_RARITY = 4000;                        // ~1 legendary per 4000 normal spawns
+  const LEG_CHANCE_PER_CELLTICK =
+    (SPAWN_CHANCE_PER_TICK * LIFETIME_TICKS) / (LEG_RARITY * LEG_LIFETIME_TICKS);
+  const LEG_MOD = Math.max(1, Math.round(1 / LEG_CHANCE_PER_CELLTICK));
+  const LEG_SALT = 0x4C45470A;                    // distinct seed namespace
+  // Gen 1 legendaries (PIF id == national dex in gen 1); all <= 429 so
+  // they're inside the downloaded sprite range. Filtered against the loaded
+  // species list at roll time in case data isn't fully present.
+  const GEN1_LEGENDARY_IDS = [144, 145, 146, 150, 151];
+
+  function currentLegTick(nowMs) {
+    return Math.floor((nowMs == null ? Date.now() : nowMs) / LEG_TICK_MS);
+  }
+  // Morph-partner pool: every loaded species (includes evolutions and the
+  // other legendaries). Cached; rebuilt when the loaded count changes.
+  let _legAllCache = null;
+  let _legAllLen = -1;
+  function _legAllSpecies() {
+    const Species = global.Species;
+    if (!Species || !Species.allSpecies) return null;
+    const list = Species.allSpecies();
+    if (!list.length) return null;
+    if (!_legAllCache || _legAllLen !== list.length) {
+      _legAllCache = list.map((s) => s.id);
+      _legAllLen = list.length;
+    }
+    return _legAllCache;
+  }
+  function _legLegendaries(allIds) {
+    const have = new Set(allIds);
+    return GEN1_LEGENDARY_IDS.filter((id) => have.has(id));
+  }
+  function legCellTickSeed(cellX, cellY, ltick) {
+    const curX = goodMod(cellX, LAT_MOD);
+    const curY = goodMod(cellY, LON_MOD);
+    return (Math.round(
+      ((curX + 1) * LAT_MOD + (curY + 1) * LAT_MOD * LON_MOD) * 7477
+    ) + ((ltick ^ LEG_SALT) >>> 0) * 983) | 0;
+  }
+  // Cheap deterministic pre-filter — same value for every player, so
+  // legendaries are global + shared. Skips the xor4096 seed init for the
+  // vast majority of cell-ticks that host no legendary.
+  function _legCandidate(cellX, cellY, ltick) {
+    const h = (Math.imul(cellX, 73856093) ^ Math.imul(cellY, 19349663)
+      ^ Math.imul(ltick, 83492791) ^ LEG_SALT) >>> 0;
+    return (h % LEG_MOD) === 0;
+  }
+  function generateLegendaryAtTick(cellX, cellY, ltick) {
+    if (!_legCandidate(cellX, cellY, ltick)) return null;
+    const all = _legAllSpecies();
+    if (!all) return null;
+    const legs = _legLegendaries(all);
+    if (!legs.length) return null;
+    const arng = getxor4069(legCellTickSeed(cellX, cellY, ltick));
+    const fx = arng();
+    const fy = arng();
+    const lat = (cellX + fx) / SCALE - 90;
+    const lng = (cellY + fy) / SCALE - 180;
+    // Head = a gen-1 legendary (uniform); body = any loaded species
+    // (uniform, including the other legendaries).
+    const legendary = legs[Math.floor(arng() * legs.length)];
+    const partner = all[Math.floor(arng() * all.length)];
+    const level = expDistr(8, 50, arng()) + 5;   // legendaries skew a bit higher
+    const sizeM = 0.15 + arng() * 2.0;
+    const bornOffset = Math.floor(arng() * LEG_TICK_MS);
+    const startMs = ltick * LEG_TICK_MS + bornOffset;
+    const variantSeed = arng();
+    return {
+      // 'L:' namespace keeps legendary caught-IDs distinct from normal
+      // spawn IDs and is recognized by isSpawnIdStale.
+      id: 'L:' + cellX + ':' + cellY + ':' + ltick + ':0',
+      lat, lng, speciesA: legendary, speciesB: partner,
+      level, sizeM, variantSeed,
+      startMs, expireMs: startMs + LEG_LIFETIME_MS,
+      legendary: true,
+    };
+  }
+  function legendariesInBbox(bbox, nowMs) {
+    const [west, south, east, north] = bbox;
+    const now = nowMs == null ? Date.now() : nowMs;
+    const curLT = currentLegTick(now);
+    const minLatCell = Math.floor((south + 90) * SCALE);
+    const maxLatCell = Math.ceil((north + 90) * SCALE);
+    const minLngCell = Math.floor((west + 180) * SCALE);
+    const maxLngCell = Math.ceil((east + 180) * SCALE);
+    if ((maxLatCell - minLatCell + 1) * (maxLngCell - minLngCell + 1) > MAX_CELLS) return [];
+    const firstLT = curLT - LEG_LIFETIME_TICKS;
+    const out = [];
+    for (let cx = minLatCell; cx <= maxLatCell; cx++) {
+      for (let cy = minLngCell; cy <= maxLngCell; cy++) {
+        for (let lt = firstLT; lt <= curLT; lt++) {
+          const p = generateLegendaryAtTick(cx, cy, lt);
+          if (!p) continue;
+          if (now < p.startMs || now >= p.expireMs) continue;
+          if (p.lat < south || p.lat > north || p.lng < west || p.lng > east) continue;
+          out.push(p);
+        }
+      }
+    }
+    return out;
+  }
+
   function spawnsInBbox(bbox, nowMs) {
     const [west, south, east, north] = bbox;
     const now = nowMs == null ? Date.now() : nowMs;
@@ -510,6 +633,11 @@
         }
       }
     }
+    // Fold in the independent legendary stream (rare; cheap hash-gated
+    // scan over a few coarse ticks). Legendary spawn objects share the
+    // normal shape, so the marker/encounter pipeline handles them as-is.
+    const legs = legendariesInBbox(bbox, now);
+    for (let i = 0; i < legs.length; i++) out.push(legs[i]);
     return out;
   }
 
@@ -518,6 +646,14 @@
   // bloats localStorage — return true so creatures.js can prune it.
   function isSpawnIdStale(id, nowMs) {
     if (typeof id !== 'string') return true;
+    // Legendary IDs ('L:cx:cy:legtick:0') age out on the coarse leg-tick
+    // scale + 1-day window, not the 20-minute normal window.
+    if (id.startsWith('L:')) {
+      const lparts = id.split(':');
+      const ltick = +lparts[3];
+      if (!Number.isFinite(ltick)) return true;
+      return ltick < currentLegTick(nowMs) - LEG_LIFETIME_TICKS;
+    }
     const parts = id.split(':');
     if (parts.length < 3) return true;
     const tick = +parts[2];
@@ -530,6 +666,10 @@
   global.Spawns = {
     spawnsInBbox, generateCellAtTick, currentTick, isSpawnIdStale,
     currentWeather,
+    // Legendary stream (folded into spawnsInBbox; exposed for tests +
+    // any future legendary-specific UI).
+    legendariesInBbox, generateLegendaryAtTick, currentLegTick,
+    LEG_TICK_MS, LEG_LIFETIME_MS,
     // Exposed so other deterministic features (e.g. daycare loot,
     // future event drops) can seed their own streams from a stable,
     // proven PRNG rather than each rolling their own hash.
