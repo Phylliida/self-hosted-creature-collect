@@ -6988,6 +6988,10 @@ function fmtDate(ts) {
       // Last-viewed fractal permalink, so resuming on another device
       // lands on the same view.
       fractalLast: localStorage.getItem('cc.fractalLast.v1') || null,
+      // Active incense ({type, startMs}) so a burning incense keeps its
+      // remaining time across devices / restarts.
+      activeIncense: (window.Creatures && window.Creatures.getActiveIncense)
+        ? window.Creatures.getActiveIncense() : null,
     };
   }
 
@@ -7327,6 +7331,12 @@ function fmtDate(ts) {
     // that view.
     if (typeof data.fractalLast === 'string' && data.fractalLast) {
       localStorage.setItem('cc.fractalLast.v1', data.fractalLast);
+    }
+    // Active incense — adopt it (honouring its original start time so the
+    // remaining window is correct; ignored if already expired).
+    if (data.activeIncense && window.Creatures && window.Creatures.setActiveIncenseState) {
+      try { window.Creatures.setActiveIncenseState(data.activeIncense); }
+      catch (e) { console.error('importActiveIncense failed', e); }
     }
     alert(
       `Imported: ${favAdded} favorite(s) (${favSkipped} skipped), ` +
