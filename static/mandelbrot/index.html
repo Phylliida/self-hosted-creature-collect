@@ -12,6 +12,11 @@
          jsdelivr CDN link) so the fractal viewer runs fully offline
          inside the bundled app — no network at runtime. -->
     <link href="./vendor/bootstrap.min.css" rel="stylesheet">
+    <!-- Black page background (after Bootstrap so it wins over its white
+         body bg). Kills the white flash while a saved fractal reloads the
+         iframe — the blank loading state now matches the black viewer
+         shell instead of flashing white before the canvas paints. -->
+    <style>html, body { background: #000; }</style>
 </head>
 <body id="app">
 <div id="main">

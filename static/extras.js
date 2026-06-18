@@ -356,6 +356,9 @@
   #fractalsWindow iframe {
     position: absolute; inset: 0; width: 100%; height: 100%;
     border: 0; display: block;
+    /* Black during navigation so reloading a saved fractal doesn't flash
+       white before the new document paints. */
+    background: #000;
   }
   #fractalsBar {
     position: absolute; z-index: 2;

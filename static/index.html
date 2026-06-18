@@ -6183,8 +6183,8 @@ function fmtDate(ts) {
     onRemove() {}
   }
   // Focus / follow toggle — centers on the player and keeps them centered
-  // as they move (driven by the GeolocateControl's position fixes). Zoom 6
-  // on activation, unless "Lock zoom" is on (then keep the current zoom).
+  // as they move (driven by the GeolocateControl's position fixes). Zoom
+  // 16 on activation, unless "Lock zoom" is on (then keep current zoom).
   let _focusActive = false;
   let _lastUserPos = null;
   let _pendingFocusZoom = null;
@@ -6197,9 +6197,16 @@ function fmtDate(ts) {
   }
   function toggleFocus() {
     _focusActive = !_focusActive;
+    try { localStorage.setItem('cc.focusFollow', _focusActive ? '1' : '0'); } catch (e) {}
     if (_focusBtnEl) _focusBtnEl.classList.toggle('focus-active', _focusActive);
+    // While focused the map stays centred on the player, so disable
+    // drag-panning (zoom still works); re-enable when turning off.
+    try {
+      if (_focusActive) map.dragPan.disable();
+      else map.dragPan.enable();
+    } catch (e) {}
     if (!_focusActive) return;
-    const zoom = localStorage.getItem('cc.lockZoom') === '1' ? map.getZoom() : 6;
+    const zoom = localStorage.getItem('cc.lockZoom') === '1' ? map.getZoom() : 16;
     if (_lastUserPos) {
       _recenterOnUser(zoom);
     } else {
@@ -6268,6 +6275,14 @@ function fmtDate(ts) {
       _pendingFocusZoom = null;
     }
   });
+  // Restore the focus/follow toggle from a previous session — re-enter
+  // follow mode (pan disabled, button lit); the next GPS fix recenters at
+  // the current zoom (we don't force the activation zoom on restore).
+  if (localStorage.getItem('cc.focusFollow') === '1') {
+    _focusActive = true;
+    if (_focusBtnEl) _focusBtnEl.classList.add('focus-active');
+    try { map.dragPan.disable(); } catch (e) {}
+  }
 
   // Auto-activate the GeolocateControl on every load so the user-dot
   // shows up without a button press AND the permission prompt fires

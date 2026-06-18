@@ -685,8 +685,12 @@
   function _rollShinyForRecord(rec) {
     if (!rec || rec.shinyVariant !== undefined) return;
     let rate = (global.ShinyStore && global.ShinyStore.RATE) || 0.001;
-    // Incense spawns roll shiny at double the normal rate.
-    if (rec.spawn && rec.spawn.incense) rate *= 2;
+    // Legendaries get 10× the base shiny rate (1/100 at the default
+    // 1/1000); incense spawns get 2×. The roll itself uses Math.random,
+    // so WHO sees a shiny varies per trainer — only which/where the
+    // legendary spawns is deterministic and shared.
+    if (rec.spawn && rec.spawn.legendary) rate *= 10;
+    else if (rec.spawn && rec.spawn.incense) rate *= 2;
     const count = (global.ShinyStore && global.ShinyStore.VARIANT_COUNT) || 12;
     const hit = _forceShinyOn() || (Math.random() < rate);
     rec.shinyVariant = hit ? Math.floor(Math.random() * count) : null;
