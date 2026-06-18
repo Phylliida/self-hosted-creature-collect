@@ -1890,6 +1890,9 @@
   html[data-theme="medieval"] .maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-background .maplibregl-ctrl-icon {
     filter: none;
   }
+  /* Focus/follow toggle — accent-tinted while active (the SVG uses
+     currentColor, so tinting the button colours the icon). */
+  .maplibregl-ctrl button.focus-btn.focus-active { color: var(--ui-accent); }
   .maplibregl-ctrl-attrib { color: var(--ui-text); }
   .maplibregl-ctrl-attrib a { color: var(--ui-accent); }
   .maplibregl-ctrl-scale {
@@ -6179,9 +6182,56 @@ function fmtDate(ts) {
     }
     onRemove() {}
   }
+  // Focus / follow toggle — centers on the player and keeps them centered
+  // as they move (driven by the GeolocateControl's position fixes). Zoom 6
+  // on activation, unless "Lock zoom" is on (then keep the current zoom).
+  let _focusActive = false;
+  let _lastUserPos = null;
+  let _pendingFocusZoom = null;
+  let _focusBtnEl = null;
+  function _recenterOnUser(zoom) {
+    if (!_lastUserPos || !_lastUserPos.coords) return;
+    const opts = { center: [_lastUserPos.coords.longitude, _lastUserPos.coords.latitude] };
+    if (zoom != null) opts.zoom = zoom;
+    map.easeTo(opts);
+  }
+  function toggleFocus() {
+    _focusActive = !_focusActive;
+    if (_focusBtnEl) _focusBtnEl.classList.toggle('focus-active', _focusActive);
+    if (!_focusActive) return;
+    const zoom = localStorage.getItem('cc.lockZoom') === '1' ? map.getZoom() : 6;
+    if (_lastUserPos) {
+      _recenterOnUser(zoom);
+    } else {
+      // No fix yet — kick the geolocate control and apply the zoom on the
+      // first fix that arrives.
+      _pendingFocusZoom = zoom;
+      try { geolocate.trigger(); } catch (e) {}
+    }
+  }
+  class FocusControl {
+    onAdd() {
+      const c = document.createElement('div');
+      c.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'focus-btn';
+      b.title = 'Focus on me';
+      b.setAttribute('aria-label', 'focus on me');
+      b.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="display:block;margin:auto"><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="7"/><line x1="12" y1="2" x2="12" y2="4.5"/><line x1="12" y1="19.5" x2="12" y2="22"/><line x1="2" y1="12" x2="4.5" y2="12"/><line x1="19.5" y1="12" x2="22" y2="12"/></svg>`;
+      b.onclick = () => toggleFocus();
+      _focusBtnEl = b;
+      c.appendChild(b);
+      return c;
+    }
+    onRemove() { _focusBtnEl = null; }
+  }
   map.addControl(new RoutingControl(), 'bottom-right');
   map.addControl(new SettingsControl(), 'bottom-right');
   const creatureUi = Creatures.install(map);
+  // Added AFTER the pokéball so it stacks directly ABOVE it (MapLibre
+  // prepends bottom-corner controls, so later-added = higher).
+  map.addControl(new FocusControl(), 'bottom-right');
   map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
 
   map.on('moveend', () => {
@@ -6209,6 +6259,15 @@ function fmtDate(ts) {
     fitBoundsOptions: { maxZoom: 15 }
   });
   map.addControl(geolocate, 'bottom-right');
+  // Feed the focus/follow toggle: remember the latest fix, and while focus
+  // is active recenter on it (applying the one-time activation zoom first).
+  geolocate.on('geolocate', (e) => {
+    _lastUserPos = e;
+    if (_focusActive) {
+      _recenterOnUser(_pendingFocusZoom);
+      _pendingFocusZoom = null;
+    }
+  });
 
   // Auto-activate the GeolocateControl on every load so the user-dot
   // shows up without a button press AND the permission prompt fires

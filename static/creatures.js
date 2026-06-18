@@ -2907,7 +2907,10 @@
         const a = famA[col];
         const b = famB[row];
         const isCurrent = a === currentA && b === currentB;
-        const seen = isCurrent || isFusionSeen(a, b);
+        // Use the real seen status (NOT isCurrent) so the cell for the
+        // fusion you're viewing silhouettes when you haven't seen it —
+        // matching the black silhouette shown at the top of the entry.
+        const seen = isFusionSeen(a, b);
         const title = (global.Species && seen)
           ? `${global.Species.nameFor(a)} × ${global.Species.nameFor(b)}`
           : '???';

@@ -600,6 +600,9 @@
   // lives in the save file (creatures.js) and is pushed here via
   // setActiveIncense so it survives app restarts.
   const INCENSE_DURATION_MS = 30 * 60 * 1000;   // 30 min active
+  // Incense spawns at this fraction of the normal per-cell-tick rate —
+  // 0.5 → half the regular density (so roughly +50% pokémon while active).
+  const INCENSE_RATE_FACTOR = 0.5;
   const INCENSE_SALT = 0x12CE45EE;              // 'inCENSE' — distinct seed namespace
   let _activeIncense = null;                    // { type, startMs } | null
   function setActiveIncense(state) {
@@ -629,7 +632,7 @@
     const typeIdx = TYPES.indexOf(incenseType);
     if (typeIdx < 0) return null;
     const arng = getxor4069(incenseCellTickSeed(cellX, cellY, tick, typeIdx));
-    if (arng() >= SPAWN_CHANCE_PER_TICK) return null;
+    if (arng() >= SPAWN_CHANCE_PER_TICK * INCENSE_RATE_FACTOR) return null;
     const fx = arng();
     const fy = arng();
     const lat = (cellX + fx) / SCALE - 90;
