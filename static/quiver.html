@@ -247,19 +247,43 @@ body {
   }
   #resetQuiverButton:hover { color: #fff; border-color: rgba(255, 255, 255, 0.5); }
 
+  /* Kill the browser's double-tap-to-zoom when tapping the controls. */
+  .defaultButton, .selectedButton, .menu-toggle, #resetQuiverButton,
+  .button-container, .extras-panel, .saving-panel, .undo-redo-panel,
+  .mg-confirm-panel, input {
+    touch-action: manipulation;
+  }
+
+  /* Collapsible (spoiler) menu — the toggle stays, everything else hides. */
+  .menu-toggle {
+    align-self: flex-start;
+    padding: 4px 10px; font-size: 16px; line-height: 1;
+    background: rgba(255, 255, 255, 0.12); color: rgba(255, 255, 255, 0.85);
+    border: 2px solid rgba(255, 255, 255, 0.2); border-radius: 6px; cursor: pointer;
+  }
+  .menu-toggle:hover { color: #fff; }
+  .button-container.collapsed > :not(.menu-toggle) { display: none; }
+
+  /* B-matrix value is a read-only display: fixed, not tappable/zoomable. */
+  #bMatrixField { pointer-events: none; width: 100%; box-sizing: border-box; }
+
   /* ── Mobile: overlay the control panel over the canvas so it doesn't take
      layout width (the quiver fills the screen); buttons shrink to fit. ── */
   @media (max-width: 760px) {
     .button-container {
       position: fixed; top: 44px; left: 0; z-index: 5;
-      min-width: 0; padding: 6px 8px; gap: 0.35rem;
+      min-width: 0; max-width: 64vw; padding: 6px 8px; gap: 0.35rem;
       background: rgba(17, 17, 17, 0.55); border-radius: 0 8px 8px 0;
+      max-height: calc(100vh - 50px); overflow-y: auto; -webkit-overflow-scrolling: touch;
     }
     .button-container br { display: none; }
     .defaultButton, .selectedButton {
       padding: 0.4em 0.6em; font-size: 11px; letter-spacing: 0.5px;
     }
-    .extras-panel, .saving-panel { max-height: 78vh; overflow-y: auto; }
+    /* Submenus flow in-column instead of popping off the right edge. */
+    .extras-panel, .saving-panel {
+      position: static; left: auto; top: auto; margin-top: 4px; box-shadow: none;
+    }
   }
 
   </style>
@@ -275,28 +299,29 @@ body {
 </div>
 <div class="container">
   <div class="button-container">
-<button id="mutateButton" class="defaultButton" onclick="setModifyingState(MUTATE_STATE);">MUTATE VERTEX (M)</button>
+<button class="menu-toggle" type="button" onclick="toggleQuiverMenu();" aria-label="Toggle menu">&#9776;</button>
+<button id="mutateButton" class="defaultButton" onclick="setModifyingState(MUTATE_STATE);">MUTATE VERTEX</button>
 <br />
-<button id="translateButton" class="defaultButton" onclick="setModifyingState(TRANSLATE_STATE);">TRANSLATE VERTEX (T)</button>
+<button id="translateButton" class="defaultButton" onclick="setModifyingState(TRANSLATE_STATE);">TRANSLATE VERTEX</button>
 <br />
-<button id="renameVertexButton" class="defaultButton" onclick="setModifyingState(RENAME_VERTEX_STATE);">RENAME VERTEX (R)</button>
+<button id="renameVertexButton" class="defaultButton" onclick="setModifyingState(RENAME_VERTEX_STATE);">RENAME VERTEX</button>
 <input type="text" id="renameVertexLabel" value="0" onchange="CURRENT_VERTEX_LABEL=this.value;" class="defaultButton" />
 <br />
-<button id="createVertexButton" class="defaultButton" onclick="setModifyingState(CREATE_VERTEX_STATE);">CREATE VERTEX (V)</button>
+<button id="createVertexButton" class="defaultButton" onclick="setModifyingState(CREATE_VERTEX_STATE);">CREATE VERTEX</button>
 <br />
-<button id="createEdgeButton" class="defaultButton" onclick="setModifyingState(CREATE_EDGE_STATE);">CREATE EDGE (E)</button>
+<button id="createEdgeButton" class="defaultButton" onclick="setModifyingState(CREATE_EDGE_STATE);">CREATE EDGE</button>
 <input type="text" id="createEdgeLabel" value="1" onchange="CURRENT_LINK_LABEL=this.value;" class="defaultButton" />
 <br />
-<button id="deleteVertexButton" class="defaultButton" onclick="setModifyingState(DELETE_VERTEX_STATE);">DELETE VERTEX (D)</button>
+<button id="deleteVertexButton" class="defaultButton" onclick="setModifyingState(DELETE_VERTEX_STATE);">DELETE VERTEX</button>
 <br /><br /><br /><br />
 <div class="selectedButton" >B Matrix</div>
 <br />
-<input id="bMatrixField" value="0" class="selectedButton" readonly=true />
+<input id="bMatrixField" value="0" class="selectedButton" readonly=true tabindex="-1" />
 <br />
 <button id="extrasButton" class="defaultButton" onclick="toggleExtrasPanel();">EXTRAS</button>
 
 <div id="extrasPanel" class="extras-panel" style="display:none;">
-  <button id="freezeVertexButton" class="defaultButton" onclick="setModifyingState(FREEZE_VERTEX_STATE);">FREEZE VERTEX (F)</button>
+  <button id="freezeVertexButton" class="defaultButton" onclick="setModifyingState(FREEZE_VERTEX_STATE);">FREEZE VERTEX</button>
   <button id="principalFramingButton" class="defaultButton" onclick="applyPrincipalFraming();">PRINCIPAL FRAMING</button>
   <button id="mutationGraphButton" class="defaultButton" onclick="toggleMutationGraph();">SHOW MUTATION GRAPH</button>
   <button id="freezeMgButton" class="defaultButton" onclick="toggleMutationGraphFreeze();">FREEZE MUTATION GRAPH</button>
@@ -447,6 +472,13 @@ function performResetQuiver() {
     suppressUndoRecord = false;
     window.location.hash = "";
     window.location.reload();
+}
+
+function toggleQuiverMenu() {
+    var bc = document.querySelector('.button-container');
+    if (!bc) return;
+    var collapsed = bc.classList.toggle('collapsed');
+    try { localStorage.setItem('quiverMenuCollapsed', collapsed ? '1' : '0'); } catch (e) {}
 }
 
 var undoRedoEnabled = true; // always on — undo/redo buttons are permanent
@@ -3124,6 +3156,12 @@ function loadGraphFromHash() {
 document.addEventListener("DOMContentLoaded", async function(event) {
     setModifyingState(MUTATE_STATE);
     setupImportDrop();
+    try {
+        if (localStorage.getItem('quiverMenuCollapsed') === '1') {
+            var _bc = document.querySelector('.button-container');
+            if (_bc) _bc.classList.add('collapsed');
+        }
+    } catch (e) {}
     if (undoRedoEnabled) loadUndoStack();
     refreshUndoRedoVisibility();
     updateUndoRedoButtons();
