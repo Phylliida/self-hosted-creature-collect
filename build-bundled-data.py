@@ -382,6 +382,12 @@ def build_species_evolutions() -> dict:
     target symbols → numbers."""
     species = load_species_dat()
     sym_to_num = _id_symbol_to_number_map(species)
+    # Methods that genuinely require an item. The client evolves with candy and
+    # only enforces *item* conditions, so when a target offers both an item
+    # method (e.g. Linking Cord, Reaper Cloth) and a level/move fallback, the
+    # fallback would let the player skip the required item. Keep only the item
+    # method for such targets — see the dedup below.
+    ITEM_METHODS = {"Item", "TradeItem", "DayHoldItem"}
     out: dict[str, list] = {}
     for entry in species.values():
         idn = entry.get("id_number")
@@ -403,6 +409,11 @@ def build_species_evolutions() -> dict:
             if target_num is None or target_num not in ALLOWED_SET:
                 continue
             rows.append([target_num, str(method), param])
+        # Drop a non-item method when the same target also has an item method,
+        # so item-gated (trade-style) evolutions actually require the item.
+        item_targets = {r[0] for r in rows if r[1] in ITEM_METHODS}
+        if item_targets:
+            rows = [r for r in rows if r[1] in ITEM_METHODS or r[0] not in item_targets]
         if rows:
             out[str(idn)] = rows
     return out
