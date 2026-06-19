@@ -298,9 +298,11 @@ body {
     .defaultButton, .selectedButton {
       padding: 0.4em 0.6em; font-size: 11px; letter-spacing: 0.5px;
     }
-    /* Submenus flow in-column instead of popping off the right edge. */
-    .extras-panel, .saving-panel {
-      position: static; left: auto; top: auto; margin-top: 4px; box-shadow: none;
+    /* Extras buttons just flow in the column below EXTRAS — no boxed panel. */
+    .extras-panel {
+      position: static; left: auto; top: auto;
+      background: none; border: none; border-radius: 0; box-shadow: none;
+      padding: 0; margin: 0; gap: 0.35rem;
     }
   }
 
@@ -315,8 +317,8 @@ body {
     <button class="defaultButton" onclick="performResetQuiver();">RESET</button>
   </div>
 </div>
-<button id="importQuiverButton" onclick="openImportDialog();" title="Import quiver image or JSON">&#128229; Import</button>
-<button id="shareQuiverButton" onclick="toggleSharePopup();" title="Share quiver">&#128228; Share</button>
+<button id="importQuiverButton" onclick="openImportDialog();" title="Import quiver image or JSON">Import</button>
+<button id="shareQuiverButton" onclick="toggleSharePopup();" title="Share quiver">Share</button>
 <div id="sharePopup" class="mg-confirm-panel" style="display:none;">
   <div class="mg-confirm-msg">Share quiver as…</div>
   <div class="mg-confirm-buttons">
@@ -529,6 +531,11 @@ function toggleQuiverMenu() {
     var bc = document.querySelector('.button-container');
     if (!bc) return;
     var collapsed = bc.classList.toggle('collapsed');
+    if (collapsed) {
+        // Collapsing the menu also closes the Extras submenu.
+        var ep = document.getElementById('extrasPanel');
+        if (ep) ep.style.display = 'none';
+    }
     try { localStorage.setItem('quiverMenuCollapsed', collapsed ? '1' : '0'); } catch (e) {}
 }
 
@@ -3176,6 +3183,11 @@ function loadGraphFromHash() {
                       links: newLinks.map(l => ({...l}))
                   };
                   restoreMutationGraph(mgData, currentSnap);
+              } else if (mutationGraph.enabled) {
+                  // Loaded a quiver with no saved mutation graph while one is
+                  // visible — reseed it to a single node from the new quiver,
+                  // same as editing the quiver does.
+                  resetMutationGraph();
               }
               if (pendingImportCenter) {
                   pendingImportCenter = false;
