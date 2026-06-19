@@ -25,6 +25,18 @@
   const QUIVER_SRC = '/static/quiver.html';
   const SYNTH_SRC = '/static/synth.html';
 
+  // Quiver bubble icon: three nodes in a triangle with a directed arrow from one
+  // to another. Inline SVG, uses currentColor so it matches the theme/text.
+  const QUIVER_ICON =
+    '<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" style="display:block">'
+    + '<circle cx="12" cy="5" r="2.4" fill="currentColor"/>'
+    + '<circle cx="5" cy="18" r="2.4" fill="currentColor"/>'
+    + '<circle cx="19" cy="18" r="2.4" fill="currentColor"/>'
+    + '<g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">'
+    + '<line x1="7.8" y1="18" x2="15.8" y2="18"/>'
+    + '<path d="M14.4 16.4 L16.2 18 L14.4 19.6"/>'
+    + '</g></svg>';
+
   // ────────────────────────────────────────────────────────────
   // IndexedDB store (songs + quivers)
   // ────────────────────────────────────────────────────────────
@@ -334,7 +346,7 @@
   function register() {
     if (!global.ExtrasRegisterTool) { setTimeout(register, 50); return; }
     global.ExtrasRegisterTool({
-      id: 'quiver', name: 'Quiver', label: 'Quiver', icon: '&#9883;&#65039;', // ⚛️
+      id: 'quiver', name: 'Quiver', label: 'Quiver', icon: QUIVER_ICON,
       open: () => {
         if (!quiverWin) quiverWin = makeAppWindow({
           title: 'Quiver', noun: 'quiver', nounPlural: 'quivers',
