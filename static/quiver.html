@@ -238,35 +238,20 @@ body {
     letter-spacing: 2px;
 }
 
-  /* Reset-to-default button, pinned top-left (opens a confirm popup). */
-  #resetQuiverButton {
+  /* Top bar: Reset / Import / Share, pinned top-left in a row. */
+  #quiverTopBar {
     position: fixed; top: 6px; left: 6px; z-index: 60;
+    display: flex; gap: 6px;
+  }
+  #quiverTopBar button {
     padding: 6px 12px; font-size: 13px; font-weight: 600;
     background: rgba(20, 20, 20, 0.85); color: rgba(255, 255, 255, 0.85);
     border: 2px solid rgba(255, 255, 255, 0.25); border-radius: 6px; cursor: pointer;
   }
-  #resetQuiverButton:hover { color: #fff; border-color: rgba(255, 255, 255, 0.5); }
-
-  /* Share button, pinned top-right (opens a small share-as menu). */
-  #shareQuiverButton {
-    position: fixed; top: 6px; right: 6px; z-index: 60;
-    padding: 6px 12px; font-size: 13px; font-weight: 600;
-    background: rgba(20, 20, 20, 0.85); color: rgba(255, 255, 255, 0.85);
-    border: 2px solid rgba(255, 255, 255, 0.25); border-radius: 6px; cursor: pointer;
-  }
-  #shareQuiverButton:hover { color: #fff; border-color: rgba(255, 255, 255, 0.5); }
-
-  /* Import button, top-left next to Reset (opens a file picker). */
-  #importQuiverButton {
-    position: fixed; top: 6px; left: 92px; z-index: 60;
-    padding: 6px 12px; font-size: 13px; font-weight: 600;
-    background: rgba(20, 20, 20, 0.85); color: rgba(255, 255, 255, 0.85);
-    border: 2px solid rgba(255, 255, 255, 0.25); border-radius: 6px; cursor: pointer;
-  }
-  #importQuiverButton:hover { color: #fff; border-color: rgba(255, 255, 255, 0.5); }
+  #quiverTopBar button:hover { color: #fff; border-color: rgba(255, 255, 255, 0.5); }
 
   /* Kill the browser's double-tap-to-zoom when tapping the controls. */
-  .defaultButton, .selectedButton, .menu-toggle, #resetQuiverButton,
+  .defaultButton, .selectedButton, .menu-toggle, #quiverTopBar button,
   .button-container, .extras-panel, .saving-panel, .undo-redo-panel,
   .mg-confirm-panel, input {
     touch-action: manipulation;
@@ -309,7 +294,11 @@ body {
   </style>
 
 
+<div id="quiverTopBar">
 <button id="resetQuiverButton" onclick="confirmResetQuiver();" title="Reset to default quiver">&#8635; Reset</button>
+<button id="importQuiverButton" onclick="openImportDialog();" title="Import quiver image or JSON">Import</button>
+<button id="shareQuiverButton" onclick="toggleSharePopup();" title="Share quiver">Share</button>
+</div>
 <div id="resetConfirmPanel" class="mg-confirm-panel" style="display:none;">
   <div class="mg-confirm-msg">Reset to the default quiver?</div>
   <div class="mg-confirm-buttons">
@@ -317,8 +306,6 @@ body {
     <button class="defaultButton" onclick="performResetQuiver();">RESET</button>
   </div>
 </div>
-<button id="importQuiverButton" onclick="openImportDialog();" title="Import quiver image or JSON">Import</button>
-<button id="shareQuiverButton" onclick="toggleSharePopup();" title="Share quiver">Share</button>
 <div id="sharePopup" class="mg-confirm-panel" style="display:none;">
   <div class="mg-confirm-msg">Share quiver as…</div>
   <div class="mg-confirm-buttons">
