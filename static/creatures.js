@@ -2386,6 +2386,14 @@
   function isFusionOwned(a, b) {
     return caughtFusionsSet().has(`${a}-${b}`);
   }
+  // Do we own (have captured) this specific variant ("art") of a fusion?
+  // `variant`: a non-negative number (custom slot) or 'auto'/null (autogen) —
+  // keyed the same way as the seen/captured variant stores.
+  function ownsVariant(a, b, variant) {
+    const owned = _capStore.variantKeysForFusion(a, b);
+    if (typeof variant === 'number' && variant >= 0) return owned.has(String(variant));
+    return owned.has('auto');
+  }
 
   // Default display name for a fusion. Prefers the canonical fused
   // name from SPLIT_NAMES (e.g. "Jigglyish") when the table is loaded,
@@ -10602,12 +10610,31 @@
   function openBattleScreen(spawn) {
     const el = ensureBattleScreen();
     _currentBattleSpawn = spawn;
-    // Show the "New" badge unless we already OWN this fusion (have one in
-    // the collection) — independent of whether we've merely seen it before.
-    const isNewFusion = !isFusionOwned(spawn.speciesA, spawn.speciesB);
-    // Mark fusion seen + record which variant the user actually saw,
-    // so the pokédex can silhouette variants they haven't yet seen.
-    // Variant resolution is async; do it in the background.
+    // "New" badge on the info bubble's top-left corner:
+    //   • "New"     — we don't own this fusion at all
+    //   • "New Art" — we own the fusion but not this variant (art)
+    // The variant can resolve asynchronously, so the badge is finalised once
+    // it's known (defaults to hidden for an owned fusion until then).
+    const ownsFusion = isFusionOwned(spawn.speciesA, spawn.speciesB);
+    const newBadge = el.querySelector('.battle-new-badge');
+    const showNewBadge = (text) => {
+      if (!newBadge) return;
+      if (!text) { newBadge.hidden = true; return; }
+      newBadge.textContent = text;
+      newBadge.hidden = false;
+      newBadge.style.animation = 'none';
+      void newBadge.offsetWidth; // restart the pop animation
+      newBadge.style.animation = '';
+    };
+    showNewBadge(ownsFusion ? '' : 'New');
+    const decideArtBadge = (variant) => {
+      if (ownsFusion) {
+        showNewBadge(ownsVariant(spawn.speciesA, spawn.speciesB, variant) ? '' : 'New Art');
+      }
+    };
+    // Mark fusion seen + record which variant the user actually saw, so the
+    // pokédex can silhouette variants they haven't yet seen. Variant
+    // resolution is async; do it in the background.
     const _seenRec = _markers.get(spawn.id);
     // Decide shininess for THIS player at the moment they engage the
     // encounter. Lives on the marker record so the battle sprite, the
@@ -10616,10 +10643,12 @@
     _rollShinyForRecord(_seenRec);
     if (_seenRec && 'variant' in _seenRec) {
       markFusionSeen(spawn.speciesA, spawn.speciesB, spawn, _seenRec.variant);
+      decideArtBadge(_seenRec.variant);
     } else {
       markFusionSeen(spawn.speciesA, spawn.speciesB, spawn);
       resolveSpawnVariant(spawn).then((v) => {
         markFusionSeen(spawn.speciesA, spawn.speciesB, null, v);
+        decideArtBadge(v);
       }).catch(() => {});
     }
     const nameEl = el.querySelector('.battle-name');
@@ -10629,18 +10658,6 @@
     const typesEl = el.querySelector('.battle-types');
     if (typesEl) {
       typesEl.innerHTML = typeChipsHtml(fusionTypesFor(spawn.speciesA, spawn.speciesB));
-    }
-    // "New" badge — a little tag on the info bubble's top-left corner when
-    // this is the first time we've seen this fusion. Replay the pop on each
-    // open by restarting the CSS animation.
-    const newBadge = el.querySelector('.battle-new-badge');
-    if (newBadge) {
-      newBadge.hidden = !isNewFusion;
-      if (isNewFusion) {
-        newBadge.style.animation = 'none';
-        void newBadge.offsetWidth; // force reflow so the pop restarts
-        newBadge.style.animation = '';
-      }
     }
     // Incense badge — a little type-coloured orb in the info bubble's
     // top-right when this spawn came from an active incense.
