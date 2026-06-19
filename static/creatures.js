@@ -401,16 +401,17 @@
 
   // Register evolution-item bag entries derived from the bundled
   // evo-items/ directory. The set is intentionally hardcoded so the
-  // module loads quickly without needing the bundle JSON in memory;
-  // it mirrors the items copy_evo_items() ships in
-  // build-bundled-data.py. Each gets a name, an icon URL pointing
-  // at the bundled PNG, and a desc — slotting into the bag UI the
-  // same way poke_ball / great_ball / test_orb do.
+  // module loads quickly without needing the bundle JSON in memory.
+  // MUST stay in sync with data/BundledData/evo-items-list.json — i.e.
+  // the PNGs that build-bundled-data.py actually ships under evo-items/.
+  // (An out-of-sync list is why DUSKSTONE/DAWNSTONE/REAPERCLOTH had no
+  // bag icons while phantom keys with no PNG were listed instead.) Each
+  // gets a name, an icon URL pointing at the bundled PNG, and a desc —
+  // slotting into the bag UI the same way poke_ball / great_ball do.
   const EVO_ITEM_KEYS = [
-    'DRAGONSCALE', 'ELECTIRIZER', 'FIRESTONE', 'ICESTONE', 'KINGSROCK',
-    'LEAFSTONE', 'LINKINGCORD', 'MAGMARIZER', 'MAGNETSTONE', 'METALCOAT',
-    'MOONSTONE', 'PROTECTOR', 'SHINYSTONE', 'SUNSTONE', 'THUNDERSTONE',
-    'UPGRADE', 'WATERSTONE',
+    'DAWNSTONE', 'DUSKSTONE', 'FIRESTONE', 'ICESTONE', 'LEAFSTONE',
+    'LINKINGCORD', 'MAGNETSTONE', 'MOONSTONE', 'REAPERCLOTH', 'SHINYSTONE',
+    'SUNSTONE', 'THUNDERSTONE', 'WATERSTONE',
   ];
   for (const key of EVO_ITEM_KEYS) {
     if (ITEMS[key]) continue;
