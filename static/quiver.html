@@ -247,6 +247,24 @@ body {
   }
   #resetQuiverButton:hover { color: #fff; border-color: rgba(255, 255, 255, 0.5); }
 
+  /* Share button, pinned top-right (opens a small share-as menu). */
+  #shareQuiverButton {
+    position: fixed; top: 6px; right: 6px; z-index: 60;
+    padding: 6px 12px; font-size: 13px; font-weight: 600;
+    background: rgba(20, 20, 20, 0.85); color: rgba(255, 255, 255, 0.85);
+    border: 2px solid rgba(255, 255, 255, 0.25); border-radius: 6px; cursor: pointer;
+  }
+  #shareQuiverButton:hover { color: #fff; border-color: rgba(255, 255, 255, 0.5); }
+
+  /* Import button, top-left next to Reset (opens a file picker). */
+  #importQuiverButton {
+    position: fixed; top: 6px; left: 92px; z-index: 60;
+    padding: 6px 12px; font-size: 13px; font-weight: 600;
+    background: rgba(20, 20, 20, 0.85); color: rgba(255, 255, 255, 0.85);
+    border: 2px solid rgba(255, 255, 255, 0.25); border-radius: 6px; cursor: pointer;
+  }
+  #importQuiverButton:hover { color: #fff; border-color: rgba(255, 255, 255, 0.5); }
+
   /* Kill the browser's double-tap-to-zoom when tapping the controls. */
   .defaultButton, .selectedButton, .menu-toggle, #resetQuiverButton,
   .button-container, .extras-panel, .saving-panel, .undo-redo-panel,
@@ -297,6 +315,18 @@ body {
     <button class="defaultButton" onclick="performResetQuiver();">RESET</button>
   </div>
 </div>
+<button id="importQuiverButton" onclick="openImportDialog();" title="Import quiver image or JSON">&#128229; Import</button>
+<button id="shareQuiverButton" onclick="toggleSharePopup();" title="Share quiver">&#128228; Share</button>
+<div id="sharePopup" class="mg-confirm-panel" style="display:none;">
+  <div class="mg-confirm-msg">Share quiver as…</div>
+  <div class="mg-confirm-buttons">
+    <button class="defaultButton" onclick="shareQuiverImage();">Data image</button>
+    <button class="defaultButton" onclick="shareQuiverJson();">JSON</button>
+  </div>
+  <div class="mg-confirm-buttons" style="margin-top:0.5rem;">
+    <button class="defaultButton" onclick="closeSharePopup();">CANCEL</button>
+  </div>
+</div>
 <div class="container">
   <div class="button-container">
 <button class="menu-toggle" type="button" onclick="toggleQuiverMenu();" aria-label="Toggle menu">&#9776;</button>
@@ -328,12 +358,6 @@ body {
   <button id="mgZoomInButton" class="defaultButton" onclick="mgZoomIn();">+ ZOOM MUTATION GRAPH</button>
   <button id="mgZoomOutButton" class="defaultButton" onclick="mgZoomOut();">- ZOOM MUTATION GRAPH</button>
   <button id="deleteMgButton" class="defaultButton" onclick="confirmDeleteMutationGraph();">DELETE MUTATION GRAPH</button>
-  <button id="savingButton" class="defaultButton" onclick="toggleSavingPanel();">SAVING</button>
-  <div id="savingPanel" class="saving-panel" style="display:none;">
-    <button id="exportPngButton" class="defaultButton" onclick="exportQuiverPng();">EXPORT DATA IMAGE (encoded in metadata)</button>
-    <button id="exportJsonButton" class="defaultButton" onclick="exportQuiverJson();">EXPORT JSON (alternative format)</button>
-    <button id="importPngButton" class="defaultButton" onclick="openImportDialog();">IMPORT DATA IMAGE OR JSON<br>(or drop here)</button>
-  </div>
 </div>
 
 <div id="mgConfirmPanel" class="mg-confirm-panel" style="display:none;">
@@ -450,13 +474,40 @@ function toggleExtrasPanel() {
     var panel = document.getElementById("extrasPanel");
     var opening = panel.style.display === "none";
     panel.style.display = opening ? "flex" : "none";
-    if (!opening) document.getElementById("savingPanel").style.display = "none";
 }
 
-function toggleSavingPanel() {
-    var panel = document.getElementById("savingPanel");
-    panel.style.display = (panel.style.display === "none") ? "flex" : "none";
+// Share the current quiver via the native share sheet (navigator.share with a
+// File), falling back to a download where Web Share isn't available.
+function shareOrDownloadFile(blob, filename, mimeType) {
+    var file = null;
+    try { file = new File([blob], filename, { type: mimeType }); } catch (e) {}
+    if (file && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+        navigator.share({ files: [file], title: filename }).catch(function (err) {
+            if (err && err.name === 'AbortError') return; // user dismissed the sheet
+            downloadBlob(blob, filename);
+        });
+    } else {
+        downloadBlob(blob, filename);
+    }
 }
+function downloadBlob(blob, filename) {
+    var dlUrl = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = dlUrl; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(dlUrl); }, 200);
+}
+function toggleSharePopup() {
+    var p = document.getElementById("sharePopup");
+    if (!p) return;
+    p.style.display = (p.style.display === "none") ? "block" : "none";
+}
+function closeSharePopup() {
+    var p = document.getElementById("sharePopup");
+    if (p) p.style.display = "none";
+}
+function shareQuiverImage() { closeSharePopup(); exportQuiverPng(); }
+function shareQuiverJson() { closeSharePopup(); exportQuiverJson(); }
 
 function confirmResetQuiver() {
     var p = document.getElementById("resetConfirmPanel");
@@ -1025,14 +1076,7 @@ function exportQuiverPng() {
                 if (hashStr.charAt(0) === "#") hashStr = hashStr.substring(1);
                 var withMeta = injectPngText(pngBytes, "QuiverHash", hashStr);
                 var outBlob = new Blob([withMeta], { type: "image/png" });
-                var dlUrl = URL.createObjectURL(outBlob);
-                var a = document.createElement("a");
-                a.href = dlUrl;
-                a.download = "quiver.png";
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                setTimeout(function() { URL.revokeObjectURL(dlUrl); }, 200);
+                shareOrDownloadFile(outBlob, "quiver.png", "image/png");
             });
         }, "image/png");
     }).catch(function(e) {
@@ -1168,14 +1212,7 @@ function exportQuiverJson() {
     }
     var pretty = JSON.stringify(structured, null, 2);
     var blob = new Blob([pretty], { type: "application/json" });
-    var dlUrl = URL.createObjectURL(blob);
-    var a = document.createElement("a");
-    a.href = dlUrl;
-    a.download = "quiver.json";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(function() { URL.revokeObjectURL(dlUrl); }, 200);
+    shareOrDownloadFile(blob, "quiver.json", "application/json");
 }
 
 function importQuiverJson(file) {
