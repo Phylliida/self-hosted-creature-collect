@@ -196,7 +196,7 @@
         <div class="exapp-title">${escapeHtml(cfg.title)}</div>
         <button class="exapp-btn exapp-close" type="button">Close</button>
       </div>
-      <iframe class="exapp-frame" title="${escapeHtml(cfg.title)}"></iframe>
+      <iframe class="exapp-frame" title="${escapeHtml(cfg.title)}" allow="web-share"></iframe>
       <div class="exapp-overlay exapp-save-overlay">
         <div class="exapp-card">
           <h4>Save ${escapeHtml(cfg.noun)}</h4>
