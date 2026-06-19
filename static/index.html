@@ -7072,6 +7072,10 @@ function fmtDate(ts) {
       quivers: (window.ExtrasQuivers && window.ExtrasQuivers.all)
         ? await window.ExtrasQuivers.all()
         : [],
+      // App preferences worth carrying across devices: the "count steps in
+      // background" toggle, and the map data source (Flask vs Hugging Face).
+      pedometerEnabled: localStorage.getItem('cc.pedometerEnabled'),
+      regionsMode: localStorage.getItem('cc.regionsMode'),
       // Active incense ({type, startMs}) so a burning incense keeps its
       // remaining time across devices / restarts.
       activeIncense: (window.Creatures && window.Creatures.getActiveIncense)
@@ -7323,6 +7327,15 @@ function fmtDate(ts) {
       localStorage.setItem('cc.backupName', data.backupName);
       const nameInput = document.getElementById('backupName');
       if (nameInput) nameInput.value = data.backupName;
+    }
+    // Restore explicit preferences from the save (the post-import reload makes
+    // them take effect — toggle/selector and map fetching re-read these keys).
+    if (data.pedometerEnabled === '1' || data.pedometerEnabled === '0') {
+      localStorage.setItem('cc.pedometerEnabled', data.pedometerEnabled);
+    }
+    if (data.regionsMode === 'bbox-flask' || data.regionsMode === 'static-flask' ||
+        data.regionsMode === 'static-hf') {
+      localStorage.setItem('cc.regionsMode', data.regionsMode);
     }
     // Daycare slots: union with current slots, capped at 2, and
     // filtered against imported + existing capture IDs so we never
