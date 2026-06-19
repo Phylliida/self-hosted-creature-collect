@@ -297,6 +297,9 @@
   // load by reloading the iframe to that hash (quiver reads it on init).
   function captureQuiver(win) {
     if (!win) return null;
+    // Freeze + serialize the mutation graph into the hash before reading it, so
+    // saved quivers carry their mutation graph too.
+    try { if (typeof win.ensureMutationGraphFrozen === 'function') win.ensureMutationGraphFrozen(); } catch (e) {}
     try { if (typeof win.triggerURLUpdate === 'function') win.triggerURLUpdate(); } catch (e) {}
     let hash = '';
     try { hash = win.location.hash || ''; } catch (e) { return null; }
@@ -305,7 +308,21 @@
     return { hash: hash, thumb: thumb };
   }
   function applyQuiver(frameEl, win, data) {
-    frameEl.src = QUIVER_SRC + ((data && data.hash) ? data.hash : '');
+    const hash = (data && data.hash) ? data.hash : '';
+    // Prefer setting the hash on the live iframe — quiver's onhashchange runs
+    // loadGraphFromHash(), which restores the quiver AND its mutation graph.
+    // If the hash is unchanged, force a reload so it still re-applies.
+    if (win) {
+      try {
+        if ((win.location.hash || '') === hash) {
+          frameEl.src = QUIVER_SRC + '?t=' + Date.now() + hash;
+        } else {
+          win.location.hash = hash;
+        }
+        return;
+      } catch (e) { /* cross-window issue — fall through to a full reload */ }
+    }
+    frameEl.src = QUIVER_SRC + hash;
   }
 
   // ────────────────────────────────────────────────────────────
