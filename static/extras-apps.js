@@ -25,24 +25,29 @@
   const QUIVER_SRC = '/static/quiver.html';
   const SYNTH_SRC = '/static/synth.html';
 
-  // Quiver bubble icon: three nodes in a triangle with a directed arrow from one
-  // to another. Inline SVG, uses currentColor so it matches the theme/text.
+  // Quiver bubble icon: three nodes in a triangle with directed arrows
+  // left -> top and top -> right. Inline SVG; uses currentColor to match the
+  // theme/text. Arrowheads are stroked chevrons (no markers) for WebKit safety.
   const QUIVER_ICON =
     '<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" style="display:block">'
+    + '<g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'
+    + '<line x1="6.5" y1="15.2" x2="10.6" y2="7.6"/>'
+    + '<path d="M7.94 9.38 L10.6 7.6 L10.58 10.8"/>'
+    + '<line x1="13.4" y1="7.6" x2="17.6" y2="15.4"/>'
+    + '<path d="M17.58 12.2 L17.6 15.4 L14.94 13.62"/>'
+    + '</g>'
     + '<circle cx="12" cy="5" r="2.4" fill="currentColor"/>'
     + '<circle cx="5" cy="18" r="2.4" fill="currentColor"/>'
     + '<circle cx="19" cy="18" r="2.4" fill="currentColor"/>'
-    + '<g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">'
-    + '<line x1="7.8" y1="18" x2="15.8" y2="18"/>'
-    + '<path d="M14.4 16.4 L16.2 18 L14.4 19.6"/>'
-    + '</g></svg>';
+    + '</svg>';
 
   // ────────────────────────────────────────────────────────────
   // IndexedDB store (songs + quivers)
   // ────────────────────────────────────────────────────────────
   const DB_NAME = 'cc-extras-apps-v1';
-  const DB_VER = 1;
-  const STORE_NAMES = ['songs', 'quivers'];
+  const DB_VER = 2;
+  // 'state' holds single-record current-state autosaves (e.g. the live quiver).
+  const STORE_NAMES = ['songs', 'quivers', 'state'];
 
   function openDb() {
     return new Promise((resolve, reject) => {
@@ -78,6 +83,13 @@
       tx.objectStore(store).delete(id);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
+    }));
+  }
+  function idbGet(store, id) {
+    return openDb().then((db) => new Promise((resolve, reject) => {
+      const rq = db.transaction(store, 'readonly').objectStore(store).get(id);
+      rq.onsuccess = () => resolve(rq.result || null);
+      rq.onerror = () => reject(rq.error);
     }));
   }
 
@@ -224,15 +236,62 @@
     function frameWin() { try { return frame.contentWindow; } catch (e) { return null; } }
 
     function open() {
-      if (!loaded) { frame.src = cfg.src; loaded = true; }
+      if (!loaded) {
+        loaded = true;
+        if (cfg.autosaveKey) {
+          // Restore the last current-state (e.g. quiver + mutation graph) so
+          // closing/reopening the app returns to where you left off.
+          idbGet('state', cfg.autosaveKey)
+            .then((rec) => { frame.src = cfg.src + ((rec && rec.hash) ? rec.hash : ''); })
+            .catch(() => { frame.src = cfg.src; });
+        } else {
+          frame.src = cfg.src;
+        }
+      }
       win.classList.add('show');
     }
     function close() {
+      autosave(true);
       win.classList.remove('show');
       saveOverlay.classList.remove('show');
       browseOverlay.classList.remove('show');
     }
     win.querySelector('.exapp-close').onclick = close;
+
+    // ── Autosave current state (so reopening restores the same view) ──
+    // Used by the quiver window (cfg.autosaveKey). The full state lives in the
+    // page hash; freeze=true also pins the mutation graph node positions.
+    let autosaveTimer = null;
+    function autosave(freeze) {
+      if (!cfg.autosaveKey || !loaded) return;
+      let w; try { w = frame.contentWindow; } catch (e) { return; }
+      if (!w) return;
+      let hash = '';
+      try {
+        if (freeze && typeof w.ensureMutationGraphFrozen === 'function') w.ensureMutationGraphFrozen();
+        if (freeze && typeof w.triggerURLUpdate === 'function') w.triggerURLUpdate();
+        hash = w.location.hash || '';
+      } catch (e) { return; }
+      idbPut('state', { id: cfg.autosaveKey, hash: hash, updatedAt: Date.now() }).catch(() => {});
+    }
+    function scheduleAutosave() {
+      if (autosaveTimer) clearTimeout(autosaveTimer);
+      autosaveTimer = setTimeout(() => autosave(false), 600);
+    }
+    if (cfg.autosaveKey) {
+      // Re-attach on every (re)load of the iframe (initial, reset, named load).
+      frame.addEventListener('load', () => {
+        let w; try { w = frame.contentWindow; } catch (e) { return; }
+        if (!w) return;
+        try {
+          w.addEventListener('hashchange', scheduleAutosave);
+          w.addEventListener('pagehide', () => autosave(true));
+        } catch (e) {}
+      });
+      // Persist when the whole app is backgrounded / closed.
+      document.addEventListener('visibilitychange', () => { if (document.hidden) autosave(true); });
+      global.addEventListener('pagehide', () => autosave(true));
+    }
 
     // ── Save ──
     win.querySelector('.exapp-save').onclick = () => {
@@ -351,6 +410,7 @@
         if (!quiverWin) quiverWin = makeAppWindow({
           title: 'Quiver', noun: 'quiver', nounPlural: 'quivers',
           src: QUIVER_SRC, store: quiversStore, capture: captureQuiver, apply: applyQuiver,
+          autosaveKey: 'quiver-current',
         });
         quiverWin.open();
       },
