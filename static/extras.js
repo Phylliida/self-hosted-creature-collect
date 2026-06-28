@@ -223,20 +223,6 @@
   .date-res { text-align: center; font-size: 14px; line-height: 1.5; }
   .date-res .big { font-size: 19px; font-weight: 700; }
 
-  /* Sun times */
-  #extrasSun input[type="date"] { flex: 1; min-width: 0; padding: 8px; font-size: 14px; }
-  #extrasSun input[type="number"] { flex: 1; min-width: 0; padding: 8px; font-size: 13px; }
-  .sun-row { display: flex; justify-content: space-between; margin: 4px 0; font-size: 14px; }
-  .sun-row .v { font-weight: 600; font-variant-numeric: tabular-nums; }
-  .sun-note { text-align: center; font-size: 13px; margin: 2px 0; }
-
-  /* Moon phase */
-  #extrasMoon input[type="date"] { flex: 1; min-width: 0; padding: 8px; font-size: 14px; }
-  .moon-wrap { display: flex; justify-content: center; margin: 12px 0 8px; }
-  .moon-name { text-align: center; font-size: 17px; font-weight: 700; }
-  .moon-meta { text-align: center; margin-top: 4px; line-height: 1.5; }
-  .moon-next { text-align: center; font-size: 13px; line-height: 1.7; }
-
   /* Dice & D&D */
   .dnd-row { display: flex; gap: 4px; margin: 6px 0; align-items: center; }
   .dnd-row .dnd-name { flex: 1; min-width: 0; padding: 7px 8px; font-size: 13px; }
@@ -477,14 +463,6 @@
         <span class="bubble-icon">&#128197;</span>
         <span>Date<br>calculator</span>
       </button>
-      <button class="extras-bubble" data-extra="sun" type="button">
-        <span class="bubble-icon">&#127749;</span>
-        <span>Sun<br>times</span>
-      </button>
-      <button class="extras-bubble" data-extra="moon" type="button">
-        <span class="bubble-icon">&#127769;</span>
-        <span>Moon<br>phase</span>
-      </button>
       <button class="extras-bubble" data-extra="dice" type="button">
         <span class="bubble-icon">&#127922;</span>
         <span>Dice &amp;<br>D&amp;D</span>
@@ -581,30 +559,6 @@
         </select>
       </div>
       <div class="xt-card date-res" id="dcAddRes">&mdash;</div>
-    </div>
-
-    <div id="extrasSun" hidden>
-      <div class="xt-row">
-        <input type="date" id="sunDate" aria-label="date">
-        <button class="xt-mini" id="sunToday" type="button">today</button>
-      </div>
-      <div class="xt-row">
-        <input type="number" id="sunLat" step="any" min="-90" max="90" inputmode="decimal" placeholder="latitude" aria-label="latitude">
-        <input type="number" id="sunLon" step="any" min="-180" max="180" inputmode="decimal" placeholder="longitude" aria-label="longitude">
-        <button class="xt-mini" id="sunMapLoc" type="button" title="use map position">&#128205;</button>
-      </div>
-      <div class="xt-card" id="sunRes"><span class="xt-muted">pan the map to your spot, then tap &#128205;</span></div>
-    </div>
-
-    <div id="extrasMoon" hidden>
-      <div class="xt-row">
-        <input type="date" id="moonDate" aria-label="date">
-        <button class="xt-mini" id="moonToday" type="button">today</button>
-      </div>
-      <div class="moon-wrap" id="moonSvgWrap"></div>
-      <div class="moon-name" id="moonName"></div>
-      <div class="xt-muted moon-meta" id="moonMeta"></div>
-      <div class="xt-card moon-next" id="moonNext"></div>
     </div>
 
     <div id="extrasDice" hidden>
@@ -1017,8 +971,6 @@
     tip: { name: 'Tip calculator', el: $('extrasTip') },
     tz: { name: 'Time zones', el: $('extrasTz') },
     date: { name: 'Date calculator', el: $('extrasDate') },
-    sun: { name: 'Sun times', el: $('extrasSun') },
-    moon: { name: 'Moon phase', el: $('extrasMoon') },
     dice: { name: 'Dice & D&D', el: $('extrasDice') },
     wheel: { name: 'Decision wheel', el: $('extrasWheel') },
   };
@@ -1171,6 +1123,14 @@
     const m = (v || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
     return m ? { y: +m[1], mo: +m[2], d: +m[3] } : null;
   }
+
+  // Expose a handful of shared helpers so sibling extras files (e.g.
+  // extras-almanac.js) can reuse the exact same location + timezone logic
+  // instead of duplicating it. Generic on purpose.
+  global.ExtrasUtil = {
+    getMapLoc, appTz, clock12, fmtClock, wallParts, epochFromWall,
+    parseDateInput, todayStr, fmtNum,
+  };
 
   // ────────────────────────────────────────────────────────────
   // Unit converter
@@ -1581,219 +1541,6 @@
     computeAll();
     for (const el of [aEl, bEl, startEl, nEl]) el.addEventListener('input', computeAll);
     for (const el of [dirEl, unitEl]) el.addEventListener('change', computeAll);
-  })();
-
-  // ────────────────────────────────────────────────────────────
-  // Sun times — sunrise / sunset / golden hour / twilight
-  // ────────────────────────────────────────────────────────────
-  // NOAA solar position approximation (±2 min). Returns UTC minutes
-  // for rise/set at the given zenith angle, or a polar marker when
-  // the sun never crosses it that day. Longitude is east-positive.
-  function sunTimesUTC(y, mo, d, lat, lon, zenithDeg) {
-    const rad = Math.PI / 180;
-    const N = Math.floor((Date.UTC(y, mo - 1, d) - Date.UTC(y, 0, 1)) / 86400000) + 1;
-    const g = 2 * Math.PI / 365 * (N - 1 + 0.5);
-    const eqtime = 229.18 * (0.000075 + 0.001868 * Math.cos(g) - 0.032077 * Math.sin(g)
-      - 0.014615 * Math.cos(2 * g) - 0.040849 * Math.sin(2 * g));
-    const decl = 0.006918 - 0.399912 * Math.cos(g) + 0.070257 * Math.sin(g)
-      - 0.006758 * Math.cos(2 * g) + 0.000907 * Math.sin(2 * g)
-      - 0.002697 * Math.cos(3 * g) + 0.00148 * Math.sin(3 * g);
-    const cosHA = (Math.cos(zenithDeg * rad) - Math.sin(lat * rad) * Math.sin(decl))
-      / (Math.cos(lat * rad) * Math.cos(decl));
-    if (cosHA > 1) return { polar: 'below' };   // sun never gets that high
-    if (cosHA < -1) return { polar: 'above' };  // sun never gets that low
-    const ha = Math.acos(cosHA) / rad;
-    return {
-      rise: 720 - 4 * (lon + ha) - eqtime,
-      set: 720 - 4 * (lon - ha) - eqtime,
-      noon: 720 - 4 * lon - eqtime,
-    };
-  }
-
-  (() => {
-    const dateEl = $('sunDate');
-    const latEl = $('sunLat');
-    const lonEl = $('sunLon');
-    const res = $('sunRes');
-
-    function fillFromMap() {
-      const loc = getMapLoc();
-      if (!loc) return false;
-      latEl.value = loc.lat.toFixed(4);
-      lonEl.value = loc.lon.toFixed(4);
-      return true;
-    }
-    function row(label, value) {
-      const r = document.createElement('div');
-      r.className = 'sun-row';
-      const l = document.createElement('span');
-      l.textContent = label;
-      const v = document.createElement('span');
-      v.className = 'v';
-      v.textContent = value;
-      r.appendChild(l);
-      r.appendChild(v);
-      return r;
-    }
-    function note(text) {
-      const n = document.createElement('div');
-      n.className = 'sun-note';
-      n.textContent = text;
-      return n;
-    }
-    function compute() {
-      const dt = parseDateInput(dateEl.value);
-      const lat = parseFloat(latEl.value);
-      const lon = parseFloat(lonEl.value);
-      res.innerHTML = '';
-      if (!dt || !isFinite(lat) || !isFinite(lon)) {
-        const hintEl = document.createElement('span');
-        hintEl.className = 'xt-muted';
-        hintEl.textContent = 'pan the map to your spot, then tap 📍 — or type a lat/lon';
-        res.appendChild(hintEl);
-        return;
-      }
-      const dayMs = Date.UTC(dt.y, dt.mo - 1, dt.d);
-      const t = (min) => fmtClock(dayMs + min * 60000, appTz());
-      const official = sunTimesUTC(dt.y, dt.mo, dt.d, lat, lon, 90.833);
-      const civil = sunTimesUTC(dt.y, dt.mo, dt.d, lat, lon, 96);
-      const golden = sunTimesUTC(dt.y, dt.mo, dt.d, lat, lon, 84);
-
-      if (official.polar === 'below') {
-        res.appendChild(note('🌙 polar night — the sun stays below the horizon'));
-        if (!civil.polar) {
-          res.appendChild(row('🌄 twilight begins', t(civil.rise)));
-          res.appendChild(row('🌆 twilight ends', t(civil.set)));
-        }
-        return;
-      }
-      if (official.polar === 'above') {
-        res.appendChild(note('☀️ midnight sun — the sun never sets today'));
-        if (!golden.polar) {
-          res.appendChild(row('✨ golden ends', t(golden.rise)));
-          res.appendChild(row('✨ golden begins', t(golden.set)));
-        }
-        return;
-      }
-      if (!civil.polar) res.appendChild(row('🌄 dawn', t(civil.rise)));
-      res.appendChild(row('🌅 sunrise', t(official.rise)));
-      if (golden.polar === 'below') {
-        res.appendChild(note('✨ the sun stays low — golden light all day'));
-      } else if (!golden.polar) {
-        res.appendChild(row('✨ golden hour ends', t(golden.rise)));
-        res.appendChild(row('✨ golden hour begins', t(golden.set)));
-      }
-      res.appendChild(row('🌇 sunset', t(official.set)));
-      if (!civil.polar) res.appendChild(row('🌆 dusk', t(civil.set)));
-      const len = official.set - official.rise;
-      res.appendChild(row('⏱ day length',
-        Math.floor(len / 60) + ' h ' + String(Math.round(len % 60)).padStart(2, '0') + ' min'));
-    }
-
-    dateEl.value = todayStr();
-    tools.sun.onShow = () => {
-      if (latEl.value === '' && lonEl.value === '') fillFromMap();
-      compute();
-    };
-    $('sunToday').onclick = () => { dateEl.value = todayStr(); compute(); };
-    $('sunMapLoc').onclick = () => { fillFromMap(); compute(); };
-    for (const el of [dateEl, latEl, lonEl]) el.addEventListener('input', compute);
-  })();
-
-  // ────────────────────────────────────────────────────────────
-  // Moon phase
-  // ────────────────────────────────────────────────────────────
-  // Mean synodic month from a known new moon (2000-01-06 18:14 UTC).
-  // Good to ~half a day, plenty for a phase display.
-  const SYNODIC = 29.530588853;
-  const NEW_MOON_EPOCH = Date.UTC(2000, 0, 6, 18, 14);
-  function moonAge(epoch) {
-    let age = ((epoch - NEW_MOON_EPOCH) / 86400000) % SYNODIC;
-    if (age < 0) age += SYNODIC;
-    return age;
-  }
-  // SVG of the lit moon shape for phase p (0=new .. 0.5=full .. 1=new),
-  // northern-hemisphere orientation (waxing lights up the right side);
-  // pass mirror=true for the southern-hemisphere view. The terminator
-  // is a half-ellipse whose x-radius shrinks to 0 at the quarters.
-  function moonSvg(p, size, mirror) {
-    const c = size / 2;
-    const r = c - 3;
-    const cosp = Math.cos(2 * Math.PI * p);
-    const rx = Math.abs(cosp) * r;
-    const waxing = p < 0.5;
-    // Lit-side semicircle (top→bottom): right side is a clockwise
-    // arc (sweep 1), left side counterclockwise (sweep 0). Then the
-    // terminator closes bottom→top; its sweep picks which way the
-    // ellipse bulges (toward the lit edge for crescents, away for
-    // gibbous phases).
-    const semiSweep = waxing ? 1 : 0;
-    const termSweep = waxing ? (cosp > 0 ? 0 : 1) : (cosp > 0 ? 1 : 0);
-    const d = 'M ' + c + ' ' + (c - r)
-      + ' A ' + r + ' ' + r + ' 0 0 ' + semiSweep + ' ' + c + ' ' + (c + r)
-      + ' A ' + rx.toFixed(2) + ' ' + r + ' 0 0 ' + termSweep + ' ' + c + ' ' + (c - r) + ' Z';
-    return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '"'
-      + (mirror ? ' style="transform:scaleX(-1)"' : '') + '>'
-      + '<circle cx="' + c + '" cy="' + c + '" r="' + r + '" fill="#39404e" stroke="#5a6273" stroke-width="1.5"/>'
-      + '<path d="' + d + '" fill="#f2e3ae"/>'
-      + '</svg>';
-  }
-
-  (() => {
-    const dateEl = $('moonDate');
-    const wrap = $('moonSvgWrap');
-    const nameEl = $('moonName');
-    const metaEl = $('moonMeta');
-    const nextEl = $('moonNext');
-
-    const NAMES = [
-      [0.02, '🌑', 'New moon'],
-      [0.23, '🌒', 'Waxing crescent'],
-      [0.27, '🌓', 'First quarter'],
-      [0.48, '🌔', 'Waxing gibbous'],
-      [0.52, '🌕', 'Full moon'],
-      [0.73, '🌖', 'Waning gibbous'],
-      [0.77, '🌗', 'Last quarter'],
-      [0.98, '🌘', 'Waning crescent'],
-      [1.01, '🌑', 'New moon'],
-    ];
-    function phaseName(p) {
-      for (const [limit, emoji, name] of NAMES) {
-        if (p < limit) return [emoji, name];
-      }
-      return ['🌑', 'New moon'];
-    }
-    const fmtDate = (epoch) => new Intl.DateTimeFormat(undefined, {
-      timeZone: appTz(), month: 'short', day: 'numeric',
-    }).format(epoch);
-
-    function compute() {
-      const dt = parseDateInput(dateEl.value);
-      if (!dt) return;
-      // Evaluate at local noon so "today" reads as mid-day phase.
-      const epoch = epochFromWall(appTz(), dt.y, dt.mo, dt.d, 12, 0);
-      const age = moonAge(epoch);
-      const p = age / SYNODIC;
-      const illum = (1 - Math.cos(2 * Math.PI * p)) / 2;
-      const south = (getMapLoc() || { lat: 45 }).lat < 0;
-      wrap.innerHTML = moonSvg(p, 140, south);
-      const [emoji, name] = phaseName(p);
-      nameEl.textContent = emoji + ' ' + name;
-      metaEl.textContent = Math.round(illum * 100) + '% illuminated · '
-        + age.toFixed(1) + ' days old'
-        + (south ? ' · southern-sky view' : '');
-      // Next full and new moons from this date.
-      const daysToFull = ((0.5 - p) * SYNODIC + SYNODIC) % SYNODIC;
-      const daysToNew = ((1 - p) * SYNODIC) % SYNODIC;
-      nextEl.textContent = 'next 🌕 full — ' + fmtDate(epoch + daysToFull * 86400000)
-        + ' · next 🌑 new — ' + fmtDate(epoch + daysToNew * 86400000);
-    }
-
-    dateEl.value = todayStr();
-    tools.moon.onShow = compute;
-    $('moonToday').onclick = () => { dateEl.value = todayStr(); compute(); };
-    dateEl.addEventListener('input', compute);
-    compute();
   })();
 
   // ────────────────────────────────────────────────────────────

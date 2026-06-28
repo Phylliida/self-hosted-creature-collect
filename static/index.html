@@ -4248,6 +4248,7 @@
 <script src="/static/extras.js"></script>
 <script src="/static/extras-vibration.js"></script>
 <script src="/static/extras-apps.js"></script>
+<script src="/static/extras-almanac.js"></script>
 <script>
 // Single source of truth for the app version. Bumped manually when shipping
 // a user-visible change (new features, data format upgrades, etc.). Shown
@@ -6268,6 +6269,97 @@ function fmtDate(ts) {
     fitBoundsOptions: { maxZoom: 15 }
   });
   map.addControl(geolocate, 'bottom-right');
+
+  // --- Smooth the user-location dot between GPS fixes ------------------
+  // MapLibre's GeolocateControl snaps its marker straight to each new
+  // fix. On iOS every fix arrives over the Capacitor bridge in bursts,
+  // so the dot teleports every couple seconds instead of gliding like a
+  // native maps app. We wrap the control's `_updateMarker` and ease the
+  // marker element from its last painted position to each new fix,
+  // spreading the slide across the measured inter-fix gap so the dot is
+  // (almost) always moving.
+  //
+  // Interpolation only — we never extrapolate past the latest fix, so
+  // the dot can lag a true position slightly but never invents one and
+  // never overshoots. A jump larger than DOT_SNAP_M (teleport, or the
+  // first fix after a long gap) snaps rather than sliding the dot across
+  // the map. Heading rotation and CSS state are left to the control; we
+  // only override the marker's lng/lat each animation frame.
+  try {
+    if (typeof geolocate._updateMarker === 'function') {
+      const DOT_MIN_MS = 300;    // floor so a fast burst still eases visibly
+      const DOT_MAX_MS = 2000;   // ceiling so a long GPS gap doesn't crawl
+      const DOT_SNAP_M = 150;    // jumps bigger than this snap, don't slide
+      const easeInOut = (t) =>
+        (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
+      const metersBetween = (aLng, aLat, bLng, bLat) => {
+        const rad = Math.PI / 180, R = 6371000;
+        const x = (bLng - aLng) * rad * Math.cos(((aLat + bLat) / 2) * rad);
+        const y = (bLat - aLat) * rad;
+        return Math.sqrt(x * x + y * y) * R;
+      };
+      let displayed = null;  // {lng, lat} currently painted
+      let anim = null;       // {fromLng, fromLat, toLng, toLat, start, dur}
+      let raf = 0;
+      let lastFixT = 0;
+      const step = (now) => {
+        raf = 0;
+        if (!anim) return;
+        const marker = geolocate._userLocationDotMarker;
+        if (!marker) { anim = null; return; }
+        let t = (now - anim.start) / anim.dur;
+        if (t > 1) t = 1;
+        const e = easeInOut(t);
+        const lng = anim.fromLng + (anim.toLng - anim.fromLng) * e;
+        const lat = anim.fromLat + (anim.toLat - anim.fromLat) * e;
+        marker.setLngLat([lng, lat]);
+        displayed = { lng, lat };
+        if (t < 1) raf = requestAnimationFrame(step);
+        else anim = null;
+      };
+      const origUpdateMarker = geolocate._updateMarker.bind(geolocate);
+      geolocate._updateMarker = (position) => {
+        // Hide / clear request — let the control tear the marker down
+        // and reset our state so the next fix snaps in fresh.
+        if (!position || !position.coords) {
+          anim = null;
+          if (raf) { cancelAnimationFrame(raf); raf = 0; }
+          displayed = null;
+          lastFixT = 0;
+          return origUpdateMarker(position);
+        }
+        const lng = position.coords.longitude;
+        const lat = position.coords.latitude;
+        // Run the control's full update first (heading, CSS state,
+        // adding the marker to the map). This also snaps the marker to
+        // the target; we override the position below.
+        origUpdateMarker(position);
+        const marker = geolocate._userLocationDotMarker;
+        const now = performance.now();
+        const gap = lastFixT ? now - lastFixT : 0;
+        lastFixT = now;
+        // First fix, or a jump too large to be continuous motion:
+        // accept the control's snap and start fresh from there.
+        if (!marker || displayed == null
+            || metersBetween(displayed.lng, displayed.lat, lng, lat) > DOT_SNAP_M) {
+          anim = null;
+          if (raf) { cancelAnimationFrame(raf); raf = 0; }
+          displayed = { lng, lat };
+          return;
+        }
+        // Undo the control's snap in this same frame (nothing flashes),
+        // then ease from where we're painted toward the new fix over the
+        // measured gap (clamped). Mid-slide fixes retarget smoothly.
+        marker.setLngLat([displayed.lng, displayed.lat]);
+        const dur = gap > 0
+          ? Math.max(DOT_MIN_MS, Math.min(DOT_MAX_MS, gap)) : 900;
+        anim = { fromLng: displayed.lng, fromLat: displayed.lat,
+                 toLng: lng, toLat: lat, start: now, dur };
+        if (!raf) raf = requestAnimationFrame(step);
+      };
+    }
+  } catch (e) { /* non-fatal: fall back to the control's default snap */ }
+
   // Feed the focus/follow toggle: remember the latest fix, and while focus
   // is active recenter on it (applying the one-time activation zoom first).
   geolocate.on('geolocate', (e) => {

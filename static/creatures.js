@@ -11572,7 +11572,12 @@
         refreshSpawnOverlay();
       },
       () => { /* ignore — user may have denied permission */ },
-      { enableHighAccuracy: true, maximumAge: 5000 }
+      // maximumAge: 0 — never serve a cached fix. 5000 here was letting
+      // the watch report positions up to 5s stale, which reads as the
+      // GPS "refreshing every few seconds." Demand a live fix each time;
+      // smoothing of the on-screen dot is handled by marker interpolation
+      // in index.html, not by tolerating stale coords here.
+      { enableHighAccuracy: true, maximumAge: 0 }
     );
   }
 
