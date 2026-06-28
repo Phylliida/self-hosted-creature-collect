@@ -7106,6 +7106,10 @@ function fmtDate(ts) {
       themeCustom: JSON.parse(localStorage.getItem('cc.themeCustom') || 'null'),
       units: localStorage.getItem('cc.units'),
       view: JSON.parse(localStorage.getItem('cc.view.v1') || 'null'),
+      // Bookmarked route plans (Routing → Saved). Plain localStorage
+      // list keyed by a numeric id; carried along so a player's saved
+      // walks/transit trips travel with the rest of their save.
+      savedRoutes: JSON.parse(localStorage.getItem('cc.savedRoutes.v1') || '[]'),
       // Creature collection — your caught pokemon + the nicknames you
       // gave them. Sort prefs and mode travel too so preferences land
       // on the new device. Sprite cache (IDB) is NOT exported; users
@@ -7405,6 +7409,23 @@ function fmtDate(ts) {
         }
       }
       localStorage.setItem('cc.tags.v1', JSON.stringify(current));
+    }
+    // Saved route plans: union merge by id (skip duplicates), keeping
+    // existing entries so a plan edited/renamed on this device isn't
+    // clobbered by an older snapshot. New plans from the import are
+    // appended. The saved-routes panel re-reads localStorage when it
+    // opens, so no reload is needed for these to show up.
+    if (Array.isArray(data.savedRoutes)) {
+      const current = JSON.parse(localStorage.getItem('cc.savedRoutes.v1') || '[]');
+      const existingIds = new Set(current.map((r) => r && r.id));
+      const merged = current.slice();
+      for (const r of data.savedRoutes) {
+        if (!r || r.id == null || typeof r !== 'object') continue;
+        if (existingIds.has(r.id)) continue;
+        existingIds.add(r.id);
+        merged.push(r);
+      }
+      localStorage.setItem('cc.savedRoutes.v1', JSON.stringify(merged));
     }
     if (data.creatureSortBy && !localStorage.getItem('cc.creatureSortBy')) {
       localStorage.setItem('cc.creatureSortBy', data.creatureSortBy);
