@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>∞ Infinizoom — infinite zoom drawing</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230e0f13'/%3E%3Ctext x='16' y='23' font-size='20' text-anchor='middle' fill='%235b8cff'%3E%E2%88%9E%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <canvas id="canvas" aria-label="drawing canvas"></canvas>
+
+  <!-- Icon sprite: ONE cohesive line-icon set (24×24, currentColor stroke, 2px,
+       round caps) shared by every toolbar button via <use>. currentColor means the
+       active tool's icon inherits the accent/white text colour — emoji couldn't.
+       Buttons keep their title/aria-label for the accessible name; icons are decorative. -->
+  <svg aria-hidden="true" focusable="false" style="position:absolute;width:0;height:0;overflow:hidden" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <symbol id="ic-pen" viewBox="0 0 24 24"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></symbol>
+      <symbol id="ic-brush" viewBox="0 0 24 24"><path d="M9.06 11.9l8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08"/><path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z"/></symbol>
+      <symbol id="ic-line" viewBox="0 0 24 24"><path d="M6.5 17.5 17.5 6.5"/><circle cx="5.5" cy="18.5" r="2"/><circle cx="18.5" cy="5.5" r="2"/></symbol>
+      <symbol id="ic-arrow" viewBox="0 0 24 24"><path d="M5 19 19 5"/><path d="M10 5h9v9"/></symbol>
+      <symbol id="ic-rect" viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="1.5"/></symbol>
+      <symbol id="ic-ellipse" viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="9" ry="7"/></symbol>
+      <symbol id="ic-star" viewBox="0 0 24 24"><path d="M12 3l2.6 5.6 6 .6-4.5 4 1.3 5.9L12 16.9 6.6 19.1l1.3-5.9-4.5-4 6-.6z"/></symbol>
+      <symbol id="ic-text" viewBox="0 0 24 24"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></symbol>
+      <symbol id="ic-connector" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8 8l8 8"/></symbol>
+      <symbol id="ic-select" viewBox="0 0 24 24"><path d="M4.5 4.5l5.5 15 2.3-6.2 6.2-2.3z"/></symbol>
+      <symbol id="ic-eraser" viewBox="0 0 24 24"><path d="M8 21H21"/><path d="M21 16.5a2 2 0 0 0 0-2.83l-5.67-5.67a2 2 0 0 0-2.83 0l-9 9a2 2 0 0 0 0 2.83L7 21h4z"/><path d="M5.5 11.5l7 7"/></symbol>
+      <symbol id="ic-pan" viewBox="0 0 24 24"><path d="M12 2v20"/><path d="M2 12h20"/><path d="M5 9l-3 3 3 3"/><path d="M9 5l3-3 3 3"/><path d="M15 19l-3 3-3-3"/><path d="M19 9l3 3-3 3"/></symbol>
+      <symbol id="ic-sym" viewBox="0 0 24 24"><path d="M12 3v18"/><path d="M4.2 7.5 19.8 16.5"/><path d="M4.2 16.5 19.8 7.5"/><circle cx="12" cy="12" r="2.4"/></symbol>
+      <symbol id="ic-pixel" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="1"/><path d="M9.33 4v16"/><path d="M14.67 4v16"/><path d="M4 9.33h16"/><path d="M4 14.67h16"/></symbol>
+      <symbol id="ic-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-4"/></symbol>
+      <symbol id="ic-redo" viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h4"/></symbol>
+      <symbol id="ic-zoom-out" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/><path d="M8 11h6"/></symbol>
+      <symbol id="ic-zoom-in" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/><path d="M8 11h6"/><path d="M11 8v6"/></symbol>
+      <symbol id="ic-fit" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></symbol>
+      <symbol id="ic-home" viewBox="0 0 24 24"><path d="M3 10l9-7 9 7"/><path d="M5 9v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9"/><path d="M9 21v-6h6v6"/></symbol>
+      <!-- batch 34: the chrome-identity icons (dock + matching panel headers). Same
+           grammar (24×24, stroke currentColor, 2px round) so they belong to the set. -->
+      <symbol id="ic-palette" viewBox="0 0 24 24"><circle cx="13.5" cy="6.5" r="1.3"/><circle cx="17.5" cy="10.5" r="1.3"/><circle cx="8.5" cy="7.5" r="1.3"/><circle cx="6.5" cy="12.5" r="1.3"/><path d="M12 2a10 10 0 0 0 0 20c1 0 1.7-.8 1.7-1.7 0-.4-.2-.8-.5-1.1-.3-.3-.4-.6-.4-1.1a1.6 1.6 0 0 1 1.7-1.6h2A5.5 5.5 0 0 0 22 11C22 6 17.5 2 12 2z"/></symbol>
+      <symbol id="ic-layers" viewBox="0 0 24 24"><path d="M12 2 2 7l10 5 10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></symbol>
+      <symbol id="ic-bookmark" viewBox="0 0 24 24"><path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></symbol>
+      <symbol id="ic-film" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 3v18"/><path d="M17 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/></symbol>
+      <symbol id="ic-camera" viewBox="0 0 24 24"><path d="M14.5 4l1.5 2.5h3a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8.5a2 2 0 0 1 2-2h3L9.5 4z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+      <symbol id="ic-settings" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="ic-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="ic-unlock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></symbol>
+      <!-- File & export + flipbook-transport chrome (batch 35: finish the one icon language) -->
+      <symbol id="ic-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8" cy="9.5" r="1.6"/><path d="M4 18l4.5-5 3 3.2L17 10l4 4.5"/></symbol>
+      <symbol id="ic-vector" viewBox="0 0 24 24"><rect x="3" y="15" width="4.5" height="4.5" rx="0.5"/><rect x="16.5" y="4.5" width="4.5" height="4.5" rx="0.5"/><path d="M7.5 17C8 11 12 7.5 16.5 7"/></symbol>
+      <symbol id="ic-save" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-7H7v7"/><path d="M7 3v5h7"/></symbol>
+      <symbol id="ic-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h3.5l2 2.5H19a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+      <symbol id="ic-image-plus" viewBox="0 0 24 24"><path d="M21 12V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h7"/><circle cx="8" cy="9" r="1.5"/><path d="M3 16l4-4 3 2.5"/><path d="M18 14v6"/><path d="M15 17h6"/></symbol>
+      <symbol id="ic-trash" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><path d="M18 7l-1 13a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 7"/><path d="M10 11v6"/><path d="M14 11v6"/></symbol>
+      <symbol id="ic-prev" viewBox="0 0 24 24"><path d="M18 6v12L9 12z"/><path d="M6 6v12"/></symbol>
+      <symbol id="ic-next" viewBox="0 0 24 24"><path d="M6 6v12l9-6z"/><path d="M18 6v12"/></symbol>
+      <symbol id="ic-play" viewBox="0 0 24 24"><path d="M7 5v14l11-7z"/></symbol>
+      <symbol id="ic-pause" viewBox="0 0 24 24"><path d="M8 5v14"/><path d="M16 5v14"/></symbol>
+      <symbol id="ic-plus" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></symbol>
+      <symbol id="ic-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2"/></symbol>
+      <symbol id="ic-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="M15 3v18"/><path d="M3 9h18"/><path d="M3 15h18"/></symbol>
+      <!-- pixel-art tool palette (batch 39): the same line-icon language as the toolbar.
+           pencil ≠ pen (ferrule line); marquee = dashed rect (marching ants); wand = stick + sparkle. -->
+      <symbol id="ic-pencil" viewBox="0 0 24 24"><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/><path d="M14 6l4 4"/></symbol>
+      <symbol id="ic-fill" viewBox="0 0 24 24"><path d="M19 11l-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11z"/><path d="M5 2l5 5"/><path d="M2 13h15"/><path d="M22 20a2 2 0 1 1-4 0c0-1.6 1.7-2.4 2-4 .3 1.6 2 2.4 2 4z"/></symbol>
+      <symbol id="ic-eyedropper" viewBox="0 0 24 24"><path d="M2 22l1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="M15 6l3.4-3.4a2.12 2.12 0 1 1 3 3L18 9l.4.4a2.12 2.12 0 1 1-3 3l-3.8-3.8a2.12 2.12 0 1 1 3-3l.4.4z"/></symbol>
+      <symbol id="ic-marquee" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="1" stroke-dasharray="3.2 2.6"/></symbol>
+      <symbol id="ic-wand" viewBox="0 0 24 24"><path d="M4 20l9-9"/><path d="M16 4l1 3 3 1-3 1-1 3-1-3-3-1 3-1z"/></symbol>
+      <!-- Arrange / Align / LOD action rows (batch 40): the LAST glyph chrome → the
+           shared line-icon language. z-order = arrows (plain = step, arrow-to-bar =
+           limit); rotate = circular arrows; scale = diagonal expand/contract; group =
+           SOLID boundary + 2 inner squares (solid, not dashed — dashed shimmers at 16px
+           and would collide with the marquee icon); ungroup = 2 separate squares;
+           link/unlink = chain (parent/unparent); lock = closed padlock (pairs ic-unlock);
+           stamp = nested squares (recursion); align = edge-line + 2 rects flush/centred;
+           distribute = 3 even boxes (no edge line → reads distinct from align); LOD =
+           magnifier (plain = all, reuse ic-zoom-out/in for far/near; LOD IS zoom here). -->
+      <symbol id="ic-raise" viewBox="0 0 24 24"><path d="M12 19V5"/><path d="M6 11l6-6 6 6"/></symbol>
+      <symbol id="ic-lower" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M6 13l6 6 6-6"/></symbol>
+      <symbol id="ic-to-front" viewBox="0 0 24 24"><path d="M4 4h16"/><path d="M12 20V9"/><path d="M7 14l5-5 5 5"/></symbol>
+      <symbol id="ic-to-back" viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M12 4v11"/><path d="M7 10l5 5 5-5"/></symbol>
+      <symbol id="ic-rotate-ccw" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5"/></symbol>
+      <symbol id="ic-rotate-cw" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/></symbol>
+      <symbol id="ic-grow" viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></symbol>
+      <symbol id="ic-shrink" viewBox="0 0 24 24"><path d="M4 14h6v6"/><path d="M20 10h-6V4"/><path d="M14 10l7-7"/><path d="M3 21l7-7"/></symbol>
+      <symbol id="ic-group" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><rect x="6.5" y="6.5" width="5.5" height="5.5" rx="1"/><rect x="12.5" y="12.5" width="5" height="5" rx="1"/></symbol>
+      <symbol id="ic-ungroup" viewBox="0 0 24 24"><rect x="3" y="4" width="9" height="9" rx="1.5"/><rect x="13" y="12" width="8" height="8" rx="1.5"/></symbol>
+      <symbol id="ic-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.6"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.6"/></symbol>
+      <symbol id="ic-unlink" viewBox="0 0 24 24"><path d="M9 17l-1.2 1.2a4.2 4.2 0 0 1-6-6L5 9"/><path d="M15 7l1.2-1.2a4.2 4.2 0 0 1 6 6L19 15"/><path d="M8 2.5v3"/><path d="M2.5 8h3"/><path d="M16 21.5v-3"/><path d="M21.5 16h-3"/></symbol>
+      <symbol id="ic-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+      <symbol id="ic-stamp" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="1.5"/><rect x="6.5" y="6.5" width="11" height="11" rx="1"/><rect x="10" y="10" width="4" height="4" rx="0.5"/></symbol>
+      <symbol id="ic-portal" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="1.5"/><rect x="7.2" y="7.2" width="9.6" height="9.6" rx="1" transform="rotate(12 12 12)"/><rect x="10.4" y="10.4" width="3.2" height="3.2" rx="0.5" transform="rotate(24 12 12)"/></symbol>
+      <symbol id="ic-align-left" viewBox="0 0 24 24"><path d="M4 3v18"/><rect x="7" y="6" width="13" height="4.5" rx="1.2"/><rect x="7" y="13.5" width="8" height="4.5" rx="1.2"/></symbol>
+      <symbol id="ic-align-center-h" viewBox="0 0 24 24"><path d="M12 3v18"/><rect x="5.5" y="6" width="13" height="4.5" rx="1.2"/><rect x="8" y="13.5" width="8" height="4.5" rx="1.2"/></symbol>
+      <symbol id="ic-align-right" viewBox="0 0 24 24"><path d="M20 3v18"/><rect x="4" y="6" width="13" height="4.5" rx="1.2"/><rect x="9" y="13.5" width="8" height="4.5" rx="1.2"/></symbol>
+      <symbol id="ic-align-top" viewBox="0 0 24 24"><path d="M3 4h18"/><rect x="6" y="7" width="4.5" height="13" rx="1.2"/><rect x="13.5" y="7" width="4.5" height="8" rx="1.2"/></symbol>
+      <symbol id="ic-align-middle-v" viewBox="0 0 24 24"><path d="M3 12h18"/><rect x="6" y="5.5" width="4.5" height="13" rx="1.2"/><rect x="13.5" y="8" width="4.5" height="8" rx="1.2"/></symbol>
+      <symbol id="ic-align-bottom" viewBox="0 0 24 24"><path d="M3 20h18"/><rect x="6" y="4" width="4.5" height="13" rx="1.2"/><rect x="13.5" y="9" width="4.5" height="8" rx="1.2"/></symbol>
+      <symbol id="ic-distribute-h" viewBox="0 0 24 24"><rect x="3" y="8" width="4" height="8" rx="1"/><rect x="10" y="8" width="4" height="8" rx="1"/><rect x="17" y="8" width="4" height="8" rx="1"/></symbol>
+      <symbol id="ic-distribute-v" viewBox="0 0 24 24"><rect x="8" y="3" width="8" height="4" rx="1"/><rect x="8" y="10" width="8" height="4" rx="1"/><rect x="8" y="17" width="8" height="4" rx="1"/></symbol>
+      <symbol id="ic-zoom" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></symbol>
+    </defs>
+  </svg>
+
+  <!-- Top toolbar: tools. One line-icon language — every button is an <svg><use>
+       of the sprite above; the title= carries the name + shortcut for hover/a11y. -->
+  <div id="toolbar" class="panel" role="toolbar" aria-label="tools">
+    <button class="tool" data-tool="pen"     title="Pen (P)"><svg class="ic" aria-hidden="true"><use href="#ic-pen"/></svg></button>
+    <button class="tool" data-tool="brush"   title="Brush — pressure / tapered stroke (B)"><svg class="ic" aria-hidden="true"><use href="#ic-brush"/></svg></button>
+    <button class="tool" data-tool="line"    title="Line (L)"><svg class="ic" aria-hidden="true"><use href="#ic-line"/></svg></button>
+    <button class="tool" data-tool="arrow"   title="Arrow (A)"><svg class="ic" aria-hidden="true"><use href="#ic-arrow"/></svg></button>
+    <button class="tool" data-tool="rect"    title="Rectangle (R)"><svg class="ic" aria-hidden="true"><use href="#ic-rect"/></svg></button>
+    <button class="tool" data-tool="ellipse" title="Ellipse (O)"><svg class="ic" aria-hidden="true"><use href="#ic-ellipse"/></svg></button>
+    <button class="tool" data-tool="star"    title="Star / polygon (S)"><svg class="ic" aria-hidden="true"><use href="#ic-star"/></svg></button>
+    <button class="tool" data-tool="text"    title="Text (T)"><svg class="ic" aria-hidden="true"><use href="#ic-text"/></svg></button>
+    <button class="tool" data-tool="connector" title="Connector — drag between two objects (C)"><svg class="ic" aria-hidden="true"><use href="#ic-connector"/></svg></button>
+    <button class="tool" data-tool="select"  title="Select (V)"><svg class="ic" aria-hidden="true"><use href="#ic-select"/></svg></button>
+    <button class="tool" data-tool="eraser"  title="Eraser (E)"><svg class="ic" aria-hidden="true"><use href="#ic-eraser"/></svg></button>
+    <button class="tool" data-tool="pan"     title="Pan (H / hold Space)"><svg class="ic" aria-hidden="true"><use href="#ic-pan"/></svg></button>
+    <span class="sep"></span>
+    <button id="symToggleTop" aria-pressed="false" title="Mandala / symmetry mode (M) — mirror every stroke into radial copies"><svg class="ic" aria-hidden="true"><use href="#ic-sym"/></svg></button>
+    <button id="pixelToggleTop" aria-pressed="false" title="Pixel-art mode — create & edit a pixel sprite"><svg class="ic" aria-hidden="true"><use href="#ic-pixel"/></svg></button>
+    <span class="sep"></span>
+    <button id="undo" title="Undo (Ctrl+Z)"><svg class="ic" aria-hidden="true"><use href="#ic-undo"/></svg></button>
+    <button id="redo" title="Redo (Ctrl+Shift+Z)"><svg class="ic" aria-hidden="true"><use href="#ic-redo"/></svg></button>
+    <span class="sep"></span>
+    <button id="zoomOut" title="Zoom out (-)"><svg class="ic" aria-hidden="true"><use href="#ic-zoom-out"/></svg></button>
+    <button id="zoomIn"  title="Zoom in (+)"><svg class="ic" aria-hidden="true"><use href="#ic-zoom-in"/></svg></button>
+    <button id="zoomFit" title="Zoom to fit (F)"><svg class="ic" aria-hidden="true"><use href="#ic-fit"/></svg></button>
+    <button id="zoomReset" title="Reset view (0)"><svg class="ic" aria-hidden="true"><use href="#ic-home"/></svg></button>
+  </div>
+
+  <!-- Left panel: style. Progressive disclosure — controls live in labelled
+       collapsible sections (Stroke open; the rest one click away). The section
+       labels are the onramps; only one group's worth of controls shows at once. -->
+  <div id="style-panel" class="panel is-drawer" aria-label="style">
+    <!-- Contextual selection inspector: hidden until something is selected. Makes
+         the (already-live) "edits apply to the selection" behaviour VISIBLE, and
+         shows what THIS selection is (type + size) — the object-awareness leg. -->
+    <div id="sel-inspector" hidden aria-live="polite">
+      <div class="sel-row">
+        <span class="sel-title" id="sel-title">Selection</span>
+        <button type="button" id="sel-deselect" class="sel-x" title="Deselect (Esc)" aria-label="Deselect">✕</button>
+      </div>
+      <div class="sel-meta" id="sel-meta"></div>
+      <div class="sel-note">Edits below apply to the selection</div>
+    </div>
+    <details class="sect" open>
+      <summary class="sect-head"><span class="sect-caret">▶</span>Stroke</summary>
+      <div class="sect-body">
+        <label class="ctl">
+          <span>Color</span>
+          <input type="color" id="color" value="#e8e8ef" />
+        </label>
+        <label class="ctl">
+          <span>Fill</span>
+          <span class="fill-row">
+            <input type="checkbox" id="fillOn" />
+            <input type="color" id="fillColor" value="#5b8cff" />
+            <input type="color" id="fillColor2" value="#b14bff" title="Gradient end colour" hidden />
+          </span>
+        </label>
+        <label class="ctl" id="fillTypeRow" hidden title="Flat colour, or a gradient you can zoom into">
+          <span>Fill style</span>
+          <select id="fillType">
+            <option value="flat">Flat</option>
+            <option value="linear">Linear gradient</option>
+            <option value="radial">Radial gradient</option>
+            <option value="conic">Conic gradient</option>
+          </select>
+        </label>
+        <label class="ctl" id="fillAngleRow" hidden title="Gradient direction">
+          <span>Gradient angle <b id="fillAngleVal">0°</b></span>
+          <input type="range" id="fillAngle" min="0" max="360" step="5" value="0" />
+        </label>
+        <label class="ctl">
+          <span>Width <b id="widthVal">3</b></span>
+          <input type="range" id="width" min="0.5" max="64" step="0.5" value="3" />
+        </label>
+        <label class="ctl">
+          <span>Width vs zoom</span>
+          <select id="widthMode" title="How stroke width responds to zoom">
+            <option value="world">Scale (world)</option>
+            <option value="screen">Fixed (screen px)</option>
+            <option value="clamp">Clamp (min–max px)</option>
+          </select>
+        </label>
+        <label class="ctl" id="clampRow" hidden title="Scales with zoom but stays within this on-screen px range">
+          <span>Clamp px</span>
+          <span class="clamp-row">
+            <input type="number" id="clampMin" min="0.75" max="64" step="0.5" value="1.5" aria-label="minimum on-screen width (px)" />
+            <span class="clamp-dash">–</span>
+            <input type="number" id="clampMax" min="0.75" max="256" step="1" value="24" aria-label="maximum on-screen width (px)" />
+          </span>
+        </label>
+        <label class="ctl">
+          <span>Opacity <b id="opacityVal">100%</b></span>
+          <input type="range" id="opacity" min="0.1" max="1" step="0.05" value="1" />
+        </label>
+        <label class="ctl">
+          <span>Blend</span>
+          <select id="blend" title="How this shape's colour mixes with the art beneath it">
+            <option value="normal">Normal</option>
+            <option value="multiply">Multiply</option>
+            <option value="screen">Screen</option>
+            <option value="overlay">Overlay</option>
+            <option value="darken">Darken</option>
+            <option value="lighten">Lighten</option>
+            <option value="color-dodge">Color dodge</option>
+            <option value="color-burn">Color burn</option>
+            <option value="hard-light">Hard light</option>
+            <option value="soft-light">Soft light</option>
+            <option value="difference">Difference</option>
+            <option value="exclusion">Exclusion</option>
+            <option value="hue">Hue</option>
+            <option value="saturation">Saturation</option>
+            <option value="color">Color</option>
+            <option value="luminosity">Luminosity</option>
+          </select>
+        </label>
+        <div class="swatches" id="swatches" aria-label="palette"></div>
+      </div>
+    </details>
+
+    <details class="sect" id="sect-shape">
+      <summary class="sect-head"><span class="sect-caret">▶</span>Shape &amp; brush</summary>
+      <div class="sect-body">
+        <label class="ctl">
+          <span>Star points <b id="sidesVal">5</b></span>
+          <input type="range" id="sides" min="3" max="12" step="1" value="5" />
+        </label>
+        <label class="toggle"><input type="checkbox" id="starToggle" checked /> Star (off = polygon)</label>
+        <label class="toggle"><input type="checkbox" id="brushSmooth" checked /> Smooth brush (Catmull-Rom)</label>
+      </div>
+    </details>
+
+    <details class="sect" id="sect-symmetry">
+      <summary class="sect-head"><span class="sect-caret">▶</span>Symmetry</summary>
+      <div class="sect-body">
+        <button type="button" id="symOn" class="mode-toggle" aria-pressed="false"><span class="mode-dot" aria-hidden="true"></span>Symmetry on <span class="mode-note">(drag the ⊕ anchor)</span></button>
+        <label class="ctl">
+          <span>Pattern</span>
+          <select id="symGroup" title="A radial mandala, or one of the 17 mathematical wallpaper groups that tile the plane">
+            <option value="">Mandala (radial)</option>
+          </select>
+        </label>
+        <label class="toggle"><input type="checkbox" id="symDomain" checked /> Highlight draw region <span class="mode-note">(draw here — symmetry fills the rest)</span></label>
+        <div id="symMandala">
+          <label class="ctl">
+            <span>Slices <b id="symSlicesVal">6</b></span>
+            <input type="range" id="symSlices" min="1" max="24" step="1" value="6" />
+          </label>
+          <label class="toggle"><input type="checkbox" id="symMirror" /> Mirror (kaleidoscope)</label>
+          <label class="toggle"><input type="checkbox" id="symGrid" /> Grid (repeat the mandala)</label>
+          <label class="ctl">
+            <span>Cols <b id="symColsVal">3</b></span>
+            <input type="range" id="symCols" min="1" max="8" step="1" value="3" />
+          </label>
+          <label class="ctl">
+            <span>Rows <b id="symRowsVal">3</b></span>
+            <input type="range" id="symRows" min="1" max="8" step="1" value="3" />
+          </label>
+          <label class="ctl">
+            <span>Spacing</span>
+            <input type="number" id="symSpacing" data-stepper min="4" step="4" value="120" />
+          </label>
+        </div>
+        <div id="symGroupRow" hidden>
+          <label class="ctl">
+            <span>Cell size</span>
+            <input type="number" id="symCell" data-stepper min="8" step="8" value="160" title="Lattice spacing (world units)" />
+          </label>
+          <label class="ctl">
+            <span>Repeat <b id="symRepsVal">2</b></span>
+            <input type="range" id="symReps" min="0" max="4" step="1" value="2" title="How many lattice cells to tile out from the anchor" />
+          </label>
+          <p class="sym-note" id="symGroupNote"></p>
+        </div>
+        <button id="symCenter" title="Move the symmetry centre to the middle of the view">⊕ Centre here</button>
+      </div>
+    </details>
+
+    <details class="sect">
+      <summary class="sect-head"><span class="sect-caret">▶</span>Arrange</summary>
+      <div class="sect-body">
+        <div class="act-list">
+          <button id="toBack" title="Send to back ([)"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-to-back"/></svg></span>Send to back</button>
+          <button id="lower" title="Lower one step (Ctrl+[)"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-lower"/></svg></span>Lower</button>
+          <button id="raise" title="Raise one step (Ctrl+])"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-raise"/></svg></span>Raise</button>
+          <button id="toFront" title="Bring to front (])"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-to-front"/></svg></span>Bring to front</button>
+          <div class="sep-h"></div>
+          <label class="toggle act-toggle" title="Rotate, scale &amp; recursive-stamp about the selection's true CENTRE OF MASS (the area-weighted centroid — a triangle balances at its centroid) instead of the centre of its bounding box. A pivot you drop yourself (Shift+P) still wins.">
+            <input type="checkbox" id="comPivotToggle" /> Pivot: centre of mass
+          </label>
+          <button id="rotL" title="Rotate −15° (,)"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-rotate-ccw"/></svg></span>Rotate left</button>
+          <button id="rotR" title="Rotate +15° (.)"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-rotate-cw"/></svg></span>Rotate right</button>
+          <button id="scaleDown" title="Shrink selection 10% (&lt;)"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-shrink"/></svg></span>Shrink</button>
+          <button id="scaleUp" title="Grow selection 10% (&gt;)"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-grow"/></svg></span>Grow</button>
+          <div class="sep-h"></div>
+          <button id="groupBtn" title="Group selection (Ctrl+G)"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-group"/></svg></span>Group</button>
+          <button id="ungroupBtn" title="Ungroup (Ctrl+Shift+G)"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-ungroup"/></svg></span>Ungroup</button>
+          <button id="parentBtn" title="Parent selection to the active (last-clicked) item — moving the parent then moves its children (Ctrl+P)"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-link"/></svg></span>Parent to active</button>
+          <button id="unparentBtn" title="Unparent — detach selected items from their parent (Alt+P)"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-unlink"/></svg></span>Unparent</button>
+          <div class="sep-h"></div>
+          <button id="lockBtn" title="Lock / unlock selection (Shift+L)"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-lock"/></svg></span>Lock / unlock</button>
+          <button id="hideBtn" title="Hide / show selection (Shift+H)"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-eye"/></svg></span>Hide / show</button>
+          <div class="sep-h"></div>
+          <label class="ctl act-ctl" title="How big each nested copy is relative to its parent — the per-level shrink shared by the recursive stamp and the portal. Lower = a denser, faster-shrinking fractal; higher = a gentler, slower dive.">
+            <span>Child zoom <b id="stampFactorVal">42%</b></span>
+            <input type="range" id="stampFactor" min="5" max="95" step="1" value="42" />
+          </label>
+          <label class="ctl act-ctl" title="How many shrinking generations the recursive stamp bakes. The live portal is always infinite, so it ignores this.">
+            <span>Levels <b id="stampDepthVal">3</b></span>
+            <input type="range" id="stampDepth" min="1" max="8" step="1" value="3" />
+          </label>
+          <label class="ctl act-ctl" title="Spin each nested copy a little more than the last, about the same shrink centre — turns recursion from a concentric pile into a logarithmic SPIRAL (a vortex). Drives BOTH the baked stamp and the live portal (dive in for an endless spiral). 0° = a straight stack.">
+            <span>Spin <b id="stampSpinVal">0°</b></span>
+            <input type="range" id="stampSpin" min="-180" max="180" step="1" value="0" />
+          </label>
+          <label class="toggle act-toggle" title="Show the chromatic-vortex extras: a per-level hue shift and an opacity fade so the spiral changes colour and dims as it dives.">
+            <input type="checkbox" id="vortexToggle" /> Vortex extras
+          </label>
+          <div id="vortexRows" hidden>
+            <label class="ctl act-ctl" title="Shift each nested copy's colour a little more around the wheel than the last — a chromatic vortex. Drives BOTH the baked stamp and the live portal (dive in for an endless rainbow tunnel). Greys stay grey. 0° = no shift.">
+              <span>Hue shift <b id="stampHueVal">0°</b></span>
+              <input type="range" id="stampHue" min="-180" max="180" step="1" value="0" />
+            </label>
+            <label class="ctl act-ctl" title="Dim each nested copy more than the last, so the spiral fades as it dives inward. Stamp only — the live portal ignores fade (zooming toward ever-fainter levels would just vanish the view). 0% = no fade.">
+              <span>Fade <b id="stampFadeVal">0%</b></span>
+              <input type="range" id="stampFade" min="0" max="90" step="1" value="0" />
+            </label>
+            <label class="ctl act-ctl" title="Shift each nested copy sideways a little more than the last, so the shrinking copies drift off-axis into a spiral arm / comet-tail instead of a centred pile. Spin steers the drift direction, so this one knob reaches every arm. Stamp only — the live portal must keep its fixed centre to loop seamlessly. 0% = no drift.">
+              <span>Drift <b id="stampDriftVal">0%</b></span>
+              <input type="range" id="stampDrift" min="-100" max="100" step="1" value="0" />
+            </label>
+          </div>
+          <button id="stampBtn" title="Drop nested shrinking copies of the selection — make a fractal!"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-stamp"/></svg></span>Recursive stamp</button>
+          <button id="portalBtn" title="Make a LIVE recursive portal — the selection nests inside itself forever; zoom in to dive ∞"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-portal"/></svg></span>Recursive portal ∞</button>
+          <button id="drosteLoopBtn" title="Export the selected portal as a seamlessly-looping infinite-zoom GIF — an endless Droste dive that never shows a seam"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-film"/></svg></span>Loop GIF ∞</button>
+        </div>
+      </div>
+    </details>
+
+    <details class="sect">
+      <summary class="sect-head"><span class="sect-caret">▶</span>Align &amp; distribute</summary>
+      <div class="sect-body">
+        <div class="act-list">
+          <button id="alignLeft"    title="Align left edges"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-align-left"/></svg></span>Align left</button>
+          <button id="alignHCenter" title="Align horizontal centres"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-align-center-h"/></svg></span>Align centre (H)</button>
+          <button id="alignRight"   title="Align right edges"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-align-right"/></svg></span>Align right</button>
+          <div class="sep-h"></div>
+          <button id="alignTop"     title="Align top edges"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-align-top"/></svg></span>Align top</button>
+          <button id="alignVCenter" title="Align vertical centres"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-align-middle-v"/></svg></span>Align middle (V)</button>
+          <button id="alignBottom"  title="Align bottom edges"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-align-bottom"/></svg></span>Align bottom</button>
+          <div class="sep-h"></div>
+          <button id="distributeH" title="Distribute centres evenly across (needs 3+)"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-distribute-h"/></svg></span>Distribute across</button>
+          <button id="distributeV" title="Distribute centres evenly down (needs 3+)"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-distribute-v"/></svg></span>Distribute down</button>
+        </div>
+      </div>
+    </details>
+
+    <details class="sect">
+      <summary class="sect-head"><span class="sect-caret">▶</span>Visible zoom (LOD)</summary>
+      <div class="sect-body">
+        <p class="act-hint">When the selection appears as you zoom:</p>
+        <div class="act-list">
+          <button id="lodAll" title="Always visible at every zoom level"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-zoom"/></svg></span>Always visible</button>
+          <button id="lodFar" title="Show only when zoomed OUT past now"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-zoom-out"/></svg></span>Only when zoomed out</button>
+          <button id="lodNear" title="Show only when zoomed IN past now"><span class="act-ico"><svg class="ic" aria-hidden="true"><use href="#ic-zoom-in"/></svg></span>Only when zoomed in</button>
+        </div>
+      </div>
+    </details>
+  </div>
+
+  <!-- Pixel-art panel (focused floating panel; overlays the style panel while
+       you work, since vector style controls are irrelevant in pixel mode) -->
+  <div id="pixel-panel" class="panel hidden" aria-label="pixel art">
+    <div class="bm-head">
+      <span><svg class="ic" aria-hidden="true"><use href="#ic-pixel"/></svg> Pixel Art</span>
+      <button id="pixelDone" class="collapse-btn" title="Finish editing (Esc)">✕</button>
+    </div>
+    <span class="ctl-label">New sprite</span>
+    <div class="px-dims">
+      <label>W <input type="number" id="pxW" data-stepper min="1" max="256" step="1" value="32" /></label>
+      <label>H <input type="number" id="pxH" data-stepper min="1" max="256" step="1" value="32" /></label>
+      <label>cell <input type="number" id="pxCell" data-stepper min="1" step="1" value="8" /></label>
+    </div>
+    <label class="ctl">
+      <span>Palette</span>
+      <select id="pxPalette" title="Palette for new sprites">
+        <option value="pico8">PICO-8 (16)</option>
+        <option value="db16">DawnBringer 16</option>
+        <option value="arne16">ARNE 16</option>
+        <option value="gray8">Grayscale 8</option>
+      </select>
+    </label>
+    <button id="pxNew" title="Create a new pixel sprite in the view">＋ New sprite</button>
+    <label class="toggle px-fromimg"><input type="checkbox" id="pxFromImage" /> Palette from image
+      <input type="number" id="pxColors" data-stepper min="2" max="64" step="1" value="16" title="How many colours to extract (median-cut)" disabled /></label>
+    <button id="pxConvert" title="Convert the selected image into an editable pixel sprite"><svg class="ic" aria-hidden="true"><use href="#ic-image"/></svg> Convert image</button>
+    <!-- Editing controls. Same progressive-disclosure language as the style panel:
+         the core paint loop (Tools + Palette) is open; the rest live behind
+         labelled, collapsible sections so the densest surface in the app no longer
+         dumps ~50 controls in one column (CRITIQUE §2.2). The section labels are the
+         onramps; select/wand auto-open the Selection section (contextual reveal). -->
+    <div id="px-edit">
+      <span class="sep-h"></span>
+      <details class="sect" id="sect-px-tools" open>
+        <summary class="sect-head"><span class="sect-caret">▶</span>Tools</summary>
+        <div class="sect-body">
+          <div class="px-tools btn-row">
+            <button data-pxtool="pencil"     title="Pencil (B/P)"><svg class="ic" aria-hidden="true"><use href="#ic-pencil"/></svg></button>
+            <button data-pxtool="eraser"     title="Eraser (E)"><svg class="ic" aria-hidden="true"><use href="#ic-eraser"/></svg></button>
+            <button data-pxtool="fill"       title="Fill bucket (G)"><svg class="ic" aria-hidden="true"><use href="#ic-fill"/></svg></button>
+            <button data-pxtool="eyedropper" title="Pick colour (I / Alt+click)"><svg class="ic" aria-hidden="true"><use href="#ic-eyedropper"/></svg></button>
+            <button data-pxtool="line"       title="Line (L)"><svg class="ic" aria-hidden="true"><use href="#ic-line"/></svg></button>
+            <button data-pxtool="rect"       title="Rectangle (R)"><svg class="ic" aria-hidden="true"><use href="#ic-rect"/></svg></button>
+            <button data-pxtool="ellipse"    title="Ellipse (O/C)"><svg class="ic" aria-hidden="true"><use href="#ic-ellipse"/></svg></button>
+            <button data-pxtool="select"     title="Select / marquee (M) — drag a region"><svg class="ic" aria-hidden="true"><use href="#ic-marquee"/></svg></button>
+            <button data-pxtool="wand"       title="Magic wand (W) — click to select a colour. Shift adds, Alt subtracts"><svg class="ic" aria-hidden="true"><use href="#ic-wand"/></svg></button>
+          </div>
+          <label class="toggle"><input type="checkbox" id="pxRectFill" /> Filled shape</label>
+        </div>
+      </details>
+
+      <details class="sect" id="sect-px-palette" open>
+        <summary class="sect-head"><span class="sect-caret">▶</span>Palette</summary>
+        <div class="sect-body">
+          <span class="ctl-label">Click a colour to paint with it</span>
+          <div class="px-swatches" id="pxSwatches" aria-label="sprite palette"></div>
+          <label class="ctl">
+            <span>Edit slot colour</span>
+            <input type="color" id="pxSlot" value="#000000" title="Redefine the selected palette slot" />
+          </label>
+        </div>
+      </details>
+
+      <details class="sect" id="sect-px-select">
+        <summary class="sect-head"><span class="sect-caret">▶</span>Selection</summary>
+        <div class="sect-body">
+          <span class="ctl-label">Drag with ⬚ or click a colour with 🪄</span>
+          <label class="toggle"><input type="checkbox" id="pxWandContiguous" checked /> Wand: contiguous only</label>
+          <div class="px-sel-btns btn-row">
+            <button id="pxSelAll" title="Select the whole sprite (⌘/Ctrl+A)">All</button>
+            <button id="pxSelNone" title="Clear the marquee (Esc)">None</button>
+            <button id="pxSelInvert" title="Invert the selection (⌘/Ctrl+I)">Invert</button>
+            <button id="pxSelClear" title="Erase the selected cells (Delete)">Clear</button>
+          </div>
+          <div class="px-sel-btns btn-row">
+            <button id="pxSelCut" title="Cut selection to clipboard (⌘/Ctrl+X)">Cut</button>
+            <button id="pxSelCopy" title="Copy selection (⌘/Ctrl+C)">Copy</button>
+            <button id="pxSelPaste" title="Paste clipboard at the selection (⌘/Ctrl+V)">Paste</button>
+          </div>
+          <div class="px-sel-btns btn-row">
+            <button id="pxSelFlipH" title="Flip the selection left ↔ right">⬌</button>
+            <button id="pxSelFlipV" title="Flip the selection top ↕ bottom">⬍</button>
+            <button id="pxSelRotCCW" title="Rotate the selection 90° counter-clockwise">⟲</button>
+            <button id="pxSelRotCW" title="Rotate the selection 90° clockwise">⟳</button>
+          </div>
+        </div>
+      </details>
+
+      <details class="sect" id="sect-px-mirror">
+        <summary class="sect-head"><span class="sect-caret">▶</span>Mirror painting</summary>
+        <div class="sect-body">
+          <div class="px-mirror btn-row">
+            <button id="pxMirrorX" title="Mirror across the vertical axis" aria-pressed="false">↔</button>
+            <button id="pxMirrorY" title="Mirror across the horizontal axis" aria-pressed="false">↕</button>
+          </div>
+        </div>
+      </details>
+
+      <details class="sect" id="sect-px-replace">
+        <summary class="sect-head"><span class="sect-caret">▶</span>Replace colour</summary>
+        <div class="sect-body">
+          <span class="ctl-label">Recolour the selected swatch everywhere</span>
+          <div class="px-replace-row">
+            <span class="px-replace-arrow" title="Selected colour →">→</span>
+            <select id="pxReplaceTo" title="Target colour to replace / swap with"></select>
+          </div>
+          <div class="px-replace-btns btn-row">
+            <button id="pxReplace" title="Replace every pixel of the selected colour with the target (frees the selected slot)">Replace</button>
+            <button id="pxSwap" title="Swap the selected colour and the target everywhere">Swap</button>
+          </div>
+        </div>
+      </details>
+
+      <details class="sect" id="sect-px-flip">
+        <summary class="sect-head"><span class="sect-caret">▶</span>Flip &amp; rotate</summary>
+        <div class="sect-body">
+          <span class="ctl-label">Transform the whole sprite</span>
+          <div class="px-transform btn-row">
+            <button id="pxFlipH" title="Flip left ↔ right">⬌ Flip H</button>
+            <button id="pxFlipV" title="Flip top ↕ bottom">⬍ Flip V</button>
+            <button id="pxRotCCW" title="Rotate 90° counter-clockwise">⟲ 90°</button>
+            <button id="pxRotCW" title="Rotate 90° clockwise">⟳ 90°</button>
+          </div>
+        </div>
+      </details>
+
+      <details class="sect" id="sect-px-resize">
+        <summary class="sect-head"><span class="sect-caret">▶</span>Resize sprite</summary>
+        <div class="sect-body">
+          <div class="px-dims">
+            <label>W <input type="number" id="pxResizeW" data-stepper min="1" max="256" step="1" /></label>
+            <label>H <input type="number" id="pxResizeH" data-stepper min="1" max="256" step="1" /></label>
+          </div>
+          <div class="px-resize-row">
+            <select id="pxResizeMode" title="Scale resamples the art into the same box; Crop keeps pixels 1:1 and changes the footprint">
+              <option value="scale">Scale art</option>
+              <option value="crop">Crop / extend</option>
+            </select>
+            <button id="pxResize" title="Apply the new sprite size">Apply</button>
+          </div>
+        </div>
+      </details>
+
+      <details class="sect" id="sect-px-export">
+        <summary class="sect-head"><span class="sect-caret">▶</span>Export</summary>
+        <div class="sect-body">
+          <div class="px-export">
+            <label>×<input type="number" id="pxScale" data-stepper min="1" max="32" step="1" value="8" /></label>
+            <button id="pxExport" title="Export this sprite as a PNG"><svg class="ic" aria-hidden="true"><use href="#ic-image"/></svg> PNG</button>
+          </div>
+        </div>
+      </details>
+    </div>
+  </div>
+
+  <!-- Layers / objects panel. Collapsed at rest (header + count) so an empty
+       canvas doesn't show a "no objects yet" list — the caret summons it, and the
+       count badge says how many objects exist while it's tucked away. -->
+  <div id="layers-panel" class="panel is-drawer collapsed" aria-label="layers">
+    <div class="bm-head">
+      <button id="layerCollapse" class="collapse-btn" title="Hide / show the objects list" aria-expanded="false">▸</button>
+      <span><svg class="ic" aria-hidden="true"><use href="#ic-layers"/></svg> Objects</span>
+      <span id="layerCount" class="count-badge" aria-hidden="true"></span>
+      <span class="layer-actions">
+        <button id="addLayerBtn" title="Add a new layer (above the active one)">＋</button>
+        <button id="showAllBtn" title="Show all hidden items"><svg class="ic" aria-hidden="true"><use href="#ic-eye"/></svg></button>
+        <button id="unlockAllBtn" title="Unlock all locked items"><svg class="ic" aria-hidden="true"><use href="#ic-unlock"/></svg></button>
+      </span>
+    </div>
+    <div id="layer-list" aria-label="object list"></div>
+  </div>
+
+  <!-- Right panel: actions / view. Same section language as the style panel. The
+       calm first-load default (C1 declutter) ships EVERY section here collapsed —
+       File & export, View, Bookmarks and the playful Generate are all one labelled
+       click away. A newcomer sees a tidy stack of onramps, not a wall of controls;
+       the left panel's Stroke (colour / width / opacity) is the only open section,
+       because choosing a colour + size is the one thing you need before drawing. -->
+  <div id="action-panel" class="panel is-drawer" aria-label="actions">
+    <details class="sect">
+      <summary class="sect-head"><span class="sect-caret">▶</span>File &amp; export</summary>
+      <div class="sect-body">
+        <button id="exportPng" title="Export view as PNG"><svg class="ic" aria-hidden="true"><use href="#ic-image"/></svg> PNG</button>
+        <button id="exportSvg" title="Export drawing as SVG (vector)"><svg class="ic" aria-hidden="true"><use href="#ic-vector"/></svg> SVG</button>
+        <button id="exportJson" title="Export drawing as JSON"><svg class="ic" aria-hidden="true"><use href="#ic-save"/></svg> JSON</button>
+        <button id="importJson" title="Import JSON"><svg class="ic" aria-hidden="true"><use href="#ic-folder"/></svg> Open</button>
+        <input type="file" id="importFile" accept="application/json" hidden />
+        <button id="addImageBtn" title="Place an image (or just drag/drop one onto the canvas)"><svg class="ic" aria-hidden="true"><use href="#ic-image-plus"/></svg> Image</button>
+        <input type="file" id="imageFile" accept="image/*" hidden />
+        <button id="clearBtn" class="danger" title="Clear everything"><svg class="ic" aria-hidden="true"><use href="#ic-trash"/></svg> Clear</button>
+      </div>
+    </details>
+
+    <details class="sect">
+      <summary class="sect-head"><span class="sect-caret">▶</span>View</summary>
+      <div class="sect-body">
+        <div class="grid-row">
+          <label class="toggle"><input type="checkbox" id="gridToggle" checked /> Grid</label>
+          <select id="gridStyle" title="Grid style">
+            <option value="lines">lines</option>
+            <option value="dots">dots</option>
+          </select>
+        </div>
+        <label class="toggle"><input type="checkbox" id="minimapToggle" checked /> Minimap</label>
+        <label class="toggle"><input type="checkbox" id="snapToggle" /> Snap grid</label>
+        <label class="toggle"><input type="checkbox" id="guidesToggle" checked /> Smart guides</label>
+      </div>
+    </details>
+
+    <!-- Bookmarks — saved camera views. Lives here (next to View) rather than in a
+         floating top-centre panel: a labelled section is a clear onramp and frees the
+         centre band. Collapsed at rest (calm); adding a bookmark auto-reveals the list
+         (contextual disclosure). The count badge keeps the collapsed head informative. -->
+    <details class="sect" id="bookmark-sect">
+      <summary class="sect-head"><span class="sect-caret">▶</span>Bookmarks
+        <span id="bmCount" class="count-badge" aria-hidden="true"></span>
+      </summary>
+      <div class="sect-body">
+        <button id="addBookmark" class="bm-add" title="Save the current view as a bookmark"><svg class="ic" aria-hidden="true"><use href="#ic-bookmark"/></svg> Save view</button>
+        <div id="bookmark-list"></div>
+      </div>
+    </details>
+
+    <details class="sect">
+      <summary class="sect-head"><span class="sect-caret">▶</span>Generate</summary>
+      <div class="sect-body">
+        <div class="gen-row">
+          <button data-gen="tree" title="Fractal tree">🌳</button>
+          <button data-gen="spiral" title="Spiral squares (deep zoom!)">🌀</button>
+          <button data-gen="droste" title="Droste rings (deep zoom!)">🎯</button>
+          <button data-gen="sierpinski" title="Sierpinski triangle">🔺</button>
+          <button data-gen="flowers" title="Flower field">🌸</button>
+          <button data-gen="penrose" title="Penrose tiling (5-fold aperiodic — never repeats!)">🔷</button>
+          <button data-gen="ammann" title="Ammann–Beenker tiling (8-fold aperiodic — square + rhombus)">🔶</button>
+          <button data-gen="pinwheel" title="Pinwheel tiling (Conway–Radin — tiles in infinitely many orientations!)">✴️</button>
+          <button data-gen="hat" title="The Hat (2023 aperiodic MONOTILE — one shape tiles the plane, never repeating!)">🎩</button>
+          <button data-gen="spectre" title="The Spectre (2023 CHIRAL aperiodic monotile — one shape, never repeating, and NEVER reflected!)">👻</button>
+        </div>
+        <label class="gen-pick" title="The 3 regular + 8 semiregular (Archimedean) tilings — every vertex identical, built only from regular polygons">
+          <span class="gen-pick-label">Polygon tiling</span>
+          <select id="uniformKind" aria-label="Uniform (regular &amp; Archimedean) tiling">
+            <optgroup label="Regular">
+              <option value="6.6.6">Hexagonal · 6.6.6</option>
+              <option value="4.4.4.4">Square · 4.4.4.4</option>
+              <option value="3.3.3.3.3.3">Triangular · 3⁶</option>
+            </optgroup>
+            <optgroup label="Semiregular (Archimedean)">
+              <option value="3.6.3.6">Trihexagonal / kagome · 3.6.3.6</option>
+              <option value="3.4.6.4">Rhombitrihexagonal · 3.4.6.4</option>
+              <option value="4.8.8" selected>Truncated square · 4.8.8</option>
+              <option value="3.12.12">Truncated hexagonal · 3.12.12</option>
+              <option value="4.6.12">Truncated trihexagonal · 4.6.12</option>
+              <option value="3.3.3.4.4">Elongated triangular · 3.3.3.4.4</option>
+              <option value="3.3.4.3.4">Snub square · 3.3.4.3.4 (chiral)</option>
+              <option value="3.3.3.3.6">Snub hexagonal · 3.3.3.3.6 (chiral)</option>
+            </optgroup>
+          </select>
+          <button id="uniformGo" title="Draw the selected polygon tiling">Tile ⬡</button>
+        </label>
+        <label class="gen-dual" title="Draw the DUAL (Laves) tiling instead: one repeated tile shape (the snub duals are the Cairo &amp; Floret pentagonal tilings)">
+          <input type="checkbox" id="uniformDual"> <span>Dual (Laves) — the one-tile-shape inverse</span>
+        </label>
+        <label class="gen-pick" title="A single continuous, self-similar fractal LINE that threads through space — finer detail with every level (the line cousin of the recursive stamp)">
+          <span class="gen-pick-label">Fractal curve</span>
+          <select id="curveKind" aria-label="Fractal / space-filling curve">
+            <option value="hilbert" selected>Hilbert · space-filling</option>
+            <option value="gosper">Gosper flowsnake · hexagonal space-filling</option>
+            <option value="dragon">Dragon · Heighway fold</option>
+            <option value="levy">Lévy C · curling dragon cousin</option>
+            <option value="koch">Koch snowflake · closed</option>
+          </select>
+          <button id="curveGo" title="Draw the selected fractal curve">Draw ✺</button>
+        </label>
+        <label class="ctl" id="curveOrderRow" title="Recursion depth — how many times the curve subdivides into itself. Higher = finer, denser structure with more to zoom into; the cap adapts per curve (Hilbert 8, Dragon/Lévy 16, Gosper 5) so it can never ask for billions of points. Resets to the curve's sweet-spot default when you switch curves.">
+          <span>Curve order <b id="curveOrderVal">6</b></span>
+          <input type="range" id="curveOrder" min="1" max="8" step="1" value="6" />
+        </label>
+      </div>
+    </details>
+  </div>
+
+  <!-- Bottom-center: stop-motion flipbook -->
+  <div id="anim-panel" class="panel is-drawer" aria-label="flipbook animation">
+    <button id="flipToggle" title="Stop-motion flipbook — draw each page (frame)"><svg class="ic" aria-hidden="true"><use href="#ic-film"/></svg> Flipbook</button>
+    <div id="flip-controls" class="flip-controls hidden">
+      <button id="flipPrev" title="Previous page (←)"><svg class="ic" aria-hidden="true"><use href="#ic-prev"/></svg></button>
+      <span id="flipIndicator" class="flip-indicator">1 / 1</span>
+      <button id="flipNext" title="Next page (→)"><svg class="ic" aria-hidden="true"><use href="#ic-next"/></svg></button>
+      <input type="range" id="flipScrub" class="flip-scrub" min="0" max="0" step="1" value="0" title="Scrub through pages" />
+      <span class="sep"></span>
+      <button id="flipAdd" title="Insert a blank page after this one"><svg class="ic" aria-hidden="true"><use href="#ic-plus"/></svg></button>
+      <button id="flipDup" title="Duplicate this page (then tweak it — stop-motion!)"><svg class="ic" aria-hidden="true"><use href="#ic-copy"/></svg></button>
+      <button id="flipDel" title="Delete this page"><svg class="ic" aria-hidden="true"><use href="#ic-trash"/></svg></button>
+      <button id="flipPlay" title="Play / pause"><svg class="ic" aria-hidden="true"><use href="#ic-play"/></svg></button>
+      <button id="flipCam" title="Pin this view as the page's camera — play glides between pinned pages (cinematic zoom)"><svg class="ic" aria-hidden="true"><use href="#ic-camera"/></svg></button>
+      <label class="flip-mini" title="Frames per second (base rate)">fps <input type="number" id="flipFps" data-stepper min="1" max="60" value="6" /></label>
+      <label class="flip-mini" title="How long THIS page holds — × the base 1/fps (per-frame timing)">hold <input type="number" id="flipHold" data-stepper min="1" max="20" value="1" /></label>
+      <label class="flip-mini" title="Onion-skin: how many neighbouring pages to ghost">onion <input type="range" id="flipOnion" min="0" max="3" step="1" value="1" /></label>
+      <label class="flip-mini" title="Tint onion skins (past = warm, next = cool)"><input type="checkbox" id="flipTint" checked /> tint</label>
+      <label class="flip-mini" title="Loop playback"><input type="checkbox" id="flipLoop" checked /> loop</label>
+      <label class="flip-mini hidden" id="flipEaseRow" title="Camera-glide easing between pinned pages — Smooth/Smoother settle on each shot; Ease in/out bias the launch or the arrival">ease
+        <select id="flipEase">
+          <option value="linear">Linear</option>
+          <option value="smooth">Smooth</option>
+          <option value="smoother">Smoother</option>
+          <option value="in">Ease in</option>
+          <option value="out">Ease out</option>
+        </select>
+      </label>
+      <label class="flip-mini hidden" id="flipPathRow" title="Show the camera flight-plan on the canvas — numbered 'shot' frames for each pinned page + faint frames sampled along the glide (bunched where the camera is slow). A composition aid; not in the export."><input type="checkbox" id="flipPath" checked /> path</label>
+      <label class="flip-mini" title="Floyd–Steinberg dithering — smooths gradients past the GIF 256-colour limit"><input type="checkbox" id="flipDither" /> dither</label>
+      <label class="flip-mini" title="HQ export — render the movie/sheet at 2× and downsample (gamma-correct), erasing the diagonal-edge antialiasing shimmer on line-heavy art. Off = faster, smaller files"><input type="checkbox" id="flipHQ" checked /> HQ</label>
+      <span class="sep"></span>
+      <button id="flipGif" title="Export as an animated GIF (shareable)"><svg class="ic" aria-hidden="true"><use href="#ic-film"/></svg> GIF</button>
+      <button id="flipSheet" title="Export all pages as one sprite-sheet PNG"><svg class="ic" aria-hidden="true"><use href="#ic-grid"/></svg> Sheet</button>
+    </div>
+    <div id="flip-thumbs" class="flip-thumbs hidden" aria-label="frame thumbnails"></div>
+  </div>
+
+  <!-- Bottom-left HUD. The right half is the CONTEXTUAL HINT LINE (batch 26):
+       it always says what the current tool does and what each modifier would do
+       now — the local half of the "Transparency" design language. The ⌘K chip is
+       the always-visible onramp to the Command Palette (also reachable by '/'). -->
+  <div id="hud" class="panel">
+    <button id="hud-cmd" title="Command palette — find any action (press / or Ctrl/⌘K)">⌘K</button>
+    <button id="hud-focus" title="Focus mode — hide the panels and just draw (Tab)">⛶</button>
+    <span id="hud-zoom">100%</span>
+    <span id="hud-coord">0, 0</span>
+    <span id="hud-count">0 items</span>
+    <span id="hud-tool">pen</span>
+    <button id="hud-rot" class="hud-rot" title="Canvas rotated — click (or press 0) to set it upright" hidden>0°</button>
+  </div>
+
+  <!-- Contextual hint line — floats just above the HUD as faint, non-interactive
+       text (pointer-events:none) so it never intercepts canvas / chrome clicks. -->
+  <div id="hud-hint" class="hud-hint" aria-live="polite"></div>
+
+  <!-- Focus-mode exit chip. The ONE piece of chrome that stays when focus mode
+       hides everything else — it both shows you're in focus mode and is the
+       always-reachable way out (so hiding the UI can never trap you). Tab/Esc
+       and the palette also exit. Hidden unless body.focus-mode. -->
+  <button id="focus-exit" title="Exit focus mode (Tab or Esc)" aria-hidden="true">⛶ Exit focus</button>
+
+  <!-- First-run coachmark (onboarding). A one-time, NON-BLOCKING welcome anchored
+       just above the HUD so it reads as a *label* for the real ⌘K chip below —
+       not a splash screen (gemma's "spatial bridge"). It is pointer-events:none,
+       so you dismiss it simply by starting to use the app (any pointer / key /
+       wheel input — action = consent); it also auto-fades after a grace period,
+       and never returns once seen (localStorage 'infinizoom.coachSeen'). Re-
+       summonable from the palette ("Getting started…"). -->
+  <div id="coachmark" class="coachmark hidden" role="note" aria-hidden="true" aria-label="Getting started">
+    <div class="coach-head">Welcome — three ways in</div>
+    <ul class="coach-list">
+      <li><span class="coach-do">Just draw</span> — the pen is ready</li>
+      <li>Press <kbd>/</kbd> or <kbd id="coach-cmdkey">⌘K</kbd> for any command</li>
+      <li><span class="coach-do">Scroll</span> to zoom · <span class="coach-do">drag</span> to pan</li>
+    </ul>
+    <div class="coach-foot">start anywhere to begin ↓</div>
+  </div>
+
+  <!-- Command palette — the global onramp to every action. One searchable list,
+       each row showing its keyboard shortcut so the palette teaches the shortcut
+       as you use it (search-to-learn). Opens with '/' or Ctrl/⌘K. -->
+  <div id="palette" class="palette-overlay hidden" aria-hidden="true">
+    <div class="palette-box" role="dialog" aria-modal="true" aria-label="Command palette">
+      <input id="palette-input" type="text" role="combobox" aria-expanded="true"
+             aria-controls="palette-list" aria-autocomplete="list" autocomplete="off"
+             spellcheck="false" placeholder="Search commands…   ↑↓ to choose · ↵ to run · esc to close" />
+      <div id="palette-list" role="listbox" aria-label="commands"></div>
+      <div id="palette-empty" class="palette-empty hidden">No commands match.</div>
+    </div>
+  </div>
+
+  <!-- Minimap -->
+  <canvas id="minimap" title="minimap — click to jump"></canvas>
+
+  <!-- Toast / status messages -->
+  <div id="toast" aria-live="polite"></div>
+
+  <!-- Text editing overlay -->
+  <textarea id="text-editor" spellcheck="false"></textarea>
+
+  <!-- Scrim behind an open mobile drawer (tap to close); shown only in compact mode -->
+  <div id="drawer-scrim" aria-hidden="true"></div>
+
+  <!-- Mobile dock: toggle buttons that open the aux panels as bottom-sheet
+       drawers. Hidden on desktop (see the @media block in style.css). -->
+  <div id="mobile-dock" class="panel" role="toolbar" aria-label="panels">
+    <button data-drawer="style"   title="Style"><svg class="ic" aria-hidden="true"><use href="#ic-palette"/></svg></button>
+    <button data-drawer="objects" title="Objects"><svg class="ic" aria-hidden="true"><use href="#ic-layers"/></svg></button>
+    <button data-drawer="film"    title="Flipbook"><svg class="ic" aria-hidden="true"><use href="#ic-film"/></svg></button>
+    <button data-drawer="actions" title="Export / view / generate"><svg class="ic" aria-hidden="true"><use href="#ic-settings"/></svg></button>
+  </div>
+
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,1142 @@
+:root {
+  /* ---- surfaces: recessed (canvas) → forward (active) ---- */
+  --bg: #0e0f13;
+  --panel: rgba(22, 24, 31, 0.82);    /* glass chrome — calm, slightly recessed */
+  --panel-border: rgba(255, 255, 255, 0.06);  /* low-contrast hairline */
+  --surface: rgba(255, 255, 255, 0.05);        /* inset control bg (inputs, rows) */
+  --hover: rgba(255, 255, 255, 0.10);
+  /* ---- ink ---- */
+  --ink: #e8e8ef;
+  --muted: #8b8f9a;
+  /* ---- the single accent (reserved for the ACTIVE thing only) ---- */
+  --accent: #5b8cff;
+  --accent-dim: rgba(91, 140, 255, 0.20);
+  --danger: #ff5b6e;
+  /* ---- spacing scale (base 4) — use these, never ad-hoc px ---- */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 22px;
+  /* ---- type scale — hierarchy from weight+colour, not size ---- */
+  --fs-xs: 11px; --fs-sm: 12px; --fs-md: 13px; --fs-lg: 15px;
+  /* ---- radii ---- */
+  --r-sm: 7px; --r-md: 10px; --r-lg: 14px;
+  --radius: var(--r-lg);   /* legacy alias (panels, minimap) */
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.40);
+  --dock-h: 60px;   /* mobile bottom dock height (incl. padding) */
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--ink);
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+
+#canvas {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  display: block;
+  cursor: crosshair;
+}
+#canvas.tool-pan   { cursor: grab; }
+#canvas.panning    { cursor: grabbing; }
+#canvas.tool-select{ cursor: default; }
+#canvas.tool-eraser{ cursor: cell; }
+#canvas.tool-text  { cursor: text; }
+
+/* ---------- panels ---------- */
+.panel {
+  position: fixed;
+  z-index: 10;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px) saturate(1.1);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+  padding: var(--sp-2);
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+}
+
+#toolbar {
+  top: 12px;
+  /* Centre WITHOUT the left:50%+translateX trick — that trick capped the shrink-to-
+     fit width at half the viewport, forcing the toolbar to wrap onto a 2nd row that
+     collided with the Objects/Bookmarks band at top:76. width:max-content + auto
+     side-margins lets the row grow to its real content width (then wrap only when the
+     viewport is genuinely too narrow), so at desktop it's ONE clean row. */
+  left: 0; right: 0;
+  margin-inline: auto;
+  width: max-content;
+  flex-wrap: wrap;
+  gap: 5px;                /* tight: the toolbar is dense — keep it a single row */
+  max-width: calc(100vw - 24px);
+  justify-content: center;
+}
+
+#style-panel {
+  top: 76px;
+  left: 12px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;                 /* sections manage their own spacing (border-top dividers) */
+  width: 188px;
+  padding: var(--sp-2) var(--sp-3);
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+}
+
+/* ---------- contextual selection inspector ---------- */
+/* The selection IS the active thing, so this card steps FORWARD (accent), unlike
+   the recessed sections below it. Only renders when a selection exists, so the
+   calm default layout (and every geography test, which run with nothing selected)
+   is untouched. */
+#sel-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-2);
+  padding: var(--sp-2);
+  background: var(--accent-dim);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: var(--r-md);
+}
+#sel-inspector[hidden] { display: none; }   /* override the flex display when parked */
+.sel-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); }
+.sel-title { font-size: var(--fs-md); font-weight: 600; color: var(--ink); }
+.sel-meta {
+  font-size: var(--fs-xs); color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.sel-meta:empty { display: none; }
+.sel-note { font-size: var(--fs-xs); color: var(--muted); opacity: 0.85; }
+.sel-x {
+  min-width: 0; padding: 1px 7px; line-height: 1.2;
+  background: transparent; border: 1px solid var(--panel-border);
+  color: var(--muted); border-radius: var(--r-sm); cursor: pointer;
+  font-size: var(--fs-sm);
+}
+.sel-x:hover { color: var(--ink); background: var(--hover); }
+
+#action-panel {
+  top: 76px;
+  right: 12px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  width: 158px;
+  padding: var(--sp-2) var(--sp-3);
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+}
+
+#hud {
+  bottom: 12px;
+  left: 12px;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--muted);
+  gap: 14px;
+  padding: 8px 12px;
+}
+#hud span { white-space: nowrap; }
+#hud-zoom { color: var(--ink); font-weight: 600; }
+/* Rotation badge — only shown when the canvas is turned; the accent colour +
+   ↺ glyph make a non-zero view angle legible, and clicking it sets upright. */
+#hud-rot {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 6px;
+  padding: 1px 7px;
+  font: inherit;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  line-height: 1.5;
+}
+#hud-rot::before { content: "↺"; font-weight: 700; }
+#hud-rot:hover { background: color-mix(in srgb, var(--accent) 34%, transparent); }
+#hud-rot[hidden] { display: none; }
+
+/* ---------- toolbar line-icons ----------
+   ONE icon language: every #toolbar button holds an <svg class="ic"><use>. The
+   stroke is currentColor, so the icon tracks the button's text colour — muted ink
+   at rest, #fff when .active (the accent-dim chip). 24×24 symbols, drawn at 20px. */
+.ic {
+  width: 20px; height: 20px; display: block;
+  stroke: currentColor; fill: none;
+  stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+  pointer-events: none;            /* clicks land on the button, never the glyph */
+}
+#toolbar button { display: inline-flex; align-items: center; justify-content: center; }
+
+/* batch 34 — the same line-icon set, now beyond the toolbar (panel-header
+   identity icons + the flipbook toggle + the mobile dock). One sprite, one
+   language: a bookmark looks like a bookmark in the dock AND in its panel head.
+   Inline beside a label → smaller + baseline-aligned; icon-only → centred. */
+.bm-head .ic, #flipToggle .ic { width: 16px; height: 16px; display: inline-block; vertical-align: -3px; }
+.bm-head > span > .ic { margin-right: 4px; }   /* gap between a header icon and its word */
+#flipToggle { display: inline-flex; align-items: center; gap: 6px; }
+.bm-head .layer-actions button { display: inline-flex; align-items: center; justify-content: center; }
+#mobile-dock button { display: inline-flex; align-items: center; justify-content: center; }
+#mobile-dock .ic { width: 24px; height: 24px; }
+
+/* batch 35 — finish the language: the File & export row, the flipbook transport
+   strip, and the pixel convert/export buttons all now speak the same line-icon.
+   Icon + word → inline-flex with a gap (word still leads recognition); icon-only
+   transport → centred. 16px keeps these dense chrome controls calm beside text. */
+#action-panel .sect-body button,
+#flip-controls > button,
+#pxConvert, #pxExport {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+}
+#action-panel .sect-body button .ic,
+#flip-controls > button .ic,
+#pxConvert .ic, #pxExport .ic {
+  width: 16px; height: 16px;
+}
+
+/* ---------- buttons ---------- */
+/* Recede by default (subtle inset surface, transparent border); only the ACTIVE
+   button steps forward with the accent. */
+button {
+  font: inherit;
+  font-size: var(--fs-lg);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  padding: 7px 10px;
+  cursor: pointer;
+  min-width: 36px;
+  line-height: 1;
+  transition: background .12s, border-color .12s, transform .05s, color .12s;
+}
+button:hover { background: var(--hover); }
+button:active { transform: scale(0.94); }
+button.active,
+.tool.active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: #fff;
+}
+button:disabled { opacity: 0.35; cursor: not-allowed; }
+/* destructive action: recedes (muted) until hovered, then signals danger */
+button.danger { color: var(--muted); }
+button.danger:hover { color: var(--danger); border-color: var(--danger); background: rgba(255, 91, 110, 0.10); }
+
+#action-panel button { text-align: left; font-size: var(--fs-md); }
+
+.sep { width: 1px; align-self: stretch; background: var(--panel-border); margin: 0 var(--sp-1); }
+.sep-h { height: 1px; background: var(--panel-border); margin: var(--sp-1) 0; }
+
+/* ---------- collapsible section (progressive disclosure) ----------
+   The core layout primitive of the redesign: a labelled <details> whose header
+   reads as a structural guide (muted, uppercase) rather than a button, and whose
+   body holds one group's worth of controls. Native = accessible + zero JS. */
+.sect { display: block; border-top: 1px solid var(--panel-border); }
+.sect:first-of-type { border-top: none; }
+summary.sect-head {
+  display: flex; align-items: center; gap: var(--sp-2);
+  list-style: none; cursor: pointer; user-select: none;
+  padding: var(--sp-2) var(--sp-1) var(--sp-1);
+  font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--muted);
+  transition: color .12s;
+}
+summary.sect-head::-webkit-details-marker { display: none; }
+summary.sect-head:hover { color: var(--ink); }
+.sect-caret {
+  display: inline-block; font-size: 9px; color: var(--muted);
+  transition: transform .15s ease; transform: rotate(0deg);
+}
+.sect[open] > summary.sect-head { color: var(--ink); }
+.sect[open] > summary.sect-head .sect-caret { transform: rotate(90deg); color: var(--accent); }
+.sect-body {
+  display: flex; flex-direction: column; gap: var(--sp-2);
+  padding: var(--sp-1) 0 var(--sp-3);
+}
+
+/* ---------- style controls ---------- */
+.ctl { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-sm); color: var(--muted); }
+.ctl > span { display: flex; justify-content: space-between; }
+.ctl b { color: var(--ink); font-weight: 600; }
+.fill-row { display: flex; gap: var(--sp-2); align-items: center; justify-content: flex-start !important; }
+input[type="color"] {
+  width: 100%; height: 28px; padding: 0; border: 1px solid var(--panel-border);
+  border-radius: var(--r-sm); background: none; cursor: pointer;
+}
+.fill-row input[type="color"] { width: 100%; }
+.fill-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+#clampRow[hidden] { display: none; }
+#vortexRows[hidden] { display: none; }   /* vortex-stamp extras (hue + fade) disclosure */
+/* .ctl's display:flex overrides the UA [hidden] rule, so disclose explicitly */
+#fillTypeRow[hidden], #fillAngleRow[hidden] { display: none; }
+.clamp-row { display: flex; gap: var(--sp-1); align-items: center; justify-content: flex-end; }
+.clamp-row input[type="number"] {
+  width: 52px; height: 26px; text-align: center;
+  border: 1px solid var(--panel-border); border-radius: var(--r-sm);
+  background: var(--surface); color: var(--ink); font-size: var(--fs-sm);
+}
+.clamp-dash { color: var(--muted); font-size: var(--fs-sm); }
+
+/* ---------- symmetry: pattern picker + wallpaper-group params ---------- */
+/* The Pattern <select> chooses the mandala OR one of the 17 wallpaper groups;
+   exactly ONE param block shows beneath it (progressive disclosure), matching the
+   width-mode → clamp-row idiom above. */
+#symGroup {
+  font: inherit; font-size: var(--fs-sm); color: var(--ink); background: var(--surface);
+  border: 1px solid var(--panel-border); border-radius: var(--r-sm); padding: 4px 6px; cursor: pointer;
+}
+#symMandala, #symGroupRow { display: flex; flex-direction: column; gap: var(--sp-2); }
+#symMandala[hidden], #symGroupRow[hidden] { display: none; }
+.sym-note { margin: 0; font-size: var(--fs-sm); color: var(--muted); line-height: 1.35; }
+
+.swatches { display: grid; grid-template-columns: repeat(6, 1fr); gap: var(--sp-1); margin-top: var(--sp-1); }
+/* min-width:0 lets the 1fr grid tracks shrink — these are <button>s, which carry
+   the global min-width:36px that would otherwise overflow the 6-up grid */
+.swatch { width: 100%; min-width: 0; aspect-ratio: 1; border-radius: 6px; border: 1px solid var(--panel-border); cursor: pointer; transition: transform .1s; }
+.swatch:hover { transform: scale(1.12); }
+.swatch.active { outline: 2px solid #fff; outline-offset: 1px; }
+
+/* ── One number language: tactile steppers (CRITIQUE §2.5) ─────────────────
+   Bare <input type=number> reads like a spreadsheet, and its native spinner
+   arrows are a ~2px touch target (unhittable on a finger). Every [data-stepper]
+   field is wrapped at runtime (app.js _enhanceSteppers) in this −/+ frame so a
+   value is BUMPED, not typed — while the <input> stays editable + keeps its id,
+   so the test API and every existing spec are untouched. ONE look for every
+   numeric field, the same recess language as the rest of the chrome. */
+input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.stepper {
+  display: inline-flex; align-items: stretch;
+  background: var(--surface); border: 1px solid var(--panel-border);
+  border-radius: var(--r-sm); overflow: hidden;
+}
+.stepper.is-disabled { opacity: 0.4; }
+.step-btn {
+  min-width: 30px; padding: 0; margin: 0;
+  border: none; border-radius: 0; background: transparent;
+  color: var(--muted); font-size: var(--fs-lg); font-weight: 600; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+.step-btn:hover { background: var(--hover); color: var(--ink); }
+/* override the global button:active scale — a press-hold repeat shouldn't jitter */
+.step-btn:active { transform: none; background: var(--accent-dim); color: #fff; }
+.step-btn:disabled { opacity: 0.3; background: transparent; color: var(--muted); }
+.stepper > input[type="number"],
+#pixel-panel .stepper > input[type="number"],
+.flip-mini .stepper > input[type="number"] {
+  flex: 1; width: 2.5ch; min-width: 1.5ch; height: auto; margin: 0; padding: 5px 2px;
+  border: none; background: transparent; color: var(--ink);
+  text-align: center; font-size: var(--fs-sm); font-variant-numeric: tabular-nums;
+}
+/* per-context placement of the wrapped control */
+.ctl > .stepper { align-self: stretch; }
+.px-fromimg .stepper { margin-left: auto; width: 92px; flex: none; }
+.px-export .stepper { flex: none; width: 86px; }
+.flip-mini .stepper { flex: none; }
+.px-dims .stepper { width: 116px; flex: none; }
+/* dimension fields stack one-per-row (was a cramped 3-up flex) so each −/+ frame
+   has room and the labels read as a tidy column */
+.px-dims { display: flex; flex-direction: column; gap: var(--sp-1); }
+.px-dims label {
+  flex: none; flex-direction: row; align-items: center; justify-content: space-between;
+  gap: var(--sp-2); min-width: 0; font-size: 11px; color: var(--muted); text-transform: uppercase;
+}
+/* touch: the whole control + its buttons meet the 44px guideline */
+body.compact .step-btn { min-width: 44px; }
+body.compact .stepper > input[type="number"] { padding: 11px 2px; }
+body.compact .px-dims .stepper { width: 152px; }
+
+/* ---------- the switch grammar (one rule, two idioms) ----------
+   A boolean control is one of two things, and the idiom tells you which:
+     • a MODE you engage (changes how the canvas/tools behave: mandala, pixel —
+       and flipbook/focus elsewhere) → a pressed-state `aria-pressed` BUTTON,
+       sharing the `button.active` accent chip with the toolbar tools, so
+       "engaged" reads the same everywhere.
+     • a SETTING you flip (a persistent preference: mirror, wallpaper grid, snap,
+       smart-guides, minimap, star/polygon, smooth brush) → a `.toggle` CHECKBOX.
+   Acid test: does it change the result of a mouse-down on the canvas at the mode
+   level? Yes → button; preference → checkbox. (§2.8 de-dup.) */
+.toggle { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-md); color: var(--muted); cursor: pointer; transition: color .12s; }
+.toggle:hover { color: var(--ink); }
+.toggle input { accent-color: var(--accent); width: 16px; height: 16px; }
+
+/* mode toggle: a full-width labelled twin of the toolbar mode buttons. Muted at
+   rest, lights up via the shared `button.active` accent chip when engaged. The
+   leading dot is a switch affordance (hollow ring off → filled on). */
+.mode-toggle { display: flex; align-items: center; gap: var(--sp-2); width: 100%; text-align: left; color: var(--muted); font-size: var(--fs-md); }
+.mode-toggle:hover { color: var(--ink); }
+.mode-dot { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid currentColor; background: transparent; transition: background .12s, border-color .12s; }
+.mode-toggle.active .mode-dot { background: #fff; border-color: #fff; }
+.mode-note { color: var(--muted); font-size: var(--fs-sm); }
+.mode-toggle.active .mode-note { color: rgba(255, 255, 255, 0.75); }
+.grid-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); }
+.grid-row select {
+  font: inherit; font-size: var(--fs-sm); color: var(--ink); background: var(--surface);
+  border: 1px solid var(--panel-border); border-radius: var(--r-sm); padding: 3px 6px; cursor: pointer;
+}
+
+.gen-label { font-size: var(--fs-sm); color: var(--muted); }
+.gen-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: var(--sp-1); }
+.gen-row button { min-width: 0; padding: 6px 0; font-size: var(--fs-lg); text-align: center; }
+
+/* Uniform (regular + Archimedean) tilings: one grouped picker rather than 11
+   buttons — keeps the Generate panel calm while exposing the whole set. */
+.gen-pick { display: grid; grid-template-columns: 1fr auto; gap: var(--sp-1); align-items: center; margin-top: var(--sp-2); }
+.gen-pick-label { grid-column: 1 / -1; font-size: var(--fs-sm); color: var(--muted); }
+.gen-pick select { min-width: 0; width: 100%; }
+.gen-pick button { white-space: nowrap; padding: 6px 10px; }
+.gen-dual { display: flex; align-items: center; gap: var(--sp-1); margin-top: var(--sp-1); font-size: var(--fs-sm); color: var(--muted); cursor: pointer; }
+.gen-dual input { margin: 0; }
+
+.ctl-label { font-size: var(--fs-sm); color: var(--muted); margin-top: 2px; }
+.btn-row { display: flex; gap: var(--sp-1); }
+.btn-row button { flex: 1; min-width: 0; padding: 6px 0; font-size: var(--fs-md); text-align: center; }
+
+/* Pixel-art TOOL palette (batch 39): the same line-icon language as the top toolbar.
+   9 tools share one tight row in the 198px panel, so flex-centre the glyph (an svg
+   block won't centre via text-align) and draw it small. The active tool lights up
+   via the shared `button.active` accent chip — currentColor turns the stroke #fff. */
+.px-tools button { display: inline-flex; align-items: center; justify-content: center; padding: 6px 0; }
+.px-tools .ic { width: 16px; height: 16px; }
+
+/* ---------- labelled action rows (Arrange / Align / LOD) ----------
+   The dense 4-up glyph grids became a scannable vertical list: the glyph sits in
+   a fixed icon column so the words line up, and the WORD carries the meaning —
+   recognition over recall (§2.3), not hover-and-guess. These sections are
+   collapsed by default, so the extra height only appears once you open one, and
+   the full-width rows double as comfortable touch targets. */
+.act-list { display: flex; flex-direction: column; gap: 2px; }
+.act-list button {
+  display: flex; align-items: center; gap: var(--sp-2);
+  width: 100%; text-align: left;
+  padding: 7px 8px; font-size: var(--fs-md); min-height: 34px;
+}
+.act-ico {
+  flex: 0 0 1.5em; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  font-size: var(--fs-md); color: var(--muted);
+  /* batch 40: the row is now ONE line-icon language — every glyph is an <svg class=ic>
+     <use> of the shared sprite (24×24, currentColor stroke), nested in this fixed icon
+     column. grayscale stays a harmless no-op on the already-monochrome icons (and pins
+     the desaturation contract the lock button's test asserts). */
+  filter: grayscale(1); opacity: 0.85;
+}
+.act-ico .ic { width: 16px; height: 16px; }
+.act-list button:hover .act-ico,
+.act-list button.active .act-ico { color: inherit; opacity: 1; }
+.act-list .sep-h { margin: var(--sp-1) 2px; }
+/* The lone PREFERENCE that lives among the Arrange action buttons (the centre-of-
+   mass pivot switch). It's a setting, not an action, so it stays a `.toggle`
+   checkbox (the mode-vs-preference rule above) — but tightened to the same calm
+   density as the View-panel checkboxes (Minimap / Snap / Smart guides) and pinned
+   to ONE line so it sits flush in the icon-button list instead of looming as a
+   tall, two-line block. */
+.act-list .act-toggle {
+  width: 100%;
+  padding: 5px 8px;
+  margin: 1px 0;
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+.act-list .act-toggle input { flex: 0 0 auto; }
+/* Slider settings that live among the Arrange action buttons (the recursion knobs:
+   Child zoom + Levels for the stamp / portal). Like the .act-toggle preference,
+   they read as calm settings, not buttons — compact .ctl rows with a touch of
+   padding so the slider + its readout sit flush in the icon-button rhythm. */
+.act-list .act-ctl { padding: 4px 8px 6px; margin: 1px 0; gap: 3px; }
+.act-list .act-ctl input[type="range"] { margin: 0; }
+.act-hint { font-size: var(--fs-sm); color: var(--muted); margin: 0 0 var(--sp-1); line-height: 1.35; }
+
+/* panel-level header (objects / pixel) — same muted, structural voice as the
+   section headers so every panel reads from one design language. (Bookmarks used
+   to be its own floating panel with a .bm-head; it now lives as a <details>
+   section inside the Action panel — see "Bookmarks section" below.) */
+.bm-head { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-md);
+  font-weight: 600; color: var(--ink); letter-spacing: 0.01em; }
+.bm-head button { padding: 4px 9px; font-size: var(--fs-lg); }
+/* count badge in a collapsed panel header / section head — keeps it informative
+   while tucked away (e.g. "Objects 3"). Muted pill; empty when the count is zero. */
+.count-badge {
+  font-size: var(--fs-xs); font-weight: 600; color: var(--muted);
+  background: var(--surface); border-radius: 999px;
+  padding: 1px 7px; min-width: 12px; text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.count-badge:empty { display: none; }
+
+/* ---------- Bookmarks section (inside the Action panel) ---------- */
+/* the count badge rides to the far right of the section head (like the Objects
+   panel) — a rest-state signal of how many views you've saved while collapsed. */
+#bookmark-sect .count-badge { margin-left: auto; }
+/* "Save view" is a labelled body button (like the File-row buttons), not a header
+   glyph — discoverable and on-brand; it inherits the .sect-body button look. nowrap
+   keeps the icon + word on one line in the narrow panel (matches its siblings). */
+.bm-add { white-space: nowrap; }
+/* the list stacks vertically in the narrow panel; each row fills its width */
+#bookmark-list { display: flex; flex-direction: column; gap: 6px; }
+.bm-row { display: flex; align-items: center; background: rgba(255,255,255,0.05); border-radius: 8px; }
+.bm-go { flex: 1 1 auto; font-size: 12px; padding: 5px 8px; border-radius: 8px 0 0 8px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bm-del { font-size: 13px; padding: 5px 7px; border-radius: 0 8px 8px 0; color: var(--muted); }
+.bm-del:hover { color: var(--danger); }
+#bookmark-list:empty::after { content: 'none yet'; font-size: 12px; color: var(--muted); opacity: 0.6; }
+
+/* ---------- layers / objects panel ---------- */
+#layers-panel {
+  top: 76px;
+  left: 204px;
+  flex-direction: column;
+  align-items: stretch;
+  width: 182px;
+  max-height: calc(100vh - 100px);
+  overflow: hidden;
+}
+.collapse-btn {
+  padding: 2px 5px; font-size: 11px; min-width: 0; line-height: 1;
+  background: none; border: none; color: var(--muted); cursor: pointer;
+}
+.collapse-btn:hover { color: var(--ink); }
+#layers-panel.collapsed { max-height: none; }
+/* The collapse hides content on DESKTOP only; on mobile the bottom-sheet drawer
+   IS the disclosure, so a collapsed panel still shows its list when opened. */
+body:not(.compact) #layers-panel.collapsed #layer-list { display: none; }
+body:not(.compact) #layers-panel.collapsed .layer-actions { display: none; }
+.layer-actions { display: flex; gap: 4px; margin-left: auto; }
+.layer-actions button { padding: 4px 8px; font-size: 13px; min-width: 0; }
+#layer-list { display: flex; flex-direction: column; gap: 3px; overflow-y: auto; margin-top: 6px; min-height: 22px; }
+#layer-list:empty::after { content: 'no objects yet'; font-size: 12px; color: var(--muted); opacity: 0.6; padding: 4px; }
+.layer-row {
+  display: flex; align-items: center; gap: 2px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid transparent;
+  border-radius: 7px; padding: 2px 3px;
+  touch-action: none; /* let pointer-drag reparent without scrolling the panel */
+}
+.layer-row.sel { border-color: var(--accent); background: var(--accent-dim); }
+/* the "active" item — parent target for Ctrl+P — gets a warm outline (matches
+   the warm active outline drawn on the canvas) */
+.layer-row.active { border-color: #ffb454; }
+.layer-row.active .lr-name { font-weight: 600; }
+.layer-row .lr-name {
+  flex: 1; min-width: 0; text-align: left; background: none; border: none;
+  /* indent children of a parent (hierarchy view); --depth set per row */
+  padding: 3px 4px 3px calc(4px + var(--depth, 0) * 13px); font-size: 12px; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
+}
+.layer-row .lr-name:hover { background: rgba(255, 255, 255, 0.08); }
+.layer-row .lr-tog {
+  min-width: 0; padding: 3px 5px; font-size: 12px; line-height: 1;
+  background: none; border: none; opacity: 0.45; cursor: pointer;
+}
+.layer-row .lr-tog.on { opacity: 1; }
+.layer-row .lr-tog:hover { opacity: 1; background: rgba(255, 255, 255, 0.08); }
+.layer-more { font-size: 11px; color: var(--muted); text-align: center; padding: 5px; }
+/* drag-to-reparent affordances: the row being dragged dims; a drop-target row
+   gets a warm parent outline; the panel itself outlines as the "unparent" zone */
+.layer-row.drag-src { opacity: 0.4; }
+.layer-row.drop-into { border-color: #ffb454; background: rgba(255, 180, 84, 0.16); box-shadow: 0 0 0 1px #ffb454 inset; }
+#layers-panel.drop-unparent { box-shadow: 0 0 0 2px var(--accent); }
+
+/* ---------- named layers (header rows in the Objects list) ---------- */
+/* A layer header groups the item rows beneath it. Its controls wrap on a narrow
+   panel rather than overflowing. The active layer (where new strokes land) gets
+   the same warm outline as the active item. Item rows that follow a head are
+   slightly inset so the grouping reads at a glance. */
+.layer-head {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 3px;
+  margin-top: 4px; padding: 4px 4px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.10); border-radius: 8px;
+}
+.layer-head:first-child { margin-top: 0; }
+.layer-head.active { border-color: #ffb454; background: rgba(255, 180, 84, 0.10); }
+.layer-head .lh-name {
+  flex: 1 1 80px; min-width: 60px; text-align: left; background: none; border: none;
+  font-size: 12px; font-weight: 600; color: var(--ink); cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 4px; border-radius: 5px;
+}
+.layer-head .lh-name:hover { background: rgba(255, 255, 255, 0.10); }
+.layer-head .lh-op { flex: 0 0 52px; width: 52px; accent-color: var(--accent); cursor: pointer; }
+.layer-head .lh-blend { flex: 0 0 auto; max-width: 84px; font-size: 11px; padding: 1px 2px; }
+.layer-head .lr-tog { min-width: 0; padding: 2px 4px; font-size: 12px; line-height: 1; background: none; border: none; opacity: 0.45; cursor: pointer; }
+.layer-head .lr-tog.on { opacity: 1; }
+.layer-head .lr-tog:hover { opacity: 1; background: rgba(255, 255, 255, 0.08); }
+.layer-head .lh-move,
+.layer-head .lh-assign,
+.layer-head .lh-del {
+  min-width: 0; padding: 2px 5px; font-size: 11px; line-height: 1;
+  background: none; border: none; color: var(--muted); opacity: 0.6; cursor: pointer; border-radius: 5px;
+}
+.layer-head .lh-move:hover,
+.layer-head .lh-assign:not(:disabled):hover,
+.layer-head .lh-del:hover { opacity: 1; background: rgba(255, 255, 255, 0.08); }
+.layer-head .lh-del:hover { color: #ff8a8a; }
+.layer-head .lh-assign:disabled, .layer-head .lh-del:disabled { opacity: 0.22; cursor: default; }
+/* item rows belonging to a layer sit just inside the head's left edge — only in
+   layered mode (a single-layer doc has no heads, so this matches nothing and the
+   default flat list is unchanged). */
+.layer-head ~ .layer-row { margin-left: 6px; }
+
+/* ---------- flipbook / stop-motion ---------- */
+#anim-panel {
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 260px);
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+#anim-panel #flipToggle { font-size: 13px; white-space: nowrap; }
+.flip-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: center; }
+.flip-controls.hidden { display: none; }
+.flip-controls button { font-size: 14px; padding: 6px 9px; min-width: 32px; }
+.flip-indicator {
+  font-size: 12px; color: var(--ink); font-variant-numeric: tabular-nums;
+  min-width: 110px; text-align: center; white-space: nowrap;
+}
+.flip-scrub { width: 120px; accent-color: var(--accent); }
+.flip-mini { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.flip-mini input[type="number"] {
+  width: 44px; font: inherit; font-size: var(--fs-sm); color: var(--ink);
+  background: var(--surface); border: 1px solid var(--panel-border);
+  border-radius: 6px; padding: 3px 4px;
+}
+.flip-mini input[type="range"] { width: 58px; accent-color: var(--accent); }
+.flip-mini input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent); }
+.flip-mini select {
+  font: inherit; font-size: var(--fs-sm); color: var(--ink);
+  background: var(--surface); border: 1px solid var(--panel-border);
+  border-radius: 6px; padding: 2px 4px;
+}
+.flip-mini.hidden { display: none; }
+
+/* ---------- flipbook thumbnail strip ---------- */
+.flip-thumbs {
+  display: flex; align-items: center; gap: 6px;
+  flex-basis: 100%; max-width: 100%;
+  overflow-x: auto; overflow-y: hidden;
+  padding: 4px 2px 2px; scrollbar-width: thin;
+}
+.flip-thumbs.hidden { display: none; }
+.flip-thumb {
+  position: relative; flex: 0 0 auto;
+  padding: 2px; background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--panel-border); border-radius: 6px;
+  cursor: pointer; line-height: 0; transition: border-color .12s, transform .12s;
+}
+.flip-thumb:hover { border-color: var(--muted); transform: translateY(-1px); }
+.flip-thumb.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.flip-thumb canvas {
+  display: block; height: 40px; width: auto; border-radius: 3px;
+  image-rendering: -webkit-optimize-contrast;
+}
+.flip-thumb-num {
+  position: absolute; left: 3px; top: 3px;
+  font-size: 9px; line-height: 1; font-variant-numeric: tabular-nums;
+  color: var(--ink); background: rgba(0, 0, 0, 0.55);
+  padding: 1px 3px; border-radius: 4px; pointer-events: none;
+}
+/* per-page "×N" hold badge (top-right), only shown when the page holds >1 tick */
+.flip-thumb-hold {
+  position: absolute; right: 3px; top: 3px; display: none;
+  font-size: 9px; line-height: 1; font-variant-numeric: tabular-nums;
+  color: #ffd9a0; background: rgba(0, 0, 0, 0.6);
+  padding: 1px 3px; border-radius: 4px; pointer-events: none;
+}
+.flip-thumb-hold.on { display: block; }
+/* per-page 📷 camera-keyframe badge (bottom-right), shown only when the page is
+   pinned to a camera view; click it to clear that page's keyframe */
+.flip-thumb-cam {
+  position: absolute; right: 2px; bottom: 2px; display: none;
+  font-size: 10px; line-height: 1; cursor: pointer;
+  background: rgba(0, 0, 0, 0.55); border-radius: 4px; padding: 1px 2px;
+  filter: saturate(1.1);
+}
+.flip-thumb-cam.on { display: block; }
+.flip-thumb-cam:hover { background: rgba(255, 91, 110, 0.55); }
+/* drag-to-reorder affordances: the dragged thumb dims; an accent edge marks the
+   gap where it will drop (before a thumb, or after the last one) */
+.flip-thumb.drag-src { opacity: 0.4; }
+.flip-thumb { touch-action: none; }
+.flip-thumb.drop-before { box-shadow: -3px 0 0 0 var(--accent); }
+.flip-thumb.drop-after { box-shadow: 3px 0 0 0 var(--accent); }
+
+/* ---------- minimap ---------- */
+#minimap {
+  position: fixed;
+  bottom: 12px;
+  right: 12px;
+  width: 200px;
+  height: 140px;
+  /* below the side panels (which are z-index:10): the Action panel shares the right
+     gutter, and an expanded Bookmarks list can reach down into the minimap's corner —
+     the panel you're actively using should sit on top, not be click-blocked by the
+     glanceable overview. They don't overlap in the common (short-panel) case. */
+  z-index: 9;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+#minimap.hidden { display: none; }
+
+/* ---------- toast ---------- */
+#toast {
+  position: fixed;
+  bottom: 70px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  z-index: 30;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 10px 18px;
+  font-size: 13px;
+  box-shadow: var(--shadow);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .2s, transform .2s;
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+/* when the flipbook panel is open (bottom-center), lift the toast above it */
+body.flip-on #toast { bottom: 150px; }
+
+/* ---------- text editor overlay ---------- */
+#text-editor {
+  position: fixed;
+  z-index: 25;
+  display: none;
+  margin: 0;
+  border: 1px dashed var(--accent);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--ink);
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  font-family: inherit;
+  line-height: 1.1;
+  padding: 0;
+  white-space: pre;
+}
+#text-editor.active { display: block; }
+
+/* ---------- pixel-art panel ---------- */
+#pixel-panel {
+  top: 76px;
+  left: 12px;
+  width: 198px;
+  flex-direction: column;
+  align-items: stretch;
+  z-index: 20; /* overlays the style panel: vector controls are moot in pixel mode */
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+}
+#px-edit { display: flex; flex-direction: column; gap: 6px; }
+#pixel-panel.hidden { display: none; }
+body.pixel-panel-open #style-panel { display: none; } /* pixel panel takes its slot */
+#canvas.tool-pixel { cursor: crosshair; }
+/* .px-dims layout now lives with the stepper rules above (one-per-row column) —
+   its inputs are all [data-stepper], so the old 3-up flex grid was replaced. */
+#pixel-panel input[type="number"], #pixel-panel select {
+  background: var(--surface); border: 1px solid var(--panel-border);
+  color: var(--ink); border-radius: 6px; padding: 4px 5px; font-size: var(--fs-sm);
+}
+.px-swatches { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; margin-top: 2px; }
+.px-swatch {
+  width: 100%; min-width: 0; aspect-ratio: 1; border-radius: 5px; padding: 0;
+  border: 1px solid var(--panel-border); cursor: pointer;
+}
+.px-swatch.active { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+body:not(.pixel-editing) #px-edit { display: none; }
+.px-export { display: flex; align-items: center; gap: 6px; }
+.px-export label { display: flex; align-items: center; gap: 3px; font-size: 12px; color: var(--muted); }
+.px-export input { width: 46px; }
+.px-export button { flex: 1; }
+#pxConvert { margin-top: 6px; }
+.px-fromimg { margin-top: 6px; flex-wrap: wrap; }
+.px-fromimg input[type="number"] { width: 48px; margin-left: auto; }
+.px-fromimg input[type="number"]:disabled { opacity: 0.4; }
+#pxPalette:disabled { opacity: 0.45; }
+.px-resize-row { display: flex; gap: 6px; align-items: center; }
+.px-resize-row select { flex: 1; min-width: 0; }
+
+.px-replace-row { display: flex; gap: 6px; align-items: center; }
+.px-replace-row select { flex: 1; min-width: 0; }
+.px-replace-arrow { color: var(--muted); font-size: var(--fs-md); }
+.px-replace-btns { margin-top: 4px; }
+.px-transform button { font-size: var(--fs-sm); }
+.px-sel-btns { margin-top: 4px; }
+.px-sel-btns button { font-size: var(--fs-sm); }
+.px-sel-btns button:disabled { opacity: 0.35; cursor: default; }
+
+/* ---------- mobile dock + drawer scrim (hidden on desktop) ---------- */
+/* The dock is a bottom bar of toggle buttons that open each aux panel as a
+   bottom-sheet drawer; the scrim greys out the canvas behind an open drawer.
+   Both are inert on desktop — only the @media block below brings them to life. */
+#mobile-dock { display: none; }
+#drawer-scrim {
+  display: none;
+  position: fixed; inset: 0; z-index: 18;
+  background: rgba(0, 0, 0, 0.45);
+  -webkit-backdrop-filter: blur(1px); backdrop-filter: blur(1px);
+}
+
+/* ---------- Transparency: contextual hint line (in the HUD) ---------- */
+/* The ⌘K launcher chip — the always-visible onramp to the palette. */
+#hud-cmd {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  padding: 2px 7px;
+  min-height: 0;
+  border-radius: var(--r-sm);
+}
+#hud-cmd:hover { color: var(--ink); }
+/* The live "what can I do now" line. Floats just above the HUD as faint text —
+   no glass panel, and pointer-events:none so it never blocks a click on the
+   canvas or other chrome beneath it. Base text is muted (recedes); the modifier
+   hints sit after it, each a small key chip + label that LIGHTS when held. */
+#hud-hint {
+  position: fixed;
+  bottom: 54px; left: 14px;
+  z-index: 9;
+  pointer-events: none;
+  display: flex; align-items: center; gap: var(--sp-2);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-weight: 400;
+  max-width: calc(100vw - 320px);
+  overflow: hidden; white-space: nowrap;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);   /* legible over busy canvas */
+}
+/* in flipbook mode the bottom-centre fills with controls — drop the hint */
+body.flip-on #hud-hint { display: none; }
+#hud-hint .hint-base { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#hud-hint .hint-mod {
+  display: inline-flex; align-items: center; gap: 5px;
+  color: var(--muted); opacity: 0.6;
+  transition: opacity .12s, color .12s;
+  white-space: nowrap;
+}
+#hud-hint .hint-mod.active { opacity: 1; color: var(--accent); }
+#hud-hint .hint-mod kbd {
+  font: inherit; font-size: 10px; font-weight: 600;
+  padding: 1px 5px; border-radius: 5px;
+  background: var(--surface);
+  border: 1px solid var(--panel-border);
+  color: inherit;
+}
+#hud-hint .hint-mod.active kbd {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+
+/* The focus-mode launcher chip — sits next to ⌘K in the HUD, same quiet voice. */
+#hud-focus {
+  font-size: var(--fs-md);
+  color: var(--muted);
+  padding: 2px 6px;
+  min-height: 0; min-width: 0;
+  border-radius: var(--r-sm);
+}
+#hud-focus:hover { color: var(--ink); }
+
+/* ---------- Focus mode (Visual Recess, taken all the way) ----------
+   The §1.1 fix the redesign never made: a single toggle that makes ALL chrome
+   recede so only the canvas remains. Panels fade out and go inert (so they can't
+   intercept a stroke); the only survivor is #focus-exit, the always-reachable
+   way back. Tab / Esc / the palette also exit. */
+body.focus-mode #toolbar,
+body.focus-mode #style-panel,
+body.focus-mode #action-panel,
+body.focus-mode #layers-panel,
+body.focus-mode #pixel-panel,
+body.focus-mode #anim-panel,
+body.focus-mode #hud,
+body.focus-mode #hud-hint,
+body.focus-mode #minimap,
+body.focus-mode #mobile-dock {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .25s ease;
+}
+/* The lone survivor: a calm chip, top-right, that names the mode and exits it. */
+#focus-exit {
+  position: fixed;
+  top: 12px; right: 12px;
+  z-index: 40;
+  display: none;
+  align-items: center; gap: 6px;
+  font-size: var(--fs-sm); font-weight: 600;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px) saturate(1.1);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+  padding: 6px 12px;
+  opacity: 0.55;
+  transition: opacity .15s, color .15s, border-color .15s;
+}
+#focus-exit:hover { opacity: 1; color: var(--ink); border-color: var(--accent); }
+body.focus-mode #focus-exit { display: inline-flex; }
+
+/* ---------- First-run coachmark (onboarding, §1.3 / C5) ----------
+   Anchored bottom-left, just above the hint line + HUD, so it visually labels
+   the real ⌘K chip it teaches (the "spatial bridge") instead of reading as a
+   blocking splash screen. Fully inert (pointer-events:none) — you dismiss it by
+   doing anything. Speaks the recess language: calm glass, muted ink, the accent
+   reserved for the keys + the verbs. */
+.coachmark {
+  position: fixed;
+  bottom: 84px; left: 12px;
+  z-index: 36;
+  width: 250px;
+  pointer-events: none;             /* never intercept a stroke or a click */
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px) saturate(1.1);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+  padding: var(--sp-3) var(--sp-3) var(--sp-2);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity .4s ease, transform .4s ease;
+}
+.coachmark.show { opacity: 1; transform: translateY(0); }
+.coachmark.hidden { display: none; }
+.coach-head {
+  color: var(--ink); font-weight: 600; font-size: var(--fs-md);
+  margin-bottom: var(--sp-2);
+}
+.coach-list {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: var(--sp-2);
+}
+.coach-list li { line-height: 1.45; }
+.coach-do { color: var(--ink); font-weight: 600; }
+.coachmark kbd {
+  font: 600 var(--fs-xs)/1 ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--accent);
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+.coach-foot {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--muted); opacity: 0.75;
+}
+/* Focus mode hides all chrome — the coachmark goes with it. */
+body.focus-mode .coachmark { display: none; }
+
+/* The Clear button's "armed" confirm step: first click arms it (here), a second
+   click within the timeout actually clears. A non-modal §2.7 safety valve. */
+button.danger.armed,
+button.danger.armed:hover {
+  color: #fff;
+  background: rgba(255, 91, 110, 0.22);
+  border-color: var(--danger);
+}
+
+/* Toast action button (e.g. the Undo on a destructive action). When a toast
+   carries an action it becomes interactive (see _toast); the button is the
+   prominent inline recovery the §2.7 "scary destructive action" rule wants. */
+#toast.has-action { pointer-events: auto; }
+#toast .toast-action {
+  margin-left: 12px;
+  font-size: var(--fs-sm); font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  padding: 3px 10px; min-width: 0; line-height: 1.2;
+}
+#toast .toast-action:hover { color: #fff; background: var(--accent); }
+
+/* ---------- Transparency: command palette ---------- */
+.palette-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; justify-content: center; align-items: flex-start;
+  padding-top: 12vh;
+  background: rgba(0, 0, 0, 0.42);
+  -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+  animation: palette-fade .12s ease;
+}
+.palette-overlay.hidden { display: none; }
+@keyframes palette-fade { from { opacity: 0; } to { opacity: 1; } }
+.palette-box {
+  width: 580px; max-width: 92vw;
+  max-height: 70vh;
+  display: flex; flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow);
+  -webkit-backdrop-filter: blur(18px) saturate(1.1); backdrop-filter: blur(18px) saturate(1.1);
+  overflow: hidden;
+}
+#palette-input {
+  width: 100%;
+  border: none; border-bottom: 1px solid var(--panel-border);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-lg);
+  padding: var(--sp-3) var(--sp-4);
+  outline: none;
+}
+#palette-input::placeholder { color: var(--muted); font-size: var(--fs-md); }
+#palette-list { overflow-y: auto; padding: var(--sp-1) var(--sp-1) var(--sp-2); }
+.pal-cat {
+  font-size: var(--fs-xs); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted);
+  padding: var(--sp-2) var(--sp-3) var(--sp-1);
+}
+.pal-row {
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  scroll-margin: 8px;
+}
+.pal-row .pal-icon {
+  width: 22px; text-align: center; font-size: var(--fs-lg);
+  flex: 0 0 auto;
+}
+.pal-row .pal-title { flex: 1 1 auto; color: var(--ink); font-size: var(--fs-md); }
+.pal-row .pal-keys { display: flex; gap: 4px; flex: 0 0 auto; }
+.pal-row .pal-key {
+  font-size: 10px; font-weight: 600;
+  padding: 2px 6px; border-radius: 5px;
+  background: var(--surface);
+  border: 1px solid var(--panel-border);
+  color: var(--muted);
+}
+.pal-row[aria-selected="true"] { background: var(--accent-dim); }
+.pal-row[aria-selected="true"] .pal-key { border-color: var(--accent); color: var(--ink); }
+.pal-row.disabled { opacity: 0.4; cursor: default; }
+.pal-row.disabled[aria-selected="true"] { background: var(--hover); }
+.palette-empty {
+  padding: var(--sp-4); text-align: center;
+  color: var(--muted); font-size: var(--fs-md);
+}
+.palette-empty.hidden { display: none; }
+
+/* ---------- compact / mobile layout ---------- */
+/* Triggered by viewport width AND by the body.compact class (set via matchMedia
+   in app.js _initMobile, so the JS drawer state and the CSS agree). Desktop
+   tests run at 1280px, so none of this applies there. */
+@media (max-width: 760px) {
+  /* Top toolbar → edge-to-edge, single horizontally-scrollable row so the tool
+     palette never eats vertical canvas space. */
+  #toolbar {
+    top: 0; left: 0; right: 0; transform: none;
+    /* override the desktop width:max-content/auto-margins: on phones the bar is
+       edge-to-edge and scrolls its buttons internally, it does NOT size to content. */
+    width: auto; margin-inline: 0;
+    max-width: none; border-radius: 0;
+    flex-wrap: nowrap; justify-content: flex-start;
+    overflow-x: auto; overflow-y: hidden;
+    touch-action: pan-x; scrollbar-width: thin;
+    z-index: 24;
+  }
+  #toolbar button { flex: 0 0 auto; min-width: 44px; min-height: 44px; }
+  #toolbar .ic { width: 22px; height: 22px; }   /* a touch larger for touch */
+
+  /* The fixed-position aux panels become modal bottom-sheet drawers: parked
+     off-screen below the dock, sliding up when their .open class is set.
+     NOTE: selectors are ID-qualified so they outrank each panel's own
+     #id positioning rule (the anim panel sets transform: translateX). */
+  #style-panel.is-drawer,
+  #layers-panel.is-drawer,
+  #action-panel.is-drawer,
+  #anim-panel.is-drawer {
+    top: auto; bottom: calc(var(--dock-h) + 8px);
+    left: 8px; right: 8px; width: auto; max-width: none;
+    transform: translateY(100vh);   /* fully off-screen regardless of height */
+    transform: translateY(100dvh);
+    max-height: 62vh; max-height: 62dvh; overflow-y: auto;
+    transition: transform .22s ease;
+    touch-action: pan-y; z-index: 22;
+  }
+  #style-panel.is-drawer.open,
+  #layers-panel.is-drawer.open,
+  #action-panel.is-drawer.open,
+  #anim-panel.is-drawer.open { transform: translateY(0); }
+  /* keep the horizontal thumbnail strip pannable inside the pan-y drawer */
+  #anim-panel.is-drawer .flip-thumbs { touch-action: pan-x; }
+  #layers-panel.is-drawer.collapsed { max-height: 62vh; max-height: 62dvh; }
+
+  /* On mobile the bottom-sheet drawer IS the disclosure, so the Objects inner
+     collapse caret is redundant — hide it. (Bookmarks is a <details> section like
+     File/View/Generate, so its .sect-caret stays as the in-drawer disclosure.) */
+  #layerCollapse { display: none; }
+
+  /* Bigger touch targets inside the drawers */
+  .panel.is-drawer button { min-height: 38px; }
+  .btn-row button, .gen-row button { min-height: 40px; }
+  /* the full-width labelled action rows are the easiest place to hit the 44px
+     touch guideline — give them the room (the mode toggle + the COM-pivot
+     checkbox row ride along) */
+  .act-list button, .act-list .act-toggle, .mode-toggle { min-height: 44px; }
+
+  /* The dock: fixed bottom bar of drawer toggles */
+  #mobile-dock {
+    display: flex;
+    top: auto; bottom: 8px; left: 8px; right: 8px;
+    transform: none; max-width: none;
+    justify-content: space-around; gap: 4px;
+    z-index: 24;
+  }
+  #mobile-dock button {
+    flex: 1 1 0; min-width: 0; min-height: 44px; font-size: 20px; padding: 6px 0;
+  }
+  #mobile-dock button.active { background: var(--accent-dim); border-color: var(--accent); }
+
+  body.compact.drawer-open #drawer-scrim { display: block; }
+
+  /* HUD lifts above the dock; minimap shrinks + lifts so it clears the dock
+     (its show/hide is still driven by the existing #minimap.hidden toggle) */
+  #hud { bottom: calc(var(--dock-h) + 8px); left: 8px; font-size: 11px; gap: 8px; padding: 6px 9px; }
+  #minimap { bottom: calc(var(--dock-h) + 8px); right: 8px; width: 116px; height: 80px; }
+  /* The HUD is cramped on a phone — drop the wordy hint line but keep the ⌘K
+     chip (the only touch onramp to the palette, since '/' needs a keyboard). */
+  #hud-hint { display: none; }
+  .palette-overlay { padding-top: 8vh; align-items: flex-start; }
+  .palette-box { width: auto; left: 8px; right: 8px; max-width: none; max-height: 76vh; }
+  .pal-row { padding: var(--sp-3); }
+
+  /* toast clears the dock */
+  #toast,
+  body.flip-on #toast { bottom: calc(var(--dock-h) + 16px); }
+
+  /* coachmark clears the dock + HUD and spans the narrow width comfortably */
+  .coachmark { bottom: calc(var(--dock-h) + 56px); left: 8px; right: 8px; width: auto; }
+}
