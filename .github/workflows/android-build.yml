@@ -11,13 +11,15 @@
 # natively for Service Workers — none of the LocalServer / Swift
 # override architecture the iOS build needs.
 #
-# Caveat: live-update.js's BundleAccess plugin is iOS-only Swift,
-# so refresh-button live updates are no-ops on Android. The fallback
-# path is fine — `done()` runs a plain reload + cache clear (since
-# `Capacitor.Plugins.BundleAccess` is undefined). Spouse / Android
-# testers get fresh code by reinstalling the APK each release; a
-# Kotlin port of BundleAccessPlugin is the follow-up if/when that
-# friction matters.
+# Live-update on Android: there's no BundleAccess plugin / LocalServer
+# overlay here (that's iOS-only Swift), so live-update.js instead
+# overlays updated tracked files into the service-worker `app-v1` cache
+# (see updateViaCache) — the SW already serves from that cache in
+# preference to the bundled assets, so the refresh button picks up new
+# code without an APK reinstall. It fetches all files first and only
+# commits if every one arrives, so with no data it's a safe no-op. No
+# native code needed (so no risk to this build); needs on-device
+# verification that the SW intercepts the top-level `/` navigation.
 #
 # Trigger: same shape as ios-build.yml — manual workflow_dispatch
 # plus a path-filtered push to main for relevant changes.
