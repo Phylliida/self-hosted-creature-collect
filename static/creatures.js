@@ -5718,6 +5718,18 @@
         width: 16px; height: 16px; font-size: 10px; line-height: 16px;
         text-align: center; font-weight: bold; z-index: 2;
       }
+      /* "auto" tag (top-left, opposite the caught ✓) — same pill shape as the
+         encounter screen's "New" badge, muted since it's just informational. */
+      #creatureInventory .speciesdex-cell .speciesdex-auto-tag {
+        display: none;   /* flex when .is-auto (below) */
+        position: absolute; top: 4px; left: 4px; z-index: 2;
+        height: 13px; padding: 0 5px; box-sizing: border-box;
+        align-items: center; justify-content: center;
+        font-size: 9px; line-height: 1; font-weight: 700; letter-spacing: 0.06em;
+        text-transform: uppercase; color: #fff; background: rgba(0,0,0,0.6);
+        border-radius: 999px; pointer-events: none; white-space: nowrap;
+      }
+      #creatureInventory .speciesdex-cell.is-auto .speciesdex-auto-tag { display: flex; }
       #creatureInventory .speciesdex-partner { text-align: center; min-width: 64px; line-height: 1.2; }
       #creatureInventory .speciesdex-partner .sd-num { display: block; font-size: 10px; opacity: 0.55; }
       #creatureInventory .speciesdex-partner .sd-name {
@@ -9377,6 +9389,10 @@
           + `data-a="${a}" data-b="${b}" role="button" tabindex="0" `
           + `title="${escapeHtml(seenIt ? speciesNameFor(a) + ' × ' + speciesNameFor(b) : '???')}">`
           + `<span class="speciesdex-cell-ph" aria-hidden="true">·</span><img alt="">`
+          // "auto" tag — hidden until loadSpriteFor resolves the ACTUAL
+          // rendered variant (shown via .is-auto), so it works for silhouettes
+          // whose underlying art is autogen too.
+          + `<span class="speciesdex-auto-tag">auto</span>`
           // ✓ overlay when caught (owned ⊆ seen, so never on a silhouette) —
           // mirrors the pokédex card's caught badge.
           + (isFusionOwned(a, b) ? '<span class="caught-badge" title="caught">✓</span>' : '')
@@ -9398,9 +9414,19 @@
           const img = cell.querySelector('img');
           if (!img) return;
           const a = pairs[i][0], b = pairs[i][1];
-          global.SpriteStore.showSprite(img, a, b, pickPreferredSeenVariant(a, b), {
+          const seenVar = pickPreferredSeenVariant(a, b);
+          global.SpriteStore.showSprite(img, a, b, seenVar, {
             onReady: () => cell.classList.add('ready'),
           });
+          // Flag the "auto" tag against the ACTUAL rendered variant: the seen
+          // variant when the user has one, else showSprite's best-available
+          // fallback (bestVariantFor → custom slot 0 if it exists, else
+          // autogen → null). null === autogen, so it tags silhouettes too.
+          const resolved = (seenVar !== undefined)
+            ? Promise.resolve(seenVar)
+            : (global.SpriteStore.bestVariantFor
+                ? global.SpriteStore.bestVariantFor(a, b) : Promise.resolve(null));
+          resolved.then((v) => { cell.classList.toggle('is-auto', v === null); }).catch(() => {});
         });
       },
     });
