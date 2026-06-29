@@ -37,6 +37,11 @@
     + '</g>'
     + '</svg>';
 
+  // Top-bar glyphs (currentColor line icons, matching the bar's white text).
+  const ICON_UNDO = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7 L4 12 L9 17"/><path d="M4 12 h10 a5 5 0 0 1 5 5 v1"/></svg>';
+  const ICON_REDO = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 7 L20 12 L15 17"/><path d="M20 12 h-10 a5 5 0 0 0 -5 5 v1"/></svg>';
+  const ICON_X = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6 L18 18 M18 6 L6 18"/></svg>';
+
   // Quiver bubble icon: three nodes in a triangle with directed arrows
   // left -> top and top -> right. Inline SVG; uses currentColor to match the
   // theme/text. Arrowheads are stroked chevrons (no markers) for WebKit safety.
@@ -156,12 +161,19 @@
     .exapp-bar { position: absolute; top: 0; left: 0; right: 0; height: var(--exapp-bar);
       padding-top: env(safe-area-inset-top, 0px); display: flex; align-items: center; gap: 8px;
       padding-left: 10px; padding-right: 10px; background: rgba(0,0,0,0.72); color: #fff; box-sizing: border-box; }
-    .exapp-title { flex: 1; text-align: center; font-size: 14px; font-weight: 600; opacity: .9;
+    .exapp-title { flex: 1; min-width: 0; text-align: center; font-size: 14px; font-weight: 600; opacity: .9;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .exapp-btn { padding: 6px 12px; font-size: 13px; font-weight: 600; color: #fff;
-      background: rgba(255,255,255,0.16); border: none; border-radius: 6px; cursor: pointer; }
+      background: rgba(255,255,255,0.16); border: none; border-radius: 6px; cursor: pointer; flex: none; }
     .exapp-btn:hover { background: rgba(255,255,255,0.26); }
-    .exapp-close { background: rgba(224,90,107,0.55); }
+    /* Icon-only bar buttons (undo / redo / close): square, centred glyph. */
+    .exapp-iconbtn { padding: 0; width: 34px; height: 34px; display: inline-flex;
+      align-items: center; justify-content: center; }
+    .exapp-iconbtn svg { display: block; }
+    /* Close sits apart from the undo/redo cluster so it's not fat-fingered. */
+    .exapp-close { background: rgba(224,90,107,0.55); margin-left: 14px; }
+    .exapp-close:hover { background: rgba(224,90,107,0.82); }
+    .exapp-confirm-msg { white-space: pre-line; }
     .exapp-overlay { position: absolute; left: 0; right: 0; top: var(--exapp-bar); bottom: 0;
       display: none; align-items: flex-start; justify-content: center; background: rgba(0,0,0,0.5); z-index: 2; }
     .exapp-overlay.show { display: flex; }
@@ -198,18 +210,30 @@
   // Full-screen app window factory
   //   cfg = { title, noun, nounPlural, src, store,
   //           capture(iframeWin) -> data|null,
-  //           apply(iframeEl, iframeWin, data) }
+  //           apply(iframeEl, iframeWin, data),
+  //           leadActions, trailActions }
+  //
+  // leadActions / trailActions: optional per-app bar buttons. Each is
+  //   { html, title, onClick(api) } where api = { frameWin(), toast,
+  //   confirm(msg, okLabel, onOk), close }. Lead actions sit left (with
+  //   Save/Saved); trail actions sit right of the title, before the X.
   // ────────────────────────────────────────────────────────────
   function makeAppWindow(cfg) {
     injectCss();
+    const renderActions = (list, side) => (list || []).map((a, i) =>
+      `<button class="exapp-btn exapp-act${a.iconBtn ? ' exapp-iconbtn' : ''}" data-act="${side}-${i}" type="button"`
+      + ` title="${escapeHtml(a.title || '')}" aria-label="${escapeHtml(a.title || '')}">${a.html}</button>`
+    ).join('');
     const win = document.createElement('div');
     win.className = 'exapp-win';
     win.innerHTML = `
       <div class="exapp-bar">
+        ${renderActions(cfg.leadActions, 'lead')}
         <button class="exapp-btn exapp-save" type="button">Save</button>
         <button class="exapp-btn exapp-browse" type="button">Saved</button>
         <div class="exapp-title">${escapeHtml(cfg.title)}</div>
-        <button class="exapp-btn exapp-close" type="button">Close</button>
+        ${renderActions(cfg.trailActions, 'trail')}
+        <button class="exapp-btn exapp-iconbtn exapp-close" type="button" title="Close" aria-label="Close">${ICON_X}</button>
       </div>
       <iframe class="exapp-frame" title="${escapeHtml(cfg.title)}" allow="web-share"></iframe>
       <div class="exapp-overlay exapp-save-overlay">
@@ -227,6 +251,15 @@
           <h4>Saved ${escapeHtml(cfg.nounPlural)}</h4>
           <div class="exapp-list"></div>
           <button class="exapp-btn exapp-browse-close" type="button">Close</button>
+        </div>
+      </div>
+      <div class="exapp-overlay exapp-confirm-overlay">
+        <div class="exapp-card">
+          <h4 class="exapp-confirm-msg"></h4>
+          <div class="exapp-card-row">
+            <button class="exapp-btn exapp-confirm-ok" type="button">OK</button>
+            <button class="exapp-btn exapp-confirm-cancel" type="button">Cancel</button>
+          </div>
         </div>
       </div>
       <div class="exapp-toast"></div>
@@ -270,8 +303,38 @@
       win.classList.remove('show');
       saveOverlay.classList.remove('show');
       browseOverlay.classList.remove('show');
+      confirmOverlay.classList.remove('show');
     }
     win.querySelector('.exapp-close').onclick = close;
+
+    // ── Reusable confirm popup (used by per-app bar actions, e.g. New) ──
+    const confirmOverlay = win.querySelector('.exapp-confirm-overlay');
+    const confirmMsg = win.querySelector('.exapp-confirm-msg');
+    const confirmOk = win.querySelector('.exapp-confirm-ok');
+    let confirmCb = null;
+    function showConfirm(message, okLabel, onOk) {
+      confirmMsg.textContent = message;
+      confirmOk.textContent = okLabel || 'OK';
+      confirmCb = onOk;
+      confirmOverlay.classList.add('show');
+    }
+    confirmOk.onclick = () => {
+      confirmOverlay.classList.remove('show');
+      const cb = confirmCb; confirmCb = null;
+      if (cb) cb();
+    };
+    win.querySelector('.exapp-confirm-cancel').onclick = () => {
+      confirmOverlay.classList.remove('show'); confirmCb = null;
+    };
+
+    // ── Per-app bar actions (lead = left cluster, trail = right of title) ──
+    const actionApi = { frameWin, toast, confirm: showConfirm, close };
+    const wireActions = (list, side) => (list || []).forEach((a, i) => {
+      const btn = win.querySelector(`[data-act="${side}-${i}"]`);
+      if (btn && typeof a.onClick === 'function') btn.onclick = () => a.onClick(actionApi);
+    });
+    wireActions(cfg.leadActions, 'lead');
+    wireActions(cfg.trailActions, 'trail');
 
     // ── Autosave current state (so reopening restores the same view) ──
     // Used by the quiver window (cfg.autosaveKey). The full state lives in the
@@ -467,6 +530,20 @@
           // No autosaveKey: the Draw app autosaves its working doc to
           // localStorage and restores it on load, so reopening already
           // resumes where you left off.
+          // "New" up top (the in-app Clear is buried in the settings menu),
+          // gated behind a confirm; undo/redo proxy to the draw app.
+          leadActions: [{
+            html: 'New', title: 'New drawing',
+            onClick: (api) => api.confirm(
+              'Start a new drawing?\nThis clears the current canvas.', 'New',
+              () => { const w = api.frameWin(); if (w && w.DrawApp) w.DrawApp.newDrawing(); }),
+          }],
+          trailActions: [
+            { html: ICON_UNDO, title: 'Undo', iconBtn: true,
+              onClick: (api) => { const w = api.frameWin(); if (w && w.DrawApp) w.DrawApp.undo(); } },
+            { html: ICON_REDO, title: 'Redo', iconBtn: true,
+              onClick: (api) => { const w = api.frameWin(); if (w && w.DrawApp) w.DrawApp.redo(); } },
+          ],
         });
         drawWin.open();
       },
