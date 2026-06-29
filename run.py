@@ -106,6 +106,9 @@ _TRACKED_JS = {
     "creatures.js", "sprites.js", "sprite-store.js", "appdata.js",
     "species.js", "spawns.js", "trip-planner.js",
     "live-update.js", "extras.js",
+    # Extras add-on siblings — tracked so the Refresh button / live-update
+    # pick up changes (they already have the SCRIPT_VERSION='auto' hook).
+    "extras-apps.js", "extras-almanac.js", "extras-vibration.js",
 }
 _TRACKED_HTML = {"index.html", "dex.html"}
 # Authoritative list (ordered) of every file the version system tracks.
@@ -114,6 +117,7 @@ _TRACKED_HTML = {"index.html", "dex.html"}
 _SCRIPT_VERSION_FILES = [
     "creatures.js", "sprites.js", "sprite-store.js", "appdata.js",
     "species.js", "spawns.js", "trip-planner.js", "live-update.js", "extras.js",
+    "extras-apps.js", "extras-almanac.js", "extras-vibration.js",
     "sw.js", "index.html", "dex.html",
 ]
 # Capture the declaration keyword (group 1) so we can preserve it

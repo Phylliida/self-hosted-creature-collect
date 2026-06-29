@@ -3002,7 +3002,11 @@
 <!-- Refresh button — pure HTML + inline onclick so it works even when
      the JS has thrown an error during init. Targets ONLY the small
      app-shell entries in APP_CACHE — `/`, manifest, icon.svg, the
-     vendor maplibre files, and trip-planner.js. The bulky downloaded
+     vendor maplibre files, trip-planner.js, and the extras code
+     (extras.js + extras-apps/almanac/vibration; extras.js is
+     precached so it'd otherwise stay stale after a refresh — the
+     siblings are no-store so deleting them is a harmless no-op).
+     The bulky downloaded
      `/fonts/*` and `/icons/*` are LEFT ALONE because the SW serves
      them only from cache without an X-Download header (zero-network
      rule); wiping them would leave the next reload with no icons or
@@ -3033,7 +3037,7 @@
   <a id="emergencyRefresh" href="/__refresh__.html" role="button"
      onclick="try{(function(){
        // Stale-shell cache-clear, same as before.
-       try{caches.open('app-v1').then(function(c){['/','/manifest.webmanifest','/static/icon.svg','/static/trip-planner.js','/static/vendor/maplibre-gl.css','/static/vendor/maplibre-gl.js'].forEach(function(u){c.delete(u)})})}catch(_){}
+       try{caches.open('app-v1').then(function(c){['/','/manifest.webmanifest','/static/icon.svg','/static/trip-planner.js','/static/extras.js','/static/extras-apps.js','/static/extras-almanac.js','/static/extras-vibration.js','/static/vendor/maplibre-gl.css','/static/vendor/maplibre-gl.js'].forEach(function(u){c.delete(u)})})}catch(_){}
        try{localStorage.removeItem('cc.lastUpdateFailedAt');}catch(_){}
        var btn=document.getElementById('emergencyRefresh');
        if(btn){btn.style.opacity='0.5';btn.style.pointerEvents='none';}

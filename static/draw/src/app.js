@@ -6897,6 +6897,14 @@ window.DrawApp = {
   loadDrawing(data) {
     if (data) app.loadDoc(data);
   },
+  // Start a fresh drawing — same as the settings "Clear" (clearAll is
+  // undoable, so a misfire is recoverable). The host's New button gates
+  // this behind its own confirm popup.
+  newDrawing() { app.clearAll(); },
+  // Undo / redo proxies so the host's top-bar buttons drive the same
+  // command stack as the in-app undo/redo. No-ops when the stack is empty.
+  undo() { app.undo(); },
+  redo() { app.redo(); },
   // Small JPEG preview of the current canvas for the folder grid. The
   // renderer paints an opaque background every frame, so the live canvas
   // already carries the paper colour — just downscale it. Capped at 256px
