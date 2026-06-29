@@ -49,6 +49,13 @@
     label.colorpick span { font-size: 19px; color: var(--muted); line-height: 1; }
     label.colorpick input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 
+    /* Reference-image opacity row (shown only when a reference is loaded) */
+    #refRow { border-top: 1px solid var(--line); padding-top: 8px; }
+    .reflabel { color: var(--muted); font-size: 12px; flex: none; }
+    #refOpacity { accent-color: var(--accent); height: 24px; min-width: 80px; }
+    #refOpacityVal { color: var(--muted); font-size: 12px; flex: none; min-width: 38px; text-align: right; }
+    #refBtn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
     /* New-art dialog */
     .overlay { position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center;
       background: rgba(0,0,0,0.6); }
@@ -91,11 +98,19 @@
           <button id="zoomFit" class="iconbtn" title="Fit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
         </div>
         <button id="exportBtn" class="iconbtn" title="Export PNG (transparent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11"/><path d="M8 10l4 4 4-4"/><path d="M4 20h16"/></svg></button>
+        <button id="refBtn" class="iconbtn" title="Reference image — trace behind the pixels"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M21 15l-5-5L5 20"/></svg></button>
+        <input type="file" id="refFile" accept="image/*" hidden>
       </div>
       <div class="row">
         <div id="curColor"><div id="curColorTop"></div></div>
         <div id="palette" class="grow"></div>
         <label class="colorpick" title="Custom colour"><span>+</span><input type="color" id="colorInput" value="#5b8cff"></label>
+      </div>
+      <div id="refRow" class="row" style="display:none">
+        <span class="reflabel">Reference</span>
+        <input type="range" id="refOpacity" class="grow" min="0" max="100" value="50" title="Reference opacity">
+        <span id="refOpacityVal">50%</span>
+        <button id="refRemove" class="iconbtn" title="Remove reference">&times;</button>
       </div>
     </div>
   </div>

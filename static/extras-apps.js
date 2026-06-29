@@ -190,14 +190,19 @@
     .exapp-overlay { position: absolute; left: 0; right: 0; top: var(--exapp-bar); bottom: 0;
       display: none; align-items: flex-start; justify-content: center; background: rgba(0,0,0,0.5); z-index: 2; }
     .exapp-overlay.show { display: flex; }
-    .exapp-card { margin-top: 28px; width: min(92%, 360px); max-height: 78%; overflow-y: auto;
+    .exapp-card { margin-top: 28px; width: min(92%, 360px); max-height: 80%;
+      display: flex; flex-direction: column; overflow: hidden;
       background: #1c1c1f; color: #fff; border-radius: 12px; padding: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
     .exapp-card h4 { margin: 0 0 12px; font-size: 15px; text-align: center; }
     .exapp-name { width: 100%; box-sizing: border-box; padding: 10px; font-size: 15px;
       border-radius: 8px; border: 1px solid rgba(255,255,255,0.2); background: #111; color: #fff; margin-bottom: 12px; }
     .exapp-card-row { display: flex; gap: 8px; }
     .exapp-card-row .exapp-btn { flex: 1; text-align: center; }
-    .exapp-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+    /* The list is the scroll container (h4 + Close stay pinned) so long
+       libraries scroll instead of overflowing the screen. min-height:0 is
+       required for a flex child to actually shrink + scroll. */
+    .exapp-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;
+      flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
     .exapp-item { display: flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.08);
       border-radius: 8px; padding: 4px 4px 4px 8px; }
     .exapp-thumb { width: 54px; height: 40px; object-fit: contain; border-radius: 4px;
@@ -208,6 +213,17 @@
     .exapp-del { background: none; border: none; color: #fff; opacity: .6; font-size: 16px; cursor: pointer; padding: 6px 10px; }
     .exapp-del:hover { color: #ff6b6b; opacity: 1; }
     .exapp-empty { font-size: 13px; opacity: .55; text-align: center; padding: 8px; }
+    /* Hold-to-delete confirm — a 2s deliberate hold (matches the Fractals
+       window) so a saved item can't be lost to an accidental tap. */
+    .exapp-del-name { font-size: 13px; color: rgba(255,255,255,0.55); text-align: center;
+      margin-bottom: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .exapp-hold { position: relative; overflow: hidden; width: 100%; display: block; margin-bottom: 10px;
+      padding: 12px 14px; border-radius: 8px; border: none; background: #e0524b; color: #fff;
+      font: inherit; font-weight: 600; cursor: pointer; user-select: none; -webkit-user-select: none;
+      -webkit-tap-highlight-color: transparent; touch-action: none; }
+    .exapp-hold-fill { position: absolute; top: 0; left: 0; bottom: 0; width: 0; background: #9e1c16; }
+    .exapp-hold.holding .exapp-hold-fill { width: 100%; transition: width 2s linear; }
+    .exapp-hold-label { position: relative; z-index: 1; }
     .exapp-toast { position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%);
       background: rgba(0,0,0,0.85); color: #fff; padding: 8px 16px; border-radius: 20px; font-size: 13px;
       z-index: 3; opacity: 0; transition: opacity .2s; pointer-events: none; }
@@ -275,6 +291,19 @@
           </div>
         </div>
       </div>
+      <div class="exapp-overlay exapp-del-overlay">
+        <div class="exapp-card">
+          <h4>Delete this ${escapeHtml(cfg.noun)}?</h4>
+          <div class="exapp-del-name"></div>
+          <button class="exapp-hold" type="button">
+            <span class="exapp-hold-fill"></span>
+            <span class="exapp-hold-label">Hold to delete</span>
+          </button>
+          <div class="exapp-card-row">
+            <button class="exapp-btn exapp-del-cancel" type="button">Cancel</button>
+          </div>
+        </div>
+      </div>
       <div class="exapp-toast"></div>
     `;
     document.body.appendChild(win);
@@ -317,6 +346,7 @@
       saveOverlay.classList.remove('show');
       browseOverlay.classList.remove('show');
       confirmOverlay.classList.remove('show');
+      delOverlay.classList.remove('show');
     }
     win.querySelector('.exapp-close').onclick = close;
 
@@ -339,6 +369,42 @@
     win.querySelector('.exapp-confirm-cancel').onclick = () => {
       confirmOverlay.classList.remove('show'); confirmCb = null;
     };
+
+    // ── Hold-to-delete confirm (for the saved-items × buttons) ──
+    // A deliberate 2-second hold (the button fills as a progress cue) so a
+    // saved item can't be lost to an accidental tap. Releasing early cancels.
+    const delOverlay = win.querySelector('.exapp-del-overlay');
+    const delNameEl = win.querySelector('.exapp-del-name');
+    const holdBtn = win.querySelector('.exapp-hold');
+    let delTargetId = null;
+    let holdTimer = null;
+    function resetHold() {
+      if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+      holdBtn.classList.remove('holding');
+    }
+    function openDelConfirm(id, name) {
+      delTargetId = id;
+      delNameEl.textContent = name || '';
+      resetHold();
+      delOverlay.classList.add('show');
+    }
+    function startHold() {
+      if (holdTimer) return;
+      void holdBtn.offsetWidth;            // restart the fill transition from 0
+      holdBtn.classList.add('holding');
+      holdTimer = setTimeout(async () => {
+        holdTimer = null;
+        holdBtn.classList.remove('holding');
+        const id = delTargetId; delTargetId = null;
+        delOverlay.classList.remove('show');
+        if (id) { try { await cfg.store.del(id); } catch (_) {} renderList(); }
+      }, 2000);
+    }
+    holdBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); startHold(); });
+    holdBtn.addEventListener('pointerup', resetHold);
+    holdBtn.addEventListener('pointerleave', resetHold);
+    holdBtn.addEventListener('pointercancel', resetHold);
+    win.querySelector('.exapp-del-cancel').onclick = () => { resetHold(); delOverlay.classList.remove('show'); delTargetId = null; };
 
     // ── Per-app bar actions (lead = left cluster, trail = right of title) ──
     const actionApi = { frameWin, toast, confirm: showConfirm, close };
@@ -426,7 +492,12 @@
     win.querySelector('.exapp-browse-close').onclick = () => browseOverlay.classList.remove('show');
     listEl.addEventListener('click', async (e) => {
       const del = e.target.closest('[data-del]');
-      if (del) { try { await cfg.store.del(del.dataset.del); } catch (_) {} renderList(); return; }
+      if (del) {
+        const item = del.closest('.exapp-item');
+        const nm = item ? (item.querySelector('.exapp-item-name') || {}).textContent || '' : '';
+        openDelConfirm(del.dataset.del, nm);
+        return;
+      }
       const load = e.target.closest('[data-load]');
       if (load) {
         let items = [];

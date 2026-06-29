@@ -10883,6 +10883,7 @@ function fmtDate(ts) {
         <div class="sizes"><span class="bucket"><strong>${mb} MB</strong> total</span></div>
       </div>
       <div><button data-goto-static="${r.id}">go</button>
+      <button data-refresh-static="${r.id}" title="re-download this region's data (use after loading a save)">↻</button>
       <button data-del-static="${r.id}">×</button></div>`;
       el.appendChild(row);
     }
@@ -10925,6 +10926,15 @@ function fmtDate(ts) {
       catch (e) { console.error('delete static region failed', e); }
       renderRegions();
       updateDownloadLabel();
+    });
+    el.querySelectorAll('[data-refresh-static]').forEach(b => b.onclick = async () => {
+      const id = b.dataset.refreshStatic;
+      // Immediate feedback; _refreshStaticRegion re-renders the row when done
+      // (success or fail), which replaces this button and resets its state.
+      b.disabled = true;
+      b.textContent = '…';
+      try { await window._refreshStaticRegion(id); }
+      catch (e) { console.error('refresh static region failed', e); renderRegions(); }
     });
     el.querySelectorAll('[data-refresh]').forEach(b => b.onclick = () => {
       refreshRegion(b.dataset.refresh);
@@ -14816,6 +14826,35 @@ function fmtDate(ts) {
     return totalBytes;
   }
 
+  // Re-render the regions list + refresh every downstream consumer that
+  // reads from the static-region IDB stores / in-memory arrays. Shared by
+  // the bulk download and the single-region refresh so both leave the map,
+  // search, routing, transit, and housenumber overlays consistent.
+  async function _afterStaticRegionsChange() {
+    renderRegions();
+    updateDownloadLabel();
+    try { renderPoiStat(); } catch {}
+    try { populateFilter(); } catch {}
+    // Drop the parsed walk-graph so the next routing call reloads it with
+    // the newly-saved regions merged in.
+    try { unloadWalkGraph(); } catch {}
+    // Force re-parse of housenumbers on next zoom-in.
+    try { hnRegions = []; } catch {}
+    // Rebuild the transit schedule index so stops in the (re)downloaded
+    // regions get clickable arrival times.
+    try { await rebuildScheduleIndex(); } catch {}
+    // Tell MapLibre to re-fetch tiles so the region's PMTiles start being
+    // served by the protocol handler without panning.
+    try {
+      for (const id of ['base', 'local']) {
+        const src = map.getSource(id);
+        if (src && src.setTiles) {
+          src.setTiles([location.origin + '/tiles/{z}/{x}/{y}.pbf']);
+        }
+      }
+    } catch {}
+  }
+
   // Orchestrator. Downloads every static region intersecting the
   // current view, with progress in the offline-maps status line.
   async function performStaticRegionsDownload(bbox) {
@@ -14864,32 +14903,7 @@ function fmtDate(ts) {
     const mb = (bytesAll / 1048576).toFixed(1);
     status.textContent =
       `saved ${saved} region${saved === 1 ? '' : 's'} (${mb} MB total)`;
-    renderRegions();
-    updateDownloadLabel();
-    // Consumer-side refreshes for downstream features that read from
-    // the freshly-hydrated IDB stores / in-memory arrays.
-    try { renderPoiStat(); } catch {}
-    try { populateFilter(); } catch {}
-    // Drop the parsed walk-graph so the next routing call reloads it
-    // with the newly-saved regions merged in.
-    try { unloadWalkGraph(); } catch {}
-    // Force re-parse of housenumbers on next zoom-in so the new
-    // region's points appear immediately.
-    try { hnRegions = []; } catch {}
-    // Rebuild the transit schedule index so bus/train stops in the
-    // newly-downloaded regions immediately get clickable arrival
-    // times. Same call the bbox-flow makes after fetchAndSaveSchedule.
-    try { await rebuildScheduleIndex(); } catch {}
-    // Tell MapLibre to re-fetch tiles so the new region's PMTiles
-    // start being served by the protocol handler without panning.
-    try {
-      for (const id of ['base', 'local']) {
-        const src = map.getSource(id);
-        if (src && src.setTiles) {
-          src.setTiles([location.origin + '/tiles/{z}/{x}/{y}.pbf']);
-        }
-      }
-    } catch {}
+    await _afterStaticRegionsChange();
   }
   // Window-exposed so a delete button on a list entry can call it
   // without leaking the closure-private store helpers.
@@ -14923,6 +14937,35 @@ function fmtDate(ts) {
     try { await rebuildScheduleIndex(); } catch {}
     try { renderPoiStat(); } catch {}
     try { populateFilter(); } catch {}
+  };
+
+  // Window-exposed so the ↻ button on a static-region row can re-download
+  // that ONE region's files into IDB. The region's id + bbox already live
+  // in cc.staticRegions.v1, so this works for regions imported from a save
+  // file (listed as "downloaded" but with no content yet) as well as for
+  // refreshing an already-downloaded region against newer data.
+  window._refreshStaticRegion = async function (regionId) {
+    const status = document.getElementById('status');
+    const list = loadStaticRegions();
+    const rec = list.find((r) => r.id === regionId);
+    if (!rec) return;
+    try {
+      if (status) status.textContent = `re-downloading ${regionId}…`;
+      const bytes = await downloadOneStaticRegion(regionId, (fname, sz) => {
+        if (status) status.textContent =
+          `re-downloading ${regionId} · ${fname} ${(sz / 1024).toFixed(0)}KB`;
+      });
+      rec.downloadedAt = Date.now();
+      rec.totalBytes = bytes;
+      saveStaticRegions(list);
+      if (status) status.textContent =
+        `refreshed ${regionId} (${(bytes / 1048576).toFixed(1)} MB)`;
+      await _afterStaticRegionsChange();
+    } catch (e) {
+      console.error(`[static region] refresh ${regionId} failed`, e);
+      if (status) status.textContent = `refresh ${regionId} failed: ${e.message}`;
+      renderRegions();  // re-render so the disabled ↻ button resets
+    }
   };
 
   // ── PMTiles v3 reader (inline) ────────────────────────────────

@@ -18,6 +18,9 @@
   const MIN_SCALE = 1, MAX_SCALE = 64;
   const DOC_KEY = 'pixelart.doc.v1';
   const COLOR_KEY = 'pixelart.color.v1';
+  const REF_KEY = 'pixelart.ref.v1';            // reference image (data URL)
+  const REF_OPACITY_KEY = 'pixelart.refOpacity.v1';
+  const REF_MAX = 1024;                          // downscale cap for the stored reference
 
   // ── DOM ──
   const $ = (id) => document.getElementById(id);
@@ -33,11 +36,14 @@
 
   // ── State ──
   const state = { w: 16, h: 16, cells: [], scale: 24, panX: 0, panY: 0,
-    tool: 'pencil', color: '#FF004D' };
+    tool: 'pencil', color: '#FF004D', refImg: null, refOpacity: 0.5 };
+  // Down-sampled (w×h) copy of the reference so the eyedropper can read a
+  // per-cell colour without re-reading the full-res image each pick.
+  let refSample = null, refSampleCtx = null;
   let dpr = 1;
   const undoStack = [], redoStack = [];
   let pending = null;            // Map(index -> beforeColor) during a stroke
-  let drawing = false, panning = false;
+  let drawing = false, panning = false, sampling = false;
   let lastCell = null, startCell = null, lastPan = null, preview = null, hover = null;
   const pointers = new Map();    // pointerId -> {x,y}
   let gesture = null;            // {d, mx, my} during a two-finger pinch
@@ -101,8 +107,18 @@
     const ax = Math.round(state.panX), ay = Math.round(state.panY);
     const aw = Math.round(state.panX + state.w * state.scale) - ax;
     const ah = Math.round(state.panY + state.h * state.scale) - ay;
-    // Checker (shows through transparent cells), then the scaled buffer.
-    if (checkerPat) { ctx.fillStyle = checkerPat; ctx.fillRect(ax, ay, aw, ah); }
+    // Underlay: the reference image (stretched to the grid, at its opacity)
+    // when one is loaded, otherwise the transparency checker. Then the cells
+    // on top — opaque cells cover the underlay; transparent cells reveal it.
+    if (state.refImg && state.refOpacity > 0) {
+      ctx.save();
+      ctx.globalAlpha = state.refOpacity;
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(state.refImg, ax, ay, aw, ah);
+      ctx.restore();
+    } else if (checkerPat) {
+      ctx.fillStyle = checkerPat; ctx.fillRect(ax, ay, aw, ah);
+    }
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(buf, 0, 0, state.w, state.h, ax, ay, aw, ah);
     // Tool preview (line / rect) in the active colour.
@@ -146,7 +162,7 @@
   }
   function cancelStroke() {
     if (pending) { for (const [i, before] of pending) { state.cells[i] = before; setBuf(i, before); } pending = null; }
-    drawing = false; preview = null; lastCell = startCell = null; render();
+    drawing = false; sampling = false; preview = null; lastCell = startCell = null; render();
   }
   function applyOp(ch, useBefore) {
     for (const [i, before, after] of ch) { const v = useBefore ? before : after; state.cells[i] = v; setBuf(i, v); }
@@ -211,12 +227,23 @@
     gesture = { d, mx, my }; render();
   }
 
+  // Pick the colour under a cell: a painted cell → its colour, otherwise the
+  // reference image underneath. Used on eyedropper press AND drag.
+  function sampleAt(c) {
+    if (!inBounds(c[0], c[1])) return;
+    const col = state.cells[c[1] * state.w + c[0]];
+    if (col) setActiveColor(col);
+    else { const rc = sampleReference(c[0], c[1]); if (rc) setActiveColor(rc); }
+  }
   function onDown(e) {
     const p = ptOf(e), c = ptToCell(p);
     // Middle-mouse always pans, whatever the tool.
     if (e.pointerType === 'mouse' && e.button === 1) { panning = true; lastPan = p; return; }
     if (state.tool === 'pan') { panning = true; lastPan = p; return; }
-    if (state.tool === 'eyedropper') { if (inBounds(c[0], c[1])) { const col = state.cells[c[1] * state.w + c[0]]; if (col) setActiveColor(col); } return; }
+    if (state.tool === 'eyedropper') {
+      // Keep sampling while the finger/mouse is held + dragged.
+      sampling = true; hover = c; sampleAt(c); render(); return;
+    }
     if (state.tool === 'fill') { if (inBounds(c[0], c[1])) { beginStroke(); floodFill(c[0], c[1], drawColor()); commitStroke(); render(); } return; }
     if (state.tool === 'line' || state.tool === 'rect') { drawing = true; startCell = c; preview = [c]; render(); return; }
     // pencil / eraser
@@ -225,6 +252,7 @@
   function onMove(e) {
     const p = ptOf(e), c = ptToCell(p);
     if (panning) { state.panX += p.x - lastPan.x; state.panY += p.y - lastPan.y; lastPan = p; render(); return; }
+    if (sampling) { hover = c; sampleAt(c); render(); return; }   // live colour pick while dragging
     if (!drawing) { hover = c; render(); return; }
     if (state.tool === 'line') { preview = lineCells(startCell[0], startCell[1], c[0], c[1]); render(); return; }
     if (state.tool === 'rect') { preview = rectCells(startCell[0], startCell[1], c[0], c[1]); render(); return; }
@@ -235,6 +263,7 @@
   }
   function onUp() {
     if (panning) { panning = false; return; }
+    if (sampling) { sampling = false; return; }
     if (!drawing) return;
     if (preview && (state.tool === 'line' || state.tool === 'rect')) {
       beginStroke(); for (const [x, y] of preview) paintCell(x, y, drawColor()); commitStroke();
@@ -308,7 +337,7 @@
   function newDoc(w, h) {
     state.w = clampDim(w); state.h = clampDim(h);
     state.cells = new Array(state.w * state.h).fill(null);
-    rebuildBuf(); clearHistory(); fitView(); render(); scheduleSave();
+    rebuildBuf(); buildRefSample(); clearHistory(); fitView(); render(); scheduleSave();
   }
   function loadDoc(d) {
     state.w = clampDim(d.w); state.h = clampDim(d.h);
@@ -316,7 +345,72 @@
     const cells = new Array(n).fill(null);
     if (Array.isArray(d.cells)) for (let i = 0; i < n && i < d.cells.length; i++) cells[i] = d.cells[i] || null;
     state.cells = cells;
-    rebuildBuf(); clearHistory(); fitView(); render();
+    rebuildBuf(); buildRefSample(); clearHistory(); fitView(); render();
+  }
+
+  // ── Reference image (tracing underlay) ──
+  // Drawn behind the cells in render(); the eyedropper can sample it. Kept
+  // global (one at a time), persisted to localStorage, and deliberately NOT
+  // part of the saved drawing / backup — it's a working aid, not the artwork.
+  function buildRefSample() {
+    if (!state.refImg) { refSample = null; refSampleCtx = null; return; }
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, state.w); c.height = Math.max(1, state.h);
+    const g = c.getContext('2d');
+    g.imageSmoothingEnabled = true;
+    try { g.drawImage(state.refImg, 0, 0, c.width, c.height); refSample = c; refSampleCtx = g; }
+    catch (_) { refSample = null; refSampleCtx = null; }
+  }
+  function sampleReference(cx, cy) {
+    if (!refSampleCtx || !inBounds(cx, cy)) return null;
+    try {
+      const d = refSampleCtx.getImageData(cx, cy, 1, 1).data;
+      if (d[3] < 8) return null;  // transparent reference pixel → nothing to pick
+      return '#' + [d[0], d[1], d[2]].map((v) => v.toString(16).padStart(2, '0')).join('');
+    } catch (_) { return null; }
+  }
+  function setReference(dataUrl, persist) {
+    const img = new Image();
+    img.onload = () => { state.refImg = img; buildRefSample(); updateRefUI(); render(); };
+    img.onerror = () => { state.refImg = null; updateRefUI(); render(); };
+    img.src = dataUrl;
+    if (persist) { try { localStorage.setItem(REF_KEY, dataUrl); } catch (_) {} }
+  }
+  function clearReference() {
+    state.refImg = null; refSample = null; refSampleCtx = null;
+    try { localStorage.removeItem(REF_KEY); } catch (_) {}
+    updateRefUI(); render();
+  }
+  // Read a chosen file, downscale to REF_MAX (keeps localStorage small), and
+  // adopt it. JPEG flattens any alpha onto a dark fill ≈ the canvas bg.
+  function loadReferenceFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const probe = new Image();
+      probe.onload = () => {
+        const scale = Math.min(1, REF_MAX / Math.max(probe.width, probe.height));
+        const w = Math.max(1, Math.round(probe.width * scale));
+        const h = Math.max(1, Math.round(probe.height * scale));
+        const c = document.createElement('canvas'); c.width = w; c.height = h;
+        const g = c.getContext('2d');
+        g.fillStyle = '#14151a'; g.fillRect(0, 0, w, h);  // match canvas bg under any alpha
+        g.imageSmoothingEnabled = true;
+        g.drawImage(probe, 0, 0, w, h);
+        let url; try { url = c.toDataURL('image/jpeg', 0.8); } catch (_) { url = reader.result; }
+        setReference(url, true);
+      };
+      probe.onerror = () => {};
+      probe.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  }
+  function updateRefUI() {
+    const has = !!state.refImg;
+    const row = $('refRow'); if (row) row.style.display = has ? 'flex' : 'none';
+    const btn = $('refBtn'); if (btn) btn.classList.toggle('active', has);
+    const slider = $('refOpacity'); if (slider) slider.value = Math.round(state.refOpacity * 100);
+    const val = $('refOpacityVal'); if (val) val.textContent = Math.round(state.refOpacity * 100) + '%';
   }
   let saveTimer = null;
   function scheduleSave() {
@@ -417,6 +511,19 @@
     $('exportBtn').onclick = exportPNG;
     colorInput.addEventListener('input', (e) => setActiveColor(e.target.value));
     colorInput.addEventListener('change', (e) => addCustomColor(e.target.value));
+    // Reference image: pick a file → underlay; slider sets its opacity.
+    $('refBtn').onclick = () => $('refFile').click();
+    $('refFile').addEventListener('change', (e) => {
+      loadReferenceFile(e.target.files && e.target.files[0]);
+      e.target.value = '';  // allow re-picking the same file
+    });
+    $('refOpacity').addEventListener('input', (e) => {
+      state.refOpacity = (Number(e.target.value) || 0) / 100;
+      const val = $('refOpacityVal'); if (val) val.textContent = e.target.value + '%';
+      try { localStorage.setItem(REF_OPACITY_KEY, String(state.refOpacity)); } catch (_) {}
+      render();
+    });
+    $('refRemove').onclick = clearReference;
     window.addEventListener('keydown', (e) => {
       if (e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
       const meta = e.ctrlKey || e.metaKey;
@@ -437,6 +544,17 @@
     try { colorInput.value = state.color; } catch (_) {}
     buildPalette(); wireUI(); wireDialog(); wirePointer();
     resizeCanvas();
+    // Restore a persisted reference image + opacity (a working aid that
+    // survives reopening; not part of any saved drawing).
+    try {
+      const o = parseFloat(localStorage.getItem(REF_OPACITY_KEY));
+      if (o >= 0 && o <= 1) state.refOpacity = o;
+    } catch (_) {}
+    try {
+      const ref = localStorage.getItem(REF_KEY);
+      if (ref) setReference(ref, false);
+    } catch (_) {}
+    updateRefUI();
     const saved = loadSaved();
     if (saved) { loadDoc(saved); }
     else { newDoc(16, 16); showNewDialog(false); }   // first run → ask W/H
