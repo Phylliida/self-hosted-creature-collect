@@ -19,6 +19,7 @@ on:
     branches: [main]
     paths:
       - 'static/**'
+      - 'assets/**'
       - 'data/BundledData/**'
       - 'data/UnicodeData/**'
       - 'scripts/build-capacitor.sh'
@@ -225,6 +226,19 @@ jobs:
         run: |
           cd ios/App
           pod install --repo-update
+
+      # Set the app icon from assets/icon-only.png (a squared copy of
+      # tmpicon). @capacitor/assets writes every size into the project's
+      # Assets.xcassets/AppIcon.appiconset so xcodebuild compiles it in.
+      # continue-on-error: an icon hiccup must NEVER block the IPA — worst
+      # case the build just keeps Capacitor's default icon.
+      - name: Generate app icon
+        continue-on-error: true
+        run: |
+          npx --yes @capacitor/assets generate \
+            --ios \
+            --iconBackgroundColor '#395273' \
+            --iconBackgroundColorDark '#395273'
 
       # Unsigned Release build — the three CODE_SIGN_* overrides tell
       # xcodebuild to skip signing entirely (otherwise it tries to
