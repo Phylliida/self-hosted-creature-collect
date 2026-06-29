@@ -5639,6 +5639,81 @@
         display: none;
       }
       #creatureInventory .pokedex-card.ready .pokedex-art img { display: block; }
+      /* Completion button at the top of the pokédex reuses .bag-craft. */
+      #creatureInventory .pokedex-completion-btn { margin: 0 auto 10px; }
+      /* ── Completion view + species-dex view ───────────────────── */
+      #creatureInventory .completion-view { display: none; }
+      #creatureInventory .completion-view.show { display: flex; flex-direction: column; }
+      #creatureInventory .speciesdex-view { display: none; }
+      #creatureInventory .speciesdex-view.show { display: flex; flex-direction: column; }
+      #creatureInventory .completion-stats,
+      #creatureInventory .speciesdex-stats {
+        text-align: center; font-size: 12px; opacity: 0.8; margin: 2px 0 10px;
+      }
+      #creatureInventory .completion-row {
+        box-sizing: border-box; height: 60px; display: flex; align-items: center; gap: 10px;
+        padding: 6px 10px; cursor: pointer;
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.12)); border-radius: var(--ui-radius, 8px);
+      }
+      #creatureInventory .completion-row:hover { background: var(--ui-hover, rgba(0,0,0,0.04)); }
+      #creatureInventory .completion-icon {
+        width: 44px; height: 44px; flex: none; display: flex; align-items: center; justify-content: center;
+      }
+      #creatureInventory .completion-icon img {
+        max-width: 100%; max-height: 100%; object-fit: contain;
+        image-rendering: pixelated; image-rendering: crisp-edges; display: none;
+      }
+      #creatureInventory .completion-row.ready .completion-icon img { display: block; }
+      #creatureInventory .completion-info { flex: 1 1 auto; min-width: 0; }
+      #creatureInventory .completion-name {
+        font-size: 14px; font-weight: 600; margin-bottom: 5px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      #creatureInventory .completion-bar {
+        height: 7px; border-radius: 4px; overflow: hidden;
+        background: var(--ui-border, rgba(0,0,0,0.14));
+      }
+      #creatureInventory .completion-bar-fill {
+        height: 100%; border-radius: 4px; min-width: 2px;
+        background: var(--ui-accent, #5b8cff);
+      }
+      #creatureInventory .completion-pct {
+        flex: none; width: 54px; text-align: right; font-size: 13px; font-weight: 700; line-height: 1.15;
+      }
+      #creatureInventory .completion-frac { display: block; font-size: 10px; font-weight: 400; opacity: 0.6; }
+      #creatureInventory .speciesdex-head-row {
+        display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: end;
+        padding: 0 2px 6px; font-size: 11px; opacity: 0.65;
+      }
+      #creatureInventory .speciesdex-col-head { text-align: left; }
+      #creatureInventory .speciesdex-col-body { text-align: right; }
+      #creatureInventory .speciesdex-col-mid { text-align: center; min-width: 64px; }
+      #creatureInventory .speciesdex-row {
+        box-sizing: border-box; height: 84px;
+        display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center;
+      }
+      #creatureInventory .speciesdex-cell {
+        position: relative; height: 100%; min-width: 0; cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.12)); border-radius: var(--ui-radius, 8px);
+      }
+      #creatureInventory .speciesdex-cell:hover { background: var(--ui-hover, rgba(0,0,0,0.04)); }
+      #creatureInventory .speciesdex-cell img {
+        max-width: 92%; max-height: 72px; object-fit: contain;
+        image-rendering: pixelated; image-rendering: crisp-edges; display: none;
+      }
+      #creatureInventory .speciesdex-cell.ready img { display: block; }
+      #creatureInventory .speciesdex-cell-ph {
+        position: absolute; opacity: 0.25; font-size: 22px; pointer-events: none;
+      }
+      #creatureInventory .speciesdex-cell.ready .speciesdex-cell-ph { display: none; }
+      #creatureInventory .speciesdex-cell.silhouette img { filter: brightness(0); }
+      #creatureInventory .speciesdex-partner { text-align: center; min-width: 64px; line-height: 1.2; }
+      #creatureInventory .speciesdex-partner .sd-num { display: block; font-size: 10px; opacity: 0.55; }
+      #creatureInventory .speciesdex-partner .sd-name {
+        display: block; font-size: 12px; font-weight: 600; max-width: 80px; margin: 0 auto;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
       #creatureInventory .pokedex-card .pokedex-name {
         font-size: 11px; text-align: center; line-height: 1.2;
         word-break: break-word;
@@ -6397,6 +6472,7 @@
           <button class="pokedex-back" type="button" aria-label="back">←</button>
           <h3 class="pokedex-title">Pokédex</h3>
           <div class="pokedex-stats"></div>
+          <button class="bag-craft pokedex-completion-btn" type="button">Completion</button>
           <div class="search-row">
             <div class="ac-field">
               <input id="pokedexSearchAny" type="search" placeholder="Species" autocomplete="off">
@@ -6463,6 +6539,23 @@
           <button class="tags-back" type="button" aria-label="back">←</button>
           <h3 class="subview-title">Tags</h3>
           <div class="tags-body"></div>
+        </div>
+        <div class="completion-view">
+          <button class="completion-back" type="button" aria-label="back">←</button>
+          <h3 class="subview-title">Completion</h3>
+          <div class="completion-stats"></div>
+          <div class="completion-grid"></div>
+        </div>
+        <div class="speciesdex-view">
+          <button class="speciesdex-back" type="button" aria-label="back">←</button>
+          <h3 class="subview-title speciesdex-title">Dex</h3>
+          <div class="speciesdex-stats"></div>
+          <div class="speciesdex-head-row">
+            <span class="speciesdex-col-label speciesdex-col-head"></span>
+            <span class="speciesdex-col-mid">#</span>
+            <span class="speciesdex-col-label speciesdex-col-body"></span>
+          </div>
+          <div class="speciesdex-grid"></div>
         </div>
       </div>
     `;
@@ -6766,6 +6859,27 @@
     panel.querySelector('.bag-back').addEventListener('click', popView);
     panel.querySelector('.craft-back').addEventListener('click', _craftBack);
     panel.querySelector('.tags-back').addEventListener('click', popView);
+    panel.querySelector('.completion-back').addEventListener('click', popView);
+    panel.querySelector('.speciesdex-back').addEventListener('click', popView);
+    // Completion button (top of the pokédex) → species-completion list.
+    panel.querySelector('.pokedex-completion-btn').addEventListener('click',
+      () => pushView({ view: 'completion' }));
+    // Delegated row taps. Listeners live on the (persistent) grid element;
+    // virtualizeGrid swaps the rows underneath them as the user scrolls.
+    panel.querySelector('.completion-grid').addEventListener('click', (e) => {
+      const row = e.target.closest && e.target.closest('.completion-row');
+      if (!row) return;
+      const id = +row.dataset.species;
+      if (id) pushView({ view: 'speciesdex', species: id });
+    });
+    const _speciesdexOpen = (cell) => {
+      const a = +cell.dataset.a, b = +cell.dataset.b;
+      if (a && b) showFusionView(a, b);
+    };
+    panel.querySelector('.speciesdex-grid').addEventListener('click', (e) => {
+      const cell = e.target.closest && e.target.closest('.speciesdex-cell');
+      if (cell) _speciesdexOpen(cell);
+    });
     renderHeaderActions(panel);
     // Re-render when the user toggles the icon-vs-text preference in
     // Settings (event dispatched from index.html).
@@ -6899,6 +7013,8 @@
     panel.querySelector('.bag-view').classList.remove('show');
     panel.querySelector('.craft-view').classList.remove('show');
     panel.querySelector('.tags-view').classList.remove('show');
+    panel.querySelector('.completion-view').classList.remove('show');
+    panel.querySelector('.speciesdex-view').classList.remove('show');
     // Post-catch context follows the active stack frame: the Done
     // button surfaces ONLY while the user is on the specific detail
     // entry that was opened by a successful catch (top.fromCatch).
@@ -7001,6 +7117,22 @@
         renderTags();
         panel.querySelector('.tags-view').classList.add('show');
         return;
+      case 'completion': {
+        // Show first so virtualizeGrid's offsetParent check passes, then
+        // restore any saved scroll before the grid's first paint.
+        panel.querySelector('.completion-view').classList.add('show');
+        const sheet = panel.querySelector('.sheet');
+        if (sheet) sheet.scrollTop = (top.scrollY || 0);
+        renderCompletion();
+        return;
+      }
+      case 'speciesdex': {
+        panel.querySelector('.speciesdex-view').classList.add('show');
+        const sheet = panel.querySelector('.sheet');
+        if (sheet) sheet.scrollTop = (top.scrollY || 0);
+        renderSpeciesDex(top.species);
+        return;
+      }
     }
   }
 
@@ -9103,6 +9235,161 @@
       dataMs: _dataMs, filterMs: _filterMs, sortMs: _sortMs, virtualizeMs: _virtMs,
       totalMs: performance.now() - _tTotal,
       inputN: _inputN, outputN: entries.length,
+    });
+  }
+
+  // ── Completion: per-species discovery progress ─────────────────
+  // For a species X, the "morphs" are every supported fusion with X in
+  // either slot — X×P (head) for all supported P, and P×X (body). Total
+  // is 2·N (N = supported species). The self-fusion X×X counts once per
+  // side, matching the two columns the species-dex shows. Percent =
+  // fusions seen / 2N, keyed off isFusionSeen — the same discovery
+  // signal that drives the silhouettes.
+  let _supSpeciesSortedCache = null;
+  function supportedSpeciesSorted() {
+    if (!_supSpeciesSortedCache) {
+      _supSpeciesSortedCache = Array.from(SUPPORTED_SPECIES_SET).sort((x, y) => x - y);
+    }
+    return _supSpeciesSortedCache;
+  }
+  // One pass over seenFusions → per-species head/body seen counts.
+  function computeSpeciesCompletion() {
+    const seen = readSeenFusions();
+    const head = new Map(), body = new Map();
+    for (const key in seen) {
+      if (!Object.prototype.hasOwnProperty.call(seen, key)) continue;
+      const dash = key.indexOf('-');
+      if (dash < 0) continue;
+      const a = +key.slice(0, dash), b = +key.slice(dash + 1);
+      if (!SUPPORTED_SPECIES_SET.has(a) || !SUPPORTED_SPECIES_SET.has(b)) continue;
+      head.set(a, (head.get(a) || 0) + 1);
+      body.set(b, (body.get(b) || 0) + 1);
+    }
+    const total = 2 * SUPPORTED_SPECIES_SET.size;
+    return supportedSpeciesSorted().map((id) => {
+      const s = (head.get(id) || 0) + (body.get(id) || 0);
+      return { id, seen: s, total, pct: total ? s / total : 0 };
+    });
+  }
+
+  function renderCompletion() {
+    const panel = document.getElementById('creatureInventory');
+    if (!panel) return;
+    const rows = computeSpeciesCompletion();
+    // Most-complete first; ties fall back to dex order (id asc).
+    rows.sort((x, y) => (y.pct - x.pct) || (x.id - y.id));
+
+    const statsEl = panel.querySelector('.completion-stats');
+    if (statsEl) {
+      let seenAll = 0, totalAll = 0, done = 0;
+      for (const r of rows) { seenAll += r.seen; totalAll += r.total; if (r.seen >= r.total) done++; }
+      const overall = totalAll ? Math.round(seenAll / totalAll * 100) : 0;
+      statsEl.innerHTML =
+        `<b>${overall}%</b> overall · <b>${done}</b>/${rows.length} species complete`;
+    }
+
+    const grid = panel.querySelector('.completion-grid');
+    if (!grid) return;
+    const sheet = panel.querySelector('.sheet');
+    virtualizeGrid({
+      scrollEl: sheet, gridEl: grid, items: rows,
+      cols: 1, rowGap: 6, cardHeight: 60,
+      initialScrollTop: sheet ? sheet.scrollTop : 0,
+      makeCardEl(r) {
+        const pct = Math.round(r.pct * 100);
+        const card = document.createElement('div');
+        card.className = 'completion-row';
+        card.dataset.species = r.id;
+        card.setAttribute('role', 'button');
+        card.setAttribute('tabindex', '0');
+        card.innerHTML =
+          `<div class="completion-icon"><img alt=""></div>`
+          + `<div class="completion-info">`
+          +   `<div class="completion-name">${escapeHtml(speciesNameFor(r.id))}</div>`
+          +   `<div class="completion-bar"><div class="completion-bar-fill" style="width:${pct}%"></div></div>`
+          + `</div>`
+          + `<div class="completion-pct">${pct}%<span class="completion-frac">${r.seen}/${r.total}</span></div>`;
+        return card;
+      },
+      loadSpriteFor(card, r) {
+        if (!global.SpriteStore) return;
+        const img = card.querySelector('img');
+        if (!img) return;
+        // Self-fusion (X×X) ≈ the species' "pure" sprite — a stable icon.
+        global.SpriteStore.showSprite(img, r.id, r.id, pickPreferredSeenVariant(r.id, r.id), {
+          onReady: () => card.classList.add('ready'),
+        });
+      },
+    });
+  }
+
+  // Per-species fusion list: every partner P in dex order, with X×P on the
+  // left (X as head) and P×X on the right (X as body). Un-seen fusions show
+  // as silhouettes; tapping a cell opens that fusion's pokédex entry.
+  function renderSpeciesDex(speciesId) {
+    const panel = document.getElementById('creatureInventory');
+    if (!panel) return;
+    const X = parseInt(speciesId, 10);
+    if (!isFinite(X)) return;
+    const name = speciesNameFor(X);
+    const partners = supportedSpeciesSorted();
+
+    const titleEl = panel.querySelector('.speciesdex-title');
+    if (titleEl) titleEl.textContent = `${name} dex`;
+    const headLbl = panel.querySelector('.speciesdex-col-head');
+    const bodyLbl = panel.querySelector('.speciesdex-col-body');
+    if (headLbl) headLbl.textContent = `${name} × …`;
+    if (bodyLbl) bodyLbl.textContent = `… × ${name}`;
+
+    let seenHead = 0, seenBody = 0;
+    for (const p of partners) {
+      if (isFusionSeen(X, p)) seenHead++;
+      if (isFusionSeen(p, X)) seenBody++;
+    }
+    const total = 2 * partners.length;
+    const seenAll = seenHead + seenBody;
+    const statsEl = panel.querySelector('.speciesdex-stats');
+    if (statsEl) {
+      const pct = total ? Math.round(seenAll / total * 100) : 0;
+      statsEl.innerHTML = `<b>${pct}%</b> · ${seenAll}/${total} seen`;
+    }
+
+    const grid = panel.querySelector('.speciesdex-grid');
+    if (!grid) return;
+    const sheet = panel.querySelector('.sheet');
+    virtualizeGrid({
+      scrollEl: sheet, gridEl: grid, items: partners,
+      cols: 1, rowGap: 6, cardHeight: 84,
+      initialScrollTop: sheet ? sheet.scrollTop : 0,
+      makeCardEl(p) {
+        const cell = (a, b, seenIt) =>
+          `<div class="speciesdex-cell${seenIt ? '' : ' silhouette'}" `
+          + `data-a="${a}" data-b="${b}" role="button" tabindex="0" `
+          + `title="${escapeHtml(seenIt ? speciesNameFor(a) + ' × ' + speciesNameFor(b) : '???')}">`
+          + `<span class="speciesdex-cell-ph" aria-hidden="true">·</span><img alt="">`
+          + `</div>`;
+        const row = document.createElement('div');
+        row.className = 'speciesdex-row';
+        row.innerHTML =
+          cell(X, p, isFusionSeen(X, p))
+          + `<div class="speciesdex-partner"><span class="sd-num">#${p}</span>`
+          +   `<span class="sd-name">${escapeHtml(speciesNameFor(p))}</span></div>`
+          + cell(p, X, isFusionSeen(p, X));
+        return row;
+      },
+      loadSpriteFor(row, p) {
+        if (!global.SpriteStore) return;
+        const cells = row.querySelectorAll('.speciesdex-cell');
+        const pairs = [[X, p], [p, X]];
+        cells.forEach((cell, i) => {
+          const img = cell.querySelector('img');
+          if (!img) return;
+          const a = pairs[i][0], b = pairs[i][1];
+          global.SpriteStore.showSprite(img, a, b, pickPreferredSeenVariant(a, b), {
+            onReady: () => cell.classList.add('ready'),
+          });
+        });
+      },
     });
   }
 
