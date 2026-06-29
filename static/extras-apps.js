@@ -25,6 +25,16 @@
   const QUIVER_SRC = '/static/quiver.html';
   const SYNTH_SRC = '/static/synth.html';
   const DRAW_SRC = '/static/draw/index.html';
+  const PIXELART_SRC = '/static/pixelart/index.html';
+
+  // Pixel Art bubble icon: a 2×2 block of pixels in palette-ish colours.
+  const PIXEL_ICON =
+    '<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" style="display:block">'
+    + '<rect x="4" y="4" width="7.4" height="7.4" rx="1" fill="#ff004d"/>'
+    + '<rect x="12.6" y="4" width="7.4" height="7.4" rx="1" fill="#ffec27"/>'
+    + '<rect x="4" y="12.6" width="7.4" height="7.4" rx="1" fill="#29adff"/>'
+    + '<rect x="12.6" y="12.6" width="7.4" height="7.4" rx="1" fill="#00e436"/>'
+    + '</svg>';
 
   // Draw bubble icon: a pencil drawing a stroke. Inline SVG, currentColor
   // so it matches the theme/text (same approach as the Quiver icon below).
@@ -62,10 +72,11 @@
   // IndexedDB store (songs + quivers)
   // ────────────────────────────────────────────────────────────
   const DB_NAME = 'cc-extras-apps-v1';
-  const DB_VER = 3;
+  const DB_VER = 4;
   // 'state' holds single-record current-state autosaves (e.g. the live quiver).
   // 'drawings' holds named saves from the Draw app (added v3).
-  const STORE_NAMES = ['songs', 'quivers', 'state', 'drawings'];
+  // 'pixelart' holds named saves from the Pixel Art app (added v4).
+  const STORE_NAMES = ['songs', 'quivers', 'state', 'drawings', 'pixelart'];
 
   function openDb() {
     return new Promise((resolve, reject) => {
@@ -130,10 +141,12 @@
   const songsStore = makeStore('songs');
   const quiversStore = makeStore('quivers');
   const drawingsStore = makeStore('drawings');
+  const pixelartStore = makeStore('pixelart');
   // Exposed for index.html's backup export/import (mirrors window.ExtrasFractals).
   global.ExtrasSongs = songsStore;
   global.ExtrasQuivers = quiversStore;
   global.ExtrasDrawings = drawingsStore;
+  global.ExtrasPixelArt = pixelartStore;
 
   // ────────────────────────────────────────────────────────────
   // Helpers
@@ -473,6 +486,23 @@
     }
   }
 
+  // Pixel Art: state via window.PixelApp inside static/pixelart/index.html.
+  // getDrawing returns {w, h, cells}; we add a PNG preview for the folder grid.
+  function capturePixel(win) {
+    if (!win || !win.PixelApp || typeof win.PixelApp.getDrawing !== 'function') return null;
+    let d = null;
+    try { d = win.PixelApp.getDrawing(); } catch (e) { return null; }
+    if (!d) return null;
+    let thumb = null;
+    try { if (typeof win.PixelApp.thumbnail === 'function') thumb = win.PixelApp.thumbnail(); } catch (e) {}
+    return { w: d.w, h: d.h, cells: d.cells, thumb: thumb };
+  }
+  function applyPixel(frameEl, win, data) {
+    if (win && win.PixelApp && typeof win.PixelApp.loadDrawing === 'function') {
+      win.PixelApp.loadDrawing(data);
+    }
+  }
+
   function applyQuiver(frameEl, win, data) {
     const hash = (data && data.hash) ? data.hash : '';
     // Prefer setting the hash on the live iframe — quiver's onhashchange runs
@@ -497,6 +527,7 @@
   let quiverWin = null;
   let synthWin = null;
   let drawWin = null;
+  let pixelWin = null;
 
   function register() {
     if (!global.ExtrasRegisterTool) { setTimeout(register, 50); return; }
@@ -546,6 +577,28 @@
           ],
         });
         drawWin.open();
+      },
+    });
+    global.ExtrasRegisterTool({
+      id: 'pixelart', name: 'Pixel Art', label: 'Pixel<br>art', icon: PIXEL_ICON,
+      open: () => {
+        if (!pixelWin) pixelWin = makeAppWindow({
+          title: 'Pixel Art', noun: 'pixel art', nounPlural: 'pixel art',
+          src: PIXELART_SRC, store: pixelartStore, capture: capturePixel, apply: applyPixel,
+          // New opens the pixel app's own width/height dialog (which doubles as
+          // the confirm — Create discards the current canvas). Undo/redo proxy in.
+          leadActions: [{
+            html: 'New', title: 'New pixel art',
+            onClick: (api) => { const w = api.frameWin(); if (w && w.PixelApp) w.PixelApp.promptNew(); },
+          }],
+          trailActions: [
+            { html: ICON_UNDO, title: 'Undo', iconBtn: true,
+              onClick: (api) => { const w = api.frameWin(); if (w && w.PixelApp) w.PixelApp.undo(); } },
+            { html: ICON_REDO, title: 'Redo', iconBtn: true,
+              onClick: (api) => { const w = api.frameWin(); if (w && w.PixelApp) w.PixelApp.redo(); } },
+          ],
+        });
+        pixelWin.open();
       },
     });
   }
