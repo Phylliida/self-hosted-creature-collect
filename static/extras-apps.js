@@ -24,6 +24,18 @@
 
   const QUIVER_SRC = '/static/quiver.html';
   const SYNTH_SRC = '/static/synth.html';
+  const DRAW_SRC = '/static/draw/index.html';
+
+  // Draw bubble icon: a pencil drawing a stroke. Inline SVG, currentColor
+  // so it matches the theme/text (same approach as the Quiver icon below).
+  const DRAW_ICON =
+    '<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" style="display:block">'
+    + '<g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">'
+    + '<path d="M14.5 5.5 L18.5 9.5"/>'
+    + '<path d="M16 4 L20 8 L9 19 L4 20.5 L5.5 15.5 Z"/>'
+    + '<path d="M4 20.5 Q9 22 14 20"/>'
+    + '</g>'
+    + '</svg>';
 
   // Quiver bubble icon: three nodes in a triangle with directed arrows
   // left -> top and top -> right. Inline SVG; uses currentColor to match the
@@ -45,9 +57,10 @@
   // IndexedDB store (songs + quivers)
   // ────────────────────────────────────────────────────────────
   const DB_NAME = 'cc-extras-apps-v1';
-  const DB_VER = 2;
+  const DB_VER = 3;
   // 'state' holds single-record current-state autosaves (e.g. the live quiver).
-  const STORE_NAMES = ['songs', 'quivers', 'state'];
+  // 'drawings' holds named saves from the Draw app (added v3).
+  const STORE_NAMES = ['songs', 'quivers', 'state', 'drawings'];
 
   function openDb() {
     return new Promise((resolve, reject) => {
@@ -111,9 +124,11 @@
 
   const songsStore = makeStore('songs');
   const quiversStore = makeStore('quivers');
+  const drawingsStore = makeStore('drawings');
   // Exposed for index.html's backup export/import (mirrors window.ExtrasFractals).
   global.ExtrasSongs = songsStore;
   global.ExtrasQuivers = quiversStore;
+  global.ExtrasDrawings = drawingsStore;
 
   // ────────────────────────────────────────────────────────────
   // Helpers
@@ -378,6 +393,23 @@
     try { if (win.QuiverApp && win.QuiverApp.thumbnail) thumb = win.QuiverApp.thumbnail(); } catch (e) {}
     return { hash: hash, thumb: thumb };
   }
+  // Draw: state via window.DrawApp inside static/draw/index.html. getDrawing
+  // returns {doc, camera}; we add a small JPEG preview for the folder grid.
+  function captureDraw(win) {
+    if (!win || !win.DrawApp || typeof win.DrawApp.getDrawing !== 'function') return null;
+    let d = null;
+    try { d = win.DrawApp.getDrawing(); } catch (e) { return null; }
+    if (!d) return null;
+    let thumb = null;
+    try { if (typeof win.DrawApp.thumbnail === 'function') thumb = win.DrawApp.thumbnail(); } catch (e) {}
+    return { doc: d.doc, camera: d.camera, thumb: thumb };
+  }
+  function applyDraw(frameEl, win, data) {
+    if (win && win.DrawApp && typeof win.DrawApp.loadDrawing === 'function') {
+      win.DrawApp.loadDrawing(data);
+    }
+  }
+
   function applyQuiver(frameEl, win, data) {
     const hash = (data && data.hash) ? data.hash : '';
     // Prefer setting the hash on the live iframe — quiver's onhashchange runs
@@ -401,6 +433,7 @@
   // ────────────────────────────────────────────────────────────
   let quiverWin = null;
   let synthWin = null;
+  let drawWin = null;
 
   function register() {
     if (!global.ExtrasRegisterTool) { setTimeout(register, 50); return; }
@@ -423,6 +456,19 @@
           src: SYNTH_SRC, store: songsStore, capture: captureSynth, apply: applySynth,
         });
         synthWin.open();
+      },
+    });
+    global.ExtrasRegisterTool({
+      id: 'draw', name: 'Draw', label: 'Draw', icon: DRAW_ICON,
+      open: () => {
+        if (!drawWin) drawWin = makeAppWindow({
+          title: 'Draw', noun: 'drawing', nounPlural: 'drawings',
+          src: DRAW_SRC, store: drawingsStore, capture: captureDraw, apply: applyDraw,
+          // No autosaveKey: the Draw app autosaves its working doc to
+          // localStorage and restores it on load, so reopening already
+          // resumes where you left off.
+        });
+        drawWin.open();
       },
     });
   }

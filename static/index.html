@@ -7102,6 +7102,12 @@ function fmtDate(ts) {
       exportedAt: new Date().toISOString(),
       favorites: await loadAllFavorites(),
       regions: JSON.parse(localStorage.getItem('cc.regions.v1') || '[]'),
+      // Static / Hugging Face downloaded-region list — which pre-built
+      // regions the player has pulled (id + bbox + size metadata), NOT
+      // the multi-MB binary contents (tiles/POIs/walk live in IDB and
+      // are re-downloaded on demand). Mirrors how `regions` above carries
+      // only the bbox bookmarks, not the cached tiles themselves.
+      staticRegions: JSON.parse(localStorage.getItem('cc.staticRegions.v1') || '[]'),
       theme: localStorage.getItem('cc.theme'),
       themeCustom: JSON.parse(localStorage.getItem('cc.themeCustom') || 'null'),
       units: localStorage.getItem('cc.units'),
@@ -7167,6 +7173,12 @@ function fmtDate(ts) {
         : [],
       quivers: (window.ExtrasQuivers && window.ExtrasQuivers.all)
         ? await window.ExtrasQuivers.all()
+        : [],
+      // Saved drawings (Extras → Draw) — same IDB-backed store as songs/
+      // quivers; each record carries the full vector document + a small
+      // JPEG preview, so a player's drawings travel with the save.
+      drawings: (window.ExtrasDrawings && window.ExtrasDrawings.all)
+        ? await window.ExtrasDrawings.all()
         : [],
       // App preferences worth carrying across devices: the "count steps in
       // background" toggle, and the map data source (Flask vs Hugging Face).
@@ -7281,6 +7293,25 @@ function fmtDate(ts) {
       if (toAdd.length) {
         localStorage.setItem('cc.regions.v1', JSON.stringify(existing.concat(toAdd)));
         regAdded = toAdd.length;
+        renderRegions();
+        updateAppDataLabel();
+      }
+    }
+    // Static / Hugging Face downloaded-region list: same union-by-id
+    // merge as the bbox regions above. Only the metadata travels — the
+    // per-region binary files (tiles/POIs/walk) live in IDB and are NOT
+    // in the save, so an imported entry has no content on this device
+    // until it's (re)downloaded. We still restore the list so the player
+    // can see which regions they had, matching the bbox behaviour where
+    // the cached tiles likewise don't travel with the metadata.
+    let staticRegAdded = 0;
+    if (Array.isArray(data.staticRegions)) {
+      const existing = JSON.parse(localStorage.getItem('cc.staticRegions.v1') || '[]');
+      const existingIds = new Set(existing.map(r => r && r.id));
+      const toAdd = data.staticRegions.filter(r => r && r.id && !existingIds.has(r.id));
+      if (toAdd.length) {
+        localStorage.setItem('cc.staticRegions.v1', JSON.stringify(existing.concat(toAdd)));
+        staticRegAdded = toAdd.length;
         renderRegions();
         updateAppDataLabel();
       }
@@ -7574,6 +7605,12 @@ function fmtDate(ts) {
       try { await window.ExtrasQuivers.importMerge(data.quivers); }
       catch (e) { console.error('importQuivers failed', e); }
     }
+    // Saved drawings: union merge by id (skip duplicates).
+    if (Array.isArray(data.drawings) && window.ExtrasDrawings && window.ExtrasDrawings.importMerge) {
+      try { await window.ExtrasDrawings.importMerge(data.drawings); }
+      catch (e) { console.error('importDrawings failed', e); }
+    }
+
     // Last-viewed fractal: the imported save wins so loading it resumes
     // that view.
     if (typeof data.fractalLast === 'string' && data.fractalLast) {
@@ -7588,6 +7625,7 @@ function fmtDate(ts) {
     alert(
       `Imported: ${favAdded} favorite(s) (${favSkipped} skipped), ` +
       `${regAdded} region(s), ` +
+      `${staticRegAdded} static region(s), ` +
       `${creaturesAdded} creature(s) (${creaturesSkipped} skipped), ` +
       `${eggsAdded} egg(s) (${eggsSkipped} skipped)`
     );
