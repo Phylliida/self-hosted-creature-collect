@@ -7184,6 +7184,11 @@ function fmtDate(ts) {
       drawings: (window.ExtrasDrawings && window.ExtrasDrawings.all)
         ? await window.ExtrasDrawings.all()
         : [],
+      // Saved pixel art (Extras → Pixel Art) — IDB-backed like drawings;
+      // each record carries the {w,h,cells} grid + a small PNG preview.
+      pixelart: (window.ExtrasPixelArt && window.ExtrasPixelArt.all)
+        ? await window.ExtrasPixelArt.all()
+        : [],
       // App preferences worth carrying across devices: the "count steps in
       // background" toggle, and the map data source (Flask vs Hugging Face).
       pedometerEnabled: localStorage.getItem('cc.pedometerEnabled'),
@@ -7613,6 +7618,11 @@ function fmtDate(ts) {
     if (Array.isArray(data.drawings) && window.ExtrasDrawings && window.ExtrasDrawings.importMerge) {
       try { await window.ExtrasDrawings.importMerge(data.drawings); }
       catch (e) { console.error('importDrawings failed', e); }
+    }
+    // Saved pixel art: union merge by id (skip duplicates).
+    if (Array.isArray(data.pixelart) && window.ExtrasPixelArt && window.ExtrasPixelArt.importMerge) {
+      try { await window.ExtrasPixelArt.importMerge(data.pixelart); }
+      catch (e) { console.error('importPixelArt failed', e); }
     }
 
     // Last-viewed fractal: the imported save wins so loading it resumes
