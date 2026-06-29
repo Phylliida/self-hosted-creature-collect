@@ -30,6 +30,7 @@ on:
     branches: [main]
     paths:
       - 'static/**'
+      - 'assets/**'
       - 'data/BundledData/**'
       - 'scripts/build-capacitor.sh'
       - 'capacitor.config.json'
@@ -850,13 +851,67 @@ jobs:
       # Safe to commit: this is a *debug* keystore, equivalent to the
       # one Android Studio auto-generates. Real release signing would
       # use a separate keystore loaded from a GitHub Actions secret.
-      - name: Stage debug keystore
+      - name: Stage + pin debug keystore
         run: |
+          # The committed android-debug.keystore exists to give every CI
+          # build the SAME signing cert, so `adb install -r` updates work
+          # without uninstalling first. But on the GitHub runner AGP resolves
+          # the default debug keystore via ANDROID_USER_HOME / ANDROID_SDK_HOME
+          # (NOT ~/.android), so the staged copy below was being IGNORED and
+          # each build fell back to a freshly auto-generated key — the cert
+          # rotated every run → INSTALL_FAILED_UPDATE_INCOMPATIBLE on every
+          # on-device update. Fix: pin an explicit, env-independent debug
+          # signingConfig in app/build.gradle pointing at the committed
+          # keystore copied into the module. (The ~/.android stage is kept as
+          # a harmless fallback for any tooling that still reads it.)
           mkdir -p ~/.android
           cp android-debug.keystore ~/.android/debug.keystore
-          echo "── keystore staged ──"
-          keytool -list -keystore ~/.android/debug.keystore -storepass android \
-            | grep -E "Certificate fingerprint|androiddebugkey"
+          cp android-debug.keystore android/app/cc-debug.keystore
+          python3 - <<'PY'
+          import pathlib, re, sys
+          p = pathlib.Path("android/app/build.gradle")
+          s = p.read_text(encoding="utf-8")
+          if "cc-debug.keystore" in s:
+              print("  debug signingConfig already pinned")
+              raise SystemExit(0)
+          # Capacitor's generated app/build.gradle has no signingConfigs block
+          # (it relies on AGP's default debug config). Insert one right after
+          # `android {` that reconfigures the auto-created `debug` config; the
+          # debug build type already uses signingConfigs.debug by default.
+          block = (
+              "\n    signingConfigs {\n"
+              "        debug {\n"
+              "            storeFile file('cc-debug.keystore')\n"
+              "            storePassword 'android'\n"
+              "            keyAlias 'androiddebugkey'\n"
+              "            keyPassword 'android'\n"
+              "        }\n"
+              "    }\n"
+          )
+          m = re.search(r"\nandroid\s*\{", s)
+          if not m:
+              print("  ERROR: no `android {` block in app/build.gradle", file=sys.stderr)
+              sys.exit(1)
+          i = m.end()
+          p.write_text(s[:i] + block + s[i:], encoding="utf-8")
+          print("  pinned debug signingConfig -> android/app/cc-debug.keystore")
+          PY
+          echo "── all CI builds now sign with this (stable) cert ──"
+          keytool -list -v -keystore android-debug.keystore -storepass android \
+            | grep -E "SHA256:|androiddebugkey" || true
+
+      # Set the launcher icon from assets/icon-only.png (a squared copy of
+      # tmpicon). @capacitor/assets regenerates every mipmap density + the
+      # adaptive icon into the freshly-scaffolded android/ project.
+      # continue-on-error: an icon hiccup must NEVER block the APK — worst
+      # case the build just keeps Capacitor's default icon.
+      - name: Generate app icon
+        continue-on-error: true
+        run: |
+          npx --yes @capacitor/assets generate \
+            --android \
+            --iconBackgroundColor '#395273' \
+            --iconBackgroundColorDark '#395273'
 
       # `assembleDebug` produces a debug-keystore-signed APK at:
       #   android/app/build/outputs/apk/debug/app-debug.apk
