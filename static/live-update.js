@@ -40,6 +40,7 @@ console.error('[live-update] script-tag executing');
   // no data usage. The flag is consumed (cleared) at the start of the
   // check so a failed update doesn't loop on every subsequent launch.
   const REFRESH_REQ_KEY  = 'cc.refreshRequested';
+  const APP_CACHE_NAME   = 'app-v1';   // service-worker cache the SW serves from (Android overlay)
 
   if (!global.Capacitor) return;
 
@@ -142,12 +143,10 @@ console.error('[live-update] script-tag executing');
       return;
     }
     log('check started');
-    const p = plugins();
-    if (!p) { warn('plugins not available; skipping'); return; }
     if (recentlyFailed()) { log('recent failure; skipping check'); return; }
 
     const latest = await fetchLatestVersions();
-    if (!latest) return;
+    if (!latest) return;            // no data reachable → no-op (refresh does nothing)
     const installed = loadInstalled();
 
     // Take the union of file names — anything in the latest map that
@@ -157,6 +156,21 @@ console.error('[live-update] script-tag executing');
     if (!changed.length) { log('all up to date'); return; }
     log(`update available: ${changed.length} file(s) changed (${changed.join(', ')})`);
 
+    const base = global.CC_API_BASE || 'https://poke.phylliidaassets.org';
+    const p = plugins();
+    if (!p) {
+      // No native live-dir overlay — this is Android, which has no
+      // BundleAccess plugin. Apply the update by overlaying the new code
+      // into the service-worker cache, which the SW already serves in
+      // preference to the bundled copies. updateViaCache fetches everything
+      // FIRST and only commits if all of it arrives, so when no data is
+      // available it touches nothing and refresh is a safe no-op.
+      if (global.caches) await updateViaCache(latest, fnames, base);
+      else warn('no update backend (no BundleAccess, no Cache API); skipping');
+      return;
+    }
+
+    // iOS: native live-dir overlay (LocalServer serves liveDir-first).
     // Use the version of index.html (or any tracked file) as the
     // directory tag. Multiple files might change atomically; one tag
     // is fine since we re-download every changed file together.
@@ -174,7 +188,6 @@ console.error('[live-update] script-tag executing');
     // to ship code here. Writing all tracked files together avoids
     // version skew between e.g. an updated sprites.js and a stale
     // index.html that doesn't reference its new export.
-    const base = global.CC_API_BASE || 'https://poke.phylliidaassets.org';
     let downloaded = 0;
     for (const fname of fnames) {
       try {
@@ -207,6 +220,49 @@ console.error('[live-update] script-tag executing');
     localStorage.setItem(ACTIVE_DIR_KEY, versionDir);
     localStorage.removeItem(RECENT_FAIL_KEY);
     log(`activated ${dirName}; reloading`);
+    setTimeout(() => location.reload(), 100);
+  }
+
+  // Android update backend: overlay the updated tracked files into the
+  // service-worker cache. The SW's fetch handler already serves from this
+  // cache in preference to the bundled assets, so caching the remote copy
+  // under each file's local URL makes the SW serve the new code. We fetch
+  // ALL files first and only write to the cache once every one has arrived
+  // — so a flaky/offline network aborts the whole thing with the cache
+  // untouched, and the app keeps running exactly as before (refresh = no-op).
+  function cacheKey(fname) {
+    if (fname === 'index.html') return '/';
+    if (fname === 'dex.html')   return '/dex.html';
+    if (fname === 'sw.js')      return '/sw.js';
+    return `/static/${fname}`;
+  }
+  async function updateViaCache(latest, fnames, base) {
+    // Phase 1 — fetch + read everything into memory; bail (no cache writes)
+    // on any miss. Each remote (cross-origin) body is rebuilt into a clean,
+    // same-origin-style Response so the SW can serve it for navigations and
+    // scripts without cross-origin / opaque-response quirks.
+    const staged = [];
+    for (const fname of fnames) {
+      let resp;
+      try { resp = await fetch(fileUrl(base, fname), { cache: 'no-store', mode: 'cors' }); }
+      catch (e) { warn(`fetch failed for ${fname}; aborting (cache untouched)`, e); return; }
+      if (!resp || !resp.ok) { warn(`bad response for ${fname} (${resp && resp.status}); aborting`); return; }
+      let body;
+      try { body = await resp.blob(); }
+      catch (e) { warn(`read failed for ${fname}; aborting`, e); return; }
+      const ct = resp.headers.get('Content-Type') || '';
+      const clean = new Response(body, { status: 200, statusText: 'OK', headers: ct ? { 'Content-Type': ct } : {} });
+      staged.push({ key: cacheKey(fname), resp: clean });
+    }
+    // Phase 2 — commit. Only reached when every file fetched cleanly.
+    let cache;
+    try { cache = await caches.open(APP_CACHE_NAME); }
+    catch (e) { warn('caches.open failed; aborting', e); return; }
+    try { for (const s of staged) await cache.put(s.key, s.resp); }
+    catch (e) { warn('cache write failed', e); return; }
+    localStorage.setItem(VERSION_MAP_KEY, JSON.stringify(latest));
+    localStorage.removeItem(RECENT_FAIL_KEY);
+    log(`cache-overlay update applied (${staged.length} files); reloading`);
     setTimeout(() => location.reload(), 100);
   }
 

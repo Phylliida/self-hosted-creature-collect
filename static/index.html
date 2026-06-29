@@ -3039,7 +3039,12 @@
   <a id="emergencyRefresh" href="/__refresh__.html" role="button"
      onclick="try{(function(){
        // Stale-shell cache-clear, same as before.
-       try{caches.open('app-v1').then(function(c){['/','/manifest.webmanifest','/static/icon.svg','/static/trip-planner.js','/static/extras.js','/static/extras-apps.js','/static/extras-almanac.js','/static/extras-vibration.js','/static/vendor/maplibre-gl.css','/static/vendor/maplibre-gl.js'].forEach(function(u){c.delete(u)})})}catch(_){}
+       // Web/iOS: clear stale app-shell so the SW re-fetches fresh (origin /
+       // LocalServer-livedir). SKIP on Android — there the live-update flow
+       // overlays new code into this very cache in place, so deleting would
+       // be pointless online and, offline, would wipe a prior update back to
+       // the bundled version. (Refresh must never downgrade with no data.)
+       try{var _plat=(window.Capacitor&&window.Capacitor.getPlatform&&window.Capacitor.getPlatform())||'web';if(_plat!=='android'){caches.open('app-v1').then(function(c){['/','/manifest.webmanifest','/static/icon.svg','/static/trip-planner.js','/static/extras.js','/static/extras-apps.js','/static/extras-almanac.js','/static/extras-vibration.js','/static/vendor/maplibre-gl.css','/static/vendor/maplibre-gl.js'].forEach(function(u){c.delete(u)})})}}catch(_){}
        try{localStorage.removeItem('cc.lastUpdateFailedAt');}catch(_){}
        var btn=document.getElementById('emergencyRefresh');
        if(btn){btn.style.opacity='0.5';btn.style.pointerEvents='none';}
