@@ -4108,7 +4108,9 @@
       #creatureInventory .eggs-back,
       #creatureInventory .bag-back,
       #creatureInventory .craft-back,
-      #creatureInventory .tags-back {
+      #creatureInventory .tags-back,
+      #creatureInventory .completion-back,
+      #creatureInventory .speciesdex-back {
         background: none;
         border: none;
         color: var(--ui-text, #111);
@@ -4159,7 +4161,9 @@
       #creatureInventory .eggs-back:hover,
       #creatureInventory .bag-back:hover,
       #creatureInventory .craft-back:hover,
-      #creatureInventory .tags-back:hover {
+      #creatureInventory .tags-back:hover,
+      #creatureInventory .completion-back:hover,
+      #creatureInventory .speciesdex-back:hover {
         color: var(--ui-accent, #888);
       }
       /* Sub-view sibling navigation arrows. Floated to the corners
@@ -5708,6 +5712,12 @@
       }
       #creatureInventory .speciesdex-cell.ready .speciesdex-cell-ph { display: none; }
       #creatureInventory .speciesdex-cell.silhouette img { filter: brightness(0); }
+      #creatureInventory .speciesdex-cell .caught-badge {
+        position: absolute; top: 4px; right: 4px;
+        background: var(--ui-accent, #2a8); color: #fff; border-radius: 999px;
+        width: 16px; height: 16px; font-size: 10px; line-height: 16px;
+        text-align: center; font-weight: bold; z-index: 2;
+      }
       #creatureInventory .speciesdex-partner { text-align: center; min-width: 64px; line-height: 1.2; }
       #creatureInventory .speciesdex-partner .sd-num { display: block; font-size: 10px; opacity: 0.55; }
       #creatureInventory .speciesdex-partner .sd-name {
@@ -9367,6 +9377,9 @@
           + `data-a="${a}" data-b="${b}" role="button" tabindex="0" `
           + `title="${escapeHtml(seenIt ? speciesNameFor(a) + ' × ' + speciesNameFor(b) : '???')}">`
           + `<span class="speciesdex-cell-ph" aria-hidden="true">·</span><img alt="">`
+          // ✓ overlay when caught (owned ⊆ seen, so never on a silhouette) —
+          // mirrors the pokédex card's caught badge.
+          + (isFusionOwned(a, b) ? '<span class="caught-badge" title="caught">✓</span>' : '')
           + `</div>`;
         const row = document.createElement('div');
         row.className = 'speciesdex-row';
