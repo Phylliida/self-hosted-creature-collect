@@ -84,7 +84,8 @@ function makeEl(tag) {
 const ids = {};
 ['soundPad', 'drumGrid', 'tempoSlider', 'tempoValue', 'metronomeBtn', 'metronomeLight', 'barCounter',
  'beatIndicator', 'recordBtn', 'playAllBtn', 'stopBtn', 'clearBtn', 'recordingsToggle', 'dropdownArrow',
- 'recordingsPanel', 'recordingsList', 'recordingBadge', 'instrumentBtn'].forEach(id => { ids[id] = makeEl('div'); ids[id].id = id; });
+ 'recordingsPanel', 'recordingsList', 'recordingBadge', 'instrumentBtn',
+ 'scaleSel', 'rootSel', 'scaleGrid', 'scaleLabels', 'info'].forEach(id => { ids[id] = makeEl('div'); ids[id].id = id; });
 ids.soundPad.clientWidth = 800; ids.soundPad.clientHeight = 600;
 ids.tempoSlider.value = '120';
 
@@ -125,6 +126,8 @@ global.window = global;
 global.AudioContext = FakeCtx;
 global.confirm = () => true;
 global.addEventListener = () => {};
+global.localStorage = { _o: {}, getItem(k) { return k in this._o ? this._o[k] : null; },
+  setItem(k, v) { this._o[k] = String(v); }, removeItem(k) { delete this._o[k]; } };
 
 /* ── load the synth script ── */
 const html = fs.readFileSync(path.join(__dirname, '..', 'static', 'synth.html'), 'utf8');
@@ -141,10 +144,11 @@ const mouseDown = (x, y) => fire(pad, 'mousedown', { type: 'mousedown', clientX:
 const mouseUp = () => (docListeners.mouseup || []).slice().forEach(f => f({ type: 'mouseup' }));
 const song = () => global.SynthApp.getSong();
 
-/* ── T1: recording without the metronome anchors at record start ── */
+/* ── T1: recording without the metronome anchors at the Rec press ──
+   (deliberate user preference: beat 0 = the press, so off-beat starts work) */
 recordBtn.onclick();
 ok(recordBtn.textContent === 'Rec*', 'T1: recording armed');
-advance(0.25);
+advance(0.25);                   // an intentional off-beat start — must be preserved
 mouseDown(400, 300);
 advance(0.5);
 mouseUp();
@@ -152,7 +156,7 @@ advance(0.1);
 recordBtn.onclick();             // stop → auto-play
 const ev1 = song().recordings[0].events;
 ok(ev1.length >= 2 && ev1[0].type === 'start', 'T1: start event recorded');
-ok(Math.abs(ev1[0].beatPos - 0.5) < 0.02, 'T1: beatPos anchored to record start (got ' + ev1[0].beatPos + ', want ~0.5)');
+ok(Math.abs(ev1[0].beatPos - 0.5) < 0.02, 'T1: beatPos anchored to Rec press (got ' + ev1[0].beatPos + ', want ~0.5)');
 ok(ev1[ev1.length - 1].type === 'end' && Math.abs(ev1[ev1.length - 1].beatPos - 1.5) < 0.02, 'T1: end event at ~beat 1.5');
 ok(ev1.every(e => e.beatPos >= 0), 'T1: no negative beatPos');
 ok(playBtn.textContent === 'Playing', 'T1: auto-play started after stop');
@@ -263,6 +267,67 @@ stopBtn.onclick();
 const osc10 = oscCount;
 advance(40);
 ok(oscCount === osc10, 'T10: playback fully stopped after tempo change (osc delta ' + (oscCount - osc10) + ')');
+
+/* ── T11: quantize — notes snap to the chosen scale and project onto its lines ── */
+clearBtn.onclick();
+const BASE = 130.81, PENT_D = [2, 4, 6, 9, 11];      // D major pentatonic pitch classes
+ids.scaleSel.value = 'majpent'; ids.scaleSel.onchange();
+ids.rootSel.value = '2'; ids.rootSel.onchange();
+ok(ids.scaleGrid.style.display === 'block', 'T11: grid overlay shown');
+ok((ids.scaleGrid.innerHTML.match(/<line/g) || []).length === 23, 'T11: one line per reachable scale note (23)');
+ok((ids.scaleLabels.innerHTML.match(/scale-label/g) || []).length === 5, 'T11: only root lines labelled (D3..D7)');
+recordBtn.onclick();
+[[123, 456], [700, 80], [400, 300], [200, 150], [600, 400]].forEach(([x, y]) => {
+  advance(0.05); mouseDown(x, y); advance(0.05); mouseUp();
+});
+recordBtn.onclick(); stopBtn.onclick();
+const evq = song().recordings[0].events.filter(e => e.type === 'start');
+ok(evq.length === 5, 'T11: five notes recorded');
+ok(evq.every(e => {
+  const s = 12 * Math.log2(e.f / BASE), k = Math.round(s);
+  return Math.abs(s - k) < 1e-6 && PENT_D.includes(((k % 12) + 12) % 12);
+}), 'T11: every recorded pitch is an exact D-pentatonic note');
+ok(evq.every(e => {
+  const k = Math.round(12 * Math.log2(e.f / BASE));
+  return Math.abs(35 * e.nx + 20 * e.ny - k) < 0.05;
+}), 'T11: recorded positions sit on the iso-pitch lines');
+ids.scaleSel.value = 'off'; ids.scaleSel.onchange();
+ok(ids.scaleGrid.style.display === 'none', 'T11: grid hidden when quantize off');
+recordBtn.onclick();
+advance(0.05); mouseDown(123, 456); advance(0.05); mouseUp();
+recordBtn.onclick(); stopBtn.onclick();
+const evFree = song().recordings[1].events.find(e => e.type === 'start');
+const sFree = 12 * Math.log2(evFree.f / BASE);
+ok(Math.abs(sFree - Math.round(sFree)) > 0.05, 'T11: quantize off leaves pitch continuous');
+
+/* ── T12: scale + root ride through getSong/loadSong ── */
+ids.scaleSel.value = 'majpent'; ids.scaleSel.onchange();
+ids.rootSel.value = '2'; ids.rootSel.onchange();
+const s12 = song();
+ok(s12.scale === 'majpent' && s12.root === 2, 'T12: getSong carries scale + root');
+global.SynthApp.loadSong({ v: 1, tempo: 100, recordings: [] });   // legacy song: no scale fields
+ok(String(ids.scaleSel.value) === 'majpent', 'T12: legacy song leaves quantize prefs alone');
+global.SynthApp.loadSong({ v: 1, tempo: 120, scale: 'blues', root: 7, recordings: [] });
+ok(String(ids.scaleSel.value) === 'blues' && String(ids.rootSel.value) === '7', 'T12: loadSong applies saved scale');
+ok(ids.scaleGrid.style.display === 'block', 'T12: grid re-rendered after load');
+ids.scaleSel.value = 'off'; ids.scaleSel.onchange();
+
+/* ── T13: loop position ticker drives the beat dots without the metronome ── */
+clearBtn.onclick();
+recordBtn.onclick();             // beat 0 = the Rec press
+advance(0.6);                    // past the beat-1 boundary (0.5s) + one 80ms ticker period
+ok(ids.beatIndicator.children[1].classList.contains('active'), 'T13: dot tracks from the Rec press');
+mouseDown(300, 300); advance(0.05); mouseUp();
+advance(1.3);                    // ≈3.9 beats since the press
+const active13 = ids.beatIndicator.children.findIndex(c => c.classList.contains('active'));
+ok(active13 === 3, 'T13: dot tracks loop position (got ' + active13 + ', want 3)');
+ok(String(ids.barCounter.textContent) === '1.4', 'T13: bar counter follows (got ' + ids.barCounter.textContent + ')');
+recordBtn.onclick();             // stop → auto-play; ticker keeps running
+advance(0.3);
+ok(ids.beatIndicator.children.some(c => c.classList.contains('active')), 'T13: ticker active during playback');
+stopBtn.onclick();
+advance(0.3);
+ok(!ids.beatIndicator.children.some(c => c.classList.contains('active')), 'T13: dots cleared when idle');
 
 console.log('synth tests: ' + passed + ' passed, ' + failed + ' failed');
 process.exit(failed ? 1 : 0);

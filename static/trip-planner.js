@@ -62,9 +62,26 @@
     const { MinHeap } = deps;
     const walkSpeedMps = deps.walkSpeedMps || 1.3;
 
+    // Elapsed-time yield for the search loops — same pattern as the
+    // app's other chunked builders. A long-route search (95km, three
+    // alternatives) showed up as a single 3.0s main-thread freeze in a
+    // field stall dump (2026-07-02); yielding whenever >40ms of sync
+    // work has accumulated keeps the map alive while the route spinner
+    // runs. Both planners are async because of this; results are
+    // unchanged (the search order doesn't depend on wall clock).
+    function searchYielder() {
+      let last = performance.now();
+      return async () => {
+        if (performance.now() - last > 40) {
+          await new Promise((r) => setTimeout(r, 0));
+          last = performance.now();
+        }
+      };
+    }
+
     // ---- forward: depart at t0, find fastest arrival ------------------
 
-    function planForward(originNodeId, destNodeId, t0, walkWeight, transferSec, activeTrips) {
+    async function planForward(originNodeId, destNodeId, t0, walkWeight, transferSec, activeTrips) {
       const wg = deps.walkGraph, si = deps.scheduleIdx;
       if (!wg.hasNode(originNodeId) || !wg.hasNode(destNodeId)) return null;
       const destKey = 'w:' + destNodeId;
@@ -80,8 +97,11 @@
         }
       };
 
+      const maybeYield = searchYielder();
+      let pops = 0;
       while (pq.size) {
         const [cost, key, t] = pq.pop();
+        if ((++pops & 0x7FF) === 0) await maybeYield();
         if (cost > bestCost.get(key)) continue;
         if (key === destKey) return traceback(came, destKey, 'prev', 'unshift', t0, t);
 
@@ -147,7 +167,7 @@
 
     // ---- reverse: arrive by tArr, find latest departure ---------------
 
-    function planReverse(originNodeId, destNodeId, tArr, walkWeight, transferSec, activeTrips) {
+    async function planReverse(originNodeId, destNodeId, tArr, walkWeight, transferSec, activeTrips) {
       const wg = deps.walkGraph, si = deps.scheduleIdx;
       if (!wg.hasNode(originNodeId) || !wg.hasNode(destNodeId)) return null;
       const origKey = 'w:' + originNodeId;
@@ -164,8 +184,11 @@
         }
       };
 
+      const maybeYield = searchYielder();
+      let pops = 0;
       while (pq.size) {
         const [cost, key, t] = pq.pop();
+        if ((++pops & 0x7FF) === 0) await maybeYield();
         if (cost > bestCost.get(key)) continue;
         if (key === origKey) return traceback(came, origKey, 'next', 'push', t, tArr);
 
@@ -237,17 +260,24 @@
       return null;
     }
 
+    // Both planners are async (they yield to the event loop during long
+    // searches) — callers must await them.
     return { planForward, planReverse };
   }
 
   function traceback(came, terminal, linkField, orderOp, startSec, endSec) {
+    // Always append, then reverse when the caller asked for 'unshift'
+    // order — per-step unshift is O(n²) (each prepend shifts the whole
+    // array) and turned a long walking leg's thousands of edge-steps
+    // into real time. push+reverse produces the identical array.
     const steps = [];
     let cursor = terminal;
     while (came.has(cursor)) {
       const step = came.get(cursor);
-      steps[orderOp]({ ...step });
+      steps.push({ ...step });
       cursor = step[linkField];
     }
+    if (orderOp === 'unshift') steps.reverse();
     return { steps, startSec, endSec };
   }
 

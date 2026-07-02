@@ -12,7 +12,10 @@ const TILES_CACHE = 'tiles-v1';
 // to /upload-logs → saves/logs/<trainer>_<ms>.txt); bridge builders
 // (legacy + multi) switched to integer grid keys + elapsed-time
 // yields (dump-convicted ~810ms stall) + bridges/bridges-multi marks
-// + bridge-result cache (repeat routes skip the ~1.5s stop relink).
+// + bridge-result cache (repeat routes skip the ~1.5s stop relink);
+// trip-planner searches yield (3.0s freeze on a 95km plan) and
+// traceback is linear (was O(n^2) unshift). trip-planner.js is in
+// APP_SHELL, so this bump re-precaches it too.
 
 const APP_SHELL = [
   '/',
