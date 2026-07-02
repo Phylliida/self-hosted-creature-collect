@@ -35,7 +35,7 @@ input[type=range]{width:80px;height:6px}
 
 /* ------------ INFO & PANELS / METRONOME (unchanged) ------------ */
 #info{position:fixed;top:10px;left:10px;color:rgba(255,255,255,.75);font-size:14px;z-index:100;
-background:rgba(0,0,0,.35);padding:6px 10px;border-radius:4px;pointer-events:none}
+background:rgba(0,0,0,.35);padding:6px 10px;border-radius:4px;pointer-events:none;max-width:58vw}
 #recordingsToggle{position:fixed;top:10px;right:10px;z-index:101;padding:4px 9px;background:rgba(0,0,0,.5);
 color:#fff;border-radius:4px;cursor:pointer;display:flex;align-items:center;gap:4px;font-size:13px}
 #recordingsPanel{position:fixed;top:42px;right:10px;width:180px;max-height:40vh;background:rgba(0,0,0,.78);
@@ -54,14 +54,23 @@ padding:1px 6px;display:none;z-index:101}
 #barCounter{color:#fff;min-width:34px;text-align:center}
 .beat-indicator{position:fixed;bottom:54px;left:0;right:0;height:5px;background:rgba(0,0,0,.5);
 display:flex;align-items:center;justify-content:center;gap:4px;padding:6px;z-index:99}
-.beat-marker{width:14px;height:14px;background:rgba(255,255,255,.2);border-radius:50%;transition:.05s}
-.beat-marker.accent{width:18px;height:18px;background:rgba(255,255,255,.28)}
+.beat-marker{flex:0 1 14px;min-width:5px;aspect-ratio:1;height:auto;background:rgba(255,255,255,.2);border-radius:50%;transition:.05s}
+.beat-marker.accent{flex-basis:18px;background:rgba(255,255,255,.28)}
 .beat-marker.active{background:rgba(255,255,0,.85);box-shadow:0 0 9px rgba(255,255,0,.55)}
+
+/* ----- quantize: scale pitch-line overlay ----- */
+#scaleGrid,#scaleLabels{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;display:none}
+.scale-label{position:absolute;transform:translate(-50%,-50%);font-size:9px;font-weight:bold;pointer-events:none;
+text-shadow:0 0 3px rgba(0,0,0,.9)}
+select{padding:4px 5px;background:rgba(255,255,255,.18);border:none;border-radius:4px;color:#fff;font-size:12px}
+select option{color:#000}
 </style>
 </head>
 <body>
 <!-- ---------- MAIN CANVAS ---------- -->
-<div id="soundPad"><div id="drumGrid"></div></div>
+<div id="soundPad"><div id="drumGrid"></div>
+<svg id="scaleGrid" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
+<div id="scaleLabels"></div></div>
 <div id="info">3 rows × 6 cols – every row is a different kit. Y-position tweaks pitch/brightness.</div>
 
 <!-- ---------- RECORDINGS PANEL ---------- -->
@@ -75,6 +84,20 @@ display:flex;align-items:center;justify-content:center;gap:4px;padding:6px;z-ind
 <!-- ---------- CONTROL STRIP ---------- -->
 <div id="controls">
   <div class="control-group"><label>Instr:</label><button id="instrumentBtn">Synth</button></div>
+  <div class="control-group"><label>Scale</label>
+    <select id="scaleSel">
+      <option value="off">Off</option><option value="major">Major</option><option value="minor">Minor</option>
+      <option value="majpent">Major Pent</option><option value="minpent">Minor Pent</option>
+      <option value="blues">Blues</option><option value="dorian">Dorian</option><option value="mixo">Mixolydian</option>
+      <option value="harmminor">Harm Minor</option><option value="whole">Whole Tone</option>
+      <option value="chromatic">Chromatic</option>
+    </select>
+    <select id="rootSel">
+      <option value="0">C</option><option value="1">C#</option><option value="2">D</option><option value="3">D#</option>
+      <option value="4">E</option><option value="5">F</option><option value="6">F#</option><option value="7">G</option>
+      <option value="8">G#</option><option value="9">A</option><option value="10">A#</option><option value="11">B</option>
+    </select>
+  </div>
   <div class="control-group"><button id="clearBtn">Clear</button></div>
   <div class="control-group"><label>Tempo</label><input type="range" id="tempoSlider" min="40" max="200" value="120"><span id="tempoValue" class="control-value">120 BPM</span></div>
   <div class="control-group"><button id="metronomeBtn">Met:Off</button><div id="metronomeLight"></div><span id="barCounter">1.1</span></div>
@@ -92,7 +115,9 @@ const pad=$('soundPad'), grid=$('drumGrid'),
       beatIndicator=$('beatIndicator'), recordBtn=$('recordBtn'), playBtn=$('playAllBtn'),
       stopBtn=$('stopBtn'), clearBtn=$('clearBtn'), recToggle=$('recordingsToggle'),
       arrow=$('dropdownArrow'), recordingsPanel=$('recordingsPanel'), recordingsList=$('recordingsList'),
-      badge=$('recordingBadge'), instBtn=$('instrumentBtn');
+      badge=$('recordingBadge'), instBtn=$('instrumentBtn'),
+      scaleSel=$('scaleSel'), rootSel=$('rootSel'), scaleGridEl=$('scaleGrid'),
+      scaleLabels=$('scaleLabels'), info=$('info');
 
 /* ==== GRID SIZE ==== */
 const COLS=6, ROWS=3;
@@ -109,7 +134,8 @@ let instrument='synth';
 instBtn.onclick=()=>{[...touches.keys()].forEach(pid=>synthEnd(pid));   // release held notes before switching
   instrument=instrument==='synth'?'drums':'synth';
   instBtn.textContent=instrument==='synth'?'Synth':'Drums';
-  grid.style.display=instrument==='drums'?'block':'none';};
+  grid.style.display=instrument==='drums'?'block':'none';
+  renderScaleGrid();updateInfo();};
 grid.style.display='none';
 
 let tempo=120,metOn=false,metGen=0,beat=0,bar=0,nextBeat=0,tickTimer=null,loopAnchor=null;
@@ -207,6 +233,71 @@ const freq=(nx,ny)=>BASE*Math.pow(2,(((nx*5)*7)+((ny*5)*4))/12);
 const noteName=f=>{const N=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
   const s=Math.round(12*Math.log2(f/16.35));return N[(s%12+12)%12]+Math.floor(s/12);};
 
+/* ==== QUANTIZE (scale snapping + pitch-line grid) ====
+   Pitch is linear in pad position: semitones above BASE = 35*nx + 20*ny.
+   So "every position playing note k" is the diagonal line 35x+20y=k — the grid
+   renders one line per scale note and touches snap (and project) onto them. */
+const SCALES={off:null,chromatic:[0,1,2,3,4,5,6,7,8,9,10,11],major:[0,2,4,5,7,9,11],
+  minor:[0,2,3,5,7,8,10],majpent:[0,2,4,7,9],minpent:[0,3,5,7,10],blues:[0,3,5,6,7,10],
+  dorian:[0,2,3,5,7,9,10],mixo:[0,2,4,5,7,9,10],harmminor:[0,2,3,5,7,8,11],whole:[0,2,4,6,8,10]};
+const SCALE_NAMES={chromatic:'Chromatic',major:'Major',minor:'Minor',majpent:'Maj Pent',
+  minpent:'Min Pent',blues:'Blues',dorian:'Dorian',mixo:'Mixolydian',harmminor:'Harm Minor',whole:'Whole Tone'};
+const ROOTS=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const SEMI_MAX=55;                                   // 35+20: the pad's reachable range
+let scaleKey='off',rootSemi=0,quantOn=false,allowedSemis=[];
+function loadQuantPrefs(){try{const p=JSON.parse(localStorage.getItem('synth.quant.v1'))||{};
+  if(SCALES.hasOwnProperty(p.scale))scaleKey=p.scale;
+  if(typeof p.root==='number'&&p.root>=0&&p.root<12)rootSemi=Math.floor(p.root);}catch(_){}}
+function saveQuantPrefs(){try{localStorage.setItem('synth.quant.v1',JSON.stringify({scale:scaleKey,root:rootSemi}))}catch(_){}}
+function applyQuant(){
+  quantOn=!!SCALES[scaleKey];allowedSemis=[];
+  if(quantOn)for(let k=0;k<=SEMI_MAX;k++)if(SCALES[scaleKey].includes(((k-rootSemi)%12+12)%12))allowedSemis.push(k);
+  scaleSel.value=scaleKey;rootSel.value=String(rootSemi);
+  saveQuantPrefs();renderScaleGrid();updateInfo();
+}
+function snapSemi(s){let best=allowedSemis[0],bd=1e9;
+  for(const k of allowedSemis){const d=Math.abs(k-s);if(d<bd){bd=d;best=k;}}return best;}
+function pitchAt(nx,ny){
+  if(!quantOn||!allowedSemis.length)return {f:freq(nx,ny),nx,ny};
+  const s=35*nx+20*ny,k=snapSemi(s),d=(s-k)/1625;    // project onto the iso-pitch line (|∇s|²=35²+20²)
+  return {f:BASE*Math.pow(2,k/12),
+    nx:Math.min(1,Math.max(0,nx-35*d)),ny:Math.min(1,Math.max(0,ny-20*d))};
+}
+const lineHue=k=>(Math.log2(BASE*Math.pow(2,k/12))*100)%360;   // same hue formula as the note markers
+function renderScaleGrid(){
+  const show=quantOn&&instrument==='synth';
+  scaleGridEl.style.display=show?'block':'none';scaleLabels.style.display=show?'block':'none';
+  if(!show)return;
+  const lines=[];let labels='';
+  for(const k of allowedSemis){
+    const pts=[];const add=(x,y)=>{if(x>=-1e-9&&x<=1+1e-9&&y>=-1e-9&&y<=1+1e-9)
+      pts.push([Math.min(1,Math.max(0,x)),Math.min(1,Math.max(0,y))]);};
+    add(0,k/20);add(1,(k-35)/20);add(k/35,0);add((k-20)/35,1);   // clip 35x+20y=k to the unit square
+    const uniq=pts.filter((p,j)=>pts.findIndex(q=>Math.abs(q[0]-p[0])<1e-6&&Math.abs(q[1]-p[1])<1e-6)===j);
+    if(uniq.length<2)continue;
+    const [a,b]=uniq,isRoot=((k-rootSemi)%12+12)%12===0,hue=lineHue(k);
+    lines.push('<line x1="'+(a[0]*100).toFixed(2)+'" y1="'+((1-a[1])*100).toFixed(2)+
+      '" x2="'+(b[0]*100).toFixed(2)+'" y2="'+((1-b[1])*100).toFixed(2)+
+      '" stroke="hsl('+hue.toFixed(0)+' 70% 70%/'+(isRoot?'.75':'.3')+')" stroke-width="'+(isRoot?2:1)+
+      '" vector-effect="non-scaling-stroke"/>');
+    if(isRoot){                                       // label only octave roots — the marker names notes live
+      const top=a[1]>b[1]?a:b,bot=a[1]>b[1]?b:a;
+      const lx=top[0]+(bot[0]-top[0])*.04,ly=top[1]+(bot[1]-top[1])*.04;
+      labels+='<div class="scale-label" style="left:'+(lx*100).toFixed(2)+'%;top:'+((1-ly)*100).toFixed(2)+
+        '%;color:hsl('+hue.toFixed(0)+' 80% 78%)">'+noteName(BASE*Math.pow(2,k/12))+'</div>';
+    }
+  }
+  scaleGridEl.innerHTML=lines.join('');scaleLabels.innerHTML=labels;
+}
+function updateInfo(){
+  info.textContent=instrument==='drums'
+    ?'3 rows × 6 cols – every row is a different kit. Y-position tweaks pitch/brightness.'
+    :quantOn?('Snapping to '+ROOTS[rootSemi]+' '+SCALE_NAMES[scaleKey]+' – play along the lines.')
+    :'Drag anywhere – right raises pitch in fifths, up in thirds. Pick a Scale to snap notes.';
+}
+scaleSel.onchange=()=>{scaleKey=SCALES.hasOwnProperty(scaleSel.value)?scaleSel.value:'off';applyQuant();};
+rootSel.onchange=()=>{rootSemi=Math.min(11,Math.max(0,(+rootSel.value||0)));applyQuant();};
+
 /* ==== RECORDING HELPERS ==== */
 function record(ev){if(!isRec)return;const now=audio().currentTime;
   if(loopAnchor===null)loopAnchor=now;
@@ -216,20 +307,21 @@ function updateBadge(){const n=recordings.filter(r=>r.active).length;badge.textC
 /* ==== SYNTH POINTER HANDLERS ==== */
 function synthStart(pid,x,y){
   if(touches.has(pid))synthEnd(pid);
-  const w=pad.clientWidth,h=pad.clientHeight,nx=x/w,ny=1-y/h,f=freq(nx,ny),name=noteName(f),c=audio();
+  const w=pad.clientWidth,h=pad.clientHeight,q=pitchAt(x/w,1-y/h),f=q.f,name=noteName(f),c=audio();
   const o=c.createOscillator(),g=c.createGain(),flt=c.createBiquadFilter();
   o.type='sine';o.frequency.value=f;g.gain.value=.3;flt.type='lowpass';flt.frequency.value=5000;
   o.connect(flt);flt.connect(g);g.connect(c.destination);o.start();
-  const col=`hsl(${(Math.log2(f)*100)%360} 80% 60%/.8)`,m=marker('note-marker',x,y,col,name),id='n'+nextNoteId++;
-  touches.set(pid,{id,o,g,m});record({type:'start',id,nx,ny,f,name});
+  const col=`hsl(${(Math.log2(f)*100)%360} 80% 60%/.8)`,
+        m=marker('note-marker',q.nx*w,(1-q.ny)*h,col,name),id='n'+nextNoteId++;
+  touches.set(pid,{id,o,g,m});record({type:'start',id,nx:q.nx,ny:q.ny,f,name});
 }
 function synthMove(pid,x,y){
   const t=touches.get(pid);if(!t)return;
-  const w=pad.clientWidth,h=pad.clientHeight,nx=x/w,ny=1-y/h,f=freq(nx,ny),name=noteName(f),
+  const w=pad.clientWidth,h=pad.clientHeight,q=pitchAt(x/w,1-y/h),f=q.f,name=noteName(f),
         col=`hsl(${(Math.log2(f)*100)%360} 80% 60%/.8)`;
   t.o.frequency.setTargetAtTime(f,ctx.currentTime,.01);
-  Object.assign(t.m.style,{left:x+'px',top:y+'px',background:col});t.m.textContent=name;
-  record({type:'update',id:t.id,nx,ny,f,name});
+  Object.assign(t.m.style,{left:q.nx*w+'px',top:(1-q.ny)*h+'px',background:col});t.m.textContent=name;
+  record({type:'update',id:t.id,nx:q.nx,ny:q.ny,f,name});
 }
 function synthEnd(pid){
   const t=touches.get(pid);if(!t)return;
@@ -278,13 +370,15 @@ function addRow(r){
 /* ==== RECORD CONTROL ==== */
 function startRecording(){
   const c=audio();
-  // Anchor the loop at record start (metronome NOT required). Only keep an old
-  // anchor when a grid is audibly running (met ticking or tracks playing).
+  // Anchor the loop at the Rec press (metronome NOT required) — beat 0 is the
+  // press itself, so off-beat/pickup starts land where they were played. A
+  // grid already running (met ticking or tracks playing) keeps its anchor.
   if(loopAnchor===null||(!tickTimer&&!isPlay))loopAnchor=c.currentTime;
   const r={id:recSeq++,name:'Track '+(recSeq-1),events:[],active:false};
   recordings.push(r);curRec=r;isRec=true;addRow(r);
   recordBtn.classList.add('active');recordBtn.textContent='Rec*';
   if(metOn&&!tickTimer)startMet();
+  startTicker();
 }
 function stopRecording(autoPlay){
   if(!isRec)return;
@@ -353,9 +447,8 @@ function startPlayback(){
   if(isPlay||!recordings.some(r=>r.active))return;
   const c=audio();
   if(loopAnchor===null||!tickTimer)loopAnchor=c.currentTime+.02;   // no metronome running → restart the loop from the top now
-
   isPlay=true;playBtn.classList.add('active');playBtn.textContent='Playing';
-  reschedule();if(metOn&&!tickTimer)startMet();
+  reschedule();if(metOn&&!tickTimer)startMet();startTicker();
 }
 function stopPlayback(){
   if(!isPlay)return;isPlay=false;playGen++;playBtn.classList.remove('active');playBtn.textContent='Play';
@@ -392,6 +485,18 @@ function startMet(){
 function stopMet(){metGen++;clearTimeout(tickTimer);tickTimer=null;
   [...beatIndicator.children].forEach(d=>d.classList.remove('active'));}
 
+/* ==== LOOP POSITION TICKER (drives the beat dots when the metronome isn't) ==== */
+let posTimer=null;
+function tickPos(){
+  if(!isRec&&!isPlay){flash(-1);posTimer=null;return;}
+  if(!tickTimer&&loopAnchor!==null){
+    const b=Math.floor(((((audio().currentTime-loopAnchor)*tempo/60)%beatsPerLoop)+beatsPerLoop)%beatsPerLoop);
+    beat=b%timeSig;bar=Math.floor(b/timeSig);flash(b);updateCounter();
+  }
+  posTimer=setTimeout(tickPos,80);
+}
+function startTicker(){if(posTimer===null)tickPos();}
+
 /* ==== UI LISTENERS ==== */
 tempoSlider.oninput=e=>{tempo=+e.target.value;tempoValue.textContent=tempo+' BPM';
   if(metOn){stopMet();startMet();}if(isPlay)reschedule();};
@@ -425,7 +530,7 @@ document.addEventListener('mouseleave',()=>{if(touches.has('mouse')){synthEnd('m
 window.addEventListener('blur',()=>[...touches.keys()].forEach(pid=>synthEnd(pid)));
 
 /* ==== INIT ==== */
-initDots();
+initDots();loadQuantPrefs();applyQuant();
 
 /* ==== EXTERNAL SAVE / LOAD API ====
    Used by the Extras "Synth" window to save the current song (all
@@ -437,6 +542,8 @@ window.SynthApp = {
     return {
       v: 1,
       tempo: tempo,
+      scale: scaleKey,
+      root: rootSemi,
       recordings: recordings.map(function (r) {
         return { name: r.name, events: r.events };
       })
@@ -453,6 +560,9 @@ window.SynthApp = {
       tempoSlider.value = tempo;
       tempoValue.textContent = tempo + ' BPM';
     }
+    if (typeof song.scale === 'string' && SCALES.hasOwnProperty(song.scale)) scaleKey = song.scale;
+    if (typeof song.root === 'number' && song.root >= 0 && song.root < 12) rootSemi = Math.floor(song.root);
+    applyQuant();
     (Array.isArray(song.recordings) ? song.recordings : []).forEach(function (s) {
       var r = {
         id: recSeq++,

@@ -9053,7 +9053,7 @@ function fmtDate(ts) {
   // shifting the pivot past the last result's first/last transit boarding so
   // the next call surfaces a different bus. Stops on null / duplicate /
   // walk-only (nothing to nudge past).
-  function planAlternatives(originId, destId, mode, pivotDate, walkWeight, transferSec, n = 3) {
+  async function planAlternatives(originId, destId, mode, pivotDate, walkWeight, transferSec, n = 3) {
     const _t0 = performance.now();
     const out = [];
     let pivot = pivotDate;
@@ -9061,8 +9061,8 @@ function fmtDate(ts) {
       const t = todayInfo(pivot).nowSec;
       const activeTrips = makeActiveTrips(pivot);
       const raw = mode === 'arrive'
-        ? tripPlanner.planReverse(originId, destId, t, walkWeight, transferSec, activeTrips)
-        : tripPlanner.planForward(originId, destId, t, walkWeight, transferSec, activeTrips);
+        ? await tripPlanner.planReverse(originId, destId, t, walkWeight, transferSec, activeTrips)
+        : await tripPlanner.planForward(originId, destId, t, walkWeight, transferSec, activeTrips);
       if (!raw) break;
       if (out.some(r => r.startSec === raw.startSec && r.endSec === raw.endSec)) break;
       out.push(raw);
@@ -9706,7 +9706,7 @@ function fmtDate(ts) {
         transit: { stops: scheduleIdx.stops.size, stopToWalk: scheduleIdx.stopToWalkNode.size },
       });
       if (canTransit) {
-        const raws = planAlternatives(start.id, end.id, mode, pivotDate, walkWeight, transferSec);
+        const raws = await planAlternatives(start.id, end.id, mode, pivotDate, walkWeight, transferSec);
         _routeTrace('route:transit_done', { alternatives: raws.length });
         if (raws.length) {
           const pivotIso = pivotDate.toISOString();
