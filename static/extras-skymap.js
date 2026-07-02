@@ -667,6 +667,40 @@
           hits.push({ x: p.x, y: p.y, name, mag: aa.mag, alt: aa.alt, az: aa.az, kind: 'planet' });
         }
 
+        // meteor shower radiants — only while a shower is active, and only
+        // once the sky is dark enough for meteors to show
+        if (A.activeShowers && starFade > 0.05) {
+          const fmtPeak = (pk) => {
+            try {
+              return new Intl.DateTimeFormat(undefined, { timeZone: tz(), month: 'short', day: 'numeric' }).format(pk);
+            } catch (_) { return ''; }
+          };
+          ctx.font = '600 10px system-ui, sans-serif';
+          for (const sh of A.activeShowers(ms)) {
+            const s = sh.shower;
+            const aa = altAz(s.ra, s.dec, ms, lat, lon);
+            if (aa.alt < 2) continue;
+            const p = P(aa.alt, aa.az);
+            ctx.globalAlpha = 0.9 * starFade;
+            ctx.strokeStyle = '#a8e8b0';
+            ctx.lineWidth = 1.2;
+            // radiant glyph: open circle with four outward rays
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 3.6, 0, 2 * Math.PI);
+            for (let k = 0; k < 4; k++) {
+              const th = Math.PI / 4 + k * Math.PI / 2;
+              ctx.moveTo(p.x + 5.6 * Math.cos(th), p.y + 5.6 * Math.sin(th));
+              ctx.lineTo(p.x + 10 * Math.cos(th), p.y + 10 * Math.sin(th));
+            }
+            ctx.stroke();
+            ctx.fillStyle = 'rgba(168,232,176,0.9)';
+            ctx.fillText(s.name, p.x + 7, p.y - 6);
+            ctx.globalAlpha = 1;
+            hits.push({ x: p.x, y: p.y, name: s.name + ' radiant', mag: null, alt: aa.alt, az: aa.az, kind: 'shower',
+              extra: 'ZHR ~' + s.zhr + ' · peak ' + fmtPeak(sh.peakMs) });
+          }
+        }
+
         // moon with its real phase (two-arc glyph like the almanac's SVG)
         const mAA = A.moonAltAz(ms, lat, lon);
         if (mAA.alt > -0.5) {
