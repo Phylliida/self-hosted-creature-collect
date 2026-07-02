@@ -307,6 +307,12 @@ jobs:
           #    - health.READ_STEPS / READ_DISTANCE : Health Connect data
           #      types HealthConnectStepPlugin reads. Both are subject to
           #      a user-visible grant flow launched by the plugin.
+          #    - VIBRATE : navigator.vibrate() in the WebView silently
+          #      no-ops (returns true, no buzz, no error) unless the host
+          #      app holds this permission — the Extras vibration tool's
+          #      Android path is navigator.vibrate, so without this line
+          #      it plays patterns into the void. Normal-level permission:
+          #      granted at install, no runtime prompt.
           perms = (
               '    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n'
               '    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n'
@@ -314,6 +320,7 @@ jobs:
               '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />\n'
               '    <uses-permission android:name="android.permission.health.READ_STEPS" />\n'
               '    <uses-permission android:name="android.permission.health.READ_DISTANCE" />\n'
+              '    <uses-permission android:name="android.permission.VIBRATE" />\n'
           )
           if "ACCESS_FINE_LOCATION" not in text:
               new = re.sub(r'(<manifest\b[^>]*>\s*\n)', r'\1' + perms, text, count=1)
@@ -322,7 +329,7 @@ jobs:
                   sys.exit(1)
               text = new
               changed = True
-              print("  added location + foreground-service + health-connect permissions")
+              print("  added location + foreground-service + health-connect + vibrate permissions")
           # 1b) <queries> block — Android 11+ requires apps to declare
           #     which package names they intend to interact with via
           #     intents. Health Connect's provider package needs to be
@@ -445,6 +452,7 @@ jobs:
                   // constructs Capacitor.Plugins.<Name>).
                   registerPlugin(BackgroundLocationPlugin.class);
                   registerPlugin(HealthConnectStepPlugin.class);
+                  registerPlugin(HapticPatternPlugin.class);
                   super.onCreate(savedInstanceState);
                   // Capacitor wires WebViewAssetLoader for page-originated
                   // requests via WebViewClient. SW-originated requests

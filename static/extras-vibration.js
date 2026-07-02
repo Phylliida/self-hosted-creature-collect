@@ -1,20 +1,25 @@
 // Extras → Vibration: a configurable haptic "massage" generator.
 //
 // Self-contained: this whole feature lives in this one file plus the native
-// ios-overrides/HapticPatternPlugin.swift. It plugs into the Extras launcher
+// plugins — ios-overrides/HapticPatternPlugin.swift and
+// android-overrides/HapticPatternPlugin.kt. It plugs into the Extras launcher
 // via the generic global.ExtrasRegisterTool(...) hook in extras.js, so nothing
 // else needs to know it exists.
 //
 // How it drives vibration:
-//   - iOS: the native HapticPattern Capacitor plugin (Core Haptics). We compute
-//     a normalized amplitude envelope (sine/triangle/saw/square/pulse/heartbeat)
+//   - iOS + Android: a native HapticPattern Capacitor plugin (Core Haptics on
+//     iOS; VibrationEffect amplitude waveforms on Android). We compute a
+//     normalized amplitude envelope (sine/triangle/saw/square/pulse/heartbeat)
 //     for one seamless loop and hand it to the plugin, which plays it as a
 //     continuous, looping haptic whose intensity follows the envelope. The
 //     "speed" slider sets how fast the envelope cycles; the waveform sets its
-//     shape. iPad / Simulator report unsupported.
-//   - Android / other: falls back to navigator.vibrate() with a coarse on/off
-//     pattern (no intensity control). iOS Safari ignores navigator.vibrate, but
-//     inside our app the native plugin is always present, so that's moot.
+//     shape. Both plugins register under the same jsName ("HapticPattern"), so
+//     this file has no platform branches. iPad / Simulator / no-vibrator
+//     devices report unsupported. Android sharpness is accepted but ignored
+//     (no carrier control in the public API).
+//   - Web / older builds: falls back to navigator.vibrate() with a coarse
+//     on/off pattern (no intensity control). Needs android.permission.VIBRATE
+//     in the APK manifest either way (injected by the Android build workflow).
 //
 // All settings persist to localStorage. The tool always stops vibration when
 // its view is hidden / the app backgrounds, so the phone never keeps buzzing.

@@ -7,7 +7,8 @@
 
 <style>
 /* ------------ GLOBAL LAYOUT ------------ */
-html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;font-family:Arial,Helvetica,sans-serif}
+html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;font-family:Arial,Helvetica,sans-serif;
+user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
 #soundPad{width:100%;height:100%;background:linear-gradient(135deg,#1e3c72,#2a5298);touch-action:none;position:relative}
 
 /* ----- percussion guide overlay ----- */
@@ -38,9 +39,7 @@ button.active{background:rgba(255,100,100,.55)}
 label,.control-value{color:#fff}
 input[type=range]{width:80px;height:6px}
 
-/* ------------ INFO & PANELS / METRONOME (unchanged) ------------ */
-#info{position:fixed;top:10px;left:10px;color:rgba(255,255,255,.75);font-size:14px;z-index:100;
-background:rgba(0,0,0,.35);padding:6px 10px;border-radius:4px;pointer-events:none;max-width:58vw}
+/* ------------ PANELS / METRONOME ------------ */
 #recordingsToggle{position:fixed;top:10px;right:10px;z-index:101;padding:4px 9px;background:rgba(0,0,0,.5);
 color:#fff;border-radius:4px;cursor:pointer;display:flex;align-items:center;gap:4px;font-size:13px}
 #recordingsPanel{position:fixed;top:42px;right:10px;width:180px;max-height:40vh;background:rgba(0,0,0,.78);
@@ -62,20 +61,74 @@ padding:1px 6px;display:none;z-index:101}
 .beat-marker.accent{flex-basis:18px;background:rgba(255,255,255,.28)}
 .beat-marker.active{background:rgba(255,255,0,.85);box-shadow:0 0 9px rgba(255,255,0,.55)}
 
-/* ----- quantize: scale pitch-line overlay ----- */
-#scaleGrid,#scaleLabels{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;display:none}
+/* ----- quantize: scale pitch-line overlay + hex keyboard ----- */
+#scaleGrid,#scaleLabels,#hexGrid{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;display:none}
 .scale-label{position:absolute;transform:translate(-50%,-50%);font-size:9px;font-weight:bold;pointer-events:none;
 text-shadow:0 0 3px rgba(0,0,0,.9)}
 select{padding:4px 5px;background:rgba(255,255,255,.18);border:none;border-radius:4px;color:#fff;font-size:12px}
 select option{color:#000}
+
+/* ----- synth options popover (low note / hex key size) ----- */
+#synthCfgPanel{position:fixed;right:10px;bottom:120px;z-index:101;background:rgba(0,0,0,.78);
+backdrop-filter:blur(5px);padding:10px 12px;border-radius:8px;display:flex;flex-direction:column;gap:8px;
+font-size:12px;color:#fff;min-width:170px}
+#synthCfgPanel[hidden]{display:none}
+#synthCfgPanel label{display:flex;justify-content:space-between;gap:10px;align-items:center;color:#fff}
 </style>
 </head>
 <body>
 <!-- ---------- MAIN CANVAS ---------- -->
 <div id="soundPad"><div id="drumGrid"></div>
 <svg id="scaleGrid" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
-<div id="scaleLabels"></div></div>
-<div id="info">3 rows × 6 cols – every row is a different kit. Y-position tweaks pitch/brightness.</div>
+<div id="scaleLabels"></div>
+<canvas id="hexGrid"></canvas></div>
+
+<!-- ---------- SYNTH OPTIONS POPOVER ---------- -->
+<div id="synthCfgPanel" hidden>
+  <label>Voice
+    <select id="voiceSel">
+      <option value="sine">Soft</option><option value="tri">Flute</option>
+      <option value="saw">Strings</option><option value="square">Retro</option>
+      <option value="organ">Organ</option><option value="pluck">Pluck</option>
+    </select>
+  </label>
+  <label>Low note
+    <select id="baseOctSel">
+      <option value="1">C1 · deep</option><option value="2">C2</option><option value="3">C3</option>
+      <option value="4">C4</option><option value="5">C5 · high</option>
+    </select>
+  </label>
+  <label>Hex key size
+    <select id="hexSizeSel">
+      <option value="0.8">Small</option><option value="1">Normal</option>
+      <option value="1.3">Large</option><option value="1.6">Huge</option>
+    </select>
+  </label>
+  <label>Edge margin
+    <select id="edgeInsetSel">
+      <option value="0">Off</option><option value="24">Small</option><option value="40">Big</option>
+    </select>
+  </label>
+  <label>Hex step →
+    <select id="hexEastSel"></select>
+  </label>
+  <label>Hex step ↗
+    <select id="hexNESel"></select>
+  </label>
+  <label>Loop measures
+    <select id="barsSel">
+      <option value="1">1</option><option value="2">2</option><option value="4">4</option>
+      <option value="8">8</option><option value="12">12</option><option value="16">16</option>
+    </select>
+  </label>
+  <label>Beats / measure
+    <select id="timeSigSel">
+      <option value="2">2</option><option value="3">3</option><option value="4">4</option>
+      <option value="5">5</option><option value="6">6</option><option value="7">7</option>
+      <option value="8">8</option><option value="9">9</option>
+    </select>
+  </label>
+</div>
 
 <!-- ---------- RECORDINGS PANEL ---------- -->
 <div id="recordingsToggle"><span>Recordings</span><span id="dropdownArrow">▼</span></div>
@@ -89,18 +142,10 @@ select option{color:#000}
 <div id="controls">
   <div class="control-group"><label>Instr:</label><button id="instrumentBtn">Synth</button></div>
   <div class="control-group"><label>Scale</label>
-    <select id="scaleSel">
-      <option value="off">Off</option><option value="major">Major</option><option value="minor">Minor</option>
-      <option value="majpent">Major Pent</option><option value="minpent">Minor Pent</option>
-      <option value="blues">Blues</option><option value="dorian">Dorian</option><option value="mixo">Mixolydian</option>
-      <option value="harmminor">Harm Minor</option><option value="whole">Whole Tone</option>
-      <option value="chromatic">Chromatic</option>
-    </select>
-    <select id="rootSel">
-      <option value="0">C</option><option value="1">C#</option><option value="2">D</option><option value="3">D#</option>
-      <option value="4">E</option><option value="5">F</option><option value="6">F#</option><option value="7">G</option>
-      <option value="8">G#</option><option value="9">A</option><option value="10">A#</option><option value="11">B</option>
-    </select>
+    <select id="edoSel"></select>
+    <select id="scaleSel"></select>
+    <select id="rootSel"></select>
+    <button id="synthCfgBtn" title="synth options">⚙</button>
   </div>
   <div class="control-group"><button id="clearBtn">Clear</button></div>
   <div class="control-group"><label>Tempo</label><input type="range" id="tempoSlider" min="40" max="200" value="120"><span id="tempoValue" class="control-value">120 BPM</span></div>
@@ -122,7 +167,12 @@ const pad=$('soundPad'), grid=$('drumGrid'),
       arrow=$('dropdownArrow'), recordingsPanel=$('recordingsPanel'), recordingsList=$('recordingsList'),
       badge=$('recordingBadge'), instBtn=$('instrumentBtn'),
       scaleSel=$('scaleSel'), rootSel=$('rootSel'), scaleGridEl=$('scaleGrid'),
-      scaleLabels=$('scaleLabels'), info=$('info'), scrubSlider=$('scrubSlider');
+      scaleLabels=$('scaleLabels'), scrubSlider=$('scrubSlider'),
+      edoSel=$('edoSel'), hexCanvas=$('hexGrid'),
+      synthCfgBtn=$('synthCfgBtn'), synthCfgPanel=$('synthCfgPanel'),
+      baseOctSel=$('baseOctSel'), hexSizeSel=$('hexSizeSel'), edgeInsetSel=$('edgeInsetSel'),
+      hexEastSel=$('hexEastSel'), hexNESel=$('hexNESel'),
+      barsSel=$('barsSel'), timeSigSel=$('timeSigSel'), voiceSel=$('voiceSel');
 
 /* ==== GRID SIZE ==== */
 const COLS=6, ROWS=3;
@@ -133,18 +183,29 @@ for(let r=1;r<ROWS;r++){const l=document.createElement('div');l.className='drum-
 
 /* ==== AUDIO ==== */
 let ctx;const audio=()=>{if(!ctx)ctx=new (window.AudioContext||webkitAudioContext)();if(ctx.state!=='running')ctx.resume();return ctx;};
+/* master limiter bus — many overlapping voices (3-finger drags retrigger new
+   oscillators while old release tails still sound) used to sum past 1.0 and
+   hard-clip into crackles; the compressor squashes peaks smoothly instead */
+let busNode=null;
+const bus=()=>{const c=audio();
+  if(!busNode){const comp=c.createDynamicsCompressor();
+    comp.threshold.value=-10;comp.knee.value=6;comp.ratio.value=12;comp.attack.value=.003;comp.release.value=.25;
+    const mg=c.createGain();mg.gain.value=.85;
+    comp.connect(mg);mg.connect(c.destination);busNode=comp;}
+  return busNode;};
 
 /* ==== GLOBAL STATE ==== */
 let instrument='synth';
 instBtn.onclick=()=>{[...touches.keys()].forEach(pid=>synthEnd(pid));   // release held notes before switching
-  instrument=instrument==='synth'?'drums':'synth';
-  instBtn.textContent=instrument==='synth'?'Synth':'Drums';
+  instrument=instrument==='synth'?'hex':instrument==='hex'?'drums':'synth';
+  instBtn.textContent=instrument==='synth'?'Synth':instrument==='hex'?'Hex':'Drums';
   grid.style.display=instrument==='drums'?'block':'none';
-  renderScaleGrid();updateInfo();};
+  renderScaleGrid();drawHexGrid();};
 grid.style.display='none';
 
 let tempo=120,metOn=false,metGen=0,beat=0,bar=0,nextBeat=0,tickTimer=null,loopAnchor=null;
-const RELEASE=.05, MARKER_FADE=50, OSC_TAIL=300,timeSig=4,barsPerLoop=8,beatsPerLoop=timeSig*barsPerLoop;
+const RELEASE=.05, MARKER_FADE=50, OSC_TAIL=300;
+let timeSig=4,barsPerLoop=8,beatsPerLoop=timeSig*barsPerLoop;   // loop shape — configurable in ⚙
 let isRec=false,isPlay=false,recordings=[],recSeq=1,curRec=null;
 const touches=new Map();let nextNoteId=1;
 let playTimers=[],cycleTimer=null,playOrigin,playGen=0;const playNotes=new Map();
@@ -167,38 +228,38 @@ const env=(g,t,h,d)=>{g.gain.setValueAtTime(1,t);g.gain.exponentialRampToValueAt
 /*  row 0 – acoustic-ish ------------------------------------------------ */
 function kick(p,t=audio().currentTime){const c=audio(),o=c.createOscillator(),g=c.createGain();
   const f1=100+120*p,f2=40+40*p;o.type='sine';o.frequency.setValueAtTime(f1,t);o.frequency.exponentialRampToValueAtTime(f2,t+.45);
-  env(g,t,0,.45);o.connect(g);g.connect(c.destination);o.start(t);o.stop(t+.5);}
+  env(g,t,0,.45);o.connect(g);g.connect(bus());o.start(t);o.stop(t+.5);}
 function snare(p,t=audio().currentTime){const c=audio();
   const n=c.createBufferSource();n.buffer=noise();const nf=c.createBiquadFilter();nf.type='highpass';nf.frequency.value=1200;
-  const ng=c.createGain();env(ng,t,.02,.18);n.connect(nf);nf.connect(ng);ng.connect(c.destination);n.start(t);n.stop(t+.2);
+  const ng=c.createGain();env(ng,t,.02,.18);n.connect(nf);nf.connect(ng);ng.connect(bus());n.start(t);n.stop(t+.2);
   const o=c.createOscillator(),g=c.createGain();o.type='triangle';o.frequency.setValueAtTime(120+180*p,t);env(g,t,.02,.18);
-  o.connect(g);g.connect(c.destination);o.start(t);o.stop(t+.2);}
+  o.connect(g);g.connect(bus());o.start(t);o.stop(t+.2);}
 function hatc(p,t=audio().currentTime){const c=audio(),n=c.createBufferSource();n.buffer=noise();
   const hp=c.createBiquadFilter();hp.type='highpass';hp.frequency.value=6000+4000*p;
-  const g=c.createGain();env(g,t,.01,.06);n.connect(hp);hp.connect(g);g.connect(c.destination);n.start(t);n.stop(t+.07);}
+  const g=c.createGain();env(g,t,.01,.06);n.connect(hp);hp.connect(g);g.connect(bus());n.start(t);n.stop(t+.07);}
 function hato(p,t=audio().currentTime){const c=audio(),n=c.createBufferSource();n.buffer=noise();
   const hp=c.createBiquadFilter();hp.type='highpass';hp.frequency.value=5000+4000*p;
-  const g=c.createGain();env(g,t,.1,.4);n.connect(hp);hp.connect(g);g.connect(c.destination);n.start(t);n.stop(t+.5);}
+  const g=c.createGain();env(g,t,.1,.4);n.connect(hp);hp.connect(g);g.connect(bus());n.start(t);n.stop(t+.5);}
 function clap(p,t=audio().currentTime){const c=audio(),bp=c.createBiquadFilter();bp.type='bandpass';bp.frequency.value=700+600*p;
   for(let i=0;i<3;i++){const n=c.createBufferSource();n.buffer=noise();const g=c.createGain();
-    env(g,t+i*0.015,.005,.07);n.connect(bp);bp.connect(g);g.connect(c.destination);
+    env(g,t+i*0.015,.005,.07);n.connect(bp);bp.connect(g);g.connect(bus());
     n.start(t+i*0.015);n.stop(t+.15);} }
 function tomLow(p,t=audio().currentTime){const c=audio(),o=c.createOscillator(),g=c.createGain();
   const f1=150+200*p,f2=60+40*p;o.type='triangle';o.frequency.setValueAtTime(f1,t);o.frequency.exponentialRampToValueAtTime(f2,t+.5);
-  env(g,t,.02,.48);o.connect(g);g.connect(c.destination);o.start(t);o.stop(t+.55);}
+  env(g,t,.02,.48);o.connect(g);g.connect(bus());o.start(t);o.stop(t+.55);}
 
 /*  row 1 – mid kit ------------------------------------------------------ */
 function kick808(p,t){kick(Math.min(1,p+.3),t);}             // deeper / longer
 function rim(p,t=audio().currentTime){const c=audio(),o=c.createOscillator(),g=c.createGain();
-  o.type='square';o.frequency.value=1800+400*p;env(g,t,.005,.08);o.connect(g);g.connect(c.destination);
+  o.type='square';o.frequency.value=1800+400*p;env(g,t,.005,.08);o.connect(g);g.connect(bus());
   o.start(t);o.stop(t+.09);}
 function shaker(p,t=audio().currentTime){const c=audio(),n=c.createBufferSource();n.buffer=noise();
   const bp=c.createBiquadFilter();bp.type='bandpass';bp.frequency.value=3000+2000*p;
-  const g=c.createGain();env(g,t,.01,.12);n.connect(bp);bp.connect(g);g.connect(c.destination);
+  const g=c.createGain();env(g,t,.01,.12);n.connect(bp);bp.connect(g);g.connect(bus());
   n.start(t);n.stop(t+.14);}
 function cowbell(p,t=audio().currentTime){const c=audio(),o1=c.createOscillator(),o2=c.createOscillator(),g=c.createGain();
   o1.type='square';o2.type='square';o1.frequency.value=800+200*p;o2.frequency.value=1200+300*p;
-  env(g,t,.02,.25);o1.connect(g);o2.connect(g);g.connect(c.destination);o1.start(t);o2.start(t);o1.stop(t+.3);o2.stop(t+.3);}
+  env(g,t,.02,.25);o1.connect(g);o2.connect(g);g.connect(bus());o1.start(t);o2.start(t);o1.stop(t+.3);o2.stop(t+.3);}
 function bigClap(p,t){clap(Math.min(1,p+.3),t);}
 function tomMid(p,t){tomLow(Math.min(1,p+.35),t);}
 
@@ -206,16 +267,16 @@ function tomMid(p,t){tomLow(Math.min(1,p+.35),t);}
 function subKick(p,t){kick(Math.max(0,p-.4),t);}
 function snap(p,t=audio().currentTime){const c=audio(),n=c.createBufferSource();n.buffer=noise();
   const hp=c.createBiquadFilter();hp.type='highpass';hp.frequency.value=4000+3000*p;
-  const g=c.createGain();env(g,t,.005,.07);n.connect(hp);hp.connect(g);g.connect(c.destination);
+  const g=c.createGain();env(g,t,.005,.07);n.connect(hp);hp.connect(g);g.connect(bus());
   n.start(t);n.stop(t+.08);}
 function ride(p,t=audio().currentTime){const c=audio(),n=c.createBufferSource();n.buffer=noise();
   const hp=c.createBiquadFilter();hp.type='highpass';hp.frequency.value=8000+1000*p;
-  const g=c.createGain();env(g,t,.4,.9);n.connect(hp);hp.connect(g);g.connect(c.destination);n.start(t);n.stop(t+1.4);}
+  const g=c.createGain();env(g,t,.4,.9);n.connect(hp);hp.connect(g);g.connect(bus());n.start(t);n.stop(t+1.4);}
 function crash(p,t=audio().currentTime){const c=audio(),n=c.createBufferSource();n.buffer=noise();
   const bp=c.createBiquadFilter();bp.type='bandpass';bp.frequency.value=3000+2000*p;
-  const g=c.createGain();env(g,t,.3,1.2);n.connect(bp);bp.connect(g);g.connect(c.destination);n.start(t);n.stop(t+1.6);}
+  const g=c.createGain();env(g,t,.3,1.2);n.connect(bp);bp.connect(g);g.connect(bus());n.start(t);n.stop(t+1.6);}
 function clave(p,t=audio().currentTime){const c=audio(),o=c.createOscillator(),g=c.createGain();
-  o.type='square';o.frequency.value=2500+1000*p;env(g,t,.005,.06);o.connect(g);g.connect(c.destination);o.start(t);o.stop(t+.07);}
+  o.type='square';o.frequency.value=2500+1000*p;env(g,t,.005,.06);o.connect(g);g.connect(bus());o.start(t);o.stop(t+.07);}
 function tomHigh(p,t){tomLow(Math.max(0,p-.35),t);}
 
 /*  Map every unique name to function */
@@ -232,55 +293,132 @@ const rowInstruments=[
   ['subKick','snap','ride','crash','clave','tomHigh']
 ];
 
-/* ==== SYNTH (melodic) ==== */
-const BASE=130.81;
-const freq=(nx,ny)=>BASE*Math.pow(2,(((nx*5)*7)+((ny*5)*4))/12);
-const noteName=f=>{const N=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
-  const s=Math.round(12*Math.log2(f/16.35));return N[(s%12+12)%12]+Math.floor(s/12);};
+/* ==== SYNTH (melodic) — generalized to any equal temperament ====
+   Pitch is linear in pad position: EDO steps above BASE = X*nx + Y*ny where
+   X = 5 fifths and Y = 5 major thirds OF THE CURRENT EDO (12-EDO: 35 & 20,
+   exactly the original layout). */
+const C3=130.81;let baseOct=3,hexScale=1;            // low note + hex key size (⚙ panel)
+// Android gesture navigation reserves ~30px strips at the screen edges — a
+// SECOND finger landing there while one is held gets eaten by the system's
+// back-gesture detector (web content can't request exclusion zones). The edge
+// margin pulls the hex keys inward out of those strips; default on for Android.
+let edgeInset=(typeof navigator!=='undefined'&&/Android/i.test(navigator.userAgent||''))?24:0;
+const baseFreq=()=>C3*Math.pow(2,baseOct-3);         // step 0 ("BASE") in every tuning
+const EDOS=[5,6,7,8,9,10,11,12,13,14,15,16,17,19,22,24,26,31,34,41,53];
+let edo=12;
+const edoFifth=n=>Math.round(n*Math.log2(3/2));      // best fifth of n-EDO
+const edoThird=n=>Math.round(n*Math.log2(5/4));      // best major third
+const spanX=()=>5*edoFifth(edo), spanY=()=>5*edoThird(edo);
+const freq=(nx,ny)=>baseFreq()*Math.pow(2,(spanX()*nx+spanY()*ny)/edo);
+const stepFreq=k=>baseFreq()*Math.pow(2,k/edo);
+const noteName=f=>{
+  if(edo===12){const N=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+    const s=Math.round(12*Math.log2(f/16.35));return N[(s%12+12)%12]+Math.floor(s/12);}
+  const st=Math.round(edo*Math.log2(f/baseFreq()));
+  return (((st%edo)+edo)%edo)+'\\'+edo;              // microtonal degree notation, e.g. 5\13
+};
 
 /* ==== QUANTIZE (scale snapping + pitch-line grid) ====
-   Pitch is linear in pad position: semitones above BASE = 35*nx + 20*ny.
-   So "every position playing note k" is the diagonal line 35x+20y=k — the grid
-   renders one line per scale note and touches snap (and project) onto them. */
-const SCALES={off:null,chromatic:[0,1,2,3,4,5,6,7,8,9,10,11],major:[0,2,4,5,7,9,11],
-  minor:[0,2,3,5,7,8,10],majpent:[0,2,4,7,9],minpent:[0,3,5,7,10],blues:[0,3,5,6,7,10],
-  dorian:[0,2,3,5,7,9,10],mixo:[0,2,4,5,7,9,10],harmminor:[0,2,3,5,7,8,11],whole:[0,2,4,6,8,10]};
-const SCALE_NAMES={chromatic:'Chromatic',major:'Major',minor:'Minor',majpent:'Maj Pent',
-  minpent:'Min Pent',blues:'Blues',dorian:'Dorian',mixo:'Mixolydian',harmminor:'Harm Minor',whole:'Whole Tone'};
+   "Every position playing step k" is the diagonal line X*x+Y*y=k — the grid
+   renders one line per scale note and touches snap (and project) onto them.
+   Scales are defined as CHAINS OF FIFTHS (a generator chain with the root at
+   chain index `root`), which makes the diatonic modes and pentatonics
+   meaningful in every EDO — in 12-EDO they reduce to exactly the classic
+   sets. 12-only interval scales keep an explicit steps list. */
+const SCALES={
+  off:      null,
+  chromatic:{kind:'all',       name:'Chromatic'},
+  lydian:   {kind:'chain',len:7,root:0,name:'Lydian'},
+  major:    {kind:'chain',len:7,root:1,name:'Major'},
+  mixo:     {kind:'chain',len:7,root:2,name:'Mixolydian'},
+  dorian:   {kind:'chain',len:7,root:3,name:'Dorian'},
+  minor:    {kind:'chain',len:7,root:4,name:'Minor'},
+  phrygian: {kind:'chain',len:7,root:5,name:'Phrygian'},
+  locrian:  {kind:'chain',len:7,root:6,name:'Locrian'},
+  majpent:  {kind:'chain',len:5,root:0,name:'Maj Pent'},
+  minpent:  {kind:'chain',len:5,root:3,name:'Min Pent'},
+  blues:    {kind:'steps',steps:[0,3,5,6,7,10],name:'Blues',edo12:true},
+  harmminor:{kind:'steps',steps:[0,2,3,5,7,8,11],name:'Harm Minor',edo12:true},
+  whole:    {kind:'steps',steps:[0,2,4,6,8,10],name:'Whole Tone',edo12:true},
+};
+const SCALE_ORDER=['off','major','minor','lydian','mixo','dorian','phrygian','locrian',
+  'majpent','minpent','blues','harmminor','whole','chromatic'];
 const ROOTS=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
-const SEMI_MAX=55;                                   // 35+20: the pad's reachable range
-let scaleKey='off',rootSemi=0,quantOn=false,allowedSemis=[];
+let scaleKey='off',rootSemi=0,quantOn=false,allowedSemis=[],scalePCs=null;
+function scaleSteps(def){                            // pitch-class Set (root at 0) in the current edo
+  const set=new Set();
+  if(def.kind==='all'){for(let i=0;i<edo;i++)set.add(i);}
+  else if(def.kind==='chain'){const g=edoFifth(edo);
+    for(let i=0;i<def.len;i++)set.add((((i-def.root)*g)%edo+edo)%edo);}
+  else def.steps.forEach(s=>{if(s<edo)set.add(s);});
+  return set;
+}
+function rebuildTuningSelects(){
+  edoSel.innerHTML=EDOS.map(n=>'<option value="'+n+'">'+n+'-EDO</option>').join('');
+  edoSel.value=String(edo);
+  if(SCALES[scaleKey]&&SCALES[scaleKey].edo12&&edo!==12)scaleKey='chromatic';
+  scaleSel.innerHTML=SCALE_ORDER.filter(k=>!(SCALES[k]&&SCALES[k].edo12&&edo!==12))
+    .map(k=>'<option value="'+k+'">'+(k==='off'?'Off':SCALES[k].name)+'</option>').join('');
+  scaleSel.value=scaleKey;
+  if(rootSemi>=edo)rootSemi=0;
+  let ro='';for(let i=0;i<edo;i++)ro+='<option value="'+i+'">'+(edo===12?ROOTS[i]:i)+'</option>';
+  rootSel.innerHTML=ro;rootSel.value=String(rootSemi);
+  baseOctSel.value=String(baseOct);hexSizeSel.value=String(hexScale);edgeInsetSel.value=String(edgeInset);
+  voiceSel.value=voiceKey;
+  // layout-step selects: 'auto' (Wicki–Hayden for this EDO) + 0..edo steps
+  if(typeof hexEastPref==='number'&&hexEastPref>edo)hexEastPref='auto';
+  if(typeof hexNEPref==='number'&&hexNEPref>edo)hexNEPref='auto';
+  const stepOpts=(auto)=>{let h='<option value="auto">Auto (+'+auto+')</option>';
+    for(let i=0;i<=edo;i++)h+='<option value="'+i+'">+'+i+'</option>';return h;};
+  hexEastSel.innerHTML=stepOpts(2*edoFifth(edo)-edo);hexEastSel.value=String(hexEastPref);
+  hexNESel.innerHTML=stepOpts(edoFifth(edo));hexNESel.value=String(hexNEPref);
+}
 function loadQuantPrefs(){try{const p=JSON.parse(localStorage.getItem('synth.quant.v1'))||{};
+  if(EDOS.includes(p.edo))edo=p.edo;
   if(SCALES.hasOwnProperty(p.scale))scaleKey=p.scale;
-  if(typeof p.root==='number'&&p.root>=0&&p.root<12)rootSemi=Math.floor(p.root);}catch(_){}}
-function saveQuantPrefs(){try{localStorage.setItem('synth.quant.v1',JSON.stringify({scale:scaleKey,root:rootSemi}))}catch(_){}}
+  if(typeof p.root==='number'&&p.root>=0&&p.root<edo)rootSemi=Math.floor(p.root);
+  if(typeof p.baseOct==='number'&&p.baseOct>=1&&p.baseOct<=5)baseOct=Math.round(p.baseOct);
+  if([0.8,1,1.3,1.6].includes(p.hexScale))hexScale=p.hexScale;
+  if([0,24,40].includes(p.edgeInset))edgeInset=p.edgeInset;
+  const stepOk=(v)=>v==='auto'||(typeof v==='number'&&v>=0&&v<=edo&&v===Math.round(v));
+  if(stepOk(p.hexEast))hexEastPref=p.hexEast;
+  if(stepOk(p.hexNE))hexNEPref=p.hexNE;
+  if([1,2,4,8,12,16].includes(p.bars))barsPerLoop=p.bars;
+  if(typeof p.timeSig==='number'&&p.timeSig>=2&&p.timeSig<=9)timeSig=Math.round(p.timeSig);
+  beatsPerLoop=timeSig*barsPerLoop;
+  if(VOICES.hasOwnProperty(p.voice))voiceKey=p.voice;}catch(_){}}
+function saveQuantPrefs(){try{localStorage.setItem('synth.quant.v1',
+  JSON.stringify({scale:scaleKey,root:rootSemi,edo:edo,baseOct:baseOct,hexScale:hexScale,
+    edgeInset:edgeInset,hexEast:hexEastPref,hexNE:hexNEPref,bars:barsPerLoop,timeSig:timeSig,voice:voiceKey}))}catch(_){}}
 function applyQuant(){
+  rebuildTuningSelects();
   quantOn=!!SCALES[scaleKey];allowedSemis=[];
-  if(quantOn)for(let k=0;k<=SEMI_MAX;k++)if(SCALES[scaleKey].includes(((k-rootSemi)%12+12)%12))allowedSemis.push(k);
-  scaleSel.value=scaleKey;rootSel.value=String(rootSemi);
-  saveQuantPrefs();renderScaleGrid();updateInfo();
+  scalePCs=quantOn?scaleSteps(SCALES[scaleKey]):null;
+  if(quantOn){const max=spanX()+spanY();
+    for(let k=0;k<=max;k++)if(scalePCs.has(((k-rootSemi)%edo+edo)%edo))allowedSemis.push(k);}
+  saveQuantPrefs();renderScaleGrid();drawHexGrid();
 }
 function snapSemi(s){let best=allowedSemis[0],bd=1e9;
   for(const k of allowedSemis){const d=Math.abs(k-s);if(d<bd){bd=d;best=k;}}return best;}
 function pitchAt(nx,ny){
   if(!quantOn||!allowedSemis.length)return {f:freq(nx,ny),nx,ny};
-  const s=35*nx+20*ny,k=snapSemi(s),d=(s-k)/1625;    // project onto the iso-pitch line (|∇s|²=35²+20²)
-  return {f:BASE*Math.pow(2,k/12),
-    nx:Math.min(1,Math.max(0,nx-35*d)),ny:Math.min(1,Math.max(0,ny-20*d))};
+  const X=spanX(),Y=spanY(),s=X*nx+Y*ny,k=snapSemi(s),d=(s-k)/(X*X+Y*Y);   // project onto the iso-pitch line
+  return {f:stepFreq(k),
+    nx:Math.min(1,Math.max(0,nx-X*d)),ny:Math.min(1,Math.max(0,ny-Y*d))};
 }
-const lineHue=k=>(Math.log2(BASE*Math.pow(2,k/12))*100)%360;   // same hue formula as the note markers
+const lineHue=k=>(Math.log2(stepFreq(k))*100)%360;   // same hue formula as the note markers
 function renderScaleGrid(){
   const show=quantOn&&instrument==='synth';
   scaleGridEl.style.display=show?'block':'none';scaleLabels.style.display=show?'block':'none';
   if(!show)return;
-  const lines=[];let labels='';
+  const X=spanX(),Y=spanY(),lines=[];let labels='';
   for(const k of allowedSemis){
     const pts=[];const add=(x,y)=>{if(x>=-1e-9&&x<=1+1e-9&&y>=-1e-9&&y<=1+1e-9)
       pts.push([Math.min(1,Math.max(0,x)),Math.min(1,Math.max(0,y))]);};
-    add(0,k/20);add(1,(k-35)/20);add(k/35,0);add((k-20)/35,1);   // clip 35x+20y=k to the unit square
+    add(0,k/Y);add(1,(k-X)/Y);add(k/X,0);add((k-Y)/X,1);   // clip X*x+Y*y=k to the unit square
     const uniq=pts.filter((p,j)=>pts.findIndex(q=>Math.abs(q[0]-p[0])<1e-6&&Math.abs(q[1]-p[1])<1e-6)===j);
     if(uniq.length<2)continue;
-    const [a,b]=uniq,isRoot=((k-rootSemi)%12+12)%12===0,hue=lineHue(k);
+    const [a,b]=uniq,isRoot=((k-rootSemi)%edo+edo)%edo===0,hue=lineHue(k);
     lines.push('<line x1="'+(a[0]*100).toFixed(2)+'" y1="'+((1-a[1])*100).toFixed(2)+
       '" x2="'+(b[0]*100).toFixed(2)+'" y2="'+((1-b[1])*100).toFixed(2)+
       '" stroke="hsl('+hue.toFixed(0)+' 70% 70%/'+(isRoot?'.75':'.3')+')" stroke-width="'+(isRoot?2:1)+
@@ -289,19 +427,132 @@ function renderScaleGrid(){
       const top=a[1]>b[1]?a:b,bot=a[1]>b[1]?b:a;
       const lx=top[0]+(bot[0]-top[0])*.04,ly=top[1]+(bot[1]-top[1])*.04;
       labels+='<div class="scale-label" style="left:'+(lx*100).toFixed(2)+'%;top:'+((1-ly)*100).toFixed(2)+
-        '%;color:hsl('+hue.toFixed(0)+' 80% 78%)">'+noteName(BASE*Math.pow(2,k/12))+'</div>';
+        '%;color:hsl('+hue.toFixed(0)+' 80% 78%)">'+noteName(stepFreq(k))+'</div>';
     }
   }
   scaleGridEl.innerHTML=lines.join('');scaleLabels.innerHTML=labels;
 }
-function updateInfo(){
-  info.textContent=instrument==='drums'
-    ?'3 rows × 6 cols – every row is a different kit. Y-position tweaks pitch/brightness.'
-    :quantOn?('Snapping to '+ROOTS[rootSemi]+' '+SCALE_NAMES[scaleKey]+' – play along the lines.')
-    :'Drag anywhere – right raises pitch in fifths, up in thirds. Pick a Scale to snap notes.';
-}
+edoSel.onchange=()=>{const n=+edoSel.value;if(EDOS.includes(n))edo=n;applyQuant();};
 scaleSel.onchange=()=>{scaleKey=SCALES.hasOwnProperty(scaleSel.value)?scaleSel.value:'off';applyQuant();};
-rootSel.onchange=()=>{rootSemi=Math.min(11,Math.max(0,(+rootSel.value||0)));applyQuant();};
+rootSel.onchange=()=>{rootSemi=Math.min(edo-1,Math.max(0,(+rootSel.value||0)));applyQuant();};
+
+/* ==== HEX KEYBOARD (Lumatone-style isomorphic keys, any EDO) ====
+   Pointy-top hexes in axial coords: east neighbour = +A steps (whole tone,
+   2*fifth − octave), northeast = +fifth — the Bosanquet/Wicki–Hayden layout
+   generalized to the current EDO (12-EDO: east +2, NE +7). Step 0 (= BASE,
+   the root C) sits at the bottom-left. */
+let hexLayout=null;
+/* layout basis: EDO steps per key going east (→) and northeast (↗).
+   'auto' = generalized Wicki–Hayden (east = whole tone, NE = fifth);
+   numeric prefs let the user build any isomorphic layout — translation
+   invariance holds for every choice since pitch stays linear in (q,r). */
+let hexEastPref='auto',hexNEPref='auto';
+const hexEastStep=()=>hexEastPref==='auto'?2*edoFifth(edo)-edo:hexEastPref;
+const hexNEStep=()=>hexNEPref==='auto'?edoFifth(edo):hexNEPref;
+function hexParams(){
+  // size keys against the USABLE height (above the control stack), aiming for
+  // ~7-8 rows — each row is a fifth up, so that spans a sane ~5 octaves.
+  // hexScale is the user's key-size preference from the ⚙ panel.
+  const bs=$('bottomStack'),bh=(bs&&bs.offsetHeight)||0;
+  const w=pad.clientWidth||320,uh=Math.max(160,(pad.clientHeight||320)-bh-8);
+  const ei=Math.min(edgeInset,w/6),ew=w-2*ei;        // playable span between the edge margins
+  const s0=Math.max(22,Math.min(52,uh/11.4,ew/9.6));
+  const s=Math.max(18,Math.min(96,s0*hexScale)),rx=Math.sqrt(3)/2*s;
+  return {s,w,uh,rx,h:pad.clientHeight||320,x0:ei,x1:w-ei,ox:ei+rx+4,oy:uh-s-2};
+}
+const hexCenter=(q,r,L)=>({x:L.ox+Math.sqrt(3)*L.s*(q+r/2),y:L.oy-1.5*L.s*r});
+function hexFromXY(x,y,L){
+  const rf=(L.oy-y)/(1.5*L.s),qf=(x-L.ox)/(Math.sqrt(3)*L.s)-rf/2;
+  let rq=Math.round(qf),rr=Math.round(rf);const rs=Math.round(-qf-rf);
+  const dq=Math.abs(rq-qf),dr=Math.abs(rr-rf),ds=Math.abs(rs+qf+rf);
+  if(dq>dr&&dq>ds)rq=-rr-rs;else if(dr>ds)rr=-rq-rs;
+  return {q:rq,r:rr};
+}
+const hexStepOf=(q,r)=>q*hexEastStep()+r*hexNEStep();
+function drawHexGrid(){
+  hexCanvas.style.display=instrument==='hex'?'block':'none';
+  if(instrument!=='hex')return;
+  const L=hexParams();hexLayout=L;
+  const dpr=Math.min(window.devicePixelRatio||1,3);
+  hexCanvas.width=Math.round(L.w*dpr);hexCanvas.height=Math.round(L.h*dpr);
+  const c=hexCanvas.getContext('2d');
+  c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,L.w,L.h);
+  c.textAlign='center';c.textBaseline='middle';
+  // draw only keys that fit FULLY inside the pad — no sliced half-hexes at
+  // the edges (edge taps snap inward to the nearest real key instead)
+  const rMax=Math.ceil(L.oy/(1.5*L.s));
+  for(let r=0;r<=rMax;r++){
+    const y=L.oy-1.5*L.s*r;
+    if(y<L.s-1)break;
+    const qLo=Math.floor(-L.ox/(Math.sqrt(3)*L.s)-r/2),qHi=Math.ceil((L.w-L.ox)/(Math.sqrt(3)*L.s)-r/2);
+    for(let q=qLo;q<=qHi;q++){
+      const p=hexCenter(q,r,L);
+      if(p.x<L.x0+L.rx-1||p.x>L.x1-L.rx+1)continue;
+      const st=hexStepOf(q,r),deg=((st-rootSemi)%edo+edo)%edo;
+      const inScale=!scalePCs||scalePCs.has(deg),isRoot=quantOn&&deg===0;
+      const hue=lineHue(st);
+      c.beginPath();
+      for(let i=0;i<6;i++){const th=Math.PI/6+i*Math.PI/3;
+        const vx=p.x+ (L.s-1)*Math.cos(th),vy=p.y+(L.s-1)*Math.sin(th);
+        i?c.lineTo(vx,vy):c.moveTo(vx,vy);}
+      c.closePath();
+      c.fillStyle=inScale?('hsl('+hue.toFixed(0)+' '+(isRoot?60:42)+'% '+(isRoot?40:29)+'%/'+(isRoot?.85:.55)+')')
+                         :'rgba(255,255,255,.045)';
+      c.fill();
+      c.strokeStyle=isRoot?'rgba(255,255,255,.5)':'rgba(255,255,255,.14)';
+      c.lineWidth=isRoot?1.6:1;
+      c.stroke();
+      c.fillStyle='rgba(255,255,255,'+(inScale?.8:.25)+')';
+      c.font=(edo===12?'600 10px':'600 9px')+' system-ui, sans-serif';
+      c.fillText(noteName(stepFreq(st)),p.x,p.y);
+    }
+  }
+}
+window.addEventListener('resize',()=>{if(instrument==='hex')drawHexGrid();});
+if(window.ResizeObserver)new ResizeObserver(()=>{if(instrument==='hex')drawHexGrid();}).observe(pad);
+
+/* ==== ⚙ SYNTH OPTIONS (low note / hex key size) ==== */
+synthCfgBtn.onclick=()=>{
+  synthCfgPanel.hidden=!synthCfgPanel.hidden;
+  if(!synthCfgPanel.hidden){const bs=$('bottomStack');
+    synthCfgPanel.style.bottom=(((bs&&bs.offsetHeight)||100)+10)+'px';}
+};
+// tap anywhere outside the panel (pad, keys, other controls) to dismiss it;
+// the gear stays excluded or its click would immediately re-toggle
+document.addEventListener('pointerdown',(e)=>{
+  if(synthCfgPanel.hidden)return;
+  if(synthCfgPanel.contains(e.target)||synthCfgBtn.contains(e.target))return;
+  synthCfgPanel.hidden=true;
+},true);
+baseOctSel.onchange=()=>{const v=Math.round(+baseOctSel.value);
+  if(v>=1&&v<=5)baseOct=v;applyQuant();};
+voiceSel.onchange=()=>{if(VOICES.hasOwnProperty(voiceSel.value))voiceKey=voiceSel.value;saveQuantPrefs();};
+hexSizeSel.onchange=()=>{const v=+hexSizeSel.value;
+  if([0.8,1,1.3,1.6].includes(v))hexScale=v;applyQuant();};
+edgeInsetSel.onchange=()=>{const v=Math.round(+edgeInsetSel.value);
+  if([0,24,40].includes(v))edgeInset=v;applyQuant();};
+const parseStepPref=(v)=>{if(v==='auto')return 'auto';
+  const n=Math.round(+v);return (n>=0&&n<=edo)?n:'auto';};
+hexEastSel.onchange=()=>{hexEastPref=parseStepPref(hexEastSel.value);applyQuant();};
+hexNESel.onchange=()=>{hexNEPref=parseStepPref(hexNESel.value);applyQuant();};
+/* loop shape: measures per loop × beats per measure. Recorded events keep
+   their absolute beatPos — shrinking the loop lets long phrases spill into
+   later passes (they wrap), so switching back is non-destructive. */
+const LOOP_BARS=[1,2,4,8,12,16];
+function setLoopShape(ts,bars){
+  timeSig=ts;barsPerLoop=bars;beatsPerLoop=ts*bars;
+  timeSigSel.value=String(ts);barsSel.value=String(bars);
+  scrubSlider.max=beatsPerLoop;
+  if(+scrubSlider.value>=beatsPerLoop)scrubSlider.value=0;
+  initDots();
+  if(metOn&&tickTimer){stopMet();startMet();}
+  if(isPlay)reschedule();
+  saveQuantPrefs();
+}
+barsSel.onchange=()=>{const v=Math.round(+barsSel.value);
+  setLoopShape(timeSig,LOOP_BARS.includes(v)?v:barsPerLoop);};
+timeSigSel.onchange=()=>{const v=Math.round(+timeSigSel.value);
+  setLoopShape((v>=2&&v<=9)?v:timeSig,barsPerLoop);};
 
 /* ==== RECORDING HELPERS ==== */
 function record(ev){if(!isRec)return;const now=audio().currentTime;
@@ -310,29 +561,96 @@ function record(ev){if(!isRec)return;const now=audio().currentTime;
 function updateBadge(){const n=recordings.filter(r=>r.active).length;badge.textContent=n;badge.classList.toggle('visible',n>0);}
 
 /* ==== SYNTH POINTER HANDLERS ==== */
+/* Releasing a voice whose 8ms attack ramp is still pending (fast wiggles
+   retrigger inside the ramp) must first cancel the ramp and pin the envelope
+   at its current value — scheduling the release on top of a live ramp leaves
+   conflicting timeline events and the value jumps discontinuously = pop. */
+function holdRelease(gp,at){
+  try{
+    if(gp.cancelAndHoldAtTime)gp.cancelAndHoldAtTime(at);
+    else{const v=gp.value;gp.cancelScheduledValues(at);gp.setValueAtTime(v,at);}
+  }catch(_){}
+  gp.setTargetAtTime(0,at,RELEASE);
+}
+/* ==== VOICES (instrument patches — pure oscillator recipes, no samples) ====
+   Each recorded note stamps its instrument (`inst` on the start event), so
+   tracks recorded with different voices layer correctly on playback. */
+const VOICES={
+  sine:  {name:'Soft',   wave:'sine',    lp:5000, amp:.3,  partials:[[1,1]]},
+  tri:   {name:'Flute',  wave:'triangle',lp:4000, amp:.3,  partials:[[1,1]]},
+  saw:   {name:'Strings',wave:'sawtooth',lp:2200, amp:.22, partials:[[1,1]]},
+  square:{name:'Retro',  wave:'square',  lp:1500, amp:.18, partials:[[1,1]]},
+  organ: {name:'Organ',  wave:'sine',    lp:6000, amp:.26, partials:[[1,1],[2,.5],[3,.25],[4,.12]]},
+  pluck: {name:'Pluck',  wave:'triangle',lp:3200, amp:.34, partials:[[1,1],[2,.3]], decay:.22},
+};
+let voiceKey='sine';
+function makeVoice(f,inst,at){
+  const c=audio(),t=Math.max(at||c.currentTime,c.currentTime),def=VOICES[inst]||VOICES.sine;
+  const g=c.createGain(),flt=c.createBiquadFilter();
+  flt.type='lowpass';flt.frequency.value=def.lp;
+  g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(def.amp,t+.008);   // soft attack — no onset click
+  if(def.decay)g.gain.setTargetAtTime(.001,t+.012,def.decay);                  // plucked voices decay while held
+  const oscs=def.partials.map(pr=>{
+    const o=c.createOscillator(),og=c.createGain();
+    o.type=def.wave;o.frequency.value=f*pr[0];og.gain.value=pr[1];
+    o.connect(og);og.connect(flt);o.start(t);return o;});
+  flt.connect(g);g.connect(bus());
+  return {oscs,g,setFreq(nf,when){oscs.forEach((o,i)=>o.frequency.setTargetAtTime(nf*def.partials[i][0],when,.01));},
+    stop(){oscs.forEach(o=>{try{o.stop()}catch(_){}});}};
+}
+function startVoice(pid,f,name,mx,my,nx,ny){
+  const v=makeVoice(f,voiceKey);
+  const col=`hsl(${(Math.log2(f)*100)%360} 80% 60%/.8)`,
+        m=marker('note-marker',mx,my,col,name),id='n'+nextNoteId++;
+  touches.set(pid,{id,v,m});record({type:'start',id,nx,ny,f,name,inst:voiceKey});
+  return touches.get(pid);
+}
 function synthStart(pid,x,y){
   if(touches.has(pid))synthEnd(pid);
-  const w=pad.clientWidth,h=pad.clientHeight,q=pitchAt(x/w,1-y/h),f=q.f,name=noteName(f),c=audio();
-  const o=c.createOscillator(),g=c.createGain(),flt=c.createBiquadFilter();
-  o.type='sine';o.frequency.value=f;g.gain.value=.3;flt.type='lowpass';flt.frequency.value=5000;
-  o.connect(flt);flt.connect(g);g.connect(c.destination);o.start();
-  const col=`hsl(${(Math.log2(f)*100)%360} 80% 60%/.8)`,
-        m=marker('note-marker',q.nx*w,(1-q.ny)*h,col,name),id='n'+nextNoteId++;
-  touches.set(pid,{id,o,g,m});record({type:'start',id,nx:q.nx,ny:q.ny,f,name});
+  const w=pad.clientWidth,h=pad.clientHeight,q=pitchAt(x/w,1-y/h);
+  startVoice(pid,q.f,noteName(q.f),q.nx*w,(1-q.ny)*h,q.nx,q.ny);
+}
+/* hex keys: discrete pitches; dragging onto a new key retriggers (gliss) */
+const hexClampXY=(x,y,L)=>({x:Math.min(L.x1-L.rx,Math.max(L.x0+L.rx,x)),y:Math.min(L.oy,Math.max(L.s,y))});
+// The nearest lattice key to a gutter tap can be one of the CULLED
+// (undrawn) edge keys — and the cull boundary staggers with each row, so
+// phantom hits would shift row by row. Snap into the drawn range instead,
+// mirroring drawHexGrid's bounds exactly.
+function hexSnapDrawn(q,r,L){
+  const rTop=Math.floor((L.oy-(L.s-1))/(1.5*L.s));
+  r=Math.max(0,Math.min(rTop,r));
+  const qMin=Math.ceil((L.x0+L.rx-1-L.ox)/(Math.sqrt(3)*L.s)-r/2);
+  const qMax=Math.floor((L.x1-L.rx+1-L.ox)/(Math.sqrt(3)*L.s)-r/2);
+  return {q:Math.max(qMin,Math.min(qMax,q)),r};
+}
+function hexStart(pid,x,y){
+  if(touches.has(pid))synthEnd(pid);
+  if(!hexLayout||hexLayout.h!==pad.clientHeight||hexLayout.w!==pad.clientWidth)drawHexGrid();  // self-heal on size change
+  const L=hexLayout,c0=hexClampXY(x,y,L),h0=hexFromXY(c0.x,c0.y,L),{q,r}=hexSnapDrawn(h0.q,h0.r,L);
+  const st=hexStepOf(q,r),f=stepFreq(st);
+  const p=hexCenter(q,r,L),w=pad.clientWidth,h=pad.clientHeight;
+  const t=startVoice(pid,f,noteName(f),p.x,p.y,p.x/w,1-p.y/h);
+  t.hexQ=q;t.hexR=r;
+}
+function hexMove(pid,x,y){
+  const t=touches.get(pid);if(!t)return;
+  const L=hexLayout,c0=hexClampXY(x,y,L),h0=hexFromXY(c0.x,c0.y,L),{q,r}=hexSnapDrawn(h0.q,h0.r,L);
+  if(q===t.hexQ&&r===t.hexR)return;
+  synthEnd(pid);hexStart(pid,x,y);
 }
 function synthMove(pid,x,y){
   const t=touches.get(pid);if(!t)return;
   const w=pad.clientWidth,h=pad.clientHeight,q=pitchAt(x/w,1-y/h),f=q.f,name=noteName(f),
         col=`hsl(${(Math.log2(f)*100)%360} 80% 60%/.8)`;
-  t.o.frequency.setTargetAtTime(f,ctx.currentTime,.01);
+  t.v.setFreq(f,ctx.currentTime);
   Object.assign(t.m.style,{left:q.nx*w+'px',top:(1-q.ny)*h+'px',background:col});t.m.textContent=name;
   record({type:'update',id:t.id,nx:q.nx,ny:q.ny,f,name});
 }
 function synthEnd(pid){
   const t=touches.get(pid);if(!t)return;
-  t.g.gain.setTargetAtTime(0,ctx.currentTime,RELEASE);t.m.style.opacity='0';t.m.style.transition=`opacity ${RELEASE}s`;
+  holdRelease(t.v.g.gain,ctx.currentTime);t.m.style.opacity='0';t.m.style.transition=`opacity ${RELEASE}s`;
   setTimeout(()=>t.m.remove(),MARKER_FADE);
-  setTimeout(()=>{try{t.o.stop()}catch(_){}},OSC_TAIL);touches.delete(pid);record({type:'end',id:t.id});
+  setTimeout(()=>t.v.stop(),OSC_TAIL);touches.delete(pid);record({type:'end',id:t.id});
 }
 
 /* ==== DRUM HIT ==== */
@@ -349,23 +667,32 @@ function hitDrum(x,y,playback=false){
 
 /* ==== POINTER DISPATCH ==== */
 function startNote(pid,x,y){
-  instrument==='synth'?synthStart(pid,x,y):record({type:'drum',...hitDrum(x,y,false)});
+  if(instrument==='drums'){record({type:'drum',...hitDrum(x,y,false)});return;}
+  instrument==='hex'?hexStart(pid,x,y):synthStart(pid,x,y);
 }
-function moveNote(pid,x,y){if(instrument==='synth')synthMove(pid,x,y);}
-function endNote(pid){if(instrument==='synth')synthEnd(pid);}
+function moveNote(pid,x,y){
+  if(instrument==='hex')hexMove(pid,x,y);else if(instrument==='synth')synthMove(pid,x,y);
+}
+function endNote(pid){if(instrument!=='drums')synthEnd(pid);}
 
 /* ==== RECORDINGS UI ==== */
 function addRow(r){
   const row=document.createElement('div');row.className='recording-item';row.id='rec-'+r.id;
   row.innerHTML=`<div class="recording-name"></div>
-  <div class="recording-controls"><button>▶</button><button>×</button></div>`;
+  <div class="recording-controls"><button title="mute / unmute"></button><button title="delete">×</button></div>`;
   row.querySelector('.recording-name').textContent=r.name;
   const [tog,del]=row.querySelectorAll('button');
+  row.classList.toggle('active',r.active);
+  tog.textContent=r.active?'🔊':'🔇';
   recordingsList.appendChild(row);
+  // the toggle is a MUTE button: it never starts or stops the transport, and
+  // it applies immediately mid-cycle (unmute joins the current pass, mute
+  // cancels this pass's pending notes and fades anything sounding)
   tog.onclick=()=>{r.active=!r.active;row.classList.toggle('active',r.active);
-    tog.textContent=r.active?'■':'▶';updateBadge();if(r.active&&!isPlay)startPlayback();
-    if(!recordings.some(a=>a.active))stopPlayback();};
+    tog.textContent=r.active?'🔊':'🔇';updateBadge();
+    if(isPlay){reschedule();if(!r.active)killTrackNotes(r.id);}};
   del.onclick=()=>{
+    if(!confirm('Delete '+r.name+'?'))return;
     if(r===curRec){isRec=false;curRec=null;recordBtn.classList.remove('active');
       recordBtn.textContent='Rec';scrubSlider.disabled=false;}
     recordings=recordings.filter(a=>a!==r);row.remove();updateBadge();
@@ -376,6 +703,10 @@ function addRow(r){
 /* ==== RECORD CONTROL ==== */
 function startRecording(){
   const c=audio();
+  // Rec implies Play: with existing active tracks, start the loop so the
+  // overdub is heard in context (playback engages FIRST so the recorder
+  // joins its grid instead of re-anchoring).
+  if(!isPlay&&recordings.some(r=>r.active))startPlayback();
   // Anchor the loop at the Rec press (metronome NOT required) — beat 0 is the
   // press itself, so off-beat/pickup starts land where they were played. A
   // grid already running (met ticking or tracks playing) keeps its anchor.
@@ -393,16 +724,17 @@ function stopRecording(autoPlay){
   isRec=false;recordBtn.classList.remove('active');recordBtn.textContent='Rec';scrubSlider.disabled=false;
   if(!curRec.events.length){recordings=recordings.filter(a=>a!==curRec);$('rec-'+curRec.id)?.remove();}
   else{curRec.active=true;const row=$('rec-'+curRec.id);
-    if(row){row.classList.add('active');row.querySelector('button').textContent='■';}}
+    if(row){row.classList.add('active');row.querySelector('button').textContent='🔊';}}
   updateBadge();if(autoPlay!==false&&curRec.active&&!isPlay)startPlayback(true);curRec=null;
+  if(tickTimer&&!isPlay)stopMet();                 // no session left → pause the ticking
 }
 
 /* ==== PLAYBACK ==== */
 function fadeNote(n,at){
-  n.g.gain.setTargetAtTime(0,at,RELEASE);n.m.style.opacity='0';n.m.style.transition=`opacity ${RELEASE}s`;
+  holdRelease(n.v.g.gain,at);n.m.style.opacity='0';n.m.style.transition=`opacity ${RELEASE}s`;
   const c=audio();
   setTimeout(()=>n.m.remove(),Math.max(0,(at-c.currentTime)*1000)+MARKER_FADE);
-  setTimeout(()=>{try{n.o.stop()}catch(_){}},Math.max(0,(at-c.currentTime)*1000)+OSC_TAIL);
+  setTimeout(()=>n.v.stop(),Math.max(0,(at-c.currentTime)*1000)+OSC_TAIL);
 }
 function killTrackNotes(rid){
   playNotes.forEach((n,key)=>{if(key.indexOf(rid+'_')===0){fadeNote(n,audio().currentTime);playNotes.delete(key);}});
@@ -417,16 +749,13 @@ function dispatch(rid,ev,when){
   if(ev.type==='start'){
     const old=playNotes.get(key);if(old){fadeNote(old,c.currentTime);playNotes.delete(key);}
     const x=ev.nx*pad.clientWidth,y=(1-ev.ny)*pad.clientHeight;
-    const o=c.createOscillator(),g=c.createGain(),flt=c.createBiquadFilter();
-    o.type='sine';o.frequency.value=ev.f;flt.type='lowpass';flt.frequency.value=5000;
-    g.gain.setValueAtTime(0,at);g.gain.linearRampToValueAtTime(.3,at+.005);
-    o.connect(flt);flt.connect(g);g.connect(c.destination);o.start(at);
+    const v=makeVoice(ev.f,ev.inst||'sine',at);      // each event replays with the voice it was recorded with
     const m=marker('playback-marker',x,y,'rgba(255,255,0,.25)',ev.name);
-    playNotes.set(key,{o,g,m});
+    playNotes.set(key,{v,m});
   }else if(ev.type==='update'){
     const n=playNotes.get(key);if(!n)return;
     const x=ev.nx*pad.clientWidth,y=(1-ev.ny)*pad.clientHeight;
-    n.o.frequency.setTargetAtTime(ev.f,at,.01);Object.assign(n.m.style,{left:x+'px',top:y+'px'});n.m.textContent=ev.name;
+    n.v.setFreq(ev.f,at);Object.assign(n.m.style,{left:x+'px',top:y+'px'});n.m.textContent=ev.name;
   }else{
     const n=playNotes.get(key);if(!n)return;
     fadeNote(n,at);playNotes.delete(key);
@@ -463,12 +792,21 @@ function stopPlayback(){
   if(!isPlay)return;isPlay=false;playGen++;playBtn.classList.remove('active');playBtn.textContent='Play';
   playTimers.forEach(clearTimeout);playTimers=[];clearTimeout(cycleTimer);cycleTimer=null;
   playNotes.forEach(n=>fadeNote(n,ctx.currentTime));playNotes.clear();
+  if(tickTimer&&!isRec)stopMet();                  // session over — met mode stays armed, ticking pauses
 }
 
 /* ==== METRONOME ==== */
-function initDots(){beatIndicator.innerHTML='';for(let i=0;i<beatsPerLoop;i++){
-  const d=document.createElement('div');d.className='beat-marker'+(i%timeSig===0?' accent':'');beatIndicator.appendChild(d);} }
-function flash(i){[...beatIndicator.children].forEach((d,idx)=>d.classList.toggle('active',idx===i));}
+let dotStride=1;                     // long loops show one dot per MEASURE so the strip fits a phone
+function initDots(){
+  dotStride=beatsPerLoop>48?timeSig:1;
+  const n=Math.ceil(beatsPerLoop/dotStride);
+  beatIndicator.style.gap=n>32?'2px':'4px';
+  beatIndicator.innerHTML='';
+  for(let i=0;i<n;i++){const d=document.createElement('div');
+    d.className='beat-marker'+((dotStride>1||i%timeSig===0)?' accent':'');beatIndicator.appendChild(d);}
+}
+function flash(i){const idx=i<0?-1:Math.floor(i/dotStride);
+  [...beatIndicator.children].forEach((d,k)=>d.classList.toggle('active',k===idx));}
 function calcGrid(){return 60/tempo;}
 function updateCounter(){barCounter.textContent=`${bar+1}.${beat+1}`;}
 function scheduleBeat(gen){
@@ -480,13 +818,19 @@ function scheduleBeat(gen){
   }
   const accent=!beat;
   const o=c.createOscillator(),g=c.createGain();o.frequency.value=accent?1000:800;g.gain.value=accent?0.25:0.15;
-  o.connect(g);g.connect(c.destination);o.start(nextBeat);o.stop(nextBeat+.05);
+  o.connect(g);g.connect(c.destination);o.start(nextBeat);o.stop(nextBeat+.05);   // met stays off the limiter bus
+  // capture THIS beat's position — the globals advance to the next beat below,
+  // and reading them in the timer callback made the display lead by one
+  const vb=bar*timeSig+beat,vt=(bar+1)+'.'+(beat+1);
   setTimeout(()=>{metLight.classList.add('active');setTimeout(()=>metLight.classList.remove('active'),80);
-    flash(bar*timeSig+beat);updateCounter();},Math.max(0,(nextBeat-c.currentTime)*1000-5));
+    flash(vb);barCounter.textContent=vt;},Math.max(0,(nextBeat-c.currentTime)*1000-5));
   beat=(beat+1)%timeSig;if(!beat){bar=(bar+1)%barsPerLoop;}
   nextBeat+=calcGrid();tickTimer=setTimeout(()=>scheduleBeat(gen),(nextBeat-c.currentTime-.005)*1000);}
 function startMet(){
-  if(!metOn)return;const c=audio();if(loopAnchor===null)loopAnchor=c.currentTime+.02;
+  // the met is a MODE: it only ticks during a play/record session, deriving
+  // its grid from the same loopAnchor so it's always locked to the loop
+  if(!metOn||(!isPlay&&!isRec))return;
+  const c=audio();if(loopAnchor===null)loopAnchor=c.currentTime+.02;
   metGen++;const grid=calcGrid(),req=c.currentTime+.02;
   const ahead=Math.ceil((req-loopAnchor)/grid);nextBeat=loopAnchor+ahead*grid;
   const q=ahead%beatsPerLoop;beat=q%timeSig;bar=Math.floor(q/timeSig);
@@ -525,7 +869,10 @@ scrubSlider.oninput=e=>scrubTo(Math.min(beatsPerLoop-.001,Math.max(0,+e.target.v
 /* ==== UI LISTENERS ==== */
 tempoSlider.oninput=e=>{tempo=+e.target.value;tempoValue.textContent=tempo+' BPM';
   if(metOn){stopMet();startMet();}if(isPlay)reschedule();};
-metBtn.onclick=()=>{metOn=!metOn;metBtn.textContent=metOn?'Met:On':'Met:Off';metOn?startMet():stopMet();};
+metBtn.onclick=()=>{metOn=!metOn;metBtn.textContent=metOn?'Met:On':'Met:Off';
+  if(!metOn){stopMet();return;}
+  if(!isPlay&&recordings.some(r=>r.active))startPlayback();   // met implies play (startPlayback starts the ticking)
+  else if(isPlay||isRec)startMet();};                         // joining a running session: tick in sync
 recordBtn.onclick=()=>isRec?stopRecording():startRecording();
 playBtn.onclick=()=>isPlay?stopPlayback():startPlayback();
 stopBtn.onclick=()=>{isRec&&stopRecording(false);isPlay&&stopPlayback();};
@@ -536,7 +883,7 @@ recToggle.onclick=()=>{recordingsPanel.classList.toggle('visible');arrow.textCon
 /* ==== POINTER EVENTS ==== */
 function down(e){e.preventDefault();
   if(e.type==='mousedown'){startNote('mouse',e.clientX,e.clientY);
-    if(instrument==='synth'){document.addEventListener('mousemove',move);document.addEventListener('mouseup',up);}}
+    if(instrument!=='drums'){document.addEventListener('mousemove',move);document.addEventListener('mouseup',up);}}
   else[...e.changedTouches].forEach(t=>startNote(t.identifier,t.clientX,t.clientY));}
 function move(e){e.preventDefault();
   if(e.type==='mousemove')moveNote('mouse',e.clientX,e.clientY);
@@ -555,8 +902,9 @@ document.addEventListener('mouseleave',()=>{if(touches.has('mouse')){synthEnd('m
 window.addEventListener('blur',()=>[...touches.keys()].forEach(pid=>synthEnd(pid)));
 
 /* ==== INIT ==== */
-initDots();loadQuantPrefs();applyQuant();
-scrubSlider.max=beatsPerLoop;scrubSlider.value=0;
+loadQuantPrefs();applyQuant();
+setLoopShape(timeSig,barsPerLoop);
+scrubSlider.value=0;
 
 /* ==== EXTERNAL SAVE / LOAD API ====
    Used by the Extras "Synth" window to save the current song (all
@@ -570,6 +918,9 @@ window.SynthApp = {
       tempo: tempo,
       scale: scaleKey,
       root: rootSemi,
+      edo: edo,
+      timeSig: timeSig,
+      bars: barsPerLoop,
       recordings: recordings.map(function (r) {
         return { name: r.name, events: r.events };
       })
@@ -586,15 +937,20 @@ window.SynthApp = {
       tempoSlider.value = tempo;
       tempoValue.textContent = tempo + ' BPM';
     }
+    if (EDOS.includes(song.edo)) edo = song.edo; else if (song.scale) edo = 12;
     if (typeof song.scale === 'string' && SCALES.hasOwnProperty(song.scale)) scaleKey = song.scale;
-    if (typeof song.root === 'number' && song.root >= 0 && song.root < 12) rootSemi = Math.floor(song.root);
+    if (typeof song.root === 'number' && song.root >= 0 && song.root < edo) rootSemi = Math.floor(song.root);
     applyQuant();
+    // loop shape the song was recorded against (legacy songs: the old 4×8)
+    var ts = (typeof song.timeSig === 'number' && song.timeSig >= 2 && song.timeSig <= 9) ? Math.round(song.timeSig) : 4;
+    var bl = LOOP_BARS.includes(song.bars) ? song.bars : 8;
+    setLoopShape(ts, bl);
     (Array.isArray(song.recordings) ? song.recordings : []).forEach(function (s) {
       var r = {
         id: recSeq++,
         name: (s && s.name) ? s.name : ('Track ' + (recSeq - 1)),
         events: (s && Array.isArray(s.events)) ? s.events : [],
-        active: false
+        active: true   // loaded tracks arrive unmuted — the toggle no longer auto-plays
       };
       recordings.push(r);
       addRow(r);

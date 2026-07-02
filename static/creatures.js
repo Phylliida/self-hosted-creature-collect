@@ -673,6 +673,65 @@
     catch { return false; }
   }
 
+  // Accessibility toggle (Settings → "Guaranteed catch"). When on, one
+  // physical throw always ends in a catch — but the normal odds still
+  // run underneath: hidden re-rolls consume real extra balls until the
+  // catch lands, and the shake phase is slowed so the whole sequence
+  // takes ~10% LONGER than those individual throws' animations would
+  // have (plus a re-aim allowance per hidden throw). Strain relief for
+  // repeated tapping, deliberately NOT a time or resource advantage.
+  function _guaranteedCatchOn() {
+    try { return localStorage.getItem('cc.steadyCatch') === '1'; }
+    catch { return false; }
+  }
+  // Pure planner for guaranteed-catch mode. rollShakes() returns 0-3
+  // successful shakes (3 = caught) at the ball's normal odds;
+  // tryConsume() pays for one hidden re-throw and returns false when
+  // the bag is empty (the FIRST ball is paid by the caller before this
+  // runs, matching the manual path). Returns the visible throw's
+  // wobble count + pacing.
+  //
+  // Pacing math: the durations below estimate the manual path's stage
+  // animations (arc, suck-in, per-shake wobble+pause, catch ding,
+  // break-out) plus a small re-aim allowance between manual throws.
+  // The single visible sequence keeps arc/suck-in/ding at normal speed
+  // and stretches only the shake phase so that
+  //     visible total ≥ MARGIN × (manual animation total)
+  // holds for every outcome — verified in tests/guaranteed-catch.test.js.
+  function _guaranteedThrowPlan(rollShakes, tryConsume) {
+    const ARC = 650, SUCK = 480, SHAKE = 700, CATCH_END = 540,
+      BREAK = 700, REAIM = 400, MARGIN = 1.1;
+    let shakes = rollShakes();
+    let caught = shakes === 3;
+    let ballsUsed = 1;
+    let totalShakes = shakes;
+    let normalMs = ARC + SUCK + shakes * SHAKE + (caught ? CATCH_END : BREAK);
+    while (!caught && tryConsume()) {
+      ballsUsed++;
+      shakes = rollShakes();
+      caught = shakes === 3;
+      totalShakes += shakes;
+      normalMs += REAIM + ARC + SUCK + shakes * SHAKE + (caught ? CATCH_END : BREAK);
+    }
+    if (!caught) {
+      // Bag ran dry with no successful roll: the creature breaks out
+      // at normal pacing. Every rolled ball was genuinely spent — the
+      // same balls manual throwing would have burned.
+      return { caught: false, wobbles: shakes, wobbleMs: 380, pauseMs: 320, ballsUsed };
+    }
+    // One slowed sequence: every hidden shake is shown, and the pace
+    // stretches so the total runs past the manual-time margin. per is
+    // the full wobble+pause slot; split in the same 380/320 ratio the
+    // manual path uses. Never faster than a normal shake.
+    const wobbles = Math.max(3, totalShakes);
+    const target = normalMs * MARGIN - (ARC + SUCK + CATCH_END);
+    const per = Math.max(SHAKE, target / wobbles);
+    return {
+      caught: true, wobbles, ballsUsed,
+      wobbleMs: per * (380 / 700), pauseMs: per * (320 / 700),
+    };
+  }
+
   // Per-player shiny roll. Unlike the rest of the encounter RNG (which
   // is deterministic in spawn id so two players see the same level /
   // size / variant), shinies are independent per player and decided at
@@ -11443,12 +11502,29 @@
 
     // Stage 2: outcome decision (random 0-3 successful shakes).
     const rate = meta.catchShakeRate || 0.65;
-    let shakes = 0;
-    for (let i = 0; i < 3; i++) {
-      if (Math.random() < rate) shakes++;
-      else break;
+    const rollShakes = () => {
+      let n = 0;
+      for (let i = 0; i < 3; i++) {
+        if (Math.random() < rate) n++;
+        else break;
+      }
+      return n;
+    };
+    let shakes, caught, wobbleMs = 380, pauseMs = 320;
+    if (_guaranteedCatchOn()) {
+      // Guaranteed-catch accessibility mode: same odds and same balls
+      // (hidden re-rolls consume extras via consumeItem), slower
+      // shakes so total time stays above the manual expectation —
+      // just one physical throw. See _guaranteedThrowPlan.
+      const plan = _guaranteedThrowPlan(rollShakes, () => consumeItem(ballKey, 1));
+      shakes = plan.wobbles;
+      caught = plan.caught;
+      wobbleMs = plan.wobbleMs;
+      pauseMs = plan.pauseMs;
+    } else {
+      shakes = rollShakes();
+      caught = shakes === 3;
     }
-    const caught = shakes === 3;
 
     // Stage 3: wobble for each successful shake. Each shake is a
     // full back-and-forth — center → lead direction → opposite →
@@ -11472,10 +11548,11 @@
             easing: 'cubic-bezier(0.4, 0.0, 0.6, 1)' },
           { offset: 1,    transform: 'translateX(-50%) rotate(0deg)' },
         ],
-        { duration: 380 });
+        { duration: wobbleMs });
       await wobble.finished.catch(() => {});
-      // Suspense pause — longer than the wobble itself.
-      await delay(320);
+      // Suspense pause — longer than the wobble itself. (Both this and
+      // the wobble duration stretch in guaranteed-catch mode.)
+      await delay(pauseMs);
     }
 
     const burst = battleEl.querySelector('.battle-burst');
