@@ -3432,6 +3432,18 @@
       <span id="spriteInflightBadge" title="creature sprite IDB reads currently in flight (should stay near 0 except briefly when new spawns enter view)"></span>
       <span id="memBadge" title="estimated live JS heap used by map data"></span>
     </div>
+    <!-- Free-text bug note: whatever the user types here is stamped into
+         the diagnostic dump header (both Copy and Upload), so a report
+         arrives with "what went wrong" attached instead of relying on
+         anyone's memory. -->
+    <div style="margin-top: 6px;">
+      <input type="text" id="bugNoteInput" maxlength="500" autocomplete="off"
+        placeholder="what went wrong? (included in copied/uploaded logs)"
+        style="width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 12px;
+               background: var(--ui-input-bg); color: var(--ui-text);
+               border: 1px solid var(--ui-border); border-radius: var(--ui-radius);
+               font-family: inherit;">
+    </div>
     <div style="margin-top: 6px; display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--ui-muted); flex-wrap: wrap;">
       <button id="copyLogsBtn" type="button"
         style="padding: 4px 10px; font-size: 11px; cursor: pointer;
@@ -13279,9 +13291,13 @@ function fmtDate(ts) {
         const ua = navigator.userAgent || '';
         const platform = (window.Capacitor && window.Capacitor.getPlatform)
           ? window.Capacitor.getPlatform() : 'web';
+        // the user's free-text bug note rides at the top of the dump
+        const noteEl = document.getElementById('bugNoteInput');
+        const note = (noteEl && noteEl.value ? noteEl.value : '').trim();
         const header = `creature-collect ${versionEl ? versionEl.textContent : ''} `
           + `(${platform}) — ${new Date().toISOString()}\n`
           + `UA: ${ua}\n`
+          + (note ? `reported issue: ${note}\n` : '')
           + '─'.repeat(50) + '\n';
         const body = phases ? (phases.textContent || '') : '';
         return header + body;
