@@ -417,6 +417,37 @@ def save_backup():
     return jsonify({"ok": True, "saved": path.name})
 
 
+@app.route("/upload-logs", methods=["POST"])
+def upload_logs():
+    """Write the client's diagnostic dump to saves/logs/<name>_<ms>.txt.
+
+    Companion to the Settings "Upload logs" button (next to Copy logs) —
+    same conventions as /save: the trainer name comes from the body's
+    `backupName` field (mirror of the Settings text field), sanitized by
+    the same _SAFE_NAME_RE, and the millisecond suffix means every
+    upload lands in a new file instead of overwriting.
+    """
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "expected JSON object"}), 400
+    name = (payload.get("backupName") or "").strip()
+    if not name:
+        return jsonify({"error": "missing backupName"}), 400
+    if not _SAFE_NAME_RE.fullmatch(name):
+        return jsonify({"error": "invalid name (use letters/digits/._- and spaces)"}), 400
+    logs = payload.get("logs")
+    if not isinstance(logs, str) or not logs.strip():
+        return jsonify({"error": "missing logs"}), 400
+    logs_dir = ROOT / "saves" / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    millis = int(time.time() * 1000)
+    path = logs_dir / f"{name}_{millis}.txt"
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(logs, encoding="utf-8")
+    tmp.replace(path)
+    return jsonify({"ok": True, "saved": f"logs/{path.name}"})
+
+
 # Lazy-loaded sprite-credits index. Sourced from upstream Pokémon
 # Infinite Fusion's Sprite_Credits.csv. Keyed by (a, b) fusion ints
 # → { variant_letter or "": artist_name }. Loaded once on first
