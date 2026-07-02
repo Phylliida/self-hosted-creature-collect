@@ -89,6 +89,12 @@
   /* display:flex above would defeat the hidden attribute's
      display:none — restate it so view switching works. */
   #extrasBubbles[hidden] { display: none; }
+  /* bubble grid inside a sub-menu tool view (e.g. the Games folder) */
+  .extras-sublist {
+    display: flex; flex-wrap: wrap; gap: 14px;
+    justify-content: center;
+    padding: 6px 0 10px;
+  }
   @keyframes cc-bubble-pop {
     from { transform: scale(0.5); opacity: 0; }
     70% { transform: scale(1.06); }
@@ -975,7 +981,10 @@
     wheel: { name: 'Decision wheel', el: $('extrasWheel') },
   };
 
+  const toolParent = {};  // tool id -> parent tool id, for sub-menus (Games)
+  let curTool = null;
   function showBubbles() {
+    curTool = null;
     title.textContent = 'Extras';
     backBtn.hidden = true;
     bubbles.hidden = false;
@@ -984,6 +993,7 @@
   function showTool(id) {
     const t = tools[id];
     if (!t) return;
+    curTool = id;
     title.textContent = t.name;
     backBtn.hidden = false;
     bubbles.hidden = true;
@@ -996,7 +1006,11 @@
   };
   const closeExtras = () => panel.classList.remove('show');
   $('extrasXClose').onclick = closeExtras;
-  backBtn.onclick = showBubbles;
+  // back steps up one level: game -> Games list -> bubble grid
+  backBtn.onclick = () => {
+    if (curTool && toolParent[curTool]) showTool(toolParent[curTool]);
+    else showBubbles();
+  };
   panel.addEventListener('click', (e) => {
     if (e.target === panel) closeExtras();
   });
@@ -1046,6 +1060,45 @@
     tools[def.id] = { name: def.name || def.id, el: view, onShow: def.onShow };
     try { if (typeof def.build === 'function') def.build(view); }
     catch (e) { console.error('ExtrasRegisterTool: build failed for ' + def.id, e); }
+    return view;
+  };
+
+  // Like ExtrasRegisterTool, but the tool's bubble lives inside a "Games"
+  // sub-menu instead of the top-level grid, so games don't crowd the
+  // launcher as more get added. The folder bubble is created lazily on the
+  // first registration; the back button steps game -> Games list -> grid.
+  //   def = { id, name, icon, label, build(view), onShow? }  (inline only)
+  let gamesList = null;
+  global.ExtrasRegisterGame = function registerExtraGame(def) {
+    if (!def || !def.id || tools[def.id]) return null;
+    if (!gamesList) {
+      const gv = global.ExtrasRegisterTool({
+        id: 'games', name: 'Games', icon: '&#127918;', label: 'Games',
+        build(v) { v.innerHTML = '<div class="extras-sublist"></div>'; },
+      });
+      gamesList = gv.querySelector('.extras-sublist');
+      gamesList.addEventListener('click', (e) => {
+        const b = e.target.closest('.extras-bubble');
+        if (b) showTool(b.dataset.extra);
+      });
+    }
+    const btn = document.createElement('button');
+    btn.className = 'extras-bubble';
+    btn.type = 'button';
+    btn.dataset.extra = def.id;
+    btn.innerHTML = '<span class="bubble-icon">' + (def.icon || '&#127918;') +
+      '</span><span>' + (def.label || def.name || def.id) + '</span>';
+    gamesList.appendChild(btn);
+
+    const view = document.createElement('div');
+    view.id = 'extras_' + def.id;
+    view.hidden = true;
+    panel.querySelector('.sheet').appendChild(view);
+
+    tools[def.id] = { name: def.name || def.id, el: view, onShow: def.onShow };
+    toolParent[def.id] = 'games';
+    try { if (typeof def.build === 'function') def.build(view); }
+    catch (e) { console.error('ExtrasRegisterGame: build failed for ' + def.id, e); }
     return view;
   };
 

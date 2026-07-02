@@ -3005,7 +3005,7 @@
      the JS has thrown an error during init. Targets ONLY the small
      app-shell entries in APP_CACHE — `/`, manifest, icon.svg, the
      vendor maplibre files, trip-planner.js, and the extras code
-     (extras.js + extras-apps/almanac/vibration; extras.js is
+     (extras.js + extras-apps/almanac/vibration/skymap; extras.js is
      precached so it'd otherwise stay stale after a refresh — the
      siblings are no-store so deleting them is a harmless no-op).
      The bulky downloaded
@@ -3044,7 +3044,7 @@
        // overlays new code into this very cache in place, so deleting would
        // be pointless online and, offline, would wipe a prior update back to
        // the bundled version. (Refresh must never downgrade with no data.)
-       try{var _plat=(window.Capacitor&&window.Capacitor.getPlatform&&window.Capacitor.getPlatform())||'web';if(_plat!=='android'){caches.open('app-v1').then(function(c){['/','/manifest.webmanifest','/static/icon.svg','/static/trip-planner.js','/static/extras.js','/static/extras-apps.js','/static/extras-almanac.js','/static/extras-vibration.js','/static/vendor/maplibre-gl.css','/static/vendor/maplibre-gl.js'].forEach(function(u){c.delete(u)})})}}catch(_){}
+       try{var _plat=(window.Capacitor&&window.Capacitor.getPlatform&&window.Capacitor.getPlatform())||'web';if(_plat!=='android'){caches.open('app-v1').then(function(c){['/','/manifest.webmanifest','/static/icon.svg','/static/trip-planner.js','/static/extras.js','/static/extras-apps.js','/static/extras-almanac.js','/static/extras-vibration.js','/static/extras-skymap.js','/static/extras-sudoku.js','/static/vendor/maplibre-gl.css','/static/vendor/maplibre-gl.js'].forEach(function(u){c.delete(u)})})}}catch(_){}
        try{localStorage.removeItem('cc.lastUpdateFailedAt');}catch(_){}
        var btn=document.getElementById('emergencyRefresh');
        if(btn){btn.style.opacity='0.5';btn.style.pointerEvents='none';}
@@ -4260,6 +4260,8 @@
 <script src="/static/extras-vibration.js"></script>
 <script src="/static/extras-apps.js"></script>
 <script src="/static/extras-almanac.js"></script>
+<script src="/static/extras-skymap.js"></script>
+<script src="/static/extras-sudoku.js"></script>
 <script>
 // Single source of truth for the app version. Bumped manually when shipping
 // a user-visible change (new features, data format upgrades, etc.). Shown
