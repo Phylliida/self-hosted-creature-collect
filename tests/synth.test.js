@@ -85,7 +85,7 @@ const ids = {};
 ['soundPad', 'drumGrid', 'tempoSlider', 'tempoValue', 'metronomeBtn', 'metronomeLight', 'barCounter',
  'beatIndicator', 'recordBtn', 'playAllBtn', 'stopBtn', 'clearBtn', 'recordingsToggle', 'dropdownArrow',
  'recordingsPanel', 'recordingsList', 'recordingBadge', 'instrumentBtn',
- 'scaleSel', 'rootSel', 'scaleGrid', 'scaleLabels', 'info'].forEach(id => { ids[id] = makeEl('div'); ids[id].id = id; });
+ 'scaleSel', 'rootSel', 'scaleGrid', 'scaleLabels', 'info', 'scrubSlider'].forEach(id => { ids[id] = makeEl('div'); ids[id].id = id; });
 ids.soundPad.clientWidth = 800; ids.soundPad.clientHeight = 600;
 ids.tempoSlider.value = '120';
 
@@ -328,6 +328,32 @@ ok(ids.beatIndicator.children.some(c => c.classList.contains('active')), 'T13: t
 stopBtn.onclick();
 advance(0.3);
 ok(!ids.beatIndicator.children.some(c => c.classList.contains('active')), 'T13: dots cleared when idle');
+
+/* ── T14: time scrubber — auto-follows, scrubs live, Play resumes from playhead ── */
+clearBtn.onclick();
+ok(String(ids.scrubSlider.value) === '0', 'T14: playhead cleared to 0');
+recordBtn.onclick();
+ok(ids.scrubSlider.disabled === true, 'T14: scrubbing disabled while recording');
+advance(0.5); mouseDown(300, 300); advance(0.2); mouseUp(); advance(0.1);
+recordBtn.onclick();             // stop → auto-play from the top
+ok(ids.scrubSlider.disabled === false, 'T14: scrubbing re-enabled after recording');
+advance(0.9);
+ok(Math.abs(+ids.scrubSlider.value - 1.8) < 0.3, 'T14: slider auto-follows playback (got ' + ids.scrubSlider.value + ')');
+ids.scrubSlider.value = '16'; ids.scrubSlider.oninput({ target: ids.scrubSlider });   // live scrub
+advance(0.2);
+ok(Math.abs(+ids.scrubSlider.value - 16.4) < 0.4, 'T14: live scrub jumps the playhead (got ' + ids.scrubSlider.value + ')');
+ok(String(ids.barCounter.textContent) === '5.1', 'T14: bar counter follows the scrub (got ' + ids.barCounter.textContent + ')');
+stopBtn.onclick();
+advance(0.5);
+const frozen14 = +ids.scrubSlider.value;
+advance(1.0);
+ok(+ids.scrubSlider.value === frozen14, 'T14: playhead freezes when stopped');
+ids.scrubSlider.value = '8'; ids.scrubSlider.oninput({ target: ids.scrubSlider });    // scrub while stopped
+playBtn.onclick();
+advance(0.3);
+ok(+ids.scrubSlider.value > 8 && +ids.scrubSlider.value < 8.8, 'T14: Play resumes from scrubbed position (got ' + ids.scrubSlider.value + ')');
+stopBtn.onclick();
+advance(0.3);
 
 console.log('synth tests: ' + passed + ' passed, ' + failed + ' failed');
 process.exit(failed ? 1 : 0);
