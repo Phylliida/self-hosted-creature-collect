@@ -3339,6 +3339,10 @@
       <label for="forceShinyToggle">Force shiny catches (testing)</label>
       <input type="checkbox" id="forceShinyToggle">
     </div>
+    <div class="row" title="One throw always catches — but the normal odds still run underneath: hidden re-rolls use up extra balls and the shakes run slower, so it costs the same and takes slightly longer than throwing manually. Reduces repeated tapping.">
+      <label for="steadyCatchToggle">Guaranteed catch (accessibility)</label>
+      <input type="checkbox" id="steadyCatchToggle">
+    </div>
     <div class="settings-subsection">
       <h4 class="settings-subsection-title">
         Visibility
@@ -15890,6 +15894,18 @@ function fmtDate(ts) {
     forceShinyToggle.checked = localStorage.getItem('cc.forceShiny') === '1';
     forceShinyToggle.addEventListener('change', () => {
       localStorage.setItem('cc.forceShiny', forceShinyToggle.checked ? '1' : '0');
+    });
+  }
+
+  // Guaranteed catch (accessibility): one throw always catches, but the
+  // same odds run underneath — hidden re-rolls consume extra balls and
+  // the shakes slow down so total time stays slightly above manual
+  // throwing. Read per-throw in creatures.js (_guaranteedCatchOn).
+  const steadyCatchToggle = document.getElementById('steadyCatchToggle');
+  if (steadyCatchToggle) {
+    steadyCatchToggle.checked = localStorage.getItem('cc.steadyCatch') === '1';
+    steadyCatchToggle.addEventListener('change', () => {
+      localStorage.setItem('cc.steadyCatch', steadyCatchToggle.checked ? '1' : '0');
     });
   }
 

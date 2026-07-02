@@ -99,12 +99,17 @@ python3 - <<PY
 import json, pathlib, re, time
 DIST = pathlib.Path("$DIST")
 STATIC_SRC = pathlib.Path("static")
+# Keep these in sync with run.py's _TRACKED_JS / _TRACKED_HTML — a file
+# tracked by the server but not stamped here reads as "stale" on first
+# launch and gets needlessly re-downloaded by the first refresh.
 TRACKED_JS = {
     "creatures.js", "sprites.js", "sprite-store.js", "appdata.js",
     "species.js", "spawns.js", "trip-planner.js",
-    "live-update.js", "sw.js",
+    "live-update.js", "sw.js", "extras.js",
+    "extras-apps.js", "extras-almanac.js", "extras-vibration.js",
+    "extras-skymap.js", "extras-sudoku.js",
 }
-TRACKED_HTML = {"index.html", "dex.html"}
+TRACKED_HTML = {"index.html", "dex.html", "synth.html", "quiver.html"}
 ALL_FILES = sorted(TRACKED_JS | TRACKED_HTML)
 SV_RE = re.compile(r"""((?:const|let|var)\s+)SCRIPT_VERSION\s*=\s*['"]([^'"]+)['"]""")
 HEAD_RE = re.compile(r"<head\b[^>]*>", re.IGNORECASE)
@@ -121,7 +126,9 @@ def stamp_html(text, name, ver):
         f'window._scriptVersions["{name}"]="{ver}";'
         f'window._serverScriptVersions={versions_json};</script>'
     )
-    m = HEAD_RE.search(text)
+    # No <head> (quiver.html): inject after the doctype instead —
+    # prepending before it would flip the page into quirks mode.
+    m = HEAD_RE.search(text) or re.search(r"<!DOCTYPE[^>]*>", text, re.IGNORECASE)
     if not m: return snippet + text
     return text[:m.end()] + snippet + text[m.end():]
 # Stamp every dist copy of every tracked file. Both the root-level

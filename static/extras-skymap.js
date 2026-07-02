@@ -484,6 +484,9 @@
 
     let hits = [];       // tap targets from the last draw
     let lastLoc = null;  // remembered so the 30s ticker can redraw
+    // view transform: the dome is stereographic, so zoom = scale R, pan = move
+    // the dome centre — all projected geometry follows linearly.
+    let zoom = 1, panX = 0, panY = 0, vs = 320;
 
     function readLoc() {
       const lat = parseFloat(latEl.value), lon = parseFloat(lonEl.value);
@@ -517,6 +520,7 @@
       lastLoc = loc;
       const cssW = view.clientWidth || 320;
       const size = Math.min(cssW, 430);
+      vs = size;
       const dpr = Math.min(global.devicePixelRatio || 1, 3);
       canvas.style.width = size + 'px';
       canvas.style.height = size + 'px';
@@ -527,7 +531,8 @@
       hits = [];
 
       const ms = curMs();
-      timeEl.textContent = fmtWhen(ms) + (slider.value === '0' ? '' : '  (' + (slider.value > 0 ? '+' : '') + Math.round(slider.value / 6) / 10 + ' h)');
+      timeEl.textContent = fmtWhen(ms) + (slider.value === '0' ? '' : '  (' + (slider.value > 0 ? '+' : '') + Math.round(slider.value / 6) / 10 + ' h)')
+        + (zoom > 1.01 ? ' · ' + (Math.round(zoom * 10) / 10) + '×' : '');
 
       if (!loc) {
         info.innerHTML = '<span class="xt-muted">pan the map to your spot and tap \u{1F4CD} — or type a lat/lon</span>';
@@ -536,7 +541,7 @@
       const lat = loc.lat, lon = loc.lon;
       if (!STARS) { STARS = decodeStars(); LINES = decodeLines(); }
 
-      const cx = size / 2, cy = size / 2, R = size / 2 - 14;
+      const cx = size / 2 + panX, cy = size / 2 + panY, R = (size / 2 - 14) * zoom;
       const P = (alt, az) => { const p = project(alt, az, R); return { x: cx + p.x, y: cy + p.y }; };
 
       // sky tint + star fade from the sun's altitude
@@ -607,14 +612,16 @@
         ctx.stroke();
       }
 
-      // stars
+      // stars — zooming in reveals more named-star labels
       if (starFade > 0.02) {
+        const labelMag = Math.min(4.4, 2.0 + (zoom - 1) * 0.7);
         ctx.fillStyle = '#eef2ff';
         for (let i = 0; i < STARS.length; i++) {
           const s = STARS[i];
           const aa = altAz(s.ra, s.dec, ms, lat, lon);
           if (aa.alt < -0.5) continue;
           const p = P(aa.alt, aa.az);
+          if (p.x < -24 || p.x > size + 24 || p.y < -24 || p.y > size + 24) continue;
           const r = Math.max(0.5, 2.1 - s.mag * 0.42);
           ctx.globalAlpha = starFade * Math.max(0.35, Math.min(1, 1.15 - s.mag * 0.13));
           ctx.beginPath();
@@ -623,7 +630,7 @@
           if (s.name || s.mag <= 4.6) {
             hits.push({ x: p.x, y: p.y, name: s.name, mag: s.mag, alt: aa.alt, az: aa.az, kind: s.name ? 'star' : 'faint' });
           }
-          if (prefs.labels && s.name && s.mag <= 2.0) {
+          if (prefs.labels && s.name && s.mag <= labelMag) {
             ctx.font = '10px system-ui, sans-serif';
             ctx.globalAlpha = 0.8 * starFade;
             ctx.fillText(s.name, p.x + 4, p.y - 4);
@@ -641,6 +648,7 @@
           const aa = altAz(ra, dec, ms, lat, lon);
           if (aa.alt < 4) continue;
           const p = P(aa.alt, aa.az);
+          if (p.x < -40 || p.x > size + 40 || p.y < -20 || p.y > size + 20) continue;
           ctx.fillText(name.toUpperCase(), p.x, p.y);
         }
         ctx.textAlign = 'left';
@@ -774,15 +782,16 @@
     }
 
     // tap to identify the nearest object
-    canvas.addEventListener('pointerdown', (ev) => {
-      const rect = canvas.getBoundingClientRect();
-      const x = ev.clientX - rect.left, y = ev.clientY - rect.top;
+    function identify(x, y) {
       let best = null, bd = 22 * 22;
       for (const h of hits) {
         const d = (h.x - x) * (h.x - x) + (h.y - y) * (h.y - y);
         if (d < bd) { bd = d; best = h; }
       }
-      if (!best) { info.textContent = 'tap a star or planet to identify it'; return; }
+      if (!best) {
+        info.textContent = zoom > 1.01 ? 'drag to pan · double-tap to zoom (resets at max)' : 'tap a star or planet to identify it';
+        return;
+      }
       const nm = best.name || 'star';
       const parts = [];
       if (best.mag != null) parts.push('mag ' + (Math.round(best.mag * 10) / 10));
@@ -790,7 +799,77 @@
       parts.push('alt ' + Math.round(best.alt) + '°');
       parts.push(compass(best.az) + ' ' + Math.round(best.az) + '°');
       info.innerHTML = '<b>' + nm + '</b> · ' + parts.join(' · ');
+    }
+
+    // ── zoom + pan gestures: pinch / wheel / double-tap, one-finger drag ──
+    const ptrs = new Map();
+    let pinched = false, moved = 0, lastTapT = 0, lastTapX = 0, lastTapY = 0;
+    const clampPan = () => {
+      const lim = Math.max(0, (vs / 2 - 14) * (zoom - 1));
+      panX = Math.min(lim, Math.max(-lim, panX));
+      panY = Math.min(lim, Math.max(-lim, panY));
+    };
+    // page scroll keeps working over the chart until you actually zoom in
+    const syncTA = () => { canvas.style.touchAction = zoom > 1.01 ? 'none' : 'pan-y'; };
+    function zoomAt(ax, ay, f) {
+      const nz = Math.min(8, Math.max(1, zoom * f));
+      f = nz / zoom;
+      panX = ax - (ax - (vs / 2 + panX)) * f - vs / 2;
+      panY = ay - (ay - (vs / 2 + panY)) * f - vs / 2;
+      zoom = nz < 1.02 ? 1 : nz;
+      clampPan(); syncTA(); draw();
+    }
+    const evXY = (ev) => {
+      const r = canvas.getBoundingClientRect();
+      return { x: ev.clientX - r.left, y: ev.clientY - r.top };
+    };
+    canvas.addEventListener('pointerdown', (ev) => {
+      const p = evXY(ev);
+      ptrs.set(ev.pointerId, p);
+      try { canvas.setPointerCapture(ev.pointerId); } catch (_) {}
+      if (ptrs.size === 1) { pinched = false; moved = 0; }
+      else pinched = true;
     });
+    canvas.addEventListener('pointermove', (ev) => {
+      const prev = ptrs.get(ev.pointerId);
+      if (!prev) return;
+      const p = evXY(ev);
+      if (ptrs.size === 2) {
+        let other = null;
+        ptrs.forEach((v, id) => { if (id !== ev.pointerId) other = v; });
+        const d0 = Math.hypot(prev.x - other.x, prev.y - other.y) || 1;
+        const d1 = Math.hypot(p.x - other.x, p.y - other.y) || 1;
+        panX += (p.x - prev.x) / 2;                 // midpoint drift pans
+        panY += (p.y - prev.y) / 2;
+        zoomAt((p.x + other.x) / 2, (p.y + other.y) / 2, d1 / d0);
+      } else if (ptrs.size === 1 && zoom > 1) {
+        panX += p.x - prev.x;
+        panY += p.y - prev.y;
+        clampPan(); draw();
+      }
+      moved += Math.abs(p.x - prev.x) + Math.abs(p.y - prev.y);
+      ptrs.set(ev.pointerId, p);
+    });
+    canvas.addEventListener('pointerup', (ev) => {
+      if (!ptrs.delete(ev.pointerId)) return;
+      if (ptrs.size || pinched || moved > 8) return;      // not a clean tap
+      const p = evXY(ev), now = Date.now();
+      if (now - lastTapT < 350 && Math.abs(p.x - lastTapX) < 30 && Math.abs(p.y - lastTapY) < 30) {
+        lastTapT = 0;                                     // double-tap: zoom in, reset from max
+        if (zoom >= 7.9) { zoom = 1; panX = panY = 0; syncTA(); draw(); }
+        else zoomAt(p.x, p.y, 2);
+        return;
+      }
+      lastTapT = now; lastTapX = p.x; lastTapY = p.y;
+      identify(p.x, p.y);
+    });
+    canvas.addEventListener('pointercancel', (ev) => { ptrs.delete(ev.pointerId); });
+    canvas.addEventListener('wheel', (ev) => {
+      ev.preventDefault();
+      const p = evXY(ev);
+      const dy = ev.deltaMode === 1 ? ev.deltaY * 33 : ev.deltaY;
+      zoomAt(p.x, p.y, Math.exp(-dy * 0.0022));
+    }, { passive: false });
 
     // controls
     slider.addEventListener('input', draw);

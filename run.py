@@ -111,7 +111,11 @@ _TRACKED_JS = {
     "extras-apps.js", "extras-almanac.js", "extras-vibration.js", "extras-skymap.js",
     "extras-sudoku.js",
 }
-_TRACKED_HTML = {"index.html", "dex.html"}
+# synth.html / quiver.html are the flat single-file mini-apps loaded in
+# Extras iframes — tracked so the Refresh button / native live-update
+# picks up edits without an IPA/APK rebuild (the multi-file subtrees
+# like static/draw and static/mandelbrot still need a rebuild on native).
+_TRACKED_HTML = {"index.html", "dex.html", "synth.html", "quiver.html"}
 # Authoritative list (ordered) of every file the version system tracks.
 # Used both to build the HTML-injected `_serverScriptVersions` map and
 # by the /script-versions fallback endpoint.
@@ -120,6 +124,7 @@ _SCRIPT_VERSION_FILES = [
     "species.js", "spawns.js", "trip-planner.js", "live-update.js", "extras.js",
     "extras-apps.js", "extras-almanac.js", "extras-vibration.js", "extras-skymap.js",
     "extras-sudoku.js",
+    "synth.html", "quiver.html",
     "sw.js", "index.html", "dex.html",
 ]
 # Capture the declaration keyword (group 1) so we can preserve it
@@ -130,6 +135,7 @@ _SCRIPT_VERSION_RE = re.compile(
     r"""((?:const|let|var)\s+)SCRIPT_VERSION\s*=\s*['"]([^'"]+)['"]"""
 )
 _HEAD_TAG_RE = re.compile(r"<head\b[^>]*>", re.IGNORECASE)
+_DOCTYPE_RE = re.compile(r"<!DOCTYPE[^>]*>", re.IGNORECASE)
 
 
 def _file_version(path):
@@ -176,8 +182,10 @@ def _stamp_html(content, name, version):
     The pre-baked map means the Settings diagnostic can compare
     loaded-vs-server versions with zero network requests at runtime —
     the comparison happens entirely from data shipped with the page.
-    No-op if the file has no <head> (the script is prepended so the
-    registration still runs)."""
+    Files with no <head> (e.g. quiver.html) get the script injected
+    right after the doctype instead — prepending BEFORE a doctype would
+    flip the page into quirks mode. Headless no-doctype files fall back
+    to a plain prepend."""
     server_map = _all_tracked_versions()
     server_map_json = json.dumps(server_map, separators=(",", ":"))
     snippet = (
@@ -187,7 +195,7 @@ def _stamp_html(content, name, version):
         f'window._serverScriptVersions={server_map_json};'
         f'</script>'
     )
-    m = _HEAD_TAG_RE.search(content)
+    m = _HEAD_TAG_RE.search(content) or _DOCTYPE_RE.search(content)
     if not m:
         return snippet + content
     insert_at = m.end()
@@ -290,7 +298,10 @@ def _no_http_cache_for_js(resp):
     # duplicate — and on iOS Safari each hard refresh retains the old entry
     # alongside the new one, growing storage.estimate() ~1 MB per refresh.
     if (request.path.startswith("/static/")
-        and (request.path.endswith(".js") or request.path.endswith(".css"))):
+        and (request.path.endswith(".js") or request.path.endswith(".css")
+             or request.path.endswith(".html"))):
+        # .html covers the mini-app shells (synth/quiver/draw/pixelart/
+        # mandelbrot) so an edited page is never revived from HTTP cache.
         resp.headers["Cache-Control"] = "no-store"
     return resp
 
