@@ -197,7 +197,118 @@
   // cell is fully transparent (all alpha < ALPHA_MIN). We return both
   // because bulk download wants the bbox for blank-detection without
   // re-scanning, while the cropped Blob is ready to write to IDB.
+  //
+  // Two implementations of the same contract:
+  //   - worker path (preferred): the expensive parts — the getImageData
+  //     GPU→CPU readback, the 36k-pixel alpha scan, and the PNG encode —
+  //     run in a dedicated worker. The main thread only does
+  //     createImageBitmap(sheet, sx, sy, sw, sh), which is async and
+  //     stays GPU-side, then transfers the sub-bitmap across. Detail/evo
+  //     views crop dozens of cells and bulk download crops hundreds, so
+  //     this work was showing up as main-thread stalls.
+  //   - sync path: the original implementation, kept verbatim as the
+  //     fallback for browsers without OffscreenCanvas-in-worker (and as
+  //     the escape hatch if the worker ever fails). Pixel output of the
+  //     two paths is identical; PNG bytes may differ by encoder.
+  // The worker is inline (blob: URL) so there's no extra file to
+  // register/serve/precache and it works identically on web/iOS/Android.
+  const CROP_WORKER_SRC = [
+    "'use strict';",
+    "let ok=false;",
+    "try{const t=new OffscreenCanvas(1,1);ok=!!t.getContext('2d')&&typeof t.convertToBlob==='function';}catch(e){ok=false;}",
+    "self.postMessage({ready:true,ok:ok});",
+    "self.onmessage=async function(ev){",
+    "  const id=ev.data.id,bmp=ev.data.bmp,alphaMin=ev.data.alphaMin;",
+    "  try{",
+    "    const sw=bmp.width,sh=bmp.height;",
+    "    const scan=new OffscreenCanvas(sw,sh),sctx=scan.getContext('2d');",
+    "    sctx.drawImage(bmp,0,0);",
+    "    if(bmp.close)bmp.close();",
+    "    const data=sctx.getImageData(0,0,sw,sh).data;",
+    "    let minX=sw,minY=sh,maxX=-1,maxY=-1;",
+    "    for(let y=0;y<sh;y++){const rowOff=y*sw*4+3;",
+    "      for(let x=0;x<sw;x++){if(data[rowOff+x*4]>alphaMin){",
+    "        if(x<minX)minX=x;if(x>maxX)maxX=x;if(y<minY)minY=y;if(y>maxY)maxY=y;}}}",
+    "    if(maxX<0){self.postMessage({id:id,bbox:null,blob:null});return;}",
+    "    const cw=maxX-minX+1,ch=maxY-minY+1;",
+    "    const out=new OffscreenCanvas(cw,ch);",
+    "    out.getContext('2d').drawImage(scan,minX,minY,cw,ch,0,0,cw,ch);",
+    "    const blob=await out.convertToBlob({type:'image/png'});",
+    "    self.postMessage({id:id,bbox:{minX:minX,minY:minY,maxX:maxX,maxY:maxY},blob:blob});",
+    "  }catch(e){self.postMessage({id:id,error:String(e&&e.message||e)});}",
+    "};",
+  ].join('\n');
+
+  let _cropWorker = null;      // live Worker once the ready probe passes
+  let _cropWorkerState = 'unknown'; // 'unknown' | 'starting' | 'ok' | 'off'
+  let _cropReqId = 0;
+  const _cropPending = new Map(); // id -> { resolve, reject }
+
+  function _cropWorkerDisable(reason) {
+    _cropWorkerState = 'off';
+    if (_cropWorker) { try { _cropWorker.terminate(); } catch { /* ignore */ } }
+    _cropWorker = null;
+    for (const [, p] of _cropPending) p.reject(new Error('crop worker disabled: ' + reason));
+    _cropPending.clear();
+  }
+
+  function _initCropWorker() {
+    if (_cropWorkerState !== 'unknown') return;
+    _cropWorkerState = 'starting';
+    let url = null;
+    try {
+      if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined'
+          || typeof createImageBitmap !== 'function') {
+        _cropWorkerState = 'off';
+        return;
+      }
+      url = URL.createObjectURL(new Blob([CROP_WORKER_SRC], { type: 'text/javascript' }));
+      const w = new Worker(url);
+      w.onmessage = (ev) => {
+        const d = ev.data || {};
+        if (d.ready) {
+          // revoke only after the script has demonstrably loaded
+          if (url) { URL.revokeObjectURL(url); url = null; }
+          if (d.ok) { _cropWorker = w; _cropWorkerState = 'ok'; }
+          else { try { w.terminate(); } catch { /* ignore */ } _cropWorkerState = 'off'; }
+          return;
+        }
+        const p = _cropPending.get(d.id);
+        if (!p) return;
+        _cropPending.delete(d.id);
+        if (d.error) p.reject(new Error(d.error));
+        else p.resolve({ bbox: d.bbox, blob: d.blob });
+      };
+      w.onerror = () => _cropWorkerDisable('worker onerror');
+    } catch (e) {
+      if (url) { try { URL.revokeObjectURL(url); } catch { /* ignore */ } }
+      _cropWorkerState = 'off';
+    }
+  }
+
   async function scanAndCrop(srcBitmap, sx, sy, sw, sh) {
+    if (_cropWorkerState === 'unknown') _initCropWorker();
+    if (_cropWorkerState === 'ok') {
+      try {
+        // async sub-crop; no pixel readback on the main thread
+        const sub = await createImageBitmap(srcBitmap, sx, sy, sw, sh);
+        return await new Promise((resolve, reject) => {
+          const id = ++_cropReqId;
+          _cropPending.set(id, { resolve, reject });
+          _cropWorker.postMessage({ id, bmp: sub, alphaMin: ALPHA_MIN }, [sub]);
+        });
+      } catch (e) {
+        // Any failure demotes to the sync path — for this call via the
+        // fall-through below, and permanently so we don't pay a failed
+        // round trip per cell.
+        _cropWorkerDisable(String(e && e.message || e));
+      }
+    }
+    return scanAndCropSync(srcBitmap, sx, sy, sw, sh);
+  }
+
+  async function scanAndCropSync(srcBitmap, sx, sy, sw, sh) {
+    const _t0 = performance.now();
     const scan = makeCanvas(sw, sh);
     const sctx = scan.getContext('2d');
     sctx.drawImage(srcBitmap, sx, sy, sw, sh, 0, 0, sw, sh);
@@ -220,6 +331,8 @@
     const out = makeCanvas(cw, ch);
     out.getContext('2d').drawImage(scan, minX, minY, cw, ch, 0, 0, cw, ch);
     const blob = await canvasToBlob(out);
+    const g = (typeof window !== 'undefined') ? window : globalThis;
+    if (g._ccStalls) g._ccStalls.mark('sprite-crop-sync', performance.now() - _t0);
     return { bbox: { minX, minY, maxX, maxY }, blob };
   }
 
@@ -1585,5 +1698,9 @@
     getFusedNameAsync,
     ensureSplitNamesLoaded,
     downloadSplitNames: _downloadSplitNames,
+    // internals exposed for the headless equivalence harness
+    _scanAndCrop: scanAndCrop,
+    _scanAndCropSync: scanAndCropSync,
+    _cropWorkerState: () => _cropWorkerState,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

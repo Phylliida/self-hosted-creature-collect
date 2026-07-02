@@ -3439,6 +3439,12 @@
                border: 1px solid var(--ui-border); border-radius: var(--ui-radius);
                font-family: inherit;"
         title="copy the full diagnostic dump below to the clipboard">Copy logs</button>
+      <button id="uploadLogsBtn" type="button"
+        style="padding: 4px 10px; font-size: 11px; cursor: pointer;
+               background: var(--ui-input-bg); color: var(--ui-text);
+               border: 1px solid var(--ui-border); border-radius: var(--ui-radius);
+               font-family: inherit;"
+        title="send the diagnostic dump to the server — lands in saves/logs/ with your trainer name + timestamp">Upload logs</button>
       <!-- iOS-only — wires the LocalServerDiag.restart() plugin to a
            stop+start of the GCDWebServer listen socket. Useful both
            for testing the auto-restart path and as a recovery escape
@@ -8171,7 +8177,12 @@ function fmtDate(ts) {
     _haloRefreshScheduled = true;
     requestAnimationFrame(() => {
       _haloRefreshScheduled = false;
+      const _t0 = performance.now();
       try { refreshTappablePoiHalos(); } catch {}
+      // candidate for the still-unattributed ~625ms pan/zoom stall —
+      // queryRenderedFeatures + halo rebuild was the only unmarked
+      // moveend-path work
+      if (window._ccStalls) window._ccStalls.mark('poi-halos', performance.now() - _t0);
     });
   }
   function addTappablePoiHaloLayer() {
@@ -9043,6 +9054,7 @@ function fmtDate(ts) {
   // the next call surfaces a different bus. Stops on null / duplicate /
   // walk-only (nothing to nudge past).
   function planAlternatives(originId, destId, mode, pivotDate, walkWeight, transferSec, n = 3) {
+    const _t0 = performance.now();
     const out = [];
     let pivot = pivotDate;
     for (let i = 0; i < n; i++) {
@@ -9063,6 +9075,7 @@ function fmtDate(ts) {
       if (Math.abs(deltaSec) < 1) break;
       pivot = new Date(pivot.getTime() + deltaSec * 1000);
     }
+    if (window._ccStalls) window._ccStalls.mark('trip-plan', performance.now() - _t0);
     return out;
   }
 
@@ -9714,7 +9727,9 @@ function fmtDate(ts) {
       let route = null;
       if (multi) {
         _routeTrace('route:multi_astar_invoke');
+        const _tAs = performance.now();
         const mr = astarMulti(start.id, end.id, multi);
+        if (window._ccStalls) window._ccStalls.mark('route-astar', performance.now() - _tAs);
         _routeTrace('route:multi_astar_done', {
           found: !!mr, hops: mr ? mr.path.length : 0,
         });
@@ -9787,7 +9802,9 @@ function fmtDate(ts) {
         // (e.g., user set cc.preferMultiGraph='0'). start/end here are
         // internal walkGraph indices from the legacy findNearestWalkNode.
         _routeTrace('route:astar_start');
+        const _tAs2 = performance.now();
         route = astar(start.id, end.id);
+        if (window._ccStalls) window._ccStalls.mark('route-astar', performance.now() - _tAs2);
         _routeTrace('route:astar_done', { found: !!route });
       }
       if (!route) { alert('No route found between those points.'); return; }
@@ -11132,6 +11149,7 @@ function fmtDate(ts) {
       return multiGraph;
     }
     if (!includeRegionIds || includeRegionIds.size === 0) return null;
+    const _tMulti = performance.now();
     let routingRecords = await loadRoutingGraphs(includeRegionIds);
     if (routingRecords.length !== includeRegionIds.size) {
       // Some region's routing.bin is missing — lazy-backfill from
@@ -11141,6 +11159,7 @@ function fmtDate(ts) {
       const needIds = new Set();
       for (const id of includeRegionIds) if (!have.has(id)) needIds.add(id);
       _routeTrace('multi:backfill_routing:start', { count: needIds.size });
+      const _tBf = performance.now();
       const walkRecords = await loadAllWalkGraphs(needIds);
       for (const wr of walkRecords) {
         try {
@@ -11155,6 +11174,7 @@ function fmtDate(ts) {
       _routeTrace('multi:backfill_routing:done', {
         nowHave: routingRecords.length,
       });
+      if (window._ccStalls) window._ccStalls.mark('routing-backfill ~wall', performance.now() - _tBf);
       if (routingRecords.length !== includeRegionIds.size) {
         _routeTrace('multi:missing_routing', {
           wanted: includeRegionIds.size,
@@ -11351,6 +11371,7 @@ function fmtDate(ts) {
       nodes: multiGraph.nodeCount,
       boundaryPeers: peersByGlobalId.size,
     });
+    if (window._ccStalls) window._ccStalls.mark('multi-build ~wall', performance.now() - _tMulti);
     return multiGraph;
   }
 
@@ -11363,6 +11384,7 @@ function fmtDate(ts) {
   // typed-array loop over nodeLng/nodeLat — same cost-per-node as the
   // existing findNearestWalkNode, just scaled by region count.
   function findNearestWalkNodeMulti(lng, lat, multi) {
+    const _t0 = performance.now();
     let best = -1, bestD2 = Infinity;
     for (const r of multi.regions) {
       const rv = r.routingView;
@@ -11383,6 +11405,7 @@ function fmtDate(ts) {
     // Approximate metres from squared-degrees: tan-ish at our latitudes,
     // good enough for the "is it too far" sanity check (cap at 500m).
     const m = Math.sqrt(bestD2) * 111000;
+    if (window._ccStalls) window._ccStalls.mark('walk-nearest', performance.now() - _t0);
     return { id: best, distance: m };
   }
 
@@ -13247,10 +13270,10 @@ function fmtDate(ts) {
         document.body.removeChild(ta);
         return ok;
       };
-      btn.addEventListener('click', async () => {
-        // Compose the full payload: the version line + the diagnostic
-        // dump. Including the version makes it self-describing when
-        // pasted into an issue.
+      // Compose the full payload: the version line + the diagnostic
+      // dump. Including the version makes it self-describing when
+      // pasted into an issue. Shared by Copy and Upload.
+      const composeLogsText = () => {
         const phases = document.getElementById('startupPhases');
         const versionEl = document.getElementById('versionBadge');
         const ua = navigator.userAgent || '';
@@ -13261,7 +13284,10 @@ function fmtDate(ts) {
           + `UA: ${ua}\n`
           + '─'.repeat(50) + '\n';
         const body = phases ? (phases.textContent || '') : '';
-        const text = header + body;
+        return header + body;
+      };
+      btn.addEventListener('click', async () => {
+        const text = composeLogsText();
         let ok = false;
         if (navigator.clipboard && navigator.clipboard.writeText) {
           try { await navigator.clipboard.writeText(text); ok = true; }
@@ -13269,6 +13295,31 @@ function fmtDate(ts) {
         }
         if (!ok) ok = legacyCopy(text);
         flash(ok ? `✓ copied (${text.length} chars)` : '✕ copy failed', 2500);
+      });
+      // Upload logs — same payload, but POSTed to the server, which
+      // writes saves/logs/<trainer>_<millis>.txt (same name + fetch
+      // conventions as the Save-to-server backup flow). Saves the
+      // copy-paste dance when reporting from a phone.
+      const upBtn = document.getElementById('uploadLogsBtn');
+      if (upBtn) upBtn.addEventListener('click', async () => {
+        const name = (localStorage.getItem('cc.backupName') || '').trim();
+        if (!name) { flash('✕ set a trainer name in Backup first', 3000); return; }
+        const text = composeLogsText();
+        upBtn.disabled = true;
+        try {
+          const resp = await fetch('/upload-logs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ backupName: name, logs: text }),
+          });
+          const body = await resp.json().catch(() => ({}));
+          if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+          flash(`✓ uploaded as ${body.saved || 'logs file'}`, 3000);
+        } catch (e) {
+          flash('✕ upload failed: ' + (e && e.message ? e.message : e), 3500);
+        } finally {
+          upBtn.disabled = false;
+        }
       });
     }
     // Restart-server button (iOS only). Reveals itself once we've

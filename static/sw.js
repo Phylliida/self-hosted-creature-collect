@@ -4,6 +4,12 @@ const TILES_CACHE = 'tiles-v1';
 // Shell bump 2026-06-13 (#4): housenumber counting sort + chunked
 // schedule-index build. APP_SHELL entries are cache-first, so this
 // comment exists to change sw.js's bytes → reinstall → re-precache.
+// Shell bump 2026-07-02 (#5): stall marks on the multi-graph route
+// path (multi-build, routing-backfill, route-astar, trip-plan,
+// walk-nearest) + poi-halos moveend pass; sprite lazy-crop moved to
+// a worker (sprites.js is no-store, but index.html carries marks);
+// "Upload logs" button next to Copy logs (POSTs the diagnostic dump
+// to /upload-logs → saves/logs/<trainer>_<ms>.txt).
 
 const APP_SHELL = [
   '/',
