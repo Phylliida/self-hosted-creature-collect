@@ -48,6 +48,7 @@ function extract(marker) {
 }
 const liveCode = [
   html.match(/const bridgeGridKey = [^\n]+/)[0],
+  html.match(/let _bridgeCacheMulti = null;[^\n]*/)[0],
   extract('function bridgeYielder()'),
   extract('async function buildMultimodalBridges()'),
   extract('async function buildMultimodalBridgesMulti(multi)'),
@@ -75,16 +76,16 @@ const packGlobalId = (r, i) => (((r & 0xFF) << 24) | (i & 0xFFFFFF)) >>> 0;
 const rng = mulberry32(20260702);
 const NODES_PER_REGION = 468579;              // ×2 ≈ the convicted 937k
 const N_STOPS = 25595;
-function makeRegion(regionIdx, lng0, lat0) {
+function makeRegion(regionIdx, regionId, lng0, lat0) {
   const nodeLng = new Float64Array(NODES_PER_REGION);
   const nodeLat = new Float64Array(NODES_PER_REGION);
   for (let i = 0; i < NODES_PER_REGION; i++) {
     nodeLng[i] = lng0 + (rng() - 0.5) * 0.6;
     nodeLat[i] = lat0 + (rng() - 0.5) * 0.4;
   }
-  return { regionIdx, routingView: { nodeLng, nodeLat, N: NODES_PER_REGION } };
+  return { regionIdx, regionId, routingView: { nodeLng, nodeLat, N: NODES_PER_REGION } };
 }
-const regions = [makeRegion(0, -73.75, 45.5), makeRegion(1, -73.35, 45.55)];
+const regions = [makeRegion(0, 'region-A', -73.75, 45.5), makeRegion(1, 'region-B', -73.35, 45.55)];
 const multi = {
   regions,
   lng: (gid) => regions[(gid >>> 24) & 0xFF].routingView.nodeLng[gid & 0xFFFFFF],
@@ -207,7 +208,7 @@ function mapsEqual(a, b, label) {
 
 (async () => {
   // ── run the LIVE extracted code in a sandbox ──
-  const marks = [];
+  const marks = [], traces = [];
   let yields = 0, longestStretch = 0, lastYield = null;
   const ctx = {
     performance, console,
@@ -219,7 +220,7 @@ function mapsEqual(a, b, label) {
       return setTimeout(fn, ms);
     },
     window: { _ccStalls: { mark: (l, ms) => marks.push([l, Math.round(ms)]) } },
-    _routeTrace: () => {},
+    _routeTrace: (name) => { traces.push(name); },
     haversineM, packGlobalId,
     WALK_SPEED_MPS: 1.38,
     walkGraph,
@@ -248,6 +249,33 @@ function mapsEqual(a, b, label) {
   const multiYields = yields, multiStretch = longestStretch;
   ok(multiYields > 5, 'multi build yielded to the event loop ' + multiYields + ' times');
   ok(multiStretch < 150, 'longest unyielded stretch ' + Math.round(multiStretch) + 'ms (<150ms; was one ~810ms block)');
+
+  // ── cache behavior: same regions + same stops ⇒ instant restore ──
+  ctx.scheduleIdx.stopToWalkNode = new Map();   // simulate the unload wipe
+  ctx.scheduleIdx.walkNodeToStops = new Map();
+  const tC = performance.now();
+  await vm.runInContext('buildMultimodalBridgesMulti(__multi)', ctx);
+  const cachedMs = performance.now() - tC;
+  ok(traces.includes('bridgesMulti:cached'), 'second build hits the cache');
+  ok(cachedMs < 100, 'cache hit is fast (' + Math.round(cachedMs) + 'ms)');
+  mapsEqual(refMulti.stopToWalkNode, ctx.scheduleIdx.stopToWalkNode, 'cached stopToWalkNode');
+  mapsEqual(refMulti.walkNodeToStops, ctx.scheduleIdx.walkNodeToStops, 'cached walkNodeToStops');
+
+  // changed stops identity (schedule rebuild) ⇒ full rebuild
+  traces.length = 0;
+  ctx.scheduleIdx.stops = new Map(stops);
+  await vm.runInContext('buildMultimodalBridgesMulti(__multi)', ctx);
+  ok(traces.includes('bridgesMulti:start') && !traces.includes('bridgesMulti:cached'),
+    'new stops map forces a rebuild');
+  mapsEqual(refMulti.stopToWalkNode, ctx.scheduleIdx.stopToWalkNode, 'rebuilt stopToWalkNode');
+
+  // changed region list ⇒ key mismatch ⇒ rebuild
+  traces.length = 0;
+  const multiRenamed = { ...multi, regions: [Object.assign({}, regions[0], { regionId: 'region-A2' }), regions[1]] };
+  await vm.runInContext('buildMultimodalBridgesMulti(__multi2)', Object.assign(ctx, { __multi2: multiRenamed }));
+  ok(traces.includes('bridgesMulti:start') && !traces.includes('bridgesMulti:cached'),
+    'different region list forces a rebuild');
+  ctx.scheduleIdx.stops = stops;  // restore for the legacy tests
 
   // legacy variant
   yields = 0; longestStretch = 0;

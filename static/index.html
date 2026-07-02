@@ -14341,8 +14341,29 @@ function fmtDate(ts) {
   // internal indices or globalIds, just that they round-trip through
   // String() and that si.walkNodeToStops.get(nid) returns the right
   // peers.
+  // Bridge-result cache. Linking ~25k stops into a ~937k-node graph
+  // costs ~1.5s wall per run, and it's a pure function of (ordered
+  // region list, stops map). Route-clear unloads the multi graph to
+  // free memory, so every route was paying a full relink for an
+  // identical region set (field dump, 2026-07-02). The ordered-id key
+  // is self-validating: regionIdx is assigned in that same order, so
+  // an equal key guarantees identical globalIds; the stops check is
+  // by Map identity (rebuildScheduleIndex replaces scheduleIdx
+  // wholesale). Retains ~2-4MB across unloads — small next to the
+  // ~40MB+ graph memory the unload exists to reclaim.
+  let _bridgeCacheMulti = null; // { key, stopsRef, stopToWalkNode, walkNodeToStops }
+
   async function buildMultimodalBridgesMulti(multi) {
     const _tBm = performance.now();
+    const cacheKey = multi.regions.map((r) => r.regionId).join('|');
+    if (_bridgeCacheMulti
+        && _bridgeCacheMulti.key === cacheKey
+        && _bridgeCacheMulti.stopsRef === scheduleIdx.stops) {
+      scheduleIdx.stopToWalkNode = _bridgeCacheMulti.stopToWalkNode;
+      scheduleIdx.walkNodeToStops = _bridgeCacheMulti.walkNodeToStops;
+      _routeTrace('bridgesMulti:cached', { stops: scheduleIdx.stops.size });
+      return;
+    }
     _routeTrace('bridgesMulti:start', {
       regions: multi.regions.length,
       stops: scheduleIdx.stops.size,
@@ -14434,6 +14455,11 @@ function fmtDate(ts) {
       }
     }
     _routeTrace('bridgesMulti:done', { linked, processed });
+    _bridgeCacheMulti = {
+      key: cacheKey, stopsRef: scheduleIdx.stops,
+      stopToWalkNode: scheduleIdx.stopToWalkNode,
+      walkNodeToStops: scheduleIdx.walkNodeToStops,
+    };
     if (window._ccStalls) window._ccStalls.mark('bridges-multi ~wall', performance.now() - _tBm);
   }
   // Extract wall-clock components of an instant as seen in a given IANA time zone.

@@ -11,7 +11,8 @@ const TILES_CACHE = 'tiles-v1';
 // "Upload logs" button next to Copy logs (POSTs the diagnostic dump
 // to /upload-logs → saves/logs/<trainer>_<ms>.txt); bridge builders
 // (legacy + multi) switched to integer grid keys + elapsed-time
-// yields (dump-convicted ~810ms stall) + bridges/bridges-multi marks.
+// yields (dump-convicted ~810ms stall) + bridges/bridges-multi marks
+// + bridge-result cache (repeat routes skip the ~1.5s stop relink).
 
 const APP_SHELL = [
   '/',
