@@ -14189,7 +14189,29 @@ function fmtDate(ts) {
     }
   }
 
+  // Integer grid key for the bridge builders: (cx, cy) packed into one
+  // exact float64 integer. At GRID=1000, cx ∈ [-180000, 180000] and
+  // cy ∈ [-90000, 90000]; the offsets make both non-negative and the
+  // multiplier keeps them disjoint (max ≈ 7.2e10 « 2^53). The old
+  // string keys ("cx,cy") allocated ~2 strings per node per pass —
+  // convicted by a stall dump (2026-07-02, Pixel 4a) as an ~800ms
+  // unyielding stretch when gridding a 937k-node multi-graph.
+  const bridgeGridKey = (cx, cy) => (cx + 180000) * 200000 + (cy + 90000);
+  // Elapsed-time yield helper for the bridge builders' loops — same
+  // pattern as the chunked schedule-index build: yield to the event
+  // loop whenever >40ms of sync work has accumulated.
+  function bridgeYielder() {
+    let last = performance.now();
+    return async () => {
+      if (performance.now() - last > 40) {
+        await new Promise((r) => setTimeout(r, 0));
+        last = performance.now();
+      }
+    };
+  }
+
   async function buildMultimodalBridges() {
+    const _tBw = performance.now();
     _routeTrace('bridges:start', {
       walkNodes: walkGraph.nodeCount,
       stops: scheduleIdx.stops.size,
@@ -14212,25 +14234,31 @@ function fmtDate(ts) {
     // now it's ~4MB (4 bytes per idx). We grow cells via a "list
     // of small arrays" pattern to avoid Uint32Array resizing.
     // Two-pass: first count per-cell, then allocate exact-sized arrays.
+    // Both passes yield on elapsed time — they used to run ~900k
+    // string-keyed Map ops back-to-back with no yields.
+    const maybeYield = bridgeYielder();
     const cellCounts = new Map();
     for (let idx = 0; idx < wcount; idx++) {
-      const lng = wlngs[idx], lat = wlats[idx];
-      const k = Math.round(lng * GRID) + ',' + Math.round(lat * GRID);
+      const k = bridgeGridKey(Math.round(wlngs[idx] * GRID), Math.round(wlats[idx] * GRID));
       cellCounts.set(k, (cellCounts.get(k) || 0) + 1);
+      if ((idx & 0xFFFF) === 0xFFFF) await maybeYield();
     }
     _routeTrace('bridges:cells_counted', { cells: cellCounts.size });
     const cellCursors = new Map();
+    let allocN = 0;
     for (const k of cellCounts.keys()) {
       walkGrid.set(k, new Uint32Array(cellCounts.get(k)));
       cellCursors.set(k, 0);
+      // ~236k tiny allocations for a city-pair grid — needs yields too
+      if ((++allocN & 0x3FFF) === 0) await maybeYield();
     }
     for (let idx = 0; idx < wcount; idx++) {
-      const lng = wlngs[idx], lat = wlats[idx];
-      const k = Math.round(lng * GRID) + ',' + Math.round(lat * GRID);
+      const k = bridgeGridKey(Math.round(wlngs[idx] * GRID), Math.round(wlats[idx] * GRID));
       const arr = walkGrid.get(k);
       const pos = cellCursors.get(k);
       arr[pos] = idx;
       cellCursors.set(k, pos + 1);
+      if ((idx & 0xFFFF) === 0xFFFF) await maybeYield();
     }
     cellCounts.clear();
     cellCursors.clear();
@@ -14239,19 +14267,20 @@ function fmtDate(ts) {
     let linked = 0;
     let processed = 0;
     const TRACE_EVERY = 5000;
-    // Yield to the event loop every YIELD_EVERY iterations. The stop-
+    // Yield to the event loop as sync work accumulates. The stop-
     // linking loop runs synchronously over ~30k stops × 25 grid cells
     // — total ~15s of sync work on iOS, which trips WebKit's hang
-    // watchdog and kills the page (mistaken for OOM). Yielding lets
-    // the watchdog reset and also lets the spinner UI animate.
-    const YIELD_EVERY = 2000;
+    // watchdog and kills the page (mistaken for OOM). Yielding (on
+    // elapsed time — fixed-count chunks were still producing ~170ms
+    // tasks in stall dumps) lets the watchdog reset and the spinner
+    // UI animate.
     for (const [stopId, stop] of scheduleIdx.stops) {
       const cx = Math.round(stop.lng * GRID);
       const cy = Math.round(stop.lat * GRID);
       let best = -1, bestD = Infinity;
       for (let dx = -2; dx <= 2; dx++) {
         for (let dy = -2; dy <= 2; dy++) {
-          const cell = walkGrid.get((cx + dx) + ',' + (cy + dy));
+          const cell = walkGrid.get(bridgeGridKey(cx + dx, cy + dy));
           if (!cell) continue;
           for (let i = 0; i < cell.length; i++) {
             const id = cell[i];
@@ -14274,9 +14303,7 @@ function fmtDate(ts) {
       // (rendering, user input, the iOS watchdog tick). Without this,
       // a multi-second sync loop is treated as "page hung" and the
       // WebContent process gets terminated.
-      if (processed % YIELD_EVERY === 0) {
-        await new Promise((r) => setTimeout(r, 0));
-      }
+      if ((processed & 0xFF) === 0) await maybeYield();
       // Periodic trace + memory probe so we can pinpoint how far the
       // loop got before a crash. Probe via Capacitor's MemoryProbe
       // plugin if present (iOS) — gives RAM in MB at that moment.
@@ -14302,6 +14329,7 @@ function fmtDate(ts) {
       }
     }
     _routeTrace('bridges:done', { linked, processed });
+    if (window._ccStalls) window._ccStalls.mark('bridges ~wall', performance.now() - _tBw);
   }
 
   // Multi-graph variant: bridge transit stops to the nearest globalId
@@ -14314,6 +14342,7 @@ function fmtDate(ts) {
   // String() and that si.walkNodeToStops.get(nid) returns the right
   // peers.
   async function buildMultimodalBridgesMulti(multi) {
+    const _tBm = performance.now();
     _routeTrace('bridgesMulti:start', {
       regions: multi.regions.length,
       stops: scheduleIdx.stops.size,
@@ -14327,33 +14356,42 @@ function fmtDate(ts) {
     const GRID = 1000;
     // Cell counts first, then exact-sized Uint32 arrays storing
     // globalIds. Same memory-frugal pattern as the legacy bridges.
+    // Integer keys + elapsed-time yields: the stall dump that added
+    // these showed this grid build as an ~810ms unyielding task over
+    // 937k nodes on a Pixel 4a (string keys = ~2 allocations/node/pass).
+    const maybeYield = bridgeYielder();
     const cellCounts = new Map();
     for (const r of multi.regions) {
       const lngs = r.routingView.nodeLng;
       const lats = r.routingView.nodeLat;
       const N = r.routingView.N;
       for (let i = 0; i < N; i++) {
-        const k = Math.round(lngs[i] * GRID) + ',' + Math.round(lats[i] * GRID);
+        const k = bridgeGridKey(Math.round(lngs[i] * GRID), Math.round(lats[i] * GRID));
         cellCounts.set(k, (cellCounts.get(k) || 0) + 1);
+        if ((i & 0xFFFF) === 0xFFFF) await maybeYield();
       }
     }
     _routeTrace('bridgesMulti:cells_counted', { cells: cellCounts.size });
     const walkGrid = new Map();
     const cellCursors = new Map();
+    let allocN = 0;
     for (const k of cellCounts.keys()) {
       walkGrid.set(k, new Uint32Array(cellCounts.get(k)));
       cellCursors.set(k, 0);
+      // ~236k tiny allocations for a city-pair grid — needs yields too
+      if ((++allocN & 0x3FFF) === 0) await maybeYield();
     }
     for (const r of multi.regions) {
       const lngs = r.routingView.nodeLng;
       const lats = r.routingView.nodeLat;
       const N = r.routingView.N;
       for (let i = 0; i < N; i++) {
-        const k = Math.round(lngs[i] * GRID) + ',' + Math.round(lats[i] * GRID);
+        const k = bridgeGridKey(Math.round(lngs[i] * GRID), Math.round(lats[i] * GRID));
         const arr = walkGrid.get(k);
         const pos = cellCursors.get(k);
         arr[pos] = packGlobalId(r.regionIdx, i);
         cellCursors.set(k, pos + 1);
+        if ((i & 0xFFFF) === 0xFFFF) await maybeYield();
       }
     }
     cellCounts.clear();
@@ -14362,7 +14400,6 @@ function fmtDate(ts) {
     const MAX_LINK_M = 500;
     let linked = 0;
     let processed = 0;
-    const YIELD_EVERY = 2000;
     const TRACE_EVERY = 5000;
     for (const [stopId, stop] of scheduleIdx.stops) {
       const cx = Math.round(stop.lng * GRID);
@@ -14370,7 +14407,7 @@ function fmtDate(ts) {
       let best = -1, bestD = Infinity;
       for (let dx = -2; dx <= 2; dx++) {
         for (let dy = -2; dy <= 2; dy++) {
-          const cell = walkGrid.get((cx + dx) + ',' + (cy + dy));
+          const cell = walkGrid.get(bridgeGridKey(cx + dx, cy + dy));
           if (!cell) continue;
           for (let i = 0; i < cell.length; i++) {
             const gid = cell[i];
@@ -14389,9 +14426,7 @@ function fmtDate(ts) {
         linked++;
       }
       processed++;
-      if (processed % YIELD_EVERY === 0) {
-        await new Promise((r) => setTimeout(r, 0));
-      }
+      if ((processed & 0xFF) === 0) await maybeYield();
       if (processed % TRACE_EVERY === 0) {
         _routeTrace('bridgesMulti:progress', {
           processed, linked, totalStops: scheduleIdx.stops.size,
@@ -14399,6 +14434,7 @@ function fmtDate(ts) {
       }
     }
     _routeTrace('bridgesMulti:done', { linked, processed });
+    if (window._ccStalls) window._ccStalls.mark('bridges-multi ~wall', performance.now() - _tBm);
   }
   // Extract wall-clock components of an instant as seen in a given IANA time zone.
   function walltimeInTz(d, tz) {

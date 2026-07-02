@@ -9,7 +9,9 @@ const TILES_CACHE = 'tiles-v1';
 // walk-nearest) + poi-halos moveend pass; sprite lazy-crop moved to
 // a worker (sprites.js is no-store, but index.html carries marks);
 // "Upload logs" button next to Copy logs (POSTs the diagnostic dump
-// to /upload-logs → saves/logs/<trainer>_<ms>.txt).
+// to /upload-logs → saves/logs/<trainer>_<ms>.txt); bridge builders
+// (legacy + multi) switched to integer grid keys + elapsed-time
+// yields (dump-convicted ~810ms stall) + bridges/bridges-multi marks.
 
 const APP_SHELL = [
   '/',
