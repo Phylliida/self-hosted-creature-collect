@@ -11,7 +11,8 @@
 //                antipode, distance to equator/pole)
 //   - Astronomy (moon phase/illumination, rise/set, full/new moon, supermoon,
 //                blue/black moon, eclipses w/ local visibility, planets tonight,
-//                Mercury retrograde, Mars Sol Date, age/weight on other planets)
+//                Mercury retrograde, meteor showers w/ moon interference,
+//                Mars Sol Date, age/weight on other planets)
 //   - Calendar  (day-of-year, ISO week, Julian Day, Easter, Friday-13th,
 //                day-of-week, alternate calendars, birthstone/flower)
 //
@@ -883,6 +884,66 @@
     { name: 'Sun', days: NaN, g: 27.01 },
   ];
 
+  // ── Meteor showers (IMO working-list values; radiant at peak, J2000) ──
+  // The activity window is stored as days before/after the peak; the peak
+  // instant itself is solved fresh each year from the sun's apparent
+  // longitude (peakLon), so it lands on the right night regardless of
+  // calendar drift. `guess` = nominal peak month/day to seed the solver.
+  A.METEOR_SHOWERS = [
+    { name: 'Quadrantids', peakLon: 283.15, guess: [1, 3], before: 6, after: 9, ra: 230, dec: 49, zhr: 110, parent: '2003 EH1' },
+    { name: 'Lyrids', peakLon: 32.32, guess: [4, 22], before: 8, after: 8, ra: 271, dec: 34, zhr: 18, parent: 'comet Thatcher' },
+    { name: 'Eta Aquariids', peakLon: 45.5, guess: [5, 6], before: 17, after: 22, ra: 338, dec: -1, zhr: 50, parent: "Halley's comet" },
+    { name: 'Alpha Capricornids', peakLon: 128, guess: [7, 31], before: 28, after: 15, ra: 307, dec: -10, zhr: 5, parent: 'comet 169P/NEAT' },
+    { name: 'S. Delta Aquariids', peakLon: 128, guess: [7, 31], before: 19, after: 23, ra: 340, dec: -16, zhr: 25, parent: 'comet P/2008 Y12' },
+    { name: 'Perseids', peakLon: 140.0, guess: [8, 13], before: 27, after: 11, ra: 48, dec: 58, zhr: 100, parent: 'comet Swift-Tuttle' },
+    { name: 'Draconids', peakLon: 195.4, guess: [10, 8], before: 2, after: 2, ra: 262, dec: 54, zhr: 5, parent: 'comet Giacobini-Zinner' },
+    { name: 'Orionids', peakLon: 208, guess: [10, 21], before: 19, after: 17, ra: 95, dec: 16, zhr: 20, parent: "Halley's comet" },
+    { name: 'S. Taurids', peakLon: 223, guess: [11, 5], before: 46, after: 15, ra: 52, dec: 15, zhr: 5, parent: 'comet Encke' },
+    { name: 'N. Taurids', peakLon: 230, guess: [11, 12], before: 23, after: 28, ra: 58, dec: 22, zhr: 5, parent: 'asteroid 2004 TG10' },
+    { name: 'Leonids', peakLon: 235.27, guess: [11, 17], before: 11, after: 13, ra: 152, dec: 22, zhr: 15, parent: 'comet Tempel-Tuttle' },
+    { name: 'Geminids', peakLon: 262.2, guess: [12, 14], before: 10, after: 6, ra: 112, dec: 33, zhr: 150, parent: 'asteroid Phaethon' },
+    { name: 'Ursids', peakLon: 270.7, guess: [12, 22], before: 5, after: 4, ra: 217, dec: 76, zhr: 10, parent: 'comet 8P/Tuttle' },
+  ];
+  // Instant (ms UTC) the sun reaches the shower's peak longitude in `year`.
+  A.showerPeakMs = (s, year) => {
+    let t = Date.UTC(year, s.guess[0] - 1, s.guess[1], 12);
+    for (let k = 0; k < 5; k++) {
+      const lon = A.sunEcliptic(A.jde(A.jdFromMs(t))).lonApp;
+      t += norm180(s.peakLon - lon) / 0.98565 * 86400000;
+    }
+    return t;
+  };
+  // Showers active at `ms`, closest peak first, each with the moon's
+  // illumination at that peak (a bright moon washes the shower out).
+  A.activeShowers = (ms) => {
+    const y = new Date(ms).getUTCFullYear(), out = [];
+    for (const s of A.METEOR_SHOWERS) {
+      for (const yy of [y - 1, y, y + 1]) {
+        const peak = A.showerPeakMs(s, yy);
+        if (ms >= peak - s.before * 86400000 && ms <= peak + s.after * 86400000) {
+          out.push({ shower: s, peakMs: peak, moonIllum: A.moonPhase(A.jde(A.jdFromMs(peak))).illum });
+          break;
+        }
+      }
+    }
+    out.sort((a, b) => Math.abs(ms - a.peakMs) - Math.abs(ms - b.peakMs));
+    return out;
+  };
+  // The next shower peak strictly after `ms`.
+  A.nextShowerPeak = (ms) => {
+    const y = new Date(ms).getUTCFullYear();
+    let best = null;
+    for (const s of A.METEOR_SHOWERS) {
+      for (const yy of [y, y + 1]) {
+        const peak = A.showerPeakMs(s, yy);
+        if (peak > ms && (!best || peak < best.peakMs)) {
+          best = { shower: s, peakMs: peak, moonIllum: A.moonPhase(A.jde(A.jdFromMs(peak))).illum };
+        }
+      }
+    }
+    return best;
+  };
+
   // ════════════════════════════════════════════════════════════════════
   // ECLIPSES  (Meeus ch.54 — global circumstances; local via topocentric
   //            apparent separation, reusing the sun + moon engines)
@@ -1310,6 +1371,19 @@
       const yr = new Date(now).getUTCFullYear();
       const wins = A.retrogradeWindows('Mercury', Date.UTC(yr, 0, 1), Date.UTC(yr + 1, 0, 1));
       if (wins.length) h += noteH(yr + ': ' + wins.map((w) => fmtDateMs(w.startMs) + '–' + (w.endMs ? fmtDateMs(w.endMs) : '…')).join(', '));
+      // meteor showers
+      h += subH('☄️ Meteor showers');
+      const act = A.activeShowers(now);
+      for (const a of act) {
+        const pct = Math.round(a.moonIllum * 100);
+        const sky = a.moonIllum < 0.3 ? 'dark skies 🌑' : (a.moonIllum < 0.65 ? 'some moonlight' : 'moon-washed');
+        h += rowH(a.shower.name, 'ZHR ~' + a.shower.zhr + ' · peak ' + fmtDateMs(a.peakMs) + ' · ' + until(a.peakMs));
+        h += noteH('moon at peak ' + pct + '% — ' + sky + ' · debris of ' + a.shower.parent);
+      }
+      if (!act.length) {
+        const nx = A.nextShowerPeak(now);
+        if (nx) h += noteH('none active — next: ' + nx.shower.name + ', peak ' + fmtDateMs(nx.peakMs) + ' · ' + until(nx.peakMs));
+      } else h += noteH('active radiants also appear on the Sky Map');
       // eclipses
       h += subH('🌑 Eclipses (computed for your location)');
       const se = A.nextSolarEclipse(now);
