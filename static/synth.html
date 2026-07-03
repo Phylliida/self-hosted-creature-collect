@@ -186,7 +186,10 @@ color:#fff;font-size:12px}
   <label>Decay <input type="range" id="vlDecay" min="0" max="150" step="5"><span class="vl-v" id="vlDecayV"></span></label>
   <label>Damping <input type="range" id="vlDamping" min="0" max="100" step="5"><span class="vl-v" id="vlDampingV"></span></label>
   <label>Vibrato <input type="range" id="vlMotion" min="0" max="20" step="1"><span class="vl-v" id="vlMotionV"></span></label>
-  <label>Chiff <input type="range" id="vlChiff" min="0" max="80" step="4"><span class="vl-v" id="vlChiffV"></span></label>
+  <div class="vl-h">Strike — how it's excited</div>
+  <label>Amount <input type="range" id="vlChiff" min="0" max="80" step="4"><span class="vl-v" id="vlChiffV"></span></label>
+  <label>Color <input type="range" id="vlStrikeF" min="1" max="24" step="1"><span class="vl-v" id="vlStrikeFV"></span></label>
+  <label>Time <input type="range" id="vlStrikeT" min="3" max="120" step="3"><span class="vl-v" id="vlStrikeTV"></span></label>
   <button id="vlMatch">✨ Match tuning</button>
   <button id="vlRandom">🎲 Randomize</button>
   <div class="vl-h">Presets</div>
@@ -631,7 +634,9 @@ const VL={count:vlSlider('vlCount',1,v=>v),
           decay:vlSlider('vlDecay',.01,v=>v?v.toFixed(2)+'s':'sustain'),
           damping:vlSlider('vlDamping',.01,v=>Math.round(v*100)+'%'),
           motion:vlSlider('vlMotion',1,v=>v+'¢'),
-          chiff:vlSlider('vlChiff',.01,v=>Math.round(v*100)+'%')};
+          chiff:vlSlider('vlChiff',.01,v=>Math.round(v*100)+'%'),
+          strikeF:vlSlider('vlStrikeF',1,v=>'×'+v),
+          strikeT:vlSlider('vlStrikeT',.001,v=>Math.round(v*1000)+'ms')};
 function syncLab(){
   for(const k in VL){VL[k].el.value=String(Math.round(labGen[k]/VL[k].scale));VL[k].v.textContent=VL[k].fmt(labGen[k]);}
   vlSieve.value=labGen.sieve;
@@ -679,6 +684,11 @@ function drawLabSpec(){
     c.fillStyle='hsl('+hue.toFixed(0)+' 80% 65%/.9)';
     c.fillRect(x-1.25,sH-hs,2.5,hs);
   }
+  if(labGen.chiff>0&&labGen.strikeF){                // strike = diamond at its color ratio, size ∝ amount
+    const sx=X(Math.min(31,labGen.strikeF)),sd=2+labGen.chiff*6;
+    c.fillStyle='rgba(255,255,255,.8)';
+    c.beginPath();c.moveTo(sx,6);c.lineTo(sx+sd,6+sd);c.lineTo(sx,6+2*sd);c.lineTo(sx-sd,6+sd);c.closePath();c.fill();
+  }
   if(labGen.formantA>0){                             // formant = fixed-Hz resonance bump (vs the preview note)
     const rf=labGen.formantF/(baseFreq()*2);
     if(rf>1&&rf<Math.pow(2,OCT)){
@@ -700,7 +710,7 @@ function drawLabSpec(){
 }
 function labPreview(){
   const v=makeVoice(baseFreq()*2,'lab');
-  setTimeout(()=>{holdRelease(v.g.gain,ctx.currentTime,v.rel);setTimeout(()=>v.stop(),v.tail);},350);
+  setTimeout(()=>{releaseVoice(v,ctx.currentTime);setTimeout(()=>v.stop(),v.tail);},350);
 }
 /* audition strip: tap/drag along the Lab's right edge to hear the live
    genome at different pitches — snapped to the current tuning's steps,
@@ -712,7 +722,7 @@ function vlPadStop(quick){
   // gliss handoffs damp FAST — letting every step's long release ring out
   // stacks dozens of tails on a quick slide and crackles the limiter;
   // a final lift keeps the voice's natural ring
-  holdRelease(v.g.gain,ctx.currentTime,quick?.03:v.rel);
+  releaseVoice(v,ctx.currentTime,quick?.03:v.rel);
   setTimeout(()=>v.stop(),quick?250:v.tail);
 }
 function vlPadPlay(y){
@@ -765,6 +775,8 @@ function randomGen(){
     formantA:R()<.4?0:3+R()*11,
     motion:R()<.5?0:2+Math.round(R()*8),
     chiff:(struck?R()<.7:R()<.3)?R()*.6:0,
+    strikeF:Math.pow(2,R()*4)*1.2,                   // log-uniform ×1.2..×19 — thump to click
+    strikeT:struck?.004+R()*.03:.02+R()*.09,
     match:labGen.match,
   });
 }
@@ -855,17 +867,19 @@ function record(ev){if(!isRec)return;const now=audio().currentTime;
 function updateBadge(){const n=recordings.filter(r=>r.active).length;badge.textContent=n;badge.classList.toggle('visible',n>0);}
 
 /* ==== SYNTH POINTER HANDLERS ==== */
-/* Releasing a voice whose 8ms attack ramp is still pending (fast wiggles
-   retrigger inside the ramp) must first cancel the ramp and pin the envelope
-   at its current value — scheduling the release on top of a live ramp leaves
-   conflicting timeline events and the value jumps discontinuously = pop. */
-function holdRelease(gp,at,tau){
+/* Releasing a voice mid-envelope (attack ramp still pending, or a struck
+   voice's long decay curve still in flight — e.g. Singing Bowl held-decay)
+   must pin the envelope at its EXACT current value before fading, or the
+   value jumps discontinuously = pop. Browsers' cancelAndHoldAtTime computes
+   that pin unreliably inside an active setTargetAtTime (Chrome/Android), so
+   we never ask it to: each voice carries its own analytic envelope (envAt)
+   and we pin the mathematically-known value ourselves. */
+function releaseVoice(v,at,tau){
+  if(v.released)return;v.released=true;
   at=Math.max(at,(ctx?ctx.currentTime:0)+.003);    // same quantum-safety as voice starts
-  try{
-    if(gp.cancelAndHoldAtTime)gp.cancelAndHoldAtTime(at);
-    else{const v=gp.value;gp.cancelScheduledValues(at);gp.setValueAtTime(v,at);}
-  }catch(_){}
-  gp.setTargetAtTime(0,at,tau||RELEASE);
+  const gp=v.g.gain;
+  try{gp.cancelScheduledValues(at);gp.setValueAtTime(Math.max(.0001,v.envAt(at)),at);}catch(_){}
+  gp.setTargetAtTime(0,at,tau||v.rel||RELEASE);
 }
 /* ==== VOICES (instrument patches — pure oscillator recipes, no samples) ====
    Each recorded note stamps its instrument (`inst` on the start event), so
@@ -914,13 +928,13 @@ let voiceLib=[];                                     // saved genomes: [{name, g
    fills the sliders (tweak + Save to keep a variant). P() spreads over a
    NEUTRAL base so unset genes are truly off. */
 const P=o=>Object.assign({count:6,stretch:0,tilt:1,sieve:'all',width:0,attack:.005,decay:0,
-  match:false,breath:0,formantF:800,formantA:0,damping:0,motion:0,chiff:0},o);
+  match:false,breath:0,formantF:800,formantA:0,damping:0,motion:0,chiff:0,strikeF:8,strikeT:.02},o);
 const LAB_PRESETS=[
-  ['Gamelan',     P({stretch:.22,tilt:1.0,width:4,decay:.55,damping:.5,chiff:.15,match:true})],
+  ['Gamelan',     P({stretch:.22,tilt:1.0,width:4,decay:.55,damping:.5,chiff:.15,strikeF:9,strikeT:.01,match:true})],
   ['Singing Bowl',P({count:5,stretch:.28,tilt:.6,width:3,decay:1.5,damping:.2,match:true})],
   ['Deep Gong',   P({count:9,stretch:.35,tilt:.8,decay:1.3,damping:.8,attack:.004,match:true})],
-  ['Kalimba',     P({count:3,stretch:.05,tilt:1.4,decay:.3,chiff:.3,damping:.4})],
-  ['Rain Bells',  P({count:5,sieve:'3rd',stretch:.18,decay:.4,chiff:.2,damping:.6,match:true})],
+  ['Kalimba',     P({count:3,stretch:.05,tilt:1.4,decay:.3,chiff:.3,strikeF:12,strikeT:.008,damping:.4})],
+  ['Rain Bells',  P({count:5,sieve:'3rd',stretch:.18,decay:.4,chiff:.2,strikeF:14,strikeT:.006,damping:.6,match:true})],
   ['Wooden Flute',P({count:4,tilt:1.6,breath:.22,formantF:900,formantA:8,damping:.35,motion:5,attack:.06})],
   ['Whistle',     P({count:1,breath:.3,motion:8,attack:.04,formantF:3000,formantA:6})],
   ['Glass Choir', P({sieve:'oct',count:5,width:12,attack:.18,breath:.1,formantF:1200,formantA:6,motion:4})],
@@ -929,12 +943,12 @@ const LAB_PRESETS=[
   ['Alien Brass', P({count:6,stretch:-.12,tilt:.7,breath:.06,formantF:1200,formantA:10,attack:.05,motion:3,damping:.25})],
   ['Sub Drone',   P({count:2,tilt:.5,width:10,breath:.05,motion:2,formantF:400,formantA:6})],
   // percussion — pitched/modal drums (noise-dominant kit pieces live in Drums mode)
-  ['Timpani',     P({count:5,stretch:.3,tilt:1.3,attack:.003,decay:.5,damping:.7,breath:.08,chiff:.2,formantF:300,formantA:6})],
-  ['Marimba',     P({count:3,sieve:'oct',tilt:.8,decay:.25,damping:.85,chiff:.35,formantF:700,formantA:6})],
-  ['Woodblock',   P({count:2,stretch:.4,tilt:.6,decay:.09,damping:.5,chiff:.6,formantF:1800,formantA:12})],
-  ['Steel Pan',   P({count:6,stretch:.08,tilt:.7,width:8,decay:.6,damping:.55,chiff:.25,match:true})],
-  ['Taiko',       P({count:4,stretch:.35,tilt:1.6,decay:.35,damping:.8,breath:.25,chiff:.5,formantF:200,formantA:10})],
-  ['Conga',       P({count:3,stretch:.25,tilt:1.2,decay:.18,damping:.6,breath:.15,chiff:.4,formantF:500,formantA:8})],
+  ['Timpani',     P({count:5,stretch:.3,tilt:1.3,attack:.003,decay:.5,damping:.7,breath:.08,chiff:.2,strikeF:2,strikeT:.04,formantF:300,formantA:6})],
+  ['Marimba',     P({count:3,sieve:'oct',tilt:.8,decay:.25,damping:.85,chiff:.35,strikeF:6,strikeT:.012,formantF:700,formantA:6})],
+  ['Woodblock',   P({count:2,stretch:.4,tilt:.6,decay:.09,damping:.5,chiff:.6,strikeF:10,strikeT:.008,formantF:1800,formantA:12})],
+  ['Steel Pan',   P({count:6,stretch:.08,tilt:.7,width:8,decay:.6,damping:.55,chiff:.25,strikeF:7,strikeT:.01,match:true})],
+  ['Taiko',       P({count:4,stretch:.35,tilt:1.6,decay:.35,damping:.8,breath:.25,chiff:.5,strikeF:1.5,strikeT:.05,formantF:200,formantA:10})],
+  ['Conga',       P({count:3,stretch:.25,tilt:1.2,decay:.18,damping:.6,breath:.15,chiff:.4,strikeF:4,strikeT:.02,formantF:500,formantA:8})],
 ];
 function sanitizeGen(g){
   const num=(v,lo,hi,d)=>(typeof v==='number'&&v>=lo&&v<=hi)?v:d;
@@ -980,7 +994,7 @@ function labDef(gen){
     tail:gen.decay>.4?1600:OSC_TAIL,
     breath:gen.breath||0,formantF:gen.formantF||800,formantA:gen.formantA||0,
     damping:gen.damping||0,motion:gen.motion||0,chiff:gen.chiff||0,
-    strikeF:gen.strikeF,strikeT:gen.strikeT};   // deliberately raw — undefined = legacy chiff path
+    strikeF:gen.strikeF||8,strikeT:gen.strikeT||.02};
 }
 function makeVoice(f,inst,at,gen){
   // the +5ms safety keeps the start out of the already-rendered audio quantum —
@@ -1017,29 +1031,31 @@ function makeVoice(f,inst,at,gen){
     lfo.connect(lg);oscs.forEach(o=>lg.connect(o.frequency));lfo.start(t);extra.push(lfo);}
   // STRIKE — the exciter. Routed THROUGH the voice chain (lowpass → formant →
   // envelope) and pitched relative to the note, so it composes with the rest
-  // of the genome instead of being pasted on top. Legacy genomes (no strikeF)
-  // keep the old straight-to-bus burst bit-exactly.
-  if(def.chiff&&def.strikeF!=null){
+  // of the genome instead of being pasted on top.
+  if(def.chiff){
     const n=c.createBufferSource();n.buffer=noise();
     const bp=c.createBiquadFilter();bp.type='bandpass';
-    bp.frequency.value=Math.min(12000,f*def.strikeF);bp.Q.value=.9;
+    bp.frequency.value=Math.min(12000,f*(def.strikeF||8));bp.Q.value=.9;
     const sT=def.strikeT||.02,cg=c.createGain();
     cg.gain.setValueAtTime(def.chiff*2*(sT<.015?1.5:1),t);      // short clicks need level to register
     cg.gain.setTargetAtTime(.0001,t+.002,sT);
     n.connect(bp);bp.connect(cg);cg.connect(flt);
     n.start(t);n.stop(t+Math.min(.6,sT*6+.05));
-  }else if(def.chiff){
-    const n=c.createBufferSource();n.buffer=noise();
-    const hp=c.createBiquadFilter();hp.type='highpass';hp.frequency.value=1800;
-    const cg=c.createGain();cg.gain.setValueAtTime(def.chiff*.55,t);cg.gain.setTargetAtTime(.0001,t+.006,.02);
-    n.connect(hp);hp.connect(cg);cg.connect(bus());n.start(t);n.stop(t+.15);}
+  }
   // BODY/formant — a fixed-Hz resonance the pitch moves through
   let out=flt;
   if(def.formantA){const pk=c.createBiquadFilter();pk.type='peaking';
     pk.frequency.value=def.formantF;pk.Q.value=2;pk.gain.value=def.formantA;
     flt.connect(pk);out=pk;}
   out.connect(g);g.connect(bus());
+  const aEnd=t+atk;
   return {oscs,g,rel:def.rel||RELEASE,tail:def.tail||OSC_TAIL,
+    envAt(x){                                        // analytic master-envelope value at time x
+      if(x<=t)return 0;
+      if(x<aEnd)return def.amp*(x-t)/atk;
+      if(def.decay)return .001+(def.amp-.001)*Math.exp(-Math.max(0,x-aEnd-.004)/def.decay);
+      return def.amp;
+    },
     setFreq(nf,when){oscs.forEach((o,i)=>o.frequency.setTargetAtTime(nf*parts[i][0],when,.01));},
     stop(){oscs.concat(extra).forEach(o=>{try{o.stop()}catch(_){}});}};
 }
@@ -1097,7 +1113,7 @@ function synthMove(pid,x,y){
 }
 function synthEnd(pid){
   const t=touches.get(pid);if(!t)return;
-  holdRelease(t.v.g.gain,ctx.currentTime,t.v.rel);t.m.style.opacity='0';t.m.style.transition=`opacity ${RELEASE}s`;
+  releaseVoice(t.v,ctx.currentTime);t.m.style.opacity='0';t.m.style.transition=`opacity ${RELEASE}s`;
   setTimeout(()=>t.m.remove(),MARKER_FADE);
   setTimeout(()=>t.v.stop(),t.v.tail);touches.delete(pid);record({type:'end',id:t.id});
 }
@@ -1180,7 +1196,7 @@ function stopRecording(autoPlay){
 
 /* ==== PLAYBACK ==== */
 function fadeNote(n,at){
-  holdRelease(n.v.g.gain,at,n.v.rel);n.m.style.opacity='0';n.m.style.transition=`opacity ${RELEASE}s`;
+  releaseVoice(n.v,at);n.m.style.opacity='0';n.m.style.transition=`opacity ${RELEASE}s`;
   const c=audio();
   setTimeout(()=>n.m.remove(),Math.max(0,(at-c.currentTime)*1000)+MARKER_FADE);
   setTimeout(()=>n.v.stop(),Math.max(0,(at-c.currentTime)*1000)+n.v.tail);
