@@ -619,6 +619,14 @@
         if (!synthWin) synthWin = makeAppWindow({
           title: 'Synth', noun: 'song', nounPlural: 'songs',
           src: SYNTH_SRC, store: songsStore, capture: captureSynth, apply: applySynth,
+          // "Clear" up top like Draw's New — themed confirm, then the iframe
+          // wipes all tracks via the SynthApp bridge.
+          leadActions: [{
+            html: 'Clear', title: 'Clear all tracks',
+            onClick: (api) => api.confirm(
+              'Clear everything?\nAll unsaved tracks will be lost.', 'Clear',
+              () => { const w = api.frameWin(); if (w && w.SynthApp && w.SynthApp.clearAll) w.SynthApp.clearAll(); }),
+          }],
         });
         synthWin.open();
       },
