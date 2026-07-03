@@ -1140,22 +1140,25 @@
   // across all slots, regenerating the same loot stream (same seed
   // → same items) so the user can re-tap them.
   //
-  // Rate history: was 1000 m (1 milestone/km) → 500 m (2/km). At the
-  // current 0.75/0.15/0.10 candy/egg/item table that gives 0.30 eggs
-  // per km per slot, or 0.60 eggs/km combined when both slots are
-  // filled (one egg every ~1.67 km of walking).
+  // Rate history: was 1000 m (1 milestone/km) → 500 m (2/km). Table
+  // history: 0.75/0.15/0.10 → 0.70/0.15/0.15 (2026-07, evo items
+  // bumped to 15%). Eggs unchanged: 0.30 per km per slot, 0.60/km
+  // combined when both slots are filled (one egg every ~1.67 km).
+  // NOTE: milestones are deterministic in (slot, addedAt, N), so a
+  // threshold change re-maps any still-unclaimed milestones' kinds
+  // (one-time shift, no stored history to migrate).
   const DAYCARE_LOOT_MILESTONE_M = 500;
   // Daycare loot is one of three kinds, rolled deterministically per
   // milestone via the slot's seed. Probabilities sum to 1.0:
-  //   0.00–0.75  candy   — 1 candy in the daycare pokémon's family
+  //   0.00–0.70  candy   — 1 candy in the daycare pokémon's family
   //                        bucket (50/50 between A and B's roots)
-  //   0.75–0.90  egg     — same fusion as the parent, level 1, with
+  //   0.70–0.85  egg     — same fusion as the parent, level 1, with
   //                        a randomized size baked in at drop time
-  //   0.90–1.00  evo_item — uniform pick from items that can evolve
+  //   0.85–1.00  evo_item — uniform pick from items that can evolve
   //                        either side's family. Falls back to candy
   //                        if neither family has an Item evolution.
-  const DAYCARE_PROB_CANDY = 0.75;
-  const DAYCARE_PROB_EGG = 0.15;  // implicit upper bound = 0.90
+  const DAYCARE_PROB_CANDY = 0.70;
+  const DAYCARE_PROB_EGG = 0.15;  // implicit upper bound = 0.85
 
   function _evoItemsForFamily(speciesId) {
     if (speciesId == null) return [];

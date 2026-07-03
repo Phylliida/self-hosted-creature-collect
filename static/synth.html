@@ -74,6 +74,29 @@ backdrop-filter:blur(5px);padding:10px 12px;border-radius:8px;display:flex;flex-
 font-size:12px;color:#fff;min-width:170px}
 #synthCfgPanel[hidden]{display:none}
 #synthCfgPanel label{display:flex;justify-content:space-between;gap:10px;align-items:center;color:#fff}
+
+/* ----- ⚗ voice lab: docked top sheet ("tab") — keys below stay playable ----- */
+#labToggle{position:fixed;top:10px;left:10px;z-index:105;padding:4px 9px;background:rgba(0,0,0,.5);
+color:#fff;border-radius:4px;cursor:pointer;font-size:13px}
+#voiceLabPanel{position:fixed;top:0;left:0;right:0;max-height:58%;overflow-y:auto;z-index:104;
+background:rgba(8,12,24,.93);backdrop-filter:blur(6px);padding:10px 14px 12px;
+border-radius:0 0 14px 14px;display:flex;flex-direction:column;gap:7px;font-size:12px;color:#fff}
+#voiceLabPanel[hidden]{display:none}
+#voiceLabPanel label{display:flex;justify-content:space-between;gap:8px;align-items:center;color:#fff}
+#voiceLabPanel input[type=range]{width:46%;max-width:220px}
+#voiceLabPanel .vl-v{min-width:44px;text-align:right;color:rgba(255,255,255,.7);font-variant-numeric:tabular-nums}
+#voiceLabPanel .vl-title{text-align:center;font-weight:700;margin-bottom:2px;position:relative}
+#vlClose{position:absolute;right:0;top:-3px;padding:2px 9px}
+#vlMatch.on{background:rgba(120,180,255,.4)}
+#vlSpec{width:100%;height:104px;border-radius:6px;background:rgba(255,255,255,.05);flex-shrink:0}
+.vl-librow{display:flex;gap:6px;margin-top:2px}
+#vlName{flex:1;min-width:0;padding:5px 8px;border:none;border-radius:4px;background:rgba(255,255,255,.14);
+color:#fff;font-size:12px}
+#vlList{display:flex;flex-wrap:wrap;gap:5px}
+.vl-vrow{display:flex;align-items:center;background:rgba(255,255,255,.09);border-radius:999px;overflow:hidden}
+.vl-pick{border-radius:999px 0 0 999px;padding:4px 4px 4px 11px}
+.vl-pick.on{background:rgba(120,180,255,.4)}
+.vl-del{padding:4px 9px 4px 5px;background:transparent}
 </style>
 </head>
 <body>
@@ -86,12 +109,9 @@ font-size:12px;color:#fff;min-width:170px}
 <!-- ---------- SYNTH OPTIONS POPOVER ---------- -->
 <div id="synthCfgPanel" hidden>
   <label>Voice
-    <select id="voiceSel">
-      <option value="sine">Soft</option><option value="tri">Flute</option>
-      <option value="saw">Strings</option><option value="square">Retro</option>
-      <option value="organ">Organ</option><option value="pluck">Pluck</option>
-    </select>
+    <select id="voiceSel"></select>
   </label>
+  <button id="voiceLabBtn">⚗ Voice Lab…</button>
   <label>Low note
     <select id="baseOctSel">
       <option value="1">C1 · deep</option><option value="2">C2</option><option value="3">C3</option>
@@ -130,6 +150,28 @@ font-size:12px;color:#fff;min-width:170px}
   </label>
 </div>
 
+<!-- ---------- ⚗ VOICE LAB TAB ---------- -->
+<div id="labToggle">⚗ Lab</div>
+<div id="voiceLabPanel" hidden>
+  <div class="vl-title">⚗ Voice Lab<button id="vlClose">×</button></div>
+  <canvas id="vlSpec"></canvas>
+  <label>Partials <input type="range" id="vlCount" min="1" max="10" step="1"><span class="vl-v" id="vlCountV"></span></label>
+  <label>Stretch <input type="range" id="vlStretch" min="-30" max="50" step="1"><span class="vl-v" id="vlStretchV"></span></label>
+  <label>Tilt <input type="range" id="vlTilt" min="0" max="30" step="1"><span class="vl-v" id="vlTiltV"></span></label>
+  <label>Sieve
+    <select id="vlSieve">
+      <option value="all">All</option><option value="odd">Odd</option>
+      <option value="oct">Octaves</option><option value="3rd">Every 3rd</option>
+    </select>
+  </label>
+  <label>Width <input type="range" id="vlWidth" min="0" max="25" step="1"><span class="vl-v" id="vlWidthV"></span></label>
+  <label>Attack <input type="range" id="vlAttack" min="0" max="30" step="1"><span class="vl-v" id="vlAttackV"></span></label>
+  <label>Decay <input type="range" id="vlDecay" min="0" max="150" step="5"><span class="vl-v" id="vlDecayV"></span></label>
+  <button id="vlMatch">✨ Match tuning</button>
+  <div class="vl-librow"><input id="vlName" placeholder="voice name" maxlength="24"><button id="vlSave">Save voice</button></div>
+  <div id="vlList"></div>
+</div>
+
 <!-- ---------- RECORDINGS PANEL ---------- -->
 <div id="recordingsToggle"><span>Recordings</span><span id="dropdownArrow">▼</span></div>
 <div id="recordingBadge" class="recording-badge">0</div>
@@ -147,7 +189,6 @@ font-size:12px;color:#fff;min-width:170px}
     <select id="rootSel"></select>
     <button id="synthCfgBtn" title="synth options">⚙</button>
   </div>
-  <div class="control-group"><button id="clearBtn">Clear</button></div>
   <div class="control-group"><label>Tempo</label><input type="range" id="tempoSlider" min="40" max="200" value="120"><span id="tempoValue" class="control-value">120 BPM</span></div>
   <div class="control-group"><button id="metronomeBtn">Met:Off</button><div id="metronomeLight"></div><span id="barCounter">1.1</span></div>
   <div class="control-group"><button id="recordBtn">Rec</button><button id="playAllBtn">Play</button><button id="stopBtn">Stop</button></div>
@@ -163,7 +204,7 @@ const pad=$('soundPad'), grid=$('drumGrid'),
       tempoSlider=$('tempoSlider'), tempoValue=$('tempoValue'),
       metBtn=$('metronomeBtn'), metLight=$('metronomeLight'), barCounter=$('barCounter'),
       beatIndicator=$('beatIndicator'), recordBtn=$('recordBtn'), playBtn=$('playAllBtn'),
-      stopBtn=$('stopBtn'), clearBtn=$('clearBtn'), recToggle=$('recordingsToggle'),
+      stopBtn=$('stopBtn'), recToggle=$('recordingsToggle'),
       arrow=$('dropdownArrow'), recordingsPanel=$('recordingsPanel'), recordingsList=$('recordingsList'),
       badge=$('recordingBadge'), instBtn=$('instrumentBtn'),
       scaleSel=$('scaleSel'), rootSel=$('rootSel'), scaleGridEl=$('scaleGrid'),
@@ -172,7 +213,11 @@ const pad=$('soundPad'), grid=$('drumGrid'),
       synthCfgBtn=$('synthCfgBtn'), synthCfgPanel=$('synthCfgPanel'),
       baseOctSel=$('baseOctSel'), hexSizeSel=$('hexSizeSel'), edgeInsetSel=$('edgeInsetSel'),
       hexEastSel=$('hexEastSel'), hexNESel=$('hexNESel'),
-      barsSel=$('barsSel'), timeSigSel=$('timeSigSel'), voiceSel=$('voiceSel');
+      barsSel=$('barsSel'), timeSigSel=$('timeSigSel'), voiceSel=$('voiceSel'),
+      voiceLabBtn=$('voiceLabBtn'), voiceLabPanel=$('voiceLabPanel'),
+      vlSieve=$('vlSieve'), vlMatch=$('vlMatch'), vlSpec=$('vlSpec'),
+      labToggle=$('labToggle'), vlClose=$('vlClose'), vlName=$('vlName'),
+      vlSave=$('vlSave'), vlList=$('vlList');
 
 /* ==== GRID SIZE ==== */
 const COLS=6, ROWS=3;
@@ -364,7 +409,7 @@ function rebuildTuningSelects(){
   let ro='';for(let i=0;i<edo;i++)ro+='<option value="'+i+'">'+(edo===12?ROOTS[i]:i)+'</option>';
   rootSel.innerHTML=ro;rootSel.value=String(rootSemi);
   baseOctSel.value=String(baseOct);hexSizeSel.value=String(hexScale);edgeInsetSel.value=String(edgeInset);
-  voiceSel.value=voiceKey;
+  buildVoiceOptions();
   // layout-step selects: 'auto' (Wicki–Hayden for this EDO) + 0..edo steps
   if(typeof hexEastPref==='number'&&hexEastPref>edo)hexEastPref='auto';
   if(typeof hexNEPref==='number'&&hexNEPref>edo)hexNEPref='auto';
@@ -372,6 +417,13 @@ function rebuildTuningSelects(){
     for(let i=0;i<=edo;i++)h+='<option value="'+i+'">+'+i+'</option>';return h;};
   hexEastSel.innerHTML=stepOpts(2*edoFifth(edo)-edo);hexEastSel.value=String(hexEastPref);
   hexNESel.innerHTML=stepOpts(edoFifth(edo));hexNESel.value=String(hexNEPref);
+}
+function buildVoiceOptions(){
+  const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  let h='';for(const k in VOICES)h+='<option value="'+k+'">'+VOICES[k].name+'</option>';
+  h+='<option value="lab">⚗ Lab</option>';
+  voiceLib.forEach(v=>{h+='<option value="v:'+esc(v.name)+'">⚗ '+esc(v.name)+'</option>';});
+  voiceSel.innerHTML=h;voiceSel.value=voiceKey;
 }
 function loadQuantPrefs(){try{const p=JSON.parse(localStorage.getItem('synth.quant.v1'))||{};
   if(EDOS.includes(p.edo))edo=p.edo;
@@ -386,17 +438,23 @@ function loadQuantPrefs(){try{const p=JSON.parse(localStorage.getItem('synth.qua
   if([1,2,4,8,12,16].includes(p.bars))barsPerLoop=p.bars;
   if(typeof p.timeSig==='number'&&p.timeSig>=2&&p.timeSig<=9)timeSig=Math.round(p.timeSig);
   beatsPerLoop=timeSig*barsPerLoop;
-  if(VOICES.hasOwnProperty(p.voice))voiceKey=p.voice;}catch(_){}}
+  if(p.labGen&&typeof p.labGen==='object')labGen=sanitizeGen(p.labGen);
+  if(Array.isArray(p.voiceLib))voiceLib=p.voiceLib
+    .filter(v=>v&&typeof v.name==='string'&&v.name.trim())
+    .slice(0,64).map(v=>({name:String(v.name).slice(0,24),gen:sanitizeGen(v.gen)}));
+  if(p.voice==='lab'||VOICES.hasOwnProperty(p.voice)
+    ||(typeof p.voice==='string'&&p.voice.slice(0,2)==='v:'&&voiceLib.some(x=>'v:'+x.name===p.voice)))voiceKey=p.voice;}catch(_){}}
 function saveQuantPrefs(){try{localStorage.setItem('synth.quant.v1',
   JSON.stringify({scale:scaleKey,root:rootSemi,edo:edo,baseOct:baseOct,hexScale:hexScale,
-    edgeInset:edgeInset,hexEast:hexEastPref,hexNE:hexNEPref,bars:barsPerLoop,timeSig:timeSig,voice:voiceKey}))}catch(_){}}
+    edgeInset:edgeInset,hexEast:hexEastPref,hexNE:hexNEPref,bars:barsPerLoop,timeSig:timeSig,
+    voice:voiceKey,labGen:labGen,voiceLib:voiceLib}))}catch(_){}}
 function applyQuant(){
   rebuildTuningSelects();
   quantOn=!!SCALES[scaleKey];allowedSemis=[];
   scalePCs=quantOn?scaleSteps(SCALES[scaleKey]):null;
   if(quantOn){const max=spanX()+spanY();
     for(let k=0;k<=max;k++)if(scalePCs.has(((k-rootSemi)%edo+edo)%edo))allowedSemis.push(k);}
-  saveQuantPrefs();renderScaleGrid();drawHexGrid();
+  saveQuantPrefs();renderScaleGrid();drawHexGrid();drawLabSpec();
 }
 function snapSemi(s){let best=allowedSemis[0],bd=1e9;
   for(const k of allowedSemis){const d=Math.abs(k-s);if(d<bd){bd=d;best=k;}}return best;}
@@ -517,16 +575,129 @@ synthCfgBtn.onclick=()=>{
   if(!synthCfgPanel.hidden){const bs=$('bottomStack');
     synthCfgPanel.style.bottom=(((bs&&bs.offsetHeight)||100)+10)+'px';}
 };
-// tap anywhere outside the panel (pad, keys, other controls) to dismiss it;
+// tap anywhere outside a popover (pad, keys, other controls) to dismiss it;
 // the gear stays excluded or its click would immediately re-toggle
 document.addEventListener('pointerdown',(e)=>{
-  if(synthCfgPanel.hidden)return;
-  if(synthCfgPanel.contains(e.target)||synthCfgBtn.contains(e.target))return;
-  synthCfgPanel.hidden=true;
+  if(!synthCfgPanel.hidden&&!synthCfgPanel.contains(e.target)&&!synthCfgBtn.contains(e.target))
+    synthCfgPanel.hidden=true;
+  // the Voice Lab sheet deliberately does NOT close on outside taps — you
+  // play the keys below it while sculpting; close via ⚗ Lab or its ×
 },true);
+
+/* ==== ⚗ VOICE LAB UI ==== */
+const vlSlider=(id,scale,fmt)=>({el:$(id),v:$(id+'V'),scale,fmt});
+const VL={count:vlSlider('vlCount',1,v=>v),
+          stretch:vlSlider('vlStretch',.01,v=>(v>0?'+':'')+v.toFixed(2)),
+          tilt:vlSlider('vlTilt',.1,v=>v.toFixed(1)),
+          width:vlSlider('vlWidth',1,v=>v+'¢'),
+          attack:vlSlider('vlAttack',.01,v=>Math.round(v*1000)+'ms'),
+          decay:vlSlider('vlDecay',.01,v=>v?v.toFixed(2)+'s':'sustain')};
+function syncLab(){
+  for(const k in VL){VL[k].el.value=String(Math.round(labGen[k]/VL[k].scale));VL[k].v.textContent=VL[k].fmt(labGen[k]);}
+  vlSieve.value=labGen.sieve;
+  vlMatch.classList.toggle('on',labGen.match);
+  vlMatch.textContent='✨ Match tuning: '+(labGen.match?'on':'off');
+  drawLabSpec();
+}
+/* The genome, drawn: log-frequency axis, 5 octaves. Faint verticals = the
+   CURRENT tuning's step grid (octaves brighter); white floor ticks = pure
+   harmonics; colored bars = your partials (hue matches the note markers).
+   Stretch shows as bars drifting off the harmonic ticks; match shows as bars
+   snapping onto the grid; tilt is the height rolloff; width is the glow at
+   the fundamental. Bottom strip: the attack/decay envelope over ~2s. */
+function drawLabSpec(){
+  if(voiceLabPanel.hidden)return;
+  const c=vlSpec.getContext('2d'),dpr=Math.min(window.devicePixelRatio||1,3);
+  const W=vlSpec.clientWidth||191,H=vlSpec.clientHeight||86;
+  vlSpec.width=Math.round(W*dpr);vlSpec.height=Math.round(H*dpr);
+  c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,W,H);
+  const OCT=5,X=r=>4+Math.log2(r)/OCT*(W-8),sH=H-18;
+  for(let k=0;k<=edo*OCT;k++){                       // tuning grid
+    const oct=k%edo===0;
+    c.strokeStyle=oct?'rgba(255,255,255,.28)':'rgba(140,170,255,'+(edo>24?.08:.15)+')';
+    const x=X(Math.pow(2,k/edo));
+    c.beginPath();c.moveTo(x,2);c.lineTo(x,sH);c.stroke();
+  }
+  c.fillStyle='rgba(255,255,255,.4)';                // pure-harmonic floor ticks
+  for(let k=1;k<=24;k++){const x=X(k);if(x<W-3)c.fillRect(x-.75,sH-5,1.5,5);}
+  const parts=genomePartials(labGen);                // the partials themselves
+  for(const [r,g] of parts){
+    if(r>Math.pow(2,OCT))continue;
+    const x=X(r),h=Math.pow(g,.7)*(sH-8),hue=(Math.log2(baseFreq()*r)*100)%360;
+    if(labGen.width>0&&r<parts[0][0]*1.05&&r>parts[0][0]*.95){
+      c.fillStyle='hsl('+hue.toFixed(0)+' 80% 65%/.2)';
+      c.fillRect(x-1.5-labGen.width/6,sH-h,3+labGen.width/3,h);  // unison glow
+    }
+    c.fillStyle='hsl('+hue.toFixed(0)+' 80% 65%/.9)';
+    c.fillRect(x-1.25,sH-h,2.5,h);
+  }
+  const eY=H-2,eT=t=>4+Math.min(1,t/2)*(W-8);        // envelope strip (~2s window)
+  c.strokeStyle='rgba(255,255,255,.5)';c.fillStyle='rgba(255,255,255,.14)';
+  c.beginPath();c.moveTo(4,eY);
+  const aX=eT(Math.max(.004,labGen.attack));c.lineTo(aX,sH+4);
+  if(labGen.decay>0){for(let t=0;t<=1;t+=.05)
+    c.lineTo(eT(labGen.attack+t*2),sH+4+(eY-sH-4)*(1-Math.exp(-t*2/labGen.decay)));}
+  else c.lineTo(W-4,sH+4);
+  c.stroke();c.lineTo(W-4,eY);c.closePath();c.fill();
+}
+function labPreview(){
+  const v=makeVoice(baseFreq()*2,'lab');
+  setTimeout(()=>{holdRelease(v.g.gain,ctx.currentTime,v.rel);setTimeout(()=>v.stop(),v.tail);},350);
+}
+function labChanged(preview){
+  voiceKey='lab';voiceSel.value='lab';
+  saveQuantPrefs();syncLab();
+  if(preview)labPreview();
+}
+for(const k in VL){
+  VL[k].el.oninput=()=>{labGen[k]=(+VL[k].el.value)*VL[k].scale;labChanged(false);};
+  VL[k].el.onchange=()=>labPreview();               // audible preview on slider release
+}
+vlSieve.onchange=()=>{labGen.sieve=['all','odd','oct','3rd'].includes(vlSieve.value)?vlSieve.value:'all';labChanged(true);};
+vlMatch.onclick=()=>{labGen.match=!labGen.match;labChanged(true);};
+function openLab(){
+  synthCfgPanel.hidden=true;
+  voiceLabPanel.hidden=false;
+  labChanged(true);renderVoiceLib();
+}
+voiceLabBtn.onclick=openLab;
+labToggle.onclick=()=>{voiceLabPanel.hidden?openLab():(voiceLabPanel.hidden=true);};
+vlClose.onclick=()=>{voiceLabPanel.hidden=true;};
+
+/* voice library: save the current genome under a name; tap = load into the
+   sliders + select it (further slider edits go back to the live Lab voice
+   until you re-Save); saved voices ride in prefs AND in song files */
+function renderVoiceLib(){
+  vlList.innerHTML='';
+  voiceLib.forEach(v=>{
+    const row=document.createElement('div');row.className='vl-vrow';
+    const pick=document.createElement('button');
+    pick.className='vl-pick'+(voiceKey==='v:'+v.name?' on':'');
+    pick.textContent=v.name;
+    pick.onclick=()=>{labGen=Object.assign({},v.gen);voiceKey='v:'+v.name;
+      saveQuantPrefs();syncLab();buildVoiceOptions();renderVoiceLib();labPreview();};
+    const del=document.createElement('button');del.className='vl-del';del.textContent='×';
+    del.onclick=()=>{if(!confirm('Delete voice "'+v.name+'"?'))return;
+      voiceLib=voiceLib.filter(x=>x!==v);
+      if(voiceKey==='v:'+v.name)voiceKey='lab';
+      saveQuantPrefs();buildVoiceOptions();renderVoiceLib();};
+    row.appendChild(pick);row.appendChild(del);vlList.appendChild(row);
+  });
+}
+vlSave.onclick=()=>{
+  let nm=(vlName.value||'').trim().slice(0,24);
+  if(!nm){let i=1;while(voiceLib.some(v=>v.name==='Voice '+i))i++;nm='Voice '+i;}
+  const ex=voiceLib.find(v=>v.name===nm);
+  if(ex)ex.gen=Object.assign({},labGen);             // re-save under the same name updates it
+  else voiceLib.push({name:nm,gen:Object.assign({},labGen)});
+  vlName.value='';voiceKey='v:'+nm;
+  saveQuantPrefs();buildVoiceOptions();renderVoiceLib();labPreview();
+};
 baseOctSel.onchange=()=>{const v=Math.round(+baseOctSel.value);
   if(v>=1&&v<=5)baseOct=v;applyQuant();};
-voiceSel.onchange=()=>{if(VOICES.hasOwnProperty(voiceSel.value))voiceKey=voiceSel.value;saveQuantPrefs();};
+voiceSel.onchange=()=>{const v=voiceSel.value;
+  if(v==='lab'||VOICES.hasOwnProperty(v)||(v.slice(0,2)==='v:'&&voiceLib.some(x=>'v:'+x.name===v)))voiceKey=v;
+  saveQuantPrefs();};
 hexSizeSel.onchange=()=>{const v=+hexSizeSel.value;
   if([0.8,1,1.3,1.6].includes(v))hexScale=v;applyQuant();};
 edgeInsetSel.onchange=()=>{const v=Math.round(+edgeInsetSel.value);
@@ -565,44 +736,119 @@ function updateBadge(){const n=recordings.filter(r=>r.active).length;badge.textC
    retrigger inside the ramp) must first cancel the ramp and pin the envelope
    at its current value — scheduling the release on top of a live ramp leaves
    conflicting timeline events and the value jumps discontinuously = pop. */
-function holdRelease(gp,at){
+function holdRelease(gp,at,tau){
   try{
     if(gp.cancelAndHoldAtTime)gp.cancelAndHoldAtTime(at);
     else{const v=gp.value;gp.cancelScheduledValues(at);gp.setValueAtTime(v,at);}
   }catch(_){}
-  gp.setTargetAtTime(0,at,RELEASE);
+  gp.setTargetAtTime(0,at,tau||RELEASE);
 }
 /* ==== VOICES (instrument patches — pure oscillator recipes, no samples) ====
    Each recorded note stamps its instrument (`inst` on the start event), so
    tracks recorded with different voices layer correctly on playback. */
+/* Recipe fields: wave + lowpass + amp + partials [[freq ratio, gain]...];
+   atk = attack seconds (default 8ms), decay = held-note decay τ (plucked/
+   struck voices), rel = release τ (default RELEASE), tail = ms before the
+   oscillators stop after release (default OSC_TAIL — bells ring out longer).
+   Bell partials are INHARMONIC on purpose (2.76/5.40/8.93 ≈ real bell modes);
+   choir/brass/accordion use close-detuned unisons for width. */
 const VOICES={
-  sine:  {name:'Soft',   wave:'sine',    lp:5000, amp:.3,  partials:[[1,1]]},
-  tri:   {name:'Flute',  wave:'triangle',lp:4000, amp:.3,  partials:[[1,1]]},
-  saw:   {name:'Strings',wave:'sawtooth',lp:2200, amp:.22, partials:[[1,1]]},
-  square:{name:'Retro',  wave:'square',  lp:1500, amp:.18, partials:[[1,1]]},
-  organ: {name:'Organ',  wave:'sine',    lp:6000, amp:.26, partials:[[1,1],[2,.5],[3,.25],[4,.12]]},
-  pluck: {name:'Pluck',  wave:'triangle',lp:3200, amp:.34, partials:[[1,1],[2,.3]], decay:.22},
+  sine:  {name:'Soft',     wave:'sine',    lp:5000, amp:.3,  partials:[[1,1]]},
+  tri:   {name:'Flute',    wave:'triangle',lp:4000, amp:.3,  partials:[[1,1]]},
+  saw:   {name:'Strings',  wave:'sawtooth',lp:2200, amp:.22, partials:[[1,1]]},
+  square:{name:'Retro',    wave:'square',  lp:1500, amp:.18, partials:[[1,1]]},
+  organ: {name:'Organ',    wave:'sine',    lp:6000, amp:.26, partials:[[1,1],[2,.5],[3,.25],[4,.12]]},
+  pluck: {name:'Pluck',    wave:'triangle',lp:3200, amp:.34, partials:[[1,1],[2,.3]], decay:.22},
+  bell:  {name:'Bell',     wave:'sine',    lp:8000, amp:.3,  partials:[[1,1],[2.76,.55],[5.40,.28],[8.93,.12]],
+          decay:.5, rel:.35, tail:1800},
+  choir: {name:'Choir',    wave:'triangle',lp:1300, amp:.3,  partials:[[1,1],[1.007,.85],[.993,.85],[2,.22]],
+          atk:.15, rel:.12, tail:700},
+  epiano:{name:'E-Piano',  wave:'sine',    lp:4500, amp:.3,  partials:[[1,1],[4,.22],[10,.07]], decay:.4, rel:.15, tail:900},
+  mbox:  {name:'Music Box',wave:'sine',    lp:7000, amp:.32, partials:[[1,1],[4,.35]], decay:.15, rel:.2, tail:1000},
+  bass:  {name:'Bass',     wave:'sawtooth',lp:900,  amp:.3,  partials:[[.5,1],[1,.35]]},
+  brass: {name:'Brass',    wave:'sawtooth',lp:3000, amp:.2,  partials:[[1,1],[1.004,.6]], atk:.05},
+  accordion:{name:'Accordion',wave:'square',lp:2500,amp:.15, partials:[[1,1],[1.005,.85],[2,.28]]},
 };
 let voiceKey='sine';
-function makeVoice(f,inst,at){
-  const c=audio(),t=Math.max(at||c.currentTime,c.currentTime),def=VOICES[inst]||VOICES.sine;
+
+/* ==== ⚗ VOICE LAB — the spectral genome ====
+   A genome doesn't list partials, it GENERATES them from musical rules:
+     count   how many partials survive
+     stretch partial k sits at ratio k^(1+s) — 0 = harmonic, + = bell-metallic
+     tilt    loudness rolloff 1/k^tilt — brightness in one number
+     sieve   which harmonics exist (all / odd=clarinet / octaves / every 3rd)
+     width   detuned unison copies of the fundamental, in cents
+     attack / decay  swell vs. struck
+     match   ✨ snap every partial to a power of the CURRENT EDO's step
+             (Sethares: consonance = timbre spectra aligning with the tuning,
+             so matched timbres make 13-EDO chords genuinely consonant)
+   Genomes are stamped onto recorded notes (ev.gen), so lab tracks replay
+   exactly — and re-render against the tuning if match is on. */
+let labGen={count:6,stretch:.12,tilt:1.2,sieve:'all',width:6,attack:.005,decay:.6,match:true};
+let voiceLib=[];                                     // saved genomes: [{name, gen}] — prefs + song file
+function sanitizeGen(g){
+  const num=(v,lo,hi,d)=>(typeof v==='number'&&v>=lo&&v<=hi)?v:d;
+  g=(g&&typeof g==='object')?g:{};
+  return {count:Math.round(num(g.count,1,10,6)),stretch:num(g.stretch,-.3,.5,.12),
+    tilt:num(g.tilt,0,3,1.2),sieve:['all','odd','oct','3rd'].includes(g.sieve)?g.sieve:'all',
+    width:num(g.width,0,25,6),attack:num(g.attack,0,.3,.005),decay:num(g.decay,0,1.5,.6),match:!!g.match};
+}
+function curVoiceGen(){                              // genome behind the current selection (null = builtin)
+  if(voiceKey==='lab')return labGen;
+  if(voiceKey.slice(0,2)==='v:'){const v=voiceLib.find(x=>'v:'+x.name===voiceKey);return v?v.gen:null;}
+  return null;
+}
+function genomePartials(gen){
+  const out=[];
+  for(let k=1;k<=32&&out.length<gen.count;k++){
+    if(gen.sieve==='odd'&&k%2===0)continue;
+    if(gen.sieve==='oct'&&(k&(k-1))!==0)continue;      // powers of two
+    if(gen.sieve==='3rd'&&k%3!==1)continue;            // 1,4,7,10…
+    let r=Math.pow(k,1+gen.stretch);
+    if(gen.match)r=Math.pow(2,Math.round(edo*Math.log2(r))/edo);
+    out.push([r,1/Math.pow(k,gen.tilt)]);
+  }
+  if(gen.width>0&&out.length){const c=Math.pow(2,gen.width/1200);
+    out.push([out[0][0]*c,out[0][1]*.7],[out[0][0]/c,out[0][1]*.7]);}
+  return out;
+}
+function labDef(gen){
+  const partials=genomePartials(gen);
+  const sum=partials.reduce((a,p)=>a+p[1],0)||1;
+  return {name:'Lab',wave:'sine',lp:12000,amp:.3/Math.pow(sum,.7),partials,
+    atk:gen.attack>.002?gen.attack:.008,
+    decay:gen.decay>0?gen.decay:0,
+    rel:gen.decay>0?Math.min(.3,gen.decay):RELEASE,
+    tail:gen.decay>.4?1600:OSC_TAIL};
+}
+function makeVoice(f,inst,at,gen){
+  const c=audio(),t=Math.max(at||c.currentTime,c.currentTime);
+  const def=inst==='lab'?labDef(gen||labGen):(VOICES[inst]||VOICES.sine);
   const g=c.createGain(),flt=c.createBiquadFilter();
   flt.type='lowpass';flt.frequency.value=def.lp;
-  g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(def.amp,t+.008);   // soft attack — no onset click
-  if(def.decay)g.gain.setTargetAtTime(.001,t+.012,def.decay);                  // plucked voices decay while held
-  const oscs=def.partials.map(pr=>{
+  const atk=def.atk||.008;
+  g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(def.amp,t+atk);    // soft attack — no onset click
+  if(def.decay)g.gain.setTargetAtTime(.001,t+atk+.004,def.decay);              // plucked/struck voices decay while held
+  const parts=def.partials.filter(pr=>f*pr[0]<14000);                          // drop partials past ~Nyquist
+  if(!parts.length)parts.push(def.partials[0]);
+  const oscs=parts.map(pr=>{
     const o=c.createOscillator(),og=c.createGain();
     o.type=def.wave;o.frequency.value=f*pr[0];og.gain.value=pr[1];
     o.connect(og);og.connect(flt);o.start(t);return o;});
   flt.connect(g);g.connect(bus());
-  return {oscs,g,setFreq(nf,when){oscs.forEach((o,i)=>o.frequency.setTargetAtTime(nf*def.partials[i][0],when,.01));},
+  return {oscs,g,rel:def.rel||RELEASE,tail:def.tail||OSC_TAIL,
+    setFreq(nf,when){oscs.forEach((o,i)=>o.frequency.setTargetAtTime(nf*parts[i][0],when,.01));},
     stop(){oscs.forEach(o=>{try{o.stop()}catch(_){}});}};
 }
 function startVoice(pid,f,name,mx,my,nx,ny){
-  const v=makeVoice(f,voiceKey);
+  const gen=curVoiceGen();
+  const v=makeVoice(f,gen?'lab':voiceKey,undefined,gen);
   const col=`hsl(${(Math.log2(f)*100)%360} 80% 60%/.8)`,
         m=marker('note-marker',mx,my,col,name),id='n'+nextNoteId++;
-  touches.set(pid,{id,v,m});record({type:'start',id,nx,ny,f,name,inst:voiceKey});
+  touches.set(pid,{id,v,m});
+  const ev={type:'start',id,nx,ny,f,name,inst:gen?'lab':voiceKey};
+  if(gen)ev.gen=Object.assign({},gen);                   // snapshot the genome onto the note
+  record(ev);
   return touches.get(pid);
 }
 function synthStart(pid,x,y){
@@ -648,9 +894,9 @@ function synthMove(pid,x,y){
 }
 function synthEnd(pid){
   const t=touches.get(pid);if(!t)return;
-  holdRelease(t.v.g.gain,ctx.currentTime);t.m.style.opacity='0';t.m.style.transition=`opacity ${RELEASE}s`;
+  holdRelease(t.v.g.gain,ctx.currentTime,t.v.rel);t.m.style.opacity='0';t.m.style.transition=`opacity ${RELEASE}s`;
   setTimeout(()=>t.m.remove(),MARKER_FADE);
-  setTimeout(()=>t.v.stop(),OSC_TAIL);touches.delete(pid);record({type:'end',id:t.id});
+  setTimeout(()=>t.v.stop(),t.v.tail);touches.delete(pid);record({type:'end',id:t.id});
 }
 
 /* ==== DRUM HIT ==== */
@@ -731,10 +977,10 @@ function stopRecording(autoPlay){
 
 /* ==== PLAYBACK ==== */
 function fadeNote(n,at){
-  holdRelease(n.v.g.gain,at);n.m.style.opacity='0';n.m.style.transition=`opacity ${RELEASE}s`;
+  holdRelease(n.v.g.gain,at,n.v.rel);n.m.style.opacity='0';n.m.style.transition=`opacity ${RELEASE}s`;
   const c=audio();
   setTimeout(()=>n.m.remove(),Math.max(0,(at-c.currentTime)*1000)+MARKER_FADE);
-  setTimeout(()=>n.v.stop(),Math.max(0,(at-c.currentTime)*1000)+OSC_TAIL);
+  setTimeout(()=>n.v.stop(),Math.max(0,(at-c.currentTime)*1000)+n.v.tail);
 }
 function killTrackNotes(rid){
   playNotes.forEach((n,key)=>{if(key.indexOf(rid+'_')===0){fadeNote(n,audio().currentTime);playNotes.delete(key);}});
@@ -749,7 +995,7 @@ function dispatch(rid,ev,when){
   if(ev.type==='start'){
     const old=playNotes.get(key);if(old){fadeNote(old,c.currentTime);playNotes.delete(key);}
     const x=ev.nx*pad.clientWidth,y=(1-ev.ny)*pad.clientHeight;
-    const v=makeVoice(ev.f,ev.inst||'sine',at);      // each event replays with the voice it was recorded with
+    const v=makeVoice(ev.f,ev.inst||'sine',at,ev.gen);   // each event replays with the voice (or genome) it was recorded with
     const m=marker('playback-marker',x,y,'rgba(255,255,0,.25)',ev.name);
     playNotes.set(key,{v,m});
   }else if(ev.type==='update'){
@@ -876,8 +1122,6 @@ metBtn.onclick=()=>{metOn=!metOn;metBtn.textContent=metOn?'Met:On':'Met:Off';
 recordBtn.onclick=()=>isRec?stopRecording():startRecording();
 playBtn.onclick=()=>isPlay?stopPlayback():startPlayback();
 stopBtn.onclick=()=>{isRec&&stopRecording(false);isPlay&&stopPlayback();};
-clearBtn.onclick=()=>{if(!confirm('Clear everything?'))return;stopPlayback();isRec&&stopRecording(false);
-  recordings=[];recordingsList.innerHTML='';updateBadge();scrubSlider.value=0;};
 recToggle.onclick=()=>{recordingsPanel.classList.toggle('visible');arrow.textContent=recordingsPanel.classList.contains('visible')?'▲':'▼';};
 
 /* ==== POINTER EVENTS ==== */
@@ -904,7 +1148,7 @@ window.addEventListener('blur',()=>[...touches.keys()].forEach(pid=>synthEnd(pid
 /* ==== INIT ==== */
 loadQuantPrefs();applyQuant();
 setLoopShape(timeSig,barsPerLoop);
-scrubSlider.value=0;
+scrubSlider.value=0;syncLab();renderVoiceLib();
 
 /* ==== EXTERNAL SAVE / LOAD API ====
    Used by the Extras "Synth" window to save the current song (all
@@ -921,10 +1165,20 @@ window.SynthApp = {
       edo: edo,
       timeSig: timeSig,
       bars: barsPerLoop,
+      voices: voiceLib.map(function (v) { return { name: v.name, gen: Object.assign({}, v.gen) }; }),
       recordings: recordings.map(function (r) {
         return { name: r.name, events: r.events };
       })
     };
+  },
+  clearAll: function () {
+    // wipes every track — the confirm lives in the extras window's top bar
+    stopPlayback();
+    if (isRec) stopRecording(false);
+    recordings = [];
+    recordingsList.innerHTML = '';
+    updateBadge();
+    scrubSlider.value = 0;
   },
   loadSong: function (song) {
     if (!song) return;
@@ -945,6 +1199,17 @@ window.SynthApp = {
     var ts = (typeof song.timeSig === 'number' && song.timeSig >= 2 && song.timeSig <= 9) ? Math.round(song.timeSig) : 4;
     var bl = LOOP_BARS.includes(song.bars) ? song.bars : 8;
     setLoopShape(ts, bl);
+    // merge the song's saved voices into the library (existing names win)
+    if (Array.isArray(song.voices)) {
+      song.voices.forEach(function (v) {
+        if (!v || typeof v.name !== 'string') return;
+        var nm = v.name.trim().slice(0, 24);
+        if (!nm || voiceLib.length >= 64) return;
+        if (voiceLib.some(function (x) { return x.name === nm; })) return;
+        voiceLib.push({ name: nm, gen: sanitizeGen(v.gen) });
+      });
+      saveQuantPrefs(); buildVoiceOptions(); renderVoiceLib();
+    }
     (Array.isArray(song.recordings) ? song.recordings : []).forEach(function (s) {
       var r = {
         id: recSeq++,

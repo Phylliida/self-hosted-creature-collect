@@ -89,13 +89,17 @@ function makeEl(tag) {
 
 const ids = {};
 ['soundPad', 'drumGrid', 'tempoSlider', 'tempoValue', 'metronomeBtn', 'metronomeLight', 'barCounter',
- 'beatIndicator', 'recordBtn', 'playAllBtn', 'stopBtn', 'clearBtn', 'recordingsToggle', 'dropdownArrow',
+ 'beatIndicator', 'recordBtn', 'playAllBtn', 'stopBtn', 'recordingsToggle', 'dropdownArrow',
  'recordingsPanel', 'recordingsList', 'recordingBadge', 'instrumentBtn',
  'scaleSel', 'rootSel', 'scaleGrid', 'scaleLabels', 'info', 'scrubSlider',
  'edoSel', 'hexGrid', 'synthCfgBtn', 'synthCfgPanel', 'baseOctSel', 'hexSizeSel',
  'edgeInsetSel', 'bottomStack', 'hexEastSel', 'hexNESel',
- 'barsSel', 'timeSigSel', 'voiceSel'].forEach(id => { ids[id] = makeEl('div'); ids[id].id = id; });
+ 'barsSel', 'timeSigSel', 'voiceSel', 'voiceLabBtn', 'voiceLabPanel',
+ 'vlCount', 'vlCountV', 'vlStretch', 'vlStretchV', 'vlTilt', 'vlTiltV',
+ 'vlSieve', 'vlWidth', 'vlWidthV', 'vlAttack', 'vlAttackV', 'vlDecay', 'vlDecayV',
+ 'vlMatch', 'vlSpec', 'labToggle', 'vlClose', 'vlName', 'vlSave', 'vlList'].forEach(id => { ids[id] = makeEl('div'); ids[id].id = id; });
 ids.synthCfgPanel.hidden = true;         // markup ships with the hidden attribute
+ids.voiceLabPanel.hidden = true;
 ids.soundPad.clientWidth = 800; ids.soundPad.clientHeight = 600;
 ids.tempoSlider.value = '120';
 
@@ -156,7 +160,10 @@ now = 7.3;                       // pretend the page sat idle a while before fir
 domReady();
 
 const pad = ids.soundPad, recordBtn = ids.recordBtn, playBtn = ids.playAllBtn,
-      stopBtn = ids.stopBtn, clearBtn = ids.clearBtn, instBtn = ids.instrumentBtn,
+      // Clear moved to the extras window's top bar — the shim calls the bridge
+      // the bar button uses, keeping the existing clearBtn.onclick() call sites
+      clearBtn = { onclick: () => global.SynthApp.clearAll() },
+      stopBtn = ids.stopBtn, instBtn = ids.instrumentBtn,
       badge = ids.recordingBadge, recordingsList = ids.recordingsList;
 const fire = (el, ev, e) => (el._listeners[ev] || []).forEach(f => f(e));
 const mouseDown = (x, y) => fire(pad, 'mousedown', { type: 'mousedown', clientX: x, clientY: y, preventDefault() {} });
@@ -837,6 +844,143 @@ ok(song().recordings.length === 0, 'T29: delete proceeds when confirmed');
 // loaded songs arrive unmuted
 global.SynthApp.loadSong({ v: 1, tempo: 120, recordings: [{ name: 'T', events: [{ type: 'drum', kind: 'kick', x: .5, gy: .5, localP: .5, beatPos: 0 }] }] });
 ok(String(badge.textContent) === '1', 'T29: loaded track is unmuted by default');
+
+/* ── T30: full voice catalog — partial counts, stamping, clean release ── */
+clearBtn.onclick();
+instBtn.onclick();                                              // → hex
+const CATALOG = { sine: 1, tri: 1, saw: 1, square: 1, organ: 4, pluck: 2,
+  bell: 4, choir: 4, epiano: 3, mbox: 2, bass: 2, brass: 2, accordion: 3 };
+recordBtn.onclick();
+let allOk = true, allStamped = true;
+for (const [key, nParts] of Object.entries(CATALOG)) {
+  ids.voiceSel.value = key; ids.voiceSel.onchange();
+  const m30 = oscMade.length;
+  advance(0.05); mouseDown(300, 400); advance(0.3); mouseUp();  // long enough to outlast choir's 150ms attack
+  if (oscMade.length - m30 !== nParts) { allOk = false; console.error('  voice ' + key + ': ' + (oscMade.length - m30) + ' oscs, want ' + nParts); }
+}
+advance(2.0);                                                   // bell tail (1.8s) elapses without error
+recordBtn.onclick(); stopBtn.onclick();
+const ev30 = song().recordings[0].events.filter(e => e.type === 'start');
+Object.keys(CATALOG).forEach((key, i) => { if (ev30[i].inst !== key) allStamped = false; });
+ok(allOk, 'T30: every voice creates its exact partial count');
+ok(allStamped, 'T30: all 13 voices stamp their instrument');
+ok(ev30.length === 13 && song().recordings[0].events.filter(e => e.type === 'end').length === 13,
+   'T30: every voice releases cleanly (13 starts / ends)');
+ids.voiceSel.value = 'sine'; ids.voiceSel.onchange();
+instBtn.onclick(); instBtn.onclick();                           // hex → drums → synth
+
+/* ── T31: ⚗ Voice Lab — spectral genome, sieves, tuning-match, round-trip ── */
+clearBtn.onclick();
+instBtn.onclick();                                              // → hex
+ids.voiceLabBtn.onclick();                                      // open lab (also previews)
+ok(ids.voiceLabPanel.hidden === false && String(ids.voiceSel.value) === 'lab', 'T31: lab opens and selects the lab voice');
+ok(typeof ids.vlSpec.width === 'number' && ids.vlSpec.width > 0, 'T31: spectrum view rendered on open');
+// genome: 5 odd harmonics, no stretch/width, pure sustain
+ids.vlCount.value = '5'; ids.vlCount.oninput();
+ids.vlStretch.value = '0'; ids.vlStretch.oninput();
+ids.vlTilt.value = '10'; ids.vlTilt.oninput();
+ids.vlWidth.value = '0'; ids.vlWidth.oninput();
+ids.vlAttack.value = '0'; ids.vlAttack.oninput();
+ids.vlDecay.value = '0'; ids.vlDecay.oninput();
+ids.vlSieve.value = 'odd'; ids.vlSieve.onchange();              // previews
+// default genome ships matched — ensure OFF for the pure-harmonic assertions
+if (JSON.parse(global.localStorage.getItem('synth.quant.v1')).labGen.match) ids.vlMatch.onclick();
+advance(3);                                                     // drain preview tails
+recordBtn.onclick();
+let m31 = oscMade.length;
+advance(0.05); mouseDown(300, 400); advance(0.1); mouseUp();
+recordBtn.onclick(); stopBtn.onclick();
+const ev31 = song().recordings[0].events.find(e => e.type === 'start');
+const made31 = oscMade.slice(m31, m31 + 5);
+ok(oscMade.length - m31 === 5, 'T31: genome generates exactly 5 partials (got ' + (oscMade.length - m31) + ')');
+const ratios31 = made31.map(o => Math.round(o.frequency.value / ev31.f)).join(',');
+ok(ratios31 === '1,3,5,7,9', 'T31: odd sieve yields harmonics 1,3,5,7,9 (got ' + ratios31 + ')');
+ok(ev31.inst === 'lab' && ev31.gen && ev31.gen.count === 5 && ev31.gen.sieve === 'odd',
+   'T31: genome snapshot stamped on the note');
+// ✨ tuning match: in 13-EDO every partial must land on a power of the step
+ids.edoSel.value = '13'; ids.edoSel.onchange();
+ids.vlStretch.value = '30'; ids.vlStretch.oninput();            // stretched → would be inharmonic without match
+ids.vlMatch.onclick();                                          // match ON (previews)
+advance(3);
+recordingsList.children[0].querySelectorAll('button')[0].onclick();   // mute track 1 — keep the osc stream clean
+recordBtn.onclick();
+m31 = oscMade.length;
+advance(0.05); mouseDown(300, 400); advance(0.1); mouseUp();
+recordBtn.onclick(); stopBtn.onclick();
+const ev31b = song().recordings[1].events.find(e => e.type === 'start');
+const aligned = oscMade.slice(m31, m31 + 5).every(o => {
+  const steps = 13 * Math.log2(o.frequency.value / ev31b.f);
+  return Math.abs(steps - Math.round(steps)) < 1e-9;
+});
+ok(aligned, 'T31: ✨ matched partials land exactly on 13-EDO steps');
+ok(ev31b.gen.match === true && Math.abs(ev31b.gen.stretch - 0.3) < 1e-9, 'T31: stretched+matched genome recorded');
+// playback + save/load reproduce the genome exactly
+ids.voiceSel.value = 'sine'; ids.voiceSel.onchange();           // lab edits later shouldn't matter
+global.SynthApp.loadSong(JSON.parse(JSON.stringify(song())));
+ids.scrubSlider.value = '0'; ids.scrubSlider.oninput({ target: ids.scrubSlider });
+m31 = oscMade.length;
+playBtn.onclick();
+advance(1.0);
+const played31 = oscMade.slice(m31).filter(o => o.type === 'sine');
+ok(played31.length === 10, 'T31: both lab notes replay through their genomes (got ' + played31.length + ' oscs)');
+stopBtn.onclick();
+const p31 = JSON.parse(global.localStorage.getItem('synth.quant.v1'));
+ok(p31.labGen && p31.labGen.count === 5 && p31.labGen.match === true, 'T31: genome persisted in prefs');
+ids.vlClose.onclick();                                          // tidy: close the lab
+instBtn.onclick(); instBtn.onclick();                           // hex → drums → synth
+global.SynthApp.loadSong({ v: 1, tempo: 120, edo: 12, scale: 'off', root: 0, recordings: [] });
+
+/* ── T32: voice library — save, select, play, ride in song files ── */
+clearBtn.onclick();
+instBtn.onclick();                                              // → hex
+ids.labToggle.onclick();                                        // the tab toggle opens the lab
+ok(ids.voiceLabPanel.hidden === false, 'T32: ⚗ Lab tab opens');
+ids.vlCount.value = '3'; ids.vlCount.oninput();
+ids.vlSieve.value = 'oct'; ids.vlSieve.onchange();
+advance(3);
+ids.vlName.value = 'Bella'; ids.vlSave.onclick();               // save the genome
+advance(3);
+ok(String(ids.voiceSel.value) === 'v:Bella', 'T32: saved voice becomes the selection');
+ok(ids.vlList.children.length === 1, 'T32: library lists the voice');
+ok(ids.voiceSel.innerHTML.includes('v:Bella'), 'T32: saved voice appears in the ⚙ Voice picker');
+recordBtn.onclick();
+advance(0.05); mouseDown(300, 400); advance(0.1); mouseUp();
+recordBtn.onclick(); stopBtn.onclick();
+const ev32 = song().recordings[0].events.find(e => e.type === 'start');
+ok(ev32.inst === 'lab' && ev32.gen && ev32.gen.count === 3 && ev32.gen.sieve === 'oct',
+   'T32: notes played with a saved voice stamp its genome');
+ids.vlCount.value = '7'; ids.vlCount.oninput();                 // tweaking detaches to the live Lab voice
+ok(String(ids.voiceSel.value) === 'lab', 'T32: slider edits switch back to the live Lab voice');
+ids.vlList.children[0].querySelectorAll('button')[0].onclick(); // pick Bella again
+advance(3);
+ok(String(ids.voiceSel.value) === 'v:Bella', 'T32: picking from the library reselects it');
+const p32 = JSON.parse(global.localStorage.getItem('synth.quant.v1'));
+ok(p32.labGen.count === 3, 'T32: picking loads the genome into the sliders');
+ok(Array.isArray(p32.voiceLib) && p32.voiceLib.length === 1 && p32.voiceLib[0].name === 'Bella',
+   'T32: library persisted in prefs');
+const s32 = song();
+ok(Array.isArray(s32.voices) && s32.voices.length === 1 && s32.voices[0].name === 'Bella',
+   'T32: library rides in the song file');
+// merging: a loaded song contributes voices it carries (existing names win)
+global.SynthApp.loadSong({ v: 1, tempo: 120, recordings: [],
+  voices: [{ name: 'Bella', gen: { count: 9 } }, { name: 'Imported', gen: { count: 2, sieve: 'odd' } }] });
+const p32b = JSON.parse(global.localStorage.getItem('synth.quant.v1'));
+ok(p32b.voiceLib.length === 2 && p32b.voiceLib[0].gen.count === 3 &&
+   p32b.voiceLib[1].name === 'Imported' && p32b.voiceLib[1].gen.count === 2,
+   'T32: song voices merge in without clobbering yours');
+ok(ids.voiceSel.innerHTML.includes('Imported'), 'T32: merged voice selectable');
+// delete respects confirm and falls back to the live lab voice
+confirmResult = false;
+ids.vlList.children[1].querySelectorAll('button')[1].onclick();
+ok(JSON.parse(global.localStorage.getItem('synth.quant.v1')).voiceLib.length === 2, 'T32: delete cancelled keeps the voice');
+confirmResult = true;
+ids.vlList.children[0].querySelectorAll('button')[1].onclick(); // delete Bella (currently selected)
+const p32c = JSON.parse(global.localStorage.getItem('synth.quant.v1'));
+ok(p32c.voiceLib.length === 1 && p32c.voice === 'lab', 'T32: deleting the selected voice falls back to Lab');
+ids.vlClose.onclick();
+ok(ids.voiceLabPanel.hidden === true, 'T32: × closes the tab');
+ids.voiceSel.value = 'sine'; ids.voiceSel.onchange();
+instBtn.onclick(); instBtn.onclick();                           // hex → drums → synth
 
 console.log('synth tests: ' + passed + ' passed, ' + failed + ' failed');
 process.exit(failed ? 1 : 0);
