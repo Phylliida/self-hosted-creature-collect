@@ -101,7 +101,8 @@ const ids = {};
  'vlMatch', 'vlSpec', 'labToggle', 'vlClose', 'vlName', 'vlSave', 'vlList',
  'vlBreath', 'vlBreathV', 'vlFormantF', 'vlFormantFV', 'vlFormantA', 'vlFormantAV',
  'vlDamping', 'vlDampingV', 'vlMotion', 'vlMotionV', 'vlChiff', 'vlChiffV',
- 'vlPresets', 'vlPad', 'vlPadNote', 'vlRandom', 'vlPadOct'].forEach(id => { ids[id] = makeEl('div'); ids[id].id = id; });
+ 'vlPresets', 'vlPad', 'vlPadNote', 'vlRandom', 'vlPadOct',
+ 'vlStrikeF', 'vlStrikeFV', 'vlStrikeT', 'vlStrikeTV'].forEach(id => { ids[id] = makeEl('div'); ids[id].id = id; });
 ids.synthCfgPanel.hidden = true;         // markup ships with the hidden attribute
 ids.voiceLabPanel.hidden = true;
 ids.soundPad.clientWidth = 800; ids.soundPad.clientHeight = 600;
@@ -128,7 +129,7 @@ global.document = {
 
 /* ── fake WebAudio ── */
 let oscCount = 0, compCount = 0, bufMade = 0;
-const oscMade = [];
+const oscMade = [], filtMade = [];
 function fakeParam() { return { value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {}, linearRampToValueAtTime() {}, setTargetAtTime() {}, cancelScheduledValues() {} }; }
 function fakeNode() { return { type: '', buffer: null, frequency: fakeParam(), connect() {}, start() {}, stop() {} }; }
 class FakeCtx {
@@ -139,7 +140,7 @@ class FakeCtx {
   createBufferSource() { bufMade++; return fakeNode(); }
   createOscillator() { oscCount++; const n = fakeNode(); oscMade.push(n); return n; }
   createGain() { const n = fakeNode(); n.gain = fakeParam(); return n; }
-  createBiquadFilter() { const n = fakeNode(); n.Q = fakeParam(); n.gain = fakeParam(); return n; }
+  createBiquadFilter() { const n = fakeNode(); n.Q = fakeParam(); n.gain = fakeParam(); filtMade.push(n); return n; }
   createDynamicsCompressor() {
     compCount++;
     const n = fakeNode();
@@ -1152,6 +1153,60 @@ ok(true, 'T38: fast gliss sweep survives (quick-damped handoffs)');
 const p38 = JSON.parse(global.localStorage.getItem('synth.quant.v1'));
 ok(p38.padOct === 1, 'T38: strip bottom note persisted');
 ids.vlPadOct.value = '2'; ids.vlPadOct.onchange();
+ids.vlClose.onclick();
+
+/* ── T39: strike decomposition — pitch-tracked exciter through the voice chain ── */
+clearBtn.onclick();
+instBtn.onclick();                                              // → hex
+ids.labToggle.onclick();
+ids.vlPresets.children[1].onclick(); advance(3);                // start from a clean preset
+ids.vlChiff.value = '40'; ids.vlChiff.oninput();
+ids.vlStrikeF.value = '3'; ids.vlStrikeF.oninput();             // mallet-ish ×3 color
+ids.vlStrikeT.value = '45'; ids.vlStrikeT.oninput();            // 45ms thump
+advance(3);
+let m39 = filtMade.length;
+recordBtn.onclick();
+advance(0.05); mouseDown(300, 400); advance(0.1); mouseUp();
+recordBtn.onclick(); stopBtn.onclick();
+const ev39 = song().recordings[0].events.find(e => e.type === 'start');
+ok(Math.abs(ev39.gen.strikeF - 3) < 1e-9 && Math.abs(ev39.gen.strikeT - .045) < 1e-9,
+   'T39: strike color + time stamped on the note');
+ok(filtMade.slice(m39).some(fl => Math.abs(fl.frequency.value - ev39.f * 3) < .5),
+   'T39: exciter bandpass tracks the pitch (looked for ' + (ev39.f * 3).toFixed(0) + 'Hz)');
+// genomes without strike fields get the new exciter at the default ×8 color
+m39 = filtMade.length;
+global.SynthApp.loadSong({ v: 1, tempo: 120, recordings: [
+  { name: 'Old', events: [
+    { type: 'start', id: 'n1', nx: .5, ny: .5, f: 261.6, name: 'C4', inst: 'lab',
+      gen: { count: 2, sieve: 'all', tilt: 1, stretch: 0, width: 0, attack: 0, decay: .3, chiff: .4, match: false }, beatPos: 0 },
+    { type: 'end', id: 'n1', beatPos: 1 }] }] });
+ids.scrubSlider.value = '0'; ids.scrubSlider.oninput({ target: ids.scrubSlider });
+playBtn.onclick();
+advance(0.8);
+ok(filtMade.slice(m39).some(fl => Math.abs(fl.frequency.value - 261.6 * 8) < .5),
+   'T39: strike-less genomes fall back to the ×8 default color');
+stopBtn.onclick();
+ids.vlClose.onclick();
+instBtn.onclick(); instBtn.onclick();                           // hex → drums → synth
+
+/* ── T40: tap-spamming a long-decay voice releases every voice cleanly ── */
+ids.labToggle.onclick();
+ids.vlPresets.children[1].onclick(); advance(3);                // Singing Bowl: 1.5s held decay
+let threw40 = false;
+try {
+  for (let i = 0; i < 15; i++) {                                // rapid tap up/down the strip
+    padFire('pointerdown', 100 + (i % 5) * 100);
+    advance(0.04);
+    padFire('pointerup', 100 + (i % 5) * 100);
+    advance(0.03);
+  }
+} catch (e) { threw40 = true; }
+advance(4);                                                     // drain all the ring-outs
+ok(!threw40, 'T40: tap spam on a decaying voice survives');
+const m40 = oscMade.length;
+padFire('pointerdown', 300); padFire('pointerup', 300);         // strip still healthy afterwards
+ok(oscMade.length > m40, 'T40: strip still voices after the spam');
+advance(3);
 ids.vlClose.onclick();
 
 console.log('synth tests: ' + passed + ' passed, ' + failed + ' failed');
