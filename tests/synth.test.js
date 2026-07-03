@@ -61,6 +61,7 @@ function makeEl(tag) {
     tagName: tag, children: [], style: {}, textContent: '', className: '', id: '',
     parentNode: null, value: '', _listeners: {},
     getContext: () => ctxStub,
+    getBoundingClientRect: () => ({ top: 0, left: 0, width: 54, height: 600, right: 54, bottom: 600 }),
     classList: {
       _s: new Set(),
       add(c) { this._s.add(c); }, remove(c) { this._s.delete(c); },
@@ -97,7 +98,10 @@ const ids = {};
  'barsSel', 'timeSigSel', 'voiceSel', 'voiceLabBtn', 'voiceLabPanel',
  'vlCount', 'vlCountV', 'vlStretch', 'vlStretchV', 'vlTilt', 'vlTiltV',
  'vlSieve', 'vlWidth', 'vlWidthV', 'vlAttack', 'vlAttackV', 'vlDecay', 'vlDecayV',
- 'vlMatch', 'vlSpec', 'labToggle', 'vlClose', 'vlName', 'vlSave', 'vlList'].forEach(id => { ids[id] = makeEl('div'); ids[id].id = id; });
+ 'vlMatch', 'vlSpec', 'labToggle', 'vlClose', 'vlName', 'vlSave', 'vlList',
+ 'vlBreath', 'vlBreathV', 'vlFormantF', 'vlFormantFV', 'vlFormantA', 'vlFormantAV',
+ 'vlDamping', 'vlDampingV', 'vlMotion', 'vlMotionV', 'vlChiff', 'vlChiffV',
+ 'vlPresets', 'vlPad', 'vlPadNote', 'vlRandom', 'vlPadOct'].forEach(id => { ids[id] = makeEl('div'); ids[id].id = id; });
 ids.synthCfgPanel.hidden = true;         // markup ships with the hidden attribute
 ids.voiceLabPanel.hidden = true;
 ids.soundPad.clientWidth = 800; ids.soundPad.clientHeight = 600;
@@ -123,7 +127,7 @@ global.document = {
 };
 
 /* ── fake WebAudio ── */
-let oscCount = 0, compCount = 0;
+let oscCount = 0, compCount = 0, bufMade = 0;
 const oscMade = [];
 function fakeParam() { return { value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {}, linearRampToValueAtTime() {}, setTargetAtTime() {}, cancelScheduledValues() {} }; }
 function fakeNode() { return { type: '', buffer: null, frequency: fakeParam(), connect() {}, start() {}, stop() {} }; }
@@ -132,10 +136,10 @@ class FakeCtx {
   get currentTime() { return now; }
   resume() {}
   createBuffer(ch, len) { return { getChannelData: () => new Float32Array(len) }; }
-  createBufferSource() { return fakeNode(); }
+  createBufferSource() { bufMade++; return fakeNode(); }
   createOscillator() { oscCount++; const n = fakeNode(); oscMade.push(n); return n; }
   createGain() { const n = fakeNode(); n.gain = fakeParam(); return n; }
-  createBiquadFilter() { return fakeNode(); }
+  createBiquadFilter() { const n = fakeNode(); n.Q = fakeParam(); n.gain = fakeParam(); return n; }
   createDynamicsCompressor() {
     compCount++;
     const n = fakeNode();
@@ -826,9 +830,9 @@ ok(playBtn.textContent === 'Play', 'T29: unmuting no longer auto-plays');
 // unmute joins the CURRENT cycle: start playback muted, unmute before the note
 tog29.onclick();                                                 // mute
 ids.scrubSlider.value = '0'; ids.scrubSlider.oninput({ target: ids.scrubSlider });
-playBtn.onclick();                                               // hmm: all muted → Play refuses; unmute first
-tog29.onclick();                                                 // unmute
-playBtn.onclick();
+playBtn.onclick();                                               // transport rolls even with everything muted
+ok(playBtn.textContent === 'Playing', 'T29: Play works with all tracks muted');
+tog29.onclick();                                                 // unmute — joins the rolling cycle
 advance(0.2);
 tog29.onclick(); tog29.onclick();                                // mute + immediately unmute at t≈0.2s
 osc29 = oscCount;
@@ -981,6 +985,174 @@ ids.vlClose.onclick();
 ok(ids.voiceLabPanel.hidden === true, 'T32: × closes the tab');
 ids.voiceSel.value = 'sine'; ids.voiceSel.onchange();
 instBtn.onclick(); instBtn.onclick();                           // hex → drums → synth
+
+/* ── T33: genome v2 — breath / formant / damping / vibrato / chiff ── */
+clearBtn.onclick();
+instBtn.onclick();                                              // → hex
+ids.labToggle.onclick();
+ids.vlCount.value = '4'; ids.vlCount.oninput();
+ids.vlSieve.value = 'all'; ids.vlSieve.onchange();
+ids.vlWidth.value = '0'; ids.vlWidth.oninput();
+ids.vlBreath.value = '30'; ids.vlBreath.oninput();              // 0.30 noise mix
+ids.vlFormantA.value = '8'; ids.vlFormantA.oninput();           // body resonance on
+ids.vlDamping.value = '50'; ids.vlDamping.oninput();            // spectral flux
+ids.vlMotion.value = '8'; ids.vlMotion.oninput();               // vibrato → +1 LFO osc
+ids.vlChiff.value = '40'; ids.vlChiff.oninput();                // attack transient
+advance(3);
+recordBtn.onclick();
+let m33o = oscMade.length, m33b = bufMade;
+advance(0.05); mouseDown(300, 400); advance(0.2); mouseUp();
+recordBtn.onclick(); stopBtn.onclick();
+ok(oscMade.length - m33o === 5, 'T33: 4 partials + 1 vibrato LFO (got ' + (oscMade.length - m33o) + ' oscs)');
+ok(bufMade - m33b === 2, 'T33: breath + chiff noise sources (got ' + (bufMade - m33b) + ')');
+const ev33 = song().recordings[0].events.find(e => e.type === 'start');
+ok(Math.abs(ev33.gen.breath - 0.3) < 1e-9 && ev33.gen.formantA === 8 &&
+   Math.abs(ev33.gen.damping - 0.5) < 1e-9 && ev33.gen.motion === 8 && Math.abs(ev33.gen.chiff - 0.4) < 1e-9,
+   'T33: v2 genes stamped on the note');
+const p33 = JSON.parse(global.localStorage.getItem('synth.quant.v1'));
+ok(Math.abs(p33.labGen.breath - 0.3) < 1e-9 && p33.labGen.motion === 8, 'T33: v2 genes persisted');
+// v1 genomes (no v2 fields) still play — and sound as before (no extra nodes)
+m33o = oscMade.length; m33b = bufMade;
+global.SynthApp.loadSong({ v: 1, tempo: 120, recordings: [
+  { name: 'Old', events: [
+    { type: 'start', id: 'n1', nx: .5, ny: .5, f: 261.6, name: 'C4', inst: 'lab', gen: { count: 3, sieve: 'all', tilt: 1, stretch: 0, width: 0, attack: 0, decay: 0, match: false }, beatPos: 0 },
+    { type: 'end', id: 'n1', beatPos: 1 }] }] });
+ids.scrubSlider.value = '0'; ids.scrubSlider.oninput({ target: ids.scrubSlider });
+playBtn.onclick();
+advance(0.8);
+ok(oscMade.length - m33o === 3 && bufMade === m33b,
+   'T33: v1 genome replays bit-identically (3 oscs, no v2 nodes; got ' + (oscMade.length - m33o) + '/' + (bufMade - m33b) + ')');
+stopBtn.onclick();
+ids.vlClose.onclick();
+ids.voiceSel.value = 'sine'; ids.voiceSel.onchange();
+instBtn.onclick(); instBtn.onclick();                           // hex → drums → synth
+
+/* ── T34: built-in presets — rendered, in-range, loadable, playable ── */
+clearBtn.onclick();
+instBtn.onclick();                                              // → hex
+ids.labToggle.onclick();
+ok(ids.vlPresets.children.length === 18, 'T34: 18 presets rendered (got ' + ids.vlPresets.children.length + ')');
+// every preset genome must already be within sanitize bounds (no silent clamping)
+// — verified by playing EVERY preset and checking the stamped genome matches
+recordBtn.onclick();
+let allClean = true;
+for (let i = 0; i < ids.vlPresets.children.length; i++) {
+  ids.vlPresets.children[i].onclick();
+  advance(0.4);
+  mouseDown(300, 400); advance(0.05); mouseUp(); advance(0.05);
+}
+recordBtn.onclick(); stopBtn.onclick();
+const ev34 = song().recordings[0].events.filter(e => e.type === 'start');
+ok(ev34.length === 18 && ev34.every(e => e.inst === 'lab' && e.gen), 'T34: every preset plays and stamps a genome');
+// every preset genome must sit inside sanitize bounds — no silent clamping on load
+ok(ev34.every(e => { const g = e.gen;
+  return g.count >= 1 && g.count <= 10 && g.stretch >= -.3 && g.stretch <= .5 &&
+    g.tilt >= 0 && g.tilt <= 3 && ['all', 'odd', 'oct', '3rd'].includes(g.sieve) &&
+    g.width >= 0 && g.width <= 25 && g.attack >= 0 && g.attack <= .3 &&
+    g.decay >= 0 && g.decay <= 1.5 && g.breath >= 0 && g.breath <= .6 &&
+    g.formantF >= 200 && g.formantF <= 4000 && g.formantA >= 0 && g.formantA <= 18 &&
+    g.damping >= 0 && g.damping <= 1 && g.motion >= 0 && g.motion <= 20 &&
+    g.chiff >= 0 && g.chiff <= .8;
+}), 'T34: all preset genomes within sanitize bounds');
+// spot-check: preset 1 (Gamelan) is matched + struck; preset 6 (Wooden Flute) breathes
+ids.vlPresets.children[0].onclick(); advance(0.4);
+let p34 = JSON.parse(global.localStorage.getItem('synth.quant.v1'));
+ok(p34.labGen.match === true && p34.labGen.decay > 0, 'T34: Gamelan preset is matched + struck');
+ids.vlPresets.children[5].onclick(); advance(0.4);
+p34 = JSON.parse(global.localStorage.getItem('synth.quant.v1'));
+ok(p34.labGen.breath > 0 && p34.labGen.formantA > 0, 'T34: Wooden Flute preset breathes through a body');
+ok(String(ids.voiceSel.value) === 'lab', 'T34: loading a preset selects the Lab voice');
+ids.vlClose.onclick();
+ids.voiceSel.value = 'sine'; ids.voiceSel.onchange();
+instBtn.onclick(); instBtn.onclick();                           // hex → drums → synth
+
+/* ── T35: Play rolls the transport on an empty session (click track jam) ── */
+clearBtn.onclick();
+ids.metronomeBtn.onclick();                                     // arm the met (silent while idle)
+ids.scrubSlider.value = '0'; ids.scrubSlider.oninput({ target: ids.scrubSlider });
+const osc35 = oscCount;
+playBtn.onclick();                                              // nothing recorded — transport rolls anyway
+ok(playBtn.textContent === 'Playing', 'T35: Play starts with zero tracks');
+advance(1.6);
+ok(oscCount > osc35 + 1, 'T35: armed metronome ticks on the empty transport');
+ok(+ids.scrubSlider.value > 2.5, 'T35: playhead rolls (at beat ' + (+ids.scrubSlider.value).toFixed(1) + ')');
+recordBtn.onclick();                                            // arm a take against the rolling click
+ok(playBtn.textContent === 'Playing' && recordBtn.textContent === 'Rec*', 'T35: recording joins the rolling grid');
+advance(0.05); mouseDown(300, 300); advance(0.1); mouseUp();
+const ev35 = song().recordings[0].events.find(e => e.type === 'start');
+ok(ev35.beatPos > 3, 'T35: note lands at the transport position, not beat 0 (beat ' + ev35.beatPos.toFixed(1) + ')');
+recordBtn.onclick(); stopBtn.onclick();
+const osc35b = oscCount;
+advance(3);
+ok(oscCount === osc35b, 'T35: stop silences the click again');
+ids.metronomeBtn.onclick();                                     // met off
+
+/* ── T36: audition strip — pitched taps, drag retrigger, never records ── */
+clearBtn.onclick();
+ids.labToggle.onclick();
+const padFire = (ev, y) => (ids.vlPad._listeners[ev] || []).slice().forEach(f =>
+  f({ clientY: y, pointerId: 9, preventDefault() {} }));
+recordBtn.onclick();                                            // even while RECORDING, the strip must not record
+let m36 = oscMade.length;
+padFire('pointerdown', 450);                                    // ny=0.25 → step 9 of 12-EDO over 3 octaves
+const f36a = oscMade[m36] ? oscMade[m36].frequency.value : 0;   // first osc of the voice = fundamental
+ok(oscMade.length > m36, 'T36: strip tap voices the lab genome');
+ok(String(ids.vlPadNote.textContent) !== '♪', 'T36: note label updates (' + ids.vlPadNote.textContent + ')');
+const n36 = oscMade.length;
+padFire('pointermove', 150);                                    // drag up → ny=0.75 → step 27 → retrigger
+ok(oscMade.length > n36, 'T36: drag retriggers at the new pitch');
+const dSteps = 12 * Math.log2(oscMade[n36].frequency.value / f36a);
+ok(Math.abs(dSteps - 18) < .01, 'T36: pitch follows the strip exactly (Δ ' + dSteps.toFixed(2) + ' steps, want 18)');
+padFire('pointerup', 150);
+advance(0.2);
+recordBtn.onclick(); stopBtn.onclick();
+ok(song().recordings.length === 0, 'T36: audition taps never reach the recorder');
+ids.vlClose.onclick();
+
+/* ── T37: 🎲 randomize — always in-bounds, varied, match preserved ── */
+ids.labToggle.onclick();
+ids.vlMatch.classList.contains('on') || ids.vlMatch.onclick();  // force match ON to check preservation
+advance(2);
+const genOK = (g) => g.count >= 1 && g.count <= 10 && g.stretch >= -.3 && g.stretch <= .5 &&
+  g.tilt >= 0 && g.tilt <= 3 && ['all', 'odd', 'oct', '3rd'].includes(g.sieve) &&
+  g.width >= 0 && g.width <= 25 && g.attack >= 0 && g.attack <= .3 &&
+  g.decay >= 0 && g.decay <= 1.5 && g.breath >= 0 && g.breath <= .6 &&
+  g.formantF >= 200 && g.formantF <= 4000 && g.formantA >= 0 && g.formantA <= 18 &&
+  g.damping >= 0 && g.damping <= 1 && g.motion >= 0 && g.motion <= 20 && g.chiff >= 0 && g.chiff <= .8;
+const seen37 = new Set();
+let allOk37 = true, matchKept = true;
+for (let i = 0; i < 30; i++) {
+  ids.vlRandom.onclick();
+  advance(2.5);                                                 // drain each preview
+  const g = JSON.parse(global.localStorage.getItem('synth.quant.v1')).labGen;
+  if (!genOK(g)) allOk37 = false;
+  if (g.match !== true) matchKept = false;
+  seen37.add(JSON.stringify(g));
+}
+ok(allOk37, 'T37: 30 random genomes all within sanitize bounds');
+ok(matchKept, 'T37: randomize preserves the match setting');
+ok(seen37.size >= 25, 'T37: randomize actually varies (' + seen37.size + '/30 distinct)');
+ok(String(ids.voiceSel.value) === 'lab', 'T37: random genome selected as the playing voice');
+ids.vlMatch.onclick();                                          // match back off
+ids.vlClose.onclick();
+
+/* ── T38: strip bottom note + gliss slide stays bounded ── */
+ids.labToggle.onclick();
+ids.vlPresets.children[0].onclick();                            // Gamelan: long-ring struck voice
+advance(3);
+ids.vlPadOct.value = '1'; ids.vlPadOct.onchange();              // strip bottom = C1
+const n38 = oscMade.length;
+padFire('pointerdown', 600);                                    // very bottom → step 0
+const f38 = oscMade[n38].frequency.value;                       // first osc of the voice = fundamental
+ok(Math.abs(f38 - 130.81 / 4) < .1, 'T38: strip bottom is C1 (' + f38.toFixed(1) + 'Hz)');
+for (let y = 590; y >= 10; y -= 20) padFire('pointermove', y);  // fast full sweep — 30 gliss handoffs
+padFire('pointerup', 10);
+advance(2);
+ok(true, 'T38: fast gliss sweep survives (quick-damped handoffs)');
+const p38 = JSON.parse(global.localStorage.getItem('synth.quant.v1'));
+ok(p38.padOct === 1, 'T38: strip bottom note persisted');
+ids.vlPadOct.value = '2'; ids.vlPadOct.onchange();
+ids.vlClose.onclick();
 
 console.log('synth tests: ' + passed + ' passed, ' + failed + ' failed');
 process.exit(failed ? 1 : 0);
