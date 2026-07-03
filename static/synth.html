@@ -979,7 +979,8 @@ function labDef(gen){
     rel:gen.decay>0?Math.min(.3,gen.decay):RELEASE,
     tail:gen.decay>.4?1600:OSC_TAIL,
     breath:gen.breath||0,formantF:gen.formantF||800,formantA:gen.formantA||0,
-    damping:gen.damping||0,motion:gen.motion||0,chiff:gen.chiff||0};
+    damping:gen.damping||0,motion:gen.motion||0,chiff:gen.chiff||0,
+    strikeF:gen.strikeF,strikeT:gen.strikeT};   // deliberately raw — undefined = legacy chiff path
 }
 function makeVoice(f,inst,at,gen){
   // the +5ms safety keeps the start out of the already-rendered audio quantum —
@@ -1014,8 +1015,21 @@ function makeVoice(f,inst,at,gen){
   if(def.motion){const lfo=c.createOscillator(),lg=c.createGain();
     lfo.frequency.value=5;lg.gain.value=f*(Math.pow(2,def.motion/1200)-1);
     lfo.connect(lg);oscs.forEach(o=>lg.connect(o.frequency));lfo.start(t);extra.push(lfo);}
-  // TIME/chiff — a self-terminating attack transient straight to the bus
-  if(def.chiff){const n=c.createBufferSource();n.buffer=noise();
+  // STRIKE — the exciter. Routed THROUGH the voice chain (lowpass → formant →
+  // envelope) and pitched relative to the note, so it composes with the rest
+  // of the genome instead of being pasted on top. Legacy genomes (no strikeF)
+  // keep the old straight-to-bus burst bit-exactly.
+  if(def.chiff&&def.strikeF!=null){
+    const n=c.createBufferSource();n.buffer=noise();
+    const bp=c.createBiquadFilter();bp.type='bandpass';
+    bp.frequency.value=Math.min(12000,f*def.strikeF);bp.Q.value=.9;
+    const sT=def.strikeT||.02,cg=c.createGain();
+    cg.gain.setValueAtTime(def.chiff*2*(sT<.015?1.5:1),t);      // short clicks need level to register
+    cg.gain.setTargetAtTime(.0001,t+.002,sT);
+    n.connect(bp);bp.connect(cg);cg.connect(flt);
+    n.start(t);n.stop(t+Math.min(.6,sT*6+.05));
+  }else if(def.chiff){
+    const n=c.createBufferSource();n.buffer=noise();
     const hp=c.createBiquadFilter();hp.type='highpass';hp.frequency.value=1800;
     const cg=c.createGain();cg.gain.setValueAtTime(def.chiff*.55,t);cg.gain.setTargetAtTime(.0001,t+.006,.02);
     n.connect(hp);hp.connect(cg);cg.connect(bus());n.start(t);n.stop(t+.15);}
