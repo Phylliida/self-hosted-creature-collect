@@ -336,56 +336,58 @@
   .wheel-actions { display: flex; justify-content: center; margin-top: 6px; }
   .extras-bubble:nth-child(9) { animation-delay: 0.32s; }
 
-  /* Fractals: a full-screen window holding the bundled mandelbrot
-     viewer in its own isolated iframe. Sits above the extras sheet
-     (z-index ladder elsewhere: settings/transit=30, extras=31,
-     favPanel=32; this overlays them all at 60). */
-  #fractalsWindow {
+  /* Fractals: a full-screen window holding a bundled fractal viewer in
+     its own isolated iframe. Sits above the extras sheet (z-index ladder
+     elsewhere: settings/transit=30, extras=31, favPanel=32; this overlays
+     them all at 60). Class-based (not id-based) so two of these windows —
+     "Fractals" (original mandelbrot viewer) and "Fractals 2" (the newer
+     fast viewer) — can coexist in one document sharing these styles. */
+  .fractals-window {
     position: fixed; inset: 0; z-index: 60; background: #000;
     display: none;
   }
-  #fractalsWindow.show { display: block; }
-  #fractalsWindow iframe {
+  .fractals-window.show { display: block; }
+  .fractals-window iframe {
     position: absolute; inset: 0; width: 100%; height: 100%;
     border: 0; display: block;
     /* Black during navigation so reloading a saved fractal doesn't flash
        white before the new document paints. */
     background: #000;
   }
-  #fractalsBar {
+  .fractals-bar {
     position: absolute; z-index: 2;
     top: max(8px, env(safe-area-inset-top));
     right: max(8px, env(safe-area-inset-right));
     display: flex; gap: 6px;
   }
-  #fractalsBar button {
+  .fractals-bar button {
     width: 38px; height: 38px; border-radius: 50%;
     border: none; background: rgba(0, 0, 0, 0.55); color: #fff;
     font-size: 18px; line-height: 1; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
     -webkit-tap-highlight-color: transparent;
   }
-  #fractalsBar button:hover { background: rgba(0, 0, 0, 0.75); }
-  #fractalsBar #fracMenu.active { background: rgba(80, 140, 255, 0.85); }
-  #fractalsBar #fractalsClose { font-size: 24px; }
+  .fractals-bar button:hover { background: rgba(0, 0, 0, 0.75); }
+  .fractals-bar .frac-menu.active { background: rgba(80, 140, 255, 0.85); }
+  .fractals-bar .frac-close { font-size: 24px; }
 
-  #fracSavePrompt, #fracBrowsePanel, #fracDelConfirm {
+  .frac-save-prompt, .frac-browse-panel, .frac-del-confirm {
     position: absolute; inset: 0; display: flex;
   }
-  #fracSavePrompt, #fracBrowsePanel { z-index: 3; }
-  #fracDelConfirm { z-index: 4; }  /* above the browse panel it opens from */
-  #fracSavePrompt[hidden], #fracBrowsePanel[hidden], #fracDelConfirm[hidden] { display: none; }
-  #fracSavePrompt, #fracDelConfirm {
+  .frac-save-prompt, .frac-browse-panel { z-index: 3; }
+  .frac-del-confirm { z-index: 4; }  /* above the browse panel it opens from */
+  .frac-save-prompt[hidden], .frac-browse-panel[hidden], .frac-del-confirm[hidden] { display: none; }
+  .frac-save-prompt, .frac-del-confirm {
     align-items: center; justify-content: center;
     background: rgba(0, 0, 0, 0.55);
   }
-  #fracSavePrompt .frac-card, #fracDelConfirm .frac-card {
+  .frac-save-prompt .frac-card, .frac-del-confirm .frac-card {
     background: var(--ui-bg, #fff); color: var(--ui-text, #111);
     border-radius: 12px; padding: 16px; width: min(320px, 86vw);
     box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
   }
   .frac-card-title { font-size: 15px; font-weight: 600; margin-bottom: 10px; text-align: center; }
-  #fracName {
+  .frac-name-input {
     width: 100%; box-sizing: border-box; padding: 8px 10px; font-size: 15px;
     border: 1px solid var(--ui-border, rgba(0, 0, 0, 0.2)); border-radius: 8px;
     background: var(--ui-input-bg, #fff); color: inherit;
@@ -414,13 +416,13 @@
   .frac-hold.holding .frac-hold-fill { width: 100%; transition: width 2s linear; }
   .frac-hold-label { position: relative; z-index: 1; }
 
-  #fracBrowsePanel { flex-direction: column; background: rgba(0, 0, 0, 0.82); }
+  .frac-browse-panel { flex-direction: column; background: rgba(0, 0, 0, 0.82); }
   .frac-browse-head {
     display: flex; align-items: center; justify-content: space-between; color: #fff;
     padding: max(10px, env(safe-area-inset-top)) 14px 10px; font-size: 16px; font-weight: 600;
   }
   .frac-browse-head button { background: none; border: none; color: #fff; font-size: 26px; cursor: pointer; }
-  #fracList {
+  .frac-list {
     flex: 1; overflow-y: auto; padding: 8px 12px 16px; align-content: start;
     display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px;
   }
@@ -480,6 +482,10 @@
       <button class="extras-bubble" data-extra="fractals" type="button">
         <span class="bubble-icon">&#127744;</span>
         <span>Fractals</span>
+      </button>
+      <button class="extras-bubble" data-extra="fractals2" type="button">
+        <span class="bubble-icon">&#127756;</span>
+        <span>Fractals 2</span>
       </button>
     </div>
 
@@ -623,36 +629,49 @@
   panel.innerHTML = PANEL_HTML;
   document.body.appendChild(panel);
 
-  // Fractals window: the bundled mandelbrot viewer (static/mandelbrot/)
-  // in an isolated iframe. Its own top-level element so it can cover the
-  // whole screen rather than live inside the small extras sheet. Fully
-  // self-contained here — no other file needs to know it exists. The
-  // iframe src is set lazily on first open so the fractal worker/WebGPU
-  // only spin up if the user actually opens it; once loaded we keep it
-  // (just hide/show) so the zoom state survives reopening.
-  const FRACTALS_SRC = '/static/mandelbrot/index.html';
+  // ────────────────────────────────────────────────────────────
+  // Fractals — full-screen fractal viewer windows
+  // ────────────────────────────────────────────────────────────
+  // Two bundled deep-zoom viewers, each in its own top-level element (an
+  // iframe covering the whole screen rather than living in the small
+  // extras sheet): "Fractals" is the original mandelbrot viewer (static/
+  // mandelbrot/, permalink carried in the URL query) and "Fractals 2" is
+  // a newer, much faster mandelbrot viewer (static/fractals2/, permalink
+  // carried in the URL hash). Both share the same window / save / browse
+  // / delete / backup machinery via makeFractalTool() below; only a few
+  // config values differ. Each iframe's src is set lazily on first open
+  // so its worker/GPU only spins up if the user opens it; once loaded we
+  // just hide/show so the zoom state survives reopening.
 
   // ── Saved-fractals store (IndexedDB) ──
-  // PNG previews can't live in localStorage (that's the very quota the
-  // creature collection was moved out of), so saved fractals get their
-  // own tiny IDB store. Record shape:
-  //   { id, name, search ('?params=...' permalink), preview (small PNG
-  //     data URL), createdAt }
-  // Exposed via window.ExtrasFractals so index.html's backup export/import
-  // can carry saved fractals inside the creature-collect save file.
+  // JPEG previews can't live in localStorage (that's the very quota the
+  // creature collection was moved out of), so saved views get their own
+  // IDB stores. Record shape:
+  //   { id, name, search (the '?…'/'#…' string appended to the app URL),
+  //     preview (small JPEG data URL), createdAt }
+  // Each tool exposes window.ExtrasFractals / .ExtrasFractals2 so
+  // index.html's backup export/import can carry saved views inside the
+  // creature-collect save file.
   const FRAC_DB = 'cc-extras-v1';
-  const FRAC_STORE = 'fractals';
+  // v2 adds the 'fractals2' store alongside the original 'fractals'. Both
+  // are ensured in one upgrade so opening at v2 from either tool agrees
+  // (mismatched versions on the same DB throw VersionError). Existing
+  // users upgrade cleanly — 'fractals' already exists and is preserved;
+  // only 'fractals2' is created.
+  const FRAC_STORES = ['fractals', 'fractals2'];
   let _fracDbP = null;
   function _fracDb() {
     if (_fracDbP) return _fracDbP;
     _fracDbP = new Promise((resolve, reject) => {
       let req;
-      try { req = indexedDB.open(FRAC_DB, 1); }
+      try { req = indexedDB.open(FRAC_DB, 2); }
       catch (e) { reject(e); return; }
       req.onupgradeneeded = () => {
         const db = req.result;
-        if (!db.objectStoreNames.contains(FRAC_STORE)) {
-          db.createObjectStore(FRAC_STORE, { keyPath: 'id' });
+        for (const store of FRAC_STORES) {
+          if (!db.objectStoreNames.contains(store)) {
+            db.createObjectStore(store, { keyPath: 'id' });
+          }
         }
       };
       req.onsuccess = () => resolve(req.result);
@@ -660,11 +679,11 @@
     });
     return _fracDbP;
   }
-  function _fracAll() {
+  function _fracAll(store) {
     return _fracDb().then((db) => new Promise((resolve) => {
       const out = [];
-      const tx = db.transaction(FRAC_STORE, 'readonly');
-      const cur = tx.objectStore(FRAC_STORE).openCursor();
+      const tx = db.transaction(store, 'readonly');
+      const cur = tx.objectStore(store).openCursor();
       cur.onsuccess = () => {
         const c = cur.result;
         if (!c) { out.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)); resolve(out); return; }
@@ -673,103 +692,41 @@
       cur.onerror = () => resolve(out);
     })).catch(() => []);
   }
-  function _fracPut(rec) {
+  function _fracPut(store, rec) {
     return _fracDb().then((db) => new Promise((resolve, reject) => {
-      const tx = db.transaction(FRAC_STORE, 'readwrite');
-      tx.objectStore(FRAC_STORE).put(rec);
+      const tx = db.transaction(store, 'readwrite');
+      tx.objectStore(store).put(rec);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     }));
   }
-  function _fracDelete(id) {
+  function _fracDelete(store, id) {
     return _fracDb().then((db) => new Promise((resolve) => {
-      const tx = db.transaction(FRAC_STORE, 'readwrite');
-      tx.objectStore(FRAC_STORE).delete(id);
+      const tx = db.transaction(store, 'readwrite');
+      tx.objectStore(store).delete(id);
       tx.oncomplete = () => resolve();
       tx.onerror = () => resolve();
     }));
   }
-  // Backup hook: carry saved fractals in the creature-collect save file.
-  // index.html's buildBackupPayload/importData call these.
-  window.ExtrasFractals = {
-    all: _fracAll,
-    importMerge: async (recs) => {
-      if (!Array.isArray(recs)) return;
-      const existing = await _fracAll();
-      const ids = new Set(existing.map((r) => r && r.id));
-      for (const r of recs) {
-        if (!r || !r.id || ids.has(r.id)) continue;
-        try { await _fracPut(r); } catch (e) { /* skip bad record */ }
-      }
-    },
-  };
 
-  // ── Window markup: iframe + a small top-right toolbar, a save-name
-  // prompt, and a browse panel (all overlaid within the window). ──
-  const fractalsWin = document.createElement('div');
-  fractalsWin.id = 'fractalsWindow';
-  fractalsWin.innerHTML =
-    '<iframe id="fractalsFrame" title="Fractal viewer"></iframe>' +
-    '<div id="fractalsBar">' +
-      '<button id="fracMenu" type="button" title="show/hide controls" aria-label="controls">&#9776;</button>' +
-      '<button id="fracSave" type="button" title="save this view" aria-label="save fractal">&#128190;</button>' +
-      '<button id="fracBrowse" type="button" title="saved fractals" aria-label="saved fractals">&#128193;</button>' +
-      '<button id="fractalsClose" type="button" title="close" aria-label="close fractals">&times;</button>' +
-    '</div>' +
-    '<div id="fracSavePrompt" hidden>' +
-      '<div class="frac-card">' +
-        '<div class="frac-card-title">Save this fractal</div>' +
-        '<input id="fracName" type="text" maxlength="60" placeholder="name it…" aria-label="fractal name">' +
-        '<div class="frac-card-actions">' +
-          '<button id="fracSaveCancel" type="button">Cancel</button>' +
-          '<button id="fracSaveOk" type="button" class="primary">Save</button>' +
-        '</div>' +
-      '</div>' +
-    '</div>' +
-    '<div id="fracBrowsePanel" hidden>' +
-      '<div class="frac-browse-head"><span>Saved fractals</span>' +
-        '<button id="fracBrowseClose" type="button" aria-label="close">&times;</button></div>' +
-      '<div id="fracList"></div>' +
-    '</div>' +
-    '<div id="fracDelConfirm" hidden>' +
-      '<div class="frac-card">' +
-        '<div class="frac-card-title">Delete this fractal?</div>' +
-        '<div class="frac-card-sub" id="fracDelName"></div>' +
-        '<button id="fracDelHold" type="button" class="frac-hold">' +
-          '<span class="frac-hold-fill"></span>' +
-          '<span class="frac-hold-label">Hold to delete</span>' +
-        '</button>' +
-        '<div class="frac-card-actions">' +
-          '<button id="fracDelCancel" type="button">Cancel</button>' +
-        '</div>' +
-      '</div>' +
-    '</div>';
-  document.body.appendChild(fractalsWin);
-  const fractalsFrame = fractalsWin.querySelector('#fractalsFrame');
-  const fracMenuBtn = fractalsWin.querySelector('#fracMenu');
-  const fracSavePrompt = fractalsWin.querySelector('#fracSavePrompt');
-  const fracNameInput = fractalsWin.querySelector('#fracName');
-  const fracBrowsePanel = fractalsWin.querySelector('#fracBrowsePanel');
-  const fracList = fractalsWin.querySelector('#fracList');
-  const _show = (el) => { el.hidden = false; };
-  const _hide = (el) => { el.hidden = true; };
-
-  // Same-origin reach into the fractal iframe (both are served from the
-  // app origin, so this is allowed and needs no postMessage).
-  function _idoc() {
+  // Same-origin reach into a fractal iframe's document (both are served
+  // from the app origin, so this is allowed and needs no postMessage).
+  function _frameDoc(frame) {
     try {
-      return fractalsFrame.contentDocument ||
-        (fractalsFrame.contentWindow && fractalsFrame.contentWindow.document) || null;
+      return frame.contentDocument ||
+        (frame.contentWindow && frame.contentWindow.document) || null;
     } catch (e) { return null; }
   }
-  // Immersive layout: reuse the mandelbrot app's own .fullscreen CSS
-  // classes (canvas fills the window, settings float, footer hidden, dark
-  // theme) WITHOUT requestFullscreen — iOS blocks fullscreen on non-video
+
+  // ── Per-app hooks — the only behaviour that differs between viewers ──
+
+  // Original mandelbrot viewer: reuse its own .fullscreen CSS classes
+  // (canvas fills the window, settings float, footer hidden, dark theme)
+  // WITHOUT requestFullscreen — iOS blocks fullscreen on non-video
   // elements, but toggling the classes works everywhere. The app's
   // ResizeObserver on the canvas redraws at the new size. Start with the
   // settings menu hidden so it's fractal-first.
-  function _applyImmersive() {
-    const d = _idoc();
+  function mandelbrotImmersive(d) {
     if (!d) return;
     ['mandelbrot', 'palette-canvas', 'settings', 'footer'].forEach((id) => {
       const el = d.getElementById(id);
@@ -778,191 +735,320 @@
     if (d.documentElement) d.documentElement.setAttribute('data-bs-theme', 'dark');
     const s = d.getElementById('settings');
     if (s) s.classList.add('hidden');
-    fracMenuBtn.classList.remove('active');
   }
-  function toggleFracMenu() {
-    const d = _idoc();
-    if (!d) return;
-    const s = d.getElementById('settings');
-    if (!s) return;
-    const nowHidden = s.classList.toggle('hidden');
-    fracMenuBtn.classList.toggle('active', !nowHidden);
+  // ☰ for the original viewer: toggle its settings panel; return true when
+  // the panel is now visible (so the button can show its active state).
+  function mandelbrotToggleMenu(d) {
+    const s = d && d.getElementById('settings');
+    if (!s) return false;
+    return !s.classList.toggle('hidden');
   }
-  fractalsFrame.addEventListener('load', _applyImmersive);
+  // Fractals 2 viewer: already full-screen, but its own top-right corner
+  // (help + fullscreen buttons) sits under our save/browse/close bar, and
+  // an in-iframe fullscreen toggle is meaningless while embedded. Inject a
+  // tiny same-origin style: hide fullscreen and drop the help button to the
+  // bottom-left, clear of our bar and the app's own bottom-right ☰ menu.
+  function fractals2Chrome(d) {
+    if (!d || !d.head || d.getElementById('cc-embed-style')) return;
+    const st = d.createElement('style');
+    st.id = 'cc-embed-style';
+    st.textContent =
+      '#fullscreen{display:none!important}' +
+      '.corner{top:auto!important;right:auto!important;' +
+      'left:max(8px,env(safe-area-inset-left))!important;' +
+      'bottom:calc(env(safe-area-inset-bottom,0px) + 14px)!important}';
+    d.head.appendChild(st);
+  }
 
-  // Last-viewed fractal state (the live '?params=' permalink), so closing
-  // and reopening the app returns to the same view. Tiny string (~300
-  // chars) → fine in localStorage; also exported in the save file
-  // (index.html reads cc.fractalLast.v1) so it travels across devices.
-  const LAST_KEY = 'cc.fractalLast.v1';
-  function _readLast() { try { return localStorage.getItem(LAST_KEY) || ''; } catch (e) { return ''; } }
-  function _saveLastState() {
-    const s = _currentSearch();
-    if (s) { try { localStorage.setItem(LAST_KEY, s); } catch (e) { /* ignore */ } }
-  }
-  function openFractals() {
-    if (!fractalsFrame.getAttribute('src')) {
-      // Resume the last-viewed fractal if we have one.
-      fractalsFrame.setAttribute('src', FRACTALS_SRC + (_readLast() || ''));
+  const _show = (el) => { el.hidden = false; };
+  const _hide = (el) => { el.hidden = true; };
+
+  // ── Tool factory: builds one full-screen viewer window (iframe + save/
+  // browse/delete chrome) and returns { open }. cfg:
+  //   winId      — unique element id for the window
+  //   src        — the app's index.html URL
+  //   store      — IDB object-store name for its saved views
+  //   lastKey    — localStorage key for the last-viewed permalink
+  //   backupKey  — window.<name> global exposing { all, importMerge }
+  //   canvasId   — id of the app's <canvas>, for preview thumbnails
+  //   readLocator(win) — reads the live permalink from the iframe window
+  //                (the string, incl. leading '?'/'#', appended to src)
+  //   onLoad(doc) — optional; runs on each iframe 'load'
+  //   menu       — optional { toggle(doc) -> bool }; adds a ☰ button
+  function makeFractalTool(cfg) {
+    const win = document.createElement('div');
+    win.id = cfg.winId;
+    win.className = 'fractals-window';
+    win.innerHTML =
+      '<iframe class="frac-frame" title="Fractal viewer"></iframe>' +
+      '<div class="fractals-bar">' +
+        (cfg.menu ? '<button class="frac-menu" type="button" title="show/hide controls" aria-label="controls">&#9776;</button>' : '') +
+        '<button class="frac-save" type="button" title="save this view" aria-label="save fractal">&#128190;</button>' +
+        '<button class="frac-browse" type="button" title="saved fractals" aria-label="saved fractals">&#128193;</button>' +
+        '<button class="frac-close" type="button" title="close" aria-label="close fractals">&times;</button>' +
+      '</div>' +
+      '<div class="frac-save-prompt" hidden>' +
+        '<div class="frac-card">' +
+          '<div class="frac-card-title">Save this fractal</div>' +
+          '<input class="frac-name-input" type="text" maxlength="60" placeholder="name it…" aria-label="fractal name">' +
+          '<div class="frac-card-actions">' +
+            '<button class="frac-save-cancel" type="button">Cancel</button>' +
+            '<button class="frac-save-ok primary" type="button">Save</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="frac-browse-panel" hidden>' +
+        '<div class="frac-browse-head"><span>Saved fractals</span>' +
+          '<button class="frac-browse-close" type="button" aria-label="close">&times;</button></div>' +
+        '<div class="frac-list"></div>' +
+      '</div>' +
+      '<div class="frac-del-confirm" hidden>' +
+        '<div class="frac-card">' +
+          '<div class="frac-card-title">Delete this fractal?</div>' +
+          '<div class="frac-card-sub frac-del-name"></div>' +
+          '<button class="frac-del-hold frac-hold" type="button">' +
+            '<span class="frac-hold-fill"></span>' +
+            '<span class="frac-hold-label">Hold to delete</span>' +
+          '</button>' +
+          '<div class="frac-card-actions">' +
+            '<button class="frac-del-cancel" type="button">Cancel</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(win);
+
+    const frame = win.querySelector('.frac-frame');
+    const menuBtn = win.querySelector('.frac-menu');       // null when cfg.menu absent
+    const savePrompt = win.querySelector('.frac-save-prompt');
+    const nameInput = win.querySelector('.frac-name-input');
+    const browsePanel = win.querySelector('.frac-browse-panel');
+    const listEl = win.querySelector('.frac-list');
+    const _idoc = () => _frameDoc(frame);
+
+    frame.addEventListener('load', () => {
+      if (cfg.onLoad) cfg.onLoad(_idoc());
+      if (menuBtn) menuBtn.classList.remove('active');     // fresh load: controls hidden
+    });
+    if (menuBtn) {
+      menuBtn.addEventListener('click', () => {
+        const d = _idoc(); if (!d) return;
+        menuBtn.classList.toggle('active', !!cfg.menu.toggle(d));
+      });
     }
-    fractalsWin.classList.add('show');
+
+    // Backup hook: carry this tool's saved views in the save file.
+    // index.html's buildBackupPayload/importData call these.
+    global[cfg.backupKey] = {
+      all: () => _fracAll(cfg.store),
+      importMerge: async (recs) => {
+        if (!Array.isArray(recs)) return;
+        const existing = await _fracAll(cfg.store);
+        const ids = new Set(existing.map((r) => r && r.id));
+        for (const r of recs) {
+          if (!r || !r.id || ids.has(r.id)) continue;
+          try { await _fracPut(cfg.store, r); } catch (e) { /* skip bad record */ }
+        }
+      },
+    };
+
+    // ── Last-viewed state: the live permalink, so closing and reopening
+    // returns to the same view. Tiny string → fine in localStorage; also
+    // exported in the save file so it travels across devices. The app
+    // rewrites its URL (history.replaceState) as you pan/zoom with no
+    // event, so snapshot on a light timer while open + on background/close.
+    function _currentSearch() {
+      try { return cfg.readLocator(frame.contentWindow) || ''; }
+      catch (e) { return ''; }
+    }
+    function _readLast() { try { return localStorage.getItem(cfg.lastKey) || ''; } catch (e) { return ''; } }
+    function _saveLastState() {
+      const s = _currentSearch();
+      if (s) { try { localStorage.setItem(cfg.lastKey, s); } catch (e) { /* ignore */ } }
+    }
+    function open() {
+      if (!frame.getAttribute('src')) {
+        // Resume the last-viewed fractal if we have one.
+        frame.setAttribute('src', cfg.src + (_readLast() || ''));
+      }
+      win.classList.add('show');
+    }
+    function close() {
+      _saveLastState();
+      win.classList.remove('show');
+      _hide(savePrompt);
+      _hide(browsePanel);
+    }
+    setInterval(() => { if (win.classList.contains('show')) _saveLastState(); }, 4000);
+    window.addEventListener('pagehide', _saveLastState);
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden && win.classList.contains('show')) _saveLastState();
+    });
+
+    // ── Save: snapshot the permalink + a small JPEG of the app's canvas ──
+    function _captureThumb() {
+      const d = _idoc();
+      if (!d) return null;
+      const srcC = d.getElementById(cfg.canvasId);
+      if (!srcC || !srcC.width || !srcC.height) return null;
+      const MAXW = 192;  // small on purpose so previews don't bloat the save
+      const scale = Math.min(1, MAXW / srcC.width);
+      const w = Math.max(1, Math.round(srcC.width * scale));
+      const h = Math.max(1, Math.round(srcC.height * scale));
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      try {
+        c.getContext('2d').drawImage(srcC, 0, 0, w, h);
+        // JPEG (not PNG): a 192px fractal PNG is ~38 KB — fractals are too
+        // detail-dense for PNG. JPEG at this size is visually identical and
+        // ~5× smaller (~6 KB), which matters since previews ride along in
+        // the exported save file. Same-origin canvas → not tainted.
+        return c.toDataURL('image/jpeg', 0.72);
+      } catch (e) { return null; }
+    }
+    function openSavePrompt() {
+      nameInput.value = '';
+      _show(savePrompt);
+      setTimeout(() => { try { nameInput.focus(); } catch (e) {} }, 30);
+    }
+    async function doSaveFractal() {
+      const rec = {
+        id: 'frac-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+        name: (nameInput.value || '').trim() || 'Untitled fractal',
+        search: _currentSearch(),
+        preview: _captureThumb(),
+        createdAt: Date.now(),
+      };
+      _hide(savePrompt);
+      try { await _fracPut(cfg.store, rec); } catch (e) { /* best-effort */ }
+    }
+
+    // ── Browse: list saved views; tap to load, × to delete ──
+    function loadFractal(rec) {
+      frame.setAttribute('src', cfg.src + (rec.search || ''));
+      _hide(browsePanel);
+    }
+    async function renderBrowse() {
+      const recs = await _fracAll(cfg.store);
+      listEl.innerHTML = '';
+      if (!recs.length) {
+        const empty = document.createElement('div');
+        empty.className = 'frac-empty';
+        empty.textContent = 'No saved fractals yet. Frame a view you like, then tap the disk icon.';
+        listEl.appendChild(empty);
+        return;
+      }
+      for (const rec of recs) {
+        const card = document.createElement('div');
+        card.className = 'frac-item';
+        const img = document.createElement('img');
+        img.className = 'frac-thumb';
+        img.alt = rec.name || 'fractal';
+        if (rec.preview) img.src = rec.preview;
+        const meta = document.createElement('div');
+        meta.className = 'frac-meta';
+        const nm = document.createElement('div');
+        nm.className = 'frac-name';
+        nm.textContent = rec.name || 'Untitled';
+        const dt = document.createElement('div');
+        dt.className = 'frac-date';
+        dt.textContent = new Date(rec.createdAt || Date.now()).toLocaleDateString();
+        meta.appendChild(nm);
+        meta.appendChild(dt);
+        const del = document.createElement('button');
+        del.className = 'frac-del';
+        del.type = 'button';
+        del.setAttribute('aria-label', 'delete');
+        del.innerHTML = '&times;';
+        card.appendChild(img);
+        card.appendChild(meta);
+        card.appendChild(del);
+        card.addEventListener('click', (e) => {
+          if (e.target === del) return;
+          loadFractal(rec);
+        });
+        del.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openDelConfirm(rec);
+        });
+        listEl.appendChild(card);
+      }
+    }
+    function openBrowse() { _show(browsePanel); renderBrowse(); }
+
+    win.querySelector('.frac-save').addEventListener('click', openSavePrompt);
+    win.querySelector('.frac-browse').addEventListener('click', openBrowse);
+    win.querySelector('.frac-close').addEventListener('click', close);
+    win.querySelector('.frac-save-ok').addEventListener('click', doSaveFractal);
+    win.querySelector('.frac-save-cancel').addEventListener('click', () => _hide(savePrompt));
+    win.querySelector('.frac-browse-close').addEventListener('click', () => _hide(browsePanel));
+    nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSaveFractal(); });
+
+    // Delete needs a deliberate 2-second hold (not a single tap) so a saved
+    // fractal can't be lost by an accidental press. Releasing early cancels;
+    // the button fills as a progress cue.
+    const delConfirm = win.querySelector('.frac-del-confirm');
+    const delName = win.querySelector('.frac-del-name');
+    const delHold = win.querySelector('.frac-del-hold');
+    let delTarget = null;
+    let delTimer = null;
+    function _resetHold() {
+      if (delTimer) { clearTimeout(delTimer); delTimer = null; }
+      delHold.classList.remove('holding');
+    }
+    function openDelConfirm(rec) {
+      delTarget = rec;
+      delName.textContent = rec.name || 'Untitled';
+      _resetHold();
+      _show(delConfirm);
+    }
+    function _startHold() {
+      if (delTimer) return;
+      void delHold.offsetWidth;  // restart the fill transition from 0
+      delHold.classList.add('holding');
+      delTimer = setTimeout(async () => {
+        delTimer = null;
+        delHold.classList.remove('holding');
+        const rec = delTarget;
+        delTarget = null;
+        _hide(delConfirm);
+        if (rec) { try { await _fracDelete(cfg.store, rec.id); } catch (e) {} renderBrowse(); }
+      }, 2000);
+    }
+    delHold.addEventListener('pointerdown', (e) => { e.preventDefault(); _startHold(); });
+    delHold.addEventListener('pointerup', _resetHold);
+    delHold.addEventListener('pointerleave', _resetHold);
+    delHold.addEventListener('pointercancel', _resetHold);
+    win.querySelector('.frac-del-cancel').addEventListener('click', () => { _resetHold(); _hide(delConfirm); });
+
+    return { open };
   }
-  function closeFractals() {
-    _saveLastState();
-    fractalsWin.classList.remove('show');
-    _hide(fracSavePrompt);
-    _hide(fracBrowsePanel);
-  }
-  // The fractal app rewrites its URL (history.replaceState) as you pan/
-  // zoom — there's no event for that, so snapshot it on a light timer
-  // while the window is open, plus when the app is backgrounded/closed.
-  setInterval(() => { if (fractalsWin.classList.contains('show')) _saveLastState(); }, 4000);
-  window.addEventListener('pagehide', _saveLastState);
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden && fractalsWin.classList.contains('show')) _saveLastState();
+
+  // The original mandelbrot viewer (URL query permalink; immersive class
+  // toggling + a ☰ menu that drives its own settings panel).
+  const fractalsTool = makeFractalTool({
+    winId: 'fractalsWindow',
+    src: '/static/mandelbrot/index.html',
+    store: 'fractals',
+    lastKey: 'cc.fractalLast.v1',
+    backupKey: 'ExtrasFractals',
+    canvasId: 'mandelbrot-canvas',
+    readLocator: (w) => (w && w.location.search) || '',
+    onLoad: mandelbrotImmersive,
+    menu: { toggle: mandelbrotToggleMenu },
   });
 
-  // ── Save: snapshot the permalink + a small PNG of the 2D canvas ──
-  function _currentSearch() {
-    try {
-      return (fractalsFrame.contentWindow && fractalsFrame.contentWindow.location.search) || '';
-    } catch (e) { return ''; }
-  }
-  function _captureThumb() {
-    const d = _idoc();
-    if (!d) return null;
-    const src = d.getElementById('mandelbrot-canvas');
-    if (!src || !src.width || !src.height) return null;
-    const MAXW = 192;  // small on purpose so previews don't bloat the save
-    const scale = Math.min(1, MAXW / src.width);
-    const w = Math.max(1, Math.round(src.width * scale));
-    const h = Math.max(1, Math.round(src.height * scale));
-    const c = document.createElement('canvas');
-    c.width = w; c.height = h;
-    try {
-      c.getContext('2d').drawImage(src, 0, 0, w, h);
-      // JPEG (not PNG): a 192px fractal PNG is ~38 KB — fractals are too
-      // detail-dense for PNG. JPEG at this size is visually identical and
-      // ~5× smaller (~6 KB), which matters since previews ride along in
-      // the exported save file. Same-origin canvas → not tainted.
-      return c.toDataURL('image/jpeg', 0.72);
-    } catch (e) { return null; }
-  }
-  function openSavePrompt() {
-    fracNameInput.value = '';
-    _show(fracSavePrompt);
-    setTimeout(() => { try { fracNameInput.focus(); } catch (e) {} }, 30);
-  }
-  async function doSaveFractal() {
-    const rec = {
-      id: 'frac-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
-      name: (fracNameInput.value || '').trim() || 'Untitled fractal',
-      search: _currentSearch(),
-      preview: _captureThumb(),
-      createdAt: Date.now(),
-    };
-    _hide(fracSavePrompt);
-    try { await _fracPut(rec); } catch (e) { /* best-effort */ }
-  }
-
-  // ── Browse: list saved fractals; tap to load, × to delete ──
-  function loadFractal(rec) {
-    fractalsFrame.setAttribute('src', FRACTALS_SRC + (rec.search || ''));
-    _hide(fracBrowsePanel);
-  }
-  async function renderBrowse() {
-    const recs = await _fracAll();
-    fracList.innerHTML = '';
-    if (!recs.length) {
-      const empty = document.createElement('div');
-      empty.className = 'frac-empty';
-      empty.textContent = 'No saved fractals yet. Frame a view you like, then tap the disk icon.';
-      fracList.appendChild(empty);
-      return;
-    }
-    for (const rec of recs) {
-      const card = document.createElement('div');
-      card.className = 'frac-item';
-      const img = document.createElement('img');
-      img.className = 'frac-thumb';
-      img.alt = rec.name || 'fractal';
-      if (rec.preview) img.src = rec.preview;
-      const meta = document.createElement('div');
-      meta.className = 'frac-meta';
-      const nm = document.createElement('div');
-      nm.className = 'frac-name';
-      nm.textContent = rec.name || 'Untitled';
-      const dt = document.createElement('div');
-      dt.className = 'frac-date';
-      dt.textContent = new Date(rec.createdAt || Date.now()).toLocaleDateString();
-      meta.appendChild(nm);
-      meta.appendChild(dt);
-      const del = document.createElement('button');
-      del.className = 'frac-del';
-      del.type = 'button';
-      del.setAttribute('aria-label', 'delete');
-      del.innerHTML = '&times;';
-      card.appendChild(img);
-      card.appendChild(meta);
-      card.appendChild(del);
-      card.addEventListener('click', (e) => {
-        if (e.target === del) return;
-        loadFractal(rec);
-      });
-      del.addEventListener('click', (e) => {
-        e.stopPropagation();
-        openDelConfirm(rec);
-      });
-      fracList.appendChild(card);
-    }
-  }
-  function openBrowse() { _show(fracBrowsePanel); renderBrowse(); }
-
-  fracMenuBtn.addEventListener('click', toggleFracMenu);
-  fractalsWin.querySelector('#fracSave').addEventListener('click', openSavePrompt);
-  fractalsWin.querySelector('#fracBrowse').addEventListener('click', openBrowse);
-  fractalsWin.querySelector('#fractalsClose').addEventListener('click', closeFractals);
-  fractalsWin.querySelector('#fracSaveOk').addEventListener('click', doSaveFractal);
-  fractalsWin.querySelector('#fracSaveCancel').addEventListener('click', () => _hide(fracSavePrompt));
-  fractalsWin.querySelector('#fracBrowseClose').addEventListener('click', () => _hide(fracBrowsePanel));
-  fracNameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSaveFractal(); });
-
-  // Delete needs a deliberate 2-second hold (not a single tap) so a saved
-  // fractal can't be lost by an accidental press. Releasing early cancels;
-  // the button fills as a progress cue.
-  const fracDelConfirm = fractalsWin.querySelector('#fracDelConfirm');
-  const fracDelName = fractalsWin.querySelector('#fracDelName');
-  const fracDelHold = fractalsWin.querySelector('#fracDelHold');
-  let _delTarget = null;
-  let _delTimer = null;
-  function _resetHold() {
-    if (_delTimer) { clearTimeout(_delTimer); _delTimer = null; }
-    fracDelHold.classList.remove('holding');
-  }
-  function openDelConfirm(rec) {
-    _delTarget = rec;
-    fracDelName.textContent = rec.name || 'Untitled';
-    _resetHold();
-    _show(fracDelConfirm);
-  }
-  function _startHold() {
-    if (_delTimer) return;
-    void fracDelHold.offsetWidth;  // restart the fill transition from 0
-    fracDelHold.classList.add('holding');
-    _delTimer = setTimeout(async () => {
-      _delTimer = null;
-      fracDelHold.classList.remove('holding');
-      const rec = _delTarget;
-      _delTarget = null;
-      _hide(fracDelConfirm);
-      if (rec) { try { await _fracDelete(rec.id); } catch (e) {} renderBrowse(); }
-    }, 2000);
-  }
-  fracDelHold.addEventListener('pointerdown', (e) => { e.preventDefault(); _startHold(); });
-  fracDelHold.addEventListener('pointerup', _resetHold);
-  fracDelHold.addEventListener('pointerleave', _resetHold);
-  fracDelHold.addEventListener('pointercancel', _resetHold);
-  fractalsWin.querySelector('#fracDelCancel').addEventListener('click', () => { _resetHold(); _hide(fracDelConfirm); });
+  // The newer, faster viewer (URL hash permalink; already full-screen, so
+  // no immersive toggling — just nudge its own chrome clear of our bar).
+  const fractals2Tool = makeFractalTool({
+    winId: 'fractals2Window',
+    src: '/static/fractals2/index.html',
+    store: 'fractals2',
+    lastKey: 'cc.fractal2Last.v1',
+    backupKey: 'ExtrasFractals2',
+    canvasId: 'view',
+    readLocator: (w) => (w && w.location.hash) || '',
+    onLoad: fractals2Chrome,
+  });
 
   const $ = (id) => document.getElementById(id);
 
@@ -1017,9 +1103,10 @@
   bubbles.addEventListener('click', (e) => {
     const b = e.target.closest('.extras-bubble');
     if (!b) return;
-    // Fractals opens its own full-screen window rather than an inline
-    // tool view inside the extras sheet.
-    if (b.dataset.extra === 'fractals') { openFractals(); return; }
+    // The fractal viewers open their own full-screen windows rather than
+    // an inline tool view inside the extras sheet.
+    if (b.dataset.extra === 'fractals') { fractalsTool.open(); return; }
+    if (b.dataset.extra === 'fractals2') { fractals2Tool.open(); return; }
     // Full-screen registered tools (def.open) open their own window rather
     // than an inline sheet view.
     const reg = tools[b.dataset.extra];

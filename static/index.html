@@ -248,6 +248,9 @@
      the static refresh button below it. ~40px = one control button
      (29px) + a small gap (10px). */
   .maplibregl-ctrl-bottom-right { margin-bottom: 40px; }
+  /* Android only: nudge every map control up 7px (alignment tweak). */
+  html.cc-android .maplibregl-ctrl-bottom-right,
+  html.cc-android .maplibregl-ctrl-bottom-left { transform: translateY(-7px); }
   #install,
   #appDataMissing {
     position: absolute; left: 0; right: 0; top: 0; z-index: 20;
@@ -3709,6 +3712,13 @@
     // (Settings row + missing-data banner). Everything's bundled in
     // the IPA — there's nothing to download.
     document.documentElement.classList.add('cc-bundled');
+    // Android-only marker (used to nudge the map controls up 7px — see the
+    // html.cc-android CSS rule).
+    try {
+      if (window.Capacitor.getPlatform && window.Capacitor.getPlatform() === 'android') {
+        document.documentElement.classList.add('cc-android');
+      }
+    } catch (e) { /* ignore */ }
 
     // Icon preload was previously deferred here via window.addEventListener
     // ('load', ...) but timing-raced map.on('load') — by the time icons
@@ -6231,22 +6241,89 @@ function fmtDate(ts) {
   let _lastUserPos = null;
   let _pendingFocusZoom = null;
   let _focusBtnEl = null;
-  function _recenterOnUser(zoom) {
+  function _recenterOnUser(zoom, snap) {
     if (!_lastUserPos || !_lastUserPos.coords) return;
     const opts = { center: [_lastUserPos.coords.longitude, _lastUserPos.coords.latitude] };
     if (zoom != null) opts.zoom = zoom;
-    map.easeTo(opts);
+    // snap → jump instantly so the map lands exactly on the dot (which also
+    // snapped) on discovery / GPS-regain / teleport; otherwise ease. Bearing is
+    // left untouched (the user can rotate in focus).
+    if (snap) map.jumpTo(opts);
+    else map.easeTo(opts);
+  }
+  // While focus is on, MapLibre's own pinch (which zooms toward the finger
+  // midpoint and drifts the centre off the player) is disabled and replaced by
+  // this simple pinch that zooms around the map CENTRE — i.e. the player — via
+  // setZoom, so you keep the full zoom range AND stay centred. Two-finger only;
+  // taps and single-finger gestures pass straight through untouched.
+  let _pinchActive = false, _pinchStartDist = 0, _pinchStartZoom = 0, _pinchLastAngle = 0;
+  function _twoFingerDist(touches) {
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.hypot(dx, dy);
+  }
+  function _twoFingerAngle(touches) {
+    const dx = touches[1].clientX - touches[0].clientX;
+    const dy = touches[1].clientY - touches[0].clientY;
+    return Math.atan2(dy, dx) * 180 / Math.PI;
+  }
+  function _focusTouchStart(ev) {
+    if (!_focusActive || !ev.touches || ev.touches.length !== 2) return;
+    _pinchActive = true;
+    _pinchStartDist = _twoFingerDist(ev.touches);
+    _pinchStartZoom = map.getZoom();
+    _pinchLastAngle = _twoFingerAngle(ev.touches);
+  }
+  function _focusTouchMove(ev) {
+    if (!_focusActive || !_pinchActive || !ev.touches || ev.touches.length !== 2) return;
+    ev.preventDefault();   // stop the browser's own page pinch-zoom
+    const d = _twoFingerDist(ev.touches);
+    if (_pinchStartDist > 0 && d > 0) {
+      map.setZoom(_pinchStartZoom + Math.log2(d / _pinchStartDist));  // zooms around centre = player
+    }
+    // Two-finger twist rotates around the centre (= player) via setBearing.
+    // Incremental + wrap-normalised so it survives the ±180° seam; a clockwise
+    // twist turns the map clockwise (bearing decreases).
+    const ang = _twoFingerAngle(ev.touches);
+    const dA = ((ang - _pinchLastAngle + 540) % 360) - 180;
+    _pinchLastAngle = ang;
+    if (dA) map.setBearing(map.getBearing() - dA);
+  }
+  function _focusTouchEnd(ev) {
+    if (!ev.touches || ev.touches.length < 2) _pinchActive = false;
+  }
+  // Lock (or unlock) the view to the player: no pan, no rotation, and pinch
+  // zooms around the player. Shared by toggleFocus and the session restore.
+  function _applyFocusMode(active) {
+    try {
+      const el = map.getCanvasContainer();
+      if (active) {
+        map.dragPan.disable();
+        map.dragRotate.disable();
+        map.touchZoomRotate.disable();     // replaced by the _focusTouch* pinch
+        el.addEventListener('touchstart', _focusTouchStart, { passive: false });
+        el.addEventListener('touchmove', _focusTouchMove, { passive: false });
+        el.addEventListener('touchend', _focusTouchEnd);
+        el.addEventListener('touchcancel', _focusTouchEnd);
+      } else {
+        map.dragPan.enable();
+        map.dragRotate.enable();
+        map.touchZoomRotate.enable();
+        el.removeEventListener('touchstart', _focusTouchStart);
+        el.removeEventListener('touchmove', _focusTouchMove);
+        el.removeEventListener('touchend', _focusTouchEnd);
+        el.removeEventListener('touchcancel', _focusTouchEnd);
+        _pinchActive = false;
+      }
+    } catch (e) { /* ignore */ }
   }
   function toggleFocus() {
     _focusActive = !_focusActive;
     try { localStorage.setItem('cc.focusFollow', _focusActive ? '1' : '0'); } catch (e) {}
     if (_focusBtnEl) _focusBtnEl.classList.toggle('focus-active', _focusActive);
-    // While focused the map stays centred on the player, so disable
-    // drag-panning (zoom still works); re-enable when turning off.
-    try {
-      if (_focusActive) map.dragPan.disable();
-      else map.dragPan.enable();
-    } catch (e) {}
+    // While focused the map stays centred on the player: no pan, no rotation,
+    // zoom stays anchored on the player. Restored to normal when turning off.
+    _applyFocusMode(_focusActive);
     if (!_focusActive) return;
     const zoom = localStorage.getItem('cc.lockZoom') === '1' ? map.getZoom() : 16;
     if (_lastUserPos) {
@@ -6384,6 +6461,9 @@ function fmtDate(ts) {
           anim = null;
           if (raf) { cancelAnimationFrame(raf); raf = 0; }
           displayed = { lng, lat };
+          // In focus mode, snap the map onto the dot too so they stay aligned
+          // whenever the dot jumps (discovery / GPS-regain / teleport).
+          if (_focusActive) { try { map.setCenter([lng, lat]); } catch (_e) { /* ignore */ } }
           return;
         }
         // Undo the control's snap in this same frame (nothing flashes),
@@ -6401,10 +6481,23 @@ function fmtDate(ts) {
 
   // Feed the focus/follow toggle: remember the latest fix, and while focus
   // is active recenter on it (applying the one-time activation zoom first).
+  let _lastFixT = 0;
   geolocate.on('geolocate', (e) => {
+    const now = performance.now();
+    const prev = _lastUserPos;
+    // A first fix, a long gap since the last fix (GPS toggled off then regained),
+    // or a teleport (>150 m — the dot's own snap threshold) is a "discovery":
+    // snap the map onto the dot instead of easing, so they stay aligned.
+    let snap = !prev || !prev.coords || (_lastFixT && now - _lastFixT > 4000);
+    if (!snap && prev && prev.coords) {
+      const dLat = e.coords.latitude - prev.coords.latitude;
+      const dLng = (e.coords.longitude - prev.coords.longitude) * Math.cos(prev.coords.latitude * Math.PI / 180);
+      if (Math.hypot(dLat, dLng) * 111000 > 150) snap = true;
+    }
+    _lastFixT = now;
     _lastUserPos = e;
     if (_focusActive) {
-      _recenterOnUser(_pendingFocusZoom);
+      _recenterOnUser(_pendingFocusZoom, snap);
       _pendingFocusZoom = null;
     }
   });
@@ -6414,7 +6507,7 @@ function fmtDate(ts) {
   if (localStorage.getItem('cc.focusFollow') === '1') {
     _focusActive = true;
     if (_focusBtnEl) _focusBtnEl.classList.add('focus-active');
-    try { map.dragPan.disable(); } catch (e) {}
+    _applyFocusMode(true);
   }
 
   // Auto-activate the GeolocateControl on every load so the user-dot
@@ -7202,9 +7295,15 @@ function fmtDate(ts) {
       fractals: (window.ExtrasFractals && window.ExtrasFractals.all)
         ? await window.ExtrasFractals.all()
         : [],
-      // Last-viewed fractal permalink, so resuming on another device
-      // lands on the same view.
+      // Saved views from the newer "Fractals 2" viewer — its own IDB
+      // store, carried alongside the original fractals.
+      fractals2: (window.ExtrasFractals2 && window.ExtrasFractals2.all)
+        ? await window.ExtrasFractals2.all()
+        : [],
+      // Last-viewed fractal permalinks (one per viewer), so resuming on
+      // another device lands on the same view.
       fractalLast: localStorage.getItem('cc.fractalLast.v1') || null,
+      fractal2Last: localStorage.getItem('cc.fractal2Last.v1') || null,
       // Saved synth songs + quivers (Extras → Synth / Quiver) live in their
       // own IDB store like fractals; carried along so they travel with the save.
       songs: (window.ExtrasSongs && window.ExtrasSongs.all)
@@ -7690,6 +7789,11 @@ function fmtDate(ts) {
       try { await window.ExtrasFractals.importMerge(data.fractals); }
       catch (e) { console.error('importFractals failed', e); }
     }
+    // Saved Fractals 2 views: union merge by id (skip duplicates).
+    if (Array.isArray(data.fractals2) && window.ExtrasFractals2 && window.ExtrasFractals2.importMerge) {
+      try { await window.ExtrasFractals2.importMerge(data.fractals2); }
+      catch (e) { console.error('importFractals2 failed', e); }
+    }
     // Saved songs + quivers: union merge by id (skip duplicates).
     if (Array.isArray(data.songs) && window.ExtrasSongs && window.ExtrasSongs.importMerge) {
       try { await window.ExtrasSongs.importMerge(data.songs); }
@@ -7714,6 +7818,9 @@ function fmtDate(ts) {
     // that view.
     if (typeof data.fractalLast === 'string' && data.fractalLast) {
       localStorage.setItem('cc.fractalLast.v1', data.fractalLast);
+    }
+    if (typeof data.fractal2Last === 'string' && data.fractal2Last) {
+      localStorage.setItem('cc.fractal2Last.v1', data.fractal2Last);
     }
     // Active incense — adopt it (honouring its original start time so the
     // remaining window is correct; ignored if already expired).
