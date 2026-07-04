@@ -5462,6 +5462,24 @@
       #creatureInventory .bag-craft:hover { background: var(--ui-hover, rgba(0,0,0,0.04)); }
       #creatureInventory .craft-view { display: none; }
       #creatureInventory .craft-view.show { display: flex; flex-direction: column; }
+      .radar-marker { display: flex; flex-direction: column; align-items: center; pointer-events: none; }
+      .radar-marker-label {
+        font-size: 11px; font-weight: 700; color: #fff; background: rgba(20,24,36,0.82);
+        padding: 1px 6px; border-radius: 999px; white-space: nowrap; margin-bottom: 3px;
+        font-variant-numeric: tabular-nums; box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+      }
+      .radar-marker-img {
+        width: 44px; height: 44px; object-fit: contain; image-rendering: pixelated; display: none;
+        filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5)); pointer-events: auto; cursor: pointer;
+      }
+      .radar-marker.ready .radar-marker-img { display: block; }
+      .radar-marker.silhouette .radar-marker-img { filter: brightness(0) drop-shadow(0 1px 2px rgba(0,0,0,0.35)); }
+      .radar-marker.radar-legendary .radar-marker-img {
+        filter: brightness(0)
+          drop-shadow(1.3px 0 0 #ffcb2e) drop-shadow(-1.3px 0 0 #ffcb2e)
+          drop-shadow(0 1.3px 0 #ffcb2e) drop-shadow(0 -1.3px 0 #ffcb2e);
+      }
+      .radar-marker.radar-legendary .radar-marker-label { background: rgba(184,134,11,0.94); }
       #creatureInventory .craft-hint {
         font-size: 12px; color: var(--ui-muted, #666);
         text-align: center; margin: 0 0 12px;
@@ -9419,7 +9437,7 @@
           + `<div class="completion-info">`
           +   `<div class="completion-name">${escapeHtml(speciesNameFor(r.id))}</div>`
           +   `<div class="completion-bar"><div class="completion-bar-fill" style="width:${pct}%"></div></div>`
-          +   (bonus ? `<div class="completion-bonus">✨ +${bonus}× shiny</div>` : ``)
+          +   (bonus ? `<div class="completion-bonus">${bonus}× shiny</div>` : ``)
           + `</div>`
           + `<div class="completion-pct">${pct}%<span class="completion-frac">${r.seen}/${r.total}</span></div>`;
         return card;
@@ -11900,6 +11918,9 @@
 
   function refreshSpawnOverlay() {
     if (!_overlayMap || !global.Spawns) return;
+    // Radar ghosts live at fixed spawn locations (no GPS needed) — refresh
+    // their countdowns / pruning every tick, before the GPS-gated spawn logic.
+    refreshRadarMarkers();
     // Without a GPS fix we can't compute distance — clear any existing
     // markers rather than leaving stale ones from a previous fix.
     if (_userLat == null || _userLng == null) {
@@ -12036,6 +12057,186 @@
 
   let _zoomHandler = null;
 
+  // ── Poké-radar: show the nearest evolved ("radar") spawns on the map ──────
+  // The evolved-spawn stream (spawns.js) is folded into spawnsInBbox, so an
+  // evolved spawn becomes a normal catchable marker once you're within
+  // VISIBILITY_RADIUS_M. The radar is a DISCOVERY toggle: while ON it drops the
+  // few nearest evolved spawns onto the map as black silhouettes ("blips") with
+  // a live countdown above each, so you can navigate toward one. A radar-scope
+  // bubble button (above the focus button) turns it off. State persists.
+  const RADAR_ACTIVE_KEY = 'cc.radar.v1';
+  const RADAR_COUNT = 5;                 // how many nearest blips to show
+  const RADAR_RESCAN_MS = 8000;          // throttle the nearest-set recompute
+  const _radarMarkers = new Map();       // spawn.id -> { marker, el, spawn }
+  let _radarActive = false;
+  let _radarLastScanAt = 0;
+
+  function fmtRemain(ms) {
+    if (ms == null || ms <= 0) return 'gone';
+    const totalMin = Math.floor(ms / 60000);
+    const h = Math.floor(totalMin / 60), m = totalMin % 60;
+    if (h > 0) return h + 'h ' + m + 'm';
+    if (m > 0) return m + 'm';
+    return '<1m';
+  }
+
+  // Radar-scope bubble button — mirrors the daycare route bubble: joins the
+  // bottom-right control cluster, reordered ABOVE the focus button. ALWAYS
+  // visible; tapping it TOGGLES the radar on/off (accent-tinted while on).
+  let _radarBubbleCtrl = null;
+  class _RadarBubbleControl {
+    onAdd(map) {
+      this._map = map;
+      const container = document.createElement('div');
+      container.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'cc-radar-bubble-btn';
+      btn.title = 'Toggle Poké-radar';
+      btn.setAttribute('aria-label', 'Toggle Poké-radar');
+      btn.style.cssText = 'display:flex;align-items:center;justify-content:center;'
+        + 'background:transparent;border:none;cursor:pointer;width:29px;height:29px;padding:0;';
+      btn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor"'
+        + ' stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        + '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/>'
+        + '<line x1="12" y1="12" x2="19" y2="6"/>'
+        + '<circle cx="16.5" cy="8.5" r="1.15" fill="currentColor" stroke="none"/></svg>';
+      btn.addEventListener('click', () => setRadarActive(!_radarActive));
+      container.appendChild(btn);
+      this._container = container;
+      this._btn = btn;
+      return container;
+    }
+    onRemove() {
+      if (this._container && this._container.parentNode) this._container.parentNode.removeChild(this._container);
+      this._map = null;
+    }
+  }
+  function _ensureRadarBubble() {
+    if (_radarBubbleCtrl) return _radarBubbleCtrl;
+    if (!_installedMap) return null;
+    _radarBubbleCtrl = new _RadarBubbleControl();
+    _installedMap.addControl(_radarBubbleCtrl, 'bottom-right');
+    // Reorder to the top of the bottom-right cluster so it sits above the
+    // focus / geolocate buttons.
+    try {
+      const cluster = _installedMap.getContainer().querySelector('.maplibregl-ctrl-bottom-right');
+      if (cluster && _radarBubbleCtrl._container && cluster.firstChild) {
+        cluster.insertBefore(_radarBubbleCtrl._container, cluster.firstChild);
+      }
+    } catch (e) { /* best-effort */ }
+    return _radarBubbleCtrl;
+  }
+  function _updateRadarBubble() {
+    const ctrl = _ensureRadarBubble();
+    if (ctrl && ctrl._btn) {
+      ctrl._btn.style.color = _radarActive ? 'var(--ui-accent, #5b8cff)' : 'var(--ui-text, #444)';
+    }
+  }
+
+  function _radarMakeMarkerEl(sp) {
+    // Always a black silhouette on the map (a "radar blip"); the real sprite
+    // only appears once you're in range and the normal marker takes over.
+    // Legendaries get a gold outline (radar-legendary) to stand out.
+    const el = document.createElement('div');
+    el.className = 'radar-marker silhouette' + (sp.legendary ? ' radar-legendary' : '');
+    el.innerHTML = '<div class="radar-marker-label">' + fmtRemain(sp.expireMs - Date.now())
+      + '</div><img class="radar-marker-img" alt="" draggable="false">';
+    el.querySelector('.radar-marker-img').addEventListener('click', (e) => {
+      e.stopPropagation();
+      // If it's already a real in-range marker, open its catch screen.
+      const real = _markers.get(sp.id);
+      if (real) { openBattleScreen(real.spawn); return; }
+      // In focus mode the view is locked to the player — don't recenter on the
+      // blip (cc.focusFollow is kept in sync with the map's _focusActive).
+      let focusOn = false;
+      try { focusOn = localStorage.getItem('cc.focusFollow') === '1'; } catch (e2) { /* ignore */ }
+      if (focusOn) return;
+      if (_overlayMap) { try { _overlayMap.easeTo({ center: [sp.lng, sp.lat], duration: 600 }); } catch (_) { /* ignore */ } }
+    });
+    if (global.SpriteStore) {
+      const img = el.querySelector('.radar-marker-img');
+      // best-available sprite; the .silhouette filter blacks it out to a shape
+      global.SpriteStore.showSprite(img, sp.speciesA, sp.speciesB, undefined, {
+        onReady: () => el.classList.add('ready'),
+      });
+    }
+    return el;
+  }
+  function _radarEnsureMarker(sp) {
+    if (!_overlayMap || !global.maplibregl) return null;
+    let rec = _radarMarkers.get(sp.id);
+    if (!rec) {
+      const el = _radarMakeMarkerEl(sp);
+      const marker = new global.maplibregl.Marker({ element: el, anchor: 'center' })
+        .setLngLat([sp.lng, sp.lat]).addTo(_overlayMap);
+      rec = { marker, el, spawn: sp };
+      _radarMarkers.set(sp.id, rec);
+    }
+    return rec;
+  }
+  function _radarRemoveMarker(id) {
+    const rec = _radarMarkers.get(id);
+    if (rec) { try { rec.marker.remove(); } catch (e) { /* ignore */ } _radarMarkers.delete(id); }
+  }
+  function _radarClearMarkers() {
+    for (const id of Array.from(_radarMarkers.keys())) _radarRemoveMarker(id);
+  }
+
+  // Reconcile radar blips to the current nearest set (while active): add the
+  // nearest RADAR_COUNT alive & uncaught, drop the rest, refresh countdown
+  // labels, and hide a blip while its real in-range marker is up. The nearest
+  // recompute is throttled (RADAR_RESCAN_MS); countdown/visibility refresh every
+  // call. `force` recomputes immediately (on activation).
+  function refreshRadarMarkers(force) {
+    if (!_overlayMap) return;
+    if (!_radarActive || _userLat == null || _userLng == null
+        || !global.Spawns || !global.Spawns.nearestRadar) {
+      if (_radarMarkers.size) _radarClearMarkers();
+      return;
+    }
+    const now = Date.now();
+    const caught = (typeof readCaughtSpawnIds === 'function') ? readCaughtSpawnIds() : new Set();
+    if (force || now - _radarLastScanAt > RADAR_RESCAN_MS) {
+      _radarLastScanAt = now;
+      const near = global.Spawns.nearestRadar(_userLat, _userLng, RADAR_COUNT);
+      const desired = new Set();
+      for (const sp of near) {
+        if (caught.has(sp.id) || sp.expireMs <= now) continue;
+        desired.add(sp.id);
+        _radarEnsureMarker(sp);
+      }
+      for (const id of Array.from(_radarMarkers.keys())) {
+        if (!desired.has(id)) _radarRemoveMarker(id);
+      }
+    }
+    for (const pair of _radarMarkers) {
+      const id = pair[0], rec = pair[1];
+      const left = rec.spawn.expireMs - now;
+      if (left <= 0 || caught.has(id)) { _radarRemoveMarker(id); continue; }
+      const label = rec.el.querySelector('.radar-marker-label');
+      if (label) label.textContent = fmtRemain(left);
+      // Hide the blip while the real (in-range, catchable) marker is present.
+      rec.el.style.display = _markers.has(id) ? 'none' : '';
+    }
+  }
+
+  // Toggle the radar on/off (from the always-on map bubble button). No auto-zoom
+  // — the blips just appear/disappear at their world positions.
+  function setRadarActive(on) {
+    _radarActive = !!on;
+    try { localStorage.setItem(RADAR_ACTIVE_KEY, _radarActive ? '1' : '0'); } catch (e) { /* ignore */ }
+    _updateRadarBubble();
+    if (!_radarActive) _radarClearMarkers();
+    else refreshRadarMarkers(true);
+  }
+  function _radarRestore() {
+    try { _radarActive = localStorage.getItem(RADAR_ACTIVE_KEY) === '1'; } catch (e) { _radarActive = false; }
+    _ensureRadarBubble();      // the toggle button is always on the map
+    _updateRadarBubble();
+    refreshRadarMarkers(true);
+  }
+
   function attachSpawnOverlay(map) {
     if (_overlayMap === map) return;
     _overlayMap = map;
@@ -12048,6 +12249,7 @@
     // land promptly. Dedupe in refresh keeps this near-free when nothing
     // has changed (warm memoized scan + a no-op marker diff).
     _overlayTimer = setInterval(refreshSpawnOverlay, SPAWN_REFRESH_MS);
+    _radarRestore();   // re-create a followed radar ghost after (re)attach
   }
 
   function detachSpawnOverlay() {

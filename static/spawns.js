@@ -472,12 +472,12 @@
   // Rarity is density-matched to the normal pool: a legendary is ~1/
   // LEG_RARITY as likely to be standing in a given cell as a normal spawn,
   // so of the creatures you actually encounter ~1/LEG_RARITY are legendary
-  // (the "1/4000 chance of a legendary" the design calls for) — regardless
-  // of how the longer lifetime inflates the raw standing count.
+  // (a ~1/16000 chance of a legendary) — regardless of how the longer lifetime
+  // inflates the raw standing count.
   const LEG_TICK_MS = 6 * 60 * 60 * 1000;        // legendary birth granularity: 6 h
   const LEG_LIFETIME_MS = 24 * 60 * 60 * 1000;   // legendaries linger ~1 day
   const LEG_LIFETIME_TICKS = Math.ceil(LEG_LIFETIME_MS / LEG_TICK_MS);  // 4
-  const LEG_RARITY = 4000;                        // ~1 legendary per 4000 normal spawns
+  const LEG_RARITY = 16000;                       // ~1 legendary per 16000 normal spawns (4× rarer, 2026-07-04)
   const LEG_CHANCE_PER_CELLTICK =
     (SPAWN_CHANCE_PER_TICK * LIFETIME_TICKS) / (LEG_RARITY * LEG_LIFETIME_TICKS);
   const LEG_MOD = Math.max(1, Math.round(1 / LEG_CHANCE_PER_CELLTICK));
@@ -594,11 +594,15 @@
   // (chain A→B→C ⇒ uniform over {B, C}). Seeded from (cell, tick) only — no
   // player/time — so evolved spawns are global + shared like legendaries.
   const EVO_TICK_MS = 3 * 60 * 60 * 1000;         // evolved birth granularity: 3 h
-  const EVO_LIFETIME_MS = 12 * 60 * 60 * 1000;    // evolved linger ~half a day
-  const EVO_LIFETIME_TICKS = Math.ceil(EVO_LIFETIME_MS / EVO_TICK_MS);  // 4
-  const EVO_RARITY = 100;                          // ~1 evolved per 100 normal spawns
+  const EVO_LIFETIME_MS = 5 * 60 * 60 * 1000;     // evolved linger up to ~5 h
+  const EVO_LIFETIME_TICKS = Math.ceil(EVO_LIFETIME_MS / EVO_TICK_MS);  // 2
+  const EVO_RARITY = 200;                          // ~1 evolved per 200 normal spawns
+  // Use the TRUE lifetime/tick ratio (not the ceil'd EVO_LIFETIME_TICKS) so the
+  // 1/EVO_RARITY encounter rate stays exact even when the lifetime isn't a whole
+  // multiple of the tick (5 h life / 3 h tick → 1.667 generations overlap, not 2).
+  // EVO_LIFETIME_TICKS is only the integer scan window.
   const EVO_CHANCE_PER_CELLTICK =
-    (SPAWN_CHANCE_PER_TICK * LIFETIME_TICKS) / (EVO_RARITY * EVO_LIFETIME_TICKS);
+    (SPAWN_CHANCE_PER_TICK * LIFETIME_TICKS) / (EVO_RARITY * (EVO_LIFETIME_MS / EVO_TICK_MS));
   const EVO_MOD = Math.max(1, Math.round(1 / EVO_CHANCE_PER_CELLTICK));
   const EVO_SALT = 0x45564F0A;                     // 'EVO\n' — distinct seed namespace
   const EVO_BOTH_CHANCE = 0.65;                    // else exactly one half evolved
@@ -728,6 +732,90 @@
       }
     }
     return out;
+  }
+
+  // Nearest N alive evolved spawns to a point, sorted by distance — powers the
+  // poké-radar UI. Expands the search box (doubling from ~1.1 km) until it has N
+  // or hits maxRadiusM, then sorts by an equirectangular metric (accurate enough
+  // at these scales). The cheap hash pre-filter keeps even a wide scan light.
+  function nearestEvolved(lat, lng, n, maxRadiusM) {
+    if (lat == null || lng == null || !isFinite(lat) || !isFinite(lng)) return [];
+    const want = n || 5;
+    const maxR = maxRadiusM || 5000;
+    const cosLat = Math.max(0.05, Math.cos(lat * Math.PI / 180));
+    const now = Date.now();
+    const curET = currentEvoTick(now);
+    const firstET = curET - EVO_LIFETIME_TICKS;
+    const found = new Map();
+    let radiusM = 2000;   // first box almost always holds ≥N at evolved density (avoids re-expansion)
+    while (true) {
+      const latPad = radiusM / 111000;
+      const lngPad = radiusM / (111000 * cosLat);
+      const minLatCell = Math.floor((lat - latPad + 90) * SCALE);
+      const maxLatCell = Math.ceil((lat + latPad + 90) * SCALE);
+      const minLngCell = Math.floor((lng - lngPad + 180) * SCALE);
+      const maxLngCell = Math.ceil((lng + lngPad + 180) * SCALE);
+      for (let cx = minLatCell; cx <= maxLatCell; cx++) {
+        for (let cy = minLngCell; cy <= maxLngCell; cy++) {
+          for (let et = firstET; et <= curET; et++) {
+            const p = generateEvolvedAtTick(cx, cy, et);
+            if (!p) continue;
+            if (now < p.startMs || now >= p.expireMs) continue;
+            if (!found.has(p.id)) found.set(p.id, p);
+          }
+        }
+      }
+      if (found.size >= want || radiusM >= maxR) break;
+      radiusM *= 2;
+    }
+    const arr = Array.from(found.values());
+    const d2 = (p) => { const dy = p.lat - lat, dx = (p.lng - lng) * cosLat; return dy * dy + dx * dx; };
+    arr.sort((a, b) => d2(a) - d2(b));
+    return arr.slice(0, want);
+  }
+
+  // Nearest N alive radar targets — evolved spawns AND legendaries, merged and
+  // sorted by distance. Same expanding-box search as nearestEvolved, scanning
+  // both streams in each box; legendaries are ~20× rarer so usually none are
+  // near, but when one is closer than the Nth evolved it takes a slot. Returned
+  // spawn objects keep their own `evolved:true` / `legendary:true` flags so the
+  // UI can style them differently (e.g. a gold outline for legendaries).
+  function nearestRadar(lat, lng, n, maxRadiusM) {
+    if (lat == null || lng == null || !isFinite(lat) || !isFinite(lng)) return [];
+    const want = n || 5;
+    const maxR = maxRadiusM || 5000;
+    const cosLat = Math.max(0.05, Math.cos(lat * Math.PI / 180));
+    const now = Date.now();
+    const curET = currentEvoTick(now), firstET = curET - EVO_LIFETIME_TICKS;
+    const curLT = currentLegTick(now), firstLT = curLT - LEG_LIFETIME_TICKS;
+    const found = new Map();
+    let radiusM = 2000;
+    while (true) {
+      const latPad = radiusM / 111000;
+      const lngPad = radiusM / (111000 * cosLat);
+      const minLatCell = Math.floor((lat - latPad + 90) * SCALE);
+      const maxLatCell = Math.ceil((lat + latPad + 90) * SCALE);
+      const minLngCell = Math.floor((lng - lngPad + 180) * SCALE);
+      const maxLngCell = Math.ceil((lng + lngPad + 180) * SCALE);
+      for (let cx = minLatCell; cx <= maxLatCell; cx++) {
+        for (let cy = minLngCell; cy <= maxLngCell; cy++) {
+          for (let et = firstET; et <= curET; et++) {
+            const p = generateEvolvedAtTick(cx, cy, et);
+            if (p && now >= p.startMs && now < p.expireMs && !found.has(p.id)) found.set(p.id, p);
+          }
+          for (let lt = firstLT; lt <= curLT; lt++) {
+            const p = generateLegendaryAtTick(cx, cy, lt);
+            if (p && now >= p.startMs && now < p.expireMs && !found.has(p.id)) found.set(p.id, p);
+          }
+        }
+      }
+      if (found.size >= want || radiusM >= maxR) break;
+      radiusM *= 2;
+    }
+    const arr = Array.from(found.values());
+    const d2 = (p) => { const dy = p.lat - lat, dx = (p.lng - lng) * cosLat; return dy * dy + dx * dx; };
+    arr.sort((a, b) => d2(a) - d2(b));
+    return arr.slice(0, want);
   }
 
   // ── Incense spawns (independent deterministic pull) ───────────
@@ -989,7 +1077,7 @@
     LEG_TICK_MS, LEG_LIFETIME_MS,
     // Evolved ("poké-radar") stream — folded into spawnsInBbox; exposed for
     // tests + the future poké-radar detection UI.
-    evolvedInBbox, generateEvolvedAtTick, currentEvoTick,
+    evolvedInBbox, generateEvolvedAtTick, currentEvoTick, nearestEvolved, nearestRadar,
     EVO_TICK_MS, EVO_LIFETIME_MS, EVO_RARITY,
     // Incense stream — creatures.js sets the active state (from the save
     // file); spawnsInBbox folds it in while active.
