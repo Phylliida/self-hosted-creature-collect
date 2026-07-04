@@ -131,7 +131,7 @@ global.document = {
 let oscCount = 0, compCount = 0, bufMade = 0;
 const oscMade = [], filtMade = [];
 function fakeParam() { return { value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {}, linearRampToValueAtTime() {}, setTargetAtTime() {}, cancelScheduledValues() {} }; }
-function fakeNode() { return { type: '', buffer: null, frequency: fakeParam(), connect() {}, start() {}, stop() {} }; }
+function fakeNode() { const n = { type: '', buffer: null, frequency: fakeParam(), stopped: false, connect() {}, start() {}, stop() { n.stopped = true; } }; return n; }
 class FakeCtx {
   constructor() { this.state = 'running'; this.destination = {}; this.sampleRate = 512; }
   get currentTime() { return now; }
@@ -1207,6 +1207,22 @@ const m40 = oscMade.length;
 padFire('pointerdown', 300); padFire('pointerup', 300);         // strip still healthy afterwards
 ok(oscMade.length > m40, 'T40: strip still voices after the spam');
 advance(3);
+ids.vlClose.onclick();
+
+/* ── T41: oscillators outlive the release curve — no premature hard stop ── */
+ids.labToggle.onclick();
+ids.vlPresets.children[3].onclick(); advance(3);                // Kalimba base
+ids.vlDecay.value = '25'; ids.vlDecay.oninput();                // decay .25 → rel .25 → needs ~1.65s tail
+advance(3);
+const m41 = oscMade.length;
+padFire('pointerdown', 300);
+padFire('pointerup', 300);                                      // release at ~full amplitude
+advance(0.5);                                                   // old fixed 300ms tail would have stopped here
+const voice41 = oscMade.slice(m41);
+ok(voice41.length > 0 && voice41.every(o => !o.stopped),
+   'T41: mid-decay voice still ringing at +0.5s (old 300ms tail cut it at ~30% amplitude)');
+advance(2.0);
+ok(voice41.every(o => o.stopped), 'T41: and fully stopped once the release has died away');
 ids.vlClose.onclick();
 
 console.log('synth tests: ' + passed + ' passed, ' + failed + ' failed');

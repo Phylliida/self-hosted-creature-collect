@@ -3421,6 +3421,10 @@
       </span>
     </div>
     <div id="backupStatus" style="font-size: 11px; color: var(--ui-muted); margin: -4px 0 6px;"></div>
+    <div class="row">
+      <label for="autoBackupToggle">Auto-backup daily on WiFi</label>
+      <input type="checkbox" id="autoBackupToggle">
+    </div>
     <div class="attribution" style="margin-top: 14px; padding-top: 10px;
          border-top: 1px solid var(--ui-hairline); font-size: 11px; color: var(--ui-muted);
          line-height: 1.5;">
@@ -7224,6 +7228,8 @@ function fmtDate(ts) {
       // background" toggle, and the map data source (Flask vs Hugging Face).
       pedometerEnabled: localStorage.getItem('cc.pedometerEnabled'),
       regionsMode: localStorage.getItem('cc.regionsMode'),
+      // "Auto-backup daily on WiFi" toggle, so the preference travels too.
+      autoBackup: localStorage.getItem('cc.autoBackup'),
       // Active incense ({type, startMs}) so a burning incense keeps its
       // remaining time across devices / restarts.
       activeIncense: (window.Creatures && window.Creatures.getActiveIncense)
@@ -7273,7 +7279,10 @@ function fmtDate(ts) {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  async function saveToServer() {
+  // opts.silent → no alerts (used by the WiFi auto-backup). Returns whether
+  // the save succeeded so callers can react without a popup.
+  async function saveToServer(opts) {
+    const silent = !!(opts && opts.silent);
     const name = (localStorage.getItem('cc.backupName') || '').trim();
     if (!name) {
       alert('Enter a Name in the field below first — that\u2019s used for the saved filename.');
@@ -7292,10 +7301,52 @@ function fmtDate(ts) {
       // "save reminder" banner stays hidden for the next 7 days.
       localStorage.setItem('cc.lastSaveAt', String(Date.now()));
       updateBackupStatus();
-      alert(`Saved to server as ${body.saved || name + '.json'}`);
+      if (!silent) alert(`Saved to server as ${body.saved || name + '.json'}`);
+      return true;
     } catch (e) {
-      alert('Save failed: ' + (e && e.message ? e.message : e));
+      if (!silent) alert('Save failed: ' + (e && e.message ? e.message : e));
+      return false;
     }
+  }
+
+  // Returns true ONLY when we can positively confirm a non-cellular (WiFi /
+  // ethernet) connection. Prefers the native @capacitor/network plugin (the
+  // authoritative source in the iOS / Android apps); otherwise falls back to
+  // the web Network Information API (Chromium / Android WebView). When neither
+  // can tell — e.g. iOS Safari with no plugin, or a browser without the API —
+  // it returns false, so auto-backup never risks spending cellular data.
+  async function isConfirmedWifi() {
+    try {
+      const Net = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Network;
+      if (Net && Net.getStatus) {
+        const s = await Net.getStatus();
+        return !!(s && s.connected && s.connectionType === 'wifi');
+      }
+    } catch (_) { /* fall through to the web API */ }
+    const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (conn && conn.type) {
+      return conn.type === 'wifi' || conn.type === 'ethernet' || conn.type === 'wimax';
+    }
+    return false; // connection type unknown → not certain → do not auto-save
+  }
+
+  // Opt-in daily backup. Fires only when: the toggle is on, we're online, a
+  // backup name is set, it's been >24 h since the last save, AND we've
+  // CONFIRMED WiFi. Runs silently and swallows errors so a flaky upload never
+  // nags — it'll simply retry the next time the app is foregrounded.
+  let _autoBackupBusy = false;
+  async function maybeAutoBackup() {
+    if (localStorage.getItem('cc.autoBackup') !== '1') return;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+    if (!(localStorage.getItem('cc.backupName') || '').trim()) return;
+    const last = Number(localStorage.getItem('cc.lastSaveAt') || 0);
+    if (isFinite(last) && last > 0 && Date.now() - last < 24 * 60 * 60 * 1000) return;
+    if (_autoBackupBusy) return;
+    _autoBackupBusy = true;
+    try {
+      if (await isConfirmedWifi()) await saveToServer({ silent: true });
+    } catch (_) { /* silent — retry on next foreground */ }
+    finally { _autoBackupBusy = false; }
   }
   async function importData(fileOrData) {
     // Accepts either a File/Blob (from the Import button) or an already-
@@ -7516,6 +7567,9 @@ function fmtDate(ts) {
     // them take effect — toggle/selector and map fetching re-read these keys).
     if (data.pedometerEnabled === '1' || data.pedometerEnabled === '0') {
       localStorage.setItem('cc.pedometerEnabled', data.pedometerEnabled);
+    }
+    if (data.autoBackup === '1' || data.autoBackup === '0') {
+      localStorage.setItem('cc.autoBackup', data.autoBackup);
     }
     if (data.regionsMode === 'bbox-flask' || data.regionsMode === 'static-flask' ||
         data.regionsMode === 'static-hf') {
@@ -16177,6 +16231,26 @@ function fmtDate(ts) {
     el.textContent = `Save uploads to the server (uses data). ${tail}`;
   }
   updateBackupStatus();
+
+  // ── Auto-backup on WiFi (opt-in) ──────────────────────────────────
+  // One of the very few automatic network actions in this otherwise
+  // zero-data PWA, so it is strictly opt-in AND only ever fires when we
+  // can POSITIVELY confirm WiFi (never on cellular, never when the
+  // connection type is unknown). Logic lives in maybeAutoBackup().
+  const autoBackupToggle = document.getElementById('autoBackupToggle');
+  if (autoBackupToggle) {
+    autoBackupToggle.checked = localStorage.getItem('cc.autoBackup') === '1';
+    autoBackupToggle.addEventListener('change', () => {
+      localStorage.setItem('cc.autoBackup', autoBackupToggle.checked ? '1' : '0');
+      if (autoBackupToggle.checked) maybeAutoBackup();
+    });
+  }
+  // Check shortly after load (deferred so it never competes with startup
+  // work) and whenever the app returns to the foreground.
+  setTimeout(() => { maybeAutoBackup(); }, 8000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) maybeAutoBackup();
+  });
 
   // Creature sprite status display + clear-cache button. The bulk
   // download itself now lives in the `appDataBtn` flow above; this

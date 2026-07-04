@@ -297,26 +297,22 @@
   const BUCKET_W_XW = 0.075;  // 8: (uniform over not-WEEKLY, WEEKLY)
   const BUCKET_W_UU = 0.10;   // 9: (uniform, uniform)
 
-  let _cachedSamplerKey = null;
-  let _cachedSampler = null;
-  function getTypePairSampler() {
-    if (!_buildTypeIndices()) return null;
-    const w = currentWeather();
-    const key = `${w.daily}|${w.weekly}`;
-    if (key === _cachedSamplerKey && _cachedSampler) return _cachedSampler;
-
-    const daily = w.daily;
-    const weekly = w.weekly;
+  // Build a cumulative (typeA, typeB) sampler from a pair of type→species
+  // pools, weighted by the weather mixture (daily/weekly). Shared by the
+  // normal stream and the evolved stream (which passes evolved-form pools and
+  // its own birth-tick weather). Pairs whose either pool is empty are dropped
+  // (so e.g. FLYING-day diverts cleanly instead of rolling species-less), then
+  // the survivors are renormalized into a cumulative distribution for fast
+  // binary-search sampling.
+  function _composePairSampler(byPrimary, bySecondary, daily, weekly) {
     const N = TYPES.length;
-    const otherD = N - 1;   // count of types other than DAILY (== TYPES.length - 1)
+    const otherD = N - 1;   // count of types other than DAILY
     const otherW = N - 1;   // count of types other than WEEKLY
-
-    // Weight of one concrete (a, b) pair under the mixture. Each
-    // bucket either pins exactly one pair (buckets 1-4) or spreads
-    // uniformly over a subset (buckets 5-9); we sum the contributions.
-    // When daily == weekly the daily- and weekly-anchored buckets
-    // collapse onto the same pair, which is fine — that's exactly how
-    // "extra-strong same-type weather" should land.
+    // Weight of one concrete (a, b) pair under the mixture. Each bucket either
+    // pins exactly one pair (buckets 1-4) or spreads uniformly over a subset
+    // (buckets 5-9); we sum the contributions. When daily == weekly the daily-
+    // and weekly-anchored buckets collapse onto the same pair, which is fine —
+    // that's exactly how "extra-strong same-type weather" should land.
     const weightOf = (a, b) => {
       let v = 0;
       if (a === daily  && b === daily)  v += BUCKET_W_DD;
@@ -330,17 +326,12 @@
       v += BUCKET_W_UU / (N * N);
       return v;
     };
-
-    // Compose the full (a, b) distribution, dropping pairs where
-    // either pool is empty (so e.g. FLYING-day diverts cleanly instead
-    // of rolling species-less). Renormalize the survivors into a
-    // cumulative distribution for fast binary-search sampling.
     const entries = [];
     let total = 0;
     for (const a of TYPES) {
-      if (!_byPrimary[a].length) continue;
+      if (!byPrimary[a].length) continue;
       for (const b of TYPES) {
-        if (!_bySecondary[b].length) continue;
+        if (!bySecondary[b].length) continue;
         const wv = weightOf(a, b);
         if (wv <= 0) continue;
         entries.push({ a, b, w: wv });
@@ -349,15 +340,22 @@
     }
     if (!entries.length || total <= 0) return null;
     let cum = 0;
-    for (const e of entries) {
-      cum += e.w / total;
-      e.cum = cum;
-    }
-    // Floating-point drift guard: pin the last cum to exactly 1 so a
-    // PRNG draw of 0.9999… can never fall past the end.
+    for (const e of entries) { cum += e.w / total; e.cum = cum; }
+    // Floating-point drift guard: pin the last cum to exactly 1 so a PRNG draw
+    // of 0.9999… can never fall past the end.
     entries[entries.length - 1].cum = 1;
+    return { byPrimary, bySecondary, entries };
+  }
 
-    const sampler = { byPrimary: _byPrimary, bySecondary: _bySecondary, entries };
+  let _cachedSamplerKey = null;
+  let _cachedSampler = null;
+  function getTypePairSampler() {
+    if (!_buildTypeIndices()) return null;
+    const w = currentWeather();
+    const key = `${w.daily}|${w.weekly}`;
+    if (key === _cachedSamplerKey && _cachedSampler) return _cachedSampler;
+    const sampler = _composePairSampler(_byPrimary, _bySecondary, w.daily, w.weekly);
+    if (!sampler) return null;
     _cachedSamplerKey = key;
     _cachedSampler = sampler;
     return sampler;
@@ -581,6 +579,157 @@
     return out;
   }
 
+  // ── Evolved spawns ("poké-radar" stream; independent deterministic pull) ──
+  // A third parallel stream (same shape/machinery as legendaries) that seeds
+  // fusions whose halves are EVOLVED forms of the normal wild pool — rarer than
+  // normal (~1/EVO_RARITY of the creatures you encounter) and lingering half a
+  // day so you can travel to one. Density is matched exactly like legendaries:
+  // longer life is cancelled by a proportionally lower per-cell-tick chance so
+  // the encounter ratio stays 1/EVO_RARITY regardless of lifetime.
+  //
+  // Sampling: pick a (typeA, typeB) pair from the SAME weather mixture as normal
+  // spawns, but from the pools chosen for this spawn's shape — 65% both halves
+  // evolved, else exactly one half evolved (the other a base wild form). An
+  // evolved half is drawn uniformly across a base's whole forward-evolution set
+  // (chain A→B→C ⇒ uniform over {B, C}). Seeded from (cell, tick) only — no
+  // player/time — so evolved spawns are global + shared like legendaries.
+  const EVO_TICK_MS = 3 * 60 * 60 * 1000;         // evolved birth granularity: 3 h
+  const EVO_LIFETIME_MS = 12 * 60 * 60 * 1000;    // evolved linger ~half a day
+  const EVO_LIFETIME_TICKS = Math.ceil(EVO_LIFETIME_MS / EVO_TICK_MS);  // 4
+  const EVO_RARITY = 100;                          // ~1 evolved per 100 normal spawns
+  const EVO_CHANCE_PER_CELLTICK =
+    (SPAWN_CHANCE_PER_TICK * LIFETIME_TICKS) / (EVO_RARITY * EVO_LIFETIME_TICKS);
+  const EVO_MOD = Math.max(1, Math.round(1 / EVO_CHANCE_PER_CELLTICK));
+  const EVO_SALT = 0x45564F0A;                     // 'EVO\n' — distinct seed namespace
+  const EVO_BOTH_CHANCE = 0.65;                    // else exactly one half evolved
+
+  function currentEvoTick(nowMs) {
+    return Math.floor((nowMs == null ? Date.now() : nowMs) / EVO_TICK_MS);
+  }
+
+  // Evolved-form type indices: every forward-evolution descendant of a base
+  // wild species (SPAWNABLE_SPECIES_A), filtered to loaded species, bucketed by
+  // primary/secondary type exactly like the normal pools. Rebuilt when the
+  // loaded species count changes.
+  let _evoByPrimary = null, _evoBySecondary = null, _evoIdxLen = -1;
+  function _buildEvoIndices() {
+    if (_evoByPrimary && _evoBySecondary) {
+      const Species0 = global.Species;
+      const all0 = Species0 && Species0.allSpecies ? Species0.allSpecies() : null;
+      if (all0 && _evoIdxLen === all0.length) return true;
+    }
+    const Species = global.Species;
+    if (!Species || !Species.typesFor || !Species.evolutionsFor || !Species.allSpecies) return false;
+    const all = Species.allSpecies();
+    if (!all.length) return false;
+    const loaded = new Set(all.map((s) => s.id));
+    const evoSet = new Set();
+    for (const base of SPAWNABLE_SPECIES_A) {
+      const stack = [base];
+      const seen = new Set([base]);
+      while (stack.length) {
+        const cur = stack.pop();
+        for (const e of Species.evolutionsFor(cur)) {
+          const t = e.target;
+          if (seen.has(t)) continue;
+          seen.add(t);
+          if (loaded.has(t)) evoSet.add(t);   // a descendant == an evolved form
+          stack.push(t);
+        }
+      }
+    }
+    const byPrimary = Object.create(null), bySecondary = Object.create(null);
+    for (const t of TYPES) { byPrimary[t] = []; bySecondary[t] = []; }
+    for (const sp of evoSet) {
+      const types = Species.typesFor(sp) || [];
+      if (!types.length) continue;
+      byPrimary[types[0]].push(sp);
+      bySecondary[types[1] || types[0]].push(sp);
+    }
+    _evoByPrimary = byPrimary;
+    _evoBySecondary = bySecondary;
+    _evoIdxLen = all.length;
+    return true;
+  }
+
+  // Cheap deterministic pre-filter (same value for every player), skipping the
+  // xor4096 seed init for the vast majority of cell-ticks with no evolved spawn.
+  function _evoCandidate(cellX, cellY, etick) {
+    const h = (Math.imul(cellX, 73856093) ^ Math.imul(cellY, 19349663)
+      ^ Math.imul(etick, 83492791) ^ EVO_SALT) >>> 0;
+    return (h % EVO_MOD) === 0;
+  }
+  function evoCellTickSeed(cellX, cellY, etick) {
+    const curX = goodMod(cellX, LAT_MOD);
+    const curY = goodMod(cellY, LON_MOD);
+    return (Math.round(
+      ((curX + 1) * LAT_MOD + (curY + 1) * LAT_MOD * LON_MOD) * 7477
+    ) + ((etick ^ EVO_SALT) >>> 0) * 983) | 0;
+  }
+  function generateEvolvedAtTick(cellX, cellY, etick) {
+    if (!_evoCandidate(cellX, cellY, etick)) return null;
+    if (!_buildTypeIndices() || !_buildEvoIndices()) return null;
+    const arng = getxor4069(evoCellTickSeed(cellX, cellY, etick));
+    const fx = arng();
+    const fy = arng();
+    const lat = (cellX + fx) / SCALE - 90;
+    const lng = (cellY + fy) / SCALE - 180;
+    // Shape: 65% both halves evolved, else exactly one (a coin picks the side).
+    const bothEvolved = arng() < EVO_BOTH_CHANCE;
+    const aEvolved = bothEvolved || arng() < 0.5;
+    const bEvolved = bothEvolved || !aEvolved;
+    const poolA = aEvolved ? _evoByPrimary : _byPrimary;
+    const poolB = bEvolved ? _evoBySecondary : _bySecondary;
+    // Weather-weighted type pair, seeded from THIS tick's weather so a spawn's
+    // species stay fixed across its whole 12 h life (not shifting when the
+    // daily/weekly type rolls over mid-window).
+    const w = currentWeather(etick * EVO_TICK_MS);
+    const sampler = _composePairSampler(poolA, poolB, w.daily, w.weekly);
+    if (!sampler) return null;
+    const pair = _sampleTypePair(sampler, arng());
+    const listA = sampler.byPrimary[pair.a];
+    const listB = sampler.bySecondary[pair.b];
+    const speciesA = listA[Math.floor(arng() * listA.length)];
+    const speciesB = listB[Math.floor(arng() * listB.length)];
+    const level = expDistr(7, 50, arng()) + 3;   // evolved skew higher than base forms
+    const sizeM = 0.15 + arng() * 2.0;
+    const bornOffset = Math.floor(arng() * EVO_TICK_MS);
+    const startMs = etick * EVO_TICK_MS + bornOffset;
+    const variantSeed = arng();
+    return {
+      // 'E:' namespace keeps evolved caught-IDs distinct and is recognized by
+      // isSpawnIdStale (coarse evo-tick scale + 12 h window).
+      id: 'E:' + cellX + ':' + cellY + ':' + etick + ':0',
+      lat, lng, speciesA, speciesB, level, sizeM, variantSeed,
+      startMs, expireMs: startMs + EVO_LIFETIME_MS,
+      evolved: true,
+    };
+  }
+  function evolvedInBbox(bbox, nowMs) {
+    const [west, south, east, north] = bbox;
+    const now = nowMs == null ? Date.now() : nowMs;
+    const curET = currentEvoTick(now);
+    const minLatCell = Math.floor((south + 90) * SCALE);
+    const maxLatCell = Math.ceil((north + 90) * SCALE);
+    const minLngCell = Math.floor((west + 180) * SCALE);
+    const maxLngCell = Math.ceil((east + 180) * SCALE);
+    if ((maxLatCell - minLatCell + 1) * (maxLngCell - minLngCell + 1) > MAX_CELLS) return [];
+    const firstET = curET - EVO_LIFETIME_TICKS;
+    const out = [];
+    for (let cx = minLatCell; cx <= maxLatCell; cx++) {
+      for (let cy = minLngCell; cy <= maxLngCell; cy++) {
+        for (let et = firstET; et <= curET; et++) {
+          const p = generateEvolvedAtTick(cx, cy, et);
+          if (!p) continue;
+          if (now < p.startMs || now >= p.expireMs) continue;
+          if (p.lat < south || p.lat > north || p.lng < west || p.lng > east) continue;
+          out.push(p);
+        }
+      }
+    }
+    return out;
+  }
+
   // ── Incense spawns (independent deterministic pull) ───────────
   // A second normal-density stream that runs ONLY while the player has an
   // incense active, layered on top of the regular spawns (so you see ~2×
@@ -780,6 +929,11 @@
     // normal shape, so the marker/encounter pipeline handles them as-is.
     const legs = legendariesInBbox(bbox, now);
     for (let i = 0; i < legs.length; i++) out.push(legs[i]);
+    // Fold in the evolved stream (rare; same cheap hash-gated coarse-tick scan
+    // as legendaries). Evolved spawn objects share the normal shape, so the
+    // marker/encounter pipeline handles them as-is.
+    const evos = evolvedInBbox(bbox, now);
+    for (let i = 0; i < evos.length; i++) out.push(evos[i]);
     // Fold in the incense stream — only non-empty while an incense is
     // active. Normal density, so this is what doubles the spawn count.
     const inc = incenseSpawnsInBbox(bbox, now);
@@ -799,6 +953,14 @@
       const ltick = +lparts[3];
       if (!Number.isFinite(ltick)) return true;
       return ltick < currentLegTick(nowMs) - LEG_LIFETIME_TICKS;
+    }
+    // Evolved IDs ('E:cx:cy:evotick:0') age out on the coarse evo-tick scale +
+    // 12-hour window, like legendaries but on their own cadence.
+    if (id.startsWith('E:')) {
+      const eparts = id.split(':');
+      const etick = +eparts[3];
+      if (!Number.isFinite(etick)) return true;
+      return etick < currentEvoTick(nowMs) - EVO_LIFETIME_TICKS;
     }
     // Incense IDs ('I:cx:cy:tick:0') ride the normal minute-tick scale +
     // 20-min window (the incense activation window is enforced separately
@@ -825,6 +987,10 @@
     // any future legendary-specific UI).
     legendariesInBbox, generateLegendaryAtTick, currentLegTick,
     LEG_TICK_MS, LEG_LIFETIME_MS,
+    // Evolved ("poké-radar") stream — folded into spawnsInBbox; exposed for
+    // tests + the future poké-radar detection UI.
+    evolvedInBbox, generateEvolvedAtTick, currentEvoTick,
+    EVO_TICK_MS, EVO_LIFETIME_MS, EVO_RARITY,
     // Incense stream — creatures.js sets the active state (from the save
     // file); spawnsInBbox folds it in while active.
     setActiveIncense, getActiveIncense, incenseSpawnsInBbox,
