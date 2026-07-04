@@ -898,11 +898,11 @@ const VOICES={
   organ: {name:'Organ',    wave:'sine',    lp:6000, amp:.26, partials:[[1,1],[2,.5],[3,.25],[4,.12]]},
   pluck: {name:'Pluck',    wave:'triangle',lp:3200, amp:.34, partials:[[1,1],[2,.3]], decay:.22},
   bell:  {name:'Bell',     wave:'sine',    lp:8000, amp:.3,  partials:[[1,1],[2.76,.55],[5.40,.28],[8.93,.12]],
-          decay:.5, rel:.35, tail:1800},
+          decay:.5, rel:.35, tail:2400},
   choir: {name:'Choir',    wave:'triangle',lp:1300, amp:.3,  partials:[[1,1],[1.007,.85],[.993,.85],[2,.22]],
           atk:.15, rel:.12, tail:700},
   epiano:{name:'E-Piano',  wave:'sine',    lp:4500, amp:.3,  partials:[[1,1],[4,.22],[10,.07]], decay:.4, rel:.15, tail:900},
-  mbox:  {name:'Music Box',wave:'sine',    lp:7000, amp:.32, partials:[[1,1],[4,.35]], decay:.15, rel:.2, tail:1000},
+  mbox:  {name:'Music Box',wave:'sine',    lp:7000, amp:.32, partials:[[1,1],[4,.35]], decay:.15, rel:.2, tail:1400},
   bass:  {name:'Bass',     wave:'sawtooth',lp:900,  amp:.3,  partials:[[.5,1],[1,.35]]},
   brass: {name:'Brass',    wave:'sawtooth',lp:3000, amp:.2,  partials:[[1,1],[1.004,.6]], atk:.05},
   accordion:{name:'Accordion',wave:'square',lp:2500,amp:.15, partials:[[1,1],[1.005,.85],[2,.28]]},
@@ -987,11 +987,15 @@ function genomePartials(gen){
 function labDef(gen){
   const partials=genomePartials(gen);
   const sum=partials.reduce((a,p)=>a+p[1],0)||1;
+  const rel=gen.decay>0?Math.min(.3,gen.decay):RELEASE;
   return {name:'Lab',wave:'sine',lp:12000,amp:.3/Math.pow(sum,.7),partials,
     atk:gen.attack>.002?gen.attack:.008,
     decay:gen.decay>0?gen.decay:0,
-    rel:gen.decay>0?Math.min(.3,gen.decay):RELEASE,
-    tail:gen.decay>.4?1600:OSC_TAIL,
+    rel:rel,
+    // the oscillators must outlive the release curve (~6τ ≈ −52dB), or the
+    // hard stop lands mid-fade and clicks — mid-decay genomes used to get
+    // cut at up to 37% amplitude by the fixed 300ms tail
+    tail:Math.max(OSC_TAIL,Math.round(rel*6000)+150),
     breath:gen.breath||0,formantF:gen.formantF||800,formantA:gen.formantA||0,
     damping:gen.damping||0,motion:gen.motion||0,chiff:gen.chiff||0,
     strikeF:gen.strikeF||8,strikeT:gen.strikeT||.02};

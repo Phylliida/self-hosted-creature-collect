@@ -760,6 +760,19 @@
     const lon = atan2(yv, xv) + w, r = Math.hypot(xv, yv);
     return { x: r * cos(lon), y: r * sin(lon), r, lon: norm360(lon), M };
   };
+  // Heliocentric ecliptic position projected on the ecliptic plane (AU), plus the
+  // Sun-distance r (AU) and heliocentric ecliptic longitude (deg, 0 at the vernal
+  // equinox, increasing counter-clockwise as seen from ecliptic north). Earth is
+  // derived from the Sun's geocentric vector (Earth_helio = -Sun_geo). Feeds the
+  // top-down solar-system orrery in the Astronomy tool.
+  A.PLANET_A = { Mercury: 0.3871, Venus: 0.7233, Earth: 1.0000, Mars: 1.5237, Jupiter: 5.2026, Saturn: 9.5549, Uranus: 19.2184, Neptune: 30.1104 };
+  A.HELIO_ORDER = ['Mercury', 'Venus', 'Earth', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune'];
+  A.helio = (name, jde) => {
+    const d = jde - 2451543.5;
+    if (name === 'Earth') { const su = sunXYZ(d); return { x: -su.x, y: -su.y, r: su.r, lon: norm360(su.lon + 180) }; }
+    const p = helioXYZ(PL[name], d);
+    return { x: p.xh, y: p.yh, r: p.r, lon: norm360(atan2(p.yh, p.xh)) };
+  };
   // Full geocentric report for a planet at JDE.
   // Geocentric ecliptic position of a planet at emission day dE (sun/Earth held
   // at observation day, supplied via su). Applies the Schlyter giant-planet
@@ -1104,6 +1117,12 @@
   .alm-planets thead th { color: var(--ui-muted); font-weight: 600; border-bottom: 1px solid var(--ui-border); }
   .alm-up { color: var(--ui-accent); font-weight: 700; }
   .alm-down { color: var(--ui-muted); }
+  .orr-wrap { display: flex; justify-content: center; margin: 8px 0 4px; }
+  .orr-canvas { width: 100%; max-width: 360px; height: auto; border-radius: 12px; background: #070a12; display: block; touch-action: pan-y; }
+  .orr-when { text-align: center; font-size: 13px; font-weight: 600; margin: 2px 0 6px; font-variant-numeric: tabular-nums; }
+  .orr-slider { width: 100%; margin: 2px 0 8px; }
+  .orr-legend { display: flex; flex-wrap: wrap; gap: 3px 12px; justify-content: center; font-size: 12px; margin: 4px 0 2px; }
+  .orr-leg { white-space: nowrap; }
   `;
   document.head.appendChild(style);
 
@@ -1119,6 +1138,7 @@
   const flagH = (t) => '<div class="alm-flag">' + t + '</div>';
   const fmtMs = (ms) => (U.fmtClock ? U.fmtClock(ms, tz()) : new Date(ms).toUTCString());
   const fmtDateMs = (ms) => new Intl.DateTimeFormat(undefined, { timeZone: tz(), month: 'short', day: 'numeric' }).format(ms);
+  const fmtFull = (ms) => { try { return new Intl.DateTimeFormat(undefined, { timeZone: tz(), weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }).format(ms); } catch (_) { return new Date(ms).toDateString(); } };
   const utMin = (dt, min) => fmtMs(Date.UTC(dt.y, dt.mo - 1, dt.d) + Math.round(min * 60000));
   const fmtLat = (l) => Math.abs(l).toFixed(2) + '° ' + (l >= 0 ? 'N' : 'S');
   const fmtLon = (l) => { const x = norm180(l); return Math.abs(x).toFixed(2) + '° ' + (x >= 0 ? 'E' : 'W'); };
@@ -1184,6 +1204,55 @@
   const FULL_MOON_NAMES = ['Wolf Moon', 'Snow Moon', 'Worm Moon', 'Pink Moon', 'Flower Moon', 'Strawberry Moon',
     'Buck Moon', 'Sturgeon Moon', 'Corn Moon', 'Hunter Moon', 'Beaver Moon', 'Cold Moon'];
   const PLANET_SYM = { Mercury: '☿', Venus: '♀', Mars: '♂', Jupiter: '♃', Saturn: '♄', Uranus: '♅', Neptune: '♆', Sun: '☉', Moon: '☽' };
+
+  // ── top-down heliocentric orrery (drawn on a canvas by the Astronomy tool) ──
+  const ORR_COL = { Mercury: '#b9b2a6', Venus: '#e7cd86', Earth: '#5b8dd6', Mars: '#d15f3c', Jupiter: '#d9a878', Saturn: '#e6d29a', Uranus: '#8fd6db', Neptune: '#5566d4' };
+  const ORR_SYM = { Mercury: '☿', Venus: '♀', Earth: '⊕', Mars: '♂', Jupiter: '♃', Saturn: '♄', Uranus: '♅', Neptune: '♆' };
+  const ORR_DOT = { Mercury: 2.6, Venus: 3.2, Earth: 3.3, Mars: 2.8, Jupiter: 5.2, Saturn: 4.6, Uranus: 3.9, Neptune: 3.9 };
+  // log radial scale so Mercury (0.39 AU) and Neptune (30 AU) both stay visible.
+  const ORR_LO = Math.log(0.34), ORR_SPAN = Math.log(31) - ORR_LO;
+  const orrRadius = (au, R0) => R0 * (0.11 + 0.89 * (Math.log(au) - ORR_LO) / ORR_SPAN);
+  function drawOrrery(ctx, size, jde) {
+    const cx = size / 2, cy = size / 2, R0 = size / 2 - 20;
+    const bg = ctx.createRadialGradient(cx, cy, 0, cx, cy, size / 2);
+    bg.addColorStop(0, '#141a2e'); bg.addColorStop(1, '#070a12');
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, size, size);
+    // reference direction: ecliptic longitude 0 deg (vernal equinox), pointing right
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1; ctx.setLineDash([3, 4]);
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + R0, cy); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.font = '9px system-ui, sans-serif';
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.fillText('0°', cx + R0 - 1, cy - 7);
+    // orbit rings
+    for (const name of A.HELIO_ORDER) {
+      const rr = orrRadius(A.PLANET_A[name], R0);
+      ctx.beginPath(); ctx.arc(cx, cy, rr, 0, 2 * Math.PI);
+      ctx.strokeStyle = name === 'Earth' ? 'rgba(120,170,235,0.55)' : 'rgba(255,255,255,0.16)';
+      ctx.lineWidth = 1; ctx.stroke();
+    }
+    // Sun
+    const sg = ctx.createRadialGradient(cx, cy, 0, cx, cy, 10);
+    sg.addColorStop(0, '#fff4c2'); sg.addColorStop(0.5, '#ffd23f'); sg.addColorStop(1, 'rgba(255,180,40,0)');
+    ctx.fillStyle = sg; ctx.beginPath(); ctx.arc(cx, cy, 10, 0, 2 * Math.PI); ctx.fill();
+    ctx.fillStyle = '#ffe27a'; ctx.beginPath(); ctx.arc(cx, cy, 3.2, 0, 2 * Math.PI); ctx.fill();
+    // planets
+    ctx.font = '12px system-ui, sans-serif'; ctx.textBaseline = 'middle';
+    for (const name of A.HELIO_ORDER) {
+      const h = A.helio(name, jde), rr = orrRadius(h.r, R0), ang = h.lon * Math.PI / 180;
+      const px = cx + rr * Math.cos(ang), py = cy - rr * Math.sin(ang), dr = ORR_DOT[name];
+      if (name === 'Saturn') {
+        ctx.strokeStyle = 'rgba(230,210,154,0.85)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.ellipse(px, py, dr + 3.2, (dr + 3.2) * 0.42, -0.5, 0, 2 * Math.PI); ctx.stroke();
+      }
+      ctx.beginPath(); ctx.arc(px, py, dr, 0, 2 * Math.PI); ctx.fillStyle = ORR_COL[name]; ctx.fill();
+      if (name === 'Earth') { ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 1; ctx.stroke(); }
+      // symbol label, nudged radially outward and clamped inside the canvas
+      const lo = dr + 9, lx = Math.max(9, Math.min(size - 9, px + Math.cos(ang) * lo));
+      const ly = Math.max(9, Math.min(size - 9, py - Math.sin(ang) * lo));
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillText(ORR_SYM[name], lx + 0.7, ly + 0.7);
+      ctx.fillStyle = ORR_COL[name]; ctx.fillText(ORR_SYM[name], lx, ly);
+    }
+  }
 
   // next new/full-moon instant strictly after ms
   function nextPhaseAfter(ms, phase) {
@@ -1319,6 +1388,14 @@
   function buildAstro(view) {
     view.innerHTML = DATE_ROW + LOC_ROW + '<div class="xt-card alm-out">' + LOC_HINT + '</div>'
       + '<div class="xt-divider"></div>'
+      + subH('🪐 Solar-system map — top-down, Sun at centre')
+      + noteH('where every planet sits in its orbit · distances on a log scale so all are visible')
+      + '<div class="orr-wrap"><canvas class="orr-canvas"></canvas></div>'
+      + '<div class="orr-when"></div>'
+      + '<input type="range" class="orr-slider" min="-60" max="60" step="1" value="0" aria-label="days from the map date">'
+      + '<div class="xt-row"><input type="date" class="orr-date" aria-label="map date"><button class="xt-mini orr-now" type="button">now</button></div>'
+      + '<div class="orr-legend"></div>'
+      + '<div class="xt-divider"></div>'
       + subH('🛸 Your age & weight across the solar system')
       + '<div class="xt-row"><input type="date" class="alm-bday" aria-label="birth date"><input type="number" class="alm-wt" step="any" min="0" inputmode="decimal" placeholder="your weight"></div>'
       + '<div class="xt-card alm-worlds"></div>';
@@ -1326,6 +1403,38 @@
     const bEl = view.querySelector('.alm-bday'), wEl = view.querySelector('.alm-wt'), worlds = view.querySelector('.alm-worlds');
     dateEl.value = U.todayStr();
     try { const saved = JSON.parse(localStorage.getItem('cc.almanac') || '{}'); if (saved.bday) bEl.value = saved.bday; if (saved.wt) wEl.value = saved.wt; } catch (e) { /* ignore */ }
+
+    // ── top-down solar-system orrery (its own map date + day slider) ──
+    const orrCanvas = view.querySelector('.orr-canvas'), orrCtx = orrCanvas.getContext('2d');
+    const orrSlider = view.querySelector('.orr-slider'), orrDateEl = view.querySelector('.orr-date');
+    const orrWhen = view.querySelector('.orr-when'), orrLegend = view.querySelector('.orr-legend');
+    orrDateEl.value = U.todayStr();
+    function orrShownMs() {
+      const dt = U.parseDateInput(orrDateEl.value);
+      const base = dt ? Date.UTC(dt.y, dt.mo - 1, dt.d, 12) : Date.now();
+      return base + parseFloat(orrSlider.value || '0') * 86400000;
+    }
+    function renderOrr() {
+      const size = Math.min(view.clientWidth || 0, 360);
+      if (size < 40) return; // hidden / not laid out yet
+      const dpr = Math.min(global.devicePixelRatio || 1, 3);
+      orrCanvas.style.width = size + 'px'; orrCanvas.style.height = size + 'px';
+      orrCanvas.width = Math.round(size * dpr); orrCanvas.height = Math.round(size * dpr);
+      orrCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const ms = orrShownMs(), off = parseFloat(orrSlider.value || '0'), jde = A.jde(A.jdFromMs(ms));
+      drawOrrery(orrCtx, size, jde);
+      orrWhen.textContent = fmtFull(ms) + (off ? '  (' + (off > 0 ? '+' : '−') + Math.abs(off) + ' d)' : '');
+      let leg = '';
+      for (const nm of A.HELIO_ORDER) {
+        const hp = A.helio(nm, jde);
+        leg += '<span class="orr-leg"><b style="color:' + ORR_COL[nm] + '">' + ORR_SYM[nm] + ' ' + nm + '</b> '
+          + '<span class="xt-muted">' + hp.r.toFixed(2) + ' AU · ' + Math.round(hp.lon) + '°</span></span>';
+      }
+      orrLegend.innerHTML = leg;
+    }
+    orrSlider.addEventListener('input', renderOrr);
+    orrDateEl.addEventListener('input', () => { orrSlider.value = '0'; renderOrr(); });
+    view.querySelector('.orr-now').onclick = () => { orrDateEl.value = U.todayStr(); orrSlider.value = '0'; renderOrr(); };
 
     function compute() {
       const dt = U.parseDateInput(dateEl.value), loc = readLoc(view);
@@ -1424,7 +1533,7 @@
     view.querySelector('.alm-loc').onclick = () => { fillLocFromMap(view); compute(); };
     view.querySelectorAll('.alm-date, .alm-lat, .alm-lon').forEach((el) => el.addEventListener('input', slow));
     [bEl, wEl].forEach((el) => el.addEventListener('input', debounce(computeWorlds, 200)));
-    return { compute: () => { compute(); computeWorlds(); }, view };
+    return { compute: () => { compute(); computeWorlds(); renderOrr(); }, view };
   }
 
   // ════════════════════════════ CALENDAR TOOL ════════════════════════════════

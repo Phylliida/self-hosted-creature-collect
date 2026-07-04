@@ -732,6 +732,25 @@
     };
   }
 
+  // Completion-dex shiny bonus. A fusion morph's Completion % maps to a
+  // multiplier in 10% bands: 20%→+2×, 30%→+3×, … 90%→+9×, 100%→+10× (below
+  // 20% gives nothing). The two morphs' bonuses ADD (e.g. a 40% head + 20%
+  // body → 4 + 2 = 6× shiny), so two low-completion species stay at the base
+  // rate. Banded off the ROUNDED % the Completion dex shows, so the number on
+  // a dex row is exactly what that morph is worth.
+  function _speciesShinyBonus(pct) {
+    const shown = Math.round(pct * 100); // match the % printed on the dex row
+    if (shown < 20) return 0;            // 10% band (and below) gives no bonus
+    return Math.min(10, Math.floor(shown / 10)); // 20→2, 30→3, … 90→9, 100→10
+  }
+  function _fusionShinyMultiplier(speciesA, speciesB) {
+    const byId = new Map(computeSpeciesCompletion().map((r) => [r.id, r.pct]));
+    let m = 0;
+    if (speciesA != null) m += _speciesShinyBonus(byId.get(speciesA) || 0);
+    if (speciesB != null) m += _speciesShinyBonus(byId.get(speciesB) || 0);
+    return m || 1; // 0 (both morphs below 20%) → base rate
+  }
+
   // Per-player shiny roll. Unlike the rest of the encounter RNG (which
   // is deterministic in spawn id so two players see the same level /
   // size / variant), shinies are independent per player and decided at
@@ -751,6 +770,8 @@
     // legendary spawns is deterministic and shared.
     if (rec.spawn && rec.spawn.legendary) rate *= 10;
     else if (rec.spawn && rec.spawn.incense) rate *= 2;
+    // Completion-dex bonus: the two morphs' per-species bonuses add on top.
+    rate *= _fusionShinyMultiplier(rec.spawn && rec.spawn.speciesA, rec.spawn && rec.spawn.speciesB);
     const count = (global.ShinyStore && global.ShinyStore.VARIANT_COUNT) || 12;
     const hit = _forceShinyOn() || (Math.random() < rate);
     rec.shinyVariant = hit ? Math.floor(Math.random() * count) : null;
@@ -759,8 +780,10 @@
   // Standalone roll for capture paths that don't have a marker record
   // (egg hatch, daycare loot). Same per-player semantics — independent
   // chance, decided at the moment the creature comes into being.
-  function _rollFreshShinyVariant() {
-    const rate = (global.ShinyStore && global.ShinyStore.RATE) || 0.001;
+  function _rollFreshShinyVariant(speciesA, speciesB) {
+    let rate = (global.ShinyStore && global.ShinyStore.RATE) || 0.001;
+    // Completion-dex bonus, same as the marker roll (see _fusionShinyMultiplier).
+    rate *= _fusionShinyMultiplier(speciesA, speciesB);
     const count = (global.ShinyStore && global.ShinyStore.VARIANT_COUNT) || 12;
     const hit = _forceShinyOn() || (Math.random() < rate);
     return hit ? Math.floor(Math.random() * count) : null;
@@ -1086,7 +1109,7 @@
       // Per-player shiny roll happens at hatch (the moment the player
       // first sees the creature) — independent of any other player who
       // had a sibling egg from the same daycare loot.
-      shinyVariant: _rollFreshShinyVariant(),
+      shinyVariant: _rollFreshShinyVariant(egg.speciesA, egg.speciesB),
       level: 1,
       sizeM: typeof egg.sizeM === 'number' ? egg.sizeM : 1.0,
       caughtAt: (() => {
@@ -5747,6 +5770,10 @@
         flex: none; width: 54px; text-align: right; font-size: 13px; font-weight: 700; line-height: 1.15;
       }
       #creatureInventory .completion-frac { display: block; font-size: 10px; font-weight: 400; opacity: 0.6; }
+      #creatureInventory .completion-bonus {
+        margin-top: 4px; font-size: 10.5px; font-weight: 700; line-height: 1;
+        color: var(--ui-accent, #5b8cff);
+      }
       #creatureInventory .speciesdex-head-row {
         display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: end;
         padding: 0 2px 6px; font-size: 11px; opacity: 0.65;
@@ -9381,6 +9408,7 @@
       initialScrollTop: sheet ? sheet.scrollTop : 0,
       makeCardEl(r) {
         const pct = Math.round(r.pct * 100);
+        const bonus = _speciesShinyBonus(r.pct);
         const card = document.createElement('div');
         card.className = 'completion-row';
         card.dataset.species = r.id;
@@ -9391,6 +9419,7 @@
           + `<div class="completion-info">`
           +   `<div class="completion-name">${escapeHtml(speciesNameFor(r.id))}</div>`
           +   `<div class="completion-bar"><div class="completion-bar-fill" style="width:${pct}%"></div></div>`
+          +   (bonus ? `<div class="completion-bonus">✨ +${bonus}× shiny</div>` : ``)
           + `</div>`
           + `<div class="completion-pct">${pct}%<span class="completion-frac">${r.seen}/${r.total}</span></div>`;
         return card;
@@ -11247,7 +11276,7 @@
     // roll fresh so the field is never undefined on persisted records.
     const shinyVariant = (rec && typeof rec.shinyVariant === 'number')
       ? rec.shinyVariant
-      : (rec && rec.shinyVariant === null ? null : _rollFreshShinyVariant());
+      : (rec && rec.shinyVariant === null ? null : _rollFreshShinyVariant(spawn.speciesA, spawn.speciesB));
     const entry = {
       id: `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       spawnId: spawn.id,
