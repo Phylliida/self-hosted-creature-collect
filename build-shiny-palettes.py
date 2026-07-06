@@ -34,6 +34,7 @@ import argparse
 import importlib.util
 import json
 import math
+import os
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -174,14 +175,30 @@ def merge_family_pair_palette(sprites_dir, family_a, family_b,
     n_sprites = 0
     for a in family_a:
         for b in family_b:
+            loaded_here = 0
             for (_slot, suffix) in iter_fusion_variants(a, b, cells, manifest):
                 img = open_fusion_cell(sprites_dir, a, b, suffix=suffix)
                 if img is None:
                     continue
-                n_sprites += 1
+                loaded_here += 1
                 for (rgb, w) in probe.extract_sprite_test_colors(
                         img, top_n=top_n):
                     combined[rgb] += w
+            # Fallback to the autogen sprite when this fusion contributed
+            # nothing — either it's absent from cells.json (which omits many
+            # autogen-only fusions) or its listed custom art is missing on
+            # disk. Without this, a family pair whose fusions are ALL
+            # autogen-only merges zero sprites → empty palette → no shiny
+            # transforms → a degenerate "same colour" shiny. Autogen sheets
+            # exist for every fusion, so this guarantees a real palette.
+            if loaded_here == 0:
+                img = open_fusion_cell(sprites_dir, a, b, suffix='')
+                if img is not None:
+                    loaded_here += 1
+                    for (rgb, w) in probe.extract_sprite_test_colors(
+                            img, top_n=top_n):
+                        combined[rgb] += w
+            n_sprites += loaded_here
     return list(combined.items()), n_sprites
 
 
@@ -322,6 +339,40 @@ def enumerate_family_roots(evos, rev, max_species=None):
     return roots
 
 
+# ── Parallel --all baking ───────────────────────────────────────────
+# The ~9800 family pairs are fully independent, so --all fans them out
+# across a process pool. Each worker loads the bundle (evos / cells /
+# manifest) once via the initializer and then bakes many pairs, so the
+# per-A sheet cache (_SHEET_CACHE) still pays off within a worker.
+_WORKER = {}
+
+
+def _worker_init(bundle_dir_str, n):
+    bundle = Path(bundle_dir_str)
+    evos, rev = load_evolutions(bundle)
+    _WORKER['sprites_dir'] = bundle / 'sprites'
+    _WORKER['evos'] = evos
+    _WORKER['rev'] = rev
+    _WORKER['cells'] = json.loads((bundle / 'cells.json').read_text())
+    _WORKER['manifest'] = json.loads((bundle / 'manifest.json').read_text())
+    _WORKER['n'] = n
+
+
+def _bake_one(pair):
+    """Bake one (rootA, rootB) pair → (key, triples) or (key, None)."""
+    rootA, rootB = pair
+    fa = family_of(rootA, _WORKER['evos'], _WORKER['rev'])
+    fb = family_of(rootB, _WORKER['evos'], _WORKER['rev'])
+    params, _tc, _ns = compute_family_pair_params(
+        _WORKER['sprites_dir'], fa, fb,
+        _WORKER['cells'], _WORKER['manifest'], n=_WORKER['n'])
+    key = f'{rootA}-{rootB}'
+    if not params:
+        return key, None
+    return key, [[round(phi, 5), round(dl, 5), round(kp, 5)]
+                 for (phi, dl, kp) in params]
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
@@ -355,6 +406,10 @@ def main():
                     help='Upscale factor per cell in contact sheets')
     ap.add_argument('--n', type=int, default=12,
                     help='Shinies per family pair')
+    ap.add_argument('--jobs', '-j', type=int, default=1,
+                    help='Parallel worker processes for --all bake '
+                         '(default 1 = serial). Pairs are independent, so '
+                         'this scales near-linearly; 0 = use all CPUs.')
     args = ap.parse_args()
 
     if not args.pair and not args.all:
@@ -383,31 +438,54 @@ def main():
         bake = {}
         import time
         t_start = time.time()
-        for i, (rootA, rootB) in enumerate(pair_list):
-            family_a = family_of(rootA, evos, rev)
-            family_b = family_of(rootB, evos, rev)
-            params, _, n_sprites = compute_family_pair_params(
-                sprites_dir, family_a, family_b, cells, manifest, n=args.n)
-            if not params:
-                continue
-            bake[f'{rootA}-{rootB}'] = [
-                # 3 floats per triple, rounded for compact JSON
-                [round(phi, 5), round(dl, 5), round(kp, 5)]
-                for (phi, dl, kp) in params
-            ]
-            if i in sample_indices:
-                out_png = args.out_dir / f'shiny-family-{rootA}-{rootB}.png'
-                render_family_pair_sheet(
-                    sprites_dir, family_a, family_b, params, out_png,
-                    scale=args.scale)
-            # Progress log every 50 pairs.
-            if (i + 1) % 50 == 0:
-                elapsed = time.time() - t_start
-                rate = (i + 1) / elapsed
-                eta = (total - i - 1) / rate
-                print(f'  [{i+1}/{total}] {rate:.1f} pairs/s, '
-                      f'ETA {eta/60:.1f}m '
-                      f'(last: {rootA}×{rootB}, {n_sprites} sprites)')
+        jobs = os.cpu_count() if args.jobs == 0 else args.jobs
+
+        if jobs > 1:
+            # Parallel path. Sample-sheet rendering is skipped here (it needs
+            # raw params back on the main process and is only a dev spot-
+            # check); re-run a specific --pair to render one.
+            if args.render_samples > 0:
+                print('  note: --render-samples is ignored when --jobs > 1')
+            from multiprocessing import Pool
+            print(f'  baking in parallel across {jobs} workers…')
+            with Pool(jobs, initializer=_worker_init,
+                      initargs=(str(args.bundle_dir), args.n)) as pool:
+                for i, (key, triples) in enumerate(
+                        pool.imap_unordered(_bake_one, pair_list, chunksize=8)):
+                    if triples is not None:
+                        bake[key] = triples
+                    if (i + 1) % 500 == 0 or (i + 1) == total:
+                        elapsed = time.time() - t_start
+                        rate = (i + 1) / elapsed
+                        eta = (total - i - 1) / rate
+                        print(f'  [{i+1}/{total}] {rate:.1f} pairs/s, '
+                              f'ETA {eta/60:.1f}m, {len(bake)} non-empty')
+        else:
+            for i, (rootA, rootB) in enumerate(pair_list):
+                family_a = family_of(rootA, evos, rev)
+                family_b = family_of(rootB, evos, rev)
+                params, _, n_sprites = compute_family_pair_params(
+                    sprites_dir, family_a, family_b, cells, manifest, n=args.n)
+                if not params:
+                    continue
+                bake[f'{rootA}-{rootB}'] = [
+                    # 3 floats per triple, rounded for compact JSON
+                    [round(phi, 5), round(dl, 5), round(kp, 5)]
+                    for (phi, dl, kp) in params
+                ]
+                if i in sample_indices:
+                    out_png = args.out_dir / f'shiny-family-{rootA}-{rootB}.png'
+                    render_family_pair_sheet(
+                        sprites_dir, family_a, family_b, params, out_png,
+                        scale=args.scale)
+                # Progress log every 50 pairs.
+                if (i + 1) % 50 == 0:
+                    elapsed = time.time() - t_start
+                    rate = (i + 1) / elapsed
+                    eta = (total - i - 1) / rate
+                    print(f'  [{i+1}/{total}] {rate:.1f} pairs/s, '
+                          f'ETA {eta/60:.1f}m '
+                          f'(last: {rootA}×{rootB}, {n_sprites} sprites)')
 
         out_json = args.output_json or (
             args.bundle_dir / 'shiny-palettes.json')

@@ -446,6 +446,11 @@ var FREEZE_VERTEX_STATE = "Freeze vertex";
 
 var modifyingState = MUTATE_STATE;
 
+// Timestamp of the last touch-sourced drag start. Lives at module scope
+// (NOT inside drag()) so it survives the graph rebuilds that MUTATE etc.
+// perform — see the ghost-suppression guard in dragstarted().
+var _quiverLastTouchStartMs = 0;
+
 function UpdateState() {
     document.getElementById("mutateButton").className = (modifyingState == MUTATE_STATE) ? "selectedButton" : "defaultButton";
     document.getElementById("translateButton").className = (modifyingState == TRANSLATE_STATE) ? "selectedButton" : "defaultButton";
@@ -2291,8 +2296,22 @@ svg.on("click", function(event) {
     .attr("stroke-dasharray", "5,5")
     .style("display", "none");
 
-  function drag(simulation) {    
+  function drag(simulation) {
     function dragstarted(event) {
+      // Android/mobile fire a synthesized mouse event ~300 ms after
+      // touchend. A discrete action here (MUTATE / RENAME / FREEZE /
+      // DELETE / CREATE VERTEX) rebuilds the whole graph with a fresh
+      // d3.drag(), which resets d3's own touch→mouse suppression — so
+      // that ghost mousedown lands on the new node and fires the action
+      // a SECOND time (the "mutates on tap-up too" bug). Record real
+      // touches and swallow a mouse-sourced start that closely follows
+      // one. Pure-mouse and pure-touch use are unaffected.
+      var _srcType = (event.sourceEvent && event.sourceEvent.type) || '';
+      if (_srcType.indexOf('touch') === 0) {
+        _quiverLastTouchStartMs = Date.now();
+      } else if (Date.now() - _quiverLastTouchStartMs < 700) {
+        return;
+      }
       if (!event.active) simulation.alphaTarget(0.3).restart();
       if (modifyingState == TRANSLATE_STATE) {
         

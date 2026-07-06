@@ -1879,6 +1879,38 @@
     background-color: var(--ui-accent) !important;
     opacity: 0.2;
   }
+  /* Facing cone on the "you are here" dot — the standard GPS "which way
+     am I looking" cue (Google/Pokémon-GO style). The vendored MapLibre
+     build ships no heading indicator, so this is a custom child of the
+     dot element: a soft accent-coloured fan that emanates from the dot
+     and points where the device compass says we're facing. Rotation is
+     driven by the --cc-heading custom property (compass heading minus
+     the map bearing) set in JS; hidden until a heading reading exists. */
+  .maplibregl-user-location-dot .cc-user-heading {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 60px;
+    height: 60px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 200ms ease;
+    transform: translate(-50%, -50%) rotate(var(--cc-heading, 0deg));
+    transform-origin: 50% 50%;
+    /* ~70°-wide wedge centred straight up, feathered at the edges. */
+    background: conic-gradient(from -35deg at 50% 50%,
+        transparent 0deg,
+        var(--ui-accent) 24deg,
+        var(--ui-accent) 46deg,
+        transparent 70deg);
+    /* Fade the beam in just outside the dot and out toward the tip, and
+       punch a hole in the centre so the dot itself shows through. */
+    -webkit-mask: radial-gradient(circle at 50% 50%,
+        transparent 0 8px, #000 12px, #000 20px, transparent 30px);
+            mask: radial-gradient(circle at 50% 50%,
+        transparent 0 8px, #000 12px, #000 20px, transparent 30px);
+  }
+  .maplibregl-user-location-dot .cc-user-heading.visible { opacity: 0.55; }
   /* Geolocate control icon when active/tracking — MapLibre bakes the blue
      (#33b5e5) into an SVG data URI, so we swap it for an accent-colored
      silhouette using an SVG mask. */
@@ -2538,6 +2570,23 @@
     font-size: 12px; cursor: pointer; user-select: none;
   }
   .mode-chip.on { background: var(--ui-accent); border-color: var(--ui-accent-border); color: var(--ui-accent-text); }
+  /* Pathfinding transit-mode filter — three toggle chips in the routing
+     panel (bus / subway / train). "On" = pathfinding may use that mode;
+     dimmed = excluded. Default all on. Mirrors the .mode-chip look. */
+  #routingModes { display: flex; gap: 6px; margin: 2px 0; }
+  #routingModes .path-mode-chip {
+    flex: 1; justify-content: center;
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 5px 8px; border-radius: 14px;
+    font-size: 12px; cursor: pointer; user-select: none;
+    background: var(--ui-input-bg); border: 1px solid var(--ui-border);
+    color: var(--ui-muted); opacity: 0.55;
+    transition: opacity 120ms ease, background 120ms ease;
+  }
+  #routingModes .path-mode-chip.on {
+    background: var(--ui-accent); border-color: var(--ui-accent-border);
+    color: var(--ui-accent-text); opacity: 1;
+  }
   .route-row {
     display: flex; align-items: center; gap: 8px;
     padding: 6px 4px; border-bottom: 1px solid var(--ui-hairline);
@@ -3155,6 +3204,11 @@
     <input id="routingWalkWeight" type="number" min="0.5" max="10" step="0.1" value="1" style="width: 60px;">
     <label for="routingTransferMin" title="minimum time between arriving at a stop and boarding">transfer min</label>
     <input id="routingTransferMin" type="number" min="0" max="60" step="1" value="3" style="width: 50px;">
+  </div>
+  <div id="routingModes" title="which transit types pathfinding may use">
+    <button type="button" class="path-mode-chip on" data-pmode="bus">🚌 Bus</button>
+    <button type="button" class="path-mode-chip on" data-pmode="subway">🚇 Subway</button>
+    <button type="button" class="path-mode-chip on" data-pmode="train">🚆 Train</button>
   </div>
   <button class="go" id="routingGo" type="button" disabled>Plan route</button>
 </div>
@@ -5910,6 +5964,46 @@ function fmtDate(ts) {
   }
   let transitState = loadTransitState();
   function modeOn(m) { return transitState.modes[m] !== false; }
+
+  // ── Pathfinding transit-mode filter ─────────────────────────────────────
+  // Three coarse buckets the trip planner may use — independent of the map
+  // overlay's per-mode visibility (transitState.modes). Default all on; a
+  // bucket toggled off excludes its routes from route planning only (stop
+  // departure popups are unaffected). Persisted separately.
+  const PATH_MODE_KEY = 'cc.pathModes.v1';
+  function loadPathModes() {
+    try {
+      const s = JSON.parse(localStorage.getItem(PATH_MODE_KEY) || 'null');
+      if (s && typeof s === 'object') {
+        return { bus: s.bus !== false, subway: s.subway !== false, train: s.train !== false };
+      }
+    } catch {}
+    return { bus: true, subway: true, train: true };
+  }
+  let pathModes = loadPathModes();
+  function savePathModes() { localStorage.setItem(PATH_MODE_KEY, JSON.stringify(pathModes)); }
+  function pathModeOn(bucket) { return pathModes[bucket] !== false; }
+  // GTFS route_type → one of the three buckets, covering both the standard
+  // 0–12 codes AND the extended (hundreds) codes real feeds use — e.g. STM
+  // buses come through as 700, shared taxis as 1501. Ferry / aerial / cable
+  // and anything unclassified return null → the filter fails OPEN (never
+  // silently drops a route none of the three buttons represents).
+  function pathBucketForMode(m) {
+    if (m == null) return null;
+    m = Number(m);
+    if (Number.isNaN(m)) return null;
+    // Subway / metro / urban railway / underground
+    if (m === 1 || (m >= 400 && m <= 699)) return 'subway';
+    // Bus / coach / trolleybus / shared (communal) taxi
+    if (m === 3 || m === 11 || (m >= 200 && m <= 299)
+        || (m >= 700 && m <= 899) || (m >= 1500 && m <= 1599)) return 'bus';
+    // On rails: heavy rail, tram / light rail, monorail, cable car
+    if (m === 0 || m === 2 || m === 5 || m === 12
+        || (m >= 100 && m <= 199) || (m >= 900 && m <= 999)) return 'train';
+    // Ferry (4 / 1000s / 1200), aerial (6 / 1300s), funicular (7 / 1400),
+    // and any unknown code: not one of the three — always allowed.
+    return null;
+  }
   // Routes default OFF — only explicitly-checked routes show their colored overlay.
   // Physical tracks (tile layers) are still controlled by mode toggles.
   function routeOn(rid) { return transitState.routes[rid] === true; }
@@ -6478,6 +6572,117 @@ function fmtDate(ts) {
       };
     }
   } catch (e) { /* non-fatal: fall back to the control's default snap */ }
+
+  // --- Facing cone on the user-location dot ---------------------------
+  // Draw our own heading indicator (the vendored MapLibre has none): a
+  // cone that fans out from the dot in the direction the device is
+  // physically pointing, using the device compass. The cone's screen
+  // angle is the compass heading minus the map bearing, so it stays
+  // pointing at true north-relative facing even when the map is rotated.
+  try {
+    let headingEl = null;
+    let lastHeading = null;      // deg clockwise from true north, or null
+    let headingEnabled = false;
+    let gestureListener = null;
+    let compassSeen = false;     // once true, GPS course stops overriding
+
+    // The dot marker is created lazily on the first fix; grab its element
+    // (falling back to the internal field) and attach/re-attach our cone.
+    const ensureHeadingEl = () => {
+      const marker = geolocate._userLocationDotMarker;
+      let dot = null;
+      if (marker && typeof marker.getElement === 'function') {
+        try { dot = marker.getElement(); } catch (_e) { dot = null; }
+      }
+      if (!dot) dot = geolocate._dotElement || null;
+      if (!dot) return null;
+      if (!headingEl) {
+        headingEl = document.createElement('div');
+        headingEl.className = 'cc-user-heading';
+      }
+      if (headingEl.parentNode !== dot) dot.appendChild(headingEl);
+      return headingEl;
+    };
+
+    const applyRotation = () => {
+      const el = ensureHeadingEl();
+      if (!el) return;
+      if (lastHeading == null) { el.classList.remove('visible'); return; }
+      let bearing = 0;
+      try { bearing = map.getBearing(); } catch (_e) { /* default 0 */ }
+      const deg = (((lastHeading - bearing) % 360) + 360) % 360;
+      el.style.setProperty('--cc-heading', deg.toFixed(1) + 'deg');
+      el.classList.add('visible');
+    };
+
+    const onOrient = (e) => {
+      let h = null;
+      if (typeof e.webkitCompassHeading === 'number' && !isNaN(e.webkitCompassHeading)) {
+        // iOS/WebKit: already degrees clockwise from north.
+        h = e.webkitCompassHeading;
+      } else if (e.alpha != null && (e.absolute || e.type === 'deviceorientationabsolute')) {
+        // Android absolute frame: alpha is counter-clockwise; convert to
+        // clockwise-from-north and compensate for the screen rotation.
+        const so = (screen.orientation && screen.orientation.angle) || 0;
+        h = (360 - e.alpha + so) % 360;
+      }
+      if (h == null || isNaN(h)) return;
+      compassSeen = true;
+      lastHeading = h;
+      applyRotation();
+    };
+
+    const addOrientationListeners = () => {
+      window.addEventListener('deviceorientationabsolute', onOrient, true);
+      window.addEventListener('deviceorientation', onOrient, true);
+    };
+
+    // iOS 13+ gates device orientation behind a permission prompt that
+    // must be requested from inside a user gesture; everywhere else we
+    // can just start listening.
+    const enableHeading = () => {
+      if (headingEnabled) return;
+      const DOE = window.DeviceOrientationEvent;
+      if (DOE && typeof DOE.requestPermission === 'function') {
+        DOE.requestPermission().then((state) => {
+          if (state === 'granted') {
+            headingEnabled = true;
+            addOrientationListeners();
+            if (gestureListener) {
+              window.removeEventListener('pointerdown', gestureListener);
+              gestureListener = null;
+            }
+          }
+        }).catch(() => { /* not a user gesture yet — retried on first tap */ });
+      } else {
+        headingEnabled = true;
+        addOrientationListeners();
+      }
+    };
+
+    enableHeading();
+    if (!headingEnabled && window.DeviceOrientationEvent
+        && typeof window.DeviceOrientationEvent.requestPermission === 'function') {
+      gestureListener = () => enableHeading();
+      window.addEventListener('pointerdown', gestureListener);
+    }
+
+    // Keep the cone aligned as the map rotates, even with no new reading.
+    map.on('rotate', applyRotation);
+
+    // Fallback for devices without a usable magnetometer (or desktop):
+    // point the cone along the GPS course of travel while actually
+    // moving. The compass wins the moment any orientation reading lands.
+    geolocate.on('geolocate', (e) => {
+      if (compassSeen) return;
+      const c = e && e.coords;
+      if (!c || typeof c.heading !== 'number' || isNaN(c.heading)) return;
+      if (typeof c.speed === 'number' && c.speed >= 0.5) {
+        lastHeading = c.heading;
+        applyRotation();
+      }
+    });
+  } catch (e) { /* non-fatal: the dot simply shows without a facing cone */ }
 
   // Feed the focus/follow toggle: remember the latest fix, and while focus
   // is active recenter on it (applying the one-time activation zoom first).
@@ -9265,6 +9470,12 @@ function fmtDate(ts) {
     return (patternId) => {
       let c = cache.get(patternId);
       if (c) return c;
+      // Mode filter: skip patterns whose transit bucket is toggled off in
+      // the routing panel. Fails open when the mode is unknown/unclassified.
+      const pat = scheduleIdx.patterns.get(patternId);
+      const route = pat && scheduleIdx.routesById.get(pat.route_id);
+      const bucket = route ? pathBucketForMode(route.mode) : null;
+      if (bucket && !pathModeOn(bucket)) { cache.set(patternId, []); return []; }
       const raw = scheduleIdx.tripsByPattern.get(patternId) || [];
       c = [];
       for (const trip of raw) {
@@ -10000,6 +10211,33 @@ function fmtDate(ts) {
     }
   }
   routingGo.onclick = runRoutingPlan;
+
+  // Wire the three pathfinding mode toggles (bus / subway / train). Tapping
+  // one flips its bucket, restyles the chip, persists, and — if a route is
+  // already on screen — re-plans live so the filter takes effect immediately.
+  function syncPathModeChips() {
+    document.querySelectorAll('#routingModes .path-mode-chip').forEach((chip) => {
+      chip.classList.toggle('on', pathModeOn(chip.dataset.pmode));
+    });
+  }
+  (function initPathModeChips() {
+    const container = document.getElementById('routingModes');
+    if (!container) return;
+    container.addEventListener('click', (e) => {
+      const chip = e.target.closest('.path-mode-chip');
+      if (!chip || !chip.dataset.pmode) return;
+      const key = chip.dataset.pmode;
+      pathModes[key] = !pathModeOn(key);
+      savePathModes();
+      syncPathModeChips();
+      // Re-plan live only when a route is already displayed and endpoints
+      // are valid — otherwise the new filter just applies on the next plan.
+      if (currentRouteSnapshot && !routingGo.disabled && !routingInFlight) {
+        runRoutingPlan();
+      }
+    });
+    syncPathModeChips();
+  })();
 
   function openDirectionsForSelectedPoi() {
     const stored = JSON.parse(localStorage.getItem(SELECTED_KEY) || 'null');
