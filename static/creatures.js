@@ -789,10 +789,42 @@
     return hit ? Math.floor(Math.random() * count) : null;
   }
 
-  function awardCandyForCapture(speciesA, speciesB) {
+  // Special captures haul extra candy: evolved poké-radar targets pay
+  // 10× the normal 2-candy capture (20), legendaries pay 50. Each unit
+  // is sampled independently between the two morphs' family roots (see
+  // awardCandyForCapture's `total > 2` branch).
+  const CANDY_EVOLVED_CAPTURE = 20;
+  const CANDY_LEGENDARY_CAPTURE = 50;
+  // Derive a capture's candy haul from its spawn id namespace ('L:'
+  // legendary, 'E:' evolved). Used by the migration replay, which only
+  // has the persisted record; recordCapture uses the live spawn flags.
+  function candyTotalForSpawnId(id) {
+    if (typeof id === 'string') {
+      if (id.startsWith('L:')) return CANDY_LEGENDARY_CAPTURE;
+      if (id.startsWith('E:')) return CANDY_EVOLVED_CAPTURE;
+    }
+    return 2;
+  }
+
+  function awardCandyForCapture(speciesA, speciesB, total) {
     if (speciesA == null || speciesB == null) return;
     const rootA = candyRootFor(speciesA);
     const rootB = candyRootFor(speciesB);
+    // Special captures (evolved / legendary) pass a larger haul; each
+    // unit is sampled independently between the two morphs' roots.
+    if (typeof total === 'number' && total > 2) {
+      if (rootA === rootB) {
+        bumpCandy(rootA, total);
+        return;
+      }
+      let a = 0;
+      for (let i = 0; i < total; i++) {
+        if (Math.random() < 0.5) a++;
+      }
+      if (a) bumpCandy(rootA, a);
+      if (total - a) bumpCandy(rootB, total - a);
+      return;
+    }
     if (rootA === rootB) {
       bumpCandy(rootA, 2);
       return;
@@ -822,7 +854,7 @@
     const captured = readCapturedCreatures();
     for (const c of captured) {
       if (!c) continue;
-      awardCandyForCapture(c.speciesA, c.speciesB);
+      awardCandyForCapture(c.speciesA, c.speciesB, candyTotalForSpawnId(c.spawnId));
     }
     localStorage.setItem(CANDY_MIGRATED_KEY, '1');
     // Clean up older schema flags so a stale entry can't quietly
@@ -1912,6 +1944,16 @@
       description: 'At least one side is past its base form.',
       predicate: (c) => c
         && (_isEvolvedSpecies(c.speciesA) || _isEvolvedSpecies(c.speciesB)),
+    },
+    {
+      name: 'Radar',
+      description: 'Caught from a poké-radar evolved spawn.',
+      // Evolved poké-radar spawns mint 'E:'-namespaced spawn ids
+      // (see spawns.js); recordCapture persists that on the record,
+      // so the namespace is a stable marker. Egg hatches store a null
+      // spawnId, so they can't collide.
+      predicate: (c) => c && typeof c.spawnId === 'string'
+        && c.spawnId.startsWith('E:'),
     },
     {
       name: 'Daycare',
@@ -7929,6 +7971,10 @@
     let started = false;
     let ghost = null;
     let lastDropZone = null;
+    // Auto-scroll the view when the drag nears the top/bottom edge, so the
+    // incubator slots (scrolled off the top) can be reached mid-drag.
+    const scrollEl = rootEl.closest('.sheet');
+    let pointerX = 0, pointerY = 0, scrollRAF = 0;
     const fromSlotAttr = tile.dataset.fromSlot;
     const fromSlot = (fromSlotAttr === '0' || fromSlotAttr === '1')
       ? Number(fromSlotAttr) : null;
@@ -7950,6 +7996,29 @@
       return el.closest('[data-zone]');
     };
 
+    // While the pointer sits in the top/bottom EDGE band, scroll the sheet
+    // (speed ramps with proximity to the edge) and keep the drop target under
+    // the now-moving content in sync. Self-perpetuating via rAF so it keeps
+    // scrolling even when the finger is held still at the edge.
+    const EDGE = 64;
+    const MAX_SPEED = 14;   // px per frame at the very edge
+    const autoScrollStep = () => {
+      scrollRAF = 0;
+      if (!started || !scrollEl) return;
+      const rect = scrollEl.getBoundingClientRect();
+      let dv = 0;
+      if (pointerY < rect.top + EDGE) dv = -MAX_SPEED * Math.min(1, (rect.top + EDGE - pointerY) / EDGE);
+      else if (pointerY > rect.bottom - EDGE) dv = MAX_SPEED * Math.min(1, (pointerY - (rect.bottom - EDGE)) / EDGE);
+      if (dv === 0) return;  // pointer left the edge band
+      const before = scrollEl.scrollTop;
+      const max = scrollEl.scrollHeight - scrollEl.clientHeight;
+      scrollEl.scrollTop = Math.max(0, Math.min(max, before + dv));
+      if (scrollEl.scrollTop === before) return;  // hit the scroll end
+      if (ghost) { ghost.style.left = `${pointerX}px`; ghost.style.top = `${pointerY}px`; }
+      setDropTarget(findDropZone(pointerX, pointerY));
+      scrollRAF = requestAnimationFrame(autoScrollStep);
+    };
+
     const onMove = (e) => {
       const dx = e.clientX - startX;
       const dy = e.clientY - startY;
@@ -7968,11 +8037,14 @@
         if (art) ghost.style.cssText = art.style.cssText;
         document.body.appendChild(ghost);
       }
+      pointerX = e.clientX;
+      pointerY = e.clientY;
       if (ghost) {
         ghost.style.left = `${e.clientX}px`;
         ghost.style.top = `${e.clientY}px`;
       }
       setDropTarget(findDropZone(e.clientX, e.clientY));
+      if (!scrollRAF) scrollRAF = requestAnimationFrame(autoScrollStep);
     };
 
     const onUp = (e) => {
@@ -8009,6 +8081,7 @@
     const onCancel = () => cleanup();
 
     const cleanup = () => {
+      if (scrollRAF) { cancelAnimationFrame(scrollRAF); scrollRAF = 0; }
       tile.classList.remove('dragging');
       if (lastDropZone) lastDropZone.classList.remove('drop-active');
       if (ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost);
@@ -11326,7 +11399,12 @@
     // error from some other oversized key) must NOT abort the catch and
     // leave the spawn un-marked — that was the "catches it repeatedly"
     // bug. The creature is already recorded above; just log and continue.
-    try { awardCandyForCapture(spawn.speciesA, spawn.speciesB); }
+    try {
+      const candyTotal = spawn.legendary
+        ? CANDY_LEGENDARY_CAPTURE
+        : (spawn.evolved ? CANDY_EVOLVED_CAPTURE : 2);
+      awardCandyForCapture(spawn.speciesA, spawn.speciesB, candyTotal);
+    }
     catch (e) { _logCreatureError('recordCapture/awardCandy', e); }
     try { markSpawnCaught(spawn.id); }
     catch (e) { _logCreatureError('recordCapture/markSpawnCaught', e); }
