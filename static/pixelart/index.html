@@ -20,7 +20,7 @@
     #px { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
 
     /* Bottom toolbar — two rows, dark minimal, matches the extras window. */
-    #bar { flex: none; background: rgba(0,0,0,0.55); border-top: 1px solid var(--line);
+    #bar { position: relative; flex: none; background: rgba(0,0,0,0.55); border-top: 1px solid var(--line);
       padding: 7px max(8px, env(safe-area-inset-left)) calc(7px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-right));
       display: flex; flex-direction: column; gap: 7px; }
     .row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -28,7 +28,11 @@
     button { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line);
       border-radius: 8px; cursor: pointer; padding: 7px 10px; line-height: 1; }
     button:hover { background: var(--panel2); }
-    .iconbtn { width: 38px; height: 38px; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+    .iconbtn { position: relative; width: 38px; height: 38px; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+    .iconbtn .badge { position: absolute; right: 1px; bottom: 1px; min-width: 13px; height: 13px; padding: 0 2px;
+      font-size: 9px; line-height: 13px; text-align: center; background: var(--accent); color: #fff;
+      border-radius: 7px; pointer-events: none; box-shadow: 0 0 0 1.5px var(--panel); }
+    #layersBtn.multi { color: var(--accent); }
     .iconbtn svg { display: block; width: 20px; height: 20px; }
     .tool.active { background: var(--accent); border-color: var(--accent); color: #fff; }
     #zoom button { width: 34px; height: 34px; padding: 0; font-size: 17px; }
@@ -40,10 +44,12 @@
       cursor: pointer; padding: 0; background-clip: padding-box; }
     .swatch.active { border-color: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,0.6); }
     /* Checkerboard behind the live/active color chip so transparency reads. */
-    #curColor { width: 30px; height: 30px; border-radius: 7px; border: 2px solid var(--line); flex: none;
+    /* Current-colour chip — the first inline element in the palette, sized like
+       a swatch, with a ring so it reads as "active", over a checker for alpha. */
+    #curColor { width: 26px; height: 26px; border-radius: 6px; flex: none; box-shadow: 0 0 0 2px var(--accent);
       background-image: linear-gradient(45deg,#888 25%,transparent 25%),linear-gradient(-45deg,#888 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#888 75%),linear-gradient(-45deg,transparent 75%,#888 75%);
       background-size: 10px 10px; background-position: 0 0,0 5px,5px -5px,-5px 0; }
-    #curColorTop { width: 100%; height: 100%; border-radius: 5px; }
+    #curColorTop { width: 100%; height: 100%; border-radius: 6px; }
     label.colorpick { position: relative; width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--line);
       background: var(--panel); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; overflow: hidden; }
     label.colorpick span { font-size: 19px; color: var(--muted); line-height: 1; }
@@ -55,6 +61,96 @@
     #refOpacity { accent-color: var(--accent); height: 24px; min-width: 80px; }
     #refOpacityVal { color: var(--muted); font-size: 12px; flex: none; min-width: 38px; text-align: right; }
     #refBtn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+    #refSettings.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+    /* Reference settings popup — opens from the gear in the reference row and
+       floats just above the toolbar. */
+    .refmenu { position: absolute; z-index: 40; right: max(8px, env(safe-area-inset-right)); bottom: calc(100% + 6px);
+      background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px;
+      box-shadow: 0 12px 34px rgba(0,0,0,0.55); display: flex; flex-direction: column; gap: 4px; min-width: 232px; }
+    .refmenu[hidden] { display: none; }
+    .refopt { display: flex; align-items: flex-start; gap: 10px; padding: 7px 8px; border-radius: 8px; cursor: pointer; margin: 0; }
+    .refopt:hover { background: var(--panel2); }
+    .refopt input { width: 18px; height: 18px; margin: 1px 0 0; accent-color: var(--accent); flex: none; }
+    .refopt span { display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: var(--text); }
+    .refopt small { color: var(--muted); font-size: 11px; }
+    #refReset { margin-top: 2px; text-align: center; padding: 9px; }
+
+    /* Selection action bar (shown while a marquee exists) */
+    #selBar { border-top: 1px solid var(--line); padding-top: 8px; }
+    .selhint { color: var(--muted); font-size: 12px; }
+
+    /* Brush-size popover */
+    .menuhdr { font-size: 13px; font-weight: 600; padding: 2px 4px 4px; }
+    .menuhint { color: var(--muted); font-size: 11px; padding: 2px 4px 0; }
+    .brushrow { display: flex; align-items: center; gap: 10px; padding: 4px; }
+    #brushSize { accent-color: var(--accent); height: 24px; flex: 1 1 auto; min-width: 130px; }
+    #brushSizeVal { color: var(--muted); font-size: 12px; min-width: 34px; text-align: right; }
+
+    /* Export popover */
+    #exportMenu { min-width: 240px; }
+    .exportrow { display: flex; align-items: center; gap: 8px; padding: 2px 2px 8px; }
+    #exportScale { width: 78px; padding: 8px; font-size: 16px; text-align: center; color: var(--text);
+      background: #101116; border: 1px solid var(--line); border-radius: 8px; }
+    .exprow2 { display: flex; gap: 5px; margin-bottom: 8px; }
+    .exppreset { flex: 1; padding: 7px 0; font-size: 13px; }
+    #exportDims { padding: 0 2px 8px; }
+    #exportGo { margin-top: 2px; }
+
+    /* Layers panel */
+    .layerspanel { min-width: 260px; max-width: min(320px, 92vw); }
+    .layertools { display: flex; align-items: center; gap: 5px; padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px solid var(--line); }
+    .layertools .iconbtn { width: 34px; height: 34px; }
+    .layertools .iconbtn svg { width: 18px; height: 18px; }
+    .layertools .iconbtn:disabled { opacity: 0.35; cursor: default; }
+    .layerslist { display: flex; flex-direction: column; gap: 4px; max-height: 40vh; overflow-y: auto; }
+    .layerrow { display: flex; align-items: center; gap: 8px; padding: 5px; border-radius: 8px; cursor: pointer;
+      border: 1px solid transparent; background: var(--panel2); }
+    .layerrow:hover { border-color: var(--line); }
+    .layerrow.active { border-color: var(--accent); background: rgba(91,140,255,0.14); }
+    .layereye { width: 30px; height: 30px; flex: none; display: inline-flex; align-items: center; justify-content: center;
+      padding: 0; background: transparent; border: none; color: var(--text); border-radius: 6px; }
+    .layereye svg { width: 18px; height: 18px; display: block; }
+    .layereye.off { color: var(--muted); }
+    .layerthumb { width: 30px; height: 30px; flex: none; border-radius: 5px; border: 1px solid var(--line);
+      background: #14151a; image-rendering: pixelated; }
+    .layername { flex: 1 1 auto; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .layeropacityrow { display: flex; align-items: center; gap: 10px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+    #layerOpacity { accent-color: var(--accent); height: 24px; }
+
+    /* Full-width buttons used inside popovers */
+    .widebtn { display: flex; align-items: center; justify-content: center; width: 100%; padding: 9px; text-align: center; }
+    .widebtn.danger { color: #ff9a9a; }
+
+    /* Reference popout (opened from the reference button) */
+    .refpanel { min-width: 250px; }
+    #refControls { margin-top: 8px; }
+    .refpanelbody { display: flex; gap: 12px; align-items: stretch; }
+    .refpanelcol { display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-width: 0; }
+    /* Vertical opacity slider: a horizontal range rotated inside a fixed-height box
+       (portable across mobile WebViews), value shown beneath. */
+    .vsliderbox { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: none; }
+    .vslider { height: 134px; width: 34px; display: flex; align-items: center; justify-content: center; }
+    .vslider input[type=range] { width: 124px; transform: rotate(-90deg); accent-color: var(--accent); }
+    .vsliderbox #refOpacityVal { color: var(--muted); font-size: 12px; text-align: center; min-width: 0; }
+
+    /* Palette manager popout */
+    .palettepanel { min-width: 250px; max-width: min(320px, 92vw); }
+    .palrow { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+    #paletteSelect { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line);
+      border-radius: 8px; padding: 7px 8px; }
+    #paletteDelete:disabled { opacity: 0.4; cursor: default; }
+    .paleditlist { display: flex; flex-wrap: wrap; gap: 8px; max-height: 140px; overflow-y: auto;
+      padding: 10px 6px; margin: 2px 0 8px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .paledit { position: relative; width: 28px; height: 28px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.4);
+      padding: 0; cursor: pointer; background-clip: padding-box; }
+    .paledit:hover { box-shadow: 0 0 0 2px var(--accent); }
+    /* Always-visible so colours can be removed on touch (no hover). */
+    .paledit-x { position: absolute; top: -6px; right: -6px; width: 15px; height: 15px; line-height: 13px;
+      text-align: center; font-size: 12px; color: #fff; background: #2a2b33; border: 1px solid var(--line);
+      border-radius: 50%; }
+    .addcolor { position: relative; overflow: hidden; }
+    .addcolor input[type=color] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 
     /* New-art dialog */
     .overlay { position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center;
@@ -88,6 +184,7 @@
           <button class="iconbtn tool" data-tool="eyedropper" title="Pick colour (I)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 3a2.1 2.1 0 0 1 3 3l-8 8-3 1 1-3z"/><path d="M13 7 5 15a2 2 0 0 0 0 3l1 1a2 2 0 0 0 3 0l8-8"/></svg></button>
           <button class="iconbtn tool" data-tool="line" title="Line (L)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19 19 5"/></svg></button>
           <button class="iconbtn tool" data-tool="rect" title="Rectangle (R)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="6" width="16" height="12" rx="1"/></svg></button>
+          <button class="iconbtn tool" data-tool="select" title="Select &amp; move (M)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="3 3"><rect x="4" y="4" width="16" height="16" rx="1"/></svg></button>
           <button class="iconbtn tool" data-tool="pan" title="Pan (H / two fingers)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V11m0-1.5a1.5 1.5 0 0 1 3 0V12m0-1a1.5 1.5 0 0 1 3 0v4a5 5 0 0 1-5 5h-2a5 5 0 0 1-4-2l-3-4s-1-1.5.3-2.3 2.2.8 2.2.8L9 13"/></svg></button>
         </div>
         <span class="grow"></span>
@@ -97,20 +194,92 @@
           <button id="zoomIn" title="Zoom in">+</button>
           <button id="zoomFit" class="iconbtn" title="Fit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
         </div>
+        <button id="brushBtn" class="iconbtn" title="Brush size"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/></svg><span id="brushBadge" class="badge">1</span></button>
+        <button id="layersBtn" class="iconbtn" title="Layers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 16l9 5 9-5"/></svg></button>
         <button id="exportBtn" class="iconbtn" title="Export PNG (transparent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11"/><path d="M8 10l4 4 4-4"/><path d="M4 20h16"/></svg></button>
         <button id="refBtn" class="iconbtn" title="Reference image — trace behind the pixels"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M21 15l-5-5L5 20"/></svg></button>
+        <button id="paletteBtn" class="iconbtn" title="Palettes — switch, edit &amp; save"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18 2.3 2.3 0 0 0 2.3-2.3 2.3 2.3 0 0 0-.6-1.5 2.3 2.3 0 0 1 1.7-3.9H18a3 3 0 0 0 3-3c0-4.2-4-7.3-9-7.3z"/><circle cx="7.5" cy="11.5" r="1.1"/><circle cx="12" cy="7.5" r="1.1"/><circle cx="16.5" cy="11.5" r="1.1"/></svg></button>
         <input type="file" id="refFile" accept="image/*" hidden>
       </div>
       <div class="row">
-        <div id="curColor"><div id="curColorTop"></div></div>
-        <div id="palette" class="grow"></div>
-        <label class="colorpick" title="Custom colour"><span>+</span><input type="color" id="colorInput" value="#5b8cff"></label>
+        <div id="palette" class="grow"><div id="curColor" title="Current colour"><div id="curColorTop"></div></div></div>
       </div>
-      <div id="refRow" class="row" style="display:none">
-        <span class="reflabel">Reference</span>
-        <input type="range" id="refOpacity" class="grow" min="0" max="100" value="50" title="Reference opacity">
-        <span id="refOpacityVal">50%</span>
-        <button id="refRemove" class="iconbtn" title="Remove reference">&times;</button>
+      <div id="refPanel" class="refmenu refpanel" hidden>
+        <div class="menuhdr">Reference image</div>
+        <button id="refChoose" class="widebtn">Choose image…</button>
+        <div id="refControls">
+          <div class="refpanelbody">
+            <div class="vsliderbox">
+              <div class="vslider"><input type="range" id="refOpacity" min="0" max="100" value="50" title="Opacity"></div>
+              <span id="refOpacityVal">50%</span>
+            </div>
+            <div class="refpanelcol">
+              <label class="refopt"><input type="checkbox" id="refMoveToggle"><span>Move reference<small>drag on the canvas to reposition it</small></span></label>
+              <label class="refopt"><input type="checkbox" id="refAspectToggle"><span>Keep aspect ratio<small>fit the image instead of stretching</small></span></label>
+              <button id="refReset" class="widebtn">Reset position</button>
+              <button id="refRemove" class="widebtn danger">Remove reference</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="selBar" class="row" style="display:none">
+        <span class="reflabel">Selection</span>
+        <span class="selhint grow">drag to move · arrows nudge · Del clears</span>
+        <button id="selDelete" class="iconbtn" title="Delete selected pixels"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><path d="M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/></svg></button>
+        <button id="selDeselect" class="iconbtn" title="Deselect (Esc)">&times;</button>
+      </div>
+      <div id="exportMenu" class="refmenu" hidden>
+        <div class="menuhdr">Export PNG</div>
+        <div class="exportrow">
+          <span class="reflabel">Upscale</span>
+          <input type="number" id="exportScale" min="1" max="64" step="1" value="8" inputmode="numeric">
+          <span class="reflabel">×</span>
+        </div>
+        <div class="exprow2">
+          <button id="exp1" class="exppreset">1×</button>
+          <button id="exp2" class="exppreset">2×</button>
+          <button id="exp4" class="exppreset">4×</button>
+          <button id="exp8" class="exppreset">8×</button>
+          <button id="exp16" class="exppreset">16×</button>
+        </div>
+        <div id="exportDims" class="menuhint"></div>
+        <button id="exportGo" class="widebtn">Export PNG</button>
+      </div>
+      <div id="brushMenu" class="refmenu" hidden>
+        <div class="menuhdr">Brush size</div>
+        <div class="brushrow">
+          <input type="range" id="brushSize" min="1" max="8" step="1" value="1">
+          <span id="brushSizeVal">1 px</span>
+        </div>
+        <div class="menuhint">Square stamp for the pencil &amp; eraser</div>
+      </div>
+      <div id="layersPanel" class="refmenu layerspanel" hidden>
+        <div class="layertools">
+          <button id="layerAdd" class="iconbtn" title="Add layer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg></button>
+          <button id="layerDup" class="iconbtn" title="Duplicate layer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button>
+          <button id="layerUp" class="iconbtn" title="Move layer up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
+          <button id="layerDown" class="iconbtn" title="Move layer down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M6 13l6 6 6-6"/></svg></button>
+          <span class="grow"></span>
+          <button id="layerDelete" class="iconbtn" title="Delete layer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><path d="M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/></svg></button>
+        </div>
+        <div id="layersList" class="layerslist"></div>
+        <div class="layeropacityrow">
+          <span class="reflabel">Opacity</span>
+          <input type="range" id="layerOpacity" class="grow" min="0" max="100" value="100" title="Active layer opacity">
+        </div>
+      </div>
+      <div id="palettePanel" class="refmenu palettepanel" hidden>
+        <div class="menuhdr">Palettes</div>
+        <div class="palrow"><select id="paletteSelect" class="grow"></select></div>
+        <div class="palrow">
+          <button id="paletteImport" class="widebtn">Import…</button>
+          <button id="paletteSaveAs" class="widebtn">Save as…</button>
+          <button id="paletteDelete" class="widebtn">Delete</button>
+        </div>
+        <div id="palEditList" class="paleditlist"></div>
+        <label id="paletteAdd" class="widebtn addcolor" title="Add a custom colour"><span>＋ Add colour</span><input type="color" id="colorInput" value="#5b8cff"></label>
+        <input type="file" id="paletteFile" accept=".gpl,.pal,.txt,.hex,.css,.ase,.act,.aco,.png,.gif,.jpg,.jpeg,.bmp,image/*" hidden>
+        <div class="menuhint">Import .gpl / .pal / .ase / .aco / .act / hex / CSS or a palette PNG (e.g. Lospec). Saved globally.</div>
       </div>
     </div>
   </div>
