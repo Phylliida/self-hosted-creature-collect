@@ -558,7 +558,10 @@
   }
 
   // Pixel Art: state via window.PixelApp inside static/pixelart/index.html.
-  // getDrawing returns {w, h, cells}; we add a PNG preview for the folder grid.
+  // getDrawing returns {w, h, cells, layers, active}; we add a PNG preview for
+  // the folder grid. `cells` is the flattened composite (kept for the folder
+  // preview + older saves); `layers`/`active` carry full layer fidelity so named
+  // saves round-trip. Older saved drawings simply have no `layers` field.
   function capturePixel(win) {
     if (!win || !win.PixelApp || typeof win.PixelApp.getDrawing !== 'function') return null;
     let d = null;
@@ -566,7 +569,7 @@
     if (!d) return null;
     let thumb = null;
     try { if (typeof win.PixelApp.thumbnail === 'function') thumb = win.PixelApp.thumbnail(); } catch (e) {}
-    return { w: d.w, h: d.h, cells: d.cells, thumb: thumb };
+    return { w: d.w, h: d.h, cells: d.cells, layers: d.layers, active: d.active, thumb: thumb };
   }
   function applyPixel(frameEl, win, data) {
     if (win && win.PixelApp && typeof win.PixelApp.loadDrawing === 'function') {
