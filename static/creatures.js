@@ -751,18 +751,41 @@
     return m || 1; // 0 (both morphs below 20%) → base rate
   }
 
+  // A shiny decision, once made for a spawn, must outlive the map marker: the
+  // spawn refresh can tear a marker down and rebuild it (GPS loss, or the spawn
+  // drifting out of range) between engaging the encounter and finishing the
+  // catch. The old code stored the decision only on the ephemeral marker
+  // record, so a rebuilt marker made the catch re-roll fresh — quietly dropping
+  // a shiny the player just saw. We cache it per spawn id instead. Value: null
+  // (decided not-shiny) or an integer variant index. FIFO-capped; the entry is
+  // removed once the spawn is caught (it's persisted on the creature by then).
+  const _shinyBySpawn = new Map();
+  const _SHINY_CACHE_CAP = 1000;
+  function _cacheShiny(spawnId, variant) {
+    if (spawnId == null) return;
+    _shinyBySpawn.set(spawnId, variant);
+    if (_shinyBySpawn.size > _SHINY_CACHE_CAP) {
+      const oldest = _shinyBySpawn.keys().next().value;   // Map keeps insertion order
+      if (oldest !== undefined) _shinyBySpawn.delete(oldest);
+    }
+  }
+
   // Per-player shiny roll. Unlike the rest of the encounter RNG (which
   // is deterministic in spawn id so two players see the same level /
   // size / variant), shinies are independent per player and decided at
   // the moment the user opens the encounter screen. The roll is
-  // persisted on the marker record so re-tapping the same encounter
-  // doesn't re-roll the chance.
+  // persisted on the marker record AND the per-spawn cache so re-tapping
+  // the same encounter (even after its marker was rebuilt) doesn't re-roll.
   //
   // rec.shinyVariant resolves to either null (not shiny — vast majority
   // of cases) or an integer in [0, 11] (which of the 12 shiny styles
   // for the family pair). Idempotent: once set, never re-rolled.
   function _rollShinyForRecord(rec) {
     if (!rec || rec.shinyVariant !== undefined) return;
+    const sid = rec.spawn && rec.spawn.id;
+    // Reuse a decision already made for this spawn (e.g. the marker was rebuilt
+    // by a refresh), so shininess is stable from "tap" through to "caught".
+    if (sid != null && _shinyBySpawn.has(sid)) { rec.shinyVariant = _shinyBySpawn.get(sid); return; }
     let rate = (global.ShinyStore && global.ShinyStore.RATE) || 0.001;
     // Legendaries get 10× the base shiny rate (1/100 at the default
     // 1/1000); incense spawns get 2×. The roll itself uses Math.random,
@@ -775,6 +798,7 @@
     const count = (global.ShinyStore && global.ShinyStore.VARIANT_COUNT) || 12;
     const hit = _forceShinyOn() || (Math.random() < rate);
     rec.shinyVariant = hit ? Math.floor(Math.random() * count) : null;
+    _cacheShiny(sid, rec.shinyVariant);
   }
 
   // Standalone roll for capture paths that don't have a marker record
@@ -787,6 +811,19 @@
     const count = (global.ShinyStore && global.ShinyStore.VARIANT_COUNT) || 12;
     const hit = _forceShinyOn() || (Math.random() < rate);
     return hit ? Math.floor(Math.random() * count) : null;
+  }
+
+  // Resolve shininess for a catch, in priority order: the live marker record,
+  // then the per-spawn cache (survives a marker being rebuilt by a refresh
+  // mid-encounter), and only a fresh roll if the encounter was never engaged
+  // (instant-catch debug path). This is what keeps "saw a shiny" == "caught a
+  // shiny" even when the marker churns between tapping and catching.
+  function _resolveShinyForCatch(spawn) {
+    if (!spawn) return _rollFreshShinyVariant(undefined, undefined);
+    const rec = _markers.get(spawn.id);
+    if (rec && rec.shinyVariant !== undefined) return rec.shinyVariant;
+    if (spawn.id != null && _shinyBySpawn.has(spawn.id)) return _shinyBySpawn.get(spawn.id);
+    return _rollFreshShinyVariant(spawn.speciesA, spawn.speciesB);
   }
 
   // Special captures haul extra candy: evolved poké-radar targets pay
@@ -5385,6 +5422,68 @@
       #creatureInventory .daycare-detail-empty {
         color: var(--ui-muted, #666); font-style: italic;
       }
+      /* Daycare odds "i" button (next to the title) + its popup */
+      #creatureInventory .dc-odds-info {
+        -webkit-appearance: none; appearance: none;
+        margin-left: 8px; width: 20px; height: 20px; padding: 0;
+        border-radius: 50%; border: 1px solid var(--ui-border, rgba(0,0,0,0.2));
+        background: rgba(128,128,128,0.14); color: var(--ui-muted, #666);
+        font-size: 12px; font-style: italic; font-weight: 700; line-height: 18px;
+        text-align: center; cursor: pointer; vertical-align: middle;
+      }
+      #creatureInventory .dc-odds-info:hover { color: var(--ui-text, #111); }
+      #ccDaycareOdds {
+        position: fixed; inset: 0; z-index: 60; padding: 16px;
+        background: rgba(0,0,0,0.55);
+        display: none; align-items: center; justify-content: center;
+        opacity: 0; pointer-events: none; transition: opacity 150ms ease;
+      }
+      #ccDaycareOdds.show { display: flex; opacity: 1; pointer-events: auto; }
+      #ccDaycareOdds .dc-odds-card {
+        position: relative;
+        background: var(--ui-bg, #fff); color: var(--ui-text, #111);
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
+        border-radius: var(--ui-radius, 12px);
+        box-shadow: var(--ui-shadow, 0 6px 24px rgba(0,0,0,0.25));
+        width: calc(100% - 8px); max-width: 380px; max-height: 82vh; overflow-y: auto;
+        padding: 16px 18px 18px;
+      }
+      #ccDaycareOdds .dc-odds-close {
+        position: absolute; top: 8px; right: 8px; width: 30px; height: 30px; padding: 0;
+        border: none; background: transparent; color: var(--ui-muted, #666);
+        font-size: 22px; line-height: 1; cursor: pointer;
+      }
+      #ccDaycareOdds .dc-odds-title { margin: 0 0 8px; font-size: 16px; }
+      #ccDaycareOdds .dc-odds-intro { font-size: 13px; margin: 0 0 12px; }
+      #ccDaycareOdds .dc-odds-empty { font-size: 13px; margin: 4px 0; color: var(--ui-muted, #666); }
+      #ccDaycareOdds .dc-odds-slot {
+        border: 1px solid var(--ui-hairline, rgba(0,0,0,0.08));
+        border-radius: var(--ui-radius, 8px); padding: 10px 12px; margin-bottom: 10px;
+      }
+      #ccDaycareOdds .dc-odds-slot-name { font-weight: 600; margin-bottom: 6px; }
+      #ccDaycareOdds .dc-odds-split { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+      #ccDaycareOdds .dc-tag {
+        font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 999px;
+        background: rgba(128,128,128,0.18); color: var(--ui-text, #111);
+      }
+      #ccDaycareOdds .dc-tag.candy { background: rgba(255,193,7,0.22); }
+      #ccDaycareOdds .dc-tag.egg   { background: rgba(91,140,255,0.24); }
+      #ccDaycareOdds .dc-tag.evo   { background: rgba(0,200,120,0.22); }
+      #ccDaycareOdds .dc-odds-line { font-size: 12.5px; display: flex; gap: 8px; margin-top: 3px; }
+      #ccDaycareOdds .dc-odds-k { color: var(--ui-muted, #666); flex: 0 0 64px; }
+      #ccDaycareOdds .dc-odds-v { flex: 1 1 auto; }
+      #ccDaycareOdds .dc-odds-note { color: var(--ui-muted, #666); font-size: 12px; font-style: italic; }
+      #ccDaycareOdds .dc-odds-eggs-title { font-weight: 600; margin: 2px 0 4px; }
+      #ccDaycareOdds .dc-odds-egglist {
+        list-style: none; margin: 8px 0 0; padding: 0;
+        display: flex; flex-direction: column; gap: 3px;
+      }
+      #ccDaycareOdds .dc-odds-egglist li {
+        display: flex; justify-content: space-between; gap: 10px;
+        font-size: 13px; padding: 4px 8px; border-radius: 6px; background: rgba(128,128,128,0.10);
+      }
+      #ccDaycareOdds .dc-odds-egglist li.cross { opacity: 0.82; }
+      #ccDaycareOdds .dc-egg-pct { color: var(--ui-muted, #666); font-variant-numeric: tabular-nums; }
       #creatureInventory .daycare-empty {
         padding: 20px 8px; text-align: center;
         color: var(--ui-muted, #666); font-size: 13px;
@@ -6688,7 +6787,7 @@
         </div>
         <div class="daycare-view">
           <button class="daycare-back" type="button" aria-label="back">←</button>
-          <h3 class="subview-title">Daycare</h3>
+          <h3 class="subview-title">Daycare<button class="dc-odds-info" type="button" aria-label="Daycare odds" title="Egg, candy &amp; item odds">i</button></h3>
           <div class="daycare-body"></div>
         </div>
         <div class="eggs-view">
@@ -7026,6 +7125,10 @@
     attachDrag('fusion');
     panel.querySelector('.candy-back').addEventListener('click', popView);
     panel.querySelector('.daycare-back').addEventListener('click', popView);
+    {
+      const dcInfo = panel.querySelector('.dc-odds-info');
+      if (dcInfo) dcInfo.addEventListener('click', (e) => { e.stopPropagation(); _showDaycareOdds(); });
+    }
     panel.querySelector('.eggs-back').addEventListener('click', popView);
     panel.querySelector('.bag-back').addEventListener('click', popView);
     panel.querySelector('.craft-back').addEventListener('click', _craftBack);
@@ -8546,6 +8649,148 @@
   function _padDayKey(y, m, d) {
     return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
   }
+
+  // === Daycare odds ("i" popup) ===
+  // Mirrors _daycareLootAt's exact model so the numbers shown are the real
+  // ones, computed against whatever is currently in the daycare:
+  //   • each occupied slot rolls one drop per DAYCARE_LOOT_MILESTONE_M walked;
+  //   • candy 70% (this slot's roots, 50/50 or 100% if the same root);
+  //   • egg 15% (cross-breed pool shared across slots, 70% natural / 30% cross);
+  //   • evo item 15% (this slot's item-evolutions, uniform) — but if the pair
+  //     has no item evolution, that branch becomes candy (so candy → 85%).
+  function _daycareOddsModel() {
+    const rawSlots = readDaycareSlots();
+    const nickMap = readNicknames();
+    const occ = [];
+    const firstPool = new Set(), secondPool = new Set();
+    for (const s of rawSlots) {
+      const c = s && findCreature(s.id);
+      if (!c || !Number.isInteger(c.speciesA) || !Number.isInteger(c.speciesB)) continue;
+      occ.push({ slot: s, c });
+      firstPool.add(c.speciesA);
+      secondPool.add(c.speciesB);
+    }
+    if (!occ.length) return { empty: true, milestoneM: DAYCARE_LOOT_MILESTONE_M };
+
+    // Per-slot candy + evo-item odds (these read only that slot's own pair).
+    const slots = occ.map(({ c }) => {
+      const name = nickMap[c.id] || c.name || fusionName(c.speciesA, c.speciesB);
+      const rootA = candyRootFor(c.speciesA), rootB = candyRootFor(c.speciesB);
+      const candyShares = (rootA === rootB)
+        ? [{ species: rootA, share: 1 }]
+        : [{ species: rootA, share: 0.5 }, { species: rootB, share: 0.5 }];
+      const items = Array.from(new Set(
+        _evoItemsForFamily(c.speciesA).concat(_evoItemsForFamily(c.speciesB))));
+      const evoPct = items.length ? (1 - DAYCARE_PROB_CANDY - DAYCARE_PROB_EGG) : 0;
+      const candyPct = 1 - DAYCARE_PROB_EGG - evoPct;   // 0.70 with items, 0.85 without
+      return {
+        name, candyPct, eggPct: DAYCARE_PROB_EGG, evoPct,
+        candy: candyShares.map((cd) => ({ name: speciesNameFor(cd.species), pct: cd.share * candyPct })),
+        evo: items.map((k) => ({ name: (ITEMS[k] && ITEMS[k].name) || _formatItemName(k), pct: evoPct / items.length })),
+      };
+    });
+
+    // Shared egg-content distribution, conditional on an egg dropping.
+    const F = Array.from(firstPool), S = Array.from(secondPool);
+    const naturals = [];
+    for (const x of F) for (const y of S) naturals.push([x, y]);
+    const U = Array.from(new Set([...F, ...S]));
+    const natKeys = new Set(naturals.map(([x, y]) => x + ',' + y));
+    const others = [];
+    for (const x of U) for (const y of U) if (!natKeys.has(x + ',' + y)) others.push([x, y]);
+    const natShare = others.length ? 0.7 : 1.0;
+    const othShare = others.length ? 0.3 : 0;
+    // Aggregate by the baby-form pair the egg actually hatches into.
+    const agg = new Map();
+    const add = (x, y, p, natural) => {
+      const a = candyRootFor(x), b = candyRootFor(y);
+      const key = a + ',' + b;
+      const cur = agg.get(key) || { a, b, pct: 0, natural: false };
+      cur.pct += p; cur.natural = cur.natural || natural;
+      agg.set(key, cur);
+    };
+    for (const [x, y] of naturals) add(x, y, natShare / naturals.length, true);
+    for (const [x, y] of others) add(x, y, othShare / others.length, false);
+    const eggContents = Array.from(agg.values())
+      .map((e) => ({ name: fusionName(e.a, e.b), pct: e.pct, natural: e.natural }))
+      .sort((p, q) => q.pct - p.pct);
+
+    return {
+      empty: false, milestoneM: DAYCARE_LOOT_MILESTONE_M, slots, eggContents,
+      naturalPairs: new Set(eggContents.filter((e) => e.natural).map((e) => e.name)).size,
+      crossPairs: new Set(eggContents.filter((e) => !e.natural).map((e) => e.name)).size,
+    };
+  }
+
+  function _fmtPct(x) {
+    const v = Math.round(x * 1000) / 10;   // one decimal
+    return (Number.isInteger(v) ? String(v) : v.toFixed(1)) + '%';
+  }
+  function _daycareOddsHtml() {
+    const m = _daycareOddsModel();
+    if (m.empty) {
+      return '<p class="dc-odds-empty">Put a pokémon in the daycare (via the <b>Daycare</b> tag on its detail page) '
+        + 'to see its egg, candy and evolution-item odds here.</p>';
+    }
+    const dist = (m.milestoneM % 1000 === 0) ? (m.milestoneM / 1000) + ' km' : m.milestoneM + ' m';
+    let h = '<p class="dc-odds-intro">Every <b>' + dist + '</b> your daycare walks earns one loot drop '
+      + 'per pokémon inside. For each drop:</p>';
+    for (const s of m.slots) {
+      h += '<div class="dc-odds-slot"><div class="dc-odds-slot-name">' + escapeHtml(s.name) + '</div>';
+      h += '<div class="dc-odds-split">'
+        + '<span class="dc-tag candy">Candy ' + _fmtPct(s.candyPct) + '</span>'
+        + '<span class="dc-tag egg">Egg ' + _fmtPct(s.eggPct) + '</span>'
+        + (s.evoPct > 0 ? '<span class="dc-tag evo">Evo item ' + _fmtPct(s.evoPct) + '</span>' : '')
+        + '</div>';
+      h += '<div class="dc-odds-line"><span class="dc-odds-k">Candy</span><span class="dc-odds-v">'
+        + s.candy.map((cd) => escapeHtml(cd.name) + ' ' + _fmtPct(cd.pct)).join(' · ') + '</span></div>';
+      if (s.evoPct > 0) {
+        h += '<div class="dc-odds-line"><span class="dc-odds-k">Evo item</span><span class="dc-odds-v">'
+          + s.evo.map((ev) => escapeHtml(ev.name) + ' ' + _fmtPct(ev.pct)).join(' · ') + '</span></div>';
+      } else {
+        h += '<div class="dc-odds-line dc-odds-note">No item evolutions for this pair — those rolls become extra candy.</div>';
+      }
+      h += '</div>';
+    }
+    h += '<div class="dc-odds-eggs"><div class="dc-odds-eggs-title">If an egg drops, what hatches</div>';
+    h += '<div class="dc-odds-note">'
+      + m.naturalPairs + ' natural pairing' + (m.naturalPairs !== 1 ? 's' : '')
+      + (m.crossPairs
+          ? ' share 70%, ' + m.crossPairs + ' cross pairing' + (m.crossPairs !== 1 ? 's' : '') + ' share 30%.'
+          : ' (100%).')
+      + ' Eggs hatch the baby form; the egg’s artwork is random.</div>';
+    h += '<ul class="dc-odds-egglist">'
+      + m.eggContents.map((e) =>
+          '<li class="' + (e.natural ? 'natural' : 'cross') + '">'
+          + '<span class="dc-egg-name">' + escapeHtml(e.name) + '</span>'
+          + '<span class="dc-egg-pct">' + _fmtPct(e.pct) + '</span></li>').join('')
+      + '</ul></div>';
+    return h;
+  }
+
+  let _dcOddsEl = null;
+  function _ensureDaycareOddsEl() {
+    if (_dcOddsEl) return _dcOddsEl;
+    const root = document.createElement('div');
+    root.id = 'ccDaycareOdds';
+    root.className = 'dc-odds-overlay';
+    root.innerHTML = '<div class="dc-odds-card" role="dialog" aria-modal="true" aria-label="Daycare odds">'
+      + '<button type="button" class="dc-odds-close" aria-label="close">×</button>'
+      + '<h3 class="dc-odds-title">Daycare odds</h3>'
+      + '<div class="dc-odds-content"></div></div>';
+    document.body.appendChild(root);
+    root.addEventListener('click', (e) => { if (e.target === root) _hideDaycareOdds(); });
+    root.querySelector('.dc-odds-close').addEventListener('click', _hideDaycareOdds);
+    _dcOddsEl = root;
+    return root;
+  }
+  function _showDaycareOdds() {
+    const root = _ensureDaycareOddsEl();
+    root.querySelector('.dc-odds-content').innerHTML = _daycareOddsHtml();
+    root.classList.add('show');
+  }
+  function _hideDaycareOdds() { if (_dcOddsEl) _dcOddsEl.classList.remove('show'); }
+
   function renderDaycare(opts) {
     const panel = document.getElementById('creatureInventory');
     if (!panel) return;
@@ -11361,13 +11606,12 @@
     const variant = (rec && 'variant' in rec)
       ? rec.variant
       : await resolveSpawnVariant(spawn);
-    // shinyVariant was rolled in openBattleScreen at the moment this
-    // player tapped the spawn. If somehow we got here without an
-    // encounter open (instant-catch debug path, future automation),
-    // roll fresh so the field is never undefined on persisted records.
-    const shinyVariant = (rec && typeof rec.shinyVariant === 'number')
-      ? rec.shinyVariant
-      : (rec && rec.shinyVariant === null ? null : _rollFreshShinyVariant(spawn.speciesA, spawn.speciesB));
+    // shinyVariant was decided in openBattleScreen when the player tapped the
+    // spawn. Resolve it robustly (marker record → per-spawn cache → fresh roll)
+    // so a marker rebuilt by a spawn refresh mid-catch can't drop a shiny the
+    // player saw. The cache entry is no longer needed once it's persisted here.
+    const shinyVariant = _resolveShinyForCatch(spawn);
+    if (spawn && spawn.id != null) _shinyBySpawn.delete(spawn.id);
     const entry = {
       id: `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       spawnId: spawn.id,
@@ -11890,6 +12134,9 @@
       // wakes those once the web build's sprite download lands.
       loaded: false,
     };
+    // If this spawn's shininess was already decided before a refresh rebuilt
+    // its marker, carry it onto the new record so every reader stays consistent.
+    if (_shinyBySpawn.has(spawn.id)) record.shinyVariant = _shinyBySpawn.get(spawn.id);
     _markers.set(spawn.id, record);
     // Diagnostic — record when the very first spawn DOM marker is
     // attached to the map, distinct from when its sprite finishes
