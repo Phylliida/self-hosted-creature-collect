@@ -827,11 +827,12 @@
   }
 
   // Special captures haul extra candy: evolved poké-radar targets pay
-  // 10× the normal 2-candy capture (20), legendaries pay 50. Each unit
-  // is sampled independently between the two morphs' family roots (see
-  // awardCandyForCapture's `total > 2` branch).
+  // 10× the normal 2-candy capture (20), legendaries pay 50, and egg
+  // hatches pay 10. Each unit is sampled independently between the two
+  // morphs' family roots (see awardCandyForCapture's `total > 2` branch).
   const CANDY_EVOLVED_CAPTURE = 20;
   const CANDY_LEGENDARY_CAPTURE = 50;
+  const CANDY_HATCH_CAPTURE = 10;
   // Derive a capture's candy haul from its spawn id namespace ('L:'
   // legendary, 'E:' evolved). Used by the migration replay, which only
   // has the persisted record; recordCapture uses the live spawn flags.
@@ -1210,7 +1211,18 @@
     const list = readCapturedCreatures();
     list.push(entry);
     writeCapturedCreatures(list);
-    awardCandyForCapture(egg.speciesA, egg.speciesB);
+    // Register the hatched fusion (+ its variant) in the Pokédex NOW.
+    // Wild catches get marked seen at the encounter (openBattleScreen);
+    // a hatch has no encounter, so without this the fusion only reaches
+    // seenFusions via the load-time backfillSeenFromCaptures() — meaning
+    // it wouldn't show in the dex until an app restart, and evolving it
+    // before that restart would overwrite the record's species, losing
+    // the pre-evolution dex entry for good.
+    try {
+      markFusionSeen(egg.speciesA, egg.speciesB,
+        { lat: entry.caughtAt.lat, lng: entry.caughtAt.lng }, variant);
+    } catch {}
+    awardCandyForCapture(egg.speciesA, egg.speciesB, CANDY_HATCH_CAPTURE);
     eggs.splice(idx, 1);
     writeEggs(eggs);
     removeFromIncubator(eggId);
@@ -2207,6 +2219,11 @@
     const t0 = performance.now();
     const out = readCapturedCreatures().map((e) => ({
       id: e.id,
+      // Carry spawnId through so the 'Radar' built-in tag predicate
+      // (spawnId starts with 'E:') can see it. Same trap as fromEgg below:
+      // the predicates run on THIS normalized object, not the raw stored
+      // record, so a dropped field silently disables the tag.
+      spawnId: e.spawnId,
       speciesA: e.speciesA,
       speciesB: e.speciesB,
       variant: (typeof e.variant === 'number') ? e.variant : 'auto',
@@ -9501,6 +9518,20 @@
     });
   }
 
+  // Whether a pokédex entry (an abstract seen-fusion, { key, a, b, ... })
+  // passes the selected built-in tag predicates. Fusion-intrinsic tags
+  // (Pure/Evolved/Evolvable) are satisfied by a synthesized (a, b) stub;
+  // per-capture tags (Radar/Shiny/Hatched/Daycare) read fields that only
+  // exist on real captures, so they're matched against the trainer's actual
+  // captures of this fusion (capsByFusion: fusion key -> [captures]). A tag
+  // passes on the stub OR any real capture of the fusion; AND across preds.
+  function pokedexEntryPassesTags(e, preds, capsByFusion) {
+    const synthetic = { speciesA: e.a, speciesB: e.b };
+    const caps = capsByFusion.get(e.key) || [];
+    return preds.every((b) =>
+      b.predicate(synthetic) || caps.some((c) => b.predicate(c)));
+  }
+
   function renderPokedex() {
     const _tTotal = performance.now();
     const panel = document.getElementById('creatureInventory');
@@ -9522,6 +9553,12 @@
     });
     const _dataMs = performance.now() - _tData;
     const _inputN = entries.length;
+    // Full-library totals for the header summary — captured BEFORE any
+    // type/tag/search filter narrows `entries`, so "caught · encountered"
+    // stays stable when a filter is applied (it summarizes the whole dex,
+    // not the filtered view). Using the post-filter length here made the
+    // encountered count clamp to 0 as soon as any filter was active.
+    const totalSeenAll = entries.length;
     const _tFilter = performance.now();
 
     const filterType = readPokedexFilterType();
@@ -9542,19 +9579,31 @@
         return true;
       });
     }
-    // Built-in tag filter (e.g. "Pure"). Predicates take a creature-
-    // shaped object — for the abstract pokedex entry we synthesize
-    // one from the (a, b) pair. AND semantics across selected tags.
+    // Built-in tag filter (e.g. "Pure"). Fusion-intrinsic predicates
+    // (Pure/Evolved/Evolvable) read only speciesA/B, so a synthesized
+    // (a, b) stub satisfies them. Per-capture predicates (Radar/Shiny/
+    // Hatched/Daycare) read fields that live ONLY on real captures
+    // (spawnId/shinyVariant/fromEgg/id), which the stub lacks — so those
+    // must be evaluated against the trainer's actual captures of this
+    // fusion. A tag passes when the stub matches OR any real capture of
+    // the fusion matches; AND semantics across selected tags. The capture
+    // index is built only while a tag filter is active (off the common
+    // render path), keyed by fusion so each lookup is O(1).
     const selectedPokedexTags = readPokedexTagFilter();
     if (selectedPokedexTags.length) {
       const preds = selectedPokedexTags
         .map((name) => BUILTIN_TAGS.find((b) => b.name === name))
         .filter(Boolean);
       if (preds.length) {
-        entries = entries.filter((e) => {
-          const synthetic = { speciesA: e.a, speciesB: e.b };
-          return preds.every((b) => b.predicate(synthetic));
-        });
+        const capsByFusion = new Map();
+        for (const c of readCapturedCreatures()) {
+          if (c.speciesA == null || c.speciesB == null) continue;
+          const k = `${c.speciesA}-${c.speciesB}`;
+          let arr = capsByFusion.get(k);
+          if (!arr) { arr = []; capsByFusion.set(k, arr); }
+          arr.push(c);
+        }
+        entries = entries.filter((e) => pokedexEntryPassesTags(e, preds, capsByFusion));
       }
     }
 
@@ -9588,9 +9637,8 @@
     });
     const _sortMs = performance.now() - _tSort;
 
-    const totalSeen = entries.length;
     const totalCaught = caught.size;
-    const encounteredOnly = Math.max(0, totalSeen - totalCaught);
+    const encounteredOnly = Math.max(0, totalSeenAll - totalCaught);
     const statsEl = panel.querySelector('.pokedex-stats');
     if (statsEl) {
       statsEl.innerHTML =
