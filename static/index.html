@@ -7770,16 +7770,22 @@ function fmtDate(ts) {
       const current = (window.Creatures && window.Creatures.getSeenFusions)
         ? window.Creatures.getSeenFusions()
         : JSON.parse(localStorage.getItem('cc.seenFusions') || '{}');
-      // Merge: keep the earliest firstSeen, latest lastSeen.
-      for (const [key, val] of Object.entries(data.seenFusions)) {
-        if (!val) continue;
-        const cur = current[key];
-        if (!cur) { current[key] = val; continue; }
-        if (val.firstSeen && (!cur.firstSeen || val.firstSeen < cur.firstSeen)) {
-          cur.firstSeen = val.firstSeen;
-        }
-        if (val.lastSeen && (!cur.lastSeen || val.lastSeen > cur.lastSeen)) {
-          cur.lastSeen = val.lastSeen;
+      // Lossless merge (unions art + shiny variants, carries favorite art +
+      // "first seen here" location, keeps earliest firstSeen / latest lastSeen).
+      if (window.Creatures && window.Creatures.mergeSeenFusions) {
+        window.Creatures.mergeSeenFusions(current, data.seenFusions);
+      } else {
+        // Fallback for an older Creatures build: firstSeen/lastSeen only.
+        for (const [key, val] of Object.entries(data.seenFusions)) {
+          if (!val) continue;
+          const cur = current[key];
+          if (!cur) { current[key] = val; continue; }
+          if (val.firstSeen && (!cur.firstSeen || val.firstSeen < cur.firstSeen)) {
+            cur.firstSeen = val.firstSeen;
+          }
+          if (val.lastSeen && (!cur.lastSeen || val.lastSeen > cur.lastSeen)) {
+            cur.lastSeen = val.lastSeen;
+          }
         }
       }
       if (window.Creatures && window.Creatures.setSeenFusions) {
