@@ -10156,8 +10156,11 @@
         card.dataset.species = r.id;
         card.setAttribute('role', 'button');
         card.setAttribute('tabindex', '0');
+        // Silhouette the X×X icon until the pure form is actually seen/caught,
+        // so the completion list doesn't spoil sprites you haven't found yet.
+        const pureSeen = isFusionSeen(r.id, r.id) || isFusionOwned(r.id, r.id);
         card.innerHTML =
-          `<div class="completion-icon"><img alt=""></div>`
+          `<div class="completion-icon${pureSeen ? '' : ' silhouette'}"><img alt=""></div>`
           + `<div class="completion-info">`
           +   `<div class="completion-name">${escapeHtml(speciesNameFor(r.id))}</div>`
           +   `<div class="completion-bar"><div class="completion-bar-fill" style="width:${pct}%"></div></div>`
