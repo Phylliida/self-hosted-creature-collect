@@ -2409,6 +2409,126 @@
     }
     return out;
   }
+  // Shiny styles (0-based palette indices) the trainer has for a fusion:
+  // the shinyVariant of every capture of (a, b), UNIONed with any persisted
+  // in seenFusions[key].shinyVariants. The persisted set is how an
+  // evolved-away shiny (whose capture is no longer stored as (a, b)) still
+  // lights up the pre-evolution's dex row. Mirrors readSeenVariants.
+  // Normalize a persisted shiny entry to { variant, shinyVariant }. Tolerates
+  // the legacy bare-number form (art variant unknown → null = best-available).
+  function _normShinyEntry(e) {
+    if (typeof e === 'number') return { variant: null, shinyVariant: e };
+    if (e && typeof e.shinyVariant === 'number') {
+      return {
+        variant: (typeof e.variant === 'number') ? e.variant : null,
+        shinyVariant: e.shinyVariant,
+      };
+    }
+    return null;
+  }
+  // Add a (art variant, shiny style) pair to a seenFusions entry's
+  // shinyVariants list, deduped by the pair. Returns true if it changed.
+  function _addShinyToEntry(entry, variant, shinyVariant) {
+    if (typeof shinyVariant !== 'number') return false;
+    if (!Array.isArray(entry.shinyVariants)) entry.shinyVariants = [];
+    const v = (typeof variant === 'number') ? variant : null;
+    for (const e of entry.shinyVariants) {
+      const n = _normShinyEntry(e);
+      if (n && n.shinyVariant === shinyVariant && n.variant === v) return false;
+    }
+    entry.shinyVariants.push({ variant: v, shinyVariant });
+    return true;
+  }
+  // Shiny (art variant, shiny style) pairs the trainer has for a fusion, so
+  // each shiny renders at the ART variant it was actually caught at — not a
+  // generic one. Live captures of (a, b) carry their own variant; persisted
+  // credits (evolved-away shinies) carry the pre-evolution art variant when
+  // known (null → best-available). Deduped by (variant, shinyVariant).
+  // Returns [{ variant, shinyVariant }, ...].
+  function readSeenShinyVariants(a, b) {
+    const out = [];
+    const keys = new Set();
+    const push = (variant, shinyVariant) => {
+      if (typeof shinyVariant !== 'number') return;
+      const v = (typeof variant === 'number') ? variant : null;
+      const k = `${v}|${shinyVariant}`;
+      if (keys.has(k)) return;
+      keys.add(k);
+      out.push({ variant: v, shinyVariant });
+    };
+    for (const c of readCapturedCreatures()) {
+      if (c && c.speciesA === a && c.speciesB === b && typeof c.shinyVariant === 'number') {
+        push(c.variant, c.shinyVariant);
+      }
+    }
+    const seen = readSeenFusions();
+    const arr = seen[`${a}-${b}`] && seen[`${a}-${b}`].shinyVariants;
+    if (Array.isArray(arr)) {
+      for (const e of arr) { const n = _normShinyEntry(e); if (n) push(n.variant, n.shinyVariant); }
+    }
+    return out;
+  }
+  // Persist a shiny (art variant + style) onto an ALREADY-SEEN fusion's dex
+  // entry (no-op for unseen fusions, so we never mint phantom entries). Used
+  // by the evolve hook — so evolving a shiny doesn't erase the shiny from the
+  // pre-evolution dex row — and by the one-time lineage backfill.
+  function markFusionShinySeen(a, b, variant, shinyVariant) {
+    if (a == null || b == null || typeof shinyVariant !== 'number') return;
+    const seen = readSeenFusions();
+    const entry = seen[`${a}-${b}`];
+    if (!entry) return;
+    if (_addShinyToEntry(entry, variant, shinyVariant)) writeSeenFusions(seen);
+  }
+  // Losslessly merge an imported seenFusions map into the current one (backup
+  // restore). New fusions are copied whole; for a fusion already known we keep
+  // the earliest firstSeen / latest lastSeen, UNION the art variants and shiny
+  // variants, adopt an imported favorite only when there's no local one, and
+  // fill in the "first seen here" location when the local side lacks it.
+  // Mutates and returns `current`.
+  function mergeSeenFusions(current, incoming) {
+    if (!current || typeof current !== 'object') current = {};
+    if (!incoming || typeof incoming !== 'object') return current;
+    for (const key of Object.keys(incoming)) {
+      const val = incoming[key];
+      if (!val || typeof val !== 'object') continue;
+      const cur = current[key];
+      if (!cur) { current[key] = val; continue; }
+      if (val.firstSeen && (!cur.firstSeen || val.firstSeen < cur.firstSeen)) cur.firstSeen = val.firstSeen;
+      if (val.lastSeen && (!cur.lastSeen || val.lastSeen > cur.lastSeen)) cur.lastSeen = val.lastSeen;
+      // Union art variants (map vKey -> earliest-seen timestamp).
+      if (val.variants && typeof val.variants === 'object') {
+        if (!cur.variants || typeof cur.variants !== 'object') cur.variants = {};
+        for (const vk of Object.keys(val.variants)) {
+          const ts = val.variants[vk];
+          if (cur.variants[vk] == null || (typeof ts === 'number' && ts < cur.variants[vk])) {
+            cur.variants[vk] = ts;
+          }
+        }
+      }
+      // Union shiny (art variant, style) pairs; tolerate legacy bare numbers.
+      if (Array.isArray(val.shinyVariants)) {
+        if (!Array.isArray(cur.shinyVariants)) cur.shinyVariants = [];
+        for (const e of val.shinyVariants) {
+          const n = _normShinyEntry(e);
+          if (!n) continue;
+          const dup = cur.shinyVariants.some((x) => {
+            const m = _normShinyEntry(x);
+            return m && m.variant === n.variant && m.shinyVariant === n.shinyVariant;
+          });
+          if (!dup) cur.shinyVariants.push({ variant: n.variant, shinyVariant: n.shinyVariant });
+        }
+      }
+      // Adopt an imported favorite only when there's no local choice.
+      if (val.favoriteArt && !cur.favoriteArt) cur.favoriteArt = val.favoriteArt;
+      // Fill in "first seen here" location when the local side lacks it.
+      if (cur.lat == null && val.lat != null) {
+        cur.lat = val.lat; cur.lng = val.lng;
+        if (val.poi != null) cur.poi = val.poi;
+        if (val.place != null) cur.place = val.place;
+      }
+    }
+    return current;
+  }
   // One-time migration for legacy captures without a `variant`
   // field. Picks slot 0 (the artist's primary variant if any custom
   // exists, else autogen) — best-guess given we can't know which
@@ -2524,6 +2644,94 @@
     }
     if (changed) writeSeenFusions(seen);
   }
+  // Linear chain of a species' pre-evolutions, most-evolved first:
+  // [x, pre(x), pre(pre(x)), ..., root]. Evolution branches going FORWARD
+  // (Eevee → many), but each form has a single direct pre-evolution, so
+  // walking backward is always linear. Returns [x] when data isn't loaded.
+  function _ancestorChain(x) {
+    const S = global.Species;
+    if (!S || !S.familyOf || !S.evolutionsFor) return [x];
+    const fam = S.familyOf(x);
+    const directPre = (t) => {
+      for (const f of fam) {
+        if (f === t) continue;
+        for (const e of S.evolutionsFor(f)) if (e.target === t) return f;
+      }
+      return null;
+    };
+    const chain = [x];
+    const guard = new Set([x]);
+    let cur = x;
+    for (;;) {
+      const p = directPre(cur);
+      if (p == null || guard.has(p)) break;
+      chain.push(p); guard.add(p); cur = p;
+    }
+    return chain;
+  }
+  // The pre-evolution fusions a shiny (a, b) capture passed through, on the
+  // path the trainer actually took. Per-side ancestor chains are linear; the
+  // only branching is the ORDER the two sides were evolved. Every form the
+  // trainer evolved through was marked seen, so we walk the 2-D lattice back
+  // from (a, b) preferring pre-evo nodes that are SEEN — reconstructing the
+  // real path. On genuine ambiguity (both branch nodes seen) we pick one.
+  // Returns [[a', b'], ...], excluding (a, b) itself.
+  function _shinyLineageAncestors(a, b, seenHas) {
+    const chainA = _ancestorChain(a);   // [a, ..., rootA]
+    const chainB = _ancestorChain(b);
+    let ia = 0, ib = 0;
+    const out = [];
+    while (ia < chainA.length - 1 || ib < chainB.length - 1) {
+      const canA = ia < chainA.length - 1;
+      const canB = ib < chainB.length - 1;
+      let goA;
+      if (canA && canB) {
+        const seenA = seenHas(chainA[ia + 1], chainB[ib]);
+        const seenB = seenHas(chainA[ia], chainB[ib + 1]);
+        goA = seenA || !seenB;   // follow the seen branch; tie / neither → pick A
+      } else {
+        goA = canA;
+      }
+      if (goA) ia++; else ib++;
+      out.push([chainA[ia], chainB[ib]]);
+    }
+    return out;
+  }
+  // One-time backfill: for every shiny the trainer evolved themselves (a
+  // non-radar spawn id — an evolved 'E:' spawn was caught pre-evolved, not
+  // evolved by us), credit the shiny style to the earlier lineage forms that
+  // are already in the dex. So a shiny caught as a base form still shows on
+  // that base form's shiny row after it was evolved. Batched (one write).
+  // Gated on the evolution data being loaded AND a flag, so it runs once.
+  const SHINY_LINEAGE_BACKFILL_KEY = 'cc.shinyLineageBackfill.v2';
+  function backfillShinyLineage() {
+    if (localStorage.getItem(SHINY_LINEAGE_BACKFILL_KEY) === '1') return;
+    const S = global.Species;
+    if (!S || !S.familyOf) return;
+    // familyOf collapses to [x] until the evolutions JSON loads; probe a
+    // known multi-stage line (Bulbasaur) so we don't flip the flag early.
+    if (S.familyOf(1).length <= 1) return;   // data not ready — retry next boot
+    const seen = readSeenFusions();
+    const seenHas = (x, y) =>
+      Object.prototype.hasOwnProperty.call(seen, `${x}-${y}`);
+    let changed = false;
+    for (const c of readCapturedCreatures()) {
+      if (!c || typeof c.shinyVariant !== 'number') continue;
+      if (typeof c.spawnId === 'string' && c.spawnId.startsWith('E:')) continue;
+      if (c.speciesA == null || c.speciesB == null) continue;
+      for (const [a2, b2] of _shinyLineageAncestors(c.speciesA, c.speciesB, seenHas)) {
+        const entry = seen[`${a2}-${b2}`];
+        if (!entry) continue;   // only credit fusions already in the dex
+        // The base-form art variant was overwritten when the creature evolved,
+        // so it's unrecoverable here — credit with null (best-available art).
+        // Shinies evolved from now on keep their exact art variant via the
+        // evolve hook's markFusionShinySeen(c.variant, ...).
+        if (_addShinyToEntry(entry, null, c.shinyVariant)) changed = true;
+      }
+    }
+    if (changed) writeSeenFusions(seen);
+    localStorage.setItem(SHINY_LINEAGE_BACKFILL_KEY, '1');
+  }
   function isFusionSeen(a, b) {
     return readSeenFusions().hasOwnProperty(`${a}-${b}`);
   }
@@ -2554,6 +2762,38 @@
     if (lowest !== Infinity) return lowest;
     if (seen.has('auto')) return null;
     return undefined;
+  }
+  // The single sprite to show for a fusion wherever it appears as one image
+  // (dex header, pokédex grid, completion dex): the trainer's chosen favorite
+  // art if set, else the default — the lowest seen art variant (non-shiny),
+  // or best-available when nothing's been discovered. Returns
+  // { variant, shinyVariant }: variant is a number|null|undefined that
+  // SpriteStore.showSprite understands, shinyVariant is a number|null.
+  function favoriteArtFor(a, b) {
+    const entry = readSeenFusions()[`${a}-${b}`];
+    const fav = entry && entry.favoriteArt;
+    if (fav && typeof fav === 'object' && ('variant' in fav || 'shinyVariant' in fav)) {
+      return {
+        variant: (typeof fav.variant === 'number') ? fav.variant : null,
+        shinyVariant: (typeof fav.shinyVariant === 'number') ? fav.shinyVariant : null,
+      };
+    }
+    return { variant: pickPreferredSeenVariant(a, b), shinyVariant: null };
+  }
+  // Set (or replace) a fusion's favorite art. Only an already-seen fusion can
+  // have one; `variant` is an art variant (number, or null/'auto' for autogen)
+  // and `shinyVariant` is null (normal) or a shiny style index. Returns true
+  // when it changed the store.
+  function setFavoriteArt(a, b, variant, shinyVariant) {
+    const seen = readSeenFusions();
+    const entry = seen[`${a}-${b}`];
+    if (!entry) return false;
+    entry.favoriteArt = {
+      variant: (typeof variant === 'number') ? variant : null,
+      shinyVariant: (typeof shinyVariant === 'number') ? shinyVariant : null,
+    };
+    writeSeenFusions(seen);
+    return true;
   }
   function caughtFusionsSet() {
     const set = new Set();
@@ -3171,13 +3411,12 @@
       const b = +cell.dataset.b;
       const img = cell.querySelector('img');
       if (!img) return;
-      // Match what the user has actually seen so the family-tree
-      // mosaic shows their unlocked variants — `pickPreferredSeenVariant`
-      // returns `undefined` when the user hasn't seen any variant of
-      // the fusion, which SpriteStore.showSprite interprets as "best
-      // available" (custom slot 0 if any, else autogen).
-      const v = pickPreferredSeenVariant(a, b);
-      global.SpriteStore.showSprite(img, a, b, v, {
+      // Honor the fusion's favorite art (falls back to lowest seen variant)
+      // so the family-tree mosaic matches what's shown up top / in the dex,
+      // including a favorited shiny.
+      const fav = favoriteArtFor(a, b);
+      global.SpriteStore.showSprite(img, a, b, fav.variant, {
+        shinyVariant: fav.shinyVariant,
         onReady: () => cell.classList.add('ready'),
       });
     });
@@ -3573,6 +3812,16 @@
 
     // Pokédex gets the new fusion (+ its variant) on first evolution.
     try { markFusionSeen(newA, newB, null, newVariant); } catch {}
+    // If we just evolved a shiny, its capture no longer exists as the OLD
+    // fusion — persist the shiny style onto that pre-evolution's dex row so
+    // its "Shiny variants" section doesn't lose it. (c still holds the old
+    // speciesA/speciesB + shinyVariant; markFusionShinySeen only augments an
+    // already-seen entry, and the old form was seen when it was caught.)
+    try {
+      if (typeof c.shinyVariant === 'number') {
+        markFusionShinySeen(c.speciesA, c.speciesB, c.variant, c.shinyVariant);
+      }
+    } catch {}
 
     return updated;
   }
@@ -4462,6 +4711,14 @@
         word-wrap: break-word; line-height: 1.2;
       }
       #creatureInventory .variant-cell.silhouette .label { color: var(--ui-muted, #888); }
+      /* Tap a discovered art/shiny cell to make it the fusion's favorite art
+         (shown up top + in the pokedex + completion dex). The current
+         favorite gets an accent ring. */
+      #creatureInventory .variant-cell[data-fav-selectable] { cursor: pointer; }
+      #creatureInventory .variant-cell.favorited {
+        border-color: var(--ui-accent, #b6896c);
+        box-shadow: 0 0 0 2px var(--ui-accent, #b6896c);
+      }
       #creatureInventory .variant-empty {
         font-size: 12px; color: var(--ui-muted, #888); padding: 6px 0;
       }
@@ -9149,6 +9406,7 @@
         cls: `variant-cell autogen ${!fusionSeen ? 'silhouette' : ''}`,
         variant: null,
         label: !fusionSeen ? '???' : 'autogen',
+        selectable: fusionSeen,   // can favorite the autogen art once seen
       });
     }
     for (let i = 0; i < variantCount; i++) {
@@ -9164,6 +9422,7 @@
         cls: `variant-cell ${isSeen ? '' : 'silhouette'}`,
         variant: i,
         label,
+        selectable: isSeen,       // only a discovered variant can be favorited
       });
     }
     if (!cards.length) {
@@ -9171,7 +9430,7 @@
       return;
     }
     gridEl.innerHTML = cards.map((c) => `
-      <div class="${c.cls}">
+      <div class="${c.cls}"${c.selectable ? ' data-fav-selectable' : ''} data-variant="${c.variant === null ? 'auto' : c.variant}" data-shiny="">
         <img alt="">
         <div class="label">${escapeHtml(c.label)}</div>
       </div>
@@ -9187,6 +9446,87 @@
       global.SpriteStore.showSprite(img, a, b, c.variant);
       img.style.opacity = '';
     });
+  }
+
+  // Renders the "Shiny variants" grid: one cell per shiny style the trainer
+  // owns for this fusion (readSeenShinyVariants — live captures ∪ persisted
+  // lineage credits). Hides itself AND its section label when there are none,
+  // so the row only appears once you've actually got a shiny of the fusion.
+  function _populateFusionShinyGrid(gridEl, labelEl, a, b) {
+    if (!gridEl) return;
+    // Each entry is { variant, shinyVariant } — render at its OWN art variant
+    // so a shiny caught at variant #2 shows as variant #2, not a generic one.
+    const entries = readSeenShinyVariants(a, b).sort((x, y) =>
+      (x.shinyVariant - y.shinyVariant)
+      || ((x.variant == null ? -1 : x.variant) - (y.variant == null ? -1 : y.variant)));
+    if (!entries.length || !global.SpriteStore) {
+      gridEl.innerHTML = '';
+      gridEl.style.display = 'none';
+      if (labelEl) labelEl.style.display = 'none';
+      return;
+    }
+    gridEl.style.display = '';
+    if (labelEl) labelEl.style.display = '';
+    // No label — shiny cells are just the sprites, appearing as you get them.
+    gridEl.innerHTML = entries.map((e) => `
+      <div class="variant-cell shiny-cell" data-fav-selectable data-variant="${e.variant === null ? 'auto' : e.variant}" data-shiny="${e.shinyVariant}">
+        <img alt="">
+      </div>
+    `).join('');
+    const cellEls = gridEl.querySelectorAll('.variant-cell');
+    entries.forEach((e, i) => {
+      const img = cellEls[i] && cellEls[i].querySelector('img');
+      if (!img) return;
+      const artVariant = (typeof e.variant === 'number') ? e.variant : undefined;
+      global.SpriteStore.showSprite(img, a, b, artVariant, { shinyVariant: e.shinyVariant });
+      img.style.opacity = '';
+    });
+  }
+
+  // Normalize a variant/shiny value for favorite comparison (undefined → null).
+  function _favNorm(x) { return (typeof x === 'number') ? x : null; }
+  // Highlight the grid cell (art or shiny) that is the fusion's current
+  // favorite — the one shown up top. Cells carry data-variant / data-shiny.
+  function _markFavoriteCells(body, a, b) {
+    if (!body) return;
+    const fav = favoriteArtFor(a, b);
+    const fv = _favNorm(fav.variant), fs = _favNorm(fav.shinyVariant);
+    body.querySelectorAll('.variant-cell[data-fav-selectable]').forEach((cell) => {
+      const cv = cell.dataset.variant === 'auto' ? null : Number(cell.dataset.variant);
+      const cs = cell.dataset.shiny === '' ? null : Number(cell.dataset.shiny);
+      cell.classList.toggle('favorited', _favNorm(cv) === fv && _favNorm(cs) === fs);
+    });
+  }
+  // Re-render the fusion header art from the current favorite (used after a
+  // tap changes it, without rebuilding the whole sub-view / losing scroll).
+  function _refreshFavoriteArt(body, a, b) {
+    if (!body || !global.SpriteStore) return;
+    const fav = favoriteArtFor(a, b);
+    const img = body.querySelector('.detail-art-img');
+    const ph = body.querySelector('.detail-art-placeholder');
+    const art = body.querySelector('.detail-art');
+    if (img) {
+      global.SpriteStore.showSprite(img, a, b, fav.variant, {
+        shinyVariant: fav.shinyVariant,
+        onReady: () => { if (ph) ph.style.display = 'none'; img.style.display = 'block'; },
+      });
+    }
+    if (art) art.classList.toggle('shiny', fav.shinyVariant != null);
+    _markFavoriteCells(body, a, b);
+  }
+  // Wire tap-to-favorite on every selectable art/shiny cell in a fusion
+  // sub-view, and mark the one currently in use. Cells opt in with a
+  // data-fav-selectable attribute (silhouetted/unseen art cells don't).
+  function _wireFavoriteCells(body, a, b) {
+    if (!body) return;
+    body.querySelectorAll('.variant-cell[data-fav-selectable]').forEach((cell) => {
+      cell.addEventListener('click', () => {
+        const v = cell.dataset.variant === 'auto' ? null : Number(cell.dataset.variant);
+        const s = cell.dataset.shiny === '' ? null : Number(cell.dataset.shiny);
+        if (setFavoriteArt(a, b, v, s)) _refreshFavoriteArt(body, a, b);
+      });
+    });
+    _markFavoriteCells(body, a, b);
   }
 
   function renderFusionView(a, b, targetBody, opts) {
@@ -9354,6 +9694,8 @@
       ${familyHtml}
       <div class="fusion-section-label">Art variants</div>
       <div class="variant-grid"></div>
+      <div class="fusion-section-label shiny-variants-label" style="display:none">Shiny variants</div>
+      <div class="variant-grid shiny-variant-grid" style="display:none"></div>
     `;
     // Populate the variant grid asynchronously — server tells us
     // which variant suffixes are non-blank for this cell, then we
@@ -9361,7 +9703,23 @@
     // (per readSeenVariants — sourced from per-spawn tracking +
     // captures-with-variant) render as silhouettes.
     const variantGrid = body.querySelector('.variant-grid');
-    if (variantGrid) _populateFusionVariantGrid(variantGrid, a, b);
+    // Shiny variants row: one cell per shiny style owned for this fusion.
+    // Self-hides (label + grid) when there are none. Sync (unlike the art
+    // grid), so its cells exist before we wire favorites below.
+    const shinyGrid = body.querySelector('.shiny-variant-grid');
+    const shinyLabel = body.querySelector('.shiny-variants-label');
+    if (shinyGrid) _populateFusionShinyGrid(shinyGrid, shinyLabel, a, b);
+    // Tap any discovered art/shiny cell to make it this fusion's favorite art
+    // (shown up top + in the pokédex + completion dex). Wire after the async
+    // art grid renders so both grids' cells are present.
+    const wireFav = () => _wireFavoriteCells(body, a, b);
+    if (variantGrid) {
+      // .then(wireFav, wireFav): wire regardless of whether the art grid
+      // populated cleanly, so the (already-rendered) shiny cells are always tappable.
+      Promise.resolve(_populateFusionVariantGrid(variantGrid, a, b)).then(wireFav, wireFav);
+    } else {
+      wireFav();
+    }
     body.querySelectorAll('.species-link').forEach((link) => {
       link.addEventListener('click', () => {
         if (link.dataset.side === 'A') showPokedex({ searchA: nameA });
@@ -9401,17 +9759,18 @@
       }
     }
 
-    // Fusion sprite for the header. Prefer the lowest-indexed variant
-    // the trainer has actually seen so the header matches the variant
-    // grid — `pickPreferredSeenVariant` returns `undefined` when
-    // nothing has been seen, which SpriteStore.showSprite interprets as
-    // "best available" (custom slot 0 if any exists, else autogen).
+    // Fusion sprite for the header: the trainer's favorite art if set, else
+    // the default (lowest seen variant, non-shiny; best-available when nothing
+    // seen). favoriteArtFor returns { variant, shinyVariant }.
     if (global.SpriteStore) {
       const img = body.querySelector('.detail-art-img');
       const ph = body.querySelector('.detail-art-placeholder');
+      const art = body.querySelector('.detail-art');
       if (img) {
-        const headerVariant = pickPreferredSeenVariant(a, b);
-        global.SpriteStore.showSprite(img, a, b, headerVariant, {
+        const fav = favoriteArtFor(a, b);
+        if (art) art.classList.toggle('shiny', fav.shinyVariant != null);
+        global.SpriteStore.showSprite(img, a, b, fav.variant, {
+          shinyVariant: fav.shinyVariant,
           onReady: () => {
             if (ph) ph.style.display = 'none';
             img.style.display = 'block';
@@ -9713,13 +10072,12 @@
         if (!global.SpriteStore) return;
         const img = card.querySelector('img');
         if (!img) return;
-        // Prefer the lowest-indexed variant the trainer has actually
-        // seen, so the tile they tap matches what's "unlocked" inside
-        // the fusion view. `pickPreferredSeenVariant` returns
-        // `undefined` for never-seen fusions; SpriteStore falls back
-        // to the abstract default picker (custom v0 / autogen).
-        const v = pickPreferredSeenVariant(entry.a, entry.b);
-        global.SpriteStore.showSprite(img, entry.a, entry.b, v, {
+        // The fusion's favorite art (falls back to the lowest seen variant),
+        // so the tile matches what's shown up top in the fusion view — and
+        // reflects a shiny favorite when the trainer picked one.
+        const fav = favoriteArtFor(entry.a, entry.b);
+        global.SpriteStore.showSprite(img, entry.a, entry.b, fav.variant, {
+          shinyVariant: fav.shinyVariant,
           onReady: () => card.classList.add('ready'),
         });
       },
@@ -9813,7 +10171,10 @@
         const img = card.querySelector('img');
         if (!img) return;
         // Self-fusion (X×X) ≈ the species' "pure" sprite — a stable icon.
-        global.SpriteStore.showSprite(img, r.id, r.id, pickPreferredSeenVariant(r.id, r.id), {
+        // Honor the trainer's favorite art (incl. a favorited shiny) for X×X.
+        const fav = favoriteArtFor(r.id, r.id);
+        global.SpriteStore.showSprite(img, r.id, r.id, fav.variant, {
+          shinyVariant: fav.shinyVariant,
           onReady: () => card.classList.add('ready'),
         });
       },
@@ -9889,14 +10250,17 @@
           const img = cell.querySelector('img');
           if (!img) return;
           const a = pairs[i][0], b = pairs[i][1];
-          const seenVar = pickPreferredSeenVariant(a, b);
-          global.SpriteStore.showSprite(img, a, b, seenVar, {
+          const fav = favoriteArtFor(a, b);
+          global.SpriteStore.showSprite(img, a, b, fav.variant, {
+            shinyVariant: fav.shinyVariant,
             onReady: () => cell.classList.add('ready'),
           });
-          // Flag the "auto" tag against the ACTUAL rendered variant: the seen
-          // variant when the user has one, else showSprite's best-available
-          // fallback (bestVariantFor → custom slot 0 if it exists, else
-          // autogen → null). null === autogen, so it tags silhouettes too.
+          // Flag the "auto" tag against the ACTUAL rendered ART variant: the
+          // favorite/seen variant when there is one, else showSprite's
+          // best-available fallback (bestVariantFor → custom slot 0 if it
+          // exists, else autogen → null). null === autogen, so it tags
+          // silhouettes too.
+          const seenVar = fav.variant;
           const resolved = (seenVar !== undefined)
             ? Promise.resolve(seenVar)
             : (global.SpriteStore.bestVariantFor
@@ -12913,6 +13277,13 @@
       // Backfills the `variant` field on legacy captures (and
       // seenFusions[key].variants). Idempotent via localStorage flag.
       migrateLegacyCaptureVariants().catch(() => {});
+      // One-time: credit self-evolved shinies to their earlier lineage forms'
+      // dex rows. Needs the evolution data, so chain off Species.ensureLoaded
+      // (backfillShinyLineage re-checks readiness and only flips its flag once
+      // it truly runs, so a failed evolutions fetch just retries next boot).
+      if (global.Species && global.Species.ensureLoaded) {
+        global.Species.ensureLoaded().then(backfillShinyLineage).catch(() => {});
+      }
     });
     // Warm the in-memory daycare summary cache + run the legacy
     // localStorage→IDB migration for the per-day distance map.
@@ -13004,6 +13375,7 @@
     replaceAllCaptured: (arr) => writeCapturedCreatures(arr),
     getSeenFusions: () => readSeenFusions(),
     setSeenFusions: (map) => { _seenStore.set(map); },
+    mergeSeenFusions: (current, incoming) => mergeSeenFusions(current, incoming),
     // Active incense (carried in the save file so the 30-min window
     // survives device hops + app restarts).
     getActiveIncense: readActiveIncense,
