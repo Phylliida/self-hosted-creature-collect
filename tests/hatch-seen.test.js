@@ -55,6 +55,7 @@ function extract(marker) {
     writeCapturedCreatures: (l) => { captured = l; },
     awardCandyForCapture: () => {},
     removeFromIncubator: () => {},
+    _updateEggBubble: () => {},
     // Stub markFusionSeen to record how it was invoked.
     markFusionSeen: (a, b, spawn, variant) => { seenCalls.push({ a, b, variant }); },
   };

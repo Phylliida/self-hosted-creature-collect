@@ -98,6 +98,7 @@ function awardWith(rng) {
     writeCapturedCreatures: (l) => { captured = l; },
     markFusionSeen: () => {},
     removeFromIncubator: () => {},
+    _updateEggBubble: () => {},
     awardCandyForCapture: (a, b, total) => { candyCalls.push({ a, b, total }); },
   };
   vm.createContext(ctx);
