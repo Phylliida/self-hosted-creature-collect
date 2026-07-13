@@ -6749,6 +6749,19 @@ function fmtDate(ts) {
       _pendingFocusZoom = null;
     }
   });
+  // Fan this single GeolocateControl watch out to the game logic. The app
+  // runs exactly one OS-level geolocation watch — this control's — to keep
+  // iOS Capacitor-bridge churn and callback races down. creatures.js no
+  // longer opens its own competing watch; every fix is pushed to it here so
+  // spawns + daycare distance track the same stream that drives the dot.
+  // (If the user turns this control OFF, its watch stops and the game
+  // pauses on the last fix until tracking is re-enabled — the intended
+  // "location off" state, matching the dot vanishing.)
+  geolocate.on('geolocate', (e) => {
+    if (window.Creatures && typeof window.Creatures.onLocationFix === 'function') {
+      try { window.Creatures.onLocationFix(e); } catch (err) { /* non-fatal */ }
+    }
+  });
   // Restore the focus/follow toggle from a previous session — re-enter
   // follow mode (pan disabled, button lit); the next GPS fix recenters at
   // the current zoom (we don't force the activation zoom on restore).
