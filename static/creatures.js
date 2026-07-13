@@ -5722,12 +5722,50 @@
         width: calc(100% - 8px); max-width: 380px; max-height: 82vh; overflow-y: auto;
         padding: 16px 18px 18px;
       }
+      /* Top-of-card back/close — same bare stroked glyphs as the app's other
+         sticky back/close controls (and as the floating cluster below). */
+      #ccDaycareOdds .dc-odds-back,
       #ccDaycareOdds .dc-odds-close {
-        position: absolute; top: 8px; right: 8px; width: 30px; height: 30px; padding: 0;
-        border: none; background: transparent; color: var(--ui-muted, #666);
-        font-size: 22px; line-height: 1; cursor: pointer;
+        position: absolute; top: 8px; z-index: 2;
+        width: 30px; height: 30px; min-height: 30px; padding: 0;
+        border: none; background: transparent; color: var(--ui-text, #111);
+        text-shadow:
+          -1px -1px 0 var(--ui-bg, #fff), 0 -1px 0 var(--ui-bg, #fff),  1px -1px 0 var(--ui-bg, #fff),
+          -1px  0   0 var(--ui-bg, #fff),                                1px  0   0 var(--ui-bg, #fff),
+          -1px  1px 0 var(--ui-bg, #fff), 0  1px 0 var(--ui-bg, #fff),  1px  1px 0 var(--ui-bg, #fff);
+        line-height: 1; cursor: pointer; box-sizing: border-box;
+        display: inline-flex; align-items: center; justify-content: center;
       }
-      #ccDaycareOdds .dc-odds-title { margin: 0 0 8px; font-size: 16px; }
+      #ccDaycareOdds .dc-odds-back { left: 8px; font-size: 22px; }
+      #ccDaycareOdds .dc-odds-close { right: 8px; font-size: 26px; padding-bottom: 2px; }
+      #ccDaycareOdds .dc-odds-back:hover,
+      #ccDaycareOdds .dc-odds-close:hover { color: var(--ui-accent, #888); }
+      /* Floating back/close cluster — overlays the top of the scrolling card
+         (height:0 so it takes no flow space) and shows once scrolled down. */
+      #ccDaycareOdds .dc-odds-floatbar {
+        position: sticky; top: 6px; z-index: 3; height: 0;
+        display: none; justify-content: space-between;
+        pointer-events: none;
+      }
+      #ccDaycareOdds .dc-odds-floatbar.show { display: flex; }
+      /* Match the app's sticky back/close glyphs: bare, transparent, with an
+         8-direction bg-color stroke so they read over scrolling content. */
+      #ccDaycareOdds .dc-odds-floatbar button {
+        pointer-events: auto;
+        background: transparent; border: none; padding: 0;
+        color: var(--ui-text, #111);
+        text-shadow:
+          -1px -1px 0 var(--ui-bg, #fff), 0 -1px 0 var(--ui-bg, #fff),  1px -1px 0 var(--ui-bg, #fff),
+          -1px  0   0 var(--ui-bg, #fff),                                1px  0   0 var(--ui-bg, #fff),
+          -1px  1px 0 var(--ui-bg, #fff), 0  1px 0 var(--ui-bg, #fff),  1px  1px 0 var(--ui-bg, #fff);
+        line-height: 1; cursor: pointer; box-sizing: border-box;
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 30px; height: 30px; min-height: 30px; flex-shrink: 0;
+      }
+      #ccDaycareOdds .dc-odds-floatbar .dc-odds-float-back { font-size: 22px; }
+      #ccDaycareOdds .dc-odds-floatbar .dc-odds-float-x { font-size: 26px; padding-bottom: 2px; }
+      #ccDaycareOdds .dc-odds-floatbar button:hover { color: var(--ui-accent, #888); }
+      #ccDaycareOdds .dc-odds-title { margin: 0 0 8px; font-size: 16px; padding: 0 30px; text-align: center; }
       #ccDaycareOdds .dc-odds-intro { font-size: 13px; margin: 0 0 12px; }
       #ccDaycareOdds .dc-odds-empty { font-size: 13px; margin: 4px 0; color: var(--ui-muted, #666); }
       #ccDaycareOdds .dc-odds-slot {
@@ -5753,10 +5791,23 @@
         display: flex; flex-direction: column; gap: 3px;
       }
       #ccDaycareOdds .dc-odds-egglist li {
-        display: flex; justify-content: space-between; gap: 10px;
+        display: flex; align-items: center; gap: 8px;
         font-size: 13px; padding: 4px 8px; border-radius: 6px; background: rgba(128,128,128,0.10);
       }
+      #ccDaycareOdds .dc-odds-egglist li.dc-egg { cursor: pointer; }
+      #ccDaycareOdds .dc-odds-egglist li.dc-egg:hover { background: rgba(128,128,128,0.20); }
       #ccDaycareOdds .dc-odds-egglist li.cross { opacity: 0.82; }
+      #ccDaycareOdds .dc-egg-icon {
+        flex: 0 0 30px; width: 30px; height: 30px;
+        display: flex; align-items: center; justify-content: center;
+      }
+      #ccDaycareOdds .dc-egg-icon img {
+        max-width: 30px; max-height: 30px; object-fit: contain;
+        image-rendering: pixelated; image-rendering: crisp-edges; display: none;
+      }
+      #ccDaycareOdds .dc-odds-egglist li.ready .dc-egg-icon img { display: block; }
+      #ccDaycareOdds .dc-egg-icon.silhouette img { filter: brightness(0); }
+      #ccDaycareOdds .dc-egg-name { flex: 1 1 auto; }
       #ccDaycareOdds .dc-egg-pct { color: var(--ui-muted, #666); font-variant-numeric: tabular-nums; }
       #creatureInventory .daycare-empty {
         padding: 20px 8px; text-align: center;
@@ -7829,8 +7880,17 @@
 
   function popView() {
     if (_viewStack.length > 1) {
-      _viewStack.pop();
+      const popped = _viewStack.pop();
       applyTopView();
+      // If we're leaving a fusion view that was opened from the daycare odds
+      // popup, re-open that popup (restoring its scroll) so back returns the
+      // user to the egg-outcome list, not the bare daycare menu.
+      if (popped && popped.fromDaycareOdds) {
+        _showDaycareOdds();
+        const card = _dcOddsEl && _dcOddsEl.querySelector('.dc-odds-card');
+        if (card) card.scrollTop = popped.dcOddsScrollY || 0;
+        if (_dcOddsEl && _dcOddsEl._updateOddsFloat) _dcOddsEl._updateOddsFloat();
+      }
     } else {
       // Already at the root view — nothing to pop. Stay put.
       applyTopView();
@@ -7875,6 +7935,13 @@
     // tree by default (used when navigating in from a family-tree
     // tile — the user obviously already cares about the family).
     if (opts && opts.expandFamily) state.expandFamily = true;
+    // Opened by tapping an egg outcome in the daycare odds popup — remember so
+    // popping back re-opens that popup (at its saved scroll) instead of just
+    // dropping to the daycare menu.
+    if (opts && opts.fromDaycareOdds) {
+      state.fromDaycareOdds = true;
+      state.dcOddsScrollY = opts.dcOddsScrollY || 0;
+    }
     pushView(state);
   }
 
@@ -8210,6 +8277,7 @@
       `<div class="${cls}" data-slot="${idx}" data-zone="slot">`
       + `<div class="egg-tile slot-egg-tile" data-egg-id="${escapeHtml(egg.id)}" data-from-slot="${idx}" aria-label="${escapeHtml(name)} egg">`
       +   `<div class="tile-art" style="${artStyle}"></div>`
+      +   `<div class="tile-name">${escapeHtml(name)}</div>`
       + `</div>`
       + `<div class="slot-progress" aria-hidden="true"><div class="fill" style="width:${pct}%"></div></div>`
       + `<div class="slot-distance">${_formatIncubationKm(incubatedM)}</div>`
@@ -8986,7 +9054,7 @@
     for (const [x, y] of naturals) add(x, y, natShare / naturals.length, true);
     for (const [x, y] of others) add(x, y, othShare / others.length, false);
     const eggContents = Array.from(agg.values())
-      .map((e) => ({ name: fusionName(e.a, e.b), pct: e.pct, natural: e.natural }))
+      .map((e) => ({ a: e.a, b: e.b, name: fusionName(e.a, e.b), pct: e.pct, natural: e.natural }))
       .sort((p, q) => q.pct - p.pct);
 
     return {
@@ -9034,10 +9102,15 @@
           : ' (100%).')
       + ' Eggs hatch the baby form; the egg’s artwork is random.</div>';
     h += '<ul class="dc-odds-egglist">'
-      + m.eggContents.map((e) =>
-          '<li class="' + (e.natural ? 'natural' : 'cross') + '">'
-          + '<span class="dc-egg-name">' + escapeHtml(e.name) + '</span>'
-          + '<span class="dc-egg-pct">' + _fmtPct(e.pct) + '</span></li>').join('')
+      + m.eggContents.map((e) => {
+          const seen = isFusionSeen(e.a, e.b) || isFusionOwned(e.a, e.b);
+          return '<li class="dc-egg ' + (e.natural ? 'natural' : 'cross') + '" '
+            + 'data-a="' + e.a + '" data-b="' + e.b + '" role="button" tabindex="0" '
+            + 'title="' + escapeHtml(e.name) + ' — open dex entry">'
+            + '<span class="dc-egg-icon' + (seen ? '' : ' silhouette') + '"><img alt=""></span>'
+            + '<span class="dc-egg-name">' + escapeHtml(e.name) + '</span>'
+            + '<span class="dc-egg-pct">' + _fmtPct(e.pct) + '</span></li>';
+        }).join('')
       + '</ul></div>';
     return h;
   }
@@ -9049,18 +9122,65 @@
     root.id = 'ccDaycareOdds';
     root.className = 'dc-odds-overlay';
     root.innerHTML = '<div class="dc-odds-card" role="dialog" aria-modal="true" aria-label="Daycare odds">'
+      + '<button type="button" class="dc-odds-back" aria-label="back">←</button>'
       + '<button type="button" class="dc-odds-close" aria-label="close">×</button>'
+      + '<div class="dc-odds-floatbar">'
+      +   '<button type="button" class="dc-odds-float-back" aria-label="back">←</button>'
+      +   '<button type="button" class="dc-odds-float-x" aria-label="close">×</button>'
+      + '</div>'
       + '<h3 class="dc-odds-title">Daycare odds</h3>'
       + '<div class="dc-odds-content"></div></div>';
     document.body.appendChild(root);
     root.addEventListener('click', (e) => { if (e.target === root) _hideDaycareOdds(); });
-    root.querySelector('.dc-odds-close').addEventListener('click', _hideDaycareOdds);
+    root.querySelectorAll('.dc-odds-back, .dc-odds-close, .dc-odds-float-back, .dc-odds-float-x')
+      .forEach((b) => b.addEventListener('click', _hideDaycareOdds));
+    // Floating back/close cluster — appears once the card is scrolled past its
+    // header, mirroring the main sheet's on-scroll floating controls.
+    const card = root.querySelector('.dc-odds-card');
+    const floatbar = root.querySelector('.dc-odds-floatbar');
+    if (card && floatbar) {
+      const updateFloat = () => floatbar.classList.toggle('show', card.scrollTop > 60);
+      card.addEventListener('scroll', updateFloat, { passive: true });
+      root._updateOddsFloat = updateFloat;   // re-checked after a scroll restore
+    }
     _dcOddsEl = root;
     return root;
+  }
+  // Load each egg-outcome sprite (favorite art if the pure/baby fusion is
+  // seen/caught, else a best-available silhouette — no spoilers) and make each
+  // row tap-to-open its dex entry.
+  function _wireDaycareOddsEggs(root) {
+    if (!root) return;
+    root.querySelectorAll('li.dc-egg[data-a][data-b]').forEach((li) => {
+      const a = +li.dataset.a, b = +li.dataset.b;
+      const img = li.querySelector('img');
+      if (img && global.SpriteStore) {
+        const seen = isFusionSeen(a, b) || isFusionOwned(a, b);
+        const fav = seen ? favoriteArtFor(a, b) : { variant: undefined, shinyVariant: null };
+        global.SpriteStore.showSprite(img, a, b, fav.variant, {
+          shinyVariant: fav.shinyVariant,
+          onReady: () => li.classList.add('ready'),
+        });
+      }
+      const open = () => {
+        const card = root.querySelector('.dc-odds-card');
+        const scrollY = card ? card.scrollTop : 0;
+        _hideDaycareOdds();
+        showFusionView(a, b, null, null, { fromDaycareOdds: true, dcOddsScrollY: scrollY });
+      };
+      li.addEventListener('click', open);
+      li.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+      });
+    });
   }
   function _showDaycareOdds() {
     const root = _ensureDaycareOddsEl();
     root.querySelector('.dc-odds-content').innerHTML = _daycareOddsHtml();
+    _wireDaycareOddsEggs(root);
+    const card = root.querySelector('.dc-odds-card');
+    if (card) card.scrollTop = 0;               // fresh opens start at the top
+    if (root._updateOddsFloat) root._updateOddsFloat();
     root.classList.add('show');
   }
   function _hideDaycareOdds() { if (_dcOddsEl) _dcOddsEl.classList.remove('show'); }

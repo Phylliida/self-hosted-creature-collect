@@ -49,6 +49,8 @@ function build(slots, creatures) {
     ITEMS: { thunder_stone: { name: 'Thunder Stone' } },
     _formatItemName: (k) => k,
     escapeHtml: (s) => String(s),
+    isFusionSeen: () => true,
+    isFusionOwned: () => false,
   };
   vm.createContext(ctx);
   for (const fn of ['_fmtPct(', '_daycareOddsModel()', '_daycareOddsHtml()']) {
