@@ -3392,10 +3392,6 @@
       <label for="debugConsoleToggle">Debug console (errors overlay)</label>
       <input type="checkbox" id="debugConsoleToggle">
     </div>
-    <div class="row">
-      <label for="forceShinyToggle">Force shiny catches (testing)</label>
-      <input type="checkbox" id="forceShinyToggle">
-    </div>
     <div class="row" title="One throw always catches — but the normal odds still run underneath: hidden re-rolls use up extra balls and the shakes run slower, so it costs the same and takes slightly longer than throwing manually. Reduces repeated tapping.">
       <label for="steadyCatchToggle">Guaranteed catch (accessibility)</label>
       <input type="checkbox" id="steadyCatchToggle">
@@ -16290,17 +16286,9 @@ function fmtDate(ts) {
     }
   }
 
-  // Test-only override: when on, every encounter rolls as shiny. The
-  // roll still happens on tap (so re-opening the same spawn keeps the
-  // same shiny variant), and only newly-encountered creatures are
-  // affected — anything already in the inventory is unchanged.
-  const forceShinyToggle = document.getElementById('forceShinyToggle');
-  if (forceShinyToggle) {
-    forceShinyToggle.checked = localStorage.getItem('cc.forceShiny') === '1';
-    forceShinyToggle.addEventListener('change', () => {
-      localStorage.setItem('cc.forceShiny', forceShinyToggle.checked ? '1' : '0');
-    });
-  }
+  // Note: the "Force shiny catches (testing)" settings toggle was removed
+  // from the menu. The underlying hook (_forceShinyOn in creatures.js) still
+  // reads localStorage 'cc.forceShiny', so testers can flip the flag by hand.
 
   // Guaranteed catch (accessibility): one throw always catches, but the
   // same odds run underneath — hidden re-rolls consume extra balls and

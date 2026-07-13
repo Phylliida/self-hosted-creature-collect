@@ -421,6 +421,8 @@
       icon: `${BUNDLED_BASE}/evo-items/${key}.png`,
     };
   }
+  // Fast membership test for bag ordering (see _bagEntryRank).
+  const EVO_ITEM_SET = new Set(EVO_ITEM_KEYS);
   // Items the pokéstop "Collect items" button can grant. Each press
   // samples 1-3 items uniformly from this list (with replacement).
   const COLLECTIBLE_ITEM_KEYS = ['poke_ball', 'great_ball'];
@@ -5696,8 +5698,11 @@
       #creatureInventory .daycare-detail-empty {
         color: var(--ui-muted, #666); font-style: italic;
       }
-      /* Daycare odds "i" button (next to the title) + its popup */
-      #creatureInventory .dc-odds-info {
+      /* Round "i" info button (next to a subview title) + its popup. Shared
+         between the daycare-odds button (.dc-odds-info) and any other explainer
+         (.cc-info-btn, e.g. the craft/incense one). */
+      #creatureInventory .dc-odds-info,
+      #creatureInventory .cc-info-btn {
         -webkit-appearance: none; appearance: none;
         margin-left: 8px; width: 20px; height: 20px; padding: 0;
         border-radius: 50%; border: 1px solid var(--ui-border, rgba(0,0,0,0.2));
@@ -5705,7 +5710,8 @@
         font-size: 12px; font-style: italic; font-weight: 700; line-height: 18px;
         text-align: center; cursor: pointer; vertical-align: middle;
       }
-      #creatureInventory .dc-odds-info:hover { color: var(--ui-text, #111); }
+      #creatureInventory .dc-odds-info:hover,
+      #creatureInventory .cc-info-btn:hover { color: var(--ui-text, #111); }
       #ccDaycareOdds {
         position: fixed; inset: 0; z-index: 60; padding: 16px;
         background: rgba(0,0,0,0.55);
@@ -5809,6 +5815,152 @@
       #ccDaycareOdds .dc-egg-icon.silhouette img { filter: brightness(0); }
       #ccDaycareOdds .dc-egg-name { flex: 1 1 auto; }
       #ccDaycareOdds .dc-egg-pct { color: var(--ui-muted, #666); font-variant-numeric: tabular-nums; }
+
+      /* ── Generic info modal (reusable explainer popup) ──
+         Same full-screen card chrome as #ccDaycareOdds, but content-agnostic
+         and with a back button that pops an internal view stack (or closes at
+         the root). Used by the craft "How incense works" explainer + its type
+         chart sub-view; reusable by future "i" popups. */
+      #ccInfoModal {
+        position: fixed; inset: 0; z-index: 60; padding: 16px;
+        background: rgba(0,0,0,0.55);
+        display: none; align-items: center; justify-content: center;
+        opacity: 0; pointer-events: none; transition: opacity 150ms ease;
+      }
+      #ccInfoModal.show { display: flex; opacity: 1; pointer-events: auto; }
+      #ccInfoModal .cc-modal-card {
+        position: relative;
+        background: var(--ui-bg, #fff); color: var(--ui-text, #111);
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
+        border-radius: var(--ui-radius, 12px);
+        box-shadow: var(--ui-shadow, 0 6px 24px rgba(0,0,0,0.25));
+        width: calc(100% - 8px); max-width: 380px; max-height: 82vh; overflow-y: auto;
+        padding: 16px 18px 18px;
+      }
+      #ccInfoModal .cc-modal-back,
+      #ccInfoModal .cc-modal-close {
+        position: absolute; top: 8px; z-index: 2;
+        width: 30px; height: 30px; min-height: 30px; padding: 0;
+        border: none; background: transparent; color: var(--ui-text, #111);
+        text-shadow:
+          -1px -1px 0 var(--ui-bg, #fff), 0 -1px 0 var(--ui-bg, #fff),  1px -1px 0 var(--ui-bg, #fff),
+          -1px  0   0 var(--ui-bg, #fff),                                1px  0   0 var(--ui-bg, #fff),
+          -1px  1px 0 var(--ui-bg, #fff), 0  1px 0 var(--ui-bg, #fff),  1px  1px 0 var(--ui-bg, #fff);
+        line-height: 1; cursor: pointer; box-sizing: border-box;
+        display: inline-flex; align-items: center; justify-content: center;
+      }
+      #ccInfoModal .cc-modal-back { left: 8px; font-size: 22px; }
+      #ccInfoModal .cc-modal-close { right: 8px; font-size: 26px; padding-bottom: 2px; }
+      #ccInfoModal .cc-modal-back:hover,
+      #ccInfoModal .cc-modal-close:hover { color: var(--ui-accent, #888); }
+      #ccInfoModal .cc-modal-floatbar {
+        position: sticky; top: 6px; z-index: 3; height: 0;
+        display: none; justify-content: space-between; pointer-events: none;
+      }
+      #ccInfoModal .cc-modal-floatbar.show { display: flex; }
+      #ccInfoModal .cc-modal-floatbar button {
+        pointer-events: auto; background: transparent; border: none; padding: 0;
+        color: var(--ui-text, #111);
+        text-shadow:
+          -1px -1px 0 var(--ui-bg, #fff), 0 -1px 0 var(--ui-bg, #fff),  1px -1px 0 var(--ui-bg, #fff),
+          -1px  0   0 var(--ui-bg, #fff),                                1px  0   0 var(--ui-bg, #fff),
+          -1px  1px 0 var(--ui-bg, #fff), 0  1px 0 var(--ui-bg, #fff),  1px  1px 0 var(--ui-bg, #fff);
+        line-height: 1; cursor: pointer; box-sizing: border-box;
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 30px; height: 30px; min-height: 30px; flex-shrink: 0;
+      }
+      #ccInfoModal .cc-modal-floatbar .cc-modal-float-back { font-size: 22px; }
+      #ccInfoModal .cc-modal-floatbar .cc-modal-float-x { font-size: 26px; padding-bottom: 2px; }
+      #ccInfoModal .cc-modal-floatbar button:hover { color: var(--ui-accent, #888); }
+      #ccInfoModal .cc-modal-title { margin: 0 0 10px; font-size: 16px; padding: 0 30px; text-align: center; }
+      /* Content typography — mirrors the daycare-odds body scale. */
+      #ccInfoModal .cc-modal-content { font-size: 13px; }
+      #ccInfoModal .cc-info-p { font-size: 13px; margin: 0 0 12px; line-height: 1.5; }
+      #ccInfoModal .cc-info-section {
+        border: 1px solid var(--ui-hairline, rgba(0,0,0,0.08));
+        border-radius: var(--ui-radius, 8px); padding: 10px 12px; margin-bottom: 10px;
+      }
+      #ccInfoModal .cc-info-section-title { font-weight: 600; margin-bottom: 6px; }
+      #ccInfoModal .cc-info-row { display: flex; gap: 8px; margin-top: 4px; font-size: 12.5px; }
+      #ccInfoModal .cc-info-k { color: var(--ui-muted, #666); flex: 0 0 96px; }
+      #ccInfoModal .cc-info-v { flex: 1 1 auto; }
+      #ccInfoModal .cc-info-note { color: var(--ui-muted, #666); font-size: 12px; font-style: italic; }
+      #ccInfoModal .cc-info-mult { font-weight: 700; }
+      /* Odds bar — a stacked horizontal bar for the "other slot" split. */
+      #ccInfoModal .cc-oddsbar {
+        display: flex; height: 22px; border-radius: 6px; overflow: hidden;
+        margin: 8px 0 4px; border: 1px solid var(--ui-hairline, rgba(0,0,0,0.10));
+      }
+      #ccInfoModal .cc-oddsbar-seg {
+        display: flex; align-items: center; justify-content: center;
+        font-size: 10.5px; font-weight: 700; color: #fff;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.35); overflow: hidden; white-space: nowrap;
+        min-width: 0;
+      }
+      #ccInfoModal .cc-oddsbar-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; }
+      #ccInfoModal .cc-oddsbar-legend span {
+        display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px;
+        color: var(--ui-muted, #666);
+      }
+      #ccInfoModal .cc-oddsbar-legend i {
+        width: 10px; height: 10px; border-radius: 2px; display: inline-block; flex-shrink: 0;
+      }
+      /* "Open type chart" launcher row. */
+      #ccInfoModal .cc-info-link {
+        -webkit-appearance: none; appearance: none;
+        display: flex; align-items: center; justify-content: space-between; gap: 8px;
+        width: 100%; margin-top: 4px; padding: 11px 12px;
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+        border: 1px solid var(--ui-hairline, rgba(0,0,0,0.10));
+        border-radius: var(--ui-radius, 8px);
+        font-family: inherit; font-size: 13px; font-weight: 600;
+        color: var(--ui-text, #111); cursor: pointer; text-align: left;
+      }
+      #ccInfoModal .cc-info-link:hover { background: var(--ui-hover, rgba(0,0,0,0.08)); }
+      #ccInfoModal .cc-info-link .cc-info-link-arrow { color: var(--ui-muted, #666); font-size: 16px; }
+      /* Type chips (reuse the app's colored type-chip look at a compact size). */
+      #ccInfoModal .cc-typechips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+      #ccInfoModal .cc-typechip {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.02em;
+        padding: 3px 8px; border-radius: 999px; color: #fff;
+        text-shadow: 0 1px 1px rgba(0,0,0,0.25); white-space: nowrap;
+      }
+      #ccInfoModal .cc-typechip.dim { opacity: 0.42; }
+      /* Type picker grid for the type-chart explorer. */
+      #ccInfoModal .cc-typegrid {
+        display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 8px 0 12px;
+      }
+      #ccInfoModal .cc-typegrid button {
+        -webkit-appearance: none; appearance: none; font-family: inherit;
+        padding: 7px 4px; border-radius: 8px; border: 2px solid transparent;
+        font-size: 11.5px; font-weight: 700; color: #fff;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.3); cursor: pointer; min-width: 0;
+      }
+      #ccInfoModal .cc-typegrid button.sel {
+        border-color: var(--ui-text, #111);
+        box-shadow: 0 0 0 2px var(--ui-bg, #fff) inset;
+      }
+      #ccInfoModal .cc-typedetail {
+        border: 1px solid var(--ui-hairline, rgba(0,0,0,0.10));
+        border-radius: var(--ui-radius, 8px); padding: 12px; margin-top: 4px;
+      }
+      #ccInfoModal .cc-typedetail-head {
+        display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
+      }
+      #ccInfoModal .cc-typedetail-name { font-size: 15px; font-weight: 700; }
+      #ccInfoModal .cc-typedetail-block { margin-top: 10px; }
+      #ccInfoModal .cc-typedetail-block .cc-tdb-label {
+        font-size: 12px; font-weight: 600; margin-bottom: 2px;
+        display: flex; align-items: center; gap: 6px;
+      }
+      #ccInfoModal .cc-typedetail-block .cc-tdb-mult {
+        font-size: 10.5px; font-weight: 800; padding: 1px 6px; border-radius: 999px;
+        color: #fff;
+      }
+      #ccInfoModal .cc-tdb-mult.good { background: #2ca05a; }
+      #ccInfoModal .cc-tdb-mult.bad  { background: #b06a3a; }
+      #ccInfoModal .cc-tdb-mult.craft { background: #5b8cff; }
+      #ccInfoModal .cc-typedetail-block .cc-tdb-none { font-size: 12px; color: var(--ui-muted, #666); font-style: italic; }
       #creatureInventory .daycare-empty {
         padding: 20px 8px; text-align: center;
         color: var(--ui-muted, #666); font-size: 13px;
@@ -7127,7 +7279,7 @@
         </div>
         <div class="craft-view">
           <button class="craft-back" type="button" aria-label="back">←</button>
-          <h3 class="subview-title craft-title">Craft</h3>
+          <h3 class="subview-title craft-title"><span class="craft-title-text">Craft</span><button class="cc-info-btn craft-info" type="button" aria-label="How incense works" title="How incense works">i</button></h3>
           <div class="craft-body"></div>
         </div>
         <div class="tags-view">
@@ -7457,6 +7609,10 @@
     panel.querySelector('.eggs-back').addEventListener('click', popView);
     panel.querySelector('.bag-back').addEventListener('click', popView);
     panel.querySelector('.craft-back').addEventListener('click', _craftBack);
+    {
+      const craftInfo = panel.querySelector('.craft-info');
+      if (craftInfo) craftInfo.addEventListener('click', (e) => { e.stopPropagation(); _showIncenseInfo(); });
+    }
     panel.querySelector('.tags-back').addEventListener('click', popView);
     panel.querySelector('.completion-back').addEventListener('click', popView);
     panel.querySelector('.speciesdex-back').addEventListener('click', popView);
@@ -8623,6 +8779,31 @@
   // broken alphabetically by display name. Items with no catalog entry
   // (e.g. forward-compat from a future build) still render via their
   // raw key so nothing silently disappears.
+  // Category rank for the bag list: incense first, then evolution
+  // items, then poké balls, then anything else (e.g. the test_orb
+  // placeholder). Lower rank sorts higher in the list.
+  function _bagEntryRank(key) {
+    const meta = ITEMS[key] || {};
+    if (meta.incenseType) return 0;         // incense
+    if (EVO_ITEM_SET.has(key)) return 1;    // evolution items
+    if (meta.catchShakeRate) return 2;      // poké balls
+    return 3;                               // everything else
+  }
+  // Bag entries ([key, count]) with empties dropped, ordered by
+  // category (incense → evo → balls → other), then count-desc, then
+  // display name. Pulled out of renderBag so it can be unit-tested.
+  function _sortedBagEntries(bag) {
+    return Object.entries(bag)
+      .filter(([, n]) => n > 0)
+      .sort((a, b) => {
+        const ra = _bagEntryRank(a[0]), rb = _bagEntryRank(b[0]);
+        if (ra !== rb) return ra - rb;
+        if (b[1] !== a[1]) return b[1] - a[1];
+        const na = (ITEMS[a[0]] && ITEMS[a[0]].name) || a[0];
+        const nb = (ITEMS[b[0]] && ITEMS[b[0]].name) || b[0];
+        return na.localeCompare(nb);
+      });
+  }
   function renderBag() {
     const panel = document.getElementById('creatureInventory');
     if (!panel) return;
@@ -8652,14 +8833,7 @@
       });
     };
     const bag = readBag();
-    const entries = Object.entries(bag)
-      .filter(([, n]) => n > 0)
-      .sort((a, b) => {
-        if (b[1] !== a[1]) return b[1] - a[1];
-        const na = (ITEMS[a[0]] && ITEMS[a[0]].name) || a[0];
-        const nb = (ITEMS[b[0]] && ITEMS[b[0]].name) || b[0];
-        return na.localeCompare(nb);
-      });
+    const entries = _sortedBagEntries(bag);
     if (!entries.length) {
       body.innerHTML = craftBtnHtml + bannerHtml + `
         <div class="bag-empty">Bag is empty.</div>
@@ -8754,7 +8928,9 @@
   }
   function _craftSetTitle(text) {
     const panel = document.getElementById('creatureInventory');
-    const t = panel && panel.querySelector('.craft-view .craft-title');
+    // Only the text span is overwritten — the ".craft-info" (i) button lives
+    // alongside it in the header and must survive per-step title changes.
+    const t = panel && panel.querySelector('.craft-view .craft-title-text');
     if (t) t.textContent = text;
   }
   function renderCraft() {
@@ -9253,6 +9429,14 @@
       );
     }
     const selMeters = map[selDay] || 0;
+    // Is a route overlay currently on the map, and does it match this
+    // button? `_activeDaycareOverlay` is tracked module-side (see the
+    // "Daycare path overlay" section). When it matches, the button
+    // becomes a "Hide …" toggle instead of "Show …".
+    const dayOverlayActive = !!(_activeDaycareOverlay
+      && _activeDaycareOverlay.dayKey === selDay);
+    const allOverlayActive = !!(_activeDaycareOverlay
+      && _activeDaycareOverlay.allDays);
     const selDate = (() => {
       const parts = selDay.split('-').map(Number);
       const d = new Date(parts[0], parts[1] - 1, parts[2]);
@@ -9337,8 +9521,8 @@
       </div>
       <div class="daycare-cal-grid">${dowHtml}${cells.join('')}</div>
       <div class="daycare-detail">${detailHtml}</div>
-      <button class="daycare-show-on-map" type="button">Show on map</button>
-      <button class="daycare-show-all-on-map" type="button">Show all on map</button>
+      <button class="daycare-show-on-map" type="button">${dayOverlayActive ? 'Hide on map' : 'Show on map'}</button>
+      <button class="daycare-show-all-on-map" type="button">${allOverlayActive ? 'Hide all on map' : 'Show all on map'}</button>
     `;
     // Slot click → open the creature's detail. Async sprite hydration
     // mirrors detail-view's pattern: drop a placeholder, then swap in
@@ -9478,6 +9662,14 @@
     const showBtn = body.querySelector('.daycare-show-on-map');
     if (showBtn) {
       showBtn.addEventListener('click', () => {
+        // Toggle: if the selected day's route is already overlaid, clear
+        // it (and re-render so the label flips back to "Show on map").
+        if (_activeDaycareOverlay
+            && _activeDaycareOverlay.dayKey === _daycareCalState.selDay) {
+          _clearDaycarePathOverlay();
+          renderDaycare(opts);
+          return;
+        }
         showDaycarePathOnMap(_daycareCalState.selDay).catch((e) => {
           console.error('showDaycarePathOnMap failed', e);
         });
@@ -9486,6 +9678,13 @@
     const showAllBtn = body.querySelector('.daycare-show-all-on-map');
     if (showAllBtn) {
       showAllBtn.addEventListener('click', () => {
+        // Toggle: if the combined all-days route is already overlaid,
+        // clear it (and re-render so the label flips back).
+        if (_activeDaycareOverlay && _activeDaycareOverlay.allDays) {
+          _clearDaycarePathOverlay();
+          renderDaycare(opts);
+          return;
+        }
         showAllDaycarePathsOnMap().catch((e) => {
           console.error('showAllDaycarePathsOnMap failed', e);
         });
