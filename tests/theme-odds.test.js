@@ -101,6 +101,57 @@ ok(sawSame > 0, 'swept days include at least one daily===weekly day');
   global.Species = saved;
 }
 
+// ── Part 1b: Spawns.typePairOdds joint-grid math ────────────────────────
+// The detailed "both type-halves" diagram: joint odds over the 3×3 grid of
+// {daily, weekly, other} × {daily, weekly, other}. Must sum to 1, and its
+// per-slot marginals must reconstruct the typeOdds() marginals exactly (since
+// typeOdds is the average of the primary- and secondary-slot marginals).
+let sawPairDistinct = 0, sawPairSame = 0;
+for (let d = 0; d < 400; d++) {
+  const now = d * DAY + 12 * 3600000;
+  const p = S.typePairOdds(now);
+  const o = S.typeOdds(now);
+  ok(p != null, 'day ' + d + ': typePairOdds returns an object');
+  if (!p) continue;
+
+  // classes track the same-flag: 2 classes when a single type is boosted on
+  // both channels, else 3.
+  ok(p.same === o.same, 'day ' + d + ': pair.same matches typeOdds.same');
+  ok(p.classes.length === (p.same ? 2 : 3),
+    'day ' + d + ': ' + (p.same ? 2 : 3) + ' classes');
+
+  // Whole grid is a probability distribution: every cell >= 0, all sum to 1.
+  let gsum = 0, allNonNeg = true;
+  for (const rc of p.classes) for (const cc of p.classes) {
+    if (!(p.grid[rc][cc] >= 0)) allNonNeg = false;
+    gsum += p.grid[rc][cc];
+  }
+  ok(allNonNeg, 'day ' + d + ': all grid cells non-negative');
+  ok(Math.abs(gsum - 1) < 1e-9, 'day ' + d + ': grid sums to 1');
+
+  // Per-slot marginals reconstruct typeOdds shares:
+  //   typeOdds share of class C == (primary-marginal(C) + secondary-marginal(C)) / 2
+  const shareOf = { daily: o.dailyShare, weekly: o.same ? 0 : o.weeklyShare, other: o.otherShare };
+  for (const C of p.classes) {
+    let row = 0, col = 0;
+    for (const cc of p.classes) row += p.grid[C][cc];   // primary == C
+    for (const rc of p.classes) col += p.grid[rc][C];   // secondary == C
+    ok(Math.abs((row + col) / 2 - shareOf[C]) < 1e-9,
+      'day ' + d + ': class ' + C + ' marginals reconstruct typeOdds share');
+  }
+
+  if (p.same) sawPairSame++; else sawPairDistinct++;
+}
+ok(sawPairDistinct > 0, 'pair sweep includes distinct-weather days');
+ok(sawPairSame > 0, 'pair sweep includes at least one same-weather day');
+
+// Deterministic for a fixed timestamp.
+{
+  const a = S.typePairOdds(50 * DAY), b = S.typePairOdds(50 * DAY);
+  ok(a.daily === b.daily && a.grid.daily.daily === b.grid.daily.daily,
+    'typePairOdds is deterministic for a fixed timestamp');
+}
+
 // ── Part 2: _themeOddsHtml rendering ────────────────────────────────────
 const src = fs.readFileSync(path.join(__dirname, '..', 'static', 'creatures.js'), 'utf8');
 function extract(marker) {
@@ -131,7 +182,7 @@ const TYPE_COLORS = {
 };
 const ctx = {
   Object, Set, Array, Math, String, Number, JSON,
-  global: { Spawns: { typeOdds: () => null } },
+  global: { Spawns: { typeOdds: () => null, typePairOdds: () => null } },
   TYPE_COLORS,
 };
 vm.createContext(ctx);
@@ -140,6 +191,7 @@ for (const m of [
   'function _titleCaseType(',
   'function _ccOddsSeg(',
   'function _ccOddsLegend(',
+  'function _ccOddsGrid(',
   'function _themeOddsHtml(',
 ]) vm.runInContext(extract(m), ctx);
 const call = (expr) => vm.runInContext(expr, ctx);
@@ -185,6 +237,85 @@ const call = (expr) => vm.runInContext(expr, ctx);
   ok(/today &amp; this week/.test(h), 'P2: same-type legend merges today & this week');
   ok(h.indexOf('boosted extra hard') >= 0, 'P2: same-type note explains the double boost');
   ok(h.indexOf('17 types') >= 0, 'P2: same-type "other" splits over the remaining 17 types');
+}
+
+// Detailed pair grid — distinct weather ⇒ full 3×3 matrix.
+{
+  ctx.global.Spawns.typeOdds = () => ({
+    daily: 'FIRE', weekly: 'WATER', same: false,
+    dailyShare: 0.42, weeklyShare: 0.27, otherShare: 0.31, perType: {},
+  });
+  ctx.global.Spawns.typePairOdds = () => ({
+    daily: 'FIRE', weekly: 'WATER', same: false,
+    classes: ['daily', 'weekly', 'other'],
+    grid: {
+      daily:  { daily: 0.15, weekly: 0.10, other: 0.14 },
+      weekly: { daily: 0.10, weekly: 0.08, other: 0.07 },
+      other:  { daily: 0.14, weekly: 0.07, other: 0.05 },
+    },
+  });
+  const h = call('_themeOddsHtml()');
+  ok(h.indexOf('Both type-halves') >= 0, 'P2: grid section titled "Both type-halves"');
+  const cells = (h.match(/cc-oddsgrid-cell/g) || []).length;
+  ok(cells === 9, 'P2: distinct weather ⇒ 3×3 = 9 grid cells (got ' + cells + ')');
+  const heads = (h.match(/cc-oddsgrid-head/g) || []).length;
+  ok(heads === 6, 'P2: 3 column + 3 row headers (got ' + heads + ')');
+  ok(h.indexOf('cc-oddsgrid-corner') >= 0 && h.indexOf('1st ↓') >= 0,
+    'P2: grid has an oriented corner cell');
+  ok(h.indexOf('15%') >= 0 && h.indexOf('14%') >= 0 && h.indexOf('5%') >= 0,
+    'P2: grid renders the rounded joint percentages');
+  ok(/cc-oddsgrid-cell hot/.test(h), 'P2: the busiest cell gets the "hot" (white-text) class');
+  ok(h.indexOf('no eligible species') < 0, 'P2: no 0% cell ⇒ no empty-pool note');
+}
+
+// Grid with an exact-0 cell (empty pool) ⇒ the explanatory 0% note appears.
+{
+  ctx.global.Spawns.typeOdds = () => ({
+    daily: 'FIRE', weekly: 'STEEL', same: false,
+    dailyShare: 0.5, weeklyShare: 0.2, otherShare: 0.3, perType: {},
+  });
+  ctx.global.Spawns.typePairOdds = () => ({
+    daily: 'FIRE', weekly: 'STEEL', same: false,
+    classes: ['daily', 'weekly', 'other'],
+    grid: {
+      daily:  { daily: 0.30, weekly: 0.00, other: 0.25 },
+      weekly: { daily: 0.15, weekly: 0.00, other: 0.10 },
+      other:  { daily: 0.15, weekly: 0.00, other: 0.05 },
+    },
+  });
+  const h = call('_themeOddsHtml()');
+  ok(h.indexOf('no eligible species') >= 0, 'P2: a 0% cell ⇒ shows the empty-pool note');
+}
+
+// Detailed pair grid — same weather ⇒ 2×2 matrix, one boosted type.
+{
+  ctx.global.Spawns.typeOdds = () => ({
+    daily: 'GHOST', weekly: 'GHOST', same: true,
+    dailyShare: 0.55, weeklyShare: 0.55, otherShare: 0.45, perType: {},
+  });
+  ctx.global.Spawns.typePairOdds = () => ({
+    daily: 'GHOST', weekly: 'GHOST', same: true,
+    classes: ['daily', 'other'],
+    grid: { daily: { daily: 0.47, other: 0.22 }, other: { daily: 0.23, other: 0.08 } },
+  });
+  const h = call('_themeOddsHtml()');
+  const cells = (h.match(/cc-oddsgrid-cell/g) || []).length;
+  ok(cells === 4, 'P2: same weather ⇒ 2×2 = 4 grid cells (got ' + cells + ')');
+  const heads = (h.match(/cc-oddsgrid-head/g) || []).length;
+  ok(heads === 4, 'P2: 2 column + 2 row headers (got ' + heads + ')');
+  ok(h.indexOf('47%') >= 0, 'P2: same-weather grid shows joint percentages');
+}
+
+// typePairOdds unavailable ⇒ grid section omitted, rest still renders.
+{
+  ctx.global.Spawns.typeOdds = () => ({
+    daily: 'FIRE', weekly: 'WATER', same: false,
+    dailyShare: 0.42, weeklyShare: 0.27, otherShare: 0.31, perType: {},
+  });
+  ctx.global.Spawns.typePairOdds = () => null;
+  const h = call('_themeOddsHtml()');
+  ok(h.indexOf('cc-oddsgrid') < 0, 'P2: null pair odds ⇒ no grid rendered');
+  ok(h.indexOf('cc-oddsbar-seg') >= 0, 'P2: summary bar still renders without the grid');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
