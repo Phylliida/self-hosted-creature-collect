@@ -3398,6 +3398,10 @@
         aria-label="How guaranteed catch works" title="How guaranteed catch works">i</button>
       <input type="checkbox" id="steadyCatchToggle">
     </div>
+    <div class="row" title="When on, radar blips that use auto-generated art (no hand-drawn variant) get a small 'autogen' label — so you can tell whether a distant target is worth the walk.">
+      <label for="radarAutogenToggle">Show autogen labels on radar</label>
+      <input type="checkbox" id="radarAutogenToggle">
+    </div>
     <div class="settings-subsection">
       <h4 class="settings-subsection-title">
         Visibility
@@ -7532,6 +7536,9 @@ function fmtDate(ts) {
       regionsMode: localStorage.getItem('cc.regionsMode'),
       // "Auto-backup daily on WiFi" toggle, so the preference travels too.
       autoBackup: localStorage.getItem('cc.autoBackup'),
+      // "Show autogen labels on radar" toggle — a display preference, carried
+      // across devices alongside the other opt-in toggles.
+      radarAutogenLabels: localStorage.getItem('cc.radarAutogenLabels'),
       // Active incense ({type, startMs}) so a burning incense keeps its
       // remaining time across devices / restarts.
       activeIncense: (window.Creatures && window.Creatures.getActiveIncense)
@@ -7878,6 +7885,9 @@ function fmtDate(ts) {
     }
     if (data.autoBackup === '1' || data.autoBackup === '0') {
       localStorage.setItem('cc.autoBackup', data.autoBackup);
+    }
+    if (data.radarAutogenLabels === '1' || data.radarAutogenLabels === '0') {
+      localStorage.setItem('cc.radarAutogenLabels', data.radarAutogenLabels);
     }
     if (data.regionsMode === 'bbox-flask' || data.regionsMode === 'static-flask' ||
         data.regionsMode === 'static-hf') {
@@ -16312,6 +16322,19 @@ function fmtDate(ts) {
     steadyCatchInfoBtn.addEventListener('click', () => {
       if (window.Creatures && typeof window.Creatures.showSteadyCatchInfo === 'function') {
         window.Creatures.showSteadyCatchInfo();
+      }
+    });
+  }
+
+  // "Show autogen labels on radar" — creatures.js reads cc.radarAutogenLabels
+  // per blip; poke rerenderRadar() so a live radar reflects the flip at once.
+  const radarAutogenToggle = document.getElementById('radarAutogenToggle');
+  if (radarAutogenToggle) {
+    radarAutogenToggle.checked = localStorage.getItem('cc.radarAutogenLabels') === '1';
+    radarAutogenToggle.addEventListener('change', () => {
+      localStorage.setItem('cc.radarAutogenLabels', radarAutogenToggle.checked ? '1' : '0');
+      if (window.Creatures && typeof window.Creatures.rerenderRadar === 'function') {
+        window.Creatures.rerenderRadar();
       }
     });
   }

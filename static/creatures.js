@@ -6179,6 +6179,15 @@
           drop-shadow(0 1.3px 0 #ffcb2e) drop-shadow(0 -1.3px 0 #ffcb2e);
       }
       .radar-marker.radar-legendary .radar-marker-label { background: rgba(184,134,11,0.94); }
+      /* Autogen status pill (Settings → "Show autogen labels on radar"). Uses
+         the same accent that marks the pokedex autogen art badge, and is
+         smaller than the countdown pill so the timer stays the primary read. */
+      .radar-marker-autogen {
+        font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+        color: #fff; background: var(--ui-accent, #b6896c);
+        padding: 0 5px; border-radius: 999px; white-space: nowrap; margin-bottom: 3px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.4); pointer-events: none;
+      }
       #creatureInventory .craft-hint {
         font-size: 12px; color: var(--ui-muted, #666);
         text-align: center; margin: 0 0 12px;
@@ -13589,6 +13598,7 @@
   // a live countdown above each, so you can navigate toward one. A radar-scope
   // bubble button (above the focus button) turns it off. State persists.
   const RADAR_ACTIVE_KEY = 'cc.radar.v1';
+  const RADAR_AUTOGEN_LABEL_KEY = 'cc.radarAutogenLabels';  // Settings toggle, carried in the save file
   const RADAR_COUNT = 5;                 // how many nearest blips to show
   const RADAR_RESCAN_MS = 8000;          // throttle the nearest-set recompute
   const _radarMarkers = new Map();       // spawn.id -> { marker, el, spawn }
@@ -13602,6 +13612,23 @@
     if (h > 0) return h + 'h ' + m + 'm';
     if (m > 0) return m + 'm';
     return '<1m';
+  }
+
+  // Settings → "Show autogen labels on radar" (persisted in the save file).
+  // When on, a radar blip whose fusion has no custom art gets a small
+  // "autogen" pill — the same signal the pokedex art grid uses — so a player
+  // can tell at a glance whether a distant target is worth walking to.
+  // Read live each call so the toggle can flip mid-session.
+  function _radarAutogenLabelsOn() {
+    try { return localStorage.getItem(RADAR_AUTOGEN_LABEL_KEY) === '1'; }
+    catch { return false; }
+  }
+  // Pure gate: label a blip "autogen" only when the setting is on AND the
+  // fusion has zero custom variants. Mirrors the pokedex, which treats a
+  // 0 (or failed → 0) variant count as autogen. Kept tiny + pure so
+  // tests/radar-autogen-label.test.js can pin the decision.
+  function _radarShouldLabelAutogen(settingOn, variantCount) {
+    return settingOn === true && variantCount === 0;
   }
 
   // Radar-scope bubble button — mirrors the daycare route bubble: joins the
@@ -13685,6 +13712,23 @@
         onReady: () => el.classList.add('ready'),
       });
     }
+    // "autogen" pill (Settings-gated): the variant count is O(1) once the
+    // sprite summary has loaded, so resolve it async and drop the pill under
+    // the countdown when the fusion has no hand-drawn art. Re-check the
+    // setting inside .then() in case it flipped while the lookup was pending.
+    if (_radarAutogenLabelsOn() && global.Sprites && global.Sprites.getCellVariantCount) {
+      global.Sprites.getCellVariantCount(sp.speciesA, sp.speciesB)
+        .catch(() => 0)
+        .then((count) => {
+          if (!_radarShouldLabelAutogen(_radarAutogenLabelsOn(), count)) return;
+          if (el.querySelector('.radar-marker-autogen')) return;
+          const pill = document.createElement('div');
+          pill.className = 'radar-marker-autogen';
+          pill.textContent = 'autogen';
+          const img = el.querySelector('.radar-marker-img');
+          el.insertBefore(pill, img);   // between the countdown pill and the silhouette
+        });
+    }
     return el;
   }
   function _radarEnsureMarker(sp) {
@@ -13758,6 +13802,15 @@
     try { _radarActive = localStorage.getItem(RADAR_ACTIVE_KEY) === '1'; } catch (e) { _radarActive = false; }
     _ensureRadarBubble();      // the toggle button is always on the map
     _updateRadarBubble();
+    refreshRadarMarkers(true);
+  }
+  // Rebuild every live blip from scratch. Markers are cached + reused across
+  // refreshes, so a setting that changes a blip's contents (the autogen label)
+  // won't show on existing blips until they're recreated — the Settings toggle
+  // calls this so the change is visible immediately while the radar is on.
+  function rerenderRadarMarkers() {
+    if (!_radarActive) return;
+    _radarClearMarkers();
     refreshRadarMarkers(true);
   }
 
@@ -14160,6 +14213,9 @@
     // Settings "i" bubble → guaranteed-catch explainer popup (reuses the
     // generic info modal). Called from index.html's settings wiring.
     showSteadyCatchInfo: _showSteadyCatchInfo,
+    // Settings → "Show autogen labels on radar": rebuild live blips so the
+    // toggle takes effect immediately (see rerenderRadarMarkers).
+    rerenderRadar: rerenderRadarMarkers,
     // Collection persistence now lives in IndexedDB (creature-collection-v1).
     // ready() resolves when the in-memory caches have hydrated + the
     // one-time localStorage→IDB migration has run. Export/import in

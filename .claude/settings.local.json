@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__verus__lookup_source",
+      "mcp__verus__search",
+      "mcp__verus__check",
+      "Bash(nvidia-smi --query-gpu=name,memory.total,memory.used,memory.free --format=csv,noheader)",
+      "Bash(rocm-smi --showmeminfo vram)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "verus"
+  ],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c '\nimport sys,json,re\nd=json.load(sys.stdin)\nt=d.get(\"tool_input\",{})\ncontent=t.get(\"new_string\",\"\") or t.get(\"content\",\"\") or \"\"\npath=t.get(\"file_path\",\"\") or \"\"\nif path.endswith(\".rs\") and re.search(r\"\\bassume\\b|\\badmit\\b|external_body\",content):\n    json.dump({\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"FORBIDDEN in Verus: This edit contains assume, admit, or external_body. These bypass the verifier and create unsound proofs -- any property can be proven without actually being true. The goal is full end-to-end verification with no soundness holes.\"}},sys.stdout)\nelse:\n    print(\"{}\")\n'",
+            "timeout": 5,
+            "statusMessage": "Checking for forbidden Verus patterns..."
+          }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "bash /home/bepis/prog/SimpleBot/repos/self-hosted-creature-collect/statusline.sh"
+  },
+  "sandbox": {
+    "enabled": false,
+    "autoAllowBashIfSandboxed": false
+  }
+}
