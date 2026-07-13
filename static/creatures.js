@@ -1228,6 +1228,10 @@
     eggs.splice(idx, 1);
     writeEggs(eggs);
     removeFromIncubator(eggId);
+    // Any hatch (map bubble, eggs-view "Tap to hatch", future callers) may have
+    // been the last ready egg — re-evaluate the map's hatch bubble so it hides
+    // once nothing is left to hatch (and stays up if a sibling is still ready).
+    _updateEggBubble();
     return entry;
   }
 
@@ -13818,6 +13822,94 @@
     }
   }
 
+  // Egg-ready bubble button — mirrors the radar / daycare route bubbles: joins
+  // the bottom-right control cluster, reordered to the top. HIDDEN unless at
+  // least one incubated egg has finished (eggReadyToHatch === true). Tapping it
+  // hatches the ready egg and jumps straight to the new creature's detail page —
+  // the one-tap "your egg hatched!" shortcut, so the user doesn't have to open
+  // Eggs → incubator → "Tap to hatch". Accent-tinted since it only ever appears
+  // when it's actionable (it's a call-to-action, not an always-on toggle).
+  let _eggBubbleCtrl = null;
+  let _eggBubbleTickWired = false;
+  let _eggHatchInFlight = false;
+  class _EggReadyBubbleControl {
+    onAdd(map) {
+      this._map = map;
+      const container = document.createElement('div');
+      container.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+      container.style.display = 'none';   // shown only while an egg is ready
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'cc-egg-bubble-btn';
+      btn.title = 'Hatch ready egg';
+      btn.setAttribute('aria-label', 'Hatch ready egg');
+      btn.style.cssText = 'display:flex;align-items:center;justify-content:center;'
+        + 'background:transparent;border:none;cursor:pointer;width:29px;height:29px;padding:0;'
+        + 'color:var(--ui-accent, #5b8cff);';
+      // Egg outline with a small hatch-crack zigzag across the middle so the
+      // glyph reads as "ready to hatch" rather than a plain egg.
+      btn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor"'
+        + ' stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        + '<path d="M12 2.5c-4 0-6.6 6-6.6 10.5a6.6 6.6 0 0 0 13.2 0C18.6 8.5 16 2.5 12 2.5Z"/>'
+        + '<path d="M9.3 11.3l1.7-1.2 1 1.8 1.7-1.2"/></svg>';
+      btn.addEventListener('click', _hatchReadyEggFromMap);
+      container.appendChild(btn);
+      this._container = container;
+      this._btn = btn;
+      return container;
+    }
+    onRemove() {
+      if (this._container && this._container.parentNode) this._container.parentNode.removeChild(this._container);
+      this._map = null;
+    }
+  }
+  function _ensureEggBubble() {
+    if (_eggBubbleCtrl) return _eggBubbleCtrl;
+    if (!_installedMap) return null;
+    _eggBubbleCtrl = new _EggReadyBubbleControl();
+    _installedMap.addControl(_eggBubbleCtrl, 'bottom-right');
+    // Reorder to the top of the bottom-right cluster (above the radar / focus /
+    // geolocate buttons) so the hatch CTA is the most prominent bubble.
+    try {
+      const cluster = _installedMap.getContainer().querySelector('.maplibregl-ctrl-bottom-right');
+      if (cluster && _eggBubbleCtrl._container && cluster.firstChild) {
+        cluster.insertBefore(_eggBubbleCtrl._container, cluster.firstChild);
+      }
+    } catch (e) { /* best-effort */ }
+    return _eggBubbleCtrl;
+  }
+  // Pure predicate (kept tiny for tests/egg-ready-bubble.test.js): does any egg
+  // in the list qualify as ready-to-hatch? This is exactly the bubble's
+  // visibility rule, isolated from localStorage / the map so it can be pinned.
+  function _anyEggReadyToHatch(eggs) {
+    return Array.isArray(eggs) && eggs.some(eggReadyToHatch);
+  }
+  // Toggle the bubble's visibility from the current egg state. Cheap + safe to
+  // call from any incubation / hatch path (no-op before the map installs).
+  function _updateEggBubble() {
+    const ctrl = _ensureEggBubble();
+    if (!ctrl || !ctrl._container) return;
+    let ready = false;
+    try { ready = _anyEggReadyToHatch(readEggs()); } catch (e) { ready = false; }
+    ctrl._container.style.display = ready ? '' : 'none';
+  }
+  // Bubble click: hatch the oldest ready egg and open the new creature. Mirrors
+  // the eggs-view "Tap to hatch" flow (hatchEgg → showDetail) but from the map,
+  // so it opens the inventory panel (show()) before pushing the detail view.
+  async function _hatchReadyEggFromMap() {
+    if (_eggHatchInFlight) return;
+    const ready = readEggs().find(eggReadyToHatch);
+    if (!ready) { _updateEggBubble(); return; }
+    _eggHatchInFlight = true;
+    let entry = null;
+    try { entry = await hatchEgg(ready.id); }
+    finally { _eggHatchInFlight = false; }
+    _updateEggBubble();   // hatchEgg also refreshes; belt-and-suspenders
+    if (!entry) return;
+    show();
+    try { showDetail(entry.id); } catch (e) { /* ignore */ }
+  }
+
   function _radarMakeMarkerEl(sp) {
     // Always a black silhouette on the map (a "radar blip"); the real sprite
     // only appears once you're in range and the normal marker takes over.
@@ -14283,6 +14375,17 @@
       });
     }
     _installedMap = map;
+    // Egg-ready hatch bubble: a one-tap shortcut in the bottom-right cluster
+    // that appears whenever an incubated egg has finished. Evaluate once now
+    // (an egg may already be ready from a previous session) and on every
+    // incubation tick (crossing 5 km flips it on; hatching flips it off via
+    // hatchEgg). Independent of creature mode — hatching should always be
+    // reachable when an egg is ready.
+    _updateEggBubble();
+    if (typeof window !== 'undefined' && !_eggBubbleTickWired) {
+      _eggBubbleTickWired = true;
+      window.addEventListener('cc-incubator-tick', _updateEggBubble);
+    }
     // Theme switches reload the entire MapLibre style, which drops
     // every custom source/layer (including the daycare path). When
     // an overlay is active, transparently re-add it after the new
