@@ -6352,7 +6352,12 @@ function fmtDate(ts) {
   // this simple pinch that zooms around the map CENTRE — i.e. the player — via
   // setZoom, so you keep the full zoom range AND stay centred. Two-finger only;
   // taps and single-finger gestures pass straight through untouched.
+  // The "Lock zoom" / "Lock rotate" Settings toggles are honoured here too:
+  // when set, the matching axis of the pinch is a no-op (the custom setZoom /
+  // setBearing calls bypass MapLibre's own handlers, so we must gate them
+  // ourselves). Cached per-gesture in _focusTouchStart.
   let _pinchActive = false, _pinchStartDist = 0, _pinchStartZoom = 0, _pinchLastAngle = 0;
+  let _pinchZoomLocked = false, _pinchRotateLocked = false;
   function _twoFingerDist(touches) {
     const dx = touches[0].clientX - touches[1].clientX;
     const dy = touches[0].clientY - touches[1].clientY;
@@ -6369,21 +6374,28 @@ function fmtDate(ts) {
     _pinchStartDist = _twoFingerDist(ev.touches);
     _pinchStartZoom = map.getZoom();
     _pinchLastAngle = _twoFingerAngle(ev.touches);
+    // Snapshot the Settings locks for the life of this pinch.
+    _pinchZoomLocked = localStorage.getItem('cc.lockZoom') === '1';
+    _pinchRotateLocked = localStorage.getItem('cc.lockRotate') === '1';
   }
   function _focusTouchMove(ev) {
     if (!_focusActive || !_pinchActive || !ev.touches || ev.touches.length !== 2) return;
     ev.preventDefault();   // stop the browser's own page pinch-zoom
-    const d = _twoFingerDist(ev.touches);
-    if (_pinchStartDist > 0 && d > 0) {
-      map.setZoom(_pinchStartZoom + Math.log2(d / _pinchStartDist));  // zooms around centre = player
+    if (!_pinchZoomLocked) {
+      const d = _twoFingerDist(ev.touches);
+      if (_pinchStartDist > 0 && d > 0) {
+        map.setZoom(_pinchStartZoom + Math.log2(d / _pinchStartDist));  // zooms around centre = player
+      }
     }
     // Two-finger twist rotates around the centre (= player) via setBearing.
     // Incremental + wrap-normalised so it survives the ±180° seam; a clockwise
-    // twist turns the map clockwise (bearing decreases).
-    const ang = _twoFingerAngle(ev.touches);
-    const dA = ((ang - _pinchLastAngle + 540) % 360) - 180;
-    _pinchLastAngle = ang;
-    if (dA) map.setBearing(map.getBearing() - dA);
+    // twist turns the map clockwise (bearing decreases). Skipped when locked.
+    if (!_pinchRotateLocked) {
+      const ang = _twoFingerAngle(ev.touches);
+      const dA = ((ang - _pinchLastAngle + 540) % 360) - 180;
+      _pinchLastAngle = ang;
+      if (dA) map.setBearing(map.getBearing() - dA);
+    }
   }
   function _focusTouchEnd(ev) {
     if (!ev.touches || ev.touches.length < 2) _pinchActive = false;
@@ -6397,14 +6409,29 @@ function fmtDate(ts) {
         map.dragPan.disable();
         map.dragRotate.disable();
         map.touchZoomRotate.disable();     // replaced by the _focusTouch* pinch
+        // Double-tap / double-click zoom in MapLibre zooms toward the tap
+        // point, dragging the centre off the player — kill it in focus mode.
+        try { map.doubleClickZoom.disable(); } catch {}
         el.addEventListener('touchstart', _focusTouchStart, { passive: false });
         el.addEventListener('touchmove', _focusTouchMove, { passive: false });
         el.addEventListener('touchend', _focusTouchEnd);
         el.addEventListener('touchcancel', _focusTouchEnd);
       } else {
         map.dragPan.enable();
-        map.dragRotate.enable();
         map.touchZoomRotate.enable();
+        // Only restore the handlers that aren't held down by a Settings lock,
+        // so turning focus mode off doesn't quietly undo "Lock rotate" /
+        // "Lock zoom" (which also own dragRotate / doubleClickZoom).
+        if (localStorage.getItem('cc.lockRotate') === '1') {
+          try { map.dragRotate.disable(); } catch {}
+          try { map.touchZoomRotate.disableRotation(); } catch {}
+        } else {
+          map.dragRotate.enable();
+        }
+        try {
+          if (localStorage.getItem('cc.lockZoom') === '1') map.doubleClickZoom.disable();
+          else map.doubleClickZoom.enable();
+        } catch {}
         el.removeEventListener('touchstart', _focusTouchStart);
         el.removeEventListener('touchmove', _focusTouchMove);
         el.removeEventListener('touchend', _focusTouchEnd);
