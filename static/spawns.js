@@ -361,6 +361,43 @@
     return sampler;
   }
 
+  // Realized type composition of live spawns under the current weather,
+  // for the weather-bar "what will I catch today?" explainer.
+  //
+  // Every spawn is a two-type fusion (primary = slot-A type, secondary =
+  // slot-B type), so each spawn contributes two "type slots". We return
+  // the fraction of all type slots that are the daily type, the weekly
+  // type, and everything else — read straight off the actual pair
+  // sampler, so empty pools (e.g. FLYING has no primary species in the
+  // gen-1 set) are already baked in. That makes these the true odds for
+  // *this* day's weather, not the nominal bucket weights.
+  //
+  // perType is the full realized per-slot marginal (every type → its
+  // share, summing to 1). `same` flags daily === weekly (one type is
+  // boosted on both channels); otherShare then excludes it only once.
+  // Returns null until species data is loaded.
+  function typeOdds(nowMs) {
+    if (!_buildTypeIndices()) return null;
+    const w = currentWeather(nowMs);
+    const sampler = _composePairSampler(_byPrimary, _bySecondary, w.daily, w.weekly);
+    if (!sampler) return null;
+    const perType = Object.create(null);
+    for (const t of TYPES) perType[t] = 0;
+    let total = 0;
+    for (const e of sampler.entries) {
+      perType[e.a] += e.w;   // primary slot
+      perType[e.b] += e.w;   // secondary slot
+      total += e.w;
+    }
+    const denom = 2 * total;   // two type-slots per spawn
+    if (denom > 0) for (const t of TYPES) perType[t] /= denom;
+    const same = w.daily === w.weekly;
+    const dailyShare = perType[w.daily] || 0;
+    const weeklyShare = perType[w.weekly] || 0;
+    const otherShare = Math.max(0, 1 - dailyShare - (same ? 0 : weeklyShare));
+    return { daily: w.daily, weekly: w.weekly, same, dailyShare, weeklyShare, otherShare, perType };
+  }
+
   // Sample one (a, b) type pair given a uniform [0,1) draw r.
   function _sampleTypePair(sampler, r) {
     const entries = sampler.entries;
@@ -1070,7 +1107,7 @@
 
   global.Spawns = {
     spawnsInBbox, generateCellAtTick, currentTick, isSpawnIdStale,
-    currentWeather,
+    currentWeather, typeOdds,
     // Legendary stream (folded into spawnsInBbox; exposed for tests +
     // any future legendary-specific UI).
     legendariesInBbox, generateLegendaryAtTick, currentLegTick,

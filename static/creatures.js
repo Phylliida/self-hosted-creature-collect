@@ -6661,17 +6661,27 @@
       }
       #creatureInventory .weather-bar {
         margin: 0 0 12px;
+        text-align: center;
       }
+      /* The weather row is a button: tap it for the spawn-odds explainer. */
       #creatureInventory .weather-row {
-        display: flex; align-items: center;
+        display: inline-flex; align-items: center;
         justify-content: center;
         gap: 6px;
         font-size: 12px;
         color: var(--ui-muted, #666);
         flex-wrap: wrap;
+        -webkit-appearance: none; appearance: none;
+        background: none; border: none; font-family: inherit;
+        margin: 0 auto; padding: 4px 10px; cursor: pointer;
+        border-radius: 999px; max-width: 100%;
       }
+      #creatureInventory .weather-row:hover { background: var(--ui-hover, rgba(0,0,0,0.05)); }
       #creatureInventory .weather-row .label {
         color: var(--ui-muted, #666);
+      }
+      #creatureInventory .weather-row .weather-info {
+        font-size: 12px; opacity: 0.55; margin-left: 2px;
       }
       #creatureInventory .weather-warning {
         font-size: 12px;
@@ -9500,6 +9510,94 @@
     });
   }
 
+  // ── Daily/weekly type-weather odds explainer ────────────────────────
+  // Opened by tapping the weather chips at the top of the browse view.
+  // Reads the realized per-slot type shares from Spawns.typeOdds() (which
+  // already accounts for empty species pools) and draws a segmented bar:
+  // today's type / this week's type / everything else. Deliberately does
+  // NOT enumerate individual species — just the relative odds by type,
+  // per the board task ("all other types" catch-all).
+  function _ccOddsSeg(share, color, label) {
+    // flex proportional to the share; floor the flex so a slice never
+    // collapses to an unreadable sliver but still stays roughly to scale.
+    const flex = Math.max(3, Math.round(share * 100));
+    return '<div class="cc-oddsbar-seg" style="flex:' + flex + ';background:'
+      + color + '">' + escapeHtml(label) + '</div>';
+  }
+  function _ccOddsLegend(color, text) {
+    return '<span><i style="background:' + color + '"></i>' + escapeHtml(text) + '</span>';
+  }
+  function _themeOddsHtml() {
+    const odds = (global.Spawns && global.Spawns.typeOdds)
+      ? global.Spawns.typeOdds() : null;
+    if (!odds) {
+      return '<p class="cc-info-p">Today\'s spawn odds aren\'t available yet — '
+        + 'creature data is still loading. Try again in a moment.</p>';
+    }
+    const pct = (x) => Math.round(x * 100);
+    const dName = _titleCaseType(odds.daily);
+    const wName = _titleCaseType(odds.weekly);
+    const OTHER = '#8a8f98';
+    const dCol = TYPE_COLORS[odds.daily] || '#6d5ac0';
+    const wCol = TYPE_COLORS[odds.weekly] || '#c06a8a';
+
+    let h = '';
+    h += '<p class="cc-info-p">Every day the world runs a <b>type weather</b>: '
+      + 'one <b>daily</b> type and one <b>weekly</b> type get a big spawn boost. '
+      + 'Wild spawns are two-type fusions, so this shows how the two type-halves '
+      + 'you\'ll run into today break down.</p>';
+
+    h += '<div class="cc-info-section">';
+    h += '<div class="cc-info-section-title">Type mix of today\'s spawns</div>';
+    if (odds.same) {
+      // Daily and weekly landed on the same type — one extra-strong boost.
+      h += '<div class="cc-oddsbar">'
+        + _ccOddsSeg(odds.dailyShare, dCol, pct(odds.dailyShare) + '%')
+        + _ccOddsSeg(odds.otherShare, OTHER, pct(odds.otherShare) + '%')
+        + '</div>';
+      h += '<div class="cc-oddsbar-legend">'
+        + _ccOddsLegend(dCol, dName + ' — today & this week')
+        + _ccOddsLegend(OTHER, 'All other types')
+        + '</div>';
+      h += '<p class="cc-info-note" style="margin-top:8px">Today\'s and this '
+        + 'week\'s weather both landed on <b>' + escapeHtml(dName) + '</b>, so it\'s '
+        + 'boosted extra hard.</p>';
+    } else {
+      h += '<div class="cc-oddsbar">'
+        + _ccOddsSeg(odds.dailyShare, dCol, pct(odds.dailyShare) + '%')
+        + _ccOddsSeg(odds.weeklyShare, wCol, pct(odds.weeklyShare) + '%')
+        + _ccOddsSeg(odds.otherShare, OTHER, pct(odds.otherShare) + '%')
+        + '</div>';
+      h += '<div class="cc-oddsbar-legend">'
+        + _ccOddsLegend(dCol, dName + ' — today')
+        + _ccOddsLegend(wCol, wName + ' — this week')
+        + _ccOddsLegend(OTHER, 'All other types')
+        + '</div>';
+    }
+    h += '<p class="cc-info-note" style="margin-top:8px">Percentages are of '
+      + 'type-halves across all wild spawns. "All other types" is split over the '
+      + 'remaining ' + (odds.same ? 17 : 16) + ' types, so any single one of them '
+      + 'is uncommon today.</p>';
+    h += '</div>';
+
+    h += '<div class="cc-info-section">';
+    h += '<div class="cc-info-section-title">How the boost works</div>';
+    h += '<div class="cc-info-row"><span class="cc-info-k">Today\'s type</span>'
+      + '<span class="cc-info-v">The strongest pull — creatures carrying '
+      + '<b>' + escapeHtml(dName) + '</b> flood in for the whole UTC day.</span></div>';
+    h += '<div class="cc-info-row"><span class="cc-info-k">This week\'s type</span>'
+      + '<span class="cc-info-v">A steadier, lighter boost for '
+      + '<b>' + escapeHtml(wName) + '</b> that holds all week.</span></div>';
+    h += '<div class="cc-info-row"><span class="cc-info-k">Everything else</span>'
+      + '<span class="cc-info-v">Still rolls at a low background rate, so rarer '
+      + 'types never fully disappear.</span></div>';
+    h += '</div>';
+    return h;
+  }
+  function _showThemeOdds() {
+    _openInfoModal({ title: 'Today\'s spawn odds', html: () => _themeOddsHtml() });
+  }
+
   // ── Guaranteed-catch (accessibility) explainer ──────────────────────
   // Opens from the Settings toggle's "i" bubble via
   // Creatures.showSteadyCatchInfo(). Copy mirrors the mechanic in
@@ -11393,10 +11491,13 @@
       const label = type.charAt(0) + type.slice(1).toLowerCase();
       return `<span class="type-chip" style="background:${bg}">${escapeHtml(label)}</span>`;
     };
-    bar.innerHTML = `<div class="weather-row">
+    bar.innerHTML = `<button type="button" class="weather-row" aria-label="Show today's spawn odds">
       <span class="label">Today:</span>${chip(w.daily)}
       <span class="label" style="margin-left:6px;">Week:</span>${chip(w.weekly)}
-    </div>`;
+      <span class="weather-info" aria-hidden="true">ⓘ</span>
+    </button>`;
+    const oddsBtn = bar.querySelector('.weather-row');
+    if (oddsBtn) oddsBtn.addEventListener('click', () => _showThemeOdds());
   }
 
   // Format a duration as "Xs ago", "X minutes ago", "X hours ago",
