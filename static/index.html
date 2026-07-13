@@ -3394,6 +3394,8 @@
     </div>
     <div class="row" title="One throw always catches — but the normal odds still run underneath: hidden re-rolls use up extra balls and the shakes run slower, so it costs the same and takes slightly longer than throwing manually. Reduces repeated tapping.">
       <label for="steadyCatchToggle">Guaranteed catch (accessibility)</label>
+      <button type="button" id="steadyCatchInfoBtn" class="settings-info-btn"
+        aria-label="How guaranteed catch works" title="How guaranteed catch works">i</button>
       <input type="checkbox" id="steadyCatchToggle">
     </div>
     <div class="settings-subsection">
@@ -16299,6 +16301,18 @@ function fmtDate(ts) {
     steadyCatchToggle.checked = localStorage.getItem('cc.steadyCatch') === '1';
     steadyCatchToggle.addEventListener('change', () => {
       localStorage.setItem('cc.steadyCatch', steadyCatchToggle.checked ? '1' : '0');
+    });
+  }
+  // "i" bubble next to the toggle → guaranteed-catch explainer popup. The
+  // popup lives in creatures.js (reuses the generic info modal); we just
+  // trigger it. Sits outside the <label> so tapping it doesn't flip the
+  // checkbox.
+  const steadyCatchInfoBtn = document.getElementById('steadyCatchInfoBtn');
+  if (steadyCatchInfoBtn) {
+    steadyCatchInfoBtn.addEventListener('click', () => {
+      if (window.Creatures && typeof window.Creatures.showSteadyCatchInfo === 'function') {
+        window.Creatures.showSteadyCatchInfo();
+      }
     });
   }
 
