@@ -6501,7 +6501,21 @@ function fmtDate(ts) {
   map.addControl(scaleCtrl, 'bottom-left');
 
   const geolocate = new maplibregl.GeolocateControl({
-    positionOptions: { enableHighAccuracy: true },
+    // MapLibre shallow-merges positionOptions, so handing it our own
+    // object REPLACES its default {enableHighAccuracy:false, maximumAge:0,
+    // timeout:6000} wholesale — silently dropping the timeout, leaving it
+    // Infinity. Without a timeout the watch waits forever for a fix: on
+    // iOS a slow or blocked high-accuracy lock (indoors, urban canyon,
+    // cold GPS) then strands the control in "waiting" with no dot and no
+    // error callback ever firing — which reads to the user as GPS being
+    // broken. Restore an explicit timeout (10s, matching OpenStreetMap's
+    // locate control) so a failed fix surfaces as an error the control can
+    // render, instead of a silent hang. A timeout (error code 3) never
+    // tears down tracking — MapLibre only clears the watch on
+    // permission-denied (code 1); code 3 just flips a CSS error class
+    // that the next successful fix clears. maximumAge:0 is restored
+    // explicitly to keep MapLibre's original no-stale-fix behaviour.
+    positionOptions: { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 },
     trackUserLocation: true,
     showUserHeading: true,
     showAccuracyCircle: false,

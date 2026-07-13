@@ -13697,13 +13697,26 @@
         _accumulateDaycareDistance(_userLat, _userLng, pos.timestamp || Date.now());
         refreshSpawnOverlay();
       },
-      () => { /* ignore — user may have denied permission */ },
+      () => {
+        // Non-fatal: the user may have denied permission, or (with the
+        // timeout below) a fix just couldn't be acquired in time. The
+        // watch keeps running either way, so the next good fix will flow
+        // through the success path. Nothing to do here but not crash.
+      },
       // maximumAge: 0 — never serve a cached fix. 5000 here was letting
       // the watch report positions up to 5s stale, which reads as the
       // GPS "refreshing every few seconds." Demand a live fix each time;
       // smoothing of the on-screen dot is handled by marker interpolation
       // in index.html, not by tolerating stale coords here.
-      { enableHighAccuracy: true, maximumAge: 0 }
+      //
+      // timeout: 10000 — without it the option is Infinity, so on iOS a
+      // slow/blocked high-accuracy lock leaves watchPosition silently
+      // hung: neither success nor error ever fires and spawns never
+      // appear. A bounded timeout (matching OpenStreetMap's locate
+      // control) makes a stalled fix surface as an error instead; the
+      // watch continues, so a later fix still arrives. Outdoors with
+      // signal, fixes land well inside 10s so this never trips.
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
     );
   }
 
