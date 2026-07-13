@@ -5947,6 +5947,10 @@
       #ccInfoModal .cc-typedetail-head {
         display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
       }
+      #ccInfoModal .cc-typedot {
+        width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0;
+        display: inline-block; box-shadow: 0 0 0 1px rgba(0,0,0,0.18) inset;
+      }
       #ccInfoModal .cc-typedetail-name { font-size: 15px; font-weight: 700; }
       #ccInfoModal .cc-typedetail-block { margin-top: 10px; }
       #ccInfoModal .cc-typedetail-block .cc-tdb-label {
@@ -9360,6 +9364,267 @@
     root.classList.add('show');
   }
   function _hideDaycareOdds() { if (_dcOddsEl) _dcOddsEl.classList.remove('show'); }
+
+  // ── Generic info modal ──────────────────────────────────────────────
+  // A reusable explainer popup with the same card chrome as the daycare
+  // odds modal, but content-agnostic and with a small internal view stack
+  // so a popup can drill into a sub-view (e.g. incense info → type chart)
+  // and the ← button pops back (or closes at the root). A "view" is
+  //   { title, html, onWire? } where html is a string or () => string and
+  //   onWire(root, contentEl) runs after the content is painted.
+  let _infoModalEl = null;
+  let _infoModalStack = [];
+  function _ensureInfoModalEl() {
+    if (_infoModalEl) return _infoModalEl;
+    const root = document.createElement('div');
+    root.id = 'ccInfoModal';
+    root.innerHTML = '<div class="cc-modal-card" role="dialog" aria-modal="true">'
+      + '<button type="button" class="cc-modal-back" aria-label="back">←</button>'
+      + '<button type="button" class="cc-modal-close" aria-label="close">×</button>'
+      + '<div class="cc-modal-floatbar">'
+      +   '<button type="button" class="cc-modal-float-back" aria-label="back">←</button>'
+      +   '<button type="button" class="cc-modal-float-x" aria-label="close">×</button>'
+      + '</div>'
+      + '<h3 class="cc-modal-title"></h3>'
+      + '<div class="cc-modal-content"></div></div>';
+    document.body.appendChild(root);
+    root.addEventListener('click', (e) => { if (e.target === root) _closeInfoModal(); });
+    root.querySelectorAll('.cc-modal-close, .cc-modal-float-x')
+      .forEach((b) => b.addEventListener('click', _closeInfoModal));
+    root.querySelectorAll('.cc-modal-back, .cc-modal-float-back')
+      .forEach((b) => b.addEventListener('click', _infoModalBack));
+    const card = root.querySelector('.cc-modal-card');
+    const floatbar = root.querySelector('.cc-modal-floatbar');
+    if (card && floatbar) {
+      const updateFloat = () => floatbar.classList.toggle('show', card.scrollTop > 60);
+      card.addEventListener('scroll', updateFloat, { passive: true });
+      root._updateFloat = updateFloat;
+    }
+    _infoModalEl = root;
+    return root;
+  }
+  function _renderInfoModalTop() {
+    const root = _infoModalEl;
+    const view = _infoModalStack[_infoModalStack.length - 1];
+    if (!root || !view) return;
+    root.querySelector('.cc-modal-title').textContent = view.title || '';
+    const content = root.querySelector('.cc-modal-content');
+    content.innerHTML = (typeof view.html === 'function') ? view.html() : (view.html || '');
+    if (typeof view.onWire === 'function') view.onWire(root, content);
+    const card = root.querySelector('.cc-modal-card');
+    if (card) card.scrollTop = 0;
+    if (root._updateFloat) root._updateFloat();
+  }
+  function _openInfoModal(view) {
+    _infoModalStack = [view];
+    const root = _ensureInfoModalEl();
+    _renderInfoModalTop();
+    root.classList.add('show');
+  }
+  function _pushInfoView(view) { _infoModalStack.push(view); _renderInfoModalTop(); }
+  function _infoModalBack() {
+    if (_infoModalStack.length > 1) { _infoModalStack.pop(); _renderInfoModalTop(); }
+    else _closeInfoModal();
+  }
+  function _closeInfoModal() {
+    if (_infoModalEl) _infoModalEl.classList.remove('show');
+    _infoModalStack = [];
+  }
+
+  // ── Incense explainer + type-chart explorer ─────────────────────────
+  function _ccTypeChip(t, dim) {
+    return '<span class="cc-typechip' + (dim ? ' dim' : '') + '" style="background:'
+      + (TYPE_COLORS[t] || '#888') + '">' + escapeHtml(_titleCaseType(t)) + '</span>';
+  }
+  function _ccTypeChips(types) {
+    if (!types || !types.length) return '<span class="cc-tdb-none">none</span>';
+    return '<div class="cc-typechips">' + types.map((t) => _ccTypeChip(t)).join('') + '</div>';
+  }
+  function _incenseInfoHtml() {
+    const mins = Math.round(_incenseDurationMs() / 60000);
+    let h = '';
+    h += '<p class="cc-info-p">Incense is a scented lure you craft from eggs and burn to '
+      + 'draw out a specific <b>type</b> of pokémon. Only one incense burns at a time — '
+      + 'lighting a new one replaces the current one.</p>';
+
+    // While burning
+    h += '<div class="cc-info-section">';
+    h += '<div class="cc-info-section-title">While it\'s burning (~' + mins + ' min)</div>';
+    h += '<div class="cc-info-row"><span class="cc-info-k">Extra spawns</span>'
+      + '<span class="cc-info-v">A second wave of pokémon layers on top of the usual ones — '
+      + 'about <b>+50% more</b> to catch — for the whole window.</span></div>';
+    h += '<div class="cc-info-row"><span class="cc-info-k">Guaranteed half</span>'
+      + '<span class="cc-info-v">Every incense spawn is a fusion with your incense type on '
+      + 'one half. The other half is:</span></div>';
+    // Other-half odds bar: 40% any / 30% weekly / 30% daily.
+    h += '<div class="cc-oddsbar">'
+      + '<div class="cc-oddsbar-seg" style="flex:40;background:#8a8f98">40%</div>'
+      + '<div class="cc-oddsbar-seg" style="flex:30;background:#6d5ac0">30%</div>'
+      + '<div class="cc-oddsbar-seg" style="flex:30;background:#c06a8a">30%</div>'
+      + '</div>';
+    h += '<div class="cc-oddsbar-legend">'
+      + '<span><i style="background:#8a8f98"></i>Any type</span>'
+      + '<span><i style="background:#6d5ac0"></i>This week\'s theme type</span>'
+      + '<span><i style="background:#c06a8a"></i>Today\'s theme type</span>'
+      + '</div>';
+    h += '<div class="cc-info-row"><span class="cc-info-k">Shiny rate</span>'
+      + '<span class="cc-info-v">Incense spawns roll shiny at <b>2×</b> the normal rate.</span></div>';
+    h += '</div>';
+
+    // Crafting
+    h += '<div class="cc-info-section">';
+    h += '<div class="cc-info-section-title">Crafting incense</div>';
+    h += '<p class="cc-info-p" style="margin-bottom:6px">Craft from an egg whose type is '
+      + '<b>neutral or super-effective</b> against the incense type. An egg that only '
+      + '<i>resists</i> that type can\'t be used.</p>';
+    h += '<div class="cc-info-row"><span class="cc-info-k">Yield</span>'
+      + '<span class="cc-info-v"><span class="cc-info-mult">1×</span> base. Each of the egg\'s '
+      + 'types that\'s <b>super-effective</b> against the incense type adds +1 — so '
+      + '<span class="cc-info-mult">2×</span> for one match, <span class="cc-info-mult">3×</span> '
+      + 'for two.</span></div>';
+    h += '</div>';
+
+    h += '<button class="cc-info-link cc-open-typechart" type="button">'
+      + '<span>See the type chart</span><span class="cc-info-link-arrow">›</span></button>';
+    return h;
+  }
+  function _showIncenseInfo() {
+    _openInfoModal({
+      title: 'How incense works',
+      html: () => _incenseInfoHtml(),
+      onWire: (root, content) => {
+        const btn = content.querySelector('.cc-open-typechart');
+        if (btn) btn.addEventListener('click', () => _pushTypeChartView(
+          (_craftState && _craftState.type) || null));
+      },
+    });
+  }
+
+  // ── Guaranteed-catch (accessibility) explainer ──────────────────────
+  // Opens from the Settings toggle's "i" bubble via
+  // Creatures.showSteadyCatchInfo(). Copy mirrors the mechanic in
+  // _guaranteedThrowPlan: one visible throw always lands the catch, but the
+  // ball's normal odds still run underneath — every hidden re-roll spends a
+  // real ball, and the shake phase is stretched (MARGIN 1.1 → ~10% longer)
+  // so it costs the same balls and a touch more time than throwing by hand.
+  // If the bag empties before a roll succeeds, the creature breaks free.
+  function _steadyCatchInfoHtml() {
+    let h = '';
+    h += '<p class="cc-info-p">An accessibility option: with it on, a single '
+      + 'throw always lands the catch, so you don\'t have to tap through misses '
+      + 'and re-throws. It\'s built to cost <b>exactly the same</b> as catching '
+      + 'the normal way — it just spares your hands the repeated tapping.</p>';
+
+    h += '<div class="cc-info-section">';
+    h += '<div class="cc-info-section-title">What actually happens</div>';
+    h += '<div class="cc-info-row"><span class="cc-info-k">Under the hood</span>'
+      + '<span class="cc-info-v">Behind that one animation the game keeps throwing '
+      + 'at the ball\'s normal odds until a throw sticks — you just see it as one '
+      + 'smooth sequence instead of many separate taps.</span></div>';
+    h += '<div class="cc-info-row"><span class="cc-info-k">Ball cost</span>'
+      + '<span class="cc-info-v">Every hidden re-throw spends a <b>real ball</b>, '
+      + 'exactly as if you\'d thrown them yourself. A stubborn catch still burns '
+      + 'through balls at the normal rate.</span></div>';
+    h += '<div class="cc-info-row"><span class="cc-info-k">If your bag runs out</span>'
+      + '<span class="cc-info-v">Run out of that ball before a throw succeeds and the '
+      + 'creature <b>breaks free</b> — same as missing every manual throw. It\'s '
+      + '"guaranteed" only while you have balls to spend.</span></div>';
+    h += '</div>';
+
+    h += '<div class="cc-info-section">';
+    h += '<div class="cc-info-section-title">Why it\'s still balanced</div>';
+    h += '<div class="cc-info-row"><span class="cc-info-k">Same odds</span>'
+      + '<span class="cc-info-v">The catch rate is unchanged. A Great Ball still '
+      + 'catches at Great Ball odds; rarer creatures are no cheaper to land.</span></div>';
+    h += '<div class="cc-info-row"><span class="cc-info-k">Same-ish time</span>'
+      + '<span class="cc-info-v">The shakes are slowed so the whole sequence runs '
+      + 'about <b>10% longer</b> than those throws would have by hand (plus a beat '
+      + 'to re-aim each hidden throw). There\'s no speed advantage.</span></div>';
+    h += '<div class="cc-info-row"><span class="cc-info-k">Just less tapping</span>'
+      + '<span class="cc-info-v">The only thing it removes is the repeated tapping — '
+      + 'helpful if that\'s uncomfortable or difficult.</span></div>';
+    h += '</div>';
+
+    h += '<p class="cc-info-note">In short: same balls, same odds, a touch slower — '
+      + 'one tap instead of many.</p>';
+    return h;
+  }
+  function _showSteadyCatchInfo() {
+    _openInfoModal({
+      title: 'Guaranteed catch',
+      html: () => _steadyCatchInfoHtml(),
+    });
+  }
+
+  // Type-chart explorer: tap an attacking type to see what it beats / is
+  // resisted by, plus (crafting-relevant) which egg types make the best
+  // incense of that type. `_typeStrongAgainst(T)` is the inverse of
+  // _TYPE_STRONG — the set of types super-effective *against* T.
+  let _typeChartSel = null;
+  function _typeStrongAgainst(target) {
+    const out = [];
+    for (const atk of ALL_TYPES) {
+      if (_TYPE_STRONG_SETS[atk] && _TYPE_STRONG_SETS[atk].has(target)) out.push(atk);
+    }
+    return out;
+  }
+  function _typeDetailHtml(T) {
+    const strong = _TYPE_STRONG[T] || [];
+    const weak = _TYPE_REDUCED[T] || [];
+    const bestEggs = _typeStrongAgainst(T);
+    let h = '<div class="cc-typedetail">';
+    h += '<div class="cc-typedetail-head">'
+      + '<span class="cc-typedot" style="background:' + (TYPE_COLORS[T] || '#888') + '"></span>'
+      + '<span class="cc-typedetail-name">' + escapeHtml(_titleCaseType(T)) + '</span></div>';
+    h += '<div class="cc-typedetail-block">'
+      + '<div class="cc-tdb-label"><span class="cc-tdb-mult good">2×</span>Super-effective against</div>'
+      + _ccTypeChips(strong) + '</div>';
+    h += '<div class="cc-typedetail-block">'
+      + '<div class="cc-tdb-label"><span class="cc-tdb-mult bad">½× / 0×</span>Resisted / no effect</div>'
+      + _ccTypeChips(weak) + '</div>';
+    h += '<div class="cc-typedetail-block">'
+      + '<div class="cc-tdb-label"><span class="cc-tdb-mult craft">2×–3×</span>Best eggs for '
+      + escapeHtml(_titleCaseType(T)) + ' Incense</div>'
+      + _ccTypeChips(bestEggs)
+      + '<div class="cc-info-note" style="margin-top:5px">Eggs of these types are super-effective '
+      + 'against ' + escapeHtml(_titleCaseType(T)) + ', so they craft extra incense.</div></div>';
+    h += '</div>';
+    return h;
+  }
+  function _typeChartHtml() {
+    let h = '<p class="cc-info-p">Tap a type to see what it\'s strong and weak against. '
+      + 'When crafting, an egg type that\'s super-effective against the incense type '
+      + 'yields more (2×, or 3× when both of a fusion\'s types match).</p>';
+    h += '<div class="cc-typegrid">'
+      + ALL_TYPES.map((t) => '<button type="button" data-type="' + t + '"'
+          + (t === _typeChartSel ? ' class="sel"' : '')
+          + ' style="background:' + (TYPE_COLORS[t] || '#888') + '">'
+          + escapeHtml(_titleCaseType(t)) + '</button>').join('')
+      + '</div>';
+    h += '<div class="cc-typedetail-wrap">' + _typeDetailHtml(_typeChartSel) + '</div>';
+    return h;
+  }
+  function _wireTypeChart(content) {
+    const grid = content.querySelector('.cc-typegrid');
+    const wrap = content.querySelector('.cc-typedetail-wrap');
+    if (!grid || !wrap) return;
+    grid.querySelectorAll('button[data-type]').forEach((b) => {
+      b.addEventListener('click', () => {
+        _typeChartSel = b.dataset.type;
+        grid.querySelectorAll('button[data-type]').forEach((x) =>
+          x.classList.toggle('sel', x.dataset.type === _typeChartSel));
+        wrap.innerHTML = _typeDetailHtml(_typeChartSel);
+      });
+    });
+  }
+  function _pushTypeChartView(defaultType) {
+    _typeChartSel = (defaultType && TYPE_COLORS[defaultType]) ? defaultType : ALL_TYPES[0];
+    _pushInfoView({
+      title: 'Type chart',
+      html: () => _typeChartHtml(),
+      onWire: (root, content) => _wireTypeChart(content),
+    });
+  }
 
   function renderDaycare(opts) {
     const panel = document.getElementById('creatureInventory');
@@ -13687,6 +13952,9 @@
   function getItemMeta(key) { return ITEMS[key] || null; }
   global.Creatures = {
     install, isEnabled: readEnabled,
+    // Settings "i" bubble → guaranteed-catch explainer popup (reuses the
+    // generic info modal). Called from index.html's settings wiring.
+    showSteadyCatchInfo: _showSteadyCatchInfo,
     // Collection persistence now lives in IndexedDB (creature-collection-v1).
     // ready() resolves when the in-memory caches have hydrated + the
     // one-time localStorage→IDB migration has run. Export/import in
