@@ -2481,6 +2481,21 @@
     if (!entry) return;
     if (_addShinyToEntry(entry, variant, shinyVariant)) writeSeenFusions(seen);
   }
+  // Mark a fusion as one the trainer HAS caught but no longer owns — because
+  // they evolved their only copy away (performEvolution transforms the capture
+  // in place, so isFusionOwned goes false). Drives the encounter screen's
+  // "Fresh" badge: re-catching such a fusion is a re-acquisition, not a first
+  // catch. Only augments an already-seen entry (the pre-evolution form was seen
+  // when it was caught), so it never mints a phantom dex row. Not set for
+  // still-owned fusions — those are covered by isFusionOwned directly.
+  function markFusionCaughtAway(a, b) {
+    if (a == null || b == null) return;
+    const seen = readSeenFusions();
+    const entry = seen[`${a}-${b}`];
+    if (!entry || entry.caught) return;
+    entry.caught = true;
+    writeSeenFusions(seen);
+  }
   // Losslessly merge an imported seenFusions map into the current one (backup
   // restore). New fusions are copied whole; for a fusion already known we keep
   // the earliest firstSeen / latest lastSeen, UNION the art variants and shiny
@@ -2522,6 +2537,9 @@
       }
       // Adopt an imported favorite only when there's no local choice.
       if (val.favoriteArt && !cur.favoriteArt) cur.favoriteArt = val.favoriteArt;
+      // "Caught then evolved away" is a monotonic fact — OR it in (drives the
+      // encounter "Fresh" badge; see markFusionCaughtAway).
+      if (val.caught) cur.caught = true;
       // Fill in "first seen here" location when the local side lacks it.
       if (cur.lat == null && val.lat != null) {
         cur.lat = val.lat; cur.lng = val.lng;
@@ -2733,6 +2751,37 @@
     }
     if (changed) writeSeenFusions(seen);
     localStorage.setItem(SHINY_LINEAGE_BACKFILL_KEY, '1');
+  }
+  // One-time backfill: trainers who evolved things BEFORE the "Fresh" badge
+  // shipped have pre-evolution forms that were caught-then-evolved-away but
+  // carry no `caught` flag (that's only set by the evolve hook going forward).
+  // Reconstruct them from the lineage of every current capture and flag their
+  // dex rows, so re-encounters read "Fresh" instead of "New". Best-effort:
+  // mirrors backfillShinyLineage, including the `E:` skip (an already-evolved
+  // spawn was caught post-evolution, so its earlier forms were never caught by
+  // the trainer). Batched (one write); gated on the evolution data + a flag.
+  const CAUGHT_AWAY_BACKFILL_KEY = 'cc.caughtAwayBackfill.v1';
+  function backfillCaughtAwayLineage() {
+    if (localStorage.getItem(CAUGHT_AWAY_BACKFILL_KEY) === '1') return;
+    const S = global.Species;
+    if (!S || !S.familyOf) return;
+    if (S.familyOf(1).length <= 1) return;   // data not ready — retry next boot
+    const seen = readSeenFusions();
+    const seenHas = (x, y) =>
+      Object.prototype.hasOwnProperty.call(seen, `${x}-${y}`);
+    let changed = false;
+    for (const c of readCapturedCreatures()) {
+      if (!c || c.speciesA == null || c.speciesB == null) continue;
+      if (typeof c.spawnId === 'string' && c.spawnId.startsWith('E:')) continue;
+      for (const [a2, b2] of _shinyLineageAncestors(c.speciesA, c.speciesB, seenHas)) {
+        const entry = seen[`${a2}-${b2}`];
+        if (!entry || entry.caught) continue;   // only credit fusions already in the dex
+        entry.caught = true;
+        changed = true;
+      }
+    }
+    if (changed) writeSeenFusions(seen);
+    localStorage.setItem(CAUGHT_AWAY_BACKFILL_KEY, '1');
   }
   function isFusionSeen(a, b) {
     return readSeenFusions().hasOwnProperty(`${a}-${b}`);
@@ -3830,6 +3879,10 @@
 
     // Pokédex gets the new fusion (+ its variant) on first evolution.
     try { markFusionSeen(newA, newB, null, newVariant); } catch {}
+    // We just evolved our copy of the OLD fusion away. If that was our last one
+    // (isFusionOwned(old) now false), a future re-catch of it should read as
+    // "Fresh", not "New" — flag its dex row so the encounter screen knows.
+    try { markFusionCaughtAway(c.speciesA, c.speciesB); } catch {}
     // If we just evolved a shiny, its capture no longer exists as the OLD
     // fusion — persist the shiny style onto that pre-evolution's dex row so
     // its "Shiny variants" section doesn't lose it. (c still holds the old
@@ -12497,11 +12550,17 @@
     const el = ensureBattleScreen();
     _currentBattleSpawn = spawn;
     // "New" badge on the info bubble's top-left corner:
-    //   • "New"     — we don't own this fusion at all
+    //   • "New"     — we've never caught this fusion
+    //   • "Fresh"   — we caught it before but evolved our copy away (re-catch)
     //   • "New Art" — we own the fusion but not this variant (art)
     // The variant can resolve asynchronously, so the badge is finalised once
     // it's known (defaults to hidden for an owned fusion until then).
     const ownsFusion = isFusionOwned(spawn.speciesA, spawn.speciesB);
+    // Caught-then-evolved-away flag on the dex row (see markFusionCaughtAway).
+    // Read before markFusionSeen below (which never touches `caught`, so order
+    // is not load-bearing, but the intent is "what did we know coming in").
+    const caughtAway = !ownsFusion
+      && !!(readSeenFusions()[`${spawn.speciesA}-${spawn.speciesB}`] || {}).caught;
     const newBadge = el.querySelector('.battle-new-badge');
     const showNewBadge = (text) => {
       if (!newBadge) return;
@@ -12512,7 +12571,7 @@
       void newBadge.offsetWidth; // restart the pop animation
       newBadge.style.animation = '';
     };
-    showNewBadge(ownsFusion ? '' : 'New');
+    showNewBadge(ownsFusion ? '' : (caughtAway ? 'Fresh' : 'New'));
     const decideArtBadge = (variant) => {
       if (ownsFusion) {
         showNewBadge(ownsVariant(spawn.speciesA, spawn.speciesB, variant) ? '' : 'New Art');
@@ -14002,7 +14061,12 @@
       // (backfillShinyLineage re-checks readiness and only flips its flag once
       // it truly runs, so a failed evolutions fetch just retries next boot).
       if (global.Species && global.Species.ensureLoaded) {
-        global.Species.ensureLoaded().then(backfillShinyLineage).catch(() => {});
+        global.Species.ensureLoaded().then(() => {
+          backfillShinyLineage();
+          // Same lineage-walk infra: flag pre-existing evolved-away forms so
+          // re-encounters show "Fresh" (see backfillCaughtAwayLineage).
+          backfillCaughtAwayLineage();
+        }).catch(() => {});
       }
     });
     // Warm the in-memory daycare summary cache + run the legacy
