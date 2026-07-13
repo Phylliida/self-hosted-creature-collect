@@ -4756,6 +4756,10 @@
         grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
         gap: 8px;
         margin-top: 8px;
+        /* Breathing room so an edge-column cell's outward favorite ring
+           (box-shadow below) isn't sliced off by the overflow:hidden edges
+           of .body-slot / .fusion-view. */
+        padding: 2px 4px;
       }
       #creatureInventory .variant-cell {
         display: flex; flex-direction: column; align-items: center; gap: 2px;
@@ -4789,6 +4793,10 @@
       #creatureInventory .variant-cell.favorited {
         border-color: var(--ui-accent, #b6896c);
         box-shadow: 0 0 0 2px var(--ui-accent, #b6896c);
+        /* Sit above sibling cells so the accent ring is never painted over
+           or clipped by a neighbour's white background. */
+        position: relative;
+        z-index: 1;
       }
       #creatureInventory .variant-empty {
         font-size: 12px; color: var(--ui-muted, #888); padding: 6px 0;
