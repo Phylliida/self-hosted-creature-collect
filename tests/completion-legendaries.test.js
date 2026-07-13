@@ -64,6 +64,9 @@ const ctx = {
   SUPPORTED_SPECIES_SET: SUPPORTED,
   SUPPORTED_NONLEG_COUNT: NONLEG_COUNT,
   isLegendarySpecies: (id) => LEG.has(id),
+  // In this stub pool nothing is an evolution (each id is its own family);
+  // the non-evolved filter is exercised separately in completion-nonevolved.test.
+  _isEvolvedSpecies: () => false,
   supportedSpeciesSorted: () => [...SUPPORTED].sort((a, b) => a - b),
   readSeenFusions: () => seenMap,
 };
