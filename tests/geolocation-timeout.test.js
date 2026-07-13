@@ -1,22 +1,26 @@
-// Guards the fix for "GPS being weird on iOS".
+// Guards the fix for "GPS being weird on iOS", now covering TWO invariants:
 //
-// Both of the app's location watches must run with a BOUNDED timeout.
-// Without one, watchPosition's timeout defaults to Infinity, so on iOS a
-// slow or blocked high-accuracy lock (indoors, urban canyon, cold GPS)
-// leaves the watch silently hung — neither the success nor the error
-// callback ever fires, the dot never appears, spawns never load, and the
-// GeolocateControl button spins in "waiting" forever. That reads to the
-// user as GPS being broken. OpenStreetMap's locate control always runs
-// with a timeout; we now match that.
+//   (1) The app's one geolocation watch must run with a BOUNDED timeout.
+//       Without one, watchPosition's timeout defaults to Infinity, so on
+//       iOS a slow or blocked high-accuracy lock (indoors, urban canyon,
+//       cold GPS) leaves the watch silently hung — neither success nor
+//       error ever fires, the dot never appears, spawns never load, and
+//       the GeolocateControl button spins in "waiting" forever. That reads
+//       as GPS being broken. OpenStreetMap's locate control always runs
+//       with a timeout; we match that. This is invisible at runtime and was
+//       ALREADY introduced once (passing our own positionOptions object
+//       shallow-replaces MapLibre's default {..., timeout:6000} wholesale).
 //
-// This is a static source-assertion test (like tests/bag-sort.test.js): it
-// reads the two option literals and asserts each declares enableHighAccuracy
-// plus a finite, positive timeout. It exists because the MapLibre default
-// timeout was ALREADY silently dropped once — passing our own
-// positionOptions object shallow-replaces MapLibre's default
-// {enableHighAccuracy:false, maximumAge:0, timeout:6000} wholesale — so this
-// regression is invisible at runtime and easy to reintroduce.
+//   (2) SINGLE-WATCH invariant. The app runs exactly ONE OS-level watch —
+//       MapLibre's GeolocateControl. creatures.js must NOT open its own
+//       second navigator.geolocation.watchPosition; instead it subscribes
+//       to the control's fixes via Creatures.onLocationFix(pos), pushed
+//       from index.html's 'geolocate' handler. Two simultaneous
+//       high-accuracy watches are exactly the GPS-churn / bridge-race
+//       source the consolidation removed, so guard against a second one
+//       creeping back.
 //
+// Static source-assertion test (like tests/bag-sort.test.js).
 // Run: node tests/geolocation-timeout.test.js
 'use strict';
 const fs = require('fs');
@@ -54,18 +58,20 @@ function assertBoundedTimeout(body, label) {
   assertBoundedTimeout(body, 'index.html positionOptions');
 }
 
-// --- 2) creatures.js startLocationWatch() watchPosition options ------------
-// The options object is the third argument to watchPosition; it is the only
-// place enableHighAccuracy appears in the file.
+// --- 2) creatures.js must NOT open a second watch (single-watch invariant) --
+// After consolidation the app runs exactly one OS-level geolocation watch
+// (the GeolocateControl asserted above). creatures.js subscribes to it via
+// Creatures.onLocationFix(pos) instead of running its own watchPosition.
 {
-  const at = creaturesSrc.indexOf('enableHighAccuracy');
-  ok(at >= 0, 'creatures.js: watchPosition options object present');
-  const open = creaturesSrc.lastIndexOf('{', at);
-  const close = creaturesSrc.indexOf('}', at);
-  const body = creaturesSrc.slice(open, close + 1);
-  ok(/enableHighAccuracy\s*:\s*true/.test(body),
-    'creatures.js: watch keeps enableHighAccuracy:true');
-  assertBoundedTimeout(body, 'creatures.js watchPosition');
+  ok(!/navigator\.geolocation\.watchPosition/.test(creaturesSrc),
+    'creatures.js: must NOT open its own watchPosition ' +
+    '(single-watch: subscribe to the GeolocateControl via onLocationFix)');
+  ok(/function onLocationFix\b/.test(creaturesSrc),
+    'creatures.js: defines onLocationFix (the single-watch fix consumer)');
+  ok(/\bonLocationFix\b/.test(creaturesSrc.slice(creaturesSrc.indexOf('global.Creatures'))),
+    'creatures.js: exposes onLocationFix on the public API');
+  ok(/window\.Creatures\.onLocationFix/.test(indexSrc),
+    'index.html: forwards GeolocateControl fixes into Creatures.onLocationFix');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

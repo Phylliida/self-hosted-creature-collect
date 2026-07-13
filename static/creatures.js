@@ -12035,7 +12035,10 @@
   let _overlayMap = null;
   let _overlayTimer = null;
   let _overlayPopup = null;
-  let _geoWatchId = null;
+  // Whether we're attached and accepting position fixes. The app runs a
+  // single OS-level geolocation watch (MapLibre's GeolocateControl, in
+  // index.html); we no longer own a watch id — see onLocationFix.
+  let _geoListening = false;
   let _userLat = null;
   let _userLng = null;
   // _markers: spawn.id -> { marker, spawn, firstShownAt, loaded, variant? }
@@ -13677,54 +13680,61 @@
   const FIRST_FIX_TIMEOUT_MS = 5000;
   let _firstFixDeadline = 0;
 
+  // Single-watch architecture. The app runs exactly ONE OS-level
+  // geolocation watch — MapLibre's GeolocateControl (the blue dot), in
+  // index.html. This module used to open a *second*, independent
+  // high-accuracy geolocation watch of its own right here. Two
+  // simultaneous watches doubled the GPS radio churn and, over the iOS
+  // Capacitor bridge, invited callback-starvation / throttling races
+  // between the two consumers (surfaced while investigating "GPS being
+  // weird on iOS"). Instead, index.html forwards every GeolocateControl
+  // 'geolocate' fix into onLocationFix() below, so spawns + daycare
+  // distance track the same stream that drives the dot.
+  //
+  // startLocationWatch just arms us to accept fixes and starts the
+  // first-fix accuracy-gate clock; it no longer owns a watch. If the user
+  // turns the GeolocateControl OFF, its watch stops and no fixes arrive —
+  // spawns + daycare distance pause on the last position until tracking is
+  // re-enabled. That's the intended "location off" state (and matches the
+  // dot vanishing), not a regression.
   function startLocationWatch() {
-    if (_geoWatchId != null || !navigator.geolocation) return;
+    if (_geoListening) return;
+    _geoListening = true;
     _firstFixDeadline = Date.now() + FIRST_FIX_TIMEOUT_MS;
-    _geoWatchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        const acc = pos.coords.accuracy;
-        if (_userLat == null
-            && acc != null
-            && acc > FIRST_FIX_MIN_ACCURACY_M
-            && Date.now() < _firstFixDeadline) {
-          return;
-        }
-        _userLat = pos.coords.latitude;
-        _userLng = pos.coords.longitude;
-        // Accumulate trainer travel into today's daycare bucket.
-        // pos.timestamp is preferred over Date.now() because it
-        // reflects when the OS captured the fix (not when JS ran).
-        _accumulateDaycareDistance(_userLat, _userLng, pos.timestamp || Date.now());
-        refreshSpawnOverlay();
-      },
-      () => {
-        // Non-fatal: the user may have denied permission, or (with the
-        // timeout below) a fix just couldn't be acquired in time. The
-        // watch keeps running either way, so the next good fix will flow
-        // through the success path. Nothing to do here but not crash.
-      },
-      // maximumAge: 0 — never serve a cached fix. 5000 here was letting
-      // the watch report positions up to 5s stale, which reads as the
-      // GPS "refreshing every few seconds." Demand a live fix each time;
-      // smoothing of the on-screen dot is handled by marker interpolation
-      // in index.html, not by tolerating stale coords here.
-      //
-      // timeout: 10000 — without it the option is Infinity, so on iOS a
-      // slow/blocked high-accuracy lock leaves watchPosition silently
-      // hung: neither success nor error ever fires and spawns never
-      // appear. A bounded timeout (matching OpenStreetMap's locate
-      // control) makes a stalled fix surface as an error instead; the
-      // watch continues, so a later fix still arrives. Outdoors with
-      // signal, fixes land well inside 10s so this never trips.
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
-    );
+  }
+
+  // Consume one position fix pushed from index.html's GeolocateControl
+  // 'geolocate' handler. Runs the former watch-success body: the first-fix
+  // accuracy gate, coordinate update, daycare travel accumulation, and a
+  // spawn-overlay refresh. No-ops unless we're attached + listening
+  // (creature mode on), matching the old watch's attach/detach lifetime.
+  function onLocationFix(pos) {
+    if (!_geoListening || !pos || !pos.coords) return;
+    const acc = pos.coords.accuracy;
+    // Ignore an imprecise (network / cell-tower) first fix for a short
+    // window so the initial spawn set isn't placed 50-200 m off and then
+    // jumps once a real GPS fix lands. After the deadline we accept
+    // whatever accuracy we have so low-signal users still see something.
+    if (_userLat == null
+        && acc != null
+        && acc > FIRST_FIX_MIN_ACCURACY_M
+        && Date.now() < _firstFixDeadline) {
+      return;
+    }
+    _userLat = pos.coords.latitude;
+    _userLng = pos.coords.longitude;
+    // Accumulate trainer travel into today's daycare bucket.
+    // pos.timestamp is preferred over Date.now() because it reflects
+    // when the OS captured the fix (not when JS ran).
+    _accumulateDaycareDistance(_userLat, _userLng, pos.timestamp || Date.now());
+    refreshSpawnOverlay();
   }
 
   function stopLocationWatch() {
-    if (_geoWatchId != null && navigator.geolocation) {
-      navigator.geolocation.clearWatch(_geoWatchId);
-    }
-    _geoWatchId = null;
+    // No OS watch to clear — index.html owns the single watch. Just stop
+    // accepting fixes and forget our last position so a later re-attach
+    // re-runs the first-fix accuracy gate cleanly.
+    _geoListening = false;
     _userLat = null;
     _userLng = null;
     _firstFixDeadline = 0;
@@ -14491,6 +14501,11 @@
     getDaycarePath,
     exportDaycareData,
     importDaycareData,
+    // Location bridge — single-watch architecture. index.html owns the
+    // one OS-level geolocation watch (MapLibre's GeolocateControl) and
+    // forwards each 'geolocate' fix here so spawns + daycare distance
+    // track the same stream as the blue dot (no second watchPosition).
+    onLocationFix,
     // Fitness bridge — page-side pedometer sync (iOS) calls these to
     // credit closed-app movement and to read the last-synced marker.
     creditPedometerMeters,
