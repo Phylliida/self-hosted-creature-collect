@@ -3160,6 +3160,22 @@
   })();
   const SUPPORTED_SPECIES_MAX = 429;  // max id in the set, for callers that need a numeric ceiling
 
+  // Gen-1 legendaries (Articuno/Zapdos/Moltres/Mewtwo/Mew). Kept in lockstep
+  // with GEN1_LEGENDARY_IDS in spawns.js. Completion is scored against
+  // NON-legendary partners only: legendary spawns are ~1/16000, so requiring
+  // their fusions would make 100% (and its shiny bonus) unreachable. Legendary
+  // species still get their own — uncounted — row in the completion dex.
+  const LEGENDARY_SPECIES_SET = new Set([144, 145, 146, 150, 151]);
+  function isLegendarySpecies(id) { return LEGENDARY_SPECIES_SET.has(id); }
+  // How many supported species actually count toward completion — the partner
+  // pool and the aggregate %. Excludes the legendaries in the pool
+  // (Articuno/Zapdos/Moltres/Mewtwo; Mew 151 isn't a supported species anyway).
+  const SUPPORTED_NONLEG_COUNT = (() => {
+    let n = 0;
+    for (const id of SUPPORTED_SPECIES_SET) if (!isLegendarySpecies(id)) n++;
+    return n;
+  })();
+
   function fusionEvolutionsFor(a, b) {
     if (!global.Species || !global.Species.fusionEvolutionsFor) return [];
     const all = global.Species.fusionEvolutionsFor(a, b);
@@ -10797,13 +10813,17 @@
       if (dash < 0) continue;
       const a = +key.slice(0, dash), b = +key.slice(dash + 1);
       if (!SUPPORTED_SPECIES_SET.has(a) || !SUPPORTED_SPECIES_SET.has(b)) continue;
-      head.set(a, (head.get(a) || 0) + 1);
-      body.set(b, (body.get(b) || 0) + 1);
+      // Legendaries are far too rare to fairly gate completion, so a fusion
+      // only advances a species when its PARTNER is non-legendary. (The
+      // legendary morph still lights up in the species-dex grid — it just
+      // doesn't count toward the %.)
+      if (!isLegendarySpecies(b)) head.set(a, (head.get(a) || 0) + 1);
+      if (!isLegendarySpecies(a)) body.set(b, (body.get(b) || 0) + 1);
     }
-    const total = 2 * SUPPORTED_SPECIES_SET.size;
+    const total = 2 * SUPPORTED_NONLEG_COUNT;
     return supportedSpeciesSorted().map((id) => {
       const s = (head.get(id) || 0) + (body.get(id) || 0);
-      return { id, seen: s, total, pct: total ? s / total : 0 };
+      return { id, seen: s, total, pct: total ? s / total : 0, legendary: isLegendarySpecies(id) };
     });
   }
 
@@ -10816,11 +10836,18 @@
 
     const statsEl = panel.querySelector('.completion-stats');
     if (statsEl) {
-      let seenAll = 0, totalAll = 0, done = 0;
-      for (const r of rows) { seenAll += r.seen; totalAll += r.total; if (r.seen >= r.total) done++; }
+      // Legendaries are shown in the list but excluded from the headline % and
+      // the "complete" tally — they're too rare to fairly count against you.
+      let seenAll = 0, totalAll = 0, done = 0, counted = 0;
+      for (const r of rows) {
+        if (r.legendary) continue;
+        counted++;
+        seenAll += r.seen; totalAll += r.total;
+        if (r.seen >= r.total) done++;
+      }
       const overall = totalAll ? Math.round(seenAll / totalAll * 100) : 0;
       statsEl.innerHTML =
-        `<b>${overall}%</b> overall · <b>${done}</b>/${rows.length} species complete`;
+        `<b>${overall}%</b> overall · <b>${done}</b>/${counted} species complete`;
     }
 
     const grid = panel.querySelector('.completion-grid');
@@ -10884,12 +10911,17 @@
     if (headLbl) headLbl.textContent = `${name} × …`;
     if (bodyLbl) bodyLbl.textContent = `… × ${name}`;
 
-    let seenHead = 0, seenBody = 0;
+    // Legendary partners still render in the grid below (as uncounted bonus
+    // cells), but they don't count toward this page's % — matching the
+    // completion-dex row for X.
+    let seenHead = 0, seenBody = 0, counted = 0;
     for (const p of partners) {
+      if (isLegendarySpecies(p)) continue;
+      counted++;
       if (isFusionSeen(X, p)) seenHead++;
       if (isFusionSeen(p, X)) seenBody++;
     }
-    const total = 2 * partners.length;
+    const total = 2 * counted;
     const seenAll = seenHead + seenBody;
     const statsEl = panel.querySelector('.speciesdex-stats');
     if (statsEl) {
