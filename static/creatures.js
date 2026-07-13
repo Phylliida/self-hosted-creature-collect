@@ -6465,6 +6465,25 @@
       #creatureInventory .speciesdex-stats {
         text-align: center; font-size: 12px; opacity: 0.8; margin: 2px 0 10px;
       }
+      /* Non-evolved filter chip — a plain outlined button by default,
+         accent-filled when the filter is active (aria-pressed). Matches
+         the .family-toggle idiom but centered like a filter pill. */
+      #creatureInventory .completion-filter {
+        align-self: center; background: transparent;
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
+        border-radius: var(--ui-radius, 8px);
+        color: var(--ui-text, #111);
+        padding: 5px 12px; margin: 2px 0 8px;
+        font-size: 12px; font-family: inherit; cursor: pointer;
+      }
+      #creatureInventory .completion-filter:hover {
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+      }
+      #creatureInventory .completion-filter.is-active {
+        background: var(--ui-accent, #3b7fdf);
+        border-color: var(--ui-accent, #3b7fdf);
+        color: var(--ui-accent-text, #fff);
+      }
       #creatureInventory .completion-row {
         box-sizing: border-box; height: 60px; display: flex; align-items: center; gap: 10px;
         padding: 6px 10px; cursor: pointer;
@@ -7390,6 +7409,7 @@
         <div class="completion-view">
           <button class="completion-back" type="button" aria-label="back">←</button>
           <h3 class="subview-title">Completion</h3>
+          <button class="completion-filter" type="button" aria-pressed="false">Show non-evolved only</button>
           <div class="completion-stats"></div>
           <div class="completion-grid"></div>
         </div>
@@ -7719,6 +7739,14 @@
     // Completion button (top of the pokédex) → species-completion list.
     panel.querySelector('.pokedex-completion-btn').addEventListener('click',
       () => pushView({ view: 'completion' }));
+    // Non-evolved filter toggle in the completion header. Reset scroll so the
+    // (now shorter/longer) list starts from the top after re-rendering.
+    panel.querySelector('.completion-filter').addEventListener('click', () => {
+      _completionNonEvolvedOnly = !_completionNonEvolvedOnly;
+      const sheet = panel.querySelector('.sheet');
+      if (sheet) sheet.scrollTop = 0;
+      renderCompletion();
+    });
     // Delegated row taps. Listeners live on the (persistent) grid element;
     // virtualizeGrid swaps the rows underneath them as the user scrolls.
     panel.querySelector('.completion-grid').addEventListener('click', (e) => {
@@ -10893,21 +10921,46 @@
     const total = 2 * SUPPORTED_NONLEG_COUNT;
     return supportedSpeciesSorted().map((id) => {
       const s = (head.get(id) || 0) + (body.get(id) || 0);
-      return { id, seen: s, total, pct: total ? s / total : 0, legendary: isLegendarySpecies(id) };
+      return {
+        id, seen: s, total, pct: total ? s / total : 0,
+        legendary: isLegendarySpecies(id), evolved: _isEvolvedSpecies(id),
+      };
     });
   }
+
+  // Completion view: when true, only non-evolved species (base forms +
+  // pre-evo babies — the ones you actually CATCH or HATCH) are listed and
+  // counted, so the % reflects "how much of the catchable pool have I found".
+  // View-local (not persisted), like the family-tree expand toggle.
+  let _completionNonEvolvedOnly = false;
 
   function renderCompletion() {
     const panel = document.getElementById('creatureInventory');
     if (!panel) return;
-    const rows = computeSpeciesCompletion();
+    const nonEvoOnly = _completionNonEvolvedOnly;
+    // In "non-evolved only" mode drop evolved forms entirely — you can't catch
+    // or hatch those directly, so hiding them shows exactly what's left to find
+    // in the wild / from eggs. Legendaries are non-evolved so they stay in the
+    // list, but (as elsewhere) never count toward the headline %.
+    const allRows = computeSpeciesCompletion();
+    const rows = nonEvoOnly ? allRows.filter((r) => !r.evolved) : allRows;
     // Most-complete first; ties fall back to dex order (id asc).
     rows.sort((x, y) => (y.pct - x.pct) || (x.id - y.id));
+
+    const filterBtn = panel.querySelector('.completion-filter');
+    if (filterBtn) {
+      filterBtn.classList.toggle('is-active', nonEvoOnly);
+      filterBtn.setAttribute('aria-pressed', nonEvoOnly ? 'true' : 'false');
+      filterBtn.textContent = nonEvoOnly
+        ? 'Non-evolved only (to catch / hatch)'
+        : 'Show non-evolved only';
+    }
 
     const statsEl = panel.querySelector('.completion-stats');
     if (statsEl) {
       // Legendaries are shown in the list but excluded from the headline % and
       // the "complete" tally — they're too rare to fairly count against you.
+      // (In non-evolved mode `rows` is already the non-evolved set.)
       let seenAll = 0, totalAll = 0, done = 0, counted = 0;
       for (const r of rows) {
         if (r.legendary) continue;
@@ -10917,7 +10970,8 @@
       }
       const overall = totalAll ? Math.round(seenAll / totalAll * 100) : 0;
       statsEl.innerHTML =
-        `<b>${overall}%</b> overall · <b>${done}</b>/${counted} species complete`;
+        `<b>${overall}%</b> ${nonEvoOnly ? 'non-evolved' : 'overall'}`
+        + ` · <b>${done}</b>/${counted} species complete`;
     }
 
     const grid = panel.querySelector('.completion-grid');
