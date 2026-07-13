@@ -5982,6 +5982,26 @@
       #ccInfoModal .cc-oddsbar-legend i {
         width: 10px; height: 10px; border-radius: 2px; display: inline-block; flex-shrink: 0;
       }
+      /* Odds grid — a heat-map matrix of the joint two-type-half odds. Rows are
+         the primary (first) half, columns the secondary (second) half. */
+      #ccInfoModal .cc-oddsgrid { display: grid; gap: 3px; margin: 8px 0 4px; font-size: 11px; }
+      #ccInfoModal .cc-oddsgrid-corner {
+        display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-end;
+        gap: 1px; padding: 2px 2px 4px; font-size: 9.5px; line-height: 1.1;
+        color: var(--ui-muted, #666);
+      }
+      #ccInfoModal .cc-oddsgrid-head {
+        display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+        font-weight: 600; padding: 3px 3px; min-width: 0; white-space: nowrap; overflow: hidden;
+      }
+      #ccInfoModal .cc-oddsgrid-head i {
+        width: 9px; height: 9px; border-radius: 2px; display: inline-block; flex-shrink: 0;
+      }
+      #ccInfoModal .cc-oddsgrid-cell {
+        display: flex; align-items: center; justify-content: center; padding: 7px 2px;
+        border-radius: 4px; font-weight: 700; color: var(--ui-text, #111);
+      }
+      #ccInfoModal .cc-oddsgrid-cell.hot { color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.35); }
       /* "Open type chart" launcher row. */
       #ccInfoModal .cc-info-link {
         -webkit-appearance: none; appearance: none;
@@ -9641,9 +9661,45 @@
   function _ccOddsLegend(color, text) {
     return '<span><i style="background:' + color + '"></i>' + escapeHtml(text) + '</span>';
   }
+  // Renders Spawns.typePairOdds() as a heat-map matrix: rows = the primary
+  // (first) type-half, columns = the secondary (second) half, each cell the
+  // joint chance of that exact combo. Cell tint scales with the busiest cell so
+  // the grid reads as a heatmap; honest 0% cells (a boosted type with no
+  // eligible species in that slot today) stay visible.
+  function _ccOddsGrid(pair) {
+    const OTHER = '#8a8f98';
+    const colOf = (c) => c === 'daily' ? (TYPE_COLORS[pair.daily] || '#6d5ac0')
+      : c === 'weekly' ? (TYPE_COLORS[pair.weekly] || '#c06a8a') : OTHER;
+    const labelOf = (c) => c === 'daily' ? _titleCaseType(pair.daily)
+      : c === 'weekly' ? _titleCaseType(pair.weekly) : 'Other';
+    const classes = pair.classes;
+    const pct = (x) => Math.round(x * 100);
+    let max = 0;
+    for (const rc of classes) for (const cc of classes) max = Math.max(max, pair.grid[rc][cc]);
+    const head = (c) => '<div class="cc-oddsgrid-head"><i style="background:'
+      + colOf(c) + '"></i>' + escapeHtml(labelOf(c)) + '</div>';
+    const cols = 'minmax(40px,auto) repeat(' + classes.length + ',1fr)';
+    let h = '<div class="cc-oddsgrid" style="grid-template-columns:' + cols + '">';
+    h += '<div class="cc-oddsgrid-corner"><span>1st ↓</span><span>2nd →</span></div>';
+    for (const cc of classes) h += head(cc);
+    for (const rc of classes) {
+      h += head(rc);
+      for (const cc of classes) {
+        const share = pair.grid[rc][cc];
+        const a = max > 0 ? 0.06 + 0.54 * (share / max) : 0.06;
+        const hot = a > 0.4 ? ' hot' : '';
+        h += '<div class="cc-oddsgrid-cell' + hot + '" style="background:rgba(109,90,192,'
+          + a.toFixed(3) + ')">' + pct(share) + '%</div>';
+      }
+    }
+    h += '</div>';
+    return h;
+  }
   function _themeOddsHtml() {
     const odds = (global.Spawns && global.Spawns.typeOdds)
       ? global.Spawns.typeOdds() : null;
+    const pair = (global.Spawns && global.Spawns.typePairOdds)
+      ? global.Spawns.typePairOdds() : null;
     if (!odds) {
       return '<p class="cc-info-p">Today\'s spawn odds aren\'t available yet — '
         + 'creature data is still loading. Try again in a moment.</p>';
@@ -9693,6 +9749,29 @@
       + 'remaining ' + (odds.same ? 17 : 16) + ' types, so any single one of them '
       + 'is uncommon today.</p>';
     h += '</div>';
+
+    if (pair) {
+      const combo = pair.same
+        ? escapeHtml(dName) + ' or another type'
+        : escapeHtml(dName) + ', ' + escapeHtml(wName) + ' or another type';
+      h += '<div class="cc-info-section">';
+      h += '<div class="cc-info-section-title">Both type-halves</div>';
+      h += '<p class="cc-info-p">Each spawn fuses a <b>first</b> and a <b>second</b> '
+        + 'type-half. This grid is the chance of every combo (' + combo + ') — read a '
+        + 'row for the first half, a column for the second. Darker means more likely; '
+        + 'all cells add up to 100%.</p>';
+      h += _ccOddsGrid(pair);
+      let hasZero = false;
+      for (const rc of pair.classes) for (const cc of pair.classes) {
+        if (pair.grid[rc][cc] === 0) hasZero = true;
+      }
+      if (hasZero) {
+        h += '<p class="cc-info-note" style="margin-top:8px">A <b>0%</b> cell means that '
+          + 'boosted type has no eligible species for that half today, so it only shows '
+          + 'up in the other slot.</p>';
+      }
+      h += '</div>';
+    }
 
     h += '<div class="cc-info-section">';
     h += '<div class="cc-info-section-title">How the boost works</div>';

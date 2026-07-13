@@ -398,6 +398,42 @@
     return { daily: w.daily, weekly: w.weekly, same, dailyShare, weeklyShare, otherShare, perType };
   }
 
+  // Detailed *joint* odds over the two type-halves of a spawn. Where typeOdds
+  // gives per-slot marginals, this gives the full breakdown the weather-bar
+  // explainer's "detailed" diagram wants: the chance a spawn is
+  // daily×daily, daily×weekly, weekly×daily, daily×other, other×daily,
+  // weekly×weekly, weekly×other, other×weekly, or other×other — i.e. the 3×3
+  // grid of {daily, weekly, other} for (primary, secondary). Read straight off
+  // the live pair sampler so empty pools are honestly baked in (e.g. if a
+  // boosted type has no primary species, its whole primary row realizes ~0).
+  //
+  // Each entry's primary/secondary type is classified daily/weekly/other and
+  // its realized weight added to the matching grid cell, then normalized so the
+  // whole grid sums to 1. On a same-weather day (daily === weekly) the daily and
+  // weekly classes merge, so `classes` is ['daily','other'] and the grid is 2×2.
+  // Returns { daily, weekly, same, classes, grid } where grid[rowClass][colClass]
+  // is the joint probability. null until species data loads.
+  function typePairOdds(nowMs) {
+    if (!_buildTypeIndices()) return null;
+    const w = currentWeather(nowMs);
+    const sampler = _composePairSampler(_byPrimary, _bySecondary, w.daily, w.weekly);
+    if (!sampler) return null;
+    const same = w.daily === w.weekly;
+    // daily checked first so on a same-weather day both boosted halves land in
+    // the single 'daily' class rather than being double-counted.
+    const classOf = (t) => (t === w.daily ? 'daily' : (t === w.weekly ? 'weekly' : 'other'));
+    const classes = same ? ['daily', 'other'] : ['daily', 'weekly', 'other'];
+    const grid = Object.create(null);
+    for (const rc of classes) { grid[rc] = Object.create(null); for (const cc of classes) grid[rc][cc] = 0; }
+    let total = 0;
+    for (const e of sampler.entries) {
+      grid[classOf(e.a)][classOf(e.b)] += e.w;
+      total += e.w;
+    }
+    if (total > 0) for (const rc of classes) for (const cc of classes) grid[rc][cc] /= total;
+    return { daily: w.daily, weekly: w.weekly, same, classes, grid };
+  }
+
   // Sample one (a, b) type pair given a uniform [0,1) draw r.
   function _sampleTypePair(sampler, r) {
     const entries = sampler.entries;
@@ -1107,7 +1143,7 @@
 
   global.Spawns = {
     spawnsInBbox, generateCellAtTick, currentTick, isSpawnIdStale,
-    currentWeather, typeOdds,
+    currentWeather, typeOdds, typePairOdds,
     // Legendary stream (folded into spawnsInBbox; exposed for tests +
     // any future legendary-specific UI).
     legendariesInBbox, generateLegendaryAtTick, currentLegTick,
