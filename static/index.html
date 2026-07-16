@@ -3944,15 +3944,25 @@
       // foreground, so the native plugin is enough on its own.
       const watches = new Map();
       let nextId = 1;
+      // Matches the Android BgLoc path's threshold: anything older is a
+      // cached/queued replay, not a live position.
+      const STALE_FIX_THRESHOLD_MS = 5000;
       const shim = {
         getCurrentPosition(success, error, opts) {
-          Geo.getCurrentPosition(opts || {})
+          // Force high accuracy. The native plugin reuses ONE shared
+          // CLLocationManager for every call, and enableHighAccuracy:false
+          // sets its desiredAccuracy to kCLLocationAccuracyThreeKilometers —
+          // permanently downgrading any live watchPosition stream on the
+          // same manager to cell-tower fixes until the watch is restarted.
+          // No one-shot in this app wants 3 km accuracy; on iOS the option
+          // is a footgun, not a choice.
+          Geo.getCurrentPosition({ ...(opts || {}), enableHighAccuracy: true })
             .then((pos) => success && success(pos))
             .catch((err) => error && error(err));
         },
         watchPosition(success, error, opts) {
           const id = nextId++;
-          const entry = { realId: null, cleared: false };
+          const entry = { realId: null, cleared: false, lastTs: 0 };
           watches.set(id, entry);
           // Capacitor's Geo.watchPosition return type varies between
           // plugin versions: some return Promise<CallbackID>, some
@@ -3961,8 +3971,28 @@
           let result;
           try {
             result = Geo.watchPosition(opts || {}, (pos, err) => {
+              if (entry.cleared) return;
               if (err) { error && error(err); return; }
-              if (pos) success && success(pos);
+              if (!pos) return;
+              // The native plugin ignores maximumAge: on start CoreLocation
+              // replays its cached last-known fix — possibly hours old and
+              // from another part of town — with its ORIGINAL timestamp.
+              // The web API would discard that under maximumAge:0; do it
+              // here so the dot never teleports to a stale position. (Same
+              // guard the Android BgLoc path already has.)
+              //
+              // Also drop out-of-order fixes: the plugin reports
+              // locations.first from each CoreLocation batch, but batches
+              // are ordered oldest→newest, so bursty bridge delivery can
+              // hand us a fix OLDER than one already forwarded — a
+              // backwards jump on screen.
+              const ts = typeof pos.timestamp === 'number' ? pos.timestamp : 0;
+              if (ts) {
+                if (Date.now() - ts > STALE_FIX_THRESHOLD_MS) return;
+                if (ts <= entry.lastTs) return;
+                entry.lastTs = ts;
+              }
+              success && success(pos);
             });
           } catch (e) { error && error(e); return id; }
           if (result && typeof result.then === 'function') {
@@ -6974,6 +7004,29 @@ function fmtDate(ts) {
   // Skips re-asking when permission is already granted or has been
   // denied (browser blocks re-prompts in that case anyway).
   async function ensureLocationPermission() {
+    // Capacitor (iOS/Android): prime via the plugin's permission API, NOT
+    // a getCurrentPosition. The iOS plugin drives every call through ONE
+    // shared CLLocationManager, and getCurrentPosition({enableHighAccuracy:
+    // false}) sets that manager's desiredAccuracy to ThreeKilometers —
+    // silently downgrading the GeolocateControl's live watch to cell-tower
+    // fixes (the "dot leaps blocks away" bug). The navigator.permissions
+    // guard below can never trip under the Capacitor shim (the page never
+    // asks WebKit for geolocation, so WebKit's page-level state stays
+    // 'prompt' forever), so that coarse one-shot re-fired on every load,
+    // focus, and visibility flip. checkPermissions/requestPermissions only
+    // touch authorization state — they never configure the manager.
+    const capGeo = window.Capacitor && window.Capacitor.Plugins
+      && window.Capacitor.Plugins.Geolocation;
+    if (capGeo) {
+      try {
+        const s = await capGeo.checkPermissions();
+        const st = s && s.location;
+        if (st === 'prompt' || st === 'prompt-with-rationale') {
+          await capGeo.requestPermissions();
+        }
+      } catch { /* location services off — nothing to prime */ }
+      return;
+    }
     if (!navigator.geolocation) return;
     if (navigator.permissions) {
       try {
