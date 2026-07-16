@@ -3096,7 +3096,7 @@
        // overlays new code into this very cache in place, so deleting would
        // be pointless online and, offline, would wipe a prior update back to
        // the bundled version. (Refresh must never downgrade with no data.)
-       try{var _plat=(window.Capacitor&&window.Capacitor.getPlatform&&window.Capacitor.getPlatform())||'web';if(_plat!=='android'){caches.open('app-v1').then(function(c){['/','/manifest.webmanifest','/static/icon.svg','/static/trip-planner.js','/static/extras.js','/static/extras-apps.js','/static/extras-almanac.js','/static/extras-vibration.js','/static/extras-skymap.js','/static/extras-sudoku.js','/static/vendor/maplibre-gl.css','/static/vendor/maplibre-gl.js'].forEach(function(u){c.delete(u)})})}}catch(_){}
+       try{var _plat=(window.Capacitor&&window.Capacitor.getPlatform&&window.Capacitor.getPlatform())||'web';if(_plat!=='android'){caches.open('app-v1').then(function(c){['/','/manifest.webmanifest','/static/icon.svg','/static/trip-planner.js','/static/extras.js','/static/extras-apps.js','/static/extras-almanac.js','/static/extras-vibration.js','/static/extras-skymap.js','/static/extras-sudoku.js','/static/extras-sensors.js','/static/vendor/maplibre-gl.css','/static/vendor/maplibre-gl.js'].forEach(function(u){c.delete(u)})})}}catch(_){}
        try{localStorage.removeItem('cc.lastUpdateFailedAt');}catch(_){}
        var btn=document.getElementById('emergencyRefresh');
        if(btn){btn.style.opacity='0.5';btn.style.pointerEvents='none';}
@@ -4384,6 +4384,7 @@
 <script src="/static/extras-almanac.js"></script>
 <script src="/static/extras-skymap.js"></script>
 <script src="/static/extras-sudoku.js"></script>
+<script src="/static/extras-sensors.js"></script>
 <script>
 // Single source of truth for the app version. Bumped manually when shipping
 // a user-visible change (new features, data format upgrades, etc.). Shown
@@ -6790,6 +6791,16 @@ function fmtDate(ts) {
   geolocate.on('geolocate', (e) => {
     if (window.Creatures && typeof window.Creatures.onLocationFix === 'function') {
       try { window.Creatures.onLocationFix(e); } catch (err) { /* non-fatal */ }
+    }
+  });
+  // Same-stream feed for the Extras sensors dashboard (single-watch
+  // invariant: extras must never open a second OS-level watch). The
+  // latest fix is also stashed on window so the dashboard can render
+  // immediately when opened after fixes have been flowing for a while.
+  geolocate.on('geolocate', (e) => {
+    window._ccLatestFix = e;
+    if (window.ExtrasSensors && typeof window.ExtrasSensors.onLocationFix === 'function') {
+      try { window.ExtrasSensors.onLocationFix(e); } catch (err) { /* non-fatal */ }
     }
   });
   // Restore the focus/follow toggle from a previous session — re-enter
