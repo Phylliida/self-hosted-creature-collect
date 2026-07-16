@@ -229,10 +229,18 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :NSLocationWhenInUseUsageDescription string 'Show your position on the map and detect nearby creatures while walking.'" "$PLIST"
           /usr/libexec/PlistBuddy -c "Delete :NSMotionUsageDescription" "$PLIST" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :NSMotionUsageDescription string 'Credit your daycare creatures and incubating eggs with steps walked while the app is closed.'" "$PLIST"
-          # Microphone: only used by the Extras sensors dashboard's opt-in
-          # level meter (local analysis, nothing recorded or transmitted).
+          # Microphone: used by the Extras sensors dashboard's opt-in level
+          # meter and the tuner (local analysis, nothing recorded or sent).
           /usr/libexec/PlistBuddy -c "Delete :NSMicrophoneUsageDescription" "$PLIST" 2>/dev/null || true
-          /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'Show a live sound-level meter in the sensors dashboard. Audio is analyzed on the device only and never recorded or sent anywhere.'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'Power the tuner and the sound-level meter. Audio is analyzed on the device only and never recorded or sent anywhere.'" "$PLIST"
+          # Background audio: the Extras soundscapes tool is a sleep aid —
+          # its WebAudio graph must keep playing when the screen locks.
+          # Without this mode iOS suspends the WKWebView's audio on lock.
+          # Paired with the AVAudioSession .playback category set in
+          # AppBridgeViewController.
+          /usr/libexec/PlistBuddy -c "Delete :UIBackgroundModes" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string audio" "$PLIST"
           echo "── Info.plist after patching ──"
           /usr/libexec/PlistBuddy -c "Print :WKAppBoundDomains" "$PLIST"
           /usr/libexec/PlistBuddy -c "Print :NSLocationWhenInUseUsageDescription" "$PLIST"

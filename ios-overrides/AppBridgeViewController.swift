@@ -9,6 +9,7 @@
 // Workflow patches the storyboard during build.
 
 import UIKit
+import AVFoundation
 import Capacitor
 
 @objc(AppBridgeViewController)
@@ -22,6 +23,19 @@ class AppBridgeViewController: CAPBridgeViewController {
             NSLog("[AppBridgeVC] serverURL set to \(url.absoluteString)")
         } catch {
             NSLog("[AppBridgeVC] LocalServer start failed: \(error)")
+        }
+        // Background audio for the Extras soundscapes sleep tool: the
+        // .playback category (paired with UIBackgroundModes audio in
+        // Info.plist, added by the build workflow) lets the WebView's
+        // WebAudio keep playing after the screen locks. .mixWithOthers
+        // keeps us polite toward other apps' audio; recent iOS lets
+        // WKWebView manage its own session while capturing (tuner/mic
+        // meter), so this doesn't fight getUserMedia.
+        do {
+            try AVAudioSession.sharedInstance().setCategory(
+                .playback, mode: .default, options: [.mixWithOthers])
+        } catch {
+            NSLog("[AppBridgeVC] AVAudioSession category failed: \(error)")
         }
         return descriptor
     }

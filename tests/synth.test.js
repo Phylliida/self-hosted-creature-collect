@@ -102,9 +102,16 @@ const ids = {};
  'vlBreath', 'vlBreathV', 'vlFormantF', 'vlFormantFV', 'vlFormantA', 'vlFormantAV',
  'vlDamping', 'vlDampingV', 'vlMotion', 'vlMotionV', 'vlChiff', 'vlChiffV',
  'vlPresets', 'vlPad', 'vlPadNote', 'vlRandom', 'vlPadOct',
- 'vlStrikeF', 'vlStrikeFV', 'vlStrikeT', 'vlStrikeTV'].forEach(id => { ids[id] = makeEl('div'); ids[id].id = id; });
+ 'vlStrikeF', 'vlStrikeFV', 'vlStrikeT', 'vlStrikeTV',
+ 'metRow',
+ 'tunExplorer', 'tunExplorerBtn', 'txClose', 'txRandom', 'txCount', 'txHisto', 'txChips',
+ 'txSearch', 'txGrid', 'txPad', 'txStatus', 'txDetail', 'txDetCanvas', 'txDetRuler', 'txDetName',
+ 'txDetMeta', 'txDetDesc', 'txDetCents', 'txBack', 'txHear', 'txUse'].forEach(id => { ids[id] = makeEl('div'); ids[id].id = id; });
 ids.synthCfgPanel.hidden = true;         // markup ships with the hidden attribute
 ids.voiceLabPanel.hidden = true;
+ids.tunExplorer.hidden = true;
+ids.txDetail.hidden = true;
+ids.txGrid.clientWidth = 360; ids.txGrid.clientHeight = 420; ids.txGrid.scrollTop = 0;
 ids.soundPad.clientWidth = 800; ids.soundPad.clientHeight = 600;
 ids.tempoSlider.value = '120';
 
@@ -128,18 +135,18 @@ global.document = {
 };
 
 /* ── fake WebAudio ── */
-let oscCount = 0, compCount = 0, bufMade = 0;
-const oscMade = [], filtMade = [];
+let oscCount = 0, compCount = 0, bufMade = 0, lastBufLen = 0;
+const oscMade = [], filtMade = [], gainsMade = [];
 function fakeParam() { return { value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {}, linearRampToValueAtTime() {}, setTargetAtTime() {}, cancelScheduledValues() {} }; }
-function fakeNode() { const n = { type: '', buffer: null, frequency: fakeParam(), stopped: false, connect() {}, start() {}, stop() { n.stopped = true; } }; return n; }
+function fakeNode() { const n = { type: '', buffer: null, frequency: fakeParam(), stopped: false, disconnected: false, connect() {}, disconnect() { n.disconnected = true; }, start() {}, stop() { n.stopped = true; } }; return n; }
 class FakeCtx {
   constructor() { this.state = 'running'; this.destination = {}; this.sampleRate = 512; }
   get currentTime() { return now; }
   resume() {}
-  createBuffer(ch, len) { return { getChannelData: () => new Float32Array(len) }; }
+  createBuffer(ch, len) { lastBufLen = len; return { getChannelData: () => new Float32Array(len) }; }
   createBufferSource() { bufMade++; return fakeNode(); }
   createOscillator() { oscCount++; const n = fakeNode(); oscMade.push(n); return n; }
-  createGain() { const n = fakeNode(); n.gain = fakeParam(); return n; }
+  createGain() { const n = fakeNode(); n.gain = fakeParam(); gainsMade.push(n); return n; }
   createBiquadFilter() { const n = fakeNode(); n.Q = fakeParam(); n.gain = fakeParam(); filtMade.push(n); return n; }
   createDynamicsCompressor() {
     compCount++;
@@ -1224,6 +1231,275 @@ ok(voice41.length > 0 && voice41.every(o => !o.stopped),
 advance(2.0);
 ok(voice41.every(o => o.stopped), 'T41: and fully stopped once the release has died away');
 ids.vlClose.onclick();
+
+/* ── T42: Scala tuning via loadSong — quantized pad notes land on scale steps ── */
+clearBtn.onclick();
+while (instBtn.textContent !== 'Synth') instBtn.onclick();      // ensure pad mode
+const JI7 = [203.91, 386.31, 498.04, 701.96, 884.36, 1088.27, 1200];  // JI major, octave period
+global.SynthApp.loadSong({ v: 1, tempo: 120, scale: 'chromatic', root: 0, edo: 12,
+  scl: { name: 'ji7', cents: JI7 }, timeSig: 4, bars: 8, recordings: [] });
+ids.baseOctSel.value = '3'; ids.baseOctSel.onchange();          // pin base to C3 for the math below
+const sclCents = k => {                                         // reference stepCents for the JI7 scale
+  const N = 7, P = 1200, o = Math.floor(k / N), i = k - o * N;
+  return o * P + (i === 0 ? 0 : JI7[i - 1]);
+};
+recordBtn.onclick();
+advance(0.1); mouseDown(400, 300); advance(0.2); mouseUp(); advance(0.05);
+recordBtn.onclick(); stopBtn.onclick();
+const ev42 = song().recordings[0].events[0];
+const cents42 = 1200 * Math.log2(ev42.f / 130.81);
+let hit42 = false;
+for (let k = 0; k <= 40; k++) if (Math.abs(sclCents(k) - cents42) < 0.05) hit42 = true;
+ok(hit42, 'T42: quantized pad note lands exactly on a JI7 scale step (got ' + cents42.toFixed(2) + 'c)');
+ok(/^\d+\\7$/.test(ev42.name), 'T42: note named in degree\\7 notation (got ' + ev42.name + ')');
+ok(Math.abs(cents42 - 2603.91) < 0.05, 'T42: pad centre = step 15 = 2 octaves + 9/8 (got ' + cents42.toFixed(2) + 'c)');
+
+/* ── T43: the tuning rides in prefs and in getSong ── */
+const s43 = song();
+ok(s43.scl && s43.scl.name === 'ji7' && s43.scl.cents.length === 7, 'T43: getSong carries the Scala tuning');
+const prefs43 = JSON.parse(global.localStorage._o['synth.quant.v1']);
+ok(prefs43.scl && prefs43.scl.name === 'ji7', 'T43: prefs carry the Scala tuning');
+
+/* ── T44: legacy songs (no scl field) land back in plain EDO mode ── */
+clearBtn.onclick();
+global.SynthApp.loadSong({ v: 1, tempo: 120, scale: 'chromatic', root: 0, edo: 13,
+  timeSig: 4, bars: 8, recordings: [] });
+ok(song().scl === null, 'T44: legacy song load clears the Scala tuning');
+recordBtn.onclick();
+advance(0.1); mouseDown(400, 300); advance(0.2); mouseUp(); advance(0.05);
+recordBtn.onclick(); stopBtn.onclick();
+ok(/\\13$/.test(song().recordings[0].events[0].name), 'T44: back to 13-EDO degree names');
+
+/* ── T45: Tuning Explorer — histogram → ring grid → detail → use ── */
+clearBtn.onclick();
+global.SCALA_DB = { v: 2, scales: [
+  ['pelog7', 'test pelog', 1, 0, [120, 270, 540, 670, 785, 950, 1215]],
+  ['tet12', 'test equal', 0, 3, [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200]],
+  ['just5', 'test pentatonic', 0, 1, [204, 386, 702, 884, 1200]],
+] };
+ids.tunExplorerBtn.onclick();
+ok(ids.tunExplorer.hidden === false, 'T45: explorer opens from the gear panel');
+ok(ids.txHisto.children.length >= 4, 'T45: histogram has All + one bar per note count');
+ok(ids.txChips.children.length === 4, 'T45: family/period/intonation/sort dropdowns built');
+ok(ids.txPad.children.length === 3, 'T45: all three ring thumbnails rendered');
+const bar7 = ids.txHisto.children.find(b => b._html && b._html.indexOf('<b>7</b>') >= 0);
+ok(!!bar7, 'T45: found the 7-note histogram bar');
+bar7.onclick();
+ok(String(ids.txCount.textContent).indexOf('1 of 3') === 0, 'T45: 7-note bin filters to one scale (' + ids.txCount.textContent + ')');
+ok(ids.txPad.children.length === 1, 'T45: grid shows only the 7-note scale');
+ids.txPad.children[0].onclick();
+ok(ids.txDetail.hidden === false && ids.txDetName.textContent === 'pelog7', 'T45: detail view opened for pelog7');
+ok(ids.txDetMeta.textContent.indexOf('7 notes') === 0, 'T45: detail meta shows note count');
+ids.txUse.onclick();
+ok(ids.tunExplorer.hidden === true, 'T45: use-tuning closes the explorer');
+ok(song().scl && song().scl.name === 'pelog7', 'T45: pelog7 is now the live tuning');
+ok(ids.edoSel.value === 'scl', 'T45: tuning select shows the Scala tuning');
+// hex mode plays the tuning without crashing, degree names in \7
+while (instBtn.textContent !== 'Hex') instBtn.onclick();
+recordBtn.onclick();
+advance(0.1); mouseDown(200, 300); advance(0.2); mouseUp(); advance(0.05);
+recordBtn.onclick(); stopBtn.onclick();
+const ev45 = song().recordings[0].events[0];
+ok(isFinite(ev45.f) && ev45.f > 0 && /\\7$/.test(ev45.name), 'T45: hex key plays a finite pelog pitch (' + ev45.name + ')');
+const c45 = 1200 * Math.log2(ev45.f / 130.81);
+let hit45 = false;
+for (let k = -14; k <= 60; k++) {
+  const o = Math.floor(k / 7), i = k - o * 7;
+  const cc = o * 1215 + (i === 0 ? 0 : [120, 270, 540, 670, 785, 950, 1215][i - 1]);
+  if (Math.abs(cc - c45) < 0.05) hit45 = true;
+}
+ok(hit45, 'T45: hex pitch sits exactly on a pelog step incl. the 1215c period (got ' + c45.toFixed(2) + 'c)');
+while (instBtn.textContent !== 'Synth') instBtn.onclick();
+
+/* ── T46: arpeggio preview plays voices but never records ── */
+clearBtn.onclick();
+ids.tunExplorerBtn.onclick();
+ids.txPad.children[0].onclick();                                // detail for the filtered scale
+recordBtn.onclick();                                            // recording armed
+const osc46 = oscCount;
+ids.txHear.onclick();
+advance(4);
+ok(oscCount > osc46, 'T46: preview arpeggio made sound');
+recordBtn.onclick(); stopBtn.onclick();
+ok(song().recordings.length === 0, 'T46: preview left nothing in the take (empty take dropped)');
+ids.txClose.onclick();
+ok(ids.tunExplorer.hidden === true, 'T46: close button closes the explorer');
+
+/* ── T47: 🎲 surprise + the Explore… entry in the tuning select ── */
+ids.tunExplorerBtn.onclick();
+ids.txRandom.onclick();
+ok(ids.txDetail.hidden === false && ids.txDetName.textContent.length > 0, 'T47: dice opens a random detail view');
+ids.txClose.onclick();
+ids.edoSel.value = 'browse'; ids.edoSel.onchange();
+ok(ids.tunExplorer.hidden === false, 'T47: Explore… option in the tuning select opens the explorer');
+ok(ids.edoSel.value === 'scl', 'T47: select snaps back to the active tuning');
+ids.txClose.onclick();
+ids.edoSel.value = '12'; ids.edoSel.onchange();                 // back to 12-EDO for anything after
+ok(song().scl === null && ids.edoSel.value === '12', 'T47: picking an EDO clears the Scala tuning');
+
+/* ── T48: facet dropdowns (family/period/intonation) + sort + live counts ── */
+ids.tunExplorerBtn.onclick();
+const [famSel, perSel, intoSel, sortSel] = ids.txChips.children;
+famSel.value = '1'; famSel.onchange();                          // gamelan → pelog7 only
+ok(String(ids.txCount.textContent).indexOf('1 of 3') === 0, 'T48: family facet filters (' + ids.txCount.textContent + ')');
+ok(ids.txPad.children.length === 1 &&
+   ids.txPad.children[0].children[1].textContent === 'pelog7', 'T48: grid shows the gamelan scale');
+ok(famSel._html.indexOf('Gamelan · 1') >= 0, 'T48: family options carry live counts');
+famSel.value = '-1'; famSel.onchange();
+perSel.value = 'near'; perSel.onchange();                       // 1215c period = stretched octave
+ok(String(ids.txCount.textContent).indexOf('1 of 3') === 0 &&
+   ids.txPad.children[0].children[1].textContent === 'pelog7', 'T48: period facet finds the stretched-octave scale');
+perSel.value = 'all'; perSel.onchange();
+intoSel.value = '1'; intoSel.onchange();                        // just ratios → just5
+ok(ids.txPad.children.length === 1 &&
+   ids.txPad.children[0].children[1].textContent === 'just5', 'T48: intonation facet finds the just scale');
+intoSel.value = '-1'; intoSel.onchange();
+sortSel.value = 'notes'; sortSel.onchange();                    // fewest notes first
+ok(ids.txPad.children[0].children[1].textContent === 'just5', 'T48: notes sort puts the pentatonic first');
+sortSel.value = 'name'; sortSel.onchange();
+ids.txPad.children[0].onclick();                                // detail draws ring + step ruler
+ok(ids.txDetMeta.textContent.indexOf('7 notes') === 0 &&
+   ids.txDetMeta.textContent.indexOf('gamelan') > 0, 'T48: detail meta shows intonation + family');
+ok(!!ids.txDetRuler.style.width, 'T48: step ruler drawn in the detail view');
+ids.txClose.onclick();
+
+/* ── T49: scrubbing mid-play keeps the metronome accents/counter in sync ──
+   (regression: startMet re-derives beat/bar from the new anchor, then scrubTo
+   clobbered them — every later tick inherited the shifted count, so accents
+   and the bar counter drifted after every scrub) */
+clearBtn.onclick();
+if (ids.metronomeBtn.textContent === 'Met:On') ids.metronomeBtn.onclick();  // met off for setup
+recordBtn.onclick();
+advance(0.1); mouseDown(400, 300); advance(0.2); mouseUp(); advance(0.05);
+recordBtn.onclick();                          // stop → auto-play from the top
+ok(playBtn.textContent === 'Playing', 'T49: playing');
+ids.metronomeBtn.onclick();                   // met joins the running session
+ok(ids.metronomeBtn.textContent === 'Met:On', 'T49: met armed');
+advance(2.0);
+const m49 = oscMade.length;
+ids.scrubSlider.value = '9.2';                // a real drag updates the slider itself too
+ids.scrubSlider.oninput({ target: { value: '9.2' } });          // skip to beat 9.2 mid-play
+advance(1.5);                                 // beats 10, 11, 12 tick
+const met49 = oscMade.slice(m49).map(o => o.frequency.value).filter(f => f === 800 || f === 1000);
+ok(met49.length === 3, 'T49: three ticks after the scrub (got ' + met49.length + ')');
+ok(met49[0] === 800 && met49[1] === 800 && met49[2] === 1000,
+   'T49: accent lands on beat 12, the bar line (got ' + met49.join(',') + ')');
+ok(ids.barCounter.textContent === '4.1', 'T49: bar counter tracks the scrubbed position (got ' + ids.barCounter.textContent + ')');
+
+/* ── T50: the met pauses and resumes with the transport, like a track ── */
+stopBtn.onclick();
+const m50 = oscMade.length;
+advance(4);
+ok(oscMade.length === m50, 'T50: no ticks while stopped');
+ok(ids.metronomeBtn.textContent === 'Met:On', 'T50: met stays armed while paused');
+ids.scrubSlider.value = '4';
+ids.scrubSlider.oninput({ target: { value: '4' } });            // park the playhead on a bar line
+playBtn.onclick();
+advance(0.6);
+const met50 = oscMade.slice(m50).map(o => o.frequency.value).filter(f => f === 800 || f === 1000);
+ok(met50.length >= 1 && met50[0] === 1000, 'T50: resumes ticking from the playhead with the right accent (got ' + met50.join(',') + ')');
+stopBtn.onclick();
+
+/* ── T51: per-track volume — slider drives r.gain, rides in the song file ── */
+const row51 = recordingsList.children[recordingsList.children.length - 1];
+const vol51 = row51.children.find(c => c.tagName === 'input');
+ok(!!vol51 && vol51.value === '100', 'T51: track row has a volume slider at 100%');
+vol51.value = '30'; vol51.oninput();
+const s51 = song();
+ok(Math.abs(s51.recordings[0].gain - 0.3) < 1e-9, 'T51: getSong carries the track gain');
+global.SynthApp.loadSong(JSON.parse(JSON.stringify(s51)));
+const row51b = recordingsList.children[recordingsList.children.length - 1];
+const vol51b = row51b.children.find(c => c.tagName === 'input');
+ok(vol51b.value === '30', 'T51: loadSong restores the slider position');
+ok(Math.abs(song().recordings[0].gain - 0.3) < 1e-9, 'T51: gain roundtrips');
+global.SynthApp.loadSong({ v: 1, tempo: 120, recordings: [{ name: 'legacy', events: [] }] });
+ok(song().recordings[0].gain === 1, 'T51: legacy songs default to full volume');
+
+/* ── T52: metronome row — mute mirrors the Met button, volume is a pref ── */
+const metTog52 = ids.metRow.children[1].children[0];
+const metVol52 = ids.metRow.children[2];
+ok(metTog52.textContent === (ids.metronomeBtn.textContent === 'Met:On' ? '🔊' : '🔇'),
+   'T52: met row toggle mirrors the Met button');
+const wasOn52 = ids.metronomeBtn.textContent === 'Met:On';
+metTog52.onclick();
+ok(ids.metronomeBtn.textContent === (wasOn52 ? 'Met:Off' : 'Met:On'), 'T52: row toggle flips the Met button');
+metTog52.onclick();                            // restore
+metVol52.value = '40'; metVol52.oninput();
+ok(Math.abs(JSON.parse(global.localStorage._o['synth.quant.v1']).metVol - 0.4) < 1e-9,
+   'T52: met volume persists in prefs');
+// volume 0 = truly silent ticks (the visuals still run, no zero-start ramp)
+metVol52.value = '0'; metVol52.oninput();
+clearBtn.onclick();
+recordBtn.onclick(); advance(0.05); mouseDown(300, 300); advance(0.1); mouseUp();
+if (ids.metronomeBtn.textContent === 'Met:Off') ids.metronomeBtn.onclick();  // met on while recording
+const m52 = oscMade.length;
+advance(2.0);
+ok(oscMade.slice(m52).every(o => o.frequency.value !== 800 && o.frequency.value !== 1000),
+   'T52: zero met volume makes no tick oscillators');
+recordBtn.onclick(); stopBtn.onclick();
+metVol52.value = '100'; metVol52.oninput();
+if (ids.metronomeBtn.textContent === 'Met:On') ids.metronomeBtn.onclick();
+
+/* ── T53: changing tempo mid-play keeps the playhead where it was ──
+   (regression: a fixed loopAnchor rescales the position by the tempo ratio —
+   dragging 120→60 BPM at beat 2 teleported the loop to beat 1) */
+clearBtn.onclick();
+recordBtn.onclick();
+advance(0.1); mouseDown(400, 300); advance(0.2); mouseUp(); advance(0.05);
+recordBtn.onclick();                          // → playing from the top
+advance(1.0);                                 // ≈ beat 2 at 120 BPM
+ids.tempoSlider.oninput({ target: { value: '60' } });
+advance(0.1);                                 // one ticker pass updates the scrubber
+const pos53 = +ids.scrubSlider.value;
+ok(pos53 > 1.8 && pos53 < 2.5, 'T53: playhead held near beat 2 through the tempo change (got ' + pos53.toFixed(2) + ')');
+ids.tempoSlider.oninput({ target: { value: '120' } });
+stopBtn.onclick();
+
+/* ── T54: recorded pitch-drag updates are throttled to ~40Hz ──
+   (Pixel-class screens fire touchmove at 120Hz; every recorded update is a
+   timer + automation event on every later loop pass — main-thread scheduling
+   pressure that starves the audio thread on phones. Live sound stays
+   full-rate; only the take is thinned.) */
+clearBtn.onclick();
+while (instBtn.textContent !== 'Synth') instBtn.onclick();
+recordBtn.onclick();
+advance(0.05);
+mouseDown(100, 300);
+for (let i = 0; i < 60; i++) {                 // 120Hz drag for 0.5s
+  advance(1 / 120);
+  (docListeners.mousemove || []).slice().forEach(f =>
+    f({ type: 'mousemove', clientX: 100 + i * 5, clientY: 300, preventDefault() {} }));
+}
+mouseUp();
+recordBtn.onclick(); stopBtn.onclick();
+const upd54 = song().recordings[0].events.filter(e => e.type === 'update').length;
+ok(upd54 >= 15 && upd54 <= 26, 'T54: 60 touchmoves record ~20 updates, not 60 (got ' + upd54 + ')');
+
+/* ── T55: the shared noise buffer outlives the longest un-looped drum ──
+   (ride stops at t+1.4, crash at t+1.6 — a 1s buffer ended mid-envelope at
+   ~-40dB, audibly truncating the cymbal tails) */
+ok(lastBufLen === 512 * 2, 'T55: noise buffer is 2s (' + lastBufLen + ' frames at rate 512)');
+
+/* ── T56: deleting a track defers the gain-node disconnect past the tails ──
+   (an instant disconnect hard-cut voices still releasing through it = pop) */
+clearBtn.onclick();
+advance(3.5);                                  // flush earlier tests' deferred disconnects
+recordBtn.onclick();
+advance(0.1); mouseDown(400, 300); advance(0.2); mouseUp(); advance(0.05);
+recordBtn.onclick();                           // → auto-play
+advance(0.5);                                  // first dispatch creates the track's gain node
+const disc0 = gainsMade.filter(g => g.disconnected).length;
+confirmResult = true;
+const row56 = recordingsList.children[recordingsList.children.length - 1];
+row56.querySelectorAll('button')[1].onclick(); // delete the track (stops playback too)
+ok(gainsMade.filter(g => g.disconnected).length === disc0,
+   'T56: gain not disconnected at delete time (voices may still be fading)');
+advance(2.5);
+ok(gainsMade.filter(g => g.disconnected).length === disc0,
+   'T56: still connected inside the tail window');
+advance(1.0);
+ok(gainsMade.filter(g => g.disconnected).length === disc0 + 1,
+   'T56: disconnected once every tail has died away');
 
 console.log('synth tests: ' + passed + ' passed, ' + failed + ' failed');
 process.exit(failed ? 1 : 0);
