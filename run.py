@@ -110,7 +110,7 @@ _TRACKED_JS = {
     # Extras add-on siblings — tracked so the Refresh button / live-update
     # pick up changes (they already have the SCRIPT_VERSION='auto' hook).
     "extras-apps.js", "extras-almanac.js", "extras-vibration.js", "extras-skymap.js",
-    "extras-sudoku.js", "extras-sensors.js",
+    "extras-sudoku.js", "extras-sensors.js", "extras-tuner.js", "extras-scapes.js",
 }
 # synth.html / quiver.html are the flat single-file mini-apps loaded in
 # Extras iframes — tracked so the Refresh button / native live-update
@@ -124,7 +124,7 @@ _SCRIPT_VERSION_FILES = [
     "creatures.js", "sprites.js", "sprite-store.js", "appdata.js",
     "species.js", "spawns.js", "trip-planner.js", "live-update.js", "extras.js",
     "extras-apps.js", "extras-almanac.js", "extras-vibration.js", "extras-skymap.js",
-    "extras-sudoku.js", "extras-sensors.js",
+    "extras-sudoku.js", "extras-sensors.js", "extras-tuner.js", "extras-scapes.js",
     "synth.html", "quiver.html",
     "sw.js", "index.html", "dex.html",
 ]

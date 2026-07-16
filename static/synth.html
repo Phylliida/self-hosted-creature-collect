@@ -45,7 +45,8 @@ color:#fff;border-radius:4px;cursor:pointer;display:flex;align-items:center;gap:
 #recordingsPanel{position:fixed;top:42px;right:10px;width:180px;max-height:40vh;background:rgba(0,0,0,.78);
 backdrop-filter:blur(5px);z-index:100;padding:8px;border-radius:4px;overflow-y:auto;display:none;flex-direction:column;gap:5px}
 #recordingsPanel.visible{display:flex}
-.recording-item{display:flex;align-items:center;padding:5px;background:rgba(255,255,255,.1);border-radius:4px;transition:.2s}
+.recording-item{display:flex;align-items:center;flex-wrap:wrap;padding:5px;background:rgba(255,255,255,.1);border-radius:4px;transition:.2s}
+.rec-vol{flex-basis:100%;width:100%;height:4px;margin:5px 0 1px}
 .recording-item.active{background:rgba(255,100,100,.28)}
 .recording-name{flex-grow:1;color:#fff;margin-right:4px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .recording-controls{display:flex;gap:3px}
@@ -107,6 +108,48 @@ color:#fff;font-size:12px}
 .vl-pick{border-radius:999px 0 0 999px;padding:4px 4px 4px 11px}
 .vl-pick.on{background:rgba(120,180,255,.4)}
 .vl-del{padding:4px 9px 4px 5px;background:transparent}
+
+/* ----- 🌐 tuning explorer (Scala archive browser) ----- */
+#tunExplorer{position:fixed;inset:0;z-index:200;background:#070b18;
+display:flex;flex-direction:column;color:#fff;font-size:12px;padding:10px 10px 4px}
+#tunExplorer[hidden]{display:none}
+.tx-head{display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-shrink:0}
+.tx-title{font-weight:700;font-size:14px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#txCount{color:rgba(160,190,255,.8);font-weight:400;font-size:11px;margin-left:7px}
+#txHisto{display:flex;align-items:flex-end;gap:2px;overflow-x:auto;overflow-y:hidden;
+padding:2px 2px 0;flex-shrink:0;scrollbar-width:none}
+.tx-bar{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px;
+padding:2px 3px 3px;background:transparent;border-radius:6px;min-width:22px;flex-shrink:0}
+.tx-bar i{display:block;width:15px;border-radius:3px 3px 1px 1px;min-height:3px}
+.tx-bar b{font-size:9px;font-weight:600;color:rgba(255,255,255,.75);line-height:1}
+.tx-bar u{font-size:8px;text-decoration:none;color:rgba(255,255,255,.38);line-height:1}
+.tx-bar.on{background:rgba(120,180,255,.26)}
+.tx-bar.on b{color:#fff}
+#txChipRow{display:flex;gap:5px;flex-wrap:wrap;margin:6px 0;flex-shrink:0;align-items:center}
+#txChips{display:flex;gap:5px;flex-wrap:wrap;align-items:center}
+.tx-sel{font-size:11px;padding:3px 6px;border-radius:999px;background:rgba(255,255,255,.1);max-width:44vw}
+#txDetRuler{border-radius:6px;background:rgba(255,255,255,.05)}
+#txSearch{flex:1;min-width:90px;padding:4px 9px;border:none;border-radius:999px;
+background:rgba(255,255,255,.1);color:#fff;font-size:11px}
+#txGrid{flex:1;min-height:0;overflow-y:auto;position:relative;border-radius:8px;background:rgba(255,255,255,.03)}
+#txPad{position:relative;width:100%}
+.tx-cell{position:absolute;display:flex;flex-direction:column;align-items:center;gap:1px;
+cursor:pointer;padding-top:6px;border-radius:8px}
+.tx-cell:active{background:rgba(120,180,255,.15)}
+.tx-name{font-size:9px;color:rgba(255,255,255,.72);max-width:94%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#txStatus{position:absolute;inset:0;display:flex;flex-direction:column;gap:10px;align-items:center;
+justify-content:center;color:rgba(255,255,255,.75);text-align:center;padding:14px}
+#txDetail{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;align-items:center;
+gap:7px;padding:10px 8px}
+#txDetail[hidden]{display:none}
+#txDetName{font-weight:700;font-size:15px;text-align:center;overflow-wrap:anywhere}
+#txDetMeta{color:rgba(160,190,255,.85)}
+#txDetDesc{text-align:center;max-width:480px;color:rgba(255,255,255,.85);line-height:1.45}
+#txDetCents{font-size:10px;color:rgba(160,190,255,.8);max-width:520px;text-align:center;line-height:1.6;
+font-variant-numeric:tabular-nums}
+.tx-actions{display:flex;gap:8px;margin-top:2px;flex-wrap:wrap;justify-content:center}
+#txUse{background:rgba(120,180,255,.4)}
+.tx-credit{flex-shrink:0;text-align:center;font-size:9px;color:rgba(255,255,255,.32);padding:4px 0 2px}
 </style>
 </head>
 <body>
@@ -122,6 +165,7 @@ color:#fff;font-size:12px}
     <select id="voiceSel"></select>
   </label>
   <button id="voiceLabBtn">⚗ Voice Lab…</button>
+  <button id="tunExplorerBtn">🌐 Tuning Explorer…</button>
   <label>Low note
     <select id="baseOctSel">
       <option value="1">C1 · deep</option><option value="2">C2</option><option value="3">C3</option>
@@ -207,10 +251,36 @@ color:#fff;font-size:12px}
 </div>
 </div>
 
+<!-- ---------- 🌐 TUNING EXPLORER (Scala archive browser) ---------- -->
+<div id="tunExplorer" hidden>
+  <div class="tx-head">
+    <span class="tx-title">🌐 Tunings<span id="txCount"></span></span>
+    <button id="txRandom" title="surprise me">🎲</button>
+    <button id="txClose">×</button>
+  </div>
+  <div id="txHisto"></div>
+  <div id="txChipRow"><div id="txChips"></div><input id="txSearch" placeholder="search…"></div>
+  <div id="txGrid"><div id="txPad"></div><div id="txStatus"></div></div>
+  <div id="txDetail" hidden>
+    <canvas id="txDetCanvas"></canvas>
+    <canvas id="txDetRuler"></canvas>
+    <div id="txDetName"></div>
+    <div id="txDetMeta"></div>
+    <div id="txDetDesc"></div>
+    <div id="txDetCents"></div>
+    <div class="tx-actions">
+      <button id="txBack">← Back</button>
+      <button id="txHear">▶ Hear it</button>
+      <button id="txUse">✓ Use tuning</button>
+    </div>
+  </div>
+  <div class="tx-credit">Scala scale archive © Manuel Op de Coul · huygens-fokker.org/scala</div>
+</div>
+
 <!-- ---------- RECORDINGS PANEL ---------- -->
 <div id="recordingsToggle"><span>Recordings</span><span id="dropdownArrow">▼</span></div>
 <div id="recordingBadge" class="recording-badge">0</div>
-<div id="recordingsPanel"><div style="color:#fff;text-align:center;font-size:14px;margin-bottom:4px">Recordings</div><div id="recordingsList"></div></div>
+<div id="recordingsPanel"><div style="color:#fff;text-align:center;font-size:14px;margin-bottom:4px">Recordings</div><div id="metRow"></div><div id="recordingsList"></div></div>
 
 <!-- ---------- BOTTOM STACK: beat dots / time scrubber / controls ---------- -->
 <div id="bottomStack">
@@ -253,7 +323,14 @@ const pad=$('soundPad'), grid=$('drumGrid'),
       vlSieve=$('vlSieve'), vlMatch=$('vlMatch'), vlSpec=$('vlSpec'),
       labToggle=$('labToggle'), vlClose=$('vlClose'), vlName=$('vlName'),
       vlSave=$('vlSave'), vlList=$('vlList'), vlPresets=$('vlPresets'),
-      vlPad=$('vlPad'), vlPadNote=$('vlPadNote'), vlRandom=$('vlRandom'), vlPadOct=$('vlPadOct');
+      vlPad=$('vlPad'), vlPadNote=$('vlPadNote'), vlRandom=$('vlRandom'), vlPadOct=$('vlPadOct'),
+      tunExplorer=$('tunExplorer'), tunExplorerBtn=$('tunExplorerBtn'),
+      txClose=$('txClose'), txRandom=$('txRandom'), txCount=$('txCount'),
+      txHisto=$('txHisto'), txChips=$('txChips'), txSearch=$('txSearch'),
+      txGrid=$('txGrid'), txPad=$('txPad'), txStatus=$('txStatus'), txDetail=$('txDetail'),
+      txDetCanvas=$('txDetCanvas'), txDetRuler=$('txDetRuler'), txDetName=$('txDetName'), txDetMeta=$('txDetMeta'),
+      txDetDesc=$('txDetDesc'), txDetCents=$('txDetCents'),
+      txBack=$('txBack'), txHear=$('txHear'), txUse=$('txUse');
 
 /* ==== GRID SIZE ==== */
 const COLS=6, ROWS=3;
@@ -274,6 +351,37 @@ const bus=()=>{const c=audio();
     const mg=c.createGain();mg.gain.value=.8;    // headroom so the off-bus met tick can't push the sum into clipping
     comp.connect(mg);mg.connect(c.destination);busNode=comp;}
   return busNode;};
+/* per-track volume: every track owns one persistent GainNode feeding the bus.
+   Voices/drums route through vout() — `voiceDest` is set (synchronously, only
+   around the node-creation call) by dispatch() for playback and by the live
+   handlers while recording, so preview/audition paths still hit the bus raw. */
+let voiceDest=null;
+const vout=()=>voiceDest||bus();
+const trackGains=new Map();
+function trackOut(rid){
+  const c=audio();let g=trackGains.get(rid);
+  if(!g){g=c.createGain();
+    const r=recordings.find(x=>x.id===rid);
+    g.gain.value=(r&&typeof r.gain==='number')?r.gain:1;
+    g.connect(bus());trackGains.set(rid,g);}          // straight to the bus — vout() here would self-connect during dispatch
+  return g;
+}
+function setTrackGain(r,v){
+  r.gain=Math.min(1,Math.max(0,v));
+  const g=trackGains.get(r.id);
+  if(g)g.gain.setTargetAtTime(r.gain,audio().currentTime,.02);  // small ramp — no zipper noise
+}
+function dropTrackGain(rid){
+  const g=trackGains.get(rid);
+  if(!g)return;
+  trackGains.delete(rid);
+  // fade fast, disconnect LATER — an instant disconnect hard-cuts any voices
+  // still releasing through this gain (delete/clear/load while ringing) = pop.
+  // 3s outlives the longest voice tail (bell rings 2.4s after release).
+  try{g.gain.setTargetAtTime(0,audio().currentTime,.02)}catch(_){}
+  setTimeout(()=>{try{g.disconnect()}catch(_){}},3000);
+}
+function dropAllTrackGains(){[...trackGains.keys()].forEach(dropTrackGain);}
 
 /* ==== GLOBAL STATE ==== */
 let instrument='synth';
@@ -284,7 +392,7 @@ instBtn.onclick=()=>{[...touches.keys()].forEach(pid=>synthEnd(pid));   // relea
   renderScaleGrid();drawHexGrid();};
 grid.style.display='none';
 
-let tempo=120,metOn=false,metGen=0,beat=0,bar=0,nextBeat=0,tickTimer=null,loopAnchor=null;
+let tempo=120,metOn=false,metVol=1,metGen=0,beat=0,bar=0,nextBeat=0,tickTimer=null,loopAnchor=null;
 const RELEASE=.05, MARKER_FADE=50, OSC_TAIL=300;
 let timeSig=4,barsPerLoop=8,beatsPerLoop=timeSig*barsPerLoop;   // loop shape — configurable in ⚙
 let isRec=false,isPlay=false,recordings=[],recSeq=1,curRec=null;
@@ -301,7 +409,10 @@ function showHit(kind,x,y,play){const m=marker(play?'playback-marker':'note-mark
 /* ==== NOISE BUFFER ==== */
 let noiseBuf=null;
 function noise(){if(noiseBuf)return noiseBuf;const c=audio();
-  noiseBuf=c.createBuffer(1,c.sampleRate,c.sampleRate);
+  // 2s: the longest un-looped users (ride stops at t+1.4, crash at t+1.6)
+  // must not outlive the buffer — a 1s buffer ended mid-envelope at ~-40dB,
+  // an audible truncation of the cymbal tails
+  noiseBuf=c.createBuffer(1,c.sampleRate*2,c.sampleRate);
   const d=noiseBuf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;return noiseBuf;}
 const env=(g,t,h,d)=>{g.gain.setValueAtTime(1,t);g.gain.exponentialRampToValueAtTime(.001,t+h+d);};
 
@@ -309,38 +420,38 @@ const env=(g,t,h,d)=>{g.gain.setValueAtTime(1,t);g.gain.exponentialRampToValueAt
 /*  row 0 – acoustic-ish ------------------------------------------------ */
 function kick(p,t=audio().currentTime){const c=audio(),o=c.createOscillator(),g=c.createGain();
   const f1=100+120*p,f2=40+40*p;o.type='sine';o.frequency.setValueAtTime(f1,t);o.frequency.exponentialRampToValueAtTime(f2,t+.45);
-  env(g,t,0,.45);o.connect(g);g.connect(bus());o.start(t);o.stop(t+.5);}
+  env(g,t,0,.45);o.connect(g);g.connect(vout());o.start(t);o.stop(t+.5);}
 function snare(p,t=audio().currentTime){const c=audio();
   const n=c.createBufferSource();n.buffer=noise();const nf=c.createBiquadFilter();nf.type='highpass';nf.frequency.value=1200;
-  const ng=c.createGain();env(ng,t,.02,.18);n.connect(nf);nf.connect(ng);ng.connect(bus());n.start(t);n.stop(t+.2);
+  const ng=c.createGain();env(ng,t,.02,.18);n.connect(nf);nf.connect(ng);ng.connect(vout());n.start(t);n.stop(t+.2);
   const o=c.createOscillator(),g=c.createGain();o.type='triangle';o.frequency.setValueAtTime(120+180*p,t);env(g,t,.02,.18);
-  o.connect(g);g.connect(bus());o.start(t);o.stop(t+.2);}
+  o.connect(g);g.connect(vout());o.start(t);o.stop(t+.2);}
 function hatc(p,t=audio().currentTime){const c=audio(),n=c.createBufferSource();n.buffer=noise();
   const hp=c.createBiquadFilter();hp.type='highpass';hp.frequency.value=6000+4000*p;
-  const g=c.createGain();env(g,t,.01,.06);n.connect(hp);hp.connect(g);g.connect(bus());n.start(t);n.stop(t+.07);}
+  const g=c.createGain();env(g,t,.01,.06);n.connect(hp);hp.connect(g);g.connect(vout());n.start(t);n.stop(t+.07);}
 function hato(p,t=audio().currentTime){const c=audio(),n=c.createBufferSource();n.buffer=noise();
   const hp=c.createBiquadFilter();hp.type='highpass';hp.frequency.value=5000+4000*p;
-  const g=c.createGain();env(g,t,.1,.4);n.connect(hp);hp.connect(g);g.connect(bus());n.start(t);n.stop(t+.5);}
+  const g=c.createGain();env(g,t,.1,.4);n.connect(hp);hp.connect(g);g.connect(vout());n.start(t);n.stop(t+.5);}
 function clap(p,t=audio().currentTime){const c=audio(),bp=c.createBiquadFilter();bp.type='bandpass';bp.frequency.value=700+600*p;
   for(let i=0;i<3;i++){const n=c.createBufferSource();n.buffer=noise();const g=c.createGain();
-    env(g,t+i*0.015,.005,.07);n.connect(bp);bp.connect(g);g.connect(bus());
+    env(g,t+i*0.015,.005,.07);n.connect(bp);bp.connect(g);g.connect(vout());
     n.start(t+i*0.015);n.stop(t+.15);} }
 function tomLow(p,t=audio().currentTime){const c=audio(),o=c.createOscillator(),g=c.createGain();
   const f1=150+200*p,f2=60+40*p;o.type='triangle';o.frequency.setValueAtTime(f1,t);o.frequency.exponentialRampToValueAtTime(f2,t+.5);
-  env(g,t,.02,.48);o.connect(g);g.connect(bus());o.start(t);o.stop(t+.55);}
+  env(g,t,.02,.48);o.connect(g);g.connect(vout());o.start(t);o.stop(t+.55);}
 
 /*  row 1 – mid kit ------------------------------------------------------ */
 function kick808(p,t){kick(Math.min(1,p+.3),t);}             // deeper / longer
 function rim(p,t=audio().currentTime){const c=audio(),o=c.createOscillator(),g=c.createGain();
-  o.type='square';o.frequency.value=1800+400*p;env(g,t,.005,.08);o.connect(g);g.connect(bus());
+  o.type='square';o.frequency.value=1800+400*p;env(g,t,.005,.08);o.connect(g);g.connect(vout());
   o.start(t);o.stop(t+.09);}
 function shaker(p,t=audio().currentTime){const c=audio(),n=c.createBufferSource();n.buffer=noise();
   const bp=c.createBiquadFilter();bp.type='bandpass';bp.frequency.value=3000+2000*p;
-  const g=c.createGain();env(g,t,.01,.12);n.connect(bp);bp.connect(g);g.connect(bus());
+  const g=c.createGain();env(g,t,.01,.12);n.connect(bp);bp.connect(g);g.connect(vout());
   n.start(t);n.stop(t+.14);}
 function cowbell(p,t=audio().currentTime){const c=audio(),o1=c.createOscillator(),o2=c.createOscillator(),g=c.createGain();
   o1.type='square';o2.type='square';o1.frequency.value=800+200*p;o2.frequency.value=1200+300*p;
-  env(g,t,.02,.25);o1.connect(g);o2.connect(g);g.connect(bus());o1.start(t);o2.start(t);o1.stop(t+.3);o2.stop(t+.3);}
+  env(g,t,.02,.25);o1.connect(g);o2.connect(g);g.connect(vout());o1.start(t);o2.start(t);o1.stop(t+.3);o2.stop(t+.3);}
 function bigClap(p,t){clap(Math.min(1,p+.3),t);}
 function tomMid(p,t){tomLow(Math.min(1,p+.35),t);}
 
@@ -348,16 +459,16 @@ function tomMid(p,t){tomLow(Math.min(1,p+.35),t);}
 function subKick(p,t){kick(Math.max(0,p-.4),t);}
 function snap(p,t=audio().currentTime){const c=audio(),n=c.createBufferSource();n.buffer=noise();
   const hp=c.createBiquadFilter();hp.type='highpass';hp.frequency.value=4000+3000*p;
-  const g=c.createGain();env(g,t,.005,.07);n.connect(hp);hp.connect(g);g.connect(bus());
+  const g=c.createGain();env(g,t,.005,.07);n.connect(hp);hp.connect(g);g.connect(vout());
   n.start(t);n.stop(t+.08);}
 function ride(p,t=audio().currentTime){const c=audio(),n=c.createBufferSource();n.buffer=noise();
   const hp=c.createBiquadFilter();hp.type='highpass';hp.frequency.value=8000+1000*p;
-  const g=c.createGain();env(g,t,.4,.9);n.connect(hp);hp.connect(g);g.connect(bus());n.start(t);n.stop(t+1.4);}
+  const g=c.createGain();env(g,t,.4,.9);n.connect(hp);hp.connect(g);g.connect(vout());n.start(t);n.stop(t+1.4);}
 function crash(p,t=audio().currentTime){const c=audio(),n=c.createBufferSource();n.buffer=noise();
   const bp=c.createBiquadFilter();bp.type='bandpass';bp.frequency.value=3000+2000*p;
-  const g=c.createGain();env(g,t,.3,1.2);n.connect(bp);bp.connect(g);g.connect(bus());n.start(t);n.stop(t+1.6);}
+  const g=c.createGain();env(g,t,.3,1.2);n.connect(bp);bp.connect(g);g.connect(vout());n.start(t);n.stop(t+1.6);}
 function clave(p,t=audio().currentTime){const c=audio(),o=c.createOscillator(),g=c.createGain();
-  o.type='square';o.frequency.value=2500+1000*p;env(g,t,.005,.06);o.connect(g);g.connect(bus());o.start(t);o.stop(t+.07);}
+  o.type='square';o.frequency.value=2500+1000*p;env(g,t,.005,.06);o.connect(g);g.connect(vout());o.start(t);o.stop(t+.07);}
 function tomHigh(p,t){tomLow(Math.max(0,p-.35),t);}
 
 /*  Map every unique name to function */
@@ -387,16 +498,66 @@ let edgeInset=(typeof navigator!=='undefined'&&/Android/i.test(navigator.userAge
 const baseFreq=()=>C3*Math.pow(2,baseOct-3);         // step 0 ("BASE") in every tuning
 const EDOS=[5,6,7,8,9,10,11,12,13,14,15,16,17,19,22,24,26,31,34,41,53];
 let edo=12;
+/* ==== SCALA TUNINGS (🌐 Tuning Explorer) ====
+   `scl` = the active Scala-archive tuning, or null for plain EDO mode.
+   A tuning is {name, cents:[...]}: the cents of degrees 1..N above the base
+   note, the LAST entry being the period (the "formal octave" — not always
+   1200¢: Bohlen–Pierce repeats at a twelfth, Carlos alpha at ~78¢). All
+   pitch math funnels through stepCents(k) — linear in k for EDOs, table
+   lookup + period stacking for Scala scales — so the hex keyboard, the
+   quantize lines, note names and ✨Match work identically in any tuning. */
+let scl=null;
+const tunN=()=>scl?scl.cents.length:edo;             // steps per period
+function sanitizeScl(s){
+  if(!s||typeof s!=='object'||!Array.isArray(s.cents))return null;
+  const c=s.cents.slice(0,600).map(Number);
+  if(!c.length||c.some(v=>!isFinite(v)||v<-24000||v>24000))return null;  // ±20 octaves — dekany_indra dips to -19167c
+  if(!(c[c.length-1]>0))return null;                 // period must stack upward
+  return {name:String(s.name||'custom').slice(0,60),cents:c};
+}
+function stepCents(k){                               // cents of step k above the base (any integer k)
+  if(!scl)return k*1200/edo;
+  const N=scl.cents.length,P=scl.cents[N-1],o=Math.floor(k/N),i=k-o*N;
+  return o*P+(i===0?0:scl.cents[i-1]);
+}
+const stepFreqFrom=(base,k)=>base*Math.pow(2,stepCents(k)/1200);
+const stepFreq=k=>stepFreqFrom(baseFreq(),k);
+function nearestStep(c){                             // step index nearest to `c` cents above base
+  if(!scl)return Math.round(edo*c/1200);
+  const N=scl.cents.length,P=scl.cents[N-1],o=Math.floor(c/P);
+  let best=o*N,bd=1e9;
+  for(let k=(o-1)*N;k<=(o+2)*N;k++){const d=Math.abs(stepCents(k)-c);if(d<bd){bd=d;best=k;}}
+  return best;
+}
 const edoFifth=n=>Math.round(n*Math.log2(3/2));      // best fifth of n-EDO
 const edoThird=n=>Math.round(n*Math.log2(5/4));      // best major third
-const spanX=()=>5*edoFifth(edo), spanY=()=>5*edoThird(edo);
-const freq=(nx,ny)=>baseFreq()*Math.pow(2,(spanX()*nx+spanY()*ny)/edo);
-const stepFreq=k=>baseFreq()*Math.pow(2,k/edo);
+/* generator steps of the CURRENT tuning — the step nearest a pure fifth /
+   major third (exactly edoFifth/edoThird in EDO mode). Memoized per tuning:
+   Scala mode scans step-by-step, and tiny-period scales (Carlos alpha) may
+   need several periods to reach 702¢. */
+function bestStep(cents){
+  if(!scl)return Math.round(edo*cents/1200);
+  const N=scl.cents.length,P=scl.cents[N-1];
+  let best=1,bd=1e9;
+  const lim=Math.min(2000,N*(Math.ceil((cents+P)/Math.max(P,1))+1));
+  for(let k=1;k<=lim;k++){const d=Math.abs(stepCents(k)-cents);if(d<bd){bd=d;best=k;}}
+  return best;
+}
+const tunFifth=()=>{if(!scl)return edoFifth(edo);
+  if(scl._f===undefined)scl._f=bestStep(701.955);return scl._f;};
+const tunThird=()=>{if(!scl)return edoThird(edo);
+  if(scl._t===undefined)scl._t=bestStep(386.314);return scl._t;};
+const spanX=()=>5*tunFifth(), spanY=()=>5*tunThird();
+/* continuous pad position → frequency: piecewise-linear cents between
+   neighbouring steps (reduces exactly to 2^(s/edo) in EDO mode) */
+function posFreq(s){const k=Math.floor(s),t=s-k,c0=stepCents(k);
+  return baseFreq()*Math.pow(2,(c0+(stepCents(k+1)-c0)*t)/1200);}
+const freq=(nx,ny)=>posFreq(spanX()*nx+spanY()*ny);
 const noteName=f=>{
-  if(edo===12){const N=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+  if(edo===12&&!scl){const N=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
     const s=Math.round(12*Math.log2(f/16.35));return N[(s%12+12)%12]+Math.floor(s/12);}
-  const st=Math.round(edo*Math.log2(f/baseFreq()));
-  return (((st%edo)+edo)%edo)+'\\'+edo;              // microtonal degree notation, e.g. 5\13
+  const st=nearestStep(1200*Math.log2(f/baseFreq())),N=tunN();
+  return (((st%N)+N)%N)+'\\'+N;                      // microtonal degree notation, e.g. 5\13
 };
 
 /* ==== QUANTIZE (scale snapping + pitch-line grid) ====
@@ -426,33 +587,38 @@ const SCALE_ORDER=['off','major','minor','lydian','mixo','dorian','phrygian','lo
   'majpent','minpent','blues','harmminor','whole','chromatic'];
 const ROOTS=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 let scaleKey='off',rootSemi=0,quantOn=false,allowedSemis=[],scalePCs=null;
-function scaleSteps(def){                            // pitch-class Set (root at 0) in the current edo
-  const set=new Set();
-  if(def.kind==='all'){for(let i=0;i<edo;i++)set.add(i);}
-  else if(def.kind==='chain'){const g=edoFifth(edo);
-    for(let i=0;i<def.len;i++)set.add((((i-def.root)*g)%edo+edo)%edo);}
-  else def.steps.forEach(s=>{if(s<edo)set.add(s);});
+function scaleSteps(def){                            // pitch-class Set (root at 0) in the current tuning
+  const N=tunN(),set=new Set();
+  if(def.kind==='all'){for(let i=0;i<N;i++)set.add(i);}
+  else if(def.kind==='chain'){const g=tunFifth();
+    for(let i=0;i<def.len;i++)set.add((((i-def.root)*g)%N+N)%N);}
+  else def.steps.forEach(s=>{if(s<N)set.add(s);});
   return set;
 }
+const stepPrefMax=()=>Math.min(tunN(),96);           // hex-step numeric prefs stay sane on giant scales
 function rebuildTuningSelects(){
-  edoSel.innerHTML=EDOS.map(n=>'<option value="'+n+'">'+n+'-EDO</option>').join('');
-  edoSel.value=String(edo);
-  if(SCALES[scaleKey]&&SCALES[scaleKey].edo12&&edo!==12)scaleKey='chromatic';
-  scaleSel.innerHTML=SCALE_ORDER.filter(k=>!(SCALES[k]&&SCALES[k].edo12&&edo!==12))
+  const N=tunN(),esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  let eh=EDOS.map(n=>'<option value="'+n+'">'+n+'-EDO</option>').join('');
+  if(scl)eh+='<option value="scl">✦ '+esc(scl.name)+'</option>';
+  eh+='<option value="browse">🌐 Explore…</option>';  // opens the Tuning Explorer
+  edoSel.innerHTML=eh;
+  edoSel.value=scl?'scl':String(edo);
+  if(SCALES[scaleKey]&&SCALES[scaleKey].edo12&&(edo!==12||scl))scaleKey='chromatic';
+  scaleSel.innerHTML=SCALE_ORDER.filter(k=>!(SCALES[k]&&SCALES[k].edo12&&(edo!==12||scl)))
     .map(k=>'<option value="'+k+'">'+(k==='off'?'Off':SCALES[k].name)+'</option>').join('');
   scaleSel.value=scaleKey;
-  if(rootSemi>=edo)rootSemi=0;
-  let ro='';for(let i=0;i<edo;i++)ro+='<option value="'+i+'">'+(edo===12?ROOTS[i]:i)+'</option>';
+  if(rootSemi>=N)rootSemi=0;
+  let ro='';for(let i=0;i<N;i++)ro+='<option value="'+i+'">'+((edo===12&&!scl)?ROOTS[i]:i)+'</option>';
   rootSel.innerHTML=ro;rootSel.value=String(rootSemi);
   baseOctSel.value=String(baseOct);hexSizeSel.value=String(hexScale);edgeInsetSel.value=String(edgeInset);
   buildVoiceOptions();
-  // layout-step selects: 'auto' (Wicki–Hayden for this EDO) + 0..edo steps
-  if(typeof hexEastPref==='number'&&hexEastPref>edo)hexEastPref='auto';
-  if(typeof hexNEPref==='number'&&hexNEPref>edo)hexNEPref='auto';
+  // layout-step selects: 'auto' (Wicki–Hayden for this tuning) + 0..N steps
+  if(typeof hexEastPref==='number'&&hexEastPref>stepPrefMax())hexEastPref='auto';
+  if(typeof hexNEPref==='number'&&hexNEPref>stepPrefMax())hexNEPref='auto';
   const stepOpts=(auto)=>{let h='<option value="auto">Auto (+'+auto+')</option>';
-    for(let i=0;i<=edo;i++)h+='<option value="'+i+'">+'+i+'</option>';return h;};
-  hexEastSel.innerHTML=stepOpts(2*edoFifth(edo)-edo);hexEastSel.value=String(hexEastPref);
-  hexNESel.innerHTML=stepOpts(edoFifth(edo));hexNESel.value=String(hexNEPref);
+    for(let i=0;i<=stepPrefMax();i++)h+='<option value="'+i+'">+'+i+'</option>';return h;};
+  hexEastSel.innerHTML=stepOpts(Math.max(1,2*tunFifth()-N));hexEastSel.value=String(hexEastPref);
+  hexNESel.innerHTML=stepOpts(tunFifth());hexNESel.value=String(hexNEPref);
 }
 function buildVoiceOptions(){
   const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
@@ -463,12 +629,13 @@ function buildVoiceOptions(){
 }
 function loadQuantPrefs(){try{const p=JSON.parse(localStorage.getItem('synth.quant.v1'))||{};
   if(EDOS.includes(p.edo))edo=p.edo;
+  if(p.scl)scl=sanitizeScl(p.scl);                   // before the tuning-relative bounds below
   if(SCALES.hasOwnProperty(p.scale))scaleKey=p.scale;
-  if(typeof p.root==='number'&&p.root>=0&&p.root<edo)rootSemi=Math.floor(p.root);
+  if(typeof p.root==='number'&&p.root>=0&&p.root<tunN())rootSemi=Math.floor(p.root);
   if(typeof p.baseOct==='number'&&p.baseOct>=1&&p.baseOct<=5)baseOct=Math.round(p.baseOct);
   if([0.8,1,1.3,1.6].includes(p.hexScale))hexScale=p.hexScale;
   if([0,24,40].includes(p.edgeInset))edgeInset=p.edgeInset;
-  const stepOk=(v)=>v==='auto'||(typeof v==='number'&&v>=0&&v<=edo&&v===Math.round(v));
+  const stepOk=(v)=>v==='auto'||(typeof v==='number'&&v>=0&&v<=stepPrefMax()&&v===Math.round(v));
   if(stepOk(p.hexEast))hexEastPref=p.hexEast;
   if(stepOk(p.hexNE))hexNEPref=p.hexNE;
   if([1,2,4,8,12,16].includes(p.bars))barsPerLoop=p.bars;
@@ -480,17 +647,19 @@ function loadQuantPrefs(){try{const p=JSON.parse(localStorage.getItem('synth.qua
     .slice(0,64).map(v=>({name:String(v.name).slice(0,24),gen:sanitizeGen(v.gen)}));
   if(p.voice==='lab'||VOICES.hasOwnProperty(p.voice)
     ||(typeof p.voice==='string'&&p.voice.slice(0,2)==='v:'&&voiceLib.some(x=>'v:'+x.name===p.voice)))voiceKey=p.voice;
-  if(typeof p.padOct==='number'&&p.padOct>=1&&p.padOct<=6)padOct=Math.round(p.padOct);}catch(_){}}
+  if(typeof p.padOct==='number'&&p.padOct>=1&&p.padOct<=6)padOct=Math.round(p.padOct);
+  if(typeof p.metVol==='number'&&p.metVol>=0&&p.metVol<=1)metVol=p.metVol;}catch(_){}}
 function saveQuantPrefs(){try{localStorage.setItem('synth.quant.v1',
-  JSON.stringify({scale:scaleKey,root:rootSemi,edo:edo,baseOct:baseOct,hexScale:hexScale,
+  JSON.stringify({scale:scaleKey,root:rootSemi,edo:edo,scl:scl?{name:scl.name,cents:scl.cents}:null,
+    baseOct:baseOct,hexScale:hexScale,
     edgeInset:edgeInset,hexEast:hexEastPref,hexNE:hexNEPref,bars:barsPerLoop,timeSig:timeSig,
-    voice:voiceKey,labGen:labGen,voiceLib:voiceLib,padOct:padOct}))}catch(_){}}
+    voice:voiceKey,labGen:labGen,voiceLib:voiceLib,padOct:padOct,metVol:metVol}))}catch(_){}}
 function applyQuant(){
   rebuildTuningSelects();
   quantOn=!!SCALES[scaleKey];allowedSemis=[];
   scalePCs=quantOn?scaleSteps(SCALES[scaleKey]):null;
-  if(quantOn){const max=spanX()+spanY();
-    for(let k=0;k<=max;k++)if(scalePCs.has(((k-rootSemi)%edo+edo)%edo))allowedSemis.push(k);}
+  if(quantOn){const max=spanX()+spanY(),N=tunN();
+    for(let k=0;k<=max;k++)if(scalePCs.has(((k-rootSemi)%N+N)%N))allowedSemis.push(k);}
   saveQuantPrefs();renderScaleGrid();drawHexGrid();drawLabSpec();
 }
 function snapSemi(s){let best=allowedSemis[0],bd=1e9;
@@ -513,7 +682,7 @@ function renderScaleGrid(){
     add(0,k/Y);add(1,(k-X)/Y);add(k/X,0);add((k-Y)/X,1);   // clip X*x+Y*y=k to the unit square
     const uniq=pts.filter((p,j)=>pts.findIndex(q=>Math.abs(q[0]-p[0])<1e-6&&Math.abs(q[1]-p[1])<1e-6)===j);
     if(uniq.length<2)continue;
-    const [a,b]=uniq,isRoot=((k-rootSemi)%edo+edo)%edo===0,hue=lineHue(k);
+    const N=tunN(),[a,b]=uniq,isRoot=((k-rootSemi)%N+N)%N===0,hue=lineHue(k);
     lines.push('<line x1="'+(a[0]*100).toFixed(2)+'" y1="'+((1-a[1])*100).toFixed(2)+
       '" x2="'+(b[0]*100).toFixed(2)+'" y2="'+((1-b[1])*100).toFixed(2)+
       '" stroke="hsl('+hue.toFixed(0)+' 70% 70%/'+(isRoot?'.75':'.3')+')" stroke-width="'+(isRoot?2:1)+
@@ -527,9 +696,12 @@ function renderScaleGrid(){
   }
   scaleGridEl.innerHTML=lines.join('');scaleLabels.innerHTML=labels;
 }
-edoSel.onchange=()=>{const n=+edoSel.value;if(EDOS.includes(n))edo=n;applyQuant();};
+edoSel.onchange=()=>{const v=edoSel.value;
+  if(v==='browse'){rebuildTuningSelects();openExplorer();return;}  // restore the select, open the browser
+  if(v==='scl')return;                               // the active Scala tuning — nothing to change
+  const n=+v;if(EDOS.includes(n)){scl=null;edo=n;}applyQuant();};
 scaleSel.onchange=()=>{scaleKey=SCALES.hasOwnProperty(scaleSel.value)?scaleSel.value:'off';applyQuant();};
-rootSel.onchange=()=>{rootSemi=Math.min(edo-1,Math.max(0,(+rootSel.value||0)));applyQuant();};
+rootSel.onchange=()=>{rootSemi=Math.min(tunN()-1,Math.max(0,(+rootSel.value||0)));applyQuant();};
 
 /* ==== HEX KEYBOARD (Lumatone-style isomorphic keys, any EDO) ====
    Pointy-top hexes in axial coords: east neighbour = +A steps (whole tone,
@@ -542,8 +714,8 @@ let hexLayout=null;
    numeric prefs let the user build any isomorphic layout — translation
    invariance holds for every choice since pitch stays linear in (q,r). */
 let hexEastPref='auto',hexNEPref='auto';
-const hexEastStep=()=>hexEastPref==='auto'?2*edoFifth(edo)-edo:hexEastPref;
-const hexNEStep=()=>hexNEPref==='auto'?edoFifth(edo):hexNEPref;
+const hexEastStep=()=>hexEastPref==='auto'?Math.max(1,2*tunFifth()-tunN()):hexEastPref;
+const hexNEStep=()=>hexNEPref==='auto'?tunFifth():hexNEPref;
 function hexParams(){
   // size keys against the USABLE height (above the control stack), aiming for
   // ~7-8 rows — each row is a fifth up, so that spans a sane ~5 octaves.
@@ -583,7 +755,7 @@ function drawHexGrid(){
     for(let q=qLo;q<=qHi;q++){
       const p=hexCenter(q,r,L);
       if(p.x<L.x0+L.rx-1||p.x>L.x1-L.rx+1)continue;
-      const st=hexStepOf(q,r),deg=((st-rootSemi)%edo+edo)%edo;
+      const N=tunN(),st=hexStepOf(q,r),deg=((st-rootSemi)%N+N)%N;
       const inScale=!scalePCs||scalePCs.has(deg),isRoot=quantOn&&deg===0;
       const hue=lineHue(st);
       c.beginPath();
@@ -598,7 +770,7 @@ function drawHexGrid(){
       c.lineWidth=isRoot?1.6:1;
       c.stroke();
       c.fillStyle='rgba(255,255,255,'+(inScale?.8:.25)+')';
-      c.font=(edo===12?'600 10px':'600 9px')+' system-ui, sans-serif';
+      c.font=((edo===12&&!scl)?'600 10px':'600 9px')+' system-ui, sans-serif';
       c.fillText(noteName(stepFreq(st)),p.x,p.y);
     }
   }
@@ -657,11 +829,12 @@ function drawLabSpec(){
   const W=vlSpec.clientWidth||191,H=vlSpec.clientHeight||86;
   vlSpec.width=Math.round(W*dpr);vlSpec.height=Math.round(H*dpr);
   c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,W,H);
-  const OCT=5,X=r=>4+Math.log2(r)/OCT*(W-8),sH=H-18;
-  for(let k=0;k<=edo*OCT;k++){                       // tuning grid
-    const oct=k%edo===0;
-    c.strokeStyle=oct?'rgba(255,255,255,.28)':'rgba(140,170,255,'+(edo>24?.08:.15)+')';
-    const x=X(Math.pow(2,k/edo));
+  const OCT=5,X=r=>4+Math.log2(r)/OCT*(W-8),sH=H-18,N=tunN();
+  for(let k=0;k<=2000;k++){                          // tuning grid (period boundaries brighter)
+    const kc=stepCents(k);if(kc>1200*OCT)break;
+    const oct=k%N===0;
+    c.strokeStyle=oct?'rgba(255,255,255,.28)':'rgba(140,170,255,'+(N>24?.08:.15)+')';
+    const x=X(Math.pow(2,kc/1200));
     c.beginPath();c.moveTo(x,2);c.lineTo(x,sH);c.stroke();
   }
   c.fillStyle='rgba(255,255,255,.4)';                // pure-harmonic floor ticks
@@ -728,7 +901,7 @@ function vlPadStop(quick){
 function vlPadPlay(y){
   const r=vlPad.getBoundingClientRect(),h=r.height||300;
   const ny=Math.min(1,Math.max(0,1-(y-r.top)/h));
-  const st=Math.round(ny*3*edo),f=padBase()*Math.pow(2,st/edo);
+  const st=Math.round(ny*3*tunN()),f=stepFreqFrom(padBase(),st);
   if(vlPadVoice&&st===vlPadStep)return;
   vlPadStop(true);vlPadStep=st;
   vlPadVoice=makeVoice(f,'lab');
@@ -838,7 +1011,7 @@ hexSizeSel.onchange=()=>{const v=+hexSizeSel.value;
 edgeInsetSel.onchange=()=>{const v=Math.round(+edgeInsetSel.value);
   if([0,24,40].includes(v))edgeInset=v;applyQuant();};
 const parseStepPref=(v)=>{if(v==='auto')return 'auto';
-  const n=Math.round(+v);return (n>=0&&n<=edo)?n:'auto';};
+  const n=Math.round(+v);return (n>=0&&n<=stepPrefMax())?n:'auto';};
 hexEastSel.onchange=()=>{hexEastPref=parseStepPref(hexEastSel.value);applyQuant();};
 hexNESel.onchange=()=>{hexNEPref=parseStepPref(hexNESel.value);applyQuant();};
 /* loop shape: measures per loop × beats per measure. Recorded events keep
@@ -859,6 +1032,298 @@ barsSel.onchange=()=>{const v=Math.round(+barsSel.value);
   setLoopShape(timeSig,LOOP_BARS.includes(v)?v:barsPerLoop);};
 timeSigSel.onchange=()=>{const v=Math.round(+timeSigSel.value);
   setLoopShape((v>=2&&v<=9)?v:timeSig,barsPerLoop);};
+
+/* ==== 🌐 TUNING EXPLORER — browse the whole Scala scale archive ====
+   5,399 tunings bundled statically in scala-db.json (build-scala-db.py) and
+   lazy-loaded on first open, so the synth itself boots without it and the
+   app makes zero web requests. Navigation is visual: a note-count histogram
+   picks a bin, facet dropdowns (family / period / intonation, each with live
+   match counts) narrow it, and every scale renders as a "pitch ring" — its
+   degrees placed around one period like a clock face, colored with the app's
+   pitch-hue formula (non-octave periods get a dashed ring). Tap a ring for
+   details — labeled ring, linear step ruler, an arpeggio preview with the
+   CURRENT voice — then adopt it as the live tuning. */
+const TX_BINS=(()=>{const b=[{label:'All',test:()=>true,n:12}];
+  for(let n=1;n<=30;n++)b.push({label:String(n),test:c=>c===n,n});
+  b.push({label:'31-40',test:c=>c>=31&&c<=40,n:31},{label:'41-60',test:c=>c>=41&&c<=60,n:41},
+         {label:'61-99',test:c=>c>=61&&c<=99,n:61},{label:'100+',test:c=>c>=100,n:100});
+  return b;})();
+/* facets beyond note count: family (build-time keyword tags), intonation and
+   period class (structural). Ints match build-scala-db.py's fam/into codes. */
+const TX_FAMS=[[-1,'All families'],[1,'Gamelan'],[6,'Greek & ancient'],[7,'Middle Eastern'],
+  [8,'Indian'],[9,'East & SE Asian'],[10,'Historical temp.'],[2,'Partch'],[3,'Bohlen–Pierce'],
+  [4,'Wilson / CPS'],[5,'Carlos'],[0,'Other']];
+const TX_INTOS=[[-1,'Any intonation'],[1,'Just ratios'],[0,'Tempered cents'],[2,'Mixed'],[3,'Equal-step']];
+const TX_PERS=[['all','Any period'],['oct','Octave'],['near','Stretched 8ve'],['tri','Tritave'],['other','Exotic period']];
+const TX_SORTS=[['name','A–Z'],['notes','Fewest notes'],['period','Smallest period']];
+const TX_FAMNAME={1:'gamelan',2:'Partch',3:'Bohlen–Pierce',4:'Wilson/CPS',5:'Carlos',
+  6:'Greek & ancient',7:'Middle Eastern',8:'Indian',9:'East & SE Asian',10:'historical temperament'};
+const TX_INTONAME={0:'tempered',1:'just intonation',2:'mixed just+tempered',3:'equal-step'};
+function periodClass(P){
+  if(Math.abs(P-1200)<=2)return 'oct';
+  if(P>1100&&P<1300)return 'near';                   // stretched/compressed octaves (gamelan, piano-like)
+  if(Math.abs(P-1901.955)<=15)return 'tri';          // Bohlen–Pierce and friends
+  return 'other';
+}
+let txDB=null,txSel={count:'All',fam:-1,into:-1,per:'all',sort:'name',q:''},
+    txItems=[],txCols=3,txCur=null,txSearchTimer=null;
+const txCells=new Map();
+const TX_CH=100;                                     // grid row height (ring + name)
+function parseDB(j){
+  if(!j||!Array.isArray(j.scales))return null;
+  const out=[];
+  j.scales.forEach(s=>{
+    if(!Array.isArray(s)||s.length<5||!Array.isArray(s[4])||!s[4].length)return;
+    const cents=s[4].map(Number);
+    if(cents.some(v=>!isFinite(v))||cents[cents.length-1]<=0)return;
+    out.push({name:String(s[0]),desc:String(s[1]),fam:+s[2]||0,into:+s[3]||0,
+      cents,pc:periodClass(cents[cents.length-1])});
+  });
+  return out.length?out:null;
+}
+function loadScalaDB(cb){
+  if(txDB){cb(true);return;}
+  if(window.SCALA_DB){txDB=parseDB(window.SCALA_DB);cb(!!txDB);return;}
+  if(typeof fetch!=='function'){cb(false);return;}
+  fetch('scala-db.json').then(r=>{if(!r.ok)throw new Error(r.status);return r.json();})
+    .then(j=>{window.SCALA_DB=j;txDB=parseDB(j);cb(!!txDB);})
+    .catch(()=>cb(false));
+}
+const hueOfCents=cc=>((Math.log2(C3)+cc/1200)*100)%360;  // C3-anchored — thumbnails stay stable
+/* the scale as a clock face: one period = one turn, root at 12 o'clock;
+   spokes+dots at every degree, hue from the app's pitch-hue formula. Equal
+   scales read as even star polygons, JI/gamelan as lopsided fingerprints. */
+function drawRing(cv,cents,px,detail){
+  const dpr=Math.min(window.devicePixelRatio||1,3);
+  cv.width=Math.round(px*dpr);cv.height=Math.round(px*dpr);
+  cv.style.width=px+'px';cv.style.height=px+'px';
+  const c=cv.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,px,px);
+  const N=cents.length,P=cents[N-1],R=px/2-(detail&&N<=24?22:5),cx=px/2,cy=px/2;  // labels need edge room
+  c.strokeStyle='rgba(255,255,255,.16)';c.lineWidth=1;
+  if(Math.abs(P-1200)>2)c.setLineDash([4,3]);        // non-octave period → dashed ring, visible in the grid
+  c.beginPath();c.arc(cx,cy,R,0,2*Math.PI);c.stroke();
+  c.setLineDash([]);
+  const degs=[0].concat(cents.slice(0,N-1));         // period ≡ root — drawn once at the top
+  const alpha=N>60?.4:.85,lw=N>60?1:(detail?1.8:1.4);
+  degs.forEach((dc,i)=>{
+    const a=dc/P*2*Math.PI-Math.PI/2,hue=hueOfCents(dc);
+    const ex=cx+R*Math.cos(a),ey=cy+R*Math.sin(a),r0=i===0?0:R*.55;
+    c.strokeStyle='hsl('+hue.toFixed(0)+' 80% 65%/'+alpha+')';c.lineWidth=i===0?lw+.8:lw;
+    c.beginPath();c.moveTo(cx+r0*Math.cos(a),cy+r0*Math.sin(a));c.lineTo(ex,ey);c.stroke();
+    c.fillStyle='hsl('+hue.toFixed(0)+' 85% 70%)';
+    c.beginPath();c.arc(ex,ey,i===0?(detail?4:2.4):(detail?2.8:1.7),0,2*Math.PI);c.fill();
+    if(detail&&N<=24){                               // cents labels just outside the ring
+      c.fillStyle='rgba(255,255,255,.75)';c.font='600 9px system-ui, sans-serif';
+      c.textAlign='center';c.textBaseline='middle';
+      c.fillText(String(Math.round(dc)),cx+(R+11)*Math.cos(a),cy+(R+11)*Math.sin(a));
+    }
+  });
+}
+function setTxStatus(msg,retry){
+  txStatus.innerHTML='';txStatus.style.display=msg?'flex':'none';
+  if(!msg)return;
+  const d=document.createElement('div');d.textContent=msg;txStatus.appendChild(d);
+  if(retry){const b=document.createElement('button');b.textContent='Retry';
+    b.onclick=openExplorer;txStatus.appendChild(b);}
+}
+/* does scale s pass every active filter, optionally ignoring one facet?
+   The skip form powers live per-option counts: each facet's dropdown counts
+   matches with every OTHER filter applied (classic faceted search). */
+function txMatch(s,skip){
+  if(skip!=='q'&&txSel.q&&
+     s.name.toLowerCase().indexOf(txSel.q)<0&&s.desc.toLowerCase().indexOf(txSel.q)<0)return false;
+  if(skip!=='fam'&&txSel.fam>=0&&s.fam!==txSel.fam)return false;
+  if(skip!=='into'&&txSel.into>=0&&s.into!==txSel.into)return false;
+  if(skip!=='per'&&txSel.per!=='all'&&s.pc!==txSel.per)return false;
+  if(skip!=='count'&&txSel.count!=='All'){
+    const b=TX_BINS.find(x=>x.label===txSel.count);
+    if(b&&!b.test(s.cents.length))return false;
+  }
+  return true;
+}
+function txTally(skip,get){                          // per-option counts with `skip` facet ignored
+  const m={_tot:0};
+  txDB.forEach(s=>{if(!txMatch(s,skip))return;m._tot++;const k=get(s);m[k]=(m[k]||0)+1;});
+  return m;
+}
+function txBuildSel(sel,defs,cur,cnt){
+  sel.innerHTML=defs.map(d=>'<option value="'+d[0]+'">'+d[1]+(cnt?' · '+cnt(d[0]):'')+'</option>').join('');
+  sel.value=String(cur);
+}
+/* the facet dropdowns live in #txChips — created once, options rebuilt with
+   live counts on every filter change */
+const txFamSel=document.createElement('select'),txPerSel=document.createElement('select'),
+      txIntoSel=document.createElement('select'),txSortSel=document.createElement('select');
+[txFamSel,txPerSel,txIntoSel,txSortSel].forEach(s=>{s.className='tx-sel';txChips.appendChild(s);});
+txFamSel.onchange=()=>{txSel.fam=+txFamSel.value;txRebuild();};
+txPerSel.onchange=()=>{txSel.per=String(txPerSel.value);txRebuild();};
+txIntoSel.onchange=()=>{txSel.into=+txIntoSel.value;txRebuild();};
+txSortSel.onchange=()=>{txSel.sort=String(txSortSel.value);txRebuild();};
+function txRebuild(){
+  if(!txDB)return;
+  setTxStatus('');
+  // note-count histogram (counts respect all other facets)
+  const counts=new Array(TX_BINS.length).fill(0);
+  txDB.forEach(s=>{if(!txMatch(s,'count'))return;
+    counts[0]++;const n=s.cents.length;
+    for(let i=1;i<TX_BINS.length;i++)if(TX_BINS[i].test(n)){counts[i]++;break;}});
+  if(txSel.count!=='All'){const cur=TX_BINS.findIndex(b=>b.label===txSel.count);
+    if(cur>0&&!counts[cur])txSel.count='All';}       // current bin filtered empty → fall back
+  const mx=Math.max(1,...counts.slice(1));
+  txHisto.innerHTML='';
+  TX_BINS.forEach((b,i)=>{
+    if(i>0&&!counts[i])return;
+    const el=document.createElement('button');
+    el.className='tx-bar'+(txSel.count===b.label?' on':'');
+    const h=i===0?46:Math.max(3,Math.round(Math.sqrt(counts[i]/mx)*46));
+    const hue=(Math.log2(b.n)*100)%360;
+    el.innerHTML='<i style="height:'+h+'px;background:hsl('+hue.toFixed(0)+' 70% '+(i===0?'40%':'55%')+
+      '/.85)"></i><b>'+b.label+'</b><u>'+(i===0?counts[0]:counts[i])+'</u>';
+    el.onclick=()=>{txSel.count=b.label;txRebuild();};
+    txHisto.appendChild(el);
+  });
+  // facet dropdowns with live counts
+  const famT=txTally('fam',s=>s.fam),perT=txTally('per',s=>s.pc),intoT=txTally('into',s=>s.into);
+  txBuildSel(txFamSel,TX_FAMS,txSel.fam,k=>k<0?famT._tot:(famT[k]||0));
+  txBuildSel(txPerSel,TX_PERS,txSel.per,k=>k==='all'?perT._tot:(perT[k]||0));
+  txBuildSel(txIntoSel,TX_INTOS,txSel.into,k=>k<0?intoT._tot:(intoT[k]||0));
+  txBuildSel(txSortSel,TX_SORTS,txSel.sort,null);
+  // the grid list, sorted
+  txItems=txDB.filter(s=>txMatch(s));
+  if(txSel.sort==='notes')txItems.sort((a,b)=>a.cents.length-b.cents.length||(a.name<b.name?-1:1));
+  else if(txSel.sort==='period')txItems.sort((a,b)=>
+    a.cents[a.cents.length-1]-b.cents[b.cents.length-1]||(a.name<b.name?-1:1));
+  txCount.textContent=txItems.length===txDB.length?txDB.length+' scales'
+    :txItems.length+' of '+txDB.length;
+  if(txGrid.scrollTop)txGrid.scrollTop=0;
+  txCells.forEach(el=>el.remove());txCells.clear();
+  txLayout();
+}
+function txLayout(){
+  const w=txGrid.clientWidth||320;
+  txCols=Math.max(2,Math.floor(w/88));
+  txPad.style.height=Math.ceil(txItems.length/txCols)*TX_CH+'px';
+  txRenderWindow();
+}
+/* windowed grid — only the visible rows (±2) exist as DOM; cells are drawn
+   once on creation and dropped when scrolled far away, so browsing all 5399
+   scales never holds more than ~40 canvases */
+function txRenderWindow(){
+  const top=txGrid.scrollTop||0,h=txGrid.clientHeight||420;
+  const r0=Math.max(0,Math.floor(top/TX_CH)-2),r1=Math.floor((top+h)/TX_CH)+2;
+  const lo=r0*txCols,hi=Math.min(txItems.length,(r1+1)*txCols);
+  txCells.forEach((el,i)=>{if(i<lo||i>=hi){el.remove();txCells.delete(i);}});
+  for(let i=lo;i<hi;i++){
+    if(txCells.has(i))continue;
+    const s=txItems[i],el=document.createElement('div');el.className='tx-cell';
+    el.style.left=(i%txCols)*(100/txCols)+'%';el.style.width=(100/txCols)+'%';
+    el.style.top=Math.floor(i/txCols)*TX_CH+'px';
+    const cv=document.createElement('canvas');
+    const nm=document.createElement('div');nm.className='tx-name';nm.textContent=s.name;
+    el.appendChild(cv);el.appendChild(nm);
+    el.onclick=()=>txOpenDetail(s);
+    txPad.appendChild(el);txCells.set(i,el);
+    drawRing(cv,s.cents,68,false);
+  }
+}
+txGrid.addEventListener('scroll',txRenderWindow);
+/* linear step ruler — one tick per degree across the period. Complements the
+   ring: evenness (or pelog's lopsidedness) reads at a glance left-to-right. */
+function drawRuler(cv,cents,wpx,hpx){
+  const dpr=Math.min(window.devicePixelRatio||1,3);
+  cv.width=Math.round(wpx*dpr);cv.height=Math.round(hpx*dpr);
+  cv.style.width=wpx+'px';cv.style.height=hpx+'px';
+  const c=cv.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,wpx,hpx);
+  const N=cents.length,P=cents[N-1];
+  c.fillStyle='rgba(255,255,255,.25)';c.fillRect(4,hpx-7,wpx-8,1);
+  [0].concat(cents).forEach((dc,i)=>{
+    const x=4+Math.min(1,Math.max(0,dc/P))*(wpx-8),edge=i===0||i===N;
+    c.fillStyle='hsl('+hueOfCents(dc).toFixed(0)+' 80% '+(edge?'75%':'65%')+')';
+    c.fillRect(x-(edge?1:.6),edge?3:9,edge?2:1.2,hpx-(edge?9:15));
+  });
+}
+function txOpenDetail(s){
+  txStopPreview();
+  txCur=s;txDetail.hidden=false;txGrid.style.display='none';
+  const w=(txDetail.clientWidth||260)-20;
+  drawRing(txDetCanvas,s.cents,Math.min(240,w),true);
+  drawRuler(txDetRuler,s.cents,Math.min(400,w),26);
+  txDetName.textContent=s.name;
+  txDetDesc.textContent=s.desc||'(no description)';
+  const P=s.cents[s.cents.length-1];
+  txDetMeta.textContent=s.cents.length+(s.cents.length===1?' note':' notes')+' · period '+(Math.round(P*100)/100)+'¢'+
+    (Math.abs(P-1200)<.02?' (octave)':'')+' · '+(TX_INTONAME[s.into]||'')+
+    (TX_FAMNAME[s.fam]?' · '+TX_FAMNAME[s.fam]:'');
+  txDetCents.textContent='0 · '+s.cents.map(v=>String(Math.round(v*10)/10)).join(' · ')+' ¢';
+}
+function txBackToGrid(){txStopPreview();txCur=null;txDetail.hidden=true;txGrid.style.display='';}
+/* arpeggio preview: strum the scale bottom→top with the CURRENT voice via
+   makeVoice directly — like the Lab audition strip, it can never record */
+let txPrevGen=0,txPrevVoices=[];
+function txStopPreview(){
+  txPrevGen++;
+  txPrevVoices.forEach(v=>{releaseVoice(v,ctx?ctx.currentTime:0,.05);setTimeout(()=>v.stop(),400);});
+  txPrevVoices=[];
+}
+function txPreview(){
+  if(!txCur)return;
+  txStopPreview();
+  const gen=++txPrevGen,base=C3*2;                   // strum from C4 regardless of ⚙ low-note
+  let degs=[0].concat(txCur.cents);
+  if(degs.length>17){                                // big scales: subsample, keep the period on top
+    const stride=Math.ceil((degs.length-1)/16),out=[];
+    for(let i=0;i<degs.length-1;i+=stride)out.push(degs[i]);
+    out.push(degs[degs.length-1]);degs=out;
+  }
+  degs.forEach((dc,i)=>{
+    setTimeout(()=>{
+      if(gen!==txPrevGen)return;
+      const g=curVoiceGen(),v=makeVoice(base*Math.pow(2,dc/1200),g?'lab':voiceKey,undefined,g);
+      txPrevVoices.push(v);
+      setTimeout(()=>{if(txPrevVoices.indexOf(v)>=0){txPrevVoices=txPrevVoices.filter(x=>x!==v);
+        releaseVoice(v,ctx.currentTime);setTimeout(()=>v.stop(),v.tail);}},280);
+    },i*170);
+  });
+}
+function txUseTuning(){
+  if(!txCur)return;
+  scl={name:txCur.name,cents:txCur.cents.slice()};
+  if(rootSemi>=tunN())rootSemi=0;
+  applyQuant();                                      // persists via saveQuantPrefs, redraws everything
+  closeExplorer();
+}
+function openExplorer(){
+  synthCfgPanel.hidden=true;
+  tunExplorer.hidden=false;
+  txDetail.hidden=true;txGrid.style.display='';
+  if(txDB){txRebuild();return;}
+  setTxStatus('Loading the Scala archive… (5,399 tunings, ~1 MB, bundled locally)');
+  loadScalaDB(ok=>{
+    if(tunExplorer.hidden)return;
+    if(!ok){setTxStatus('Could not load scala-db.json. On web this needs the server reachable once; on the app it ships in the bundle.',true);return;}
+    txRebuild();
+  });
+}
+function closeExplorer(){txStopPreview();tunExplorer.hidden=true;}
+tunExplorerBtn.onclick=openExplorer;
+txClose.onclick=closeExplorer;
+txBack.onclick=txBackToGrid;
+txHear.onclick=txPreview;
+txUse.onclick=txUseTuning;
+txRandom.onclick=()=>{
+  if(!txDB)return;
+  const pool=txItems.length?txItems:txDB;
+  txOpenDetail(pool[Math.floor(Math.random()*pool.length)]);
+};
+txSearch.oninput=()=>{
+  clearTimeout(txSearchTimer);
+  txSearchTimer=setTimeout(()=>{
+    txSel.q=String(txSearch.value||'').trim().toLowerCase();
+    if(!txDetail.hidden)txBackToGrid();
+    txRebuild();
+  },140);
+};
+window.addEventListener('resize',()=>{if(!tunExplorer.hidden&&txDB)txLayout();});
 
 /* ==== RECORDING HELPERS ==== */
 function record(ev){if(!isRec)return;const now=audio().currentTime;
@@ -977,7 +1442,7 @@ function genomePartials(gen){
     if(gen.sieve==='oct'&&(k&(k-1))!==0)continue;      // powers of two
     if(gen.sieve==='3rd'&&k%3!==1)continue;            // 1,4,7,10…
     let r=Math.pow(k,1+gen.stretch);
-    if(gen.match)r=Math.pow(2,Math.round(edo*Math.log2(r))/edo);
+    if(gen.match)r=Math.pow(2,stepCents(nearestStep(1200*Math.log2(r)))/1200);  // snap to the CURRENT tuning's steps
     out.push([r,1/Math.pow(k,gen.tilt)]);
   }
   if(gen.width>0&&out.length){const c=Math.pow(2,gen.width/1200);
@@ -1051,7 +1516,7 @@ function makeVoice(f,inst,at,gen){
   if(def.formantA){const pk=c.createBiquadFilter();pk.type='peaking';
     pk.frequency.value=def.formantF;pk.Q.value=2;pk.gain.value=def.formantA;
     flt.connect(pk);out=pk;}
-  out.connect(g);g.connect(bus());
+  out.connect(g);g.connect(vout());
   const aEnd=t+atk;
   return {oscs,g,rel:def.rel||RELEASE,tail:def.tail||OSC_TAIL,
     envAt(x){                                        // analytic master-envelope value at time x
@@ -1065,7 +1530,9 @@ function makeVoice(f,inst,at,gen){
 }
 function startVoice(pid,f,name,mx,my,nx,ny){
   const gen=curVoiceGen();
+  voiceDest=(isRec&&curRec)?trackOut(curRec.id):null;  // live monitor at the take's own volume
   const v=makeVoice(f,gen?'lab':voiceKey,undefined,gen);
+  voiceDest=null;
   const col=`hsl(${(Math.log2(f)*100)%360} 80% 60%/.8)`,
         m=marker('note-marker',mx,my,col,name),id='n'+nextNoteId++;
   touches.set(pid,{id,v,m});
@@ -1113,6 +1580,14 @@ function synthMove(pid,x,y){
         col=`hsl(${(Math.log2(f)*100)%360} 80% 60%/.8)`;
   t.v.setFreq(f,ctx.currentTime);
   Object.assign(t.m.style,{left:q.nx*w+'px',top:(1-q.ny)*h+'px',background:col});t.m.textContent=name;
+  // record at most one update per 25ms per note. Live sound + marker stay
+  // full-rate above; only the take is thinned. Pixel-class screens fire
+  // touchmove at 120Hz, and every recorded update becomes a timer plus an
+  // automation event on EVERY later loop pass — that scheduling load on a
+  // phone's main thread is exactly what starves the audio thread into
+  // crackles. setFreq's 10ms smoothing makes 40Hz replay indistinguishable.
+  if(t.lastUpd!==undefined&&ctx.currentTime-t.lastUpd<.025)return;
+  t.lastUpd=ctx.currentTime;
   record({type:'update',id:t.id,nx:q.nx,ny:q.ny,f,name});
 }
 function synthEnd(pid){
@@ -1130,7 +1605,9 @@ function hitDrum(x,y,playback=false){
   const row=Math.min(ROWS-1,Math.max(0,Math.floor(gy*ROWS)));
   const kind=rowInstruments[row][col];
   const localP=Math.min(1,Math.max(0,(gy*ROWS)-row));      // 0..1 inside row
-  drumMap[kind](localP);showHit(kind,x,y,playback);
+  voiceDest=(!playback&&isRec&&curRec)?trackOut(curRec.id):voiceDest;
+  try{drumMap[kind](localP);}finally{voiceDest=null;}
+  showHit(kind,x,y,playback);
   return {kind,row,col,x:nx,gy,localP};
 }
 
@@ -1165,8 +1642,16 @@ function addRow(r){
     if(r===curRec){isRec=false;curRec=null;recordBtn.classList.remove('active');
       recordBtn.textContent='Rec';scrubSlider.disabled=false;}
     recordings=recordings.filter(a=>a!==r);row.remove();updateBadge();
-    killTrackNotes(r.id);
+    killTrackNotes(r.id);dropTrackGain(r.id);
     if(!recordings.some(a=>a.active))stopPlayback();else if(isPlay)reschedule();};
+  // per-track volume — drives the track's GainNode live (playback AND the
+  // overdub monitor), persisted in the song file. createElement, not
+  // innerHTML: the node test harness only parses div/button from markup.
+  const vol=document.createElement('input');
+  vol.type='range';vol.min='0';vol.max='100';vol.className='rec-vol';vol.title='track volume';
+  vol.value=String(Math.round((typeof r.gain==='number'?r.gain:1)*100));
+  vol.oninput=()=>setTrackGain(r,(+vol.value||0)/100);
+  row.appendChild(vol);
 }
 
 /* ==== RECORD CONTROL ==== */
@@ -1180,7 +1665,7 @@ function startRecording(){
   // press itself, so off-beat/pickup starts land where they were played. A
   // grid already running (met ticking or tracks playing) keeps its anchor.
   if(loopAnchor===null||(!tickTimer&&!isPlay))loopAnchor=c.currentTime;
-  const r={id:recSeq++,name:'Track '+(recSeq-1),events:[],active:false};
+  const r={id:recSeq++,name:'Track '+(recSeq-1),events:[],active:false,gain:1};
   recordings.push(r);curRec=r;isRec=true;addRow(r);
   recordBtn.classList.add('active');recordBtn.textContent='Rec*';scrubSlider.disabled=true;
   if(metOn&&!tickTimer)startMet();
@@ -1212,13 +1697,16 @@ function dispatch(rid,ev,when){
   const c=audio(),at=Math.max(when||c.currentTime,c.currentTime+.005);   // schedule on the audio clock, not timer-fire time
   if(ev.type==='drum'){
     const x=ev.x*pad.clientWidth,y=(1-ev.gy)*pad.clientHeight,fn=drumMap[ev.kind];
-    if(fn)fn(ev.localP,at);showHit(ev.kind,x,y,true);return;
+    voiceDest=trackOut(rid);
+    try{if(fn)fn(ev.localP,at);}finally{voiceDest=null;}
+    showHit(ev.kind,x,y,true);return;
   }
   const key=rid+'_'+ev.id;
   if(ev.type==='start'){
     const old=playNotes.get(key);if(old){fadeNote(old,c.currentTime);playNotes.delete(key);}
     const x=ev.nx*pad.clientWidth,y=(1-ev.ny)*pad.clientHeight;
-    const v=makeVoice(ev.f,ev.inst||'sine',at,ev.gen);   // each event replays with the voice (or genome) it was recorded with
+    voiceDest=trackOut(rid);
+    let v;try{v=makeVoice(ev.f,ev.inst||'sine',at,ev.gen);}finally{voiceDest=null;}  // replay with the recorded voice, at the track's volume
     const m=marker('playback-marker',x,y,'rgba(255,255,0,.25)',ev.name);
     playNotes.set(key,{v,m});
   }else if(ev.type==='update'){
@@ -1289,14 +1777,21 @@ function scheduleBeat(gen){
   }
   const accent=!beat;
   // enveloped tick — a raw sine hard-stopped mid-waveform pops; decay to
-  // silence before the stop so there is no discontinuity
-  const o=c.createOscillator(),g=c.createGain();o.frequency.value=accent?1000:800;
-  g.gain.setValueAtTime(accent?.15:.09,nextBeat);g.gain.exponentialRampToValueAtTime(.0005,nextBeat+.045);
-  o.connect(g);g.connect(c.destination);o.start(nextBeat);o.stop(nextBeat+.055);  // met stays off the limiter bus
+  // silence before the stop so there is no discontinuity. metVol scales the
+  // levels (its own "track" volume); at zero skip the osc entirely — an
+  // exponential ramp can't start from 0 and the visuals should still run.
+  if(metVol>.001){
+    const o=c.createOscillator(),g=c.createGain();o.frequency.value=accent?1000:800;
+    g.gain.setValueAtTime((accent?.15:.09)*metVol,nextBeat);g.gain.exponentialRampToValueAtTime(.0005,nextBeat+.045);
+    o.connect(g);g.connect(c.destination);o.start(nextBeat);o.stop(nextBeat+.055);  // met stays off the limiter bus
+  }
   // capture THIS beat's position — the globals advance to the next beat below,
-  // and reading them in the timer callback made the display lead by one
+  // and reading them in the timer callback made the display lead by one.
+  // gen-guarded: a queued flash from a chain that was stopped mid-flight
+  // (scrub, tempo change) must not paint a stale beat.
   const vb=bar*timeSig+beat,vt=(bar+1)+'.'+(beat+1);
-  setTimeout(()=>{metLight.classList.add('active');setTimeout(()=>metLight.classList.remove('active'),80);
+  setTimeout(()=>{if(gen!==metGen)return;
+    metLight.classList.add('active');setTimeout(()=>metLight.classList.remove('active'),80);
     flash(vb);barCounter.textContent=vt;},Math.max(0,(nextBeat-c.currentTime)*1000-5));
   beat=(beat+1)%timeSig;if(!beat){bar=(bar+1)%barsPerLoop;}
   nextBeat+=calcGrid();tickTimer=setTimeout(()=>scheduleBeat(gen),(nextBeat-c.currentTime-.005)*1000);}
@@ -1307,7 +1802,7 @@ function startMet(){
   const c=audio();if(loopAnchor===null)loopAnchor=c.currentTime+.02;
   metGen++;const grid=calcGrid(),req=c.currentTime+.02;
   const ahead=Math.ceil((req-loopAnchor)/grid);nextBeat=loopAnchor+ahead*grid;
-  const q=ahead%beatsPerLoop;beat=q%timeSig;bar=Math.floor(q/timeSig);
+  const q=((ahead%beatsPerLoop)+beatsPerLoop)%beatsPerLoop;beat=q%timeSig;bar=Math.floor(q/timeSig);
   flash(bar*timeSig+beat);updateCounter();scheduleBeat(metGen);}
 function stopMet(){metGen++;clearTimeout(tickTimer);tickTimer=null;
   [...beatIndicator.children].forEach(d=>d.classList.remove('active'));}
@@ -1319,7 +1814,7 @@ function tickPos(){
   if(!isRec&&!isPlay){flash(-1);posTimer=null;return;}
   if(loopAnchor!==null){
     const pos=loopPos();
-    scrubSlider.value=pos;
+    if(!scrubHeld)scrubSlider.value=pos;   // don't fight the user's thumb mid-drag
     if(!tickTimer){const b=Math.floor(pos);beat=b%timeSig;bar=Math.floor(b/timeSig);flash(b);updateCounter();}
   }
   posTimer=setTimeout(tickPos,80);
@@ -1335,18 +1830,58 @@ function scrubTo(b){
   loopAnchor=c.currentTime-b*60/tempo;
   playNotes.forEach(n=>fadeNote(n,c.currentTime));playNotes.clear();
   if(isPlay)reschedule();
-  if(tickTimer){stopMet();startMet();}
-  const bi=Math.floor(b);beat=bi%timeSig;bar=Math.floor(bi/timeSig);flash(bi);updateCounter();
+  if(tickTimer){stopMet();startMet();}      // startMet re-derives beat/bar and owns them from here —
+  else{                                     // clobbering them after it desynced the accents/counter
+    const bi=Math.floor(b);beat=bi%timeSig;bar=Math.floor(bi/timeSig);flash(bi);updateCounter();
+  }
 }
 scrubSlider.oninput=e=>scrubTo(Math.min(beatsPerLoop-.001,Math.max(0,+e.target.value||0)));
+/* while the finger is on the scrubber, the 80ms position ticker must not
+   overwrite the slider value — it made the thumb snap away mid-drag */
+let scrubHeld=false;
+['pointerdown','touchstart'].forEach(ev=>scrubSlider.addEventListener(ev,()=>{scrubHeld=true;}));
+['pointerup','pointercancel','touchend','touchcancel'].forEach(ev=>scrubSlider.addEventListener(ev,()=>{scrubHeld=false;}));
+scrubSlider.onchange=()=>{scrubHeld=false;};
 
 /* ==== UI LISTENERS ==== */
-tempoSlider.oninput=e=>{tempo=+e.target.value;tempoValue.textContent=tempo+' BPM';
+tempoSlider.oninput=e=>{
+  // hold the playhead still through the change: loopPos is (now-anchor)·tempo,
+  // so a fixed anchor would teleport the position by the tempo ratio mid-play
+  const pos=((isPlay||isRec)&&loopAnchor!==null)?loopPos():null;
+  tempo=+e.target.value;tempoValue.textContent=tempo+' BPM';
+  if(pos!==null)loopAnchor=audio().currentTime-pos*60/tempo;
   if(metOn){stopMet();startMet();}if(isPlay)reschedule();};
-metBtn.onclick=()=>{metOn=!metOn;metBtn.textContent=metOn?'Met:On':'Met:Off';
+/* the metronome is presented as a pinned pseudo-track: a row in the
+   Recordings panel with the same mute toggle + volume slider as real tracks.
+   It follows the transport exactly like a track (only ticks while playing or
+   recording); metOn is its mute state, metVol its volume (a pref, not song
+   data). The Met button in the control strip is a shortcut to the same
+   toggle — both stay in sync through syncMetUI(). */
+const metRowEl=$('metRow');
+metRowEl.className='recording-item';
+const metRowName=document.createElement('div');
+metRowName.className='recording-name';metRowName.textContent='Metronome';
+const metRowCtl=document.createElement('div');metRowCtl.className='recording-controls';
+const metRowTog=document.createElement('button');metRowTog.title='metronome on / off';
+metRowCtl.appendChild(metRowTog);
+const metRowVol=document.createElement('input');
+metRowVol.type='range';metRowVol.min='0';metRowVol.max='100';metRowVol.className='rec-vol';metRowVol.title='metronome volume';
+metRowEl.appendChild(metRowName);metRowEl.appendChild(metRowCtl);metRowEl.appendChild(metRowVol);
+function syncMetUI(){
+  metBtn.textContent=metOn?'Met:On':'Met:Off';
+  metRowTog.textContent=metOn?'🔊':'🔇';
+  metRowEl.classList.toggle('active',metOn);
+  metRowVol.value=String(Math.round(metVol*100));
+}
+function toggleMet(){
+  metOn=!metOn;syncMetUI();
   if(!metOn){stopMet();return;}
   if(!isPlay&&recordings.some(r=>r.active))startPlayback();   // met implies play (startPlayback starts the ticking)
-  else if(isPlay||isRec)startMet();};                         // joining a running session: tick in sync
+  else if(isPlay||isRec)startMet();                           // joining a running session: tick in sync
+}
+metBtn.onclick=toggleMet;
+metRowTog.onclick=toggleMet;
+metRowVol.oninput=()=>{metVol=Math.min(1,Math.max(0,(+metRowVol.value||0)/100));saveQuantPrefs();};
 recordBtn.onclick=()=>isRec?stopRecording():startRecording();
 playBtn.onclick=()=>isPlay?stopPlayback():startPlayback();
 stopBtn.onclick=()=>{isRec&&stopRecording(false);isPlay&&stopPlayback();};
@@ -1376,7 +1911,7 @@ window.addEventListener('blur',()=>[...touches.keys()].forEach(pid=>synthEnd(pid
 /* ==== INIT ==== */
 loadQuantPrefs();applyQuant();
 setLoopShape(timeSig,barsPerLoop);
-scrubSlider.value=0;syncLab();renderVoiceLib();renderPresets();
+scrubSlider.value=0;syncLab();renderVoiceLib();renderPresets();syncMetUI();
 
 /* ==== EXTERNAL SAVE / LOAD API ====
    Used by the Extras "Synth" window to save the current song (all
@@ -1391,11 +1926,13 @@ window.SynthApp = {
       scale: scaleKey,
       root: rootSemi,
       edo: edo,
+      scl: scl ? { name: scl.name, cents: scl.cents.slice() } : null,
       timeSig: timeSig,
       bars: barsPerLoop,
       voices: voiceLib.map(function (v) { return { name: v.name, gen: Object.assign({}, v.gen) }; }),
       recordings: recordings.map(function (r) {
-        return { name: r.name, events: r.events };
+        return { name: r.name, events: r.events,
+                 gain: (typeof r.gain === 'number') ? r.gain : 1 };
       })
     };
   },
@@ -1405,6 +1942,7 @@ window.SynthApp = {
     if (isRec) stopRecording(false);
     recordings = [];
     recordingsList.innerHTML = '';
+    dropAllTrackGains();
     updateBadge();
     scrubSlider.value = 0;
   },
@@ -1414,14 +1952,17 @@ window.SynthApp = {
     if (isPlay) stopPlayback();
     recordings = [];
     recordingsList.innerHTML = '';
+    dropAllTrackGains();
     if (typeof song.tempo === 'number' && song.tempo > 0) {
       tempo = song.tempo;
       tempoSlider.value = tempo;
       tempoValue.textContent = tempo + ' BPM';
     }
-    if (EDOS.includes(song.edo)) edo = song.edo; else if (song.scale) edo = 12;
+    var sc = sanitizeScl(song.scl);
+    if (EDOS.includes(song.edo)) edo = song.edo; else if (song.scale && !sc) edo = 12;
+    scl = sc || null;   // legacy songs (no scl field) land back in EDO mode
     if (typeof song.scale === 'string' && SCALES.hasOwnProperty(song.scale)) scaleKey = song.scale;
-    if (typeof song.root === 'number' && song.root >= 0 && song.root < edo) rootSemi = Math.floor(song.root);
+    if (typeof song.root === 'number' && song.root >= 0 && song.root < tunN()) rootSemi = Math.floor(song.root);
     applyQuant();
     // loop shape the song was recorded against (legacy songs: the old 4×8)
     var ts = (typeof song.timeSig === 'number' && song.timeSig >= 2 && song.timeSig <= 9) ? Math.round(song.timeSig) : 4;
@@ -1443,7 +1984,8 @@ window.SynthApp = {
         id: recSeq++,
         name: (s && s.name) ? s.name : ('Track ' + (recSeq - 1)),
         events: (s && Array.isArray(s.events)) ? s.events : [],
-        active: true   // loaded tracks arrive unmuted — the toggle no longer auto-plays
+        active: true,  // loaded tracks arrive unmuted — the toggle no longer auto-plays
+        gain: (s && typeof s.gain === 'number' && s.gain >= 0 && s.gain <= 1) ? s.gain : 1
       };
       recordings.push(r);
       addRow(r);
