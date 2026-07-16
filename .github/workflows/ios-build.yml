@@ -59,6 +59,20 @@ jobs:
             npm install
           fi
 
+      # Patch the @capacitor/geolocation iOS plugin source IN PLACE in
+      # node_modules, before any `pod install` (the plugin is a
+      # development pod compiled straight out of node_modules, so this
+      # is sufficient and survives later pod installs). Fixes
+      # CoreLocation misuse — shipped in plugin v6 AND v7 — that made
+      # the GPS dot jump around / go quiet on iOS: oldest-of-batch fix
+      # reporting, shared-manager accuracy clobbering by one-shots,
+      # vehicle-grade accuracy mode, and stationary auto-pause. Full
+      # rationale in the script's docstring. The script FAILS the build
+      # if the plugin source drifts from the anchored 6.1.1 shape, so a
+      # plugin upgrade can never silently ship an unpatched IPA.
+      - name: Patch @capacitor/geolocation iOS plugin
+        run: python3 ios-overrides/patch-geolocation-plugin.py
+
       # Compose the Capacitor webDir (`dist/`) by combining the
       # static frontend with the BundledData payload. Capacitor reads
       # from this directory, so the IPA ships with all sprites, low-

@@ -110,5 +110,34 @@ function slice(label, startAnchor, endAnchor) {
     'Android BgLoc path: stale-fix guard still present');
 }
 
+// --- 4) Native plugin patch is wired into the iOS CI build -----------------
+// The remaining native-layer fixes (locations.last, no shared-manager
+// reconfiguration under a live watch, pedestrian accuracy, no stationary
+// auto-pause) live in ios-overrides/patch-geolocation-plugin.py, applied to
+// node_modules by ios-build.yml before pod install. Guard both halves so
+// neither the script nor its workflow step can silently disappear.
+{
+  const patch = fs.readFileSync(
+    path.join(root, 'ios-overrides', 'patch-geolocation-plugin.py'), 'utf8');
+  ok(/locations\.last/.test(patch),
+    'plugin patch: reports the freshest fix of each CoreLocation batch');
+  ok(/!self\.isUpdatingLocation/.test(patch),
+    'plugin patch: one-shots leave the shared manager alone under a live watch');
+  ok(/pausesLocationUpdatesAutomatically = false/.test(patch),
+    'plugin patch: disables stationary auto-pause');
+  ok(/activityType = \.fitness/.test(patch),
+    'plugin patch: sets pedestrian activity type');
+  ok(/sys\.exit\(1\)/.test(patch),
+    'plugin patch: fails the build on anchor drift (no silent unpatched IPA)');
+
+  const wf = fs.readFileSync(
+    path.join(root, '.github', 'workflows', 'ios-build.yml'), 'utf8');
+  const stepAt = wf.indexOf('patch-geolocation-plugin.py');
+  ok(stepAt >= 0, 'ios-build.yml: runs the plugin patch step');
+  const podAt = wf.indexOf('cap sync ios');
+  ok(podAt > stepAt,
+    'ios-build.yml: patch step runs BEFORE cap sync ios (first pod install)');
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
