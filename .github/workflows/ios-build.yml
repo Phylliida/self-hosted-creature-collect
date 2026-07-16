@@ -161,6 +161,7 @@ jobs:
           cp ios-overrides/LocalServerDiagPlugin.swift   ios/App/App/LocalServerDiagPlugin.swift
           cp ios-overrides/MotionPedometerPlugin.swift   ios/App/App/MotionPedometerPlugin.swift
           cp ios-overrides/HapticPatternPlugin.swift     ios/App/App/HapticPatternPlugin.swift
+          cp ios-overrides/SensorProbePlugin.swift       ios/App/App/SensorProbePlugin.swift
 
           # Point Main.storyboard at our subclass instead of stock CAPBridgeViewController.
           STORYBOARD=ios/App/App/Base.lproj/Main.storyboard
@@ -228,6 +229,10 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :NSLocationWhenInUseUsageDescription string 'Show your position on the map and detect nearby creatures while walking.'" "$PLIST"
           /usr/libexec/PlistBuddy -c "Delete :NSMotionUsageDescription" "$PLIST" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :NSMotionUsageDescription string 'Credit your daycare creatures and incubating eggs with steps walked while the app is closed.'" "$PLIST"
+          # Microphone: only used by the Extras sensors dashboard's opt-in
+          # level meter (local analysis, nothing recorded or transmitted).
+          /usr/libexec/PlistBuddy -c "Delete :NSMicrophoneUsageDescription" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'Show a live sound-level meter in the sensors dashboard. Audio is analyzed on the device only and never recorded or sent anywhere.'" "$PLIST"
           echo "── Info.plist after patching ──"
           /usr/libexec/PlistBuddy -c "Print :WKAppBoundDomains" "$PLIST"
           /usr/libexec/PlistBuddy -c "Print :NSLocationWhenInUseUsageDescription" "$PLIST"

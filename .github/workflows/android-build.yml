@@ -313,6 +313,12 @@ jobs:
           #      Android path is navigator.vibrate, so without this line
           #      it plays patterns into the void. Normal-level permission:
           #      granted at install, no runtime prompt.
+          #    - RECORD_AUDIO / MODIFY_AUDIO_SETTINGS : the Extras sensors
+          #      dashboard's opt-in mic level meter uses getUserMedia in
+          #      the WebView; Capacitor's WebChromeClient only grants the
+          #      page's PermissionRequest when the host app can hold
+          #      RECORD_AUDIO (runtime prompt fires on first use). Audio
+          #      is analyzed locally, never recorded or sent.
           perms = (
               '    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n'
               '    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n'
@@ -321,6 +327,8 @@ jobs:
               '    <uses-permission android:name="android.permission.health.READ_STEPS" />\n'
               '    <uses-permission android:name="android.permission.health.READ_DISTANCE" />\n'
               '    <uses-permission android:name="android.permission.VIBRATE" />\n'
+              '    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n'
+              '    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n'
           )
           if "ACCESS_FINE_LOCATION" not in text:
               new = re.sub(r'(<manifest\b[^>]*>\s*\n)', r'\1' + perms, text, count=1)
@@ -453,6 +461,7 @@ jobs:
                   registerPlugin(BackgroundLocationPlugin.class);
                   registerPlugin(HealthConnectStepPlugin.class);
                   registerPlugin(HapticPatternPlugin.class);
+                  registerPlugin(SensorProbePlugin.class);
                   super.onCreate(savedInstanceState);
                   // Capacitor wires WebViewAssetLoader for page-originated
                   // requests via WebViewClient. SW-originated requests
