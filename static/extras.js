@@ -47,6 +47,17 @@
     padding: 18px 20px 16px;
     max-height: 85vh; overflow-y: auto;
   }
+  /* Tall/fixed layout for tools whose body changes height as you type
+     (the unit converter's smart field). Without this the vertically
+     centered sheet grows and shrinks — and re-centers — on every
+     keystroke, which reads as a flash. Pinning the sheet to a fixed
+     screen-tall box anchored near the top keeps it rock-steady; the
+     content just scrolls inside. */
+  #extrasPanel.extras-tall { align-items: flex-start; }
+  #extrasPanel.extras-tall .sheet {
+    height: 88vh; max-height: 88vh;
+    margin-top: 6vh;
+  }
   #extrasPanel h3 { margin: 0 0 14px; font-size: 16px; text-align: center; }
   /* X / back chevron — visual comes from the shared .cc-x-btn rule
      in index.html; only positioning lives here. */
@@ -1119,7 +1130,7 @@
   const bubbles = $('extrasBubbles');
   const backBtn = $('extrasBack');
   const tools = {
-    unitconv: { name: 'Unit conversions', el: $('extrasUnitConv') },
+    unitconv: { name: 'Unit conversions', el: $('extrasUnitConv'), tall: true },
     tip: { name: 'Tip calculator', el: $('extrasTip') },
     tz: { name: 'Time zones', el: $('extrasTz') },
     date: { name: 'Date calculator', el: $('extrasDate') },
@@ -1134,6 +1145,7 @@
     title.textContent = 'Extras';
     backBtn.hidden = true;
     bubbles.hidden = false;
+    panel.classList.remove('extras-tall');
     for (const t of Object.values(tools)) { if (t.el) t.el.hidden = true; }
   }
   function showTool(id) {
@@ -1143,6 +1155,7 @@
     title.textContent = t.name;
     backBtn.hidden = false;
     bubbles.hidden = true;
+    panel.classList.toggle('extras-tall', !!t.tall);
     for (const [tid, tt] of Object.entries(tools)) { if (tt.el) tt.el.hidden = (tid !== id); }
     if (t.onShow) t.onShow();
   }
