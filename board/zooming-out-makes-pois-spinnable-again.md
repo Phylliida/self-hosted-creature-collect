@@ -5,8 +5,8 @@ claimed_by: claude-opus
 created: 2026-07-19T19:29:01Z
 updated: 2026-07-19T19:29:01Z
 taiga_id: 72
-taiga_version: 1
-synced_hash: 254bd2b42f3e03ed
+taiga_version: 2
+synced_hash: 8f44cb43e58a5bce
 ---
 
 this seems wrong if used up they should be used up until countdown is finished, probably there's seperate low zoom instances or something idk

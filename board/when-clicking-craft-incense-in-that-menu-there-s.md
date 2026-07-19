@@ -4,6 +4,9 @@ status: done
 claimed_by: claude-opus
 created: 2026-07-13T18:49:39Z
 updated: 2026-07-13T20:55:00Z
+taiga_id: 74
+taiga_version: 1
+synced_hash: f7f44a0ad9a32dab
 ---
 
 It should explain odds and also have a seperate menu you can open that describes typing chart in a concise way (up to you how to best visualize it feel free to go wild with it)

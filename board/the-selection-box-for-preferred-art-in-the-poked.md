@@ -4,6 +4,9 @@ status: done
 claimed_by: claude-opus
 created: 2026-07-13T21:52:20Z
 updated: 2026-07-13T22:07:32Z
+taiga_id: 51
+taiga_version: 1
+synced_hash: 1f7f3ea34faf1c36
 ---
 
 make it on top of that in the z index so it doesn't get clipped

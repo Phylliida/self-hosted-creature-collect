@@ -4,6 +4,9 @@ status: done
 claimed_by: claude-opus
 created: 2026-07-13T18:25:09Z
 updated: 2026-07-13T19:45:00Z
+taiga_id: 56
+taiga_version: 1
+synced_hash: 98c4ae5d779f897b
 ---
 
 In settings we have a "force shiny catch", remove this setting (we can keep the code intact for testing, just remove it from settings menu)

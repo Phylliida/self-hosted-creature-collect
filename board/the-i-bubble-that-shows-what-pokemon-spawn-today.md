@@ -4,6 +4,9 @@ status: done
 claimed_by: claude-opus
 created: 2026-07-13T20:42:17Z
 updated: 2026-07-13T21:40:00Z
+taiga_id: 59
+taiga_version: 1
+synced_hash: 21d88e86a38f468f
 ---
 
 it should show more detailed info of prs of daily x _ and _ x daily and weekly x _ and _ x weekly and daily x weekly and weekly x daily and _ x _

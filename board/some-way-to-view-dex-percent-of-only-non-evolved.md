@@ -4,6 +4,9 @@ status: done
 claimed_by: claude-opus
 created: 2026-07-13T22:15:32Z
 updated: 2026-07-13T22:25:00Z
+taiga_id: 65
+taiga_version: 1
+synced_hash: a4a60d75d5e38215
 ---
 
 probably some toggle towards the top or something, make sure to respect styling patterns we have elsewhere about toggles

@@ -4,6 +4,9 @@ status: done
 claimed_by: claude-opus
 created: 2026-07-13T18:24:31Z
 updated: 2026-07-13T22:12:00Z
+taiga_id: 67
+taiga_version: 1
+synced_hash: bb441346c01612c5
 ---
 
 Match the autogen labeling styling we use elsewhere

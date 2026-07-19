@@ -4,6 +4,9 @@ status: done
 claimed_by: claude-opus
 created: 2026-07-13T19:19:38Z
 updated: 2026-07-13T22:05:00Z
+taiga_id: 63
+taiga_version: 1
+synced_hash: f247689f57b71b60
 ---
 
 legendaries can still be displayed in the completion dex but the percent is about non-legendaries only (since legendaries are hard to get)

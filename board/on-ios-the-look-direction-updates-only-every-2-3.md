@@ -4,9 +4,9 @@ status: in_progress
 claimed_by: claude-opus
 created: 2026-07-19T20:27:09Z
 updated: 2026-07-19T20:27:09Z
-taiga_id: 122
+taiga_id: 154
 taiga_version: 1
-synced_hash: 0451cdf436cf465e
+synced_hash: fe767ee45698953e
 ---
 
 it should be faster than that, real time, please don't edit any gps settings tho those are very sensitive

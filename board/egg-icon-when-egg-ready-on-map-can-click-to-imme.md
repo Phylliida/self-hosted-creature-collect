@@ -4,6 +4,9 @@ status: done
 claimed_by: claude-opus
 created: 2026-07-13T18:52:05Z
 updated: 2026-07-13T22:58:00Z
+taiga_id: 57
+taiga_version: 1
+synced_hash: 991479842c73417f
 ---
 
 put it in similar place as the daycare "show on map" calender icon shows up on the map
