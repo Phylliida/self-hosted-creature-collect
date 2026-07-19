@@ -10391,6 +10391,20 @@
       });
     }
     if (art) art.classList.toggle('shiny', fav.shinyVariant != null);
+    // Keep the family-tree mosaic in sync. Each cell's sprite is picked
+    // from favoriteArtFor at grid-render time, and the grid isn't rebuilt
+    // on a favorite tap — so without this the current fusion's cell would
+    // keep showing the old art until the entry is reopened. Only the (a,b)
+    // cell can change (favoriteArt is per-fusion). No-op when the family
+    // tree is collapsed / never expanded (no matching cell rendered yet).
+    const famImg = body.querySelector(
+      `.family-grid .family-cell[data-a="${a}"][data-b="${b}"] img`);
+    if (famImg) {
+      global.SpriteStore.showSprite(famImg, a, b, fav.variant, {
+        shinyVariant: fav.shinyVariant,
+        onReady: () => famImg.closest('.family-cell').classList.add('ready'),
+      });
+    }
     _markFavoriteCells(body, a, b);
   }
   // Wire tap-to-favorite on every selectable art/shiny cell in a fusion
