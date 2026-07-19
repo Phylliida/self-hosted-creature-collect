@@ -6719,6 +6719,23 @@ function fmtDate(ts) {
       el.classList.add('visible');
     };
 
+    // Coalesce all cone repaints into one requestAnimationFrame. The compass
+    // event handler must stay near-instant: on iOS WKWebView a heavy
+    // deviceorientation handler (here: map.getBearing() forcing map layout +
+    // a CSS custom-property write on every raw sensor tick) invites WebKit to
+    // coalesce/throttle sensor delivery, which showed up as the heading only
+    // refreshing every 2–3s. Storing the value and rendering on the next
+    // frame keeps delivery fast and does the map work at most once per frame.
+    let rafPending = false;
+    const raf = window.requestAnimationFrame
+      ? window.requestAnimationFrame.bind(window)
+      : (cb) => setTimeout(cb, 16);
+    const scheduleRender = () => {
+      if (rafPending) return;
+      rafPending = true;
+      raf(() => { rafPending = false; applyRotation(); });
+    };
+
     const onOrient = (e) => {
       let h = null;
       if (typeof e.webkitCompassHeading === 'number' && !isNaN(e.webkitCompassHeading)) {
@@ -6733,7 +6750,7 @@ function fmtDate(ts) {
       if (h == null || isNaN(h)) return;
       compassSeen = true;
       lastHeading = h;
-      applyRotation();
+      scheduleRender();
     };
 
     const addOrientationListeners = () => {
@@ -6772,7 +6789,7 @@ function fmtDate(ts) {
     }
 
     // Keep the cone aligned as the map rotates, even with no new reading.
-    map.on('rotate', applyRotation);
+    map.on('rotate', scheduleRender);
 
     // Fallback for devices without a usable magnetometer (or desktop):
     // point the cone along the GPS course of travel while actually
@@ -6783,7 +6800,7 @@ function fmtDate(ts) {
       if (!c || typeof c.heading !== 'number' || isNaN(c.heading)) return;
       if (typeof c.speed === 'number' && c.speed >= 0.5) {
         lastHeading = c.heading;
-        applyRotation();
+        scheduleRender();
       }
     });
   } catch (e) { /* non-fatal: the dot simply shows without a facing cone */ }
