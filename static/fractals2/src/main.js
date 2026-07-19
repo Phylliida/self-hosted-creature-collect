@@ -602,7 +602,40 @@ populatePaletteSelect();
 syncControls();
 setIterUI(viewer.maxIter);
 let resizeTimer = 0;
-window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => viewer.resize(), 150); });
+// The "stable" viewport is the layout size with no soft keyboard up. When the app
+// is embedded (e.g. the extras Fractals-2 tool) and its Save dialog focuses a text
+// input, the keyboard shrinks the iframe's height only — the width stays put. That
+// fires a resize, and re-deriving the backing + re-rendering a deep zoom just to
+// have it thrown away when the keyboard dismisses is exactly the wasteful rerender
+// we want to avoid. Detect that case (same width, shorter height) and simply pin the
+// canvas box to its pre-keyboard height instead of resizing — no distortion, no render.
+let stableVpW = window.innerWidth, stableVpH = window.innerHeight;
+// Soft keyboards only exist on touch devices; gate the skip on a coarse pointer so a
+// vertical-only window drag on desktop still reflows normally.
+const hasSoftKeyboard = () => { try { return matchMedia('(pointer: coarse)').matches; } catch { return false; } };
+let vpPinned = false;
+function onViewportResize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  if (hasSoftKeyboard() && w === stableVpW && h < stableVpH) {
+    canvas.style.height = stableVpH + 'px';   // hold the box; keyboard just covers the bottom
+    vpPinned = true;
+    return;
+  }
+  if (vpPinned && w === stableVpW && h === stableVpH) {
+    // Keyboard dismissed and the box is back to its pre-keyboard size. We never
+    // touched the backing while pinned, so just drop the pin — no resize, no render.
+    canvas.style.height = '';
+    vpPinned = false;
+    return;
+  }
+  // A genuine resize (rotation, desktop drag): adopt the new size as the baseline,
+  // drop any pin, and let resize() re-derive the backing and re-render.
+  stableVpW = w; stableVpH = h;
+  canvas.style.height = '';
+  vpPinned = false;
+  viewer.resize();
+}
+window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(onViewportResize, 150); });
 // initial size + render (after layout), then apply any bookmarked hash
 requestAnimationFrame(() => {
   viewer.resize();   // sizes the canvas and renders the default view
