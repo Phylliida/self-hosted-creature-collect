@@ -6501,7 +6501,8 @@
       /* Non-evolved filter chip — a plain outlined button by default,
          accent-filled when the filter is active (aria-pressed). Matches
          the .family-toggle idiom but centered like a filter pill. */
-      #creatureInventory .completion-filter {
+      #creatureInventory .completion-filter,
+      #creatureInventory .speciesdex-filter {
         align-self: center; background: transparent;
         border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
         border-radius: var(--ui-radius, 8px);
@@ -6509,10 +6510,12 @@
         padding: 5px 12px; margin: 2px 0 8px;
         font-size: 12px; font-family: inherit; cursor: pointer;
       }
-      #creatureInventory .completion-filter:hover {
+      #creatureInventory .completion-filter:hover,
+      #creatureInventory .speciesdex-filter:hover {
         background: var(--ui-hover, rgba(0,0,0,0.04));
       }
-      #creatureInventory .completion-filter.is-active {
+      #creatureInventory .completion-filter.is-active,
+      #creatureInventory .speciesdex-filter.is-active {
         background: var(--ui-accent, #3b7fdf);
         border-color: var(--ui-accent, #3b7fdf);
         color: var(--ui-accent-text, #fff);
@@ -7472,6 +7475,7 @@
         <div class="speciesdex-view">
           <button class="speciesdex-back" type="button" aria-label="back">←</button>
           <h3 class="subview-title speciesdex-title">Dex</h3>
+          <button class="speciesdex-filter" type="button" aria-pressed="false">Show non-evolved only</button>
           <div class="speciesdex-stats"></div>
           <div class="speciesdex-head-row">
             <span class="speciesdex-col-label speciesdex-col-head"></span>
@@ -7802,6 +7806,16 @@
       const sheet = panel.querySelector('.sheet');
       if (sheet) sheet.scrollTop = 0;
       renderCompletion();
+    });
+    // Same non-evolved filter for a species' partner grid. Re-render the
+    // species currently on top of the view stack; reset scroll so the
+    // (now shorter/longer) grid starts from the top.
+    panel.querySelector('.speciesdex-filter').addEventListener('click', () => {
+      _speciesdexNonEvolvedOnly = !_speciesdexNonEvolvedOnly;
+      const sheet = panel.querySelector('.sheet');
+      if (sheet) sheet.scrollTop = 0;
+      const top = _viewStack[_viewStack.length - 1];
+      if (top && top.view === 'speciesdex') renderSpeciesDex(top.species);
     });
     // Delegated row taps. Listeners live on the (persistent) grid element;
     // virtualizeGrid swaps the rows underneath them as the user scrolls.
@@ -11062,6 +11076,10 @@
   // counted, so the % reflects "how much of the catchable pool have I found".
   // View-local (not persisted), like the family-tree expand toggle.
   let _completionNonEvolvedOnly = false;
+  // Same idea for a species' partner grid: when true, only non-evolved
+  // partners (the ones you can catch / hatch to make the fusion) are listed
+  // and counted. Independent of the completion-list toggle above.
+  let _speciesdexNonEvolvedOnly = false;
 
   function renderCompletion() {
     const panel = document.getElementById('creatureInventory');
@@ -11155,7 +11173,21 @@
     const X = parseInt(speciesId, 10);
     if (!isFinite(X)) return;
     const name = speciesNameFor(X);
-    const partners = supportedSpeciesSorted();
+    const nonEvoOnly = _speciesdexNonEvolvedOnly;
+    // In "non-evolved only" mode drop evolved partners — those fusions can't be
+    // made by catching/hatching a partner directly, so the grid (and its %)
+    // shows exactly the pairings still worth chasing in the wild / from eggs.
+    const partners = supportedSpeciesSorted()
+      .filter((p) => !nonEvoOnly || !_isEvolvedSpecies(p));
+
+    const filterBtn = panel.querySelector('.speciesdex-filter');
+    if (filterBtn) {
+      filterBtn.classList.toggle('is-active', nonEvoOnly);
+      filterBtn.setAttribute('aria-pressed', nonEvoOnly ? 'true' : 'false');
+      filterBtn.textContent = nonEvoOnly
+        ? 'Non-evolved only (to catch / hatch)'
+        : 'Show non-evolved only';
+    }
 
     const titleEl = panel.querySelector('.speciesdex-title');
     if (titleEl) titleEl.textContent = `${name} dex`;
