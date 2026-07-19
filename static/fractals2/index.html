@@ -43,6 +43,18 @@
 
   <button id="panelToggle" class="panel-toggle" aria-label="Toggle controls">☰</button>
 
+  <!-- Explore / Draw quality toggle: one-tap shortcut over the two look controls that cost
+       the most (supersampling + render resolution). Explore = low-res + AA off (fast to
+       pan/zoom); Draw = full-res + 2× AA (crisp final image). State is DERIVED from the
+       ss/resScale controls in the panel, so the two never disagree; no separate persistence
+       is needed since ss & resScale already ride in the URL hash. -->
+  <div id="qualityToggle" class="quality-toggle" role="group" aria-label="Render quality mode">
+    <button class="qmode" data-mode="explore" data-testid="modeExplore"
+            title="Fast: 1/3 resolution, anti-aliasing off">Explore</button>
+    <button class="qmode" data-mode="draw" data-testid="modeDraw" aria-pressed="true"
+            title="Crisp: full resolution, 2× anti-aliasing">Draw</button>
+  </div>
+
   <section id="panel" class="panel" data-testid="panel" aria-label="Controls">
     <header class="panel-head">
       <h1>Mandelbrot · deep zoom</h1>

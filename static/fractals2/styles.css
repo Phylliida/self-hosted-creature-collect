@@ -89,6 +89,24 @@ html, body {
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
 }
 
+/* Explore / Draw quality toggle — bottom-left segmented pill, mirroring the bottom-right
+   panel toggle. Interactive (unlike the pointer-events:none HUD). Covered by the bottom
+   sheet when the panel is open (z below .panel), which is fine — it's for exploring with
+   the panel closed. */
+.quality-toggle {
+  position: fixed; left: 14px; bottom: calc(env(safe-area-inset-bottom, 0px) + 14px);
+  display: flex; z-index: 20; border-radius: 12px; overflow: hidden;
+  border: 1px solid var(--border); background: rgba(10, 14, 28, 0.7);
+  backdrop-filter: blur(8px); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+.qmode {
+  border: none; background: transparent; color: var(--muted);
+  font-size: 13px; font-weight: 600; padding: 10px 15px; line-height: 1; cursor: pointer;
+}
+.qmode + .qmode { border-left: 1px solid var(--border); }
+.qmode[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.qmode:not([aria-pressed="true"]):active { background: #243056; }
+
 .panel {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
   max-height: 82vh; overflow-y: auto;

@@ -195,7 +195,51 @@ function syncControls() {
   $('forceHQ').checked = viewer.forceHighQuality;
   $('lowPower').checked = viewer.lowPower;
   $('series').checked = viewer.series;
+  syncQualityToggle();
 }
+
+// ---------- Explore / Draw quality toggle ----------
+// A one-tap shortcut over the two look controls that cost the most: supersampling (AA) and
+// render resolution. Explore = fast (1/3 res, AA off); Draw = crisp (full res, 2× AA). The
+// toggle owns no state of its own — it just sets ss + resScale and reads them back, so it
+// can't drift out of sync with the panel selects, and it inherits their URL persistence.
+const QUALITY_MODES = {
+  explore: { ss: 1, resScale: 3 },
+  draw:    { ss: 2, resScale: 1 },
+};
+// Which preset (if any) the current ss/resScale match — null for a custom combination,
+// in which case neither pill is lit.
+function currentQualityMode() {
+  for (const [name, m] of Object.entries(QUALITY_MODES)) {
+    if (viewer.ss === m.ss && viewer.resScale === m.resScale) return name;
+  }
+  return null;
+}
+function syncQualityToggle() {
+  const cur = currentQualityMode();
+  document.querySelectorAll('.qmode').forEach((b) => {
+    if (b.dataset.mode === cur) b.setAttribute('aria-pressed', 'true');
+    else b.removeAttribute('aria-pressed');
+  });
+}
+function setQualityMode(name) {
+  const m = QUALITY_MODES[name];
+  if (!m) return;
+  // Set both fields directly, then re-render ONCE. A resScale change needs resize() (backing
+  // dims change); an ss-only change just needs render(). We can't lean on setResScale/
+  // setSupersample here — each early-returns when its own value is unchanged, which would
+  // drop the sibling field's render (e.g. from a custom res=1,ss=1 state, "Draw" changes
+  // only ss, so setResScale would no-op and never pick up the new AA).
+  const resChanged = viewer.resScale !== m.resScale;
+  viewer.ss = Math.max(1, Math.min(4, m.ss));
+  viewer.resScale = Math.max(1, Math.min(4, m.resScale));
+  if (resChanged) viewer.resize();   // re-sizes backing + re-renders
+  else viewer.render();              // ss-only change
+  syncControls();                    // reflect the ss/resScale selects + light the pill
+  scheduleHash();                    // persist, exactly as the panel selects do
+}
+document.querySelectorAll('.qmode').forEach((b) =>
+  b.addEventListener('click', () => setQualityMode(b.dataset.mode)));
 
 $('panelToggle').addEventListener('click', () => $('panel').classList.toggle('open'));
 $('panelClose').addEventListener('click', () => $('panel').classList.remove('open'));
@@ -228,11 +272,11 @@ $('showGlitch').addEventListener('change', (e) => viewer.setShowGlitches(e.targe
 $('forceHQ').addEventListener('change', (e) => viewer.setForceHighQuality(e.target.checked));
 $('lowPower').addEventListener('change', (e) => { viewer.setLowPower(e.target.checked); markLowPowerManual(); });
 $('series').addEventListener('change', (e) => viewer.setSeries(e.target.checked));
-$('ss').addEventListener('change', (e) => { viewer.setSupersample(+e.target.value); scheduleHash(); });
+$('ss').addEventListener('change', (e) => { viewer.setSupersample(+e.target.value); syncQualityToggle(); scheduleHash(); });
 // Resolution (render pixels): full/half/third of the true canvas resolution.
 // URL-persisted at Danielle's request (Spawn 34) — like ss, it rides in the hash so a
 // bookmarked view reproduces its full look/perf; the panel select keeps it visible.
-$('resScale').addEventListener('change', (e) => { viewer.setResScale(+e.target.value); scheduleHash(); });
+$('resScale').addEventListener('change', (e) => { viewer.setResScale(+e.target.value); syncQualityToggle(); scheduleHash(); });
 // Interior coloring (Spawn 41): reveals structure INSIDE the set (attractor phase /
 // orbit distance). URL-persisted like the other look settings.
 $('interiorMode').addEventListener('change', (e) => { viewer.setInteriorMode(+e.target.value); scheduleHash(); });
