@@ -6695,6 +6695,39 @@ function fmtDate(ts) {
     let gestureListener = null;
     let compassSeen = false;     // once true, GPS course stops overriding
 
+    // Compass telemetry — feeds the [compass] block of the Settings
+    // diagnostic dump. The iOS "look direction updates only every 2–3s"
+    // report is ambiguous without this: is the orientation *event* being
+    // delivered slowly (OS / WebKit throttle or Low Power Mode — only a
+    // native heading stream can fix that) or arriving fast but rendering
+    // stale (a bug in our path)? Recording inter-arrival gaps answers it.
+    // A handful of scalar writes per event so onOrient stays near-instant.
+    const cc = window._ccCompass = window._ccCompass || {
+      events: 0,           // orientation events that yielded a usable heading
+      lastT: 0,            // performance.now() of the last such event
+      gaps: [],            // recent inter-arrival gaps in ms (ring, cap 30)
+      minGap: Infinity,
+      maxGap: 0,
+      lastSource: '',      // 'webkit' | 'alpha' | 'gps-course'
+      lastAccuracy: null,  // iOS webkitCompassAccuracy (deg; <0 = uncalibrated)
+      lastHeading: null,
+    };
+    const recordCompass = (src, h, acc) => {
+      const now = performance.now();
+      if (cc.lastT) {
+        const gap = now - cc.lastT;
+        cc.gaps.push(gap);
+        if (cc.gaps.length > 30) cc.gaps.shift();
+        if (gap < cc.minGap) cc.minGap = gap;
+        if (gap > cc.maxGap) cc.maxGap = gap;
+      }
+      cc.lastT = now;
+      cc.events++;
+      cc.lastSource = src;
+      cc.lastHeading = h;
+      if (acc != null) cc.lastAccuracy = acc;
+    };
+
     // The dot marker is created lazily on the first fix; grab its element
     // (falling back to the internal field) and attach/re-attach our cone.
     const ensureHeadingEl = () => {
@@ -6742,19 +6775,24 @@ function fmtDate(ts) {
     };
 
     const onOrient = (e) => {
-      let h = null;
+      let h = null, src = '';
+      // iOS exposes the compass's own reliability estimate here (degrees of
+      // max deviation; <0 means the OS considers it uncalibrated). Undefined
+      // on Android — capture it purely for the diagnostic dump.
+      const acc = (typeof e.webkitCompassAccuracy === 'number') ? e.webkitCompassAccuracy : null;
       if (typeof e.webkitCompassHeading === 'number' && !isNaN(e.webkitCompassHeading)) {
         // iOS/WebKit: already degrees clockwise from north.
-        h = e.webkitCompassHeading;
+        h = e.webkitCompassHeading; src = 'webkit';
       } else if (e.alpha != null && (e.absolute || e.type === 'deviceorientationabsolute')) {
         // Android absolute frame: alpha is counter-clockwise; convert to
         // clockwise-from-north and compensate for the screen rotation.
         const so = (screen.orientation && screen.orientation.angle) || 0;
-        h = (360 - e.alpha + so) % 360;
+        h = (360 - e.alpha + so) % 360; src = 'alpha';
       }
       if (h == null || isNaN(h)) return;
       compassSeen = true;
       lastHeading = h;
+      recordCompass(src, h, acc);
       scheduleRender();
     };
 
@@ -6805,6 +6843,7 @@ function fmtDate(ts) {
       if (!c || typeof c.heading !== 'number' || isNaN(c.heading)) return;
       if (typeof c.speed === 'number' && c.speed >= 0.5) {
         lastHeading = c.heading;
+        recordCompass('gps-course', c.heading, null);
         scheduleRender();
       }
     });
@@ -13971,6 +14010,31 @@ function fmtDate(ts) {
               + `${String(e.dur + 'ms').padStart(8)}  ${e.kind}`
               + `${e.info ? ' ' + e.info : ''}${e.n > 1 ? ' ×' + e.n : ''}`);
           }
+        }
+      }
+      // Compass cadence — the crux of the iOS "look direction updates
+      // only every 2–3s" report. If avg gap is ~2000–3000ms the
+      // orientation *events* are arriving slowly (OS / WebKit throttle or
+      // Low Power Mode — only a native heading stream can fix that). If
+      // avg gap is small (tens of ms) but the cone still looks laggy, the
+      // problem is downstream of delivery, not the sensor. lastAcc<0 on
+      // iOS means the OS considers the compass uncalibrated.
+      const cmp = window._ccCompass;
+      if (cmp) {
+        lines.push(`[compass]`);
+        if (!cmp.events) {
+          lines.push(`  no orientation events yet (permission not granted, or no magnetometer)`);
+        } else {
+          const g = cmp.gaps;
+          const avg = g.length ? Math.round(g.reduce((a, b) => a + b, 0) / g.length) : 0;
+          lines.push(`  events=${cmp.events}  source=${cmp.lastSource}`
+            + `  lastHeading=${cmp.lastHeading == null ? '—' : Math.round(cmp.lastHeading) + '°'}`);
+          lines.push(`  gap ms: avg=${avg}`
+            + `  min=${cmp.minGap === Infinity ? '—' : Math.round(cmp.minGap)}`
+            + `  max=${Math.round(cmp.maxGap)}  (last ${g.length} samples)`);
+          const acc = cmp.lastAccuracy;
+          lines.push(`  iOS compass accuracy=${acc == null ? 'n/a (non-iOS)'
+            : (acc < 0 ? acc + '° ⚠ UNCALIBRATED' : '±' + Math.round(acc) + '°')}`);
         }
       }
       // Errors — the global ring fed by window.onerror, unhandled
