@@ -4,6 +4,9 @@ status: todo
 claimed_by: 
 created: 2026-07-19T21:25:00Z
 updated: 2026-07-19T21:25:00Z
+taiga_id: 76
+taiga_version: 1
+synced_hash: 645a941aabe0f3b9
 ---
 
 ## Description

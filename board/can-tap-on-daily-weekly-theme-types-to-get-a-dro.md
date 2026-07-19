@@ -4,6 +4,9 @@ status: done
 claimed_by: claude-opus
 created: 2026-07-13T18:32:15Z
 updated: 2026-07-13T18:32:15Z
+taiga_id: 68
+taiga_version: 1
+synced_hash: 56ff97e52251fb1b
 ---
 
 Doesn't need to describe all the pokemon available just the relative probabilities of each type of pokemon on that day (with an "all other types" category for the catch all things)

@@ -5,8 +5,8 @@ claimed_by: claude-opus
 created: 2026-07-19T19:23:52Z
 updated: 2026-07-19T19:23:52Z
 taiga_id: 75
-taiga_version: 3
-synced_hash: b6d24a005a9179c6
+taiga_version: 4
+synced_hash: 59a5032768db3055
 ---
 
 everywhere else it is displayed but not in pokedex family tree

@@ -4,6 +4,9 @@ status: done
 claimed_by: claude-opus
 created: 2026-07-13T18:28:58Z
 updated: 2026-07-13T19:45:00Z
+taiga_id: 53
+taiga_version: 1
+synced_hash: fe21c9a1fa8ad9fa
 ---
 
 (this is in addition to the calendar button on the map to toggle off, either will work)

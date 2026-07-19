@@ -5,8 +5,8 @@ claimed_by: claude-opus
 created: 2026-07-19T19:28:21Z
 updated: 2026-07-19T19:28:21Z
 taiga_id: 70
-taiga_version: 2
-synced_hash: 0802f860420abd6d
+taiga_version: 3
+synced_hash: 6b042068a41cb4f2
 ---
 
 this is for when i click on a transit stop poi, it should be right aligned eye at the right edge using a custom simple eye svg

@@ -4,6 +4,9 @@ status: done
 claimed_by: claude-opus
 created: 2026-07-19T19:21:03Z
 updated: 2026-07-19T20:05:00Z
+taiga_id: 61
+taiga_version: 1
+synced_hash: 75c632ce0c1b7481
 ---
 
 ## Description

@@ -5,8 +5,8 @@ claimed_by: claude-opus
 created: 2026-07-19T20:14:34Z
 updated: 2026-07-19T20:20:00Z
 taiga_id: 77
-taiga_version: 2
-synced_hash: 8b2fbf80005afd7d
+taiga_version: 3
+synced_hash: e29c611ef32a29e3
 ---
 
 then it'll display all potential conversions (with a second field where you can type what unit you wanted and it'll covnert to that) also you can type like 1 tsp to cm or "convert 2 tsp to cup" and it'll automatically convert and populate the output accordingly

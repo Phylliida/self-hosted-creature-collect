@@ -4,6 +4,9 @@ status: done
 claimed_by: claude-opus
 created: 2026-07-13T21:07:44Z
 updated: 2026-07-13T22:05:00Z
+taiga_id: 48
+taiga_version: 1
+synced_hash: 3fa53603cbbeb0fa
 ---
 
 If a pokemon has already been caught but then evolved we shouldn't annotate catching it as "New" instead we can call it "Fresh" (otherwise same styling), so like just have A, evolved it to B, then caught another A it is annotated as fresh, but if we already have another A then it has no annotation like before

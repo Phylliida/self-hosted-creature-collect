@@ -4,6 +4,9 @@ status: done
 claimed_by: claude-opus
 created: 2026-07-13T21:27:38Z
 updated: 2026-07-13T22:40:00Z
+taiga_id: 58
+taiga_version: 1
+synced_hash: 4b0f0e4a5022f4d9
 ---
 
 in focus mode double tap to zoom should be disabled and rotate and zoom lock should be applied if enabled in settings
