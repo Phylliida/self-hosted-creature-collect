@@ -12694,10 +12694,21 @@
         <div class="battle-balls"></div>
       </div>
     `;
-    el.querySelector('button.flee').addEventListener('click', closeBattleScreen);
+    el.querySelector('button.flee').addEventListener('click', () => {
+      // Once a ball is in flight the encounter is locked (see below);
+      // the .throwing CSS already blanks this panel, but guard here too
+      // so the close can never fire mid-throw regardless of CSS timing.
+      if (_throwInFlight) return;
+      closeBattleScreen();
+    });
     el.addEventListener('click', (e) => {
-      // Click on backdrop (outside the info/actions) dismisses.
-      if (e.target === el) closeBattleScreen();
+      // Click on backdrop (outside the info/actions) dismisses — but NOT
+      // once a ball has been thrown. The encounter is locked until the
+      // creature is caught or breaks out; otherwise the player can tap
+      // away mid-throw and the async catch still resolves, popping the
+      // caught creature up over the map. Before a throw (_throwInFlight
+      // false) the backdrop dismisses freely. See _throwInFlight.
+      if (e.target === el && !_throwInFlight) closeBattleScreen();
     });
     document.body.appendChild(el);
     return el;
