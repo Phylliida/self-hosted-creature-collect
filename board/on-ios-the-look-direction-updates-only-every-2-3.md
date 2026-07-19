@@ -4,9 +4,8 @@ status: in_progress
 claimed_by: claude-opus
 created: 2026-07-19T20:27:09Z
 updated: 2026-07-19T20:27:09Z
-taiga_id: 154
+taiga_id: 78
 taiga_version: 1
-synced_hash: fe767ee45698953e
 ---
 
 it should be faster than that, real time, please don't edit any gps settings tho those are very sensitive
@@ -40,6 +39,17 @@ it should be faster than that, real time, please don't edit any gps settings tho
 - (2026-07-19) All 42 headless test files still pass (incl. sensors +
   compass-rotate-lock). Change is JS-only in `static/index.html`, touches no GPS
   settings. Left `status: in_progress` pending on-device confirmation.
+- (2026-07-19, fresh instance) Re-verified the committed fix in place (commit
+  9768192c): `onOrient` stores `lastHeading` + `scheduleRender()`; the
+  `map.getBearing()` + `--cc-heading` write are rAF-coalesced in `applyRotation`;
+  same path for `map.on('rotate')` and the GPS-course fallback. Working tree
+  clean. Sought a second opinion on whether any *other* JS lever exists: none —
+  `deviceorientation` delivery rate in WKWebView is OS-governed, and iOS
+  throttles the magnetometer while stationary to save power. The rAF decoupling
+  is the correct JS ceiling (ensures we don't *add* lag), but cannot remove an
+  OS-imposed throttle. Also cleared the stale Taiga conflict block (Taiga
+  description was empty — nothing to merge). Keeping `in_progress` pending the
+  human's on-device check, per the same blocker the prior instance hit.
 
 ## Writeup (interim — needs on-device confirmation)
 **What I changed:** decoupled the compass-cone repaint from the raw sensor
