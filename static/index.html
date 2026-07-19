@@ -1869,6 +1869,16 @@
   html[data-theme="medieval"] .maplibregl-ctrl-zoom-out .maplibregl-ctrl-icon {
     filter: none;
   }
+  /* "Lock rotate" is on → the compass is a bearing *indicator* only. The
+     needle keeps pointing at the locked bearing, but the button no longer
+     resets north and can't be dragged to rotate. pointer-events:none is
+     what actually kills the drag — MapLibre binds its own rotate handler
+     directly to the compass element, independent of map.dragRotate. */
+  .maplibregl-ctrl-compass.cc-compass-locked {
+    opacity: 0.45;
+    cursor: default;
+    pointer-events: none;
+  }
   /* Geolocate "you are here" dot — MapLibre default is Twitter blue.
      Follow the theme accent so it matches the route line and CTAs. */
   .maplibregl-user-location-dot,
@@ -16398,7 +16408,30 @@ function fmtDate(ts) {
       try { map.doubleClickZoom.enable(); } catch {}
     }
   }
+  // The compass button in MapLibre's NavigationControl resets the bearing to
+  // north on click, and carries its own drag-to-rotate handler bound straight
+  // to the button element — neither goes through map.dragRotate, so both
+  // survive applyRotateLock's handler teardown. Neutralise the button itself:
+  // `disabled` kills click/keyboard activation, and the .cc-compass-locked
+  // class adds pointer-events:none (which is what stops the drag) plus a
+  // dimmed look so it doesn't read as a button that's simply broken. The
+  // needle still rotates with the map, so it stays useful as an indicator.
+  function _applyCompassLock(locked) {
+    let btn = null;
+    try { btn = map.getContainer().querySelector('.maplibregl-ctrl-compass'); } catch {}
+    if (!btn) return false;
+    btn.disabled = !!locked;
+    btn.classList.toggle('cc-compass-locked', !!locked);
+    if (locked) btn.setAttribute('aria-disabled', 'true');
+    else btn.removeAttribute('aria-disabled');
+    return true;
+  }
   function applyRotateLock(locked) {
+    // The NavigationControl may not be in the DOM yet on the early
+    // restore-from-settings path; retry once the map is up.
+    if (!_applyCompassLock(locked)) {
+      try { map.once('load', () => _applyCompassLock(localStorage.getItem('cc.lockRotate') === '1')); } catch {}
+    }
     if (locked) {
       _rotateLockSnapshot = map.getBearing();
       // Snap to the snapshot so any in-flight rotation lands on the
