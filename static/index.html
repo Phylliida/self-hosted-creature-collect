@@ -2624,14 +2624,15 @@
   }
   .route-popup .name { font-size: 13px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .route-popup .mode { font-size: 10px; color: var(--ui-muted); flex-shrink: 0; }
-  .route-popup .toggle-vis {
-    width: 18px; height: 18px; flex-shrink: 0;
-    border: 1px solid var(--ui-border); border-radius: 3px;
+  .route-popup .eye-toggle {
+    width: 28px; height: 22px; flex-shrink: 0; margin-left: 2px; padding: 0;
+    border: 1px solid var(--ui-border); border-radius: 4px;
     display: inline-flex; align-items: center; justify-content: center;
-    font-size: 12px; font-weight: 600; color: var(--ui-accent-text); background: var(--ui-input-bg);
+    color: var(--ui-muted); background: var(--ui-input-bg);
     cursor: pointer; user-select: none;
   }
-  .route-popup .toggle-vis.on { background: var(--ui-accent); border-color: var(--ui-accent-border); }
+  .route-popup .eye-toggle svg { display: block; }
+  .route-popup .eye-toggle.on { background: var(--ui-accent); border-color: var(--ui-accent-border); color: var(--ui-accent-text); }
   .route-popup .view-btn {
     flex-shrink: 0; padding: 2px 6px; font-size: 13px;
     border: 1px solid var(--ui-border); border-radius: 4px; background: var(--ui-input-bg);
@@ -10741,6 +10742,12 @@ function fmtDate(ts) {
     setTimeout(() => location.reload(), 800);
   };
 
+  // Custom simple eye icon; a diagonal slash marks the "line hidden" state.
+  function eyeSvg(on) {
+    const slash = on ? '' : '<line x1="3" y1="3" x2="21" y2="21"/>';
+    return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/>${slash}</svg>`;
+  }
+
   function showTransitPopup(stopName, rids, lngLat, osmNodeIds = []) {
     const unique = [...new Set(rids)].filter(rid => routeMetaIndex[rid]);
     const departures = osmNodeIds.length
@@ -10753,16 +10760,16 @@ function fmtDate(ts) {
       const on = routeOn(rid);
       const viewing = viewedRoutes.has(rid);
       return `<div class="route-item">
-        <span class="toggle-vis ${on ? 'on' : ''}" data-action="toggle" data-rid="${esc(rid)}" title="toggle line">${on ? '✓' : ''}</span>
         <span class="ref" style="background:${esc(colour)}">${esc(m.ref || '?')}</span>
         <span class="name">${esc(m.name || '(unnamed)')}</span>
-        <button type="button" class="view-btn ${viewing ? 'on' : ''}" data-action="view" data-rid="${esc(rid)}" title="view stops">👁</button>
         <span class="mode">${esc(m.mode)}</span>
+        <button type="button" class="view-btn ${viewing ? 'on' : ''}" data-action="view" data-rid="${esc(rid)}" title="view stops">👁</button>
+        <button type="button" class="eye-toggle ${on ? 'on' : ''}" data-action="toggle" data-rid="${esc(rid)}" title="${on ? 'hide line on map' : 'show line on map'}" aria-pressed="${on}">${eyeSvg(on)}</button>
       </div>`;
     }).join('');
     const title = stopName
       ? `<div class="title">${esc(stopName)}${unique.length ? ' — ' + unique.length + ' route' + (unique.length === 1 ? '' : 's') : ''}</div>`
-      : `<div class="title">${unique.length} route${unique.length === 1 ? '' : 's'} — ✓ toggles line, 👁 shows stops</div>`;
+      : `<div class="title">${unique.length} route${unique.length === 1 ? '' : 's'} — eye toggles line, 👁 shows stops</div>`;
     let schedHtml = '';
     if (departures.length) {
       const rows = departures.map(g => {
@@ -10817,7 +10824,9 @@ function fmtDate(ts) {
           }
           saveTransitState(transitState);
           el.classList.toggle('on', nowOn);
-          el.textContent = nowOn ? '✓' : '';
+          el.innerHTML = eyeSvg(nowOn);
+          el.setAttribute('aria-pressed', String(nowOn));
+          el.title = nowOn ? 'hide line on map' : 'show line on map';
           await refreshRoutesSource();
         } else if (el.dataset.action === 'view') {
           if (viewedRoutes.has(rid)) viewedRoutes.delete(rid);
