@@ -202,6 +202,52 @@
     color: var(--ui-muted);
     min-height: 15px;
   }
+  /* Smart natural-language converter */
+  .uc-smart { margin-bottom: 6px; }
+  .uc-smart input {
+    width: 100%; box-sizing: border-box;
+    padding: 10px 11px; font-size: 16px;
+    border: 1px solid var(--ui-border);
+    border-radius: 9px;
+    background: var(--ui-input-bg); color: var(--ui-text);
+    font-family: inherit;
+  }
+  #ucSmart { font-weight: 600; }
+  #ucSmartTo { margin-top: 7px; font-size: 14px; }
+  #ucSmart:focus, #ucSmartTo:focus {
+    outline: none; border-color: var(--ui-accent);
+  }
+  .uc-smart-out { margin-top: 10px; }
+  .ucs-head {
+    font-size: 16px; line-height: 1.3; margin-bottom: 8px;
+    color: var(--ui-text);
+  }
+  .ucs-head b { color: var(--ui-accent); }
+  .ucs-head.ucs-warn { color: var(--ui-muted); font-size: 13px; }
+  .ucs-cat {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--ui-muted); margin: 4px 0 3px;
+  }
+  .ucs-list { list-style: none; margin: 0; padding: 0; }
+  .ucs-list li {
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: 10px; padding: 5px 8px; border-radius: 7px;
+    font-variant-numeric: tabular-nums;
+  }
+  .ucs-list li + li { border-top: 1px solid var(--ui-border); }
+  .ucs-list li.hot {
+    background: var(--ui-accent); color: #fff;
+    border-top-color: transparent;
+  }
+  .ucs-list li.hot .ucs-u { color: #fff; opacity: 0.85; }
+  .ucs-v { font-size: 15px; font-weight: 600; }
+  .ucs-u { font-size: 12px; color: var(--ui-muted); }
+  .ucs-hint { font-size: 12px; color: var(--ui-muted); text-align: center; }
+  .uc-picker > summary {
+    cursor: pointer; font-size: 12px; color: var(--ui-muted);
+    padding: 6px 0; list-style-position: inside;
+  }
+  .uc-picker[open] > summary { margin-bottom: 4px; }
 
   /* Tip calculator */
   #tipBill { flex: 1; min-width: 0; padding: 9px 10px; font-size: 16px; }
@@ -490,6 +536,19 @@
     </div>
 
     <div id="extrasUnitConv" hidden>
+      <div class="uc-smart">
+        <input id="ucSmart" type="text" autocomplete="off" autocapitalize="off"
+          spellcheck="false" enterkeyhint="done"
+          placeholder="Type e.g. &quot;2 tsp&quot; or &quot;5 cm to in&quot;"
+          aria-label="smart conversion — type a quantity and unit">
+        <input id="ucSmartTo" type="text" autocomplete="off" autocapitalize="off"
+          spellcheck="false" enterkeyhint="done"
+          placeholder="convert to… (optional, e.g. cups)"
+          aria-label="target unit">
+        <div id="ucSmartOut" class="uc-smart-out"></div>
+      </div>
+      <details class="uc-picker">
+        <summary>Or pick units</summary>
       <select id="ucCategory" aria-label="conversion category"></select>
       <div class="uc-row">
         <input id="ucFromVal" type="number" step="any" inputmode="decimal" placeholder="0" aria-label="from value">
@@ -503,6 +562,7 @@
         <select id="ucToUnit" aria-label="to unit"></select>
       </div>
       <div id="ucHint"></div>
+      </details>
     </div>
 
     <div id="extrasTip" hidden>
@@ -1361,6 +1421,203 @@
     ] },
   ];
 
+  // ── Smart natural-language parser ───────────────────────────────
+  // Turns free text like "2 tsp", "5 cm to in", "convert 3 mi to km"
+  // (and the reversed "how many cups in 2 tsp") into a structured
+  // {value, from:{cat,unit}, to:{cat,unit}|null}. Pure — no DOM — so
+  // it's headless-testable (tests/unit-parse.test.js) and drives the
+  // classic converter UI below. Exported as global.ExtrasUnitParse.
+  function ucBuildParser(categories) {
+    // Normalise a raw unit token to a lookup key: lowercase, drop
+    // spaces/periods/degree signs, strip a leading "deg"/"degree(s)".
+    const norm = (u) => String(u).toLowerCase()
+      .replace(/[.\s]/g, '')
+      .replace(/°/g, '')
+      .replace(/^deg(rees?)?/, '');
+
+    // spelling key -> {cat, unit}. Hand-authored synonyms are added
+    // first so they win the few cross-category clashes (notably "ms"
+    // = milliseconds, not metres/second); then every unit's own id and
+    // parenthetical symbol are seeded without overwriting.
+    const index = new Map();
+    const reg = (spelling, catId, unitId) => {
+      const k = norm(spelling);
+      if (k && !index.has(k)) index.set(k, { cat: catId, unit: unitId });
+    };
+    // [catId, unitId, ...spellings]
+    const SYN = [
+      // length
+      ['length', 'mm', 'mm', 'millimetre', 'millimeter', 'millimetres', 'millimeters'],
+      ['length', 'cm', 'cm', 'centimetre', 'centimeter', 'centimetres', 'centimeters'],
+      ['length', 'm', 'm', 'metre', 'meter', 'metres', 'meters'],
+      ['length', 'km', 'km', 'kilometre', 'kilometer', 'kilometres', 'kilometers', 'klick', 'klicks'],
+      ['length', 'in', 'in', 'inch', 'inches', '"'],
+      ['length', 'ft', 'ft', 'foot', 'feet', "'"],
+      ['length', 'yd', 'yd', 'yard', 'yards'],
+      ['length', 'mi', 'mi', 'mile', 'miles'],
+      // mass
+      ['mass', 'mg', 'mg', 'milligram', 'milligrams'],
+      ['mass', 'g', 'g', 'gram', 'grams', 'gramme', 'grammes'],
+      ['mass', 'kg', 'kg', 'kilogram', 'kilograms', 'kilo', 'kilos', 'kilogramme', 'kilogrammes'],
+      ['mass', 't', 't', 'tonne', 'tonnes', 'ton', 'tons', 'metricton'],
+      ['mass', 'oz', 'oz', 'ounce', 'ounces'],
+      ['mass', 'lb', 'lb', 'lbs', 'pound', 'pounds', '#'],
+      ['mass', 'st', 'st', 'stone', 'stones'],
+      // temperature
+      ['temp', 'c', 'c', 'celsius', 'celcius', 'centigrade'],
+      ['temp', 'f', 'f', 'fahrenheit'],
+      ['temp', 'k', 'k', 'kelvin', 'kelvins'],
+      // volume
+      ['volume', 'ml', 'ml', 'millilitre', 'milliliter', 'millilitres', 'milliliters', 'cc'],
+      ['volume', 'l', 'l', 'litre', 'liter', 'litres', 'liters'],
+      ['volume', 'tsp', 'tsp', 'teaspoon', 'teaspoons', 'teaspoonful'],
+      ['volume', 'tbsp', 'tbsp', 'tablespoon', 'tablespoons', 'tbl', 'tbs'],
+      ['volume', 'floz', 'floz', 'fluidounce', 'fluidounces'],
+      ['volume', 'cup', 'cup', 'cups'],
+      ['volume', 'pt', 'pt', 'pint', 'pints'],
+      ['volume', 'qt', 'qt', 'quart', 'quarts'],
+      ['volume', 'gal', 'gal', 'gallon', 'gallons'],
+      ['volume', 'm3', 'm3', 'cubicmetre', 'cubicmeter', 'cubicmetres', 'cubicmeters'],
+      // area
+      ['area', 'sqcm', 'sqcm', 'cm2', 'squarecentimetre', 'squarecentimetres', 'squarecentimeter', 'squarecentimeters'],
+      ['area', 'sqm', 'sqm', 'm2', 'squaremetre', 'squaremetres', 'squaremeter', 'squaremeters'],
+      ['area', 'sqin', 'sqin', 'in2', 'squareinch', 'squareinches'],
+      ['area', 'sqft', 'sqft', 'ft2', 'squarefoot', 'squarefeet'],
+      ['area', 'acre', 'acre', 'acres'],
+      ['area', 'ha', 'ha', 'hectare', 'hectares'],
+      ['area', 'sqkm', 'sqkm', 'km2', 'squarekilometre', 'squarekilometres', 'squarekilometer', 'squarekilometers'],
+      ['area', 'sqmi', 'sqmi', 'mi2', 'squaremile', 'squaremiles'],
+      // speed
+      ['speed', 'ms', 'm/s', 'mps', 'metrespersecond', 'meterspersecond'],
+      ['speed', 'kmh', 'kmh', 'km/h', 'kph', 'kilometresperhour', 'kilometersperhour'],
+      ['speed', 'mph', 'mph', 'mi/h', 'milesperhour'],
+      ['speed', 'kn', 'kn', 'knot', 'knots', 'kt', 'kts'],
+      ['speed', 'fts', 'ft/s', 'fps', 'feetpersecond'],
+      // time
+      ['time', 'ms2', 'ms', 'millisecond', 'milliseconds', 'msec', 'msecs'],
+      ['time', 's', 's', 'sec', 'secs', 'second', 'seconds'],
+      ['time', 'min', 'min', 'mins', 'minute', 'minutes'],
+      ['time', 'h', 'h', 'hr', 'hrs', 'hour', 'hours'],
+      ['time', 'd', 'd', 'day', 'days'],
+      ['time', 'wk', 'wk', 'wks', 'week', 'weeks'],
+      ['time', 'yr', 'yr', 'yrs', 'year', 'years'],
+      // data
+      ['data', 'bit', 'bit', 'bits'],
+      ['data', 'byte', 'byte', 'bytes', 'b'],
+      ['data', 'kb', 'kb', 'kilobyte', 'kilobytes'],
+      ['data', 'mb', 'mb', 'megabyte', 'megabytes'],
+      ['data', 'gb', 'gb', 'gigabyte', 'gigabytes'],
+      ['data', 'tb', 'tb', 'terabyte', 'terabytes'],
+      ['data', 'kib', 'kib', 'kibibyte', 'kibibytes'],
+      ['data', 'mib', 'mib', 'mebibyte', 'mebibytes'],
+      ['data', 'gib', 'gib', 'gibibyte', 'gibibytes'],
+      ['data', 'tib', 'tib', 'tebibyte', 'tebibytes'],
+    ];
+    for (const row of SYN) {
+      for (let i = 2; i < row.length; i++) reg(row[i], row[0], row[1]);
+    }
+    // Seed each unit's own id + parenthetical symbol (won't overwrite).
+    for (const c of categories) {
+      for (const u of c.units) {
+        reg(u.id, c.id, u.id);
+        const m = u.label.match(/\(([^)]+)\)$/);
+        if (m) reg(m[1], c.id, u.id);
+      }
+    }
+
+    const catById = (id) => categories.find((c) => c.id === id) || null;
+    const unitById = (c, id) => c && c.units.find((u) => u.id === id);
+
+    function resolve(token) {
+      const k = norm(token);
+      if (!k) return null;
+      if (index.has(k)) return index.get(k);
+      if (k.length > 2 && k.endsWith('s') && index.has(k.slice(0, -1))) {
+        return index.get(k.slice(0, -1));
+      }
+      return null;
+    }
+
+    // Leading numeric portion of a string: decimal (with thousands
+    // commas), simple fraction "1/2", or mixed "2 1/2". Returns
+    // {value, rest} or null.
+    function leadingNumber(text) {
+      const t = text.trim();
+      let m = t.match(/^([+-]?\d+)\s+(\d+)\/(\d+)\b/);
+      if (m) {
+        const whole = parseInt(m[1], 10), sign = whole < 0 ? -1 : 1;
+        return { value: whole + sign * (+m[2] / +m[3]), rest: t.slice(m[0].length) };
+      }
+      m = t.match(/^([+-]?\d+)\/(\d+)\b/);
+      if (m) return { value: +m[1] / +m[2], rest: t.slice(m[0].length) };
+      m = t.match(/^([+-]?(?:\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d*\.?\d+))/);
+      if (m && m[1] !== '' && m[1] !== '+' && m[1] !== '-') {
+        const v = parseFloat(m[1].replace(/,/g, ''));
+        if (isFinite(v)) return { value: v, rest: t.slice(m[0].length) };
+      }
+      return null;
+    }
+
+    // Parse a "quantity" chunk: number (default 1 if absent) + unit.
+    function qty(text) {
+      const pn = leadingNumber(text);
+      const value = pn ? pn.value : 1;
+      const unitTxt = pn ? pn.rest : text;
+      const u = resolve(unitTxt);
+      return u ? { value, from: u, hadNumber: !!pn } : null;
+    }
+
+    function parse(raw) {
+      if (raw == null) return { ok: false };
+      let s = ' ' + String(raw).toLowerCase() + ' ';
+      // strip filler
+      s = s.replace(/\b(convert|conversion|whats|what\s+is|how\s+many|equals?|value\s+of|please)\b/g, ' ');
+      // normalise explicit separators to " to "
+      s = s.replace(/=|->|=>|»|›/g, ' to ');
+      s = s.replace(/\s+/g, ' ').trim();
+      if (!s) return { ok: false };
+
+      // Split off a target on the first "to/into/as/in" that has text
+      // after it (bare "5 in" has nothing after → stays whole → inches).
+      let left = s, right = null;
+      const m = s.match(/^(.*?)\s+(?:to|into|as|in)\s+(.+)$/);
+      if (m) { left = m[1]; right = m[2]; }
+
+      // Reversed form: "cups in 2 tsp" → quantity is on the right.
+      let qtyText = left, tgtText = right;
+      if (right && !/\d/.test(left) && /\d/.test(right)) {
+        qtyText = right; tgtText = left;
+      }
+
+      const q = qty(qtyText);
+      if (!q) return { ok: false, reason: 'unit' };
+
+      let to = null, mismatch = false;
+      if (tgtText != null && tgtText !== '') {
+        const tu = resolve(tgtText);
+        if (tu) { to = tu; mismatch = tu.cat !== q.from.cat; }
+        else return { ok: false, reason: 'target' };
+      }
+      return { ok: true, value: q.value, from: q.from, to, mismatch };
+    }
+
+    // All conversions of `value` in `from`'s category.
+    function convertAll(value, from) {
+      const c = catById(from.cat);
+      if (!c) return [];
+      const su = unitById(c, from.unit);
+      const base = su.toBase(value);
+      return c.units.map((u) => ({
+        cat: c.id, id: u.id, label: u.label, value: u.fromBase(base),
+      }));
+    }
+
+    return { parse, resolve, convertAll, categories, catById, unitById };
+  }
+  const UC_PARSER = ucBuildParser(UC_CATEGORIES);
+  global.ExtrasUnitParse = UC_PARSER;
+  global.ucBuildParser = ucBuildParser;
+
   (() => {
     const catSel = $('ucCategory');
     const fromVal = $('ucFromVal');
@@ -1451,6 +1708,84 @@
       convert(false);
       savePrefs();
     };
+
+    // ── Smart free-text converter ──────────────────────────────
+    const smart = $('ucSmart');
+    const smartTo = $('ucSmartTo');
+    const smartOut = $('ucSmartOut');
+    const esc = (s) => String(s).replace(/[&<>"]/g, (ch) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+    // Short display name: parenthetical bit ("miles (mi)" → "mi"), else label.
+    const shortLabel = (label) => {
+      const m = label.match(/\(([^)]+)\)$/);
+      return m ? m[1] : label;
+    };
+
+    function renderSmart() {
+      const raw = smart.value;
+      if (!raw.trim()) { smartOut.innerHTML = ''; return; }
+      const p = UC_PARSER.parse(raw);
+      if (!p.ok) {
+        smartOut.innerHTML = '<div class="ucs-hint">Try &ldquo;2 tsp&rdquo;, '
+          + '&ldquo;5 cm to in&rdquo;, or &ldquo;3 mi to km&rdquo;.</div>';
+        return;
+      }
+      const fromCat = UC_PARSER.catById(p.from.cat);
+      const fromU = UC_PARSER.unitById(fromCat, p.from.unit);
+
+      // Target: an explicit target in the main expression wins; else
+      // whatever's typed in the secondary "convert to…" field.
+      let target = p.to;
+      let targetMismatch = p.mismatch;
+      if (!target && smartTo.value.trim()) {
+        const r = UC_PARSER.resolve(smartTo.value);
+        if (r) { target = r; targetMismatch = r.cat !== p.from.cat; }
+      }
+      // Reflect an expression target into the secondary field (unless
+      // the user is actively typing there).
+      if (p.to && document.activeElement !== smartTo) {
+        const tc = UC_PARSER.catById(p.to.cat);
+        smartTo.value = shortLabel(UC_PARSER.unitById(tc, p.to.unit).label);
+      }
+
+      // Drive the classic picker below so both stay in sync.
+      cat = fromCat;
+      catSel.value = cat.id;
+      const sameCatTarget = target && !targetMismatch ? target.unit : undefined;
+      populateUnits(p.from.unit, sameCatTarget);
+      fromVal.value = fmtNum(p.value);
+      convert(false);
+      savePrefs();
+
+      const rows = UC_PARSER.convertAll(p.value, p.from);
+      let html = '';
+      if (target && !targetMismatch) {
+        const tr = rows.find((r) => r.id === target.unit);
+        html += '<div class="ucs-head">' + esc(fmtNum(p.value)) + ' '
+          + esc(shortLabel(fromU.label)) + ' = <b>' + esc(fmtNum(tr.value))
+          + ' ' + esc(shortLabel(tr.label)) + '</b></div>';
+      } else if (target && targetMismatch) {
+        const tc = UC_PARSER.catById(target.cat);
+        const tu = UC_PARSER.unitById(tc, target.unit);
+        html += '<div class="ucs-head ucs-warn">Can&rsquo;t convert '
+          + esc(shortLabel(fromU.label)) + ' to ' + esc(shortLabel(tu.label))
+          + ' &mdash; those measure different things.</div>';
+      }
+      html += '<div class="ucs-cat">' + esc(cat.name) + '</div>';
+      html += '<ul class="ucs-list">';
+      for (const r of rows) {
+        if (r.id === p.from.unit) continue;
+        const hot = target && !targetMismatch && r.id === target.unit;
+        html += '<li' + (hot ? ' class="hot"' : '') + '><span class="ucs-v">'
+          + esc(fmtNum(r.value)) + '</span> <span class="ucs-u">'
+          + esc(shortLabel(r.label)) + '</span></li>';
+      }
+      html += '</ul>';
+      smartOut.innerHTML = html;
+    }
+
+    smart.addEventListener('input', renderSmart);
+    smartTo.addEventListener('input', renderSmart);
   })();
 
   // ────────────────────────────────────────────────────────────
