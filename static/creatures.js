@@ -6531,6 +6531,29 @@
         image-rendering: pixelated; image-rendering: crisp-edges; display: none;
       }
       #creatureInventory .completion-row.ready .completion-icon img { display: block; }
+      /* "Consistent pixel width" setting (cc.consistentIconWidth). Sprite
+         blobs are cropped to their opaque bbox; the rules above scale each
+         crop up to fill its box (object-fit: contain on a width/height of
+         100%), which makes small creatures look zoomed and inconsistent from
+         view to view. When the setting is on we add cc-consistent-icons to
+         <html> and render every sprite at its intrinsic resolution instead:
+         capped to the box but never upscaled, exactly like the map marker
+         (max-width/max-height: 100%). One sprite pixel is then the same
+         physical size in every view. Off by default, so the rules above
+         (the current behaviour) stay the norm. No cache invalidation is
+         needed — the blob is unchanged, only its layout box. */
+      html.cc-consistent-icons #battleScreen img.battle-sprite,
+      html.cc-consistent-icons #creatureInventory .pokedex-card .pokedex-art img,
+      html.cc-consistent-icons #creatureInventory .detail-art img,
+      html.cc-consistent-icons #creatureInventory .variant-cell img,
+      html.cc-consistent-icons #creatureInventory .family-cell img,
+      html.cc-consistent-icons #creatureInventory .evo-row .evo-art img {
+        width: auto; height: auto;
+        max-width: 100%; max-height: 100%;
+        object-fit: contain;
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
+      }
       #creatureInventory .completion-info { flex: 1 1 auto; min-width: 0; }
       #creatureInventory .completion-name {
         font-size: 14px; font-weight: 600; margin-bottom: 5px;

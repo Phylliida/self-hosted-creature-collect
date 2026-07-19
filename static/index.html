@@ -3430,6 +3430,10 @@
       <label for="radarAutogenToggle">Show autogen labels on radar</label>
       <input type="checkbox" id="radarAutogenToggle">
     </div>
+    <div class="row" title="On the map, sprites render at their native pixel size. Everywhere else (encounter, Pokédex, silhouettes) they are zoomed to fill their box, so small creatures look chunky and inconsistent. Turn this on to render every sprite at native size everywhere — one sprite pixel is the same size in every view.">
+      <label for="consistentIconWidthToggle">Consistent poké icon size (no zoom)</label>
+      <input type="checkbox" id="consistentIconWidthToggle">
+    </div>
     <div class="settings-subsection">
       <h4 class="settings-subsection-title">
         Visibility
@@ -7619,6 +7623,7 @@ function fmtDate(ts) {
     { key: 'cc.memBadge',             values: _ONOFF },
     { key: 'cc.debugConsole',         values: _ONOFF },
     { key: 'cc.steadyCatch',          values: _ONOFF },
+    { key: 'cc.consistentIconWidth',  values: _ONOFF },
     { key: 'cc.buildingPois',         values: _ONOFF },
     { key: 'cc.renderBuildings',      values: _ONOFF },
     { key: 'cc.renderTransitLines',   values: _ONOFF },
@@ -16715,6 +16720,24 @@ function fmtDate(ts) {
     });
   }
 
+  // "Consistent poké icon size" — pure CSS: add cc-consistent-icons to <html>
+  // so sprites render at native size (the map idiom) instead of being zoomed
+  // to fill their box. No re-render or cache clear needed, only a reflow.
+  // Exposed on window so restoreSavedSettings() can re-apply after an import.
+  window._applyConsistentIcons = function (on) {
+    document.documentElement.classList.toggle('cc-consistent-icons', !!on);
+  };
+  const consistentIconWidthToggle = document.getElementById('consistentIconWidthToggle');
+  if (consistentIconWidthToggle) {
+    const on0 = localStorage.getItem('cc.consistentIconWidth') === '1';
+    consistentIconWidthToggle.checked = on0;
+    window._applyConsistentIcons(on0);
+    consistentIconWidthToggle.addEventListener('change', () => {
+      localStorage.setItem('cc.consistentIconWidth', consistentIconWidthToggle.checked ? '1' : '0');
+      window._applyConsistentIcons(consistentIconWidthToggle.checked);
+    });
+  }
+
   const lockZoomToggle = document.getElementById('lockZoomToggle');
   if (lockZoomToggle) {
     lockZoomToggle.checked = localStorage.getItem('cc.lockZoom') === '1';
@@ -16988,6 +17011,13 @@ function fmtDate(ts) {
 
     setChecked('wifiOnlyToggle', on('cc.wifiOnly'));
     setChecked('steadyCatchToggle', on('cc.steadyCatch'));
+
+    setChecked('consistentIconWidthToggle', on('cc.consistentIconWidth'));
+    try {
+      if (typeof window._applyConsistentIcons === 'function') {
+        window._applyConsistentIcons(on('cc.consistentIconWidth'));
+      }
+    } catch (e) { console.error(e); }
 
     setChecked('actionIconsToggle', on('cc.actionButtonsAsIcons'));
     try { window.dispatchEvent(new CustomEvent('cc-action-buttons-style-changed')); }
