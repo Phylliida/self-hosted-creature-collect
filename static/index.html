@@ -7627,6 +7627,53 @@ function fmtDate(ts) {
     return n;
   }
 
+  // Legacy preferences that predate SAVED_SETTINGS and still ride as top-level
+  // camelCase payload fields (cc.units, the creature sort/mode trio, the backup
+  // name). These used a first-write-only guard (`!localStorage.getItem(key)`)
+  // on import, so loading a backup onto a device where you'd *ever* touched
+  // Units silently ignored the saved value. Bring them under the same "the save
+  // wins" policy as cc.theme and everything in SAVED_SETTINGS: loading a save is
+  // an explicit "make this device match" action. Each value is validated the
+  // same way its reader validates it, so a hand-edited or older save can't poke
+  // junk into a key the rest of the app trusts. UI side effects run inside their
+  // own try (import doesn't reload the page) so a missing control never aborts
+  // the write.
+  const _UNITS = ['m', 'mi'];
+  const _CREATURE_SORT_KEYS = ['level', 'size', 'name', 'species', 'recent'];
+  const _CREATURE_SORT_DIRS = ['asc', 'desc'];
+  function restoreLegacyTopLevelSettings(data) {
+    if (!data || typeof data !== 'object') return;
+    if (typeof data.units === 'string' && _UNITS.includes(data.units)) {
+      localStorage.setItem('cc.units', data.units);
+      try {
+        unitsSelect.value = data.units;
+        scaleCtrl.setUnit(data.units === 'mi' ? 'imperial' : 'metric');
+      } catch (_) {}
+    }
+    if (typeof data.creatureSortBy === 'string'
+        && _CREATURE_SORT_KEYS.includes(data.creatureSortBy)) {
+      localStorage.setItem('cc.creatureSortBy', data.creatureSortBy);
+    }
+    if (typeof data.creatureSortDir === 'string'
+        && _CREATURE_SORT_DIRS.includes(data.creatureSortDir)) {
+      localStorage.setItem('cc.creatureSortDir', data.creatureSortDir);
+    }
+    // Creature mode is a plain on/off toggle whose default is ON, so a
+    // never-touched device serializes '1' explicitly (see buildBackupPayload);
+    // both '0' and '1' round-trip.
+    if (data.creatureMode === '0' || data.creatureMode === '1') {
+      localStorage.setItem('cc.creatureMode', data.creatureMode);
+    }
+    if (typeof data.backupName === 'string' && data.backupName.trim()) {
+      const name = data.backupName.trim().slice(0, 40);
+      localStorage.setItem('cc.backupName', name);
+      try {
+        const nameInput = document.getElementById('backupName');
+        if (nameInput) nameInput.value = name;
+      } catch (_) {}
+    }
+  }
+
   async function buildBackupPayload() {
     // The captured collection + seenFusions pokédex live in IndexedDB
     // now (not localStorage). Make sure the store has hydrated, then read
@@ -7668,7 +7715,12 @@ function fmtDate(ts) {
       creatureNicknames: JSON.parse(localStorage.getItem('cc.creatureNicknames') || '{}'),
       creatureSortBy: localStorage.getItem('cc.creatureSortBy'),
       creatureSortDir: localStorage.getItem('cc.creatureSortDir'),
-      creatureMode: localStorage.getItem('cc.creatureMode'),
+      // Serialize the *effective* value: creature mode defaults ON when unset
+      // (readEnabled: `v === null || v === '1'`), so a never-touched toggle must
+      // export '1' rather than null — otherwise the restore (which skips null)
+      // would drop an explicit ON on a device whose local default happened to
+      // differ. Explicitly-flipped '0' still round-trips.
+      creatureMode: localStorage.getItem('cc.creatureMode') || '1',
       caughtSpawnIds: JSON.parse(localStorage.getItem('cc.caughtSpawnIds') || '[]'),
       seenFusions: _seenFusions,
       candy: JSON.parse(localStorage.getItem('cc.candy.v1') || '{}'),
@@ -7942,11 +7994,9 @@ function fmtDate(ts) {
       } catch {}
       try { applyTheme(data.theme); } catch {}
     }
-    if (data.units && !localStorage.getItem('cc.units')) {
-      localStorage.setItem('cc.units', data.units);
-      unitsSelect.value = data.units;
-      scaleCtrl.setUnit(data.units === 'mi' ? 'imperial' : 'metric');
-    }
+    // Units, creature sort/mode, and backup name: legacy top-level settings
+    // restored with the "save wins" policy (see restoreLegacyTopLevelSettings).
+    restoreLegacyTopLevelSettings(data);
     // Creature collection: merge by capture id (skip duplicates), union
     // caught-spawn IDs, merge nicknames with current device winning on
     // conflict (user just renamed something here — don't clobber it).
@@ -8073,20 +8123,8 @@ function fmtDate(ts) {
       }
       localStorage.setItem('cc.savedRoutes.v1', JSON.stringify(merged));
     }
-    if (data.creatureSortBy && !localStorage.getItem('cc.creatureSortBy')) {
-      localStorage.setItem('cc.creatureSortBy', data.creatureSortBy);
-    }
-    if (data.creatureSortDir && !localStorage.getItem('cc.creatureSortDir')) {
-      localStorage.setItem('cc.creatureSortDir', data.creatureSortDir);
-    }
-    if (data.creatureMode && !localStorage.getItem('cc.creatureMode')) {
-      localStorage.setItem('cc.creatureMode', data.creatureMode);
-    }
-    if (data.backupName && !localStorage.getItem('cc.backupName')) {
-      localStorage.setItem('cc.backupName', data.backupName);
-      const nameInput = document.getElementById('backupName');
-      if (nameInput) nameInput.value = data.backupName;
-    }
+    // (units / creature sort+mode / backup name restored above via
+    // restoreLegacyTopLevelSettings)
     // Restore explicit preferences from the save (the post-import reload makes
     // them take effect — toggle/selector and map fetching re-read these keys).
     if (data.pedometerEnabled === '1' || data.pedometerEnabled === '0') {
