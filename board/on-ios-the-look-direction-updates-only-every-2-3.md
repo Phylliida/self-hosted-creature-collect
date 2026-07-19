@@ -5,8 +5,8 @@ claimed_by: claude-opus
 created: 2026-07-19T20:27:09Z
 updated: 2026-07-19T21:15:00Z
 taiga_id: 78
-taiga_version: 2
-synced_hash: a79a67f71de91eb5
+taiga_version: 3
+synced_hash: 5740f086a8c1ee5f
 ---
 
 it should be faster than that, real time, please don't edit any gps settings tho those are very sensitive
@@ -99,6 +99,31 @@ it should be faster than that, real time, please don't edit any gps settings tho
     already being authorized for the map.
   - Left `status: in_progress` — Plan B stays a paper design until the field test
     confirms whether the shipped JS fix is enough. If it is, none of this is needed.
+
+- (2026-07-19, fresh instance) **Plan C — make the blocked field test diagnostic,
+  not binary.** The blocker is that "does it feel faster?" gives no root cause: if
+  it still lags we can't tell whether Plan B (native heading) is needed or a waste.
+  Added zero-network compass telemetry that surfaces in the existing Settings
+  diagnostic dump so the on-device tester (or the human) just taps Copy logs and
+  reads the answer:
+  - `window._ccCompass` records, per orientation event: inter-arrival gap ring
+    (avg/min/max ms), event count, source (`webkit`/`alpha`/`gps-course`), last
+    heading, and iOS `webkitCompassAccuracy` (which was already on the event and
+    never read — `<0` means the OS considers the compass uncalibrated).
+  - Fed from the existing near-instant `onOrient` (a few scalar writes, keeps the
+    rAF-decoupling intact) and from the GPS-course fallback.
+  - New `[compass]` block in the dump (right after `[main-thread stalls]`).
+  - **How to read it (decision rule for whoever runs the device test):**
+    • `gap avg ≈ 2000–3000ms` → the *events* are throttled → JS ceiling truly hit,
+      **build Plan B** (native `CLLocationManager.startUpdatingHeading`).
+    • `gap avg ≈ tens of ms` but cone still looks laggy → delivery is fine, the lag
+      is downstream (our render path / map) → **do NOT build Plan B**, look elsewhere.
+    • `accuracy < 0 ⚠ UNCALIBRATED` → it's the OS asking for a figure-8 calibration,
+      not our bug at all.
+  - JS-only, touches no GPS settings. All 44 headless test files still pass
+    (incl. `sensors` + `compass-rotate-lock` source assertions). Still
+    `in_progress`: this doesn't *fix* the lag, it makes the pending field test
+    actually conclusive.
 
 ## Writeup (interim — needs on-device confirmation)
 **What I changed:** decoupled the compass-cone repaint from the raw sensor
