@@ -8531,18 +8531,57 @@ function fmtDate(ts) {
     map[poiCooldownKey(lng, lat)] = { t: now, c: category || '', x: lng, y: lat };
     writePoiCooldowns(map);
   }
+  // Spatial cooldown lookup. The same POI's tile-rendered coordinate
+  // shifts by a couple of meters between zoom levels (the `local`
+  // source is served at native zoom ≤14 and POIs quantize onto a
+  // coarser grid at z12/z13 than at z14), so an exact-key match would
+  // miss after zooming out and the POI would read as collectable again.
+  // Since collecting already locks every POI within POI_COOLDOWN_RADIUS_M,
+  // we treat any stored entry whose full-precision (x,y) lies within that
+  // radius as covering this location — robust to the per-zoom shift.
+  // Returns matching entries as { t, c }. Legacy entries lacking x/y are
+  // handled by the exact-key fallback in the callers below.
+  function poiCooldownMatches(lng, lat) {
+    const cds = readPoiCooldowns();
+    const out = [];
+    for (const k of Object.keys(cds)) {
+      const raw = cds[k];
+      if (!raw || typeof raw !== 'object') continue;
+      const x = raw.x, y = raw.y;
+      if (typeof x !== 'number' || typeof y !== 'number') continue;
+      if (haversineKm(lat, lng, y, x) * 1000 > POI_COOLDOWN_RADIUS_M) continue;
+      out.push({ t: raw.t || 0, c: raw.c || '' });
+    }
+    return out;
+  }
   function poiCooldownRemainingMs(lng, lat) {
-    const e = poiCooldownEntry(lng, lat);
-    if (!e) return 0;
-    const remain = POI_COOLDOWN_MS - (Date.now() - e.t);
+    const now = Date.now();
+    let remain = 0;
+    for (const e of poiCooldownMatches(lng, lat)) {
+      remain = Math.max(remain, POI_COOLDOWN_MS - (now - e.t));
+    }
+    // Legacy exact-key fallback (entries written before x/y was stored).
+    if (remain <= 0) {
+      const e = poiCooldownEntry(lng, lat);
+      if (e) remain = Math.max(remain, POI_COOLDOWN_MS - (now - e.t));
+    }
     return remain > 0 ? remain : 0;
   }
   // Returns: 'active' (gray, on cooldown), 'ready' (pink, collected
   // before but cooldown elapsed), or 'none' (never collected here).
   function poiCooldownStatus(lng, lat) {
-    const e = poiCooldownEntry(lng, lat);
-    if (!e) return 'none';
-    return (Date.now() - e.t < POI_COOLDOWN_MS) ? 'active' : 'ready';
+    const now = Date.now();
+    let hasEntry = false;
+    for (const e of poiCooldownMatches(lng, lat)) {
+      hasEntry = true;
+      if (now - e.t < POI_COOLDOWN_MS) return 'active';
+    }
+    const legacy = poiCooldownEntry(lng, lat);
+    if (legacy) {
+      hasEntry = true;
+      if (now - legacy.t < POI_COOLDOWN_MS) return 'active';
+    }
+    return hasEntry ? 'ready' : 'none';
   }
   // Cooldown coloring: rather than drawing a second symbol layer on
   // top of `poi-icons`, we directly recolor the original layer's
@@ -8564,12 +8603,15 @@ function fmtDate(ts) {
   // sane until applyTheme runs.
   let _currentCooldownActiveColor = '#888';
   let _currentCooldownReadyColor  = '#f088b0';
-  // Tiny half-edge for the polygon around each cooldown POI. ~0.5m
-  // at the equator — comfortably containing the POI's center point
-  // (since features are a Point, only their centroid is tested) but
-  // small enough that adjacent POIs (typically 10m+ apart) don't
-  // accidentally fall inside.
-  const COOLDOWN_POLYGON_EPS = 0.000005;
+  // Half-edge (in degrees) for the polygon around each cooldown POI.
+  // ~3.3m — sized to still contain the POI's centroid when it renders
+  // at a slightly different tile-quantized coordinate after a zoom
+  // change (the `local` source's z12/z13 grid can move a POI a couple
+  // of meters vs. its z14 position), so the gray/pink overlay survives
+  // zooming out. Still far smaller than POI_COOLDOWN_RADIUS_M, and any
+  // real neighbor that close was already locked and given its own
+  // entry, so this can't gray an un-locked POI.
+  const COOLDOWN_POLYGON_EPS = 0.00003;
   function buildCooldownPolygon(points) {
     if (!points.length) return { type: 'MultiPolygon', coordinates: [] };
     const e = COOLDOWN_POLYGON_EPS;
