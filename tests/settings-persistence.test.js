@@ -57,8 +57,8 @@ function makeEnv() {
    'lockRotateToggle', 'memBadgeToggle', 'debugConsoleToggle', 'buildingPoisToggle',
    'renderBuildingsToggle', 'renderTransitLinesToggle', 'renderHousenumbersToggle',
    'showPanelToggle'].forEach((id) => el(id, 'checkbox'));
-  ['clockFormatSelect', 'timezoneSelect', 'routingWalkWeight', 'routingTransferMin']
-    .forEach((id) => el(id, 'select'));
+  ['clockFormatSelect', 'timezoneSelect', 'routingWalkWeight', 'routingTransferMin',
+   'unitsSelect', 'backupName'].forEach((id) => el(id, 'select'));
   // The timezone <select> is populated from this device's Intl data; the
   // validator only accepts a zone that's actually offered.
   els.get('timezoneSelect').options = [
@@ -88,6 +88,11 @@ function makeEnv() {
     applyBuildingsLayerVisibility: () => calls.push('applyBuildings'),
     applyTransitLinesVisibility: () => calls.push('applyTransit'),
     applyHousenumbersVisibility: () => calls.push('applyHousenumbers'),
+    // restoreLegacyTopLevelSettings touches the units <select> and the map's
+    // scale control directly (import doesn't reload the page). Give it real
+    // stubs so the side effect is observable rather than swallowed by try/catch.
+    unitsSelect: els.get('unitsSelect'),
+    scaleCtrl: { setUnit: (u) => calls.push('setUnit:' + u) },
   };
   sandbox.window.dispatchEvent = () => calls.push('dispatchEvent');
   vm.createContext(sandbox);
@@ -96,12 +101,17 @@ function makeEnv() {
     matchBlock('const SAVED_SETTINGS = [', '['),
     matchBlock('function collectSavedSettings()', '{'),
     matchBlock('function restoreSavedSettings(settings)', '{'),
+    matchBlock("const _UNITS = ['m', 'mi']", '['),
+    matchBlock('const _CREATURE_SORT_KEYS =', '['),
+    matchBlock('const _CREATURE_SORT_DIRS =', '['),
+    matchBlock('function restoreLegacyTopLevelSettings(data)', '{'),
     matchBlock('window._applySettingsFromStorage = function ()', '{'),
     // `const`/`function` at the top level of a vm script don't attach to the
     // sandbox global, so hand them over explicitly.
     'this.SAVED_SETTINGS = SAVED_SETTINGS;',
     'this.collectSavedSettings = collectSavedSettings;',
     'this.restoreSavedSettings = restoreSavedSettings;',
+    'this.restoreLegacyTopLevelSettings = restoreLegacyTopLevelSettings;',
   ].join('\n;\n');
   vm.runInContext(code, sandbox);
   return { sandbox, store, els, calls };
@@ -322,6 +332,84 @@ function makeEnv() {
     'importData restores the settings object');
   ok(/window\._applySettingsFromStorage\(\)/.test(src),
     'importData re-applies settings to the live UI');
+}
+
+// --- 9. legacy top-level settings restore (the save wins + validation) -----
+// units / creature sort+dir+mode / backup name pre-date SAVED_SETTINGS and ride
+// as top-level camelCase fields. They used to guard on !localStorage.getItem(),
+// so re-loading a backup onto a device you'd already used silently ignored them.
+{
+  const { sandbox, store, els, calls } = makeEnv();
+  // Pre-populate the device with values the save should override.
+  store.set('cc.units', 'm');
+  store.set('cc.creatureSortBy', 'level');
+  store.set('cc.creatureSortDir', 'desc');
+  store.set('cc.creatureMode', '1');
+  store.set('cc.backupName', 'OldName');
+
+  sandbox.restoreLegacyTopLevelSettings({
+    units: 'mi',
+    creatureSortBy: 'species',
+    creatureSortDir: 'asc',
+    creatureMode: '0',
+    backupName: 'NewName',
+  });
+
+  ok(store.get('cc.units') === 'mi', 'imported units override the local value');
+  ok(store.get('cc.creatureSortBy') === 'species', 'imported sort key wins');
+  ok(store.get('cc.creatureSortDir') === 'asc', 'imported sort dir wins');
+  ok(store.get('cc.creatureMode') === '0', 'imported creature mode wins');
+  ok(store.get('cc.backupName') === 'NewName', 'imported backup name wins');
+
+  // Units restore re-syncs the <select> + scale control inline (no page reload).
+  ok(els.get('unitsSelect').value === 'mi', 'units <select> re-synced');
+  ok(calls.includes('setUnit:imperial'), 'scale control switched to imperial');
+  ok(els.get('backupName').value === 'NewName', 'backup-name input re-synced');
+}
+
+// --- 10. legacy restore validates junk / rejects bad values ----------------
+{
+  const { sandbox, store } = makeEnv();
+  sandbox.restoreLegacyTopLevelSettings({
+    units: 'furlongs',        // not m/mi
+    creatureSortBy: 'bogus',  // not a SORT_KEY
+    creatureSortDir: 'up',    // not asc/desc
+    creatureMode: 'on',       // not 0/1
+    backupName: '   ',        // blank after trim
+  });
+  ok(!store.has('cc.units'), 'junk units rejected');
+  ok(!store.has('cc.creatureSortBy'), 'junk sort key rejected');
+  ok(!store.has('cc.creatureSortDir'), 'junk sort dir rejected');
+  ok(!store.has('cc.creatureMode'), 'junk creature mode rejected');
+  ok(!store.has('cc.backupName'), 'blank backup name rejected');
+
+  // Non-string / non-object payloads are no-ops.
+  const { sandbox: s2, store: st2 } = makeEnv();
+  s2.restoreLegacyTopLevelSettings(null);
+  s2.restoreLegacyTopLevelSettings('nope');
+  s2.restoreLegacyTopLevelSettings({ units: 42, backupName: 99 });
+  ok(st2.size === 0, 'non-object / non-string values are no-ops');
+
+  // Backup name is trimmed and capped at 40 chars (matches the input maxlength).
+  const { sandbox: s3, store: st3 } = makeEnv();
+  s3.restoreLegacyTopLevelSettings({ backupName: '  ' + 'x'.repeat(60) + '  ' });
+  ok(st3.get('cc.backupName') === 'x'.repeat(40), 'backup name trimmed + capped at 40');
+}
+
+// --- 11. creatureMode default is serialized explicitly ----------------------
+// A never-touched toggle defaults ON (readEnabled: v===null||v==='1'), but the
+// old export wrote the raw getItem() (null), so an explicit ON never crossed the
+// wire. buildBackupPayload now serializes '1' when unset.
+{
+  ok(/creatureMode:\s*localStorage\.getItem\('cc\.creatureMode'\)\s*\|\|\s*'1'/.test(src),
+    'buildBackupPayload serializes creatureMode default as \'1\' when unset');
+  // And the import path is wired to the helper (the old inline guards are gone).
+  ok(/restoreLegacyTopLevelSettings\(data\)/.test(src),
+    'importData restores legacy top-level settings via the helper');
+  ok(!/data\.units\s*&&\s*!localStorage\.getItem\('cc\.units'\)/.test(src),
+    'the old first-write-only units guard is gone');
+  ok(!/data\.creatureSortBy\s*&&\s*!localStorage\.getItem/.test(src),
+    'the old first-write-only creature-sort guard is gone');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
