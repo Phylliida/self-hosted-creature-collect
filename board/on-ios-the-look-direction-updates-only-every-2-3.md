@@ -3,9 +3,10 @@ title: on ios the look direction updates only every 2-3 seconds
 status: in_progress
 claimed_by: claude-opus
 created: 2026-07-19T20:27:09Z
-updated: 2026-07-19T20:27:09Z
+updated: 2026-07-19T21:15:00Z
 taiga_id: 78
-taiga_version: 1
+taiga_version: 2
+synced_hash: a79a67f71de91eb5
 ---
 
 it should be faster than that, real time, please don't edit any gps settings tho those are very sensitive
@@ -50,6 +51,54 @@ it should be faster than that, real time, please don't edit any gps settings tho
   OS-imposed throttle. Also cleared the stale Taiga conflict block (Taiga
   description was empty — nothing to merge). Keeping `in_progress` pending the
   human's on-device check, per the same blocker the prior instance hit.
+
+- (2026-07-19, fresh instance) Scoped **Plan B** (native heading fallback) so it's
+  ready if the on-device test shows the rAF fix didn't clear the 2–3s cadence.
+  Did NOT write any Swift or touch index.html — this is a design note only.
+  - **Where it plugs into JS:** trivial. `onOrient` already funnels into
+    `compassSeen = true; lastHeading = h; scheduleRender()` (index.html ~6744–6758).
+    A native heading event just needs to call that same three-line body with `h` =
+    degrees clockwise from true north. No change to `applyRotation`/`scheduleRender`
+    — the rAF decoupling we already shipped is reused verbatim. `compassSeen` will
+    correctly suppress the GPS-course fallback once native headings arrive.
+  - **Native side:** iOS has no heading in the current plugin. `SensorProbePlugin`
+    streams raw magnetometer via `CMMotionManager` but computes no compass heading.
+    The real heading API is `CLLocationManager.startUpdatingHeading()` →
+    `locationManager(_:didUpdateHeading:)`, emitting `newHeading.trueHeading`
+    (fall back to `.magneticHeading` when `trueHeading < 0`, i.e. location off).
+    That stream is delivered natively and is NOT subject to the WKWebView
+    `deviceorientation` coalescing/throttle — it's the one lever left after the JS
+    ceiling.
+  - **⚠ Critical constraint (the "don't touch GPS settings" landmine):** the
+    Capacitor Geolocation plugin uses **one shared `CLLocationManager`**, and the
+    entire `ios-overrides/patch-geolocation-plugin.py` exists precisely to stop
+    callers from clobbering each other's `desiredAccuracy` (the "accuracy
+    clobbering" bug fixed in 87ef8202). Therefore the heading source MUST use its
+    **own dedicated `CLLocationManager`** that ONLY calls `startUpdatingHeading()`
+    and **never** sets `desiredAccuracy` and **never** calls
+    `startUpdatingLocation()`. Heading updates don't participate in the
+    accuracy negotiation, so a heading-only manager stays fully orthogonal to the
+    sensitive shared geolocation manager. This keeps Plan B compliant with the
+    task's "don't edit GPS settings" instruction.
+  - **Orientation detail:** `trueHeading` is referenced to the top of the device
+    per `CLDeviceOrientation`. To match the existing `webkitCompassHeading`
+    semantics the cone already expects, set `manager.headingOrientation = .portrait`
+    (or track UIDevice orientation). Then the value drops straight into `lastHeading`
+    with no extra math — same units the Android/`alpha` path is normalized to.
+  - **Packaging:** cleanest as a small new override plugin (e.g. `HeadingProbe`,
+    jsName `"HeadingProbe"`, `start()`/`stop()` + a `heading` listener event),
+    registered from `AppBridgeViewController.capacitorDidLoad()` and injected via
+    `inject-into-xcodeproj.rb` exactly like `SensorProbe`. Do NOT fold it into
+    `SensorProbePlugin`: that only runs while the Extras "Sensors" dashboard is
+    open, whereas heading must run whenever the map/cone is active — different
+    lifecycle. JS wires `HeadingProbe.addListener('heading', ...)` alongside the
+    existing `deviceorientation` listeners, guarded by `Capacitor.isNativePlatform()`.
+  - **Cost:** Swift + a Capacitor rebuild (CI), plus the geolocation-patch
+    re-derivation caveat does NOT apply here (we're adding a new file, not patching
+    the vendored plugin). No permission prompt needed for heading beyond location
+    already being authorized for the map.
+  - Left `status: in_progress` — Plan B stays a paper design until the field test
+    confirms whether the shipped JS fix is enough. If it is, none of this is needed.
 
 ## Writeup (interim — needs on-device confirmation)
 **What I changed:** decoupled the compass-cone repaint from the raw sensor
