@@ -7552,6 +7552,81 @@ function fmtDate(ts) {
     return localStorage.getItem('cc.timezone') || browserTz;
   }
 
+  // ── Settings carried in the save file ─────────────────────────────────
+  // Simple localStorage-backed preferences that travel with a backup and
+  // are restored on import. Each entry validates the incoming value so a
+  // hand-edited or older save can't poke junk into a key the rest of the
+  // app trusts. They ride in the payload under their raw localStorage key
+  // inside a `settings` object rather than as top-level camelCase fields,
+  // so adding a setting later is a one-line change here.
+  //
+  // Deliberately NOT in this table: cc.theme, cc.units, cc.creature*,
+  // cc.backupName, cc.pedometerEnabled, cc.regionsMode, cc.autoBackup and
+  // cc.radarAutogenLabels. Those predate the table and keep their existing
+  // top-level fields — notably the pedometer, whose restore is bound up
+  // with a native permission prompt and a sync-marker seed, so it must not
+  // be flipped on behind the user's back.
+  const _ONOFF = ['0', '1'];
+  const SAVED_SETTINGS = [
+    { key: 'cc.clockFormat',          values: ['24h', '12h'] },
+    // IANA zone name; only accepted if the timezone <select> actually
+    // offers it, since the list is built from this device's Intl data.
+    { key: 'cc.timezone',             validate: (v) => {
+        const el = document.getElementById('timezoneSelect');
+        return !!el && Array.from(el.options).some(o => o.value === v);
+      } },
+    { key: 'cc.hidePanel',            values: _ONOFF },
+    { key: 'cc.wifiOnly',             values: _ONOFF },
+    { key: 'cc.actionButtonsAsIcons', values: _ONOFF },
+    { key: 'cc.lockZoom',             values: _ONOFF },
+    { key: 'cc.lockRotate',           values: _ONOFF },
+    { key: 'cc.memBadge',             values: _ONOFF },
+    { key: 'cc.debugConsole',         values: _ONOFF },
+    { key: 'cc.steadyCatch',          values: _ONOFF },
+    { key: 'cc.buildingPois',         values: _ONOFF },
+    { key: 'cc.renderBuildings',      values: _ONOFF },
+    { key: 'cc.renderTransitLines',   values: _ONOFF },
+    { key: 'cc.renderHousenumbers',   values: _ONOFF },
+    // Routing prefs (Routing panel rather than the Settings menu, but the
+    // same kind of small persisted knob).
+    { key: 'cc.walkWeight',           validate: (v) => {
+        const n = parseFloat(v);
+        return Number.isFinite(n) && n > 0 && n <= 100;
+      } },
+    { key: 'cc.transferMin',          validate: (v) => {
+        const n = parseFloat(v);
+        return Number.isFinite(n) && n >= 0 && n <= 120;
+      } },
+  ];
+
+  function collectSavedSettings() {
+    const out = {};
+    for (const s of SAVED_SETTINGS) {
+      const v = localStorage.getItem(s.key);
+      if (v !== null) out[s.key] = v;
+    }
+    return out;
+  }
+
+  // Write validated values back. Returns how many keys were actually
+  // restored so the import summary can report it. The save wins over the
+  // local value here (same policy as cc.theme): loading a backup is an
+  // explicit "make this device match my save" action, and the older
+  // first-write-only guard meant re-loading on a device you'd already
+  // used never picked your preferences up.
+  function restoreSavedSettings(settings) {
+    if (!settings || typeof settings !== 'object') return 0;
+    let n = 0;
+    for (const s of SAVED_SETTINGS) {
+      const v = settings[s.key];
+      if (typeof v !== 'string') continue;
+      const ok = s.values ? s.values.includes(v) : s.validate(v);
+      if (!ok) continue;
+      try { localStorage.setItem(s.key, v); n++; } catch (_) {}
+    }
+    return n;
+  }
+
   async function buildBackupPayload() {
     // The captured collection + seenFusions pokédex live in IndexedDB
     // now (not localStorage). Make sure the store has hydrated, then read
@@ -7669,6 +7744,10 @@ function fmtDate(ts) {
       // "Show autogen labels on radar" toggle — a display preference, carried
       // across devices alongside the other opt-in toggles.
       radarAutogenLabels: localStorage.getItem('cc.radarAutogenLabels'),
+      // Everything in SAVED_SETTINGS (clock, timezone, both map locks, the
+      // whole Visibility section, routing knobs …), keyed by raw
+      // localStorage key. See the table above.
+      settings: collectSavedSettings(),
       // Active incense ({type, startMs}) so a burning incense keeps its
       // remaining time across devices / restarts.
       activeIncense: (window.Creatures && window.Creatures.getActiveIncense)
@@ -8023,6 +8102,17 @@ function fmtDate(ts) {
         data.regionsMode === 'static-hf') {
       localStorage.setItem('cc.regionsMode', data.regionsMode);
     }
+    // Table-driven settings (see SAVED_SETTINGS). Import does NOT reload the
+    // page, so writing localStorage alone would leave the Settings menu
+    // showing stale checkboxes and the map un-relocked until next launch —
+    // _applySettingsFromStorage re-syncs every control and re-runs the side
+    // effects. It's defined with the toggle wiring further down, so it may
+    // legitimately be missing if the user imports before that block ran.
+    const settingsRestored = restoreSavedSettings(data.settings);
+    if (settingsRestored && typeof window._applySettingsFromStorage === 'function') {
+      try { window._applySettingsFromStorage(); }
+      catch (e) { console.error('applySettingsFromStorage failed', e); }
+    }
     // Daycare slots: union with current slots, capped at 2, and
     // filtered against imported + existing capture IDs so we never
     // store a dangling reference. Re-importing the same backup
@@ -8182,7 +8272,8 @@ function fmtDate(ts) {
       `${regAdded} region(s), ` +
       `${staticRegAdded} static region(s), ` +
       `${creaturesAdded} creature(s) (${creaturesSkipped} skipped), ` +
-      `${eggsAdded} egg(s) (${eggsSkipped} skipped)`
+      `${eggsAdded} egg(s) (${eggsSkipped} skipped), ` +
+      `${settingsRestored} setting(s)`
     );
   }
   async function loadFromServer() {
@@ -16732,6 +16823,77 @@ function fmtDate(ts) {
       applyHousenumbersVisibility();
     });
   }
+
+  // ── Re-apply table-driven settings after an import ────────────────────
+  // importData() writes the SAVED_SETTINGS keys straight into localStorage
+  // and then calls this. Importing does not reload the page, so without it
+  // the Settings menu would keep showing the pre-import checkbox states and
+  // the map would stay un-locked / layers unchanged until the next launch.
+  //
+  // Each branch deliberately mirrors the exact expression its init code
+  // above uses, defaults included — note that hidePanel is inverted
+  // (checked = panel *shown*) and renderTransitLines defaults ON (`!== '0'`)
+  // while its neighbours default OFF (`=== '1'`). Reading the key rather
+  // than being handed a value keeps this honest: whatever ended up in
+  // storage is what gets shown.
+  window._applySettingsFromStorage = function () {
+    const get = (k) => localStorage.getItem(k);
+    const on = (k) => get(k) === '1';
+    const setChecked = (id, val) => {
+      const el = document.getElementById(id);
+      if (el) el.checked = val;
+    };
+    const setValue = (id, val) => {
+      const el = document.getElementById(id);
+      if (el && val != null) el.value = val;
+    };
+
+    setValue('clockFormatSelect', get('cc.clockFormat') || '24h');
+    setValue('timezoneSelect', get('cc.timezone'));
+
+    // Offline-maps panel — checkbox is "show", key is "hide".
+    try { applyPanelVisibility(); } catch (e) { console.error(e); }
+
+    setChecked('wifiOnlyToggle', on('cc.wifiOnly'));
+    setChecked('steadyCatchToggle', on('cc.steadyCatch'));
+
+    setChecked('actionIconsToggle', on('cc.actionButtonsAsIcons'));
+    try { window.dispatchEvent(new CustomEvent('cc-action-buttons-style-changed')); }
+    catch (e) { console.error(e); }
+
+    setChecked('lockZoomToggle', on('cc.lockZoom'));
+    try { applyZoomLock(on('cc.lockZoom')); } catch (e) { console.error(e); }
+    setChecked('lockRotateToggle', on('cc.lockRotate'));
+    try { applyRotateLock(on('cc.lockRotate')); } catch (e) { console.error(e); }
+
+    // Memory badge only exists when the native MemoryProbe plugin is
+    // present; on other builds the key round-trips but has nothing to drive.
+    setChecked('memBadgeToggle', on('cc.memBadge'));
+    if (typeof window._setMemBadge === 'function') {
+      try { window._setMemBadge(on('cc.memBadge')); } catch (e) { console.error(e); }
+    }
+
+    setChecked('debugConsoleToggle', on('cc.debugConsole'));
+    if (typeof window._setDebugConsole === 'function') {
+      try { window._setDebugConsole(on('cc.debugConsole')); } catch (e) { console.error(e); }
+    }
+
+    setChecked('buildingPoisToggle', on('cc.buildingPois'));
+    try {
+      if (on('cc.buildingPois')) addBuildingPokestopsLayer();
+      else removeBuildingPokestopsLayer();
+    } catch (e) { console.error(e); }
+
+    setChecked('renderBuildingsToggle', on('cc.renderBuildings'));
+    try { applyBuildingsLayerVisibility(); } catch (e) { console.error(e); }
+    setChecked('renderTransitLinesToggle', get('cc.renderTransitLines') !== '0');
+    try { applyTransitLinesVisibility(); } catch (e) { console.error(e); }
+    setChecked('renderHousenumbersToggle', on('cc.renderHousenumbers'));
+    try { applyHousenumbersVisibility(); } catch (e) { console.error(e); }
+
+    setValue('routingWalkWeight', get('cc.walkWeight') || '1');
+    setValue('routingTransferMin', get('cc.transferMin') || '3');
+  };
 
   // Trainer name — persisted locally and exported alongside other
   // backup data so a future server-side save flow can key by it.
