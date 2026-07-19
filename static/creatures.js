@@ -6203,6 +6203,15 @@
           drop-shadow(0 1.3px 0 #ffcb2e) drop-shadow(0 -1.3px 0 #ffcb2e);
       }
       .radar-marker.radar-legendary .radar-marker-label { background: rgba(184,134,11,0.94); }
+      /* On dark themes a pure-black silhouette vanishes into the near-black
+         map, so give non-legendary blips a white outline (legendaries keep
+         their gold one). Keyed off the theme-agnostic data-ui-dark flag that
+         applyTheme() sets in index.html. */
+      html[data-ui-dark="1"] .radar-marker.silhouette:not(.radar-legendary) .radar-marker-img {
+        filter: brightness(0)
+          drop-shadow(1.3px 0 0 #fff) drop-shadow(-1.3px 0 0 #fff)
+          drop-shadow(0 1.3px 0 #fff) drop-shadow(0 -1.3px 0 #fff);
+      }
       /* Autogen status pill (Settings → "Show autogen labels on radar"). Uses
          the same accent that marks the pokedex autogen art badge, and is
          smaller than the countdown pill so the timer stays the primary read. */

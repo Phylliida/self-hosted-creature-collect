@@ -2874,6 +2874,22 @@
     garage: { bg: '#4a4a48', landcover: '#4a4a48', landuse: '#444442', water: '#1a1a18', building: '#606060', road: '#8a7a5a', roadLabel: '#ffcc88', roadHalo: '#2a2a28', placeLabel: '#ffcc88', placeHalo: '#2a2a28', poiLabel: '#ffcc88', poiHalo: '#2a2a28', poiIcon: '#ff8a30',
               ui: { panelBg: '#3a3a38', panelText: '#e8d8b8', muted: '#8a8a88', border: '#1a1a18', hairline: '#4a4a48', hover: '#484846', inputBg: '#1a1a18', radius: '1px', shadow: '0 0 40px rgba(255,180,100,0.2), 0 4px 12px rgba(0,0,0,0.8)', accent: '#ff8a30', accentText: '#1a1a18', accentBorder: '#c04a10', danger: '#ff3030' } }
   };
+  // Perceived-luminance test on a theme's panel background so chrome that
+  // can't read the --ui-* vars (e.g. the radar silhouette blips, whose CSS
+  // lives inside creatures.js) can still branch on "is this a dark theme?".
+  // Surfaced on <html> as data-ui-dark; covers every dark theme, not just
+  // the one literally named "dark".
+  window._themeIsDark = function (t) {
+    try {
+      var hex = (t && t.ui && t.ui.panelBg) || (t && t.bg) || '#ffffff';
+      var m = String(hex).replace('#', '');
+      if (m.length === 3) m = m[0] + m[0] + m[1] + m[1] + m[2] + m[2];
+      var r = parseInt(m.substr(0, 2), 16);
+      var g = parseInt(m.substr(2, 2), 16);
+      var b = parseInt(m.substr(4, 2), 16);
+      return (0.299 * r + 0.587 * g + 0.114 * b) / 255 < 0.5;
+    } catch (e) { return false; }
+  };
   function resolve(name) {
     if (name === 'custom') {
       try {
@@ -2889,6 +2905,7 @@
   var t = resolve(name);
   var r = document.documentElement;
   r.setAttribute('data-theme', name);
+  r.setAttribute('data-ui-dark', window._themeIsDark(t) ? '1' : '0');
   var s = r.style;
   s.setProperty('--ui-map-bg', t.landcover);
   if (t.ui) {
@@ -6317,6 +6334,7 @@ function fmtDate(ts) {
     // Surface the current theme on the root element so the CSS can apply
     // theme-specific chrome (e.g. the medieval parchment palette).
     document.documentElement.setAttribute('data-theme', name);
+    document.documentElement.setAttribute('data-ui-dark', window._themeIsDark(t) ? '1' : '0');
     // Generic UI palette → CSS variables so every panel / modal / CTA
     // follows the selected theme. Each theme's `ui` dict maps to the
     // `--ui-*` variables that the shared CSS reads; unset values fall
@@ -9315,10 +9333,18 @@ function fmtDate(ts) {
   function renderFavIconGrid() {
     const el = document.getElementById('favIconGrid');
     const icons = favIconSet();
-    el.innerHTML = icons.map(n =>
-      `<div class="fav-icon-option${n === favCtx.icon ? ' selected' : ''}" data-icon="${n}" title="${n}" style="${n === favCtx.icon ? `background:${favCtx.color}` : ''}">
-        <img src="/icons/${encodeURIComponent(n)}.svg" style="filter:${n === favCtx.icon ? 'brightness(0) invert(1)' : 'none'}">
-      </div>`).join('');
+    // Icon SVGs carry dark ink; on dark themes an unselected icon renders
+    // dark-on-dark (the cell bg is --ui-hover) and is unreadable, so invert
+    // it to white there. Selected icons are already inverted (white on the
+    // chosen color swatch), so bg + accent border still tell the two apart.
+    const dark = document.documentElement.getAttribute('data-ui-dark') === '1';
+    el.innerHTML = icons.map(n => {
+      const sel = n === favCtx.icon;
+      const filter = (sel || dark) ? 'brightness(0) invert(1)' : 'none';
+      return `<div class="fav-icon-option${sel ? ' selected' : ''}" data-icon="${n}" title="${n}" style="${sel ? `background:${favCtx.color}` : ''}">
+        <img src="/icons/${encodeURIComponent(n)}.svg" style="filter:${filter}">
+      </div>`;
+    }).join('');
     el.querySelectorAll('[data-icon]').forEach(d => d.onclick = () => {
       favCtx.icon = d.dataset.icon; renderFavIconGrid();
     });
