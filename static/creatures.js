@@ -12752,6 +12752,15 @@
     // is not load-bearing, but the intent is "what did we know coming in").
     const caughtAway = !ownsFusion
       && !!(readSeenFusions()[`${spawn.speciesA}-${spawn.speciesB}`] || {}).caught;
+    // Which art variants had we seen coming IN? markFusionSeen (below) records
+    // the current one, so a live hasSeenVariant() inside decideArtBadge would
+    // always be true — snapshot it here, mirroring the caughtAway read above.
+    // Drives the "Fresh Art" badge: an art we've seen before but no longer own.
+    const seenVariantsBefore = readSeenVariants(spawn.speciesA, spawn.speciesB);
+    const hadSeenVariant = (variant) => {
+      if (typeof variant === 'number' && variant >= 0) return seenVariantsBefore.has(String(variant));
+      return seenVariantsBefore.has('auto');
+    };
     const newBadge = el.querySelector('.battle-new-badge');
     const showNewBadge = (text) => {
       if (!newBadge) return;
@@ -12764,8 +12773,13 @@
     };
     showNewBadge(ownsFusion ? '' : (caughtAway ? 'Fresh' : 'New'));
     const decideArtBadge = (variant) => {
-      if (ownsFusion) {
-        showNewBadge(ownsVariant(spawn.speciesA, spawn.speciesB, variant) ? '' : 'New Art');
+      if (!ownsFusion) return;
+      if (ownsVariant(spawn.speciesA, spawn.speciesB, variant)) {
+        showNewBadge('');            // own this exact art — nothing new
+      } else if (hadSeenVariant(variant)) {
+        showNewBadge('Fresh Art');   // seen this art before but don't own it (e.g. evolved it away)
+      } else {
+        showNewBadge('New Art');     // never seen this art of a fusion we own
       }
     };
     // Mark fusion seen + record which variant the user actually saw, so the
