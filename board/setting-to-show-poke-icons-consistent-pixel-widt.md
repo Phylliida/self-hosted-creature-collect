@@ -5,8 +5,8 @@ claimed_by: claude-opus
 created: 2026-07-19T19:25:19Z
 updated: 2026-07-19T19:25:19Z
 taiga_id: 71
-taiga_version: 4
-synced_hash: 8e7a20226b9068da
+taiga_version: 5
+synced_hash: 65452b3a1b833f97
 ---
 
 on the map it is correct but the encounter and pokedex and silouettes etc right now crop and zoom, we need a global setting (toggle in settings menu, match the style) that doesn't do any crop and instead uses full res everywhere, may require invalidating any cached sprites when changed

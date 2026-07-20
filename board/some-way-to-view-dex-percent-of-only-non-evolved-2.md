@@ -5,8 +5,8 @@ claimed_by: claude-opus
 created: 2026-07-19T19:23:24Z
 updated: 2026-07-19T19:23:24Z
 taiga_id: 49
-taiga_version: 3
-synced_hash: f4bfb06ce2e247e2
+taiga_version: 4
+synced_hash: dc82f2cc995672b6
 ---
 
 We have this but it would be nice to also be able to filter the view of like all pikachu morphs (the one with on left and right) using filter at top as well

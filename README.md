@@ -639,6 +639,14 @@ hf upload-large-folder \
     --num-workers=2
 ```
 
+Or use the wrapper: `scripts/upload-regions.sh [repo-id]` — same
+command, with preflight checks and the env vars baked in.
+
+For cron, `scripts/update-transit-and-upload.sh` first runs
+`update-transit-schedules.py` (GTFS refresh + region `schedule.json`
+re-export) and then the upload, with overlap locking and logging to
+`logs/transit-refresh.log`. Example crontab in the script header.
+
 (Substitute your HF user/repo for `TessaCoil/maps-dataset`.)
 
 Notes on the flags — all empirically needed to actually finish a

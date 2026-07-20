@@ -17,6 +17,6 @@ The transit/bus schedule data is a **static GTFS snapshot** (built ~2026-04-22 f
 
 **Shared query module `schedule_query.py`** = `build_schedule_payload(conn, w,s,e,n)` + `_in_chunks` + `EMPTY_PAYLOAD`. Refactored OUT of run.py's `/schedule` endpoint (2026-07-05) so the endpoint and the offline exporter can't drift — verified byte-identical to the old inline endpoint across MTL/NYC/LA/empty bboxes. run.py now imports it (change takes effect on next server restart). `build-regions.py` remains the full all-artifacts builder; update-transit-schedules.py is the surgical schedule-only path. (An earlier server-based `refresh-schedules.py` was consolidated INTO update-transit-schedules.py and deleted.)
 
-Needs redoing every few months — good automation candidate.
+Needs redoing every few months — good automation candidate. Done: `scripts/update-transit-and-upload.sh` chains `update-transit-schedules.py` (full all-feeds default) → `scripts/upload-regions.sh`, with flock overlap protection + logging to `logs/transit-refresh.log`; example monthly crontab in its header.
 
 **Optional graceful-degradation fix (not yet built):** when a feed is fully expired, fall back to the most recent equivalent weekday inside its valid window + a "schedule may be outdated" banner, instead of silently showing nothing.

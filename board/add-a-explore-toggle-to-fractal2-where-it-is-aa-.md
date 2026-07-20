@@ -4,7 +4,9 @@ status: done
 claimed_by: claude-opus
 created: 2026-07-19T20:40:02Z
 updated: 2026-07-19T20:40:02Z
-sync: orphaned
+taiga_id: 160
+taiga_version: 1
+synced_hash: 79aed50895b11910
 ---
 
 ## Description
