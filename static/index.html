@@ -3653,6 +3653,7 @@
     <div style="margin-top: 8px;">
       <label>max zoom <input id="zMax" type="number" min="1" max="14" value="14" style="width: 40px;"></label>
       <button id="downloadBtn">↓ save current view</button>
+      <button id="updateSchedulesBtn" title="re-download transit schedules for downloaded regions">↻ update schedules</button>
       <div id="status"></div>
       <div id="storage" style="font-size: 11px; color: var(--ui-muted); margin-top: 2px;"></div>
       <div id="poiStat" style="font-size: 11px; color: var(--ui-muted);"></div>
@@ -15835,6 +15836,49 @@ function fmtDate(ts) {
     return totalBytes;
   }
 
+  // Re-download ONLY schedule.json for one downloaded static region
+  // (the "↻ update schedules" button). GTFS calendars expire every few
+  // months and are refreshed server-side by update-transit-schedules.py,
+  // so a downloaded region's transit times go stale while its walk/POI/
+  // tile data stays fine. cache:'reload' bypasses the browser HTTP
+  // cache — Flask serves /regions/* with `Cache-Control: immutable`
+  // (run.py), so a default fetch could hand back last year's bytes.
+  // Returns { status:'updated', delta } | { status:'phantom'|'failed' }.
+  // 'phantom' = listed in cc.staticRegions.v1 but no local bytes (save-
+  // file import) — the caller skips those without any network request.
+  async function updateScheduleForStaticRegion(regionId) {
+    const old = await window._getStaticRegionFile(regionId, 'schedule.json');
+    if (!old) return { status: 'phantom' };
+    const url = window._regionFileUrl(regionId, 'schedule.json');
+    const resp = await fetch(url, { cache: 'reload' });
+    if (!resp.ok) return { status: 'failed' };
+    const blob = await resp.blob();
+    await _staticFilePut(`${regionId}/schedule.json`, blob);
+    // Hydrate into cc.schedule.v1, mirroring the schedule.json branch of
+    // downloadOneStaticRegion above: gzip magic sniff → gunzip → text →
+    // JSON.parse → saveSchedule. Near-empty payloads (transit-free
+    // regions) follow the same text.trim() guard.
+    if (blob.size > 0) {
+      try {
+        let buffer = await blob.arrayBuffer();
+        const u8 = new Uint8Array(buffer);
+        if (u8.length >= 2 && u8[0] === 0x1f && u8[1] === 0x8b) {
+          const ds = new DecompressionStream('gzip');
+          const s = new Blob([u8]).stream().pipeThrough(ds);
+          buffer = await new Response(s).arrayBuffer();
+        }
+        const text = new TextDecoder('utf-8').decode(buffer);
+        if (text.trim()) {
+          const payload = JSON.parse(text);
+          await saveSchedule(regionId, payload);
+        }
+      } catch (e) {
+        console.warn(`[static region] ${regionId}/schedule.json hydrate failed`, e);
+      }
+    }
+    return { status: 'updated', delta: blob.size - old.size };
+  }
+
   // Re-render the regions list + refresh every downstream consumer that
   // reads from the static-region IDB stores / in-memory arrays. Shared by
   // the bulk download and the single-region refresh so both leave the map,
@@ -15976,6 +16020,57 @@ function fmtDate(ts) {
       renderRegions();  // re-render so the disabled ↻ button resets
     }
   };
+
+  // Orchestrator for the "↻ update schedules" button: re-download only
+  // schedule.json for every static region that has local bytes, so fresh
+  // GTFS calendars land without re-pulling the multi-MB walk/POI/tile
+  // artifacts. Regions restored from a save file but never re-downloaded
+  // (metadata row, no IDB blobs) are skipped untouched. Ends with a
+  // schedule-index rebuild so stop popups + the trip planner pick up the
+  // new calendars; walk graph and tiles are NOT invalidated (they didn't
+  // change).
+  async function performStaticSchedulesUpdate() {
+    const status = document.getElementById('status');
+    const btn = document.getElementById('updateSchedulesBtn');
+    const list = loadStaticRegions();
+    if (!list.length) {
+      status.textContent = 'no downloaded regions';
+      return;
+    }
+    if (btn) btn.disabled = true;
+    let updated = 0;
+    let skipped = 0;
+    let failed = 0;
+    try {
+      for (let i = 0; i < list.length; i++) {
+        const r = list[i];
+        status.textContent = `updating schedules (${i + 1}/${list.length}) · ${r.id}`;
+        try {
+          const res = await updateScheduleForStaticRegion(r.id);
+          if (res.status === 'updated') {
+            updated += 1;
+            r.totalBytes = (r.totalBytes || 0) + res.delta;
+          } else if (res.status === 'phantom') {
+            skipped += 1;
+          } else {
+            failed += 1;
+          }
+        } catch (e) {
+          console.warn(`[static region] ${r.id} schedule update failed`, e);
+          failed += 1;
+        }
+      }
+      saveStaticRegions(list);
+      status.textContent =
+        `schedules updated: ${updated}` +
+        (skipped ? ` · skipped ${skipped} (not downloaded)` : '') +
+        (failed ? ` · failed ${failed}` : '');
+      renderRegions();
+      try { await rebuildScheduleIndex(); } catch {}
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
 
   // ── PMTiles v3 reader (inline) ────────────────────────────────
   // Mirrors the encoder in build-regions.py. Reads enough of the
@@ -16430,6 +16525,15 @@ function fmtDate(ts) {
       maxZoom,
       isRefresh: false,
     });
+  };
+
+  // "↻ update schedules": schedule.json-only refresh for downloaded
+  // static regions (GTFS calendars expire every few months; the rest of
+  // each region's data doesn't). Works in both static-hf and
+  // static-flask mode via window._regionFileUrl.
+  document.getElementById('updateSchedulesBtn').onclick = async () => {
+    if (!checkWifiGate()) return;
+    await performStaticSchedulesUpdate();
   };
 
   const FONTS_MB = 3.7;
