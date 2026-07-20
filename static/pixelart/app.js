@@ -70,6 +70,7 @@
   const ctx = canvas.getContext('2d');
   const paletteEl = $('palette');
   const curColorTop = $('curColorTop');
+  const saveColorBtn = $('saveColorBtn');
   const colorInput = $('colorInput');
   const zoomLabel = $('zoomLabel');
   const newDialog = $('newDialog');
@@ -657,6 +658,13 @@
   function markActiveSwatch() {
     paletteEl.querySelectorAll('.swatch').forEach((s) =>
       s.classList.toggle('active', s.dataset.col.toLowerCase() === state.color.toLowerCase()));
+    // The "save current colour" button is only useful when the colour isn't
+    // already a swatch — disable it (with a hint) once it's been saved.
+    if (saveColorBtn) {
+      const saved = hasColor(state.color);
+      saveColorBtn.disabled = saved;
+      saveColorBtn.title = saved ? 'Current colour is already in the palette' : 'Save current colour to palette';
+    }
   }
   function setActiveColor(col) {
     state.color = col;
@@ -1156,6 +1164,8 @@
     $('exportGo').onclick = doExport;
     colorInput.addEventListener('input', (e) => setActiveColor(e.target.value));
     colorInput.addEventListener('change', (e) => addCustomColor(e.target.value));
+    // Save the current colour (e.g. one eyedropped off the art/reference) as a swatch.
+    if (saveColorBtn) saveColorBtn.onclick = () => addPaletteColor(state.color);
     // Reference image: the button opens the popout; everything lives in there.
     $('refBtn').onclick = (e) => { e.stopPropagation(); toggleMenu('refPanel'); };
     $('refChoose').onclick = () => $('refFile').click();
