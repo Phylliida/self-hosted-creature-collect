@@ -704,6 +704,32 @@
     if (i < 0 || i >= PALETTE.length || PALETTE.length <= 1) return;
     PALETTE.splice(i, 1); persistIfNamed(); buildPalette(); renderPalettePanel();
   }
+  // Replace every pixel of colour `from` with `to` across all layers, in one
+  // undoable step, then repoint the palette swatch from→to. `to` defaults to the
+  // current colour Y, so the flow is: eyedrop/pick Y, then hit a swatch's ⇄.
+  function replaceColor(from, to) {
+    if (!from || !to) return;
+    const f = from.toLowerCase(), t = to.toLowerCase();
+    if (f === t) return;                                   // nothing to do
+    const before = layerSnapshot();
+    let changed = 0;
+    for (const L of state.layers) {
+      const cs = L.cells; let dirty = false;
+      for (let i = 0; i < cs.length; i++) { if (cs[i] && cs[i].toLowerCase() === f) { cs[i] = to; dirty = true; changed++; } }
+      if (dirty) rebuildLayerBuf(L);
+    }
+    if (changed) pushHistory({ t: 'layers', before, after: layerSnapshot() });
+    // Keep the palette coherent: the X slot becomes Y (or is dropped if Y is
+    // already a swatch). Palette edits aren't in the undo stack (matching
+    // add/removePaletteColor), so undo restores the art but leaves the palette.
+    const idx = PALETTE.findIndex((c) => c.toLowerCase() === f);
+    if (idx >= 0) {
+      if (PALETTE.some((c, k) => k !== idx && c.toLowerCase() === t)) PALETTE.splice(idx, 1);
+      else PALETTE[idx] = to;
+      persistIfNamed();
+    }
+    setActiveColor(to); buildPalette(); renderPalettePanel(); render(); scheduleSave();
+  }
   function savePaletteAsPrompt() {
     let name = null; try { name = prompt('Save palette as', activePaletteName || 'My palette'); } catch (_) {}
     if (name == null) return; name = name.trim(); if (!name) return;
@@ -736,7 +762,14 @@
         b.onclick = () => setActiveColor(col);
         const x = document.createElement('span'); x.className = 'paledit-x'; x.textContent = '×'; x.title = 'Remove colour';
         x.onclick = (e) => { e.stopPropagation(); removePaletteColor(i); };
-        b.appendChild(x); list.appendChild(b);
+        // Replace this colour (X) everywhere with the current colour (Y). Hidden
+        // when the swatch already IS the current colour (no-op).
+        const isCur = col.toLowerCase() === state.color.toLowerCase();
+        const r = document.createElement('span'); r.className = 'paledit-r'; r.textContent = '⇄';
+        r.title = 'Replace ' + col + ' with the current colour everywhere';
+        if (isCur) r.style.display = 'none';
+        r.onclick = (e) => { e.stopPropagation(); replaceColor(col, state.color); };
+        b.appendChild(x); b.appendChild(r); list.appendChild(b);
       });
     }
   }
