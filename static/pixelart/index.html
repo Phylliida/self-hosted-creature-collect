@@ -82,6 +82,11 @@
     .refopt span { display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: var(--text); }
     .refopt small { color: var(--muted); font-size: 11px; }
     #refReset { margin-top: 2px; text-align: center; padding: 9px; }
+    /* Extract-palette-from-reference row */
+    .refpalrow { display: flex; align-items: center; gap: 8px; }
+    #refPalCount { width: 56px; padding: 7px; font-size: 15px; text-align: center; color: var(--text);
+      background: #101116; border: 1px solid var(--line); border-radius: 8px; }
+    #refPalette { flex: 1 1 auto; width: auto; padding: 8px; }
 
     /* Selection action bar (shown while a marquee exists) */
     #selBar { border-top: 1px solid var(--line); padding-top: 8px; }
@@ -253,6 +258,11 @@
                 <button id="refRotCw" class="xbtn" title="Rotate 90° right" aria-label="Rotate reference 90° clockwise">↻</button>
               </div>
               <button id="refReset" class="widebtn">Reset transform</button>
+              <div class="refpalrow">
+                <span class="reflabel">Palette</span>
+                <input type="number" id="refPalCount" min="2" max="64" step="1" value="16" inputmode="numeric" title="Number of colours to extract">
+                <button id="refPalette" class="widebtn" title="Build a palette from the reference image (median-cut)">Extract</button>
+              </div>
               <button id="refRemove" class="widebtn danger">Remove reference</button>
             </div>
           </div>
