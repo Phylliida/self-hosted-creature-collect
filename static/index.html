@@ -8665,22 +8665,27 @@ function fmtDate(ts) {
   }
   // Cooldown coloring: rather than drawing a second symbol layer on
   // top of `poi-icons`, we directly recolor the original layer's
-  // `icon-color` paint property. Two `within` checks against MultiPolygons
-  // built from the cooldown lat/lngs replace the per-feature ID lookup
-  // (which we can't do without re-tiling for feature IDs). Single-pass
-  // render means no two-layer timing race during fast zoom — the icon
-  // gets its final color in the same frame the underlying POI is drawn.
-  // Self-managing 30s poll keeps the gray → pink transition visible
-  // even with no user input; alive only while at least one entry is
-  // still active.
+  // `icon-color` paint property. A single `within` check against a
+  // MultiPolygon built from the on-cooldown lat/lngs replaces the
+  // per-feature ID lookup (which we can't do without re-tiling for
+  // feature IDs). Single-pass render means no two-layer timing race
+  // during fast zoom — the icon gets its final color in the same frame
+  // the underlying POI is drawn. Self-managing 30s poll keeps the
+  // gray → (normal) transition visible even with no user input; alive
+  // only while at least one entry is still on cooldown. NB: only the
+  // "active"/on-cooldown state recolors the icon — a collected stop
+  // whose cooldown elapsed ("ready") is left the plain theme colour so
+  // out-of-range stops stay uniform; the range-gated halo signals
+  // "collectable now".
   let _cooldownOverlayPoll = null;
   let _currentPoiThemeColor = (typeof _initTheme !== 'undefined' && _initTheme.poiIcon)
     || '#333';
   // Cooldown colors derive from the current theme so the overlay
   // feels native to whatever palette is active. Active = muted
-  // ("unavailable"), ready = accent ("highlighted/available").
-  // Defaults match the previous fixed values so the visual stays
-  // sane until applyTheme runs.
+  // ("unavailable"). `_currentCooldownReadyColor` (accent) is no longer
+  // painted onto the icon; it's kept because the tappable halo layer
+  // still uses it for its accent ring. Defaults match the previous
+  // fixed values so the visual stays sane until applyTheme runs.
   let _currentCooldownActiveColor = '#888';
   let _currentCooldownReadyColor  = '#f088b0';
   // Half-edge (in degrees) for the polygon around each cooldown POI.
@@ -8775,16 +8780,23 @@ function fmtDate(ts) {
   function refreshCooldownOverlays() {
     const inCreatureMode = !!(window.Creatures && window.Creatures.isEnabled
       && window.Creatures.isEnabled());
-    // POIs go into `within` polygons (Point features) for the
-    // poi-icons layer's icon-color. Buildings (category 'building')
-    // go into MultiPoint geometries for the building-pokestops
-    // layer's `distance`-based icon-color — `within` doesn't work
-    // for polygon features but `distance` does, returning 0 when
-    // the cooldown point is inside the building polygon.
+    // Only stops that are *on cooldown* ("active", now - t < COOLDOWN_MS)
+    // get a distinct colour. A collected stop whose cooldown has since
+    // elapsed ("ready") renders as the plain theme colour, exactly like a
+    // never-collected stop — so out-of-range stops stay visually uniform
+    // regardless of your collection history (see board task
+    // "when-stops-refresh-while-out-of-range-they-refre"). The range-gated
+    // tappable halo (refreshTappablePoiHalos) is the cue for "collectable
+    // right now"; a persistent accent "ready" icon out of range was
+    // redundant with it and clashed with the theme accent.
+    //
+    // POIs go into `within` polygons (Point features) for the poi-icons
+    // layer's icon-color. Buildings (category 'building') go into MultiPoint
+    // geometries for the building-pokestops layer's `distance`-based
+    // icon-color — `within` doesn't work for polygon features but `distance`
+    // does, returning 0 when the cooldown point is inside the building polygon.
     const poiActivePts = [];
-    const poiReadyPts = [];
     const buildingActivePts = [];
-    const buildingReadyPts = [];
     if (inCreatureMode) {
       const cooldowns = readPoiCooldowns();
       const now = Date.now();
@@ -8802,33 +8814,27 @@ function fmtDate(ts) {
         if (!isFinite(lng) || !isFinite(lat)) continue;
         const t = entryTimestamp(raw);
         const cat = (raw && typeof raw === 'object') ? (raw.c || '') : '';
-        const isActive = now - t < POI_COOLDOWN_MS;
-        if (cat === 'building') {
-          (isActive ? buildingActivePts : buildingReadyPts).push([lng, lat]);
-        } else {
-          (isActive ? poiActivePts : poiReadyPts).push([lng, lat]);
-        }
+        if (now - t >= POI_COOLDOWN_MS) continue; // "ready" → no special colour
+        (cat === 'building' ? buildingActivePts : poiActivePts).push([lng, lat]);
       }
     }
-    // POI layer: within-based recoloring.
-    const poiExpr = (poiActivePts.length || poiReadyPts.length)
+    // POI layer: within-based recoloring. Only the active/cooldown branch.
+    const poiExpr = poiActivePts.length
       ? ['case',
           ['within', buildCooldownPolygon(poiActivePts)], _currentCooldownActiveColor,
-          ['within', buildCooldownPolygon(poiReadyPts)],  _currentCooldownReadyColor,
           _currentPoiThemeColor]
       : _currentPoiThemeColor;
     try { map.setPaintProperty('poi-icons', 'icon-color', poiExpr); } catch {}
-    // Building layer: distance-based recoloring. MultiPoint of all
-    // active (or ready) cooldown centroids; building feature matches
-    // when its polygon's distance to the nearest point is below the
-    // small threshold (i.e., the point is essentially inside it).
-    const buildExpr = (buildingActivePts.length || buildingReadyPts.length)
-      ? buildBuildingColorExpr(buildingActivePts, buildingReadyPts)
+    // Building layer: distance-based recoloring. MultiPoint of all active
+    // cooldown centroids; building feature matches when its polygon's
+    // distance to the nearest point is below the small threshold (i.e., the
+    // point is essentially inside it). No ready set — see comment above.
+    const buildExpr = buildingActivePts.length
+      ? buildBuildingColorExpr(buildingActivePts, [])
       : _currentPoiThemeColor;
-    const buildOpacityExpr =
-      (buildingActivePts.length || buildingReadyPts.length)
-        ? buildBuildingOpacityExpr(buildingActivePts, buildingReadyPts)
-        : 0.45;
+    const buildOpacityExpr = buildingActivePts.length
+      ? buildBuildingOpacityExpr(buildingActivePts, [])
+      : 0.45;
     try {
       if (map.getLayer('building-pokestops')) {
         map.setPaintProperty('building-pokestops', 'icon-color', buildExpr);
