@@ -5,8 +5,8 @@ claimed_by: claude-opus
 created: 2026-07-19T20:27:09Z
 updated: 2026-07-19T22:28:07Z
 taiga_id: 78
-taiga_version: 5
-synced_hash: 0a3db650ca12aef0
+taiga_version: 6
+synced_hash: 4dac4c66b7a9faf9
 ---
 
 it should be faster than that, real time, please don't edit any gps settings tho those are very sensitive

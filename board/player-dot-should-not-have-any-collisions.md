@@ -5,8 +5,8 @@ claimed_by: claude-opus
 created: 2026-07-20T16:33:44Z
 updated: 2026-07-20T16:33:44Z
 taiga_id: 175
-taiga_version: 3
-synced_hash: 4499cea987719221
+taiga_version: 4
+synced_hash: 48f1b927553eb67f
 ---
 
 ## Description

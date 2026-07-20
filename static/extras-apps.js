@@ -51,6 +51,9 @@
   const ICON_UNDO = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7 L4 12 L9 17"/><path d="M4 12 h10 a5 5 0 0 1 5 5 v1"/></svg>';
   const ICON_REDO = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 7 L20 12 L15 17"/><path d="M20 12 h-10 a5 5 0 0 0 -5 5 v1"/></svg>';
   const ICON_X = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6 L18 18 M18 6 L6 18"/></svg>';
+  // Folder glyph for the "Saved" browse button — an icon keeps the top bar from
+  // overflowing on narrow phones once the Save / Save New split is added.
+  const ICON_FOLDER = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7 a1 1 0 0 1 1-1 h5 l2 2 h8 a1 1 0 0 1 1 1 v8 a1 1 0 0 1 -1 1 H4 a1 1 0 0 1 -1 -1 Z"/></svg>';
 
   // Quiver bubble icon: three nodes in a triangle with directed arrows
   // left -> top and top -> right. Inline SVG; uses currentColor to match the
@@ -186,6 +189,15 @@
     /* Close sits apart from the undo/redo cluster so it's not fat-fingered. */
     .exapp-close { background: rgba(224,90,107,0.55); margin-left: 14px; }
     .exapp-close:hover { background: rgba(224,90,107,0.82); }
+    /* On narrow phones the bar (New · Save · Save New · Saved · undo/redo/close)
+       runs out of room — tighten padding/gaps and the redundant close margin so
+       nothing gets pushed off the right edge. */
+    @media (max-width: 430px) {
+      .exapp-bar { gap: 6px; padding-left: 6px; padding-right: 6px; }
+      .exapp-btn { padding: 6px 8px; }
+      .exapp-iconbtn { width: 30px; height: 30px; }
+      .exapp-close { margin-left: 6px; }
+    }
     .exapp-confirm-msg { white-space: pre-line; }
     .exapp-overlay { position: absolute; left: 0; right: 0; top: var(--exapp-bar); bottom: 0;
       display: none; align-items: flex-start; justify-content: center; background: rgba(0,0,0,0.5); z-index: 2; }
@@ -259,7 +271,8 @@
       <div class="exapp-bar">
         ${renderActions(cfg.leadActions, 'lead')}
         <button class="exapp-btn exapp-save" type="button">Save</button>
-        <button class="exapp-btn exapp-browse" type="button">Saved</button>
+        <button class="exapp-btn exapp-savenew" type="button">Save New</button>
+        <button class="exapp-btn exapp-iconbtn exapp-browse" type="button" title="Saved" aria-label="Saved">${ICON_FOLDER}</button>
         <div class="exapp-title">${escapeHtml(cfg.title)}</div>
         ${renderActions(cfg.trailActions, 'trail')}
         <button class="exapp-btn exapp-iconbtn exapp-close" type="button" title="Close" aria-label="Close">${ICON_X}</button>
@@ -316,6 +329,12 @@
     const toastEl = win.querySelector('.exapp-toast');
     let loaded = false;
     let toastTimer = null;
+    // The named record the working doc currently maps to — set when you Save New
+    // or load one from the browse list. "Save" overwrites it in place; "Save New"
+    // always makes a fresh record. Cleared by New (so a blank canvas can't clobber
+    // the drawing you had loaded). Holds { id, name, createdAt }.
+    let currentRec = null;
+    let saving = false;   // guards against a double-tap creating duplicate records
 
     function toast(msg) {
       toastEl.textContent = msg;
@@ -407,7 +426,8 @@
     win.querySelector('.exapp-del-cancel').onclick = () => { resetHold(); delOverlay.classList.remove('show'); delTargetId = null; };
 
     // ── Per-app bar actions (lead = left cluster, trail = right of title) ──
-    const actionApi = { frameWin, toast, confirm: showConfirm, close };
+    const actionApi = { frameWin, toast, confirm: showConfirm, close,
+      clearCurrent: () => { currentRec = null; } };
     const wireActions = (list, side) => (list || []).forEach((a, i) => {
       const btn = win.querySelector(`[data-act="${side}-${i}"]`);
       if (btn && typeof a.onClick === 'function') btn.onclick = () => a.onClick(actionApi);
@@ -450,26 +470,61 @@
       global.addEventListener('pagehide', () => autosave(true));
     }
 
-    // ── Save ──
-    win.querySelector('.exapp-save').onclick = () => {
-      nameInput.value = '';
+    // ── Save / Save New ──
+    // "Save New" (and "Save" when nothing is loaded yet) opens the name overlay
+    // and creates a fresh record. "Save" overwrites the record the working doc
+    // came from (currentRec), in place and without a prompt.
+    function openSaveOverlay() {
+      nameInput.value = currentRec ? currentRec.name : '';
       saveOverlay.classList.add('show');
       setTimeout(() => nameInput.focus(), 50);
+    }
+    win.querySelector('.exapp-savenew').onclick = openSaveOverlay;
+    win.querySelector('.exapp-save').onclick = () => {
+      if (currentRec) overwriteCurrent(); else openSaveOverlay();
     };
     win.querySelector('.exapp-save-cancel').onclick = () => saveOverlay.classList.remove('show');
-    async function doSave() {
-      const name = (nameInput.value || '').trim();
-      if (!name) { nameInput.focus(); return; }
+
+    // Capture the working doc, or null (with a toast) if there's nothing to save.
+    function captureData() {
       let data = null;
       try { data = cfg.capture(frameWin()); } catch (e) { console.error('capture failed', e); }
-      if (data == null) { toast('Nothing to save yet'); return; }
+      if (data == null) { toast('Nothing to save yet'); return null; }
+      return data;
+    }
+    // New named record (from the overlay). Becomes the current record so a later
+    // plain "Save" overwrites it.
+    async function doSaveNew() {
+      if (saving) return;
+      const name = (nameInput.value || '').trim();
+      if (!name) { nameInput.focus(); return; }
+      const data = captureData();
+      if (data == null) return;
       const rec = { id: newId(), name: name, createdAt: Date.now(), data: data };
-      try { await cfg.store.put(rec); } catch (e) { console.error('save failed', e); toast('Save failed'); return; }
+      saving = true;
+      try { await cfg.store.put(rec); }
+      catch (e) { console.error('save failed', e); toast('Save failed'); return; }
+      finally { saving = false; }
+      currentRec = { id: rec.id, name: rec.name, createdAt: rec.createdAt };
       saveOverlay.classList.remove('show');
       toast('Saved “' + name + '”');
     }
-    win.querySelector('.exapp-save-ok').onclick = doSave;
-    nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); doSave(); } });
+    // Overwrite the record the working doc maps to (same id + name), refreshing
+    // its data + thumbnail. Falls back to the overlay if it somehow vanished.
+    async function overwriteCurrent() {
+      if (saving || !currentRec) return;
+      const data = captureData();
+      if (data == null) return;
+      const rec = { id: currentRec.id, name: currentRec.name,
+        createdAt: currentRec.createdAt || Date.now(), updatedAt: Date.now(), data: data };
+      saving = true;
+      try { await cfg.store.put(rec); }
+      catch (e) { console.error('save failed', e); toast('Save failed'); return; }
+      finally { saving = false; }
+      toast('Saved “' + rec.name + '”');
+    }
+    win.querySelector('.exapp-save-ok').onclick = doSaveNew;
+    nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); doSaveNew(); } });
 
     // ── Browse ──
     async function renderList() {
