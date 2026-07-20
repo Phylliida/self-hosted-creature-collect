@@ -1,12 +1,12 @@
 ---
 title: on ios the look direction updates only every 2-3 seconds
-status: in_progress
+status: done
 claimed_by: claude-opus
 created: 2026-07-19T20:27:09Z
-updated: 2026-07-19T21:15:00Z
+updated: 2026-07-19T22:28:07Z
 taiga_id: 78
-taiga_version: 3
-synced_hash: 5740f086a8c1ee5f
+taiga_version: 5
+synced_hash: 0a3db650ca12aef0
 ---
 
 it should be faster than that, real time, please don't edit any gps settings tho those are very sensitive
@@ -124,6 +124,44 @@ it should be faster than that, real time, please don't edit any gps settings tho
     (incl. `sensors` + `compass-rotate-lock` source assertions). Still
     `in_progress`: this doesn't *fix* the lag, it makes the pending field test
     actually conclusive.
+
+- (2026-07-20, fresh instance) **Grounded Plan B against the actual override
+  code** (no changes made — read-only pass, as planned). Every integration point
+  the paper design assumed is confirmed real:
+  - **Registration** (`AppBridgeViewController.swift:48-56`): `capacitorDidLoad()`
+    registers each override plugin with `bridge?.registerPluginInstance(...)`.
+    Adding `HeadingProbePlugin()` is a one-line insert here — no other wiring.
+  - **Plugin template** (`SensorProbePlugin.swift`): exact model to copy —
+    `@objc(HeadingProbePlugin) public class ...: CAPPlugin, CAPBridgedPlugin`,
+    with `identifier`/`jsName="HeadingProbe"`/`pluginMethods` (`start`,`stop`),
+    main-queue `start()`/`stop()` guarded by a `running` bool, and
+    `notifyListeners("heading", data:)` to push events to JS. Confirmed
+    SensorProbe streams the raw magnetometer (`CMMotionManager`, 4 Hz) but
+    computes **no** compass heading — so there is genuinely no existing native
+    heading source, and it must be a *separate* plugin (SensorProbe only runs
+    while the Extras Sensors dashboard is open; heading must run whenever the
+    map/cone is live — different lifecycle, as the design noted).
+  - **Xcode injection** (`inject-into-xcodeproj.rb:11`): adding the plugin to the
+    build is one array entry — append `'HeadingProbePlugin.swift'` to `NEW_FILES`.
+    Idempotent (skips if the file-ref already exists).
+  - **The "don't touch GPS" landmine is provably avoidable** — confirmed by
+    reading `patch-geolocation-plugin.py`: that entire patch guards ONE shared
+    `CLLocationManager`'s `desiredAccuracy`/`requestLocation()` negotiation. It
+    never touches heading. `startUpdatingHeading()` does not read or set
+    `desiredAccuracy` and doesn't participate in that negotiation, so a
+    **dedicated** `CLLocationManager` in HeadingProbe that ONLY calls
+    `startUpdatingHeading()` (never `startUpdatingLocation`, never
+    `desiredAccuracy`) is fully orthogonal to the sensitive shared manager.
+    Plan B is compliant with "don't edit GPS settings." Also note the patch is
+    anchored on `@capacitor/geolocation 6.1.1` and re-runs pre-`cap sync`; since
+    HeadingProbe is a NEW file (not a patch to the vendored plugin), the
+    patch-re-derivation caveat does not apply to it.
+  - **Net:** the design needs no revision. Shipping it is still gated on the
+    Plan C `[compass]` telemetry from an on-device run (if event gaps are tens of
+    ms rather than ~2-3 s, native heading is a waste). Remaining fork for the
+    human: write `HeadingProbePlugin.swift` now as a ready-to-wire artifact
+    (still can't be verified without a device + CI build) vs. wait for the field
+    test to prove it's needed first. Left `status` unchanged.
 
 ## Writeup (interim — needs on-device confirmation)
 **What I changed:** decoupled the compass-cone repaint from the raw sensor
