@@ -205,6 +205,21 @@
     .card .actions button { flex: 1; padding: 10px; text-align: center; }
     .card .actions .primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
     .hint { margin: -4px 0 12px; text-align: center; font-size: 11px; color: var(--muted); }
+    /* Pick-a-Pokémon picker */
+    .pokefields { display: flex; gap: 10px; justify-content: center; margin-bottom: 10px; }
+    .pokefields label { flex: 1; display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+    .pokefields input { width: 100%; box-sizing: border-box; padding: 9px 8px; font-size: 15px; color: var(--text);
+      background: #101116; border: 1px solid var(--line); border-radius: 8px; }
+    .pokefusion { display: flex; align-items: center; gap: 8px; justify-content: center; font-size: 12px;
+      color: var(--muted); margin-bottom: 12px; cursor: pointer; }
+    .pokepreview { display: flex; flex-direction: column; align-items: center; justify-content: center;
+      min-height: 96px; margin-bottom: 14px; }
+    #pokePreview { width: 96px; height: 96px; object-fit: contain; image-rendering: pixelated;
+      background-image: linear-gradient(45deg, #23242b 25%, transparent 25%, transparent 75%, #23242b 75%),
+                        linear-gradient(45deg, #23242b 25%, transparent 25%, transparent 75%, #23242b 75%);
+      background-size: 10px 10px; background-position: 0 0, 5px 5px; background-color: #14151a;
+      border: 1px solid var(--line); border-radius: 8px; }
+    .pokepreview .hint { margin: 0; }
   </style>
 </head>
 <body>
@@ -242,6 +257,7 @@
       <div id="refPanel" class="refmenu refpanel" hidden>
         <div class="menuhdr">Reference image</div>
         <button id="refChoose" class="widebtn">Choose image…</button>
+        <button id="refPickPoke" class="widebtn" hidden>Pick a Pokémon…</button>
         <div id="refControls">
           <div class="refpanelbody">
             <div class="vsliderbox">
@@ -362,6 +378,29 @@
       <div class="actions">
         <button id="newCancel">Cancel</button>
         <button id="newCreate" class="primary">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pick a Pokémon as the tracing reference. Only wired when this app runs
+       inside the host (same-origin iframe) that exposes window.Species +
+       window.Sprites; standalone, the button stays hidden. -->
+  <div id="pokeDialog" class="overlay">
+    <div class="card">
+      <h3>Pick a Pokémon</h3>
+      <div class="pokefields">
+        <label id="pokeHeadLbl">Pokémon<input type="text" id="pokeHead" list="pokeNames" placeholder="e.g. Bulbasaur" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+        <label id="pokeBodyLbl" hidden>Body<input type="text" id="pokeBody" list="pokeNames" placeholder="e.g. Charmander" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      </div>
+      <label class="pokefusion"><input type="checkbox" id="pokeFusion"><span>Fusion — trace a head + body pair</span></label>
+      <div class="pokepreview">
+        <img id="pokePreview" alt="Sprite preview" hidden>
+        <span id="pokePreviewMsg" class="hint">Type a name to preview a sprite.</span>
+      </div>
+      <datalist id="pokeNames"></datalist>
+      <div class="actions">
+        <button id="pokeCancel">Cancel</button>
+        <button id="pokeUse" class="primary" disabled>Use as reference</button>
       </div>
     </div>
   </div>
