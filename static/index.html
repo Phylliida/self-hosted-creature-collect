@@ -1885,9 +1885,22 @@
   .maplibregl-user-location-dot::before {
     background-color: var(--ui-accent) !important;
   }
+  /* The "you are here" dot (and its accuracy circle) are purely a visual
+     cue — they must NOT swallow taps. POIs are WebGL map-canvas layers hit
+     via map.on('click') + queryRenderedFeatures, so a tap only counts if it
+     reaches the canvas; the dot is a DOM Marker layered *above* the canvas,
+     so without this it steals every tap landing on its ~19px hit area (the
+     white ring), making POIs under the player uncatchable. Same fix the
+     creature markers already use (creatures.js .creature-marker). The dot
+     has no interactive children — the heading cone is already
+     pointer-events:none — so nothing needs to re-enable events. */
+  .maplibregl-user-location-dot {
+    pointer-events: none;
+  }
   .maplibregl-user-location-accuracy-circle {
     background-color: var(--ui-accent) !important;
     opacity: 0.2;
+    pointer-events: none;
   }
   /* Facing cone on the "you are here" dot — the standard GPS "which way
      am I looking" cue (Google/Pokémon-GO style). The vendored MapLibre
