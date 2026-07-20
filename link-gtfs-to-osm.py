@@ -3,9 +3,12 @@
 
 Usage: link-gtfs-to-osm.py <schedule.sqlite> <routes-osm1.sqlite> [<routes-osm2.sqlite> ...]
 
-Writes a `gtfs_osm_link(osm_node_id, gtfs_stop_id, distance_m, name_score)` table
-into the schedule DB so the server can answer "for this OSM node, which GTFS
-stops serve it?" at bbox-download time.
+Writes a `gtfs_osm_link(osm_node_id, gtfs_stop_id, distance_m, name_score,
+lng, lat)` table into the schedule DB so the server can answer "for this OSM
+node, which GTFS stops serve it?" at bbox-download time. The lng/lat columns
+carry the OSM node's own coordinates — the schedule export forwards them as
+per-stop osm_lng/osm_lat so the client can snap stop bubbles onto the exact
+POI icon node instead of the (independently-surveyed) GTFS stop point.
 """
 import math
 import sqlite3
@@ -112,7 +115,9 @@ def main(args):
             osm_node_id INTEGER,
             gtfs_stop_id TEXT,
             distance_m REAL,
-            name_score REAL
+            name_score REAL,
+            lng REAL,
+            lat REAL
         )
     """)
     sdb.execute("CREATE INDEX idx_link_osm ON gtfs_osm_link(osm_node_id)")
@@ -150,17 +155,17 @@ def main(args):
         if not candidates:
             unmatched += 1
         for gid, d, s in candidates:
-            batch.append((nid, gid, d, s))
+            batch.append((nid, gid, d, s, olng, olat))
             total += 1
         if len(batch) >= 5000:
-            sdb.executemany("INSERT INTO gtfs_osm_link VALUES (?, ?, ?, ?)", batch)
+            sdb.executemany("INSERT INTO gtfs_osm_link VALUES (?, ?, ?, ?, ?, ?)", batch)
             batch = []
         if time.time() - last_tick > 1.0:
             sys.stderr.write(f"\r\033[K    processed {i + 1:,}/{len(osm_stops):,}  links {total:,}")
             sys.stderr.flush()
             last_tick = time.time()
     if batch:
-        sdb.executemany("INSERT INTO gtfs_osm_link VALUES (?, ?, ?, ?)", batch)
+        sdb.executemany("INSERT INTO gtfs_osm_link VALUES (?, ?, ?, ?, ?, ?)", batch)
 
     sys.stderr.write(
         f"\r\033[K    {total:,} links written, "

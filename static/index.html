@@ -5701,6 +5701,7 @@ function fmtDate(ts) {
         local: { type: 'vector', tiles: [location.origin + '/tiles/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 14, maxTileCacheSize: 64 },
         'bus-routes': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
         'route-stops': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
+        'bus-tracker': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
         'walk-route': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
         'route-trip-stops': { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
         // Housenumbers are stored as per-region binary blobs in IDB and
@@ -5821,6 +5822,21 @@ function fmtDate(ts) {
             'circle-stroke-color': ['coalesce', ['get', 'colour'], '#888'],
             'circle-stroke-width': 2,
             'circle-pitch-alignment': 'map'
+          } },
+        { id: 'bus-tracker', type: 'symbol', source: 'bus-tracker',
+          layout: {
+            visibility: localStorage.getItem('cc.renderTransitLines') === '0' ? 'none' : 'visible',
+            'icon-image': 'bus-tracker',
+            'icon-size': ['interpolate', ['linear'], ['zoom'], 9, 0.35, 14, 0.55, 18, 0.8],
+            'icon-rotate': ['get', 'heading'],
+            'icon-rotation-alignment': 'map',
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true
+          },
+          paint: {
+            'icon-color': ['coalesce', ['get', 'colour'], '#e89035'],
+            'icon-halo-color': '#ffffff',
+            'icon-halo-width': 1.25
           } },
         { id: 'road-labels', type: 'symbol', source: 'local', 'source-layer': 'transportation_name',
           minzoom: 13,
@@ -8802,7 +8818,7 @@ function fmtDate(ts) {
     map.setLayoutProperty('buildings', 'visibility', on ? 'visible' : 'none');
   }
   const TRANSIT_LINE_LAYERS = [
-    'bus-routes', 'route-stop-bubbles',
+    'bus-routes', 'route-stop-bubbles', 'bus-tracker',
     'route-trip-stop-dots', 'route-trip-stop-labels',
   ];
   function applyTransitLinesVisibility() {
@@ -14977,7 +14993,15 @@ function fmtDate(ts) {
           _sliceStart = performance.now();
         }
         if (!idx.stops.has(gid)) {
-          idx.stops.set(gid, { lng: stop.lng, lat: stop.lat, name: stop.name || '' });
+          const st = { lng: stop.lng, lat: stop.lat, name: stop.name || '' };
+          // Exact POI-icon coords from the server-side OSM link (present
+          // in newer schedule payloads); the bubble snap prefers these
+          // over proximity matching.
+          if (stop.osm_lng != null && stop.osm_lat != null) {
+            st.osm_lng = stop.osm_lng;
+            st.osm_lat = stop.osm_lat;
+          }
+          idx.stops.set(gid, st);
         }
         for (const onid of (stop.osm_nodes || [])) {
           if (!idx.osmToGtfs.has(onid)) idx.osmToGtfs.set(onid, new Set());
@@ -15516,33 +15540,51 @@ function fmtDate(ts) {
   // Bubble coords come from the GTFS feed's stops.txt; the stop POI
   // icons come from OSM nodes (mostly public_transport=platform). The
   // two are authored independently and drift apart by tens of meters
-  // in places, which reads as "bubbles float off the icons". Snap each
-  // bubbled stop to a nearby transit POI when the match is unambiguous:
-  // a name match within 150 m, else a single candidate within 50 m.
-  // Ambiguous cases (paired opposite-direction stops) and areas with no
-  // OSM coverage keep the GTFS point. Offline prototype on region-0530
-  // (Montreal): 69% name snaps, 3% unique, 12% no coverage, 16% kept.
+  // in places, which reads as "bubbles float off the icons". Two snap
+  // tiers, best first:
+  //   1. EXACT: newer schedule payloads carry osm_lng/osm_lat — the
+  //      coords of the OSM node the server-side link picked for this
+  //      stop. That node IS the icon (measured 0 m median distance to
+  //      the nearest transit POI), so use it verbatim.
+  //   2. PROXIMITY (unlinked stops): snap to a nearby transit POI, but
+  //      only when the match is unambiguous, and never onto a POI a
+  //      closer stop already claimed (the "bubble on the wrong stop"
+  //      bug):
+  //      a. candidates filtered to POI categories matching the stop's
+  //         own mode(s) — a bus stop never snaps onto a metro entrance;
+  //      b. nearest candidate within 30 m wins;
+  //      c. else nearest name match within 100 m;
+  //      d. each POI is claimed once, closest stop first.
+  // Ambiguous cases (paired opposite-direction stops) and areas with
+  // no OSM coverage keep the GTFS point.
   const ROUTE_STOP_SNAP_CATS = new Set([
     // Mirrors the transit-stop category set the POI card uses.
     'stop_position', 'platform', 'station', 'bus_stop',
     'tram_stop', 'halt', 'subway_entrance', 'ferry_terminal',
   ]);
-  let _stopSnapGrid = null;
-  let _stopSnapGridPoiCount = -1;
-  function _stopSnapGridGet() {
-    if (_stopSnapGrid && _stopSnapGridPoiCount === allPois.length) return _stopSnapGrid;
-    const cell = 0.002; // ~200 m cells; lookups scan the 3×3 neighbourhood
-    const grid = new Map();
-    for (const p of allPois) {
-      if (!ROUTE_STOP_SNAP_CATS.has(p.category)) continue;
-      const k = Math.floor(p.lng / cell) + ',' + Math.floor(p.lat / cell);
-      let arr = grid.get(k);
-      if (!arr) { arr = []; grid.set(k, arr); }
-      arr.push(p);
-    }
-    _stopSnapGrid = { grid, cell };
-    _stopSnapGridPoiCount = allPois.length;
-    return _stopSnapGrid;
+  // Per-mode candidate categories; platform/stop_position are
+  // mode-agnostic, everything else is mode-specific.
+  const ROUTE_STOP_MODE_CATS = {
+    bus: ['bus_stop', 'platform', 'stop_position'],
+    trolleybus: ['bus_stop', 'platform', 'stop_position'],
+    tram: ['tram_stop', 'platform', 'stop_position'],
+    subway: ['subway_entrance', 'station', 'platform', 'stop_position'],
+    rail: ['station', 'halt', 'platform', 'stop_position'],
+    ferry: ['ferry_terminal', 'platform'],
+    monorail: ['station', 'platform', 'stop_position'],
+  };
+  // Mirrors the gtfsModeToOsm buckets in rebuildTransitFromSchedule.
+  function _stopSnapModeBucket(m) {
+    return (
+      m === 0 || m === 5 ? 'tram' :
+      m === 1 ? 'subway' :
+      m === 2 ? 'rail' :
+      m === 3 ? 'bus' :
+      m === 4 ? 'ferry' :
+      m === 11 ? 'trolleybus' :
+      m === 12 ? 'monorail' :
+      'bus'
+    );
   }
   function _stopSnapNormPart(s) {
     return s.toLowerCase()
@@ -15567,28 +15609,81 @@ function fmtDate(ts) {
     return short.every((sp) =>
       long.some((lp) => sp === lp || (sp.length >= 4 && lp.includes(sp)) || (lp.length >= 4 && sp.includes(lp))));
   }
-  function _snapStopToPoi(lng, lat, name) {
-    const { grid, cell } = _stopSnapGridGet();
-    const cx = Math.floor(lng / cell);
-    const cy = Math.floor(lat / cell);
-    const cands = [];
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dy = -1; dy <= 1; dy++) {
-        const arr = grid.get((cx + dx) + ',' + (cy + dy));
-        if (arr) cands.push(...arr);
+  // gtfsStopId -> snapped {lng, lat} for every confidently-matched
+  // stop. Rebuilt lazily when the POI set or the schedule index
+  // changes; eye toggles just re-read the cached Map.
+  let _stopSnapAssign = null;
+  let _stopSnapAssignPoiCount = -1;
+  let _stopSnapAssignIdx = null;
+  function _stopSnapAssignGet() {
+    if (_stopSnapAssign && _stopSnapAssignPoiCount === allPois.length
+        && _stopSnapAssignIdx === scheduleIdx) return _stopSnapAssign;
+    const assign = new Map();
+    _stopSnapAssign = assign;
+    _stopSnapAssignPoiCount = allPois.length;
+    _stopSnapAssignIdx = scheduleIdx;
+    if (!scheduleIdx.stops || !scheduleIdx.stops.size) return assign;
+    // Grid over transit POIs (~200 m cells; lookups scan the 3×3).
+    const cell = 0.002;
+    const grid = new Map();
+    for (const p of allPois) {
+      if (!ROUTE_STOP_SNAP_CATS.has(p.category)) continue;
+      const k = Math.floor(p.lng / cell) + ',' + Math.floor(p.lat / cell);
+      let arr = grid.get(k);
+      if (!arr) { arr = []; grid.set(k, arr); }
+      arr.push(p);
+    }
+    const distM = (ax, ay, bx, by) => Math.hypot(
+      (ax - bx) * 111320 * Math.cos((ay + by) / 2 * Math.PI / 180),
+      (ay - by) * 110540);
+    const desired = [];
+    for (const [gid, s] of scheduleIdx.stops) {
+      // Exact link from the server-side OSM join (osm_lng/osm_lat in
+      // newer schedule payloads) — this IS the icon node, no matching
+      // needed. Unlinked stops fall through to proximity matching.
+      if (s.osm_lng != null && s.osm_lat != null) {
+        assign.set(gid, { lng: s.osm_lng, lat: s.osm_lat });
+        continue;
+      }
+      // This stop's allowed POI categories: union of its serving
+      // routes' mode buckets (a stop served by bus + metro may snap
+      // to either's infrastructure).
+      const cats = new Set();
+      for (const [patId] of (scheduleIdx.stopPatterns.get(gid) || [])) {
+        const pat = scheduleIdx.patterns.get(patId);
+        if (!pat) continue;
+        const r = scheduleIdx.routesById.get(pat.route_id);
+        for (const c of ROUTE_STOP_MODE_CATS[_stopSnapModeBucket(r ? r.mode : null)]) cats.add(c);
+      }
+      if (!cats.size) for (const c of ROUTE_STOP_MODE_CATS.bus) cats.add(c);
+      const cx = Math.floor(s.lng / cell);
+      const cy = Math.floor(s.lat / cell);
+      const cands = [];
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          const arr = grid.get((cx + dx) + ',' + (cy + dy));
+          if (arr) for (const p of arr) { if (cats.has(p.category)) cands.push(p); }
+        }
+      }
+      if (!cands.length) continue;
+      cands.sort((a, b) => distM(s.lng, s.lat, a.lng, a.lat) - distM(s.lng, s.lat, b.lng, b.lat));
+      const d0 = distM(s.lng, s.lat, cands[0].lng, cands[0].lat);
+      if (d0 <= 30) { desired.push([d0, gid, cands[0]]); continue; }
+      for (const p of cands) {
+        const d = distM(s.lng, s.lat, p.lng, p.lat);
+        if (d > 100) break;
+        if (_stopSnapNamesMatch(s.name, p.name)) { desired.push([d, gid, p]); break; }
       }
     }
-    if (!cands.length) return null;
-    const cosLat = Math.cos(lat * Math.PI / 180);
-    const distM = (p) => Math.hypot((p.lng - lng) * 111320 * cosLat, (p.lat - lat) * 110540);
-    cands.sort((a, b) => distM(a) - distM(b));
-    // Nearest name match within 150 m wins.
-    for (const p of cands) {
-      if (distM(p) <= 150 && _stopSnapNamesMatch(name, p.name)) return p;
+    // Each POI is claimed once, closest stop first.
+    desired.sort((a, b) => a[0] - b[0]);
+    const claimed = new Set();
+    for (const [, gid, p] of desired) {
+      if (claimed.has(p)) continue;
+      claimed.add(p);
+      assign.set(gid, { lng: p.lng, lat: p.lat });
     }
-    // Otherwise snap only when unambiguous: exactly one POI within 50 m.
-    const close = cands.filter((p) => distM(p) <= 50);
-    return close.length === 1 ? close[0] : null;
+    return assign;
   }
 
   let viewedRoutes = new Set();
@@ -15605,12 +15700,13 @@ function fmtDate(ts) {
     for (const [rid, meta] of Object.entries(routeMetaIndex)) {
       if (modeOn(meta.mode) && routeOn(rid)) bubbleRids.add(rid);
     }
+    const snapAssign = _stopSnapAssignGet();
     for (const rid of bubbleRids) {
       const m = routeMetaIndex[rid];
       if (!m) continue;
       const colour = /^#[0-9a-f]{3,8}$/i.test(m.colour || '') ? m.colour : '#888';
       for (const s of (m.stops || [])) {
-        const snap = _snapStopToPoi(s.lng, s.lat, s.name);
+        const snap = snapAssign.get(s.node_id);
         features.push({
           type: 'Feature',
           geometry: {
@@ -15728,7 +15824,196 @@ function fmtDate(ts) {
     // Line visibility changed — stop bubbles follow the eye state too
     // (refreshStopsSource renders viewedRoutes ∪ line-on routes).
     refreshStopsSource();
+    // Bus tracker renders the same visible-route set.
+    refreshBusTracker();
   }
+
+  // ── Live bus tracker ────────────────────────────────────────
+  // Animated bus markers for every route whose line is on (the eye).
+  // Positions come purely from the schedule: for each trip active
+  // right now (service covers today, wall time between its first and
+  // last stop times), interpolate along the pattern's shape between
+  // the two stops bracketing now. A requestAnimationFrame loop
+  // recomputes from wall time every frame (fractional seconds), so
+  // motion is perfectly smooth and never drifts; trips still appear/
+  // disappear on their own. Visual only — no real-time feed.
+  const BUS_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#fff" d="M7 1.5C4.8 1.5 3 3.3 3 5.5V16c0 1 .4 1.9 1 2.5v1c0 .8.7 1.5 1.5 1.5S7 20.3 7 19.5V19h10v.5c0 .8.7 1.5 1.5 1.5s1.5-.7 1.5-1.5v-1c.6-.6 1-1.5 1-2.5V5.5c0-2.2-1.8-4-4-4H7z"/></svg>';
+  let _busRaf = null;
+  let _busGeomCache = new Map(); // patId -> {coords, stopVtx, seqs} | null
+  let _busGeomCacheIdx = null;   // scheduleIdx identity the cache belongs to
+
+  // Per-pattern geometry for bus interpolation: the shape polyline
+  // (falling back to straight lines through stops) plus, per listed
+  // stop, the nearest polyline vertex — so inter-stop interpolation
+  // follows the drawn route line instead of cutting corners.
+  function _busPatternGeom(patId) {
+    if (_busGeomCacheIdx !== scheduleIdx) {
+      _busGeomCache = new Map();
+      _busGeomCacheIdx = scheduleIdx;
+    }
+    let g = _busGeomCache.get(patId);
+    if (g !== undefined) return g;
+    g = null;
+    const entries = (scheduleIdx.patternBboxStops.get(patId) || [])
+      .map(([seq, sid]) => ({ seq, s: scheduleIdx.stops.get(sid) }))
+      .filter((x) => x.s);
+    if (entries.length >= 2) {
+      const shape = scheduleIdx.shapeByPattern.get(patId);
+      let coords;
+      let stopVtx;
+      if (shape && shape.length >= 2) {
+        coords = shape;
+        stopVtx = entries.map(({ s }) => {
+          let best = 0;
+          let bestD = Infinity;
+          for (let i = 0; i < coords.length; i++) {
+            const dx = coords[i][0] - s.lng;
+            const dy = coords[i][1] - s.lat;
+            const d = dx * dx + dy * dy;
+            if (d < bestD) { bestD = d; best = i; }
+          }
+          return best;
+        });
+      } else {
+        coords = entries.map(({ s }) => [s.lng, s.lat]);
+        stopVtx = entries.map((_, i) => i);
+      }
+      g = { coords, stopVtx, seqs: entries.map((x) => x.seq) };
+    }
+    _busGeomCache.set(patId, g);
+    return g;
+  }
+
+  // Point at `frac` of the arc length between polyline vertices v0..v1,
+  // plus the bearing (degrees clockwise from north) of that segment.
+  function _busInterp(coords, v0, v1, frac) {
+    if (v1 <= v0) v1 = Math.min(v0 + 1, coords.length - 1);
+    if (v0 >= v1) {
+      const c = coords[Math.min(v0, coords.length - 1)];
+      return [c[0], c[1], 0];
+    }
+    const segLen = (i) => {
+      const dx = (coords[i + 1][0] - coords[i][0]) * 111320 * Math.cos(coords[i][1] * Math.PI / 180);
+      const dy = (coords[i + 1][1] - coords[i][1]) * 110540;
+      return Math.hypot(dx, dy);
+    };
+    let total = 0;
+    for (let i = v0; i < v1; i++) total += segLen(i);
+    let target = frac * total;
+    for (let i = v0; i < v1; i++) {
+      const L = segLen(i);
+      if (target <= L || i === v1 - 1) {
+        const f = L > 0 ? Math.min(1, target / L) : 0;
+        const lng = coords[i][0] + (coords[i + 1][0] - coords[i][0]) * f;
+        const lat = coords[i][1] + (coords[i + 1][1] - coords[i][1]) * f;
+        const hdx = (coords[i + 1][0] - coords[i][0]) * Math.cos(coords[i][1] * Math.PI / 180);
+        const hdy = coords[i + 1][1] - coords[i][1];
+        return [lng, lat, (Math.atan2(hdx, hdy) * 180 / Math.PI + 360) % 360];
+      }
+      target -= L;
+    }
+  }
+
+  // Flat per-(pattern, trip) candidate list for the currently visible
+  // routes, rebuilt on every refreshBusTracker. Keeps per-frame work
+  // to a single array scan — no routeMetaIndex walking at 60 fps.
+  let _busCandidates = [];
+  let _busSvcSets = null;
+  function _rebuildBusCandidates() {
+    _busCandidates = [];
+    if (!scheduleIdx.routesById || !scheduleIdx.routesById.size) return;
+    for (const [rid, meta] of Object.entries(routeMetaIndex)) {
+      if (!modeOn(meta.mode) || !routeOn(rid)) continue;
+      for (const patId of meta.patterns || []) {
+        const geom = _busPatternGeom(patId);
+        if (!geom) continue;
+        for (const trip of (scheduleIdx.tripsByPattern.get(patId) || [])) {
+          const cum = tripCumulative(trip);
+          _busCandidates.push({
+            geom, trip, cum, dur: cum[cum.length - 1],
+            colour: meta.colour || '#e89035', ref: meta.ref || '',
+          });
+        }
+      }
+    }
+    _busSvcSets = null; // recompute service validity on next frame
+  }
+  function _busAnyOn() {
+    for (const [rid, m] of Object.entries(routeMetaIndex)) {
+      if (m && modeOn(m.mode) && routeOn(rid)) return true;
+    }
+    return false;
+  }
+
+  // Currently-active candidate trips → point features for this instant.
+  function computeBusPositions(now = new Date(), svcSets = expandedServiceSets(now)) {
+    const features = [];
+    // Fractional seconds so the rAF loop animates smoothly within each
+    // timetable second (ms are tz-independent — offsets are whole min).
+    const nowSec = todayInfo(now).nowSec + now.getMilliseconds() / 1000;
+    for (const c of _busCandidates) {
+      const off = tripDayOffset(c.trip, svcSets);
+      if (off === null) continue;
+      const t0 = c.trip.f + off;
+      if (nowSec < t0 || nowSec > t0 + c.dur) continue;
+      const { geom, cum } = c;
+      for (let k = 0; k < geom.seqs.length - 1; k++) {
+        const tA = t0 + (cum[geom.seqs[k]] || 0);
+        const tB = t0 + (cum[geom.seqs[k + 1]] != null ? cum[geom.seqs[k + 1]] : c.dur);
+        if (nowSec < tA || nowSec > tB) continue;
+        const frac = tB > tA ? (nowSec - tA) / (tB - tA) : 0;
+        const [lng, lat, heading] = _busInterp(geom.coords, geom.stopVtx[k], geom.stopVtx[k + 1], frac);
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [lng, lat] },
+          properties: { colour: c.colour, ref: c.ref, headsign: c.trip.h || '', heading },
+        });
+        break; // one position per trip
+      }
+    }
+    return features;
+  }
+
+  function _busTrackerTick() {
+    const src = map.getSource('bus-tracker');
+    if (src) src.setData({ type: 'FeatureCollection', features: computeBusPositions() });
+  }
+
+  // Animation frame loop: recompute positions from wall time every
+  // frame. Service validity is date-granularity, so it's refreshed only
+  // once a second, not per frame.
+  function _busFrame() {
+    _busRaf = null;
+    const now = new Date();
+    if (!_busSvcSets || !_busSvcSets.sets || now - _busSvcSets.at >= 1000) {
+      _busSvcSets = { at: now, sets: expandedServiceSets(now) };
+    }
+    const src = map.getSource('bus-tracker');
+    if (src) src.setData({ type: 'FeatureCollection', features: computeBusPositions(now, _busSvcSets.sets) });
+    _busRaf = requestAnimationFrame(_busFrame);
+  }
+  function _busAnimStop() {
+    if (_busRaf) { cancelAnimationFrame(_busRaf); _busRaf = null; }
+  }
+
+  // Called from refreshRoutesSource whenever the visible-route set
+  // changes. Rebuilds the candidate trips, pushes an immediate frame,
+  // and starts/stops the rAF loop: it runs only while at least one
+  // route line is on and the tab is visible.
+  function refreshBusTracker() {
+    if (!map.hasImage('bus-tracker')) registerIconFromSvg('bus-tracker', BUS_ICON_SVG);
+    _rebuildBusCandidates();
+    _busTrackerTick();
+    if (_busAnyOn() && !document.hidden) {
+      if (!_busRaf) _busRaf = requestAnimationFrame(_busFrame);
+    } else {
+      _busAnimStop();
+    }
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) _busAnimStop();
+    else refreshBusTracker();
+  });
 
   // Gate large downloads when "Only download on WiFi" is enabled.
   // - Chrome/Android reports cellular via navigator.connection.type → hard block.
