@@ -5870,7 +5870,22 @@ function fmtDate(ts) {
             'icon-size': ['interpolate', ['exponential', 1.5], ['zoom'],
               11, 0.08, 14, 0.2, 16, 0.4, 18, 0.75, 20, 1.0],
             'icon-allow-overlap': true,
-            'icon-ignore-placement': true
+            'icon-ignore-placement': true,
+            // Clickable POIs draw on top of non-clickable ones. With
+            // `icon-allow-overlap`, overlapping icons all render, so draw
+            // order decides which pin is visible on top. MapLibre draws
+            // symbols in ascending `symbol-sort-key` order (higher key =
+            // drawn last = on top). "Clickable" mirrors isRealPoi(): a POI
+            // is transit infrastructure (non-clickable — it opens a transit
+            // schedule, not the POI card) when its subclass/class is one of
+            // stop_position / platform / station. Those get key 0 (bottom);
+            // every other POI gets 1 (top). Keeps a single layer so the
+            // cooldown recolor, fav filter, halo anchoring, and click query
+            // all stay unchanged.
+            'symbol-sort-key': ['case',
+              ['in', ['coalesce', ['get', 'subclass'], ['get', 'class'], ''],
+                ['literal', ['stop_position', 'platform', 'station']]],
+              0, 1]
           },
           paint: {
             'icon-color': _initTheme.poiIcon,
