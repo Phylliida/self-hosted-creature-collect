@@ -561,6 +561,8 @@
         if (!rec) return;
         try { cfg.apply(frame, frameWin(), rec.data); }
         catch (err) { console.error('apply failed', err); toast('Load failed'); return; }
+        // Remember what we loaded so a later "Save" overwrites this record.
+        currentRec = { id: rec.id, name: rec.name, createdAt: rec.createdAt };
         browseOverlay.classList.remove('show');
         toast('Loaded “' + rec.name + '”');
       }
@@ -683,7 +685,7 @@
             html: 'Clear', title: 'Clear all tracks',
             onClick: (api) => api.confirm(
               'Clear everything?\nAll unsaved tracks will be lost.', 'Clear',
-              () => { const w = api.frameWin(); if (w && w.SynthApp && w.SynthApp.clearAll) w.SynthApp.clearAll(); }),
+              () => { api.clearCurrent(); const w = api.frameWin(); if (w && w.SynthApp && w.SynthApp.clearAll) w.SynthApp.clearAll(); }),
           }],
         });
         synthWin.open();
@@ -704,7 +706,7 @@
             html: 'New', title: 'New drawing',
             onClick: (api) => api.confirm(
               'Start a new drawing?\nThis clears the current canvas.', 'New',
-              () => { const w = api.frameWin(); if (w && w.DrawApp) w.DrawApp.newDrawing(); }),
+              () => { api.clearCurrent(); const w = api.frameWin(); if (w && w.DrawApp) w.DrawApp.newDrawing(); }),
           }],
           trailActions: [
             { html: ICON_UNDO, title: 'Undo', iconBtn: true,
@@ -726,7 +728,11 @@
           // the confirm — Create discards the current canvas). Undo/redo proxy in.
           leadActions: [{
             html: 'New', title: 'New pixel art',
-            onClick: (api) => { const w = api.frameWin(); if (w && w.PixelApp) w.PixelApp.promptNew(); },
+            // promptNew() opens the pixel app's own size dialog (Create discards
+            // the canvas). Clear currentRec now so a Save after Create can't
+            // overwrite the drawing you had loaded; if you cancel, the next Save
+            // just falls back to naming — a safe direction, never data loss.
+            onClick: (api) => { api.clearCurrent(); const w = api.frameWin(); if (w && w.PixelApp) w.PixelApp.promptNew(); },
           }],
           trailActions: [
             { html: ICON_UNDO, title: 'Undo', iconBtn: true,
