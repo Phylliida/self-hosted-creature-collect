@@ -6104,6 +6104,23 @@ function fmtDate(ts) {
   // Physical tracks (tile layers) are still controlled by mode toggles.
   function routeOn(rid) { return transitState.routes[rid] === true; }
 
+  // Shared per-route line-visibility flip used by every eye toggle (the
+  // transit popup's route rows and the POI card's departure rows). Also
+  // re-enables the route's mode chip when showing a line whose mode is
+  // off. Button icon/DOM updates are the caller's job.
+  async function setRouteLineVisible(rid, on) {
+    transitState.routes[rid] = on;
+    if (on) {
+      const meta = routeMetaIndex[rid];
+      if (meta && !modeOn(meta.mode)) {
+        transitState.modes[meta.mode] = true;
+        applyTransitTileVisibility();
+      }
+    }
+    saveTransitState(transitState);
+    await refreshRoutesSource();
+  }
+
   function applyTransitTileVisibility() {
     for (const [mode, layerId] of Object.entries(TRANSIT_TILE_LAYERS)) {
       if (!map.getLayer(layerId)) continue;
@@ -9228,10 +9245,19 @@ function fmtDate(ts) {
           const label = g.headsign || g.route?.long || '';
           const times = g.departures.map(d => `<span class="dep-time">${formatDepartureTime(d.dep)}</span>`).join('');
           const timesOrHint = times || `<span class="dep-empty">no upcoming — tap for full schedule</span>`;
+          // Per-row eye toggling the route's map line — same state and
+          // behaviour as the transit popup's route-row eye. Rows are
+          // per-pattern, so both directions of a route carry an eye for
+          // the same rid; the click handler syncs them.
+          const rid = scheduleIdx.patterns.get(g.patternId)?.route_id;
+          const on = rid != null && routeOn(rid);
+          const eyeBtn = rid == null ? '' :
+            `<button type="button" class="eye-toggle ${on ? 'on' : ''}" data-rid="${esc(String(rid))}" title="${on ? 'hide line on map' : 'show line on map'}" aria-pressed="${on}">${eyeSvg(on)}</button>`;
           return `<div class="dep-row" data-pattern="${esc(String(g.patternId))}" data-stop="${esc(String(g.gtfsStopId))}" data-seq="${esc(String(g.seq))}" title="Tap to see all times">
             <span class="ref" style="background:${esc(colour)}">${esc(short)}</span>
             <span class="dep-times">${timesOrHint}</span>
             <span class="dep-name">${esc(label)}</span>
+            ${eyeBtn}
           </div>`;
         }).join('');
         rows.push(`<div class="route-popup"><div class="dep-section">
@@ -9258,6 +9284,25 @@ function fmtDate(ts) {
           el.dataset.pattern, el.dataset.stop, +el.dataset.seq,
           null, todayInfo(new Date()).gtfsIdx,
         );
+      };
+    });
+    // Eye toggles inside the transit rows: flip the route's map line
+    // without opening the schedule modal (stopPropagation — the row
+    // itself opens the modal). Sync every eye sharing the rid since
+    // both directions of a route can list at the same stop.
+    body.querySelectorAll('.eye-toggle[data-rid]').forEach(el => {
+      el.onclick = async (ev) => {
+        ev.stopPropagation();
+        ev.preventDefault();
+        const rid = el.dataset.rid;
+        const nowOn = !routeOn(rid);
+        await setRouteLineVisible(rid, nowOn);
+        body.querySelectorAll(`.eye-toggle[data-rid="${CSS.escape(rid)}"]`).forEach(b => {
+          b.classList.toggle('on', nowOn);
+          b.innerHTML = eyeSvg(nowOn);
+          b.setAttribute('aria-pressed', String(nowOn));
+          b.title = nowOn ? 'hide line on map' : 'show line on map';
+        });
       };
     });
     // For transit POIs (bus stops, etc.) in creature mode, hoist the
@@ -10893,20 +10938,11 @@ function fmtDate(ts) {
         const rid = el.dataset.rid;
         if (el.dataset.action === 'toggle') {
           const nowOn = !routeOn(rid);
-          transitState.routes[rid] = nowOn;
-          if (nowOn) {
-            const meta = routeMetaIndex[rid];
-            if (meta && !modeOn(meta.mode)) {
-              transitState.modes[meta.mode] = true;
-              applyTransitTileVisibility();
-            }
-          }
-          saveTransitState(transitState);
+          await setRouteLineVisible(rid, nowOn);
           el.classList.toggle('on', nowOn);
           el.innerHTML = eyeSvg(nowOn);
           el.setAttribute('aria-pressed', String(nowOn));
           el.title = nowOn ? 'hide line on map' : 'show line on map';
-          await refreshRoutesSource();
         } else if (el.dataset.action === 'view') {
           if (viewedRoutes.has(rid)) viewedRoutes.delete(rid);
           else viewedRoutes.add(rid);
@@ -15481,7 +15517,16 @@ function fmtDate(ts) {
     const src = map.getSource('route-stops');
     if (!src) return;
     const features = [];
-    for (const rid of viewedRoutes) {
+    // Bubbles = explicitly-viewed routes (👁 view-btn) ∪ every route
+    // whose line is currently on (eye) — turning a route's line on
+    // means "show me this route", and where it stops is part of that.
+    // The view-btn stays independent: it keeps bubbles up with the
+    // line off.
+    const bubbleRids = new Set(viewedRoutes);
+    for (const [rid, meta] of Object.entries(routeMetaIndex)) {
+      if (modeOn(meta.mode) && routeOn(rid)) bubbleRids.add(rid);
+    }
+    for (const rid of bubbleRids) {
       const m = routeMetaIndex[rid];
       if (!m) continue;
       const colour = /^#[0-9a-f]{3,8}$/i.test(m.colour || '') ? m.colour : '#888';
@@ -15597,6 +15642,9 @@ function fmtDate(ts) {
     }
     src.setData({ type: 'FeatureCollection', features });
     applyTransitTileVisibility();
+    // Line visibility changed — stop bubbles follow the eye state too
+    // (refreshStopsSource renders viewedRoutes ∪ line-on routes).
+    refreshStopsSource();
   }
 
   // Gate large downloads when "Only download on WiFi" is enabled.
