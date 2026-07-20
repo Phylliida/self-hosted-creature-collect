@@ -205,7 +205,10 @@
       ctx.fillStyle = '#14151a'; ctx.fillRect(rx, ry, rw, rh);
       ctx.save();
       ctx.globalAlpha = state.refOpacity;
-      ctx.imageSmoothingEnabled = true;
+      // Point (nearest-neighbour) sampling so the reference stays crisp when the
+      // canvas is zoomed in — matches the pixel-art workflow, and every other
+      // draw in this file already samples this way.
+      ctx.imageSmoothingEnabled = false;
       ctx.drawImage(state.refImg, rx, ry, rw, rh);
       ctx.restore();
     }
