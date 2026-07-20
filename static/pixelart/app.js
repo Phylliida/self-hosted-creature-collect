@@ -1312,6 +1312,175 @@
     } catch (e) { alert('Export failed: ' + (e && e.message ? e.message : e)); }
   }
 
+  // ── Pick a Pokémon as the tracing reference ──
+  // This app runs as a same-origin iframe inside the host, which exposes
+  // window.Species (name list) and window.Sprites.getDefaultSpriteBlob(head,
+  // body) → Blob. We reach those on the host frame, render the sprite to a PNG
+  // data URL here (keeping alpha + crisp pixels), and feed it to setReference —
+  // exactly like a chosen file. Standalone (no host), the button stays hidden.
+  let pokeNameToId = null;      // lowercased name → 1-indexed species id
+  let pokeNamesLoaded = false;
+  let pokePreviewToken = 0;     // guards against out-of-order async previews
+  let pokePendingUrl = null;    // data URL of the currently-previewed sprite
+  let pokePreviewTimer = null;
+
+  // The host frame carrying Species + Sprites, or null when running standalone.
+  function pokeHost() {
+    try {
+      if (window.Species && window.Sprites &&
+          typeof window.Sprites.getDefaultSpriteBlob === 'function') return window;
+    } catch (_) {}
+    try {
+      const p = window.parent;
+      if (p && p !== window && p.Species && p.Sprites &&
+          typeof p.Sprites.getDefaultSpriteBlob === 'function') return p;
+    } catch (_) { /* cross-origin parent — treat as no host */ }
+    return null;
+  }
+
+  // Accepts a name ("Bulbasaur", case-insensitive), a dex number, or "#25".
+  function resolvePokeId(str) {
+    const s = (str || '').trim();
+    if (!s) return null;
+    const num = s.replace(/^#/, '');
+    if (/^\d+$/.test(num)) { const n = +num; return n >= 1 ? n : null; }
+    if (!pokeNameToId) return null;
+    return pokeNameToId.get(s.toLowerCase()) || null;
+  }
+
+  // Draw a sprite Blob to a canvas at native size (no smoothing → crisp pixels)
+  // and return a PNG data URL, which preserves the sprite's transparency.
+  function pokeBlobToPngDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const objUrl = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const c = document.createElement('canvas');
+          c.width = img.naturalWidth || img.width || 1;
+          c.height = img.naturalHeight || img.height || 1;
+          const g = c.getContext('2d');
+          g.imageSmoothingEnabled = false;
+          g.drawImage(img, 0, 0);
+          const url = c.toDataURL('image/png');
+          URL.revokeObjectURL(objUrl);
+          resolve(url);
+        } catch (e) { URL.revokeObjectURL(objUrl); reject(e); }
+      };
+      img.onerror = () => { URL.revokeObjectURL(objUrl); reject(new Error('sprite decode failed')); };
+      img.src = objUrl;
+    });
+  }
+
+  function setPokePreviewMsg(msg) {
+    const el = $('pokePreviewMsg');
+    if (el) { el.textContent = msg || ''; el.style.display = msg ? '' : 'none'; }
+    const img = $('pokePreview'); if (img && msg) { img.hidden = true; }
+  }
+
+  // Resolve the current inputs → fetch the sprite → preview it. Debounced and
+  // token-guarded so fast typing doesn't flash stale sprites.
+  async function updatePokePreview() {
+    const host = pokeHost();
+    const useBtn = $('pokeUse');
+    const fusion = $('pokeFusion') && $('pokeFusion').checked;
+    if (useBtn) { useBtn.disabled = true; }
+    pokePendingUrl = null;
+    if (!host) { setPokePreviewMsg('Sprites are only available inside the app.'); return; }
+    const head = resolvePokeId($('pokeHead') ? $('pokeHead').value : '');
+    const body = fusion ? resolvePokeId($('pokeBody') ? $('pokeBody').value : '') : head;
+    if (!head || (fusion && !body)) { setPokePreviewMsg('Type a name to preview a sprite.'); return; }
+    const token = ++pokePreviewToken;
+    setPokePreviewMsg('Loading…');
+    let blob = null;
+    try { blob = await host.Sprites.getDefaultSpriteBlob(head, body); } catch (_) { blob = null; }
+    if (token !== pokePreviewToken) return;   // superseded by a newer keystroke
+    if (!blob) { setPokePreviewMsg('No sprite for that pick. (Download sprites first?)'); return; }
+    let url = null;
+    try { url = await pokeBlobToPngDataUrl(blob); } catch (_) { url = null; }
+    if (token !== pokePreviewToken) return;
+    if (!url) { setPokePreviewMsg('Could not read that sprite.'); return; }
+    pokePendingUrl = url;
+    const img = $('pokePreview');
+    if (img) { img.src = url; img.hidden = false; }
+    setPokePreviewMsg('');
+    if (useBtn) useBtn.disabled = false;
+  }
+  function schedulePokePreview() {
+    if (pokePreviewTimer) clearTimeout(pokePreviewTimer);
+    pokePreviewTimer = setTimeout(updatePokePreview, 220);
+  }
+
+  // Populate the <datalist> + name→id map once, from the host's Species list.
+  // ensureLoaded may fetch in web mode — fine, this runs from an explicit tap.
+  async function ensurePokeNames() {
+    if (pokeNamesLoaded) return;
+    const host = pokeHost(); if (!host) return;
+    try { if (host.Species.ensureLoaded) await host.Species.ensureLoaded(); } catch (_) {}
+    let list = [];
+    try { list = host.Species.allSpecies() || []; } catch (_) { list = []; }
+    if (!list.length) return;   // leave unloaded so a later open retries
+    pokeNameToId = new Map();
+    const dl = $('pokeNames');
+    if (dl) dl.innerHTML = '';
+    const frag = document.createDocumentFragment();
+    for (const sp of list) {
+      if (!sp || !sp.name) continue;
+      pokeNameToId.set(String(sp.name).toLowerCase(), sp.id);
+      const opt = document.createElement('option');
+      opt.value = sp.name;
+      frag.appendChild(opt);
+    }
+    if (dl) dl.appendChild(frag);
+    pokeNamesLoaded = true;
+  }
+
+  function openPokeDialog() {
+    const dlg = $('pokeDialog'); if (!dlg) return;
+    pokePendingUrl = null; pokePreviewToken++;
+    const img = $('pokePreview'); if (img) { img.hidden = true; img.removeAttribute('src'); }
+    const useBtn = $('pokeUse'); if (useBtn) useBtn.disabled = true;
+    setPokePreviewMsg('Type a name to preview a sprite.');
+    dlg.classList.add('show');
+    ensurePokeNames();
+    setTimeout(() => { const h = $('pokeHead'); if (h) { try { h.focus(); h.select(); } catch (_) {} } }, 30);
+  }
+  function closePokeDialog() { const dlg = $('pokeDialog'); if (dlg) dlg.classList.remove('show'); }
+
+  function wirePokePicker() {
+    const btn = $('refPickPoke');
+    if (!btn) return;
+    if (!pokeHost()) { btn.hidden = true; return; }   // standalone → no picker
+    btn.hidden = false;
+    btn.onclick = () => { closeMenus(null); openPokeDialog(); };
+
+    const fusion = $('pokeFusion');
+    if (fusion) fusion.addEventListener('change', () => {
+      const on = fusion.checked;
+      const bodyLbl = $('pokeBodyLbl'); if (bodyLbl) bodyLbl.hidden = !on;
+      const headLbl = $('pokeHeadLbl');
+      // Relabel the first field so the fusion roles are unambiguous.
+      if (headLbl) headLbl.childNodes[0].nodeValue = on ? 'Head' : 'Pokémon';
+      updatePokePreview();
+    });
+    ['pokeHead', 'pokeBody'].forEach((id) => {
+      const inp = $(id);
+      if (inp) inp.addEventListener('input', schedulePokePreview);
+      if (inp) inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); const u = $('pokeUse'); if (u && !u.disabled) u.click(); }
+      });
+    });
+    const useBtn = $('pokeUse');
+    if (useBtn) useBtn.onclick = () => {
+      if (!pokePendingUrl) return;
+      setReference(pokePendingUrl, true);   // persists like any chosen reference
+      closePokeDialog();
+    };
+    const cancel = $('pokeCancel'); if (cancel) cancel.onclick = closePokeDialog;
+    const dlg = $('pokeDialog');
+    if (dlg) dlg.addEventListener('click', (e) => { if (e.target === dlg) closePokeDialog(); });
+  }
+
   // ── Resize ──
   function resizeCanvas() {
     const r = stage.getBoundingClientRect();
@@ -1457,7 +1626,7 @@
     curColorTop.style.background = state.color;
     try { colorInput.value = state.color; } catch (_) {}
     loadPalettes();
-    buildPalette(); wireUI(); wireDialog(); wirePointer(); updateBrushUI(); updateFillUI(); renderPalettePanel(); updateBgUI();
+    buildPalette(); wireUI(); wireDialog(); wirePokePicker(); wirePointer(); updateBrushUI(); updateFillUI(); renderPalettePanel(); updateBgUI();
     resizeCanvas();
     // Restore a persisted reference image + opacity (a working aid that
     // survives reopening; not part of any saved drawing).
