@@ -62,6 +62,7 @@
   const REF_OPACITY_KEY = 'pixelart.refOpacity.v1';
   const REF_ASPECT_KEY = 'pixelart.refAspect.v1';  // fit vs. stretch the reference
   const REF_OFF_KEY = 'pixelart.refOff.v1';        // drag offset, in grid-cell units
+  const BG_KEY = 'pixelart.bg.v1';                 // canvas background behind transparency; '' = checker
   const REF_MAX = 1024;                          // downscale cap for the stored reference
 
   // ── DOM ──
@@ -86,7 +87,8 @@
   const state = { w: 16, h: 16, scale: 24, panX: 0, panY: 0,
     tool: 'pencil', color: '#FF004D', brush: 1, fillMode: 'local',
     layers: [], active: 0, sel: null,
-    refImg: null, refOpacity: 0.5, refAspect: false, refOffX: 0, refOffY: 0, refMove: false };
+    refImg: null, refOpacity: 0.5, refAspect: false, refOffX: 0, refOffY: 0, refMove: false,
+    bg: null };   // canvas background colour behind transparent cells; null = transparency checker
   const EMPTY_CELLS = [];
   Object.defineProperty(state, 'cells', {
     get() { const L = state.layers[state.active]; return L ? L.cells : EMPTY_CELLS; },
@@ -199,12 +201,15 @@
     // contrast identical to fill mode, while the checker shows in any grid area
     // the reference doesn't cover. Then the cells on top — opaque cells cover
     // the underlay; transparent cells reveal it.
-    if (checkerPat) { ctx.fillStyle = checkerPat; ctx.fillRect(ax, ay, aw, ah); }
+    // A chosen background colour replaces the checker behind transparent cells
+    // (purely an editor aid — exports and thumbnails keep real transparency).
+    if (state.bg) { ctx.fillStyle = state.bg; ctx.fillRect(ax, ay, aw, ah); }
+    else if (checkerPat) { ctx.fillStyle = checkerPat; ctx.fillRect(ax, ay, aw, ah); }
     if (state.refImg && state.refOpacity > 0) {
       const [cx, cy, cw, ch] = refRectCells();
       const rx = state.panX + cx * state.scale, ry = state.panY + cy * state.scale;
       const rw = cw * state.scale, rh = ch * state.scale;
-      ctx.fillStyle = '#14151a'; ctx.fillRect(rx, ry, rw, rh);
+      ctx.fillStyle = state.bg || '#14151a'; ctx.fillRect(rx, ry, rw, rh);
       ctx.save();
       ctx.globalAlpha = state.refOpacity;
       // Point (nearest-neighbour) sampling so the reference stays crisp when the
@@ -1095,6 +1100,22 @@
     const asp = $('refAspectToggle'); if (asp) asp.checked = state.refAspect;
     applyRefCursor();
   }
+  // ── Canvas background (behind transparent cells) ──
+  // A global editor preference, not part of the saved drawing: exports and
+  // thumbnails deliberately keep real transparency. null → transparency checker.
+  function setBgColor(col) {
+    state.bg = col || null;
+    try { localStorage.setItem(BG_KEY, state.bg || ''); } catch (_) {}
+    updateBgUI(); render();
+  }
+  function updateBgUI() {
+    const sw = $('bgSwatch');
+    // Solid colour when set; empty string restores the CSS checker swatch.
+    if (sw) sw.style.background = state.bg || '';
+    const inp = $('bgColorInput');
+    if (inp && state.bg) { try { inp.value = state.bg; } catch (_) {} }
+    const clr = $('bgClear'); if (clr) clr.disabled = !state.bg;
+  }
   // Serialize the doc: layers (name/hidden/opacity/cells) + active index.
   function serializeDoc() {
     return { w: state.w, h: state.h, active: state.active,
@@ -1223,6 +1244,11 @@
     colorInput.addEventListener('change', (e) => addCustomColor(e.target.value));
     // Save the current colour (e.g. one eyedropped off the art/reference) as a swatch.
     if (saveColorBtn) saveColorBtn.onclick = () => addPaletteColor(state.color);
+    // Canvas background: colour picker sets it live; "Checker" reverts to transparent.
+    const bgInput = $('bgColorInput');
+    if (bgInput) bgInput.addEventListener('input', (e) => setBgColor(e.target.value));
+    const bgClearBtn = $('bgClear');
+    if (bgClearBtn) bgClearBtn.onclick = () => setBgColor(null);
     // Reference image: the button opens the popout; everything lives in there.
     $('refBtn').onclick = (e) => { e.stopPropagation(); toggleMenu('refPanel'); };
     $('refChoose').onclick = () => $('refFile').click();
@@ -1319,10 +1345,11 @@
     try { const c = localStorage.getItem(COLOR_KEY); if (c) state.color = c; } catch (_) {}
     try { const bnum = parseInt(localStorage.getItem(BRUSH_KEY), 10); if (bnum >= 1 && bnum <= BRUSH_MAX) state.brush = bnum; } catch (_) {}
     try { const fm = localStorage.getItem(FILL_KEY); if (fm === 'global' || fm === 'local') state.fillMode = fm; } catch (_) {}
+    try { const bg = localStorage.getItem(BG_KEY); if (bg) state.bg = bg; } catch (_) {}
     curColorTop.style.background = state.color;
     try { colorInput.value = state.color; } catch (_) {}
     loadPalettes();
-    buildPalette(); wireUI(); wireDialog(); wirePointer(); updateBrushUI(); updateFillUI(); renderPalettePanel();
+    buildPalette(); wireUI(); wireDialog(); wirePointer(); updateBrushUI(); updateFillUI(); renderPalettePanel(); updateBgUI();
     resizeCanvas();
     // Restore a persisted reference image + opacity (a working aid that
     // survives reopening; not part of any saved drawing).

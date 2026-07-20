@@ -170,6 +170,14 @@
     .paledit-r:hover { background: var(--accent); }
     .addcolor { position: relative; overflow: hidden; }
     .addcolor input[type=color] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+    /* Canvas background picker row (in the Palettes popout) */
+    .bgrow { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+    .bgpick { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+    .bgswatch { width: 16px; height: 16px; border-radius: 4px; border: 1px solid var(--line); flex: none;
+      background-color: #1b1c22;
+      background-image: linear-gradient(45deg, #23242b 25%, transparent 25%, transparent 75%, #23242b 75%),
+                        linear-gradient(45deg, #23242b 25%, transparent 25%, transparent 75%, #23242b 75%);
+      background-size: 8px 8px; background-position: 0 0, 4px 4px; }
 
     /* New-art dialog */
     .overlay { position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center;
@@ -306,6 +314,11 @@
         <div id="palEditList" class="paleditlist"></div>
         <div class="menuhint">On a swatch: × removes it, ⇄ replaces that colour with the current colour everywhere.</div>
         <label id="paletteAdd" class="widebtn addcolor" title="Add a custom colour"><span>＋ Add colour</span><input type="color" id="colorInput" value="#5b8cff"></label>
+        <div class="bgrow">
+          <span class="reflabel">Background</span>
+          <label id="bgColorBtn" class="widebtn addcolor bgpick grow" title="Canvas colour shown behind transparent pixels (editor aid — not baked into exports)"><span id="bgSwatch" class="bgswatch"></span><span>Colour</span><input type="color" id="bgColorInput" value="#14151a"></label>
+          <button id="bgClear" class="widebtn" title="Show the transparency checkerboard instead">Checker</button>
+        </div>
         <input type="file" id="paletteFile" accept=".gpl,.pal,.txt,.hex,.css,.ase,.act,.aco,.png,.gif,.jpg,.jpeg,.bmp,image/*" hidden>
         <div class="menuhint">Import .gpl / .pal / .ase / .aco / .act / hex / CSS or a palette PNG (e.g. Lospec). Saved globally.</div>
       </div>
