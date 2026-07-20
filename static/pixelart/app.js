@@ -964,6 +964,58 @@
     reader.readAsArrayBuffer(file);
   }
 
+  // ── Palette from the reference image (median-cut quantization) ──
+  // Photos/artwork have thousands of unique colours, so unlike parseImageColors
+  // (which keeps them all — great for a Lospec strip) this reduces the reference
+  // down to `k` representative colours. Sampled at reduced resolution to bound
+  // the work; opaque pixels only. Colours come out roughly dark→light so the
+  // saved palette reads sensibly.
+  function quantizeImage(img, k) {
+    if (!img || !img.width || !img.height) return [];
+    const MAXS = 128;                                   // cap the working size
+    const scale = Math.min(1, MAXS / Math.max(img.width, img.height));
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d'); g.imageSmoothingEnabled = true;
+    g.drawImage(img, 0, 0, w, h);
+    let data; try { data = g.getImageData(0, 0, w, h).data; } catch (_) { return []; }
+    const px = [];
+    for (let i = 0; i < data.length; i += 4) if (data[i + 3] >= 8) px.push([data[i], data[i + 1], data[i + 2]]);
+    if (!px.length) return [];
+    k = Math.max(1, Math.min(64, k | 0));
+    // Repeatedly split the box with the widest colour spread along its widest
+    // channel at the median — the classic median-cut palette algorithm.
+    let boxes = [px];
+    while (boxes.length < k) {
+      let bi = -1, bestRange = -1, bestCh = 0;
+      for (let b = 0; b < boxes.length; b++) {
+        const box = boxes[b]; if (box.length < 2) continue;
+        const mn = [255, 255, 255], mx = [0, 0, 0];
+        for (const p of box) for (let ch = 0; ch < 3; ch++) { if (p[ch] < mn[ch]) mn[ch] = p[ch]; if (p[ch] > mx[ch]) mx[ch] = p[ch]; }
+        for (let ch = 0; ch < 3; ch++) { const r = mx[ch] - mn[ch]; if (r > bestRange) { bestRange = r; bi = b; bestCh = ch; } }
+      }
+      if (bi < 0 || bestRange <= 0) break;              // every box is uniform/singleton
+      const box = boxes[bi]; box.sort((a, b) => a[bestCh] - b[bestCh]);
+      const mid = box.length >> 1;
+      boxes.splice(bi, 1, box.slice(0, mid), box.slice(mid));
+    }
+    // Average each box → its representative colour; order by luminance.
+    const out = boxes.map((box) => {
+      let r = 0, gg = 0, bb = 0; for (const p of box) { r += p[0]; gg += p[1]; bb += p[2]; }
+      const n = box.length; return [Math.round(r / n), Math.round(gg / n), Math.round(bb / n)];
+    });
+    out.sort((a, b) => (a[0] + a[1] + a[2]) - (b[0] + b[1] + b[2]));
+    return out.map((p) => _hex(p[0], p[1], p[2]));
+  }
+  // Build a palette from the loaded reference and adopt it as a new named palette.
+  function paletteFromReference(k) {
+    if (!state.refImg) { try { alert('Load a reference image first.'); } catch (_) {} return; }
+    const cols = quantizeImage(state.refImg, k);
+    if (!cols.length) { try { alert('Could not read any colours from the reference.'); } catch (_) {} return; }
+    finishImport(cols, 'Reference palette');
+  }
+
   // ── Tools ──
   function selectTool(t) {
     state.tool = t;
@@ -1320,6 +1372,13 @@
       state.refOffX = 0; state.refOffY = 0;
       state.refFlipH = false; state.refFlipV = false; state.refRot = 0;
       buildRefSample(); saveRefTransform(); updateRefUI(); render();
+    };
+    // Build a palette from the reference, then swap to the palette panel so the
+    // new swatches are visible.
+    $('refPalette').onclick = () => {
+      const n = Math.max(2, Math.min(64, Math.round(Number($('refPalCount').value) || 16)));
+      paletteFromReference(n);
+      if (state.refImg) { closeMenus('palettePanel'); const pp = $('palettePanel'); if (pp) pp.hidden = false; }
     };
 
     // Brush size popover.
