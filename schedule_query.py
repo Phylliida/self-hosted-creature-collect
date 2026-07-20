@@ -55,13 +55,34 @@ def build_schedule_payload(conn, w, s, e, n):
 
     stop_ids = list(stops.keys())
     stop_id_ph = ",".join("?" * len(stop_ids))
-    for gid, osm_nid in conn.execute(
-        f"SELECT gtfs_stop_id, osm_node_id FROM gtfs_osm_link "
+    # lng/lat columns exist only after link-gtfs-to-osm.py's coord-bearing
+    # rebuild; feature-detect so older schedule DBs keep working.
+    link_cols = {r[1] for r in conn.execute("PRAGMA table_info(gtfs_osm_link)")}
+    has_link_coords = {"lng", "lat"} <= link_cols
+    link_sel = (
+        "gtfs_stop_id, osm_node_id, distance_m, name_score, lng, lat"
+        if has_link_coords else
+        "gtfs_stop_id, osm_node_id, distance_m, name_score, NULL, NULL"
+    )
+    best_link = {}  # gid -> (sort_key, osm_lng, osm_lat)
+    for gid, osm_nid, d_m, n_score, olng, olat in conn.execute(
+        f"SELECT {link_sel} FROM gtfs_osm_link "
         f"WHERE gtfs_stop_id IN ({stop_id_ph})",
         tuple(stop_ids),
     ):
-        if gid in stops:
-            stops[gid]["osm_nodes"].append(osm_nid)
+        if gid not in stops:
+            continue
+        stops[gid]["osm_nodes"].append(osm_nid)
+        if olng is None:
+            continue
+        key = (d_m if d_m is not None else 1e9, -(n_score or 0))
+        if gid not in best_link or key < best_link[gid][0]:
+            best_link[gid] = (key, olng, olat)
+    # Best linked OSM node per stop (smallest distance, best name score) —
+    # its coordinates are the exact POI icon position for the bubble snap.
+    for gid, (_key, olng, olat) in best_link.items():
+        stops[gid]["osm_lng"] = olng
+        stops[gid]["osm_lat"] = olat
 
     # Reverse index: stop -> [[pattern, seq], ...]
     stop_patterns = {}
