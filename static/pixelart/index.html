@@ -87,6 +87,13 @@
     #selBar { border-top: 1px solid var(--line); padding-top: 8px; }
     .selhint { color: var(--muted); font-size: 12px; }
 
+    /* Fill-mode bar (shown while the fill tool is active) */
+    #fillBar { border-top: 1px solid var(--line); padding-top: 8px; }
+    .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+    .fillmode { border: none; border-radius: 0; padding: 7px 14px; font-size: 13px; background: var(--panel); }
+    .fillmode + .fillmode { border-left: 1px solid var(--line); }
+    .fillmode.active { background: var(--accent); color: #fff; }
+
     /* Brush-size popover */
     .menuhdr { font-size: 13px; font-weight: 600; padding: 2px 4px 4px; }
     .menuhint { color: var(--muted); font-size: 11px; padding: 2px 4px 0; }
@@ -232,6 +239,14 @@
               <button id="refRemove" class="widebtn danger">Remove reference</button>
             </div>
           </div>
+        </div>
+      </div>
+      <div id="fillBar" class="row" style="display:none">
+        <span class="reflabel">Fill</span>
+        <span class="selhint grow">how far the bucket spreads</span>
+        <div class="seg">
+          <button id="fillLocal" class="fillmode" title="Fill only the connected region of the same colour">Local</button>
+          <button id="fillGlobal" class="fillmode" title="Fill every matching pixel on this layer (magic select)">Global</button>
         </div>
       </div>
       <div id="selBar" class="row" style="display:none">
