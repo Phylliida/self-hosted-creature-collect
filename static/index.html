@@ -15512,6 +15512,85 @@ function fmtDate(ts) {
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   }
 
+  // ── Stop-bubble ↔ POI alignment ─────────────────────────────
+  // Bubble coords come from the GTFS feed's stops.txt; the stop POI
+  // icons come from OSM nodes (mostly public_transport=platform). The
+  // two are authored independently and drift apart by tens of meters
+  // in places, which reads as "bubbles float off the icons". Snap each
+  // bubbled stop to a nearby transit POI when the match is unambiguous:
+  // a name match within 150 m, else a single candidate within 50 m.
+  // Ambiguous cases (paired opposite-direction stops) and areas with no
+  // OSM coverage keep the GTFS point. Offline prototype on region-0530
+  // (Montreal): 69% name snaps, 3% unique, 12% no coverage, 16% kept.
+  const ROUTE_STOP_SNAP_CATS = new Set([
+    // Mirrors the transit-stop category set the POI card uses.
+    'stop_position', 'platform', 'station', 'bus_stop',
+    'tram_stop', 'halt', 'subway_entrance', 'ferry_terminal',
+  ]);
+  let _stopSnapGrid = null;
+  let _stopSnapGridPoiCount = -1;
+  function _stopSnapGridGet() {
+    if (_stopSnapGrid && _stopSnapGridPoiCount === allPois.length) return _stopSnapGrid;
+    const cell = 0.002; // ~200 m cells; lookups scan the 3×3 neighbourhood
+    const grid = new Map();
+    for (const p of allPois) {
+      if (!ROUTE_STOP_SNAP_CATS.has(p.category)) continue;
+      const k = Math.floor(p.lng / cell) + ',' + Math.floor(p.lat / cell);
+      let arr = grid.get(k);
+      if (!arr) { arr = []; grid.set(k, arr); }
+      arr.push(p);
+    }
+    _stopSnapGrid = { grid, cell };
+    _stopSnapGridPoiCount = allPois.length;
+    return _stopSnapGrid;
+  }
+  function _stopSnapNormPart(s) {
+    return s.toLowerCase()
+      .normalize('NFD').replace(/\p{M}/gu, '')
+      .replace(/\bste\b/g, 'sainte').replace(/\bst\b/g, 'saint')
+      .replace(/[^a-z0-9]+/g, '');
+  }
+  function _stopSnapNameParts(s) {
+    const out = [];
+    for (const part of (s || '').split('/')) {
+      const n = _stopSnapNormPart(part);
+      if (n) out.push(n);
+    }
+    return out;
+  }
+  function _stopSnapNamesMatch(a, b) {
+    // Order-free part comparison — both datasets flip "A / B" vs "B / A".
+    const pa = _stopSnapNameParts(a);
+    const pb = _stopSnapNameParts(b);
+    if (!pa.length || !pb.length) return false;
+    const [short, long] = pa.length <= pb.length ? [pa, pb] : [pb, pa];
+    return short.every((sp) =>
+      long.some((lp) => sp === lp || (sp.length >= 4 && lp.includes(sp)) || (lp.length >= 4 && sp.includes(lp))));
+  }
+  function _snapStopToPoi(lng, lat, name) {
+    const { grid, cell } = _stopSnapGridGet();
+    const cx = Math.floor(lng / cell);
+    const cy = Math.floor(lat / cell);
+    const cands = [];
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const arr = grid.get((cx + dx) + ',' + (cy + dy));
+        if (arr) cands.push(...arr);
+      }
+    }
+    if (!cands.length) return null;
+    const cosLat = Math.cos(lat * Math.PI / 180);
+    const distM = (p) => Math.hypot((p.lng - lng) * 111320 * cosLat, (p.lat - lat) * 110540);
+    cands.sort((a, b) => distM(a) - distM(b));
+    // Nearest name match within 150 m wins.
+    for (const p of cands) {
+      if (distM(p) <= 150 && _stopSnapNamesMatch(name, p.name)) return p;
+    }
+    // Otherwise snap only when unambiguous: exactly one POI within 50 m.
+    const close = cands.filter((p) => distM(p) <= 50);
+    return close.length === 1 ? close[0] : null;
+  }
+
   let viewedRoutes = new Set();
   function refreshStopsSource() {
     const src = map.getSource('route-stops');
@@ -15531,9 +15610,13 @@ function fmtDate(ts) {
       if (!m) continue;
       const colour = /^#[0-9a-f]{3,8}$/i.test(m.colour || '') ? m.colour : '#888';
       for (const s of (m.stops || [])) {
+        const snap = _snapStopToPoi(s.lng, s.lat, s.name);
         features.push({
           type: 'Feature',
-          geometry: { type: 'Point', coordinates: [s.lng, s.lat] },
+          geometry: {
+            type: 'Point',
+            coordinates: snap ? [snap.lng, snap.lat] : [s.lng, s.lat],
+          },
           properties: {
             rid, node_id: s.node_id, name: s.name || '', role: s.role || '',
             ord: s.ord, colour
