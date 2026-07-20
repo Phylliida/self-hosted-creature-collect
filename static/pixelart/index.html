@@ -43,6 +43,13 @@
     .swatch { width: 26px; height: 26px; border-radius: 6px; border: 2px solid transparent;
       cursor: pointer; padding: 0; background-clip: padding-box; }
     .swatch.active { border-color: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,0.6); }
+    /* "Save current colour" — a swatch-sized ＋ button pinned after the chip. */
+    .swatchadd { width: 26px; height: 26px; border-radius: 6px; flex: none; cursor: pointer;
+      padding: 0; display: inline-flex; align-items: center; justify-content: center;
+      font-size: 17px; line-height: 1; color: var(--muted); background: var(--panel2);
+      border: 1px dashed var(--line); }
+    .swatchadd:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+    .swatchadd:disabled { opacity: 0.35; cursor: default; }
     /* Checkerboard behind the live/active color chip so transparency reads. */
     /* Current-colour chip — the first inline element in the palette, sized like
        a swatch, with a ring so it reads as "active", over a checker for alpha. */
@@ -202,7 +209,7 @@
         <input type="file" id="refFile" accept="image/*" hidden>
       </div>
       <div class="row">
-        <div id="palette" class="grow"><div id="curColor" title="Current colour"><div id="curColorTop"></div></div></div>
+        <div id="palette" class="grow"><div id="curColor" title="Current colour"><div id="curColorTop"></div></div><button id="saveColorBtn" class="swatchadd" title="Save current colour to palette" aria-label="Save current colour to palette">＋</button></div>
       </div>
       <div id="refPanel" class="refmenu refpanel" hidden>
         <div class="menuhdr">Reference image</div>
