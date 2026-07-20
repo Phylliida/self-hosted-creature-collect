@@ -156,6 +156,11 @@
     .paledit-x { position: absolute; top: -6px; right: -6px; width: 15px; height: 15px; line-height: 13px;
       text-align: center; font-size: 12px; color: #fff; background: #2a2b33; border: 1px solid var(--line);
       border-radius: 50%; }
+    /* Replace-with-current-colour badge, bottom-right corner (mirrors -x). */
+    .paledit-r { position: absolute; bottom: -6px; right: -6px; width: 15px; height: 15px; line-height: 13px;
+      text-align: center; font-size: 10px; color: #fff; background: #2a2b33; border: 1px solid var(--line);
+      border-radius: 50%; }
+    .paledit-r:hover { background: var(--accent); }
     .addcolor { position: relative; overflow: hidden; }
     .addcolor input[type=color] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 
@@ -284,6 +289,7 @@
           <button id="paletteDelete" class="widebtn">Delete</button>
         </div>
         <div id="palEditList" class="paleditlist"></div>
+        <div class="menuhint">On a swatch: × removes it, ⇄ replaces that colour with the current colour everywhere.</div>
         <label id="paletteAdd" class="widebtn addcolor" title="Add a custom colour"><span>＋ Add colour</span><input type="color" id="colorInput" value="#5b8cff"></label>
         <input type="file" id="paletteFile" accept=".gpl,.pal,.txt,.hex,.css,.ase,.act,.aco,.png,.gif,.jpg,.jpeg,.bmp,image/*" hidden>
         <div class="menuhint">Import .gpl / .pal / .ase / .aco / .act / hex / CSS or a palette PNG (e.g. Lospec). Saved globally.</div>
