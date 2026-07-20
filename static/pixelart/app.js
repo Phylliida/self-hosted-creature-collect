@@ -62,6 +62,7 @@
   const REF_OPACITY_KEY = 'pixelart.refOpacity.v1';
   const REF_ASPECT_KEY = 'pixelart.refAspect.v1';  // fit vs. stretch the reference
   const REF_OFF_KEY = 'pixelart.refOff.v1';        // drag offset, in grid-cell units
+  const REF_XFORM_KEY = 'pixelart.refXform.v1';    // reference flip/rotate: { fh, fv, rot }
   const BG_KEY = 'pixelart.bg.v1';                 // canvas background behind transparency; '' = checker
   const REF_MAX = 1024;                          // downscale cap for the stored reference
 
@@ -88,6 +89,7 @@
     tool: 'pencil', color: '#FF004D', brush: 1, fillMode: 'local',
     layers: [], active: 0, sel: null,
     refImg: null, refOpacity: 0.5, refAspect: false, refOffX: 0, refOffY: 0, refMove: false,
+    refFlipH: false, refFlipV: false, refRot: 0,   // reference reflect (mirror) + rotation in 90° steps
     bg: null };   // canvas background colour behind transparent cells; null = transparency checker
   const EMPTY_CELLS = [];
   Object.defineProperty(state, 'cells', {
@@ -216,7 +218,7 @@
       // canvas is zoomed in — matches the pixel-art workflow, and every other
       // draw in this file already samples this way.
       ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(state.refImg, rx, ry, rw, rh);
+      drawRefTransformed(ctx, rx, ry, rw, rh);
       ctx.restore();
     }
     ctx.imageSmoothingEnabled = false;
@@ -1015,15 +1017,38 @@
   // exactly; aspect mode fits the image inside it (contain), centred. The drag
   // offset then shifts it. render() scales this to the screen and buildRefSample()
   // paints it into grid space, so the eyedropper always samples what's shown.
+  function refRot() { return ((state.refRot % 360) + 360) % 360; }   // normalised 0/90/180/270
   function refRectCells() {
     let rx = 0, ry = 0, rw = state.w, rh = state.h;
     const img = state.refImg;
     if (state.refAspect && img && img.width && img.height) {
-      const s = Math.min(state.w / img.width, state.h / img.height);
-      rw = img.width * s; rh = img.height * s;
+      // A 90°/270° rotation puts the image on its side, so fit the grid using the
+      // image's swapped dimensions — the on-screen footprint keeps the true aspect.
+      const quarter = refRot() === 90 || refRot() === 270;
+      const iw = quarter ? img.height : img.width;
+      const ih = quarter ? img.width : img.height;
+      const s = Math.min(state.w / iw, state.h / ih);
+      rw = iw * s; rh = ih * s;
       rx = (state.w - rw) / 2; ry = (state.h - rh) / 2;
     }
     return [rx + state.refOffX, ry + state.refOffY, rw, rh];
+  }
+  // Draw the reference into the footprint [rx,ry,rw,rh] applying the reflect/rotate
+  // transform, so render() and the eyedropper's buildRefSample() stay in lockstep.
+  // Mirror is applied in screen space (Flip H always mirrors left↔right on screen),
+  // then rotation; for 90°/270° the pre-rotation box uses swapped dims so the
+  // rotated image still fills the same footprint.
+  function drawRefTransformed(g, rx, ry, rw, rh) {
+    const img = state.refImg; if (!img) return;
+    const rot = refRot();
+    g.save();
+    g.translate(rx + rw / 2, ry + rh / 2);
+    if (state.refFlipH || state.refFlipV) g.scale(state.refFlipH ? -1 : 1, state.refFlipV ? -1 : 1);
+    if (rot) g.rotate(rot * Math.PI / 180);
+    let dw = rw, dh = rh;
+    if (rot === 90 || rot === 270) { dw = rh; dh = rw; }
+    g.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+    g.restore();
   }
   function buildRefSample() {
     if (!state.refImg) { refSample = null; refSampleCtx = null; return; }
@@ -1031,7 +1056,7 @@
     c.width = Math.max(1, state.w); c.height = Math.max(1, state.h);
     const g = c.getContext('2d');
     g.imageSmoothingEnabled = true;
-    try { const [rx, ry, rw, rh] = refRectCells(); g.drawImage(state.refImg, rx, ry, rw, rh); refSample = c; refSampleCtx = g; }
+    try { const [rx, ry, rw, rh] = refRectCells(); drawRefTransformed(g, rx, ry, rw, rh); refSample = c; refSampleCtx = g; }
     catch (_) { refSample = null; refSampleCtx = null; }
   }
   function sampleReference(cx, cy) {
@@ -1049,6 +1074,7 @@
     img.src = dataUrl;
     if (persist) {
       state.refOffX = 0; state.refOffY = 0;   // a freshly chosen image starts un-nudged
+      state.refFlipH = false; state.refFlipV = false; state.refRot = 0;   // …and un-flipped/un-rotated
       try { localStorage.setItem(REF_KEY, dataUrl); } catch (_) {}
       saveRefTransform();
     }
@@ -1056,13 +1082,26 @@
   function clearReference() {
     state.refImg = null; refSample = null; refSampleCtx = null;
     state.refMove = false; state.refOffX = 0; state.refOffY = 0;
+    state.refFlipH = false; state.refFlipV = false; state.refRot = 0;
     try { localStorage.removeItem(REF_KEY); } catch (_) {}
     try { localStorage.removeItem(REF_OFF_KEY); } catch (_) {}
+    try { localStorage.removeItem(REF_XFORM_KEY); } catch (_) {}
     updateRefUI(); render();   // leave the panel open so a new image can be chosen
   }
   function saveRefTransform() {
     try { localStorage.setItem(REF_ASPECT_KEY, state.refAspect ? '1' : '0'); } catch (_) {}
     try { localStorage.setItem(REF_OFF_KEY, JSON.stringify({ x: state.refOffX, y: state.refOffY })); } catch (_) {}
+    try { localStorage.setItem(REF_XFORM_KEY, JSON.stringify({ fh: state.refFlipH, fv: state.refFlipV, rot: refRot() })); } catch (_) {}
+  }
+  // Reflect the reference (mirror). Rebuilds the eyedropper sample so it matches.
+  function setRefFlip(axis, on) {
+    if (axis === 'h') state.refFlipH = !!on; else state.refFlipV = !!on;
+    buildRefSample(); saveRefTransform(); updateRefUI(); render();
+  }
+  // Rotate the reference by ±90°. Aspect-fit re-fits to the new orientation.
+  function rotateRef(dir) {
+    state.refRot = (((state.refRot + dir * 90) % 360) + 360) % 360;
+    buildRefSample(); saveRefTransform(); updateRefUI(); render();
   }
   function applyRefCursor() { try { canvas.style.cursor = (state.refMove && state.refImg) ? 'move' : ''; } catch (_) {} }
   // Read a chosen file, downscale to REF_MAX (keeps localStorage small), and
@@ -1098,6 +1137,8 @@
     const val = $('refOpacityVal'); if (val) val.textContent = Math.round(state.refOpacity * 100) + '%';
     const mv = $('refMoveToggle'); if (mv) mv.checked = state.refMove;
     const asp = $('refAspectToggle'); if (asp) asp.checked = state.refAspect;
+    const fh = $('refFlipH'); if (fh) fh.classList.toggle('active', state.refFlipH);
+    const fv = $('refFlipV'); if (fv) fv.classList.toggle('active', state.refFlipV);
     applyRefCursor();
   }
   // ── Canvas background (behind transparent cells) ──
@@ -1271,7 +1312,15 @@
       state.refAspect = !!e.target.checked;
       buildRefSample(); saveRefTransform(); render();
     });
-    $('refReset').onclick = () => { state.refOffX = 0; state.refOffY = 0; buildRefSample(); saveRefTransform(); render(); };
+    $('refFlipH').onclick = () => setRefFlip('h', !state.refFlipH);
+    $('refFlipV').onclick = () => setRefFlip('v', !state.refFlipV);
+    $('refRotCcw').onclick = () => rotateRef(-1);
+    $('refRotCw').onclick = () => rotateRef(1);
+    $('refReset').onclick = () => {
+      state.refOffX = 0; state.refOffY = 0;
+      state.refFlipH = false; state.refFlipV = false; state.refRot = 0;
+      buildRefSample(); saveRefTransform(); updateRefUI(); render();
+    };
 
     // Brush size popover.
     $('brushBtn').onclick = (e) => { e.stopPropagation(); toggleMenu('brushMenu'); };
@@ -1361,6 +1410,13 @@
     try {
       const off = JSON.parse(localStorage.getItem(REF_OFF_KEY) || 'null');
       if (off && isFinite(off.x) && isFinite(off.y)) { state.refOffX = off.x; state.refOffY = off.y; }
+    } catch (_) {}
+    try {
+      const xf = JSON.parse(localStorage.getItem(REF_XFORM_KEY) || 'null');
+      if (xf) {
+        state.refFlipH = !!xf.fh; state.refFlipV = !!xf.fv;
+        if (xf.rot === 90 || xf.rot === 180 || xf.rot === 270) state.refRot = xf.rot;
+      }
     } catch (_) {}
     try {
       const ref = localStorage.getItem(REF_KEY);

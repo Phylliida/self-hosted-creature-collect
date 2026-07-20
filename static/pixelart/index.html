@@ -139,6 +139,9 @@
     /* Reference popout (opened from the reference button) */
     .refpanel { min-width: 250px; }
     #refControls { margin-top: 8px; }
+    .refxform { display: flex; gap: 5px; }
+    .xbtn { flex: 1; padding: 8px 0; font-size: 16px; line-height: 1; }
+    .xbtn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
     .refpanelbody { display: flex; gap: 12px; align-items: stretch; }
     .refpanelcol { display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-width: 0; }
     /* Vertical opacity slider: a horizontal range rotated inside a fixed-height box
@@ -243,7 +246,13 @@
             <div class="refpanelcol">
               <label class="refopt"><input type="checkbox" id="refMoveToggle"><span>Move reference<small>drag on the canvas to reposition it</small></span></label>
               <label class="refopt"><input type="checkbox" id="refAspectToggle"><span>Keep aspect ratio<small>fit the image instead of stretching</small></span></label>
-              <button id="refReset" class="widebtn">Reset position</button>
+              <div class="refxform">
+                <button id="refFlipH" class="xbtn" title="Flip horizontally" aria-label="Flip reference horizontally">⇆</button>
+                <button id="refFlipV" class="xbtn" title="Flip vertically" aria-label="Flip reference vertically">⇅</button>
+                <button id="refRotCcw" class="xbtn" title="Rotate 90° left" aria-label="Rotate reference 90° counter-clockwise">↺</button>
+                <button id="refRotCw" class="xbtn" title="Rotate 90° right" aria-label="Rotate reference 90° clockwise">↻</button>
+              </div>
+              <button id="refReset" class="widebtn">Reset transform</button>
               <button id="refRemove" class="widebtn danger">Remove reference</button>
             </div>
           </div>
