@@ -3960,6 +3960,118 @@
     })[ch]);
   }
 
+  // --- Long-press → "Save image" → save a sprite to the phone ----------
+  // The detail-view art is a blob: object URL. iOS WKWebView ignores the
+  // <a download> attribute for blob URLs *and* the OS's own long-press
+  // "Save Image" fails on blob: URLs, so the only reliable "Save to Photos"
+  // path on mobile is the Web Share sheet. navigator.share() requires
+  // transient user activation, which a setTimeout-driven long-press would
+  // have already spent — so the long-press only *reveals* a "Save image"
+  // button, and the actual share fires from that button's own tap (a fresh
+  // activation). Desktop / Android Chrome fall back to a real download.
+  function _safeFileName(s) {
+    const base = String(s || 'creature')
+      .normalize('NFKD').replace(/[^\w.\- ]+/g, '').trim()
+      .replace(/\s+/g, '-').slice(0, 60);
+    return base || 'creature';
+  }
+
+  async function saveImageToPhone(img, filename) {
+    const src = img && img.src;
+    if (!src) return;
+    const name = _safeFileName(filename) + '.png';
+    let blob = null;
+    try { blob = await (await fetch(src)).blob(); } catch (_) { /* ignore */ }
+    // Native share sheet — the reliable "Save to Photos" path on mobile.
+    if (blob && typeof navigator.canShare === 'function') {
+      try {
+        const file = new File([blob], name, { type: blob.type || 'image/png' });
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], title: name });
+          return;
+        }
+      } catch (e) {
+        if (e && e.name === 'AbortError') return; // user dismissed the sheet
+        /* else fall through to download */
+      }
+    }
+    // Fallback: a real file download (desktop, Android Chrome).
+    try {
+      const dlUrl = blob ? URL.createObjectURL(blob) : src;
+      const a = document.createElement('a');
+      a.href = dlUrl;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      // Only revoke a URL we minted here — never the sprite store's URL.
+      if (dlUrl !== src) setTimeout(() => URL.revokeObjectURL(dlUrl), 10000);
+    } catch (e) { console.error('saveImageToPhone', e); }
+  }
+
+  // Reveal a transient "Save image" button centered over `artEl` after a
+  // long press on it. `getFilename()` is read lazily at save time.
+  function attachLongPressSave(artEl, img, getFilename) {
+    if (!artEl || !img || artEl._lpSaveWired) return;
+    artEl._lpSaveWired = true;
+    const HOLD_MS = 480;
+    const CANCEL_MOVE = 12; // px of drift that counts as a scroll, not a hold
+    let timer = null, sx = 0, sy = 0, btn = null, dismissTimer = null;
+    let lastPointerType = '';
+
+    const clearTimer = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    const hide = () => {
+      if (dismissTimer) { clearTimeout(dismissTimer); dismissTimer = null; }
+      if (btn) { btn.remove(); btn = null; }
+      document.removeEventListener('pointerdown', onOutside, true);
+    };
+    const onOutside = (e) => { if (btn && !btn.contains(e.target)) hide(); };
+    const reveal = () => {
+      if (!img.src || btn) return;
+      btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'detail-art-save-btn';
+      btn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M5 21h14"/></svg><span>Save image</span>';
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        saveImageToPhone(img, getFilename());
+        hide();
+      });
+      artEl.appendChild(btn);
+      dismissTimer = setTimeout(hide, 4000);
+      // Bind the outside-tap dismiss on the next tick so this gesture's own
+      // trailing pointer events don't immediately close the button.
+      setTimeout(() => document.addEventListener('pointerdown', onOutside, true), 0);
+    };
+    const onDown = (e) => {
+      lastPointerType = e.pointerType || '';
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if (btn) return; // already showing
+      sx = e.clientX; sy = e.clientY;
+      clearTimer();
+      timer = setTimeout(() => {
+        timer = null;
+        try { if (navigator.vibrate) navigator.vibrate(12); } catch (_) { /* no-op */ }
+        reveal();
+      }, HOLD_MS);
+    };
+    const onMove = (e) => {
+      if (!timer) return;
+      if (Math.abs(e.clientX - sx) > CANCEL_MOVE
+          || Math.abs(e.clientY - sy) > CANCEL_MOVE) clearTimer();
+    };
+    artEl.addEventListener('pointerdown', onDown);
+    artEl.addEventListener('pointermove', onMove);
+    artEl.addEventListener('pointerup', clearTimer);
+    artEl.addEventListener('pointercancel', clearTimer);
+    // Suppress the native long-press callout (Android WebView / touch) so it
+    // doesn't fight our button. Leave desktop right-click ("Save image as")
+    // alone — that already works for blob URLs there.
+    artEl.addEventListener('contextmenu', (e) => {
+      if (lastPointerType && lastPointerType !== 'mouse') e.preventDefault();
+    });
+  }
+
   // Custom species-name autocomplete — same pattern as /dex (datalist
   // is unreliable on iOS; this also lets us substring-highlight). Two-
   // pass match: prefix hits first, then "contains". Picks fire `input`
@@ -6882,6 +6994,29 @@
       #creatureInventory .detail-art img.detail-art-img {
         width: 100%; height: 100%; object-fit: contain;
         image-rendering: pixelated; image-rendering: crisp-edges;
+      }
+      /* Long-press-to-save: kill the native callout / selection so our own
+         "Save image" button is the single behavior on the art box. */
+      #creatureInventory .detail-art {
+        -webkit-touch-callout: none;
+        -webkit-user-select: none; user-select: none;
+      }
+      #creatureInventory .detail-art .detail-art-save-btn {
+        position: absolute; left: 50%; top: 50%;
+        transform: translate(-50%, -50%); z-index: 6;
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 7px 13px; border: none; border-radius: 999px;
+        font: inherit; font-size: 13px; font-weight: 600; line-height: 1;
+        color: #fff; background: rgba(0, 0, 0, 0.74);
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+        cursor: pointer; white-space: nowrap;
+        -webkit-tap-highlight-color: transparent;
+        animation: detailArtSavePop 120ms ease-out;
+      }
+      #creatureInventory .detail-art .detail-art-save-btn svg { flex: 0 0 auto; }
+      @keyframes detailArtSavePop {
+        from { opacity: 0; transform: translate(-50%, -50%) scale(0.85); }
+        to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
       }
       #creatureInventory .rename-form {
         display: flex; gap: 6px; justify-content: center;
@@ -10715,6 +10850,10 @@
             img.style.display = 'block';
           },
         });
+        if (art) {
+          attachLongPressSave(art, img,
+            () => fusedName || `${nameA}-${nameB}`);
+        }
       }
     }
 
@@ -11633,6 +11772,7 @@
     if (global.SpriteStore && c.speciesA != null && c.speciesB != null) {
       const img = body.querySelector('.detail-art-img');
       const ph = body.querySelector('.detail-art-placeholder');
+      const art = body.querySelector('.detail-art');
       if (img) {
         // Captured creature → render the variant burned in at capture
         // time. Legacy captures (no variant field) and explicit-null
@@ -11653,6 +11793,7 @@
             }
           },
         });
+        if (art) attachLongPressSave(art, img, () => name);
       }
     }
   }
