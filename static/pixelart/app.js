@@ -54,6 +54,7 @@
   const DOC_KEY = 'pixelart.doc.v1';
   const COLOR_KEY = 'pixelart.color.v1';
   const BRUSH_KEY = 'pixelart.brush.v1';
+  const FILL_KEY = 'pixelart.fillMode.v1';         // 'local' (contiguous) | 'global'
   const BRUSH_MAX = 8;
   const PALETTES_KEY = 'pixelart.palettes.v1';     // { name: [hex,...] }, global
   const ACTIVE_PAL_KEY = 'pixelart.activePalette.v1';
@@ -83,7 +84,7 @@
   // reveal them. `state.cells` is an accessor onto the ACTIVE layer, so all the
   // existing single-layer draw/flood/eyedropper code keeps working unchanged.
   const state = { w: 16, h: 16, scale: 24, panX: 0, panY: 0,
-    tool: 'pencil', color: '#FF004D', brush: 1,
+    tool: 'pencil', color: '#FF004D', brush: 1, fillMode: 'local',
     layers: [], active: 0, sel: null,
     refImg: null, refOpacity: 0.5, refAspect: false, refOffX: 0, refOffY: 0, refMove: false };
   const EMPTY_CELLS = [];
@@ -324,6 +325,17 @@
       stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
     }
   }
+  // "Global" fill (magic-wand-by-colour): recolour EVERY cell on the active layer
+  // that matches the clicked colour, not just the contiguous region. Same
+  // active-layer scope + single-undo-step as floodFill (paintCell records to
+  // `pending`). Colour match is strict (===), identical to floodFill's contiguity
+  // test, so Local/Global differ only in reach, not in what counts as "same".
+  function fillGlobal(cx, cy, col) {
+    const target = state.cells[cy * state.w + cx];
+    if (target === col) return;
+    const w = state.w, cells = state.cells;
+    for (let i = 0; i < cells.length; i++) if (cells[i] === target) paintCell(i % w, (i / w) | 0, col);
+  }
 
   // ── Brush ──
   // Square stamp centred on the cursor cell; size 1 = single pixel. Used by the
@@ -497,6 +509,18 @@
     const btn = $('layersBtn'); if (btn) btn.classList.toggle('multi', state.layers.length > 1);
   }
   function updateSelUI() { const bar = $('selBar'); if (bar) bar.style.display = state.sel ? 'flex' : 'none'; }
+  // Fill-mode bar: only visible while the fill tool is active; segmented Local/Global.
+  function updateFillUI() {
+    const bar = $('fillBar'); if (bar) bar.style.display = state.tool === 'fill' ? 'flex' : 'none';
+    const lo = $('fillLocal'), gl = $('fillGlobal');
+    if (lo) lo.classList.toggle('active', state.fillMode !== 'global');
+    if (gl) gl.classList.toggle('active', state.fillMode === 'global');
+  }
+  function setFillMode(m) {
+    state.fillMode = (m === 'global') ? 'global' : 'local';
+    try { localStorage.setItem(FILL_KEY, state.fillMode); } catch (_) {}
+    updateFillUI();
+  }
   function updateBrushUI() {
     const sl = $('brushSize'); if (sl) sl.value = state.brush;
     const v = $('brushSizeVal'); if (v) v.textContent = state.brush + ' px';
@@ -568,7 +592,7 @@
       // Keep sampling while the finger/mouse is held + dragged.
       sampling = true; hover = c; sampleAt(c); render(); return;
     }
-    if (state.tool === 'fill') { if (inBounds(c[0], c[1])) { beginStroke(); floodFill(c[0], c[1], drawColor()); commitStroke(); render(); } return; }
+    if (state.tool === 'fill') { if (inBounds(c[0], c[1])) { beginStroke(); (state.fillMode === 'global' ? fillGlobal : floodFill)(c[0], c[1], drawColor()); commitStroke(); render(); } return; }
     if (state.tool === 'line' || state.tool === 'rect') { drawing = true; startCell = c; preview = [c]; render(); return; }
     // pencil / eraser
     drawing = true; beginStroke(); lastCell = c; stampCells(c[0], c[1], drawColor()); render();
@@ -937,7 +961,7 @@
   function selectTool(t) {
     state.tool = t;
     document.querySelectorAll('.tool').forEach((b) => b.classList.toggle('active', b.dataset.tool === t));
-    updateSelUI(); render();
+    updateSelUI(); updateFillUI(); render();
   }
 
   // ── Popover menus (reference / brush / layers) — one open at a time ──
@@ -1244,6 +1268,10 @@
     $('selDeselect').onclick = deselect;
     $('selDelete').onclick = deleteSelection;
 
+    // Fill-mode (Local / Global) segmented toggle — shown while the fill tool is active.
+    $('fillLocal').onclick = () => setFillMode('local');
+    $('fillGlobal').onclick = () => setFillMode('global');
+
     // Palette manager: switch / save / delete named palettes, edit colours.
     $('paletteBtn').onclick = (e) => { e.stopPropagation(); toggleMenu('palettePanel'); };
     $('paletteSelect').addEventListener('change', (e) => selectPalette(e.target.value));
@@ -1290,10 +1318,11 @@
     checkerPat = ctx.createPattern(makeChecker(), 'repeat');
     try { const c = localStorage.getItem(COLOR_KEY); if (c) state.color = c; } catch (_) {}
     try { const bnum = parseInt(localStorage.getItem(BRUSH_KEY), 10); if (bnum >= 1 && bnum <= BRUSH_MAX) state.brush = bnum; } catch (_) {}
+    try { const fm = localStorage.getItem(FILL_KEY); if (fm === 'global' || fm === 'local') state.fillMode = fm; } catch (_) {}
     curColorTop.style.background = state.color;
     try { colorInput.value = state.color; } catch (_) {}
     loadPalettes();
-    buildPalette(); wireUI(); wireDialog(); wirePointer(); updateBrushUI(); renderPalettePanel();
+    buildPalette(); wireUI(); wireDialog(); wirePointer(); updateBrushUI(); updateFillUI(); renderPalettePanel();
     resizeCanvas();
     // Restore a persisted reference image + opacity (a working aid that
     // survives reopening; not part of any saved drawing).
