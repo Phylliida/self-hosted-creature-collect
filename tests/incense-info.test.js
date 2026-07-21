@@ -35,60 +35,25 @@ function extract(marker) {
   return src.slice(start, i + 1);
 }
 
-// Real Gen-6+ offensive chart data (mirrors the module constants). Kept
-// here as plain ctx data because vm top-level const/let don't persist
-// across runInContext calls — only function declarations attach to the
-// context global.
-const TYPE_COLORS = {
-  NORMAL: '#A8A77A', FIGHTING: '#C22E28', FLYING: '#A98FF3', POISON: '#A33EA1',
-  GROUND: '#E2BF65', ROCK: '#B6A136', BUG: '#A6B91A', GHOST: '#735797',
-  STEEL: '#B7B7CE', FIRE: '#EE8130', WATER: '#6390F0', GRASS: '#7AC74C',
-  ELECTRIC: '#F7D02C', PSYCHIC: '#F95587', ICE: '#96D9D6', DRAGON: '#6F35FC',
-  DARK: '#705746', FAIRY: '#D685AD',
-};
-const ALL_TYPES = Object.keys(TYPE_COLORS);
-const _TYPE_STRONG = {
-  NORMAL: [], FIRE: ['GRASS', 'ICE', 'BUG', 'STEEL'], WATER: ['FIRE', 'GROUND', 'ROCK'],
-  ELECTRIC: ['WATER', 'FLYING'], GRASS: ['WATER', 'GROUND', 'ROCK'],
-  ICE: ['GRASS', 'GROUND', 'FLYING', 'DRAGON'], FIGHTING: ['NORMAL', 'ICE', 'ROCK', 'DARK', 'STEEL'],
-  POISON: ['GRASS', 'FAIRY'], GROUND: ['FIRE', 'ELECTRIC', 'POISON', 'ROCK', 'STEEL'],
-  FLYING: ['GRASS', 'FIGHTING', 'BUG'], PSYCHIC: ['FIGHTING', 'POISON'],
-  BUG: ['GRASS', 'PSYCHIC', 'DARK'], ROCK: ['FIRE', 'ICE', 'FLYING', 'BUG'],
-  GHOST: ['PSYCHIC', 'GHOST'], DRAGON: ['DRAGON'], DARK: ['PSYCHIC', 'GHOST'],
-  STEEL: ['ICE', 'ROCK', 'FAIRY'], FAIRY: ['FIGHTING', 'DRAGON', 'DARK'],
-};
-const _TYPE_REDUCED = {
-  NORMAL: ['ROCK', 'STEEL', 'GHOST'], FIRE: ['FIRE', 'WATER', 'ROCK', 'DRAGON'],
-  WATER: ['WATER', 'GRASS', 'DRAGON'], ELECTRIC: ['ELECTRIC', 'GRASS', 'DRAGON', 'GROUND'],
-  GRASS: ['FIRE', 'GRASS', 'POISON', 'FLYING', 'BUG', 'DRAGON', 'STEEL'],
-  ICE: ['FIRE', 'WATER', 'ICE', 'STEEL'], FIGHTING: ['POISON', 'FLYING', 'PSYCHIC', 'BUG', 'FAIRY', 'GHOST'],
-  POISON: ['POISON', 'GROUND', 'ROCK', 'GHOST', 'STEEL'], GROUND: ['GRASS', 'BUG', 'FLYING'],
-  FLYING: ['ELECTRIC', 'ROCK', 'STEEL'], PSYCHIC: ['PSYCHIC', 'STEEL', 'DARK'],
-  BUG: ['FIRE', 'FIGHTING', 'POISON', 'FLYING', 'GHOST', 'STEEL', 'FAIRY'],
-  ROCK: ['FIGHTING', 'GROUND', 'STEEL'], GHOST: ['DARK', 'NORMAL'], DRAGON: ['STEEL', 'FAIRY'],
-  DARK: ['FIGHTING', 'DARK', 'FAIRY'], STEEL: ['FIRE', 'WATER', 'ELECTRIC', 'STEEL'],
-  FAIRY: ['FIRE', 'POISON', 'STEEL'],
-};
-const _TYPE_STRONG_SETS = (() => {
-  const out = {};
-  for (const t of ALL_TYPES) out[t] = new Set(_TYPE_STRONG[t] || []);
-  return out;
-})();
+// Type colors / chart come from the single source of truth — no more
+// inline mirrors here (they used to duplicate creatures.js's constants,
+// which now just delegate to global.Types).
+require(path.join(__dirname, '..', 'static', 'types.js'));
+const Types = globalThis.Types;
+const ALL_TYPES = Types.list();
 
 const ctx = {
   Object, Set, Array, Math, String, Number, JSON,
-  global: {},                       // _incenseDurationMs falls back to 30 min
-  TYPE_COLORS, ALL_TYPES, _TYPE_STRONG, _TYPE_REDUCED, _TYPE_STRONG_SETS,
+  global: { Types },                // _incenseDurationMs falls back to 30 min
+  ALL_TYPES,
   _typeChartSel: null, _craftState: { step: 1, type: null, eggId: null },
 };
 vm.createContext(ctx);
 for (const m of [
   'function escapeHtml(',
-  'function _titleCaseType(',
   'function _incenseDurationMs(',
   'function _ccTypeChip(',
   'function _ccTypeChips(',
-  'function _typeStrongAgainst(',
   'function _typeDetailHtml(',
   'function _incenseInfoHtml(',
   'function _typeChartHtml(',
@@ -97,11 +62,11 @@ for (const m of [
 const call = (expr, extra) => vm.runInContext(expr, Object.assign(ctx, extra || {}));
 
 // ── 1. Inverse offensive lookup = "best egg types for this incense" ──
-ok(JSON.stringify(call('_typeStrongAgainst("FIRE")')) === JSON.stringify(['GROUND', 'ROCK', 'WATER']),
-  '1: types super-effective vs Fire are Ground/Rock/Water (ALL_TYPES order)');
-ok(JSON.stringify(call('_typeStrongAgainst("NORMAL")')) === JSON.stringify(['FIGHTING']),
+ok(JSON.stringify(Types.strongAgainst('FIRE')) === JSON.stringify(['WATER', 'GROUND', 'ROCK']),
+  '1: types super-effective vs Fire are Water/Ground/Rock (registry order)');
+ok(JSON.stringify(Types.strongAgainst('NORMAL')) === JSON.stringify(['FIGHTING']),
   '1: only Fighting is super-effective vs Normal');
-ok(call('_typeStrongAgainst("GHOST").indexOf("DARK") >= 0'),
+ok(Types.strongAgainst('GHOST').indexOf('DARK') >= 0,
   '1: Dark is super-effective vs Ghost');
 
 // ── 2. Type detail card ──

@@ -7,8 +7,10 @@ without the post-install bulk-download step.
 
 All inputs live under data/InfiniteFusion/ — no dependency on a
 pre-extracted data/Battlers/ folder. The Ruby Marshal `.dat` files
-(species.dat, types.dat, evolutions.dat) are decoded via
-`extract-pif-dat.rb` (subprocess; needs `ruby` on PATH).
+(species.dat, evolutions.dat) are decoded via `extract-pif-dat.rb`
+(subprocess; needs `ruby` on PATH). Note: types.dat is NOT decoded —
+the canonical type list + effectiveness chart lives in the app code at
+static/types.js (global.Types), not in the bundled data.
 
 Inputs:
   data/InfiniteFusion/Graphics/Battlers/spritesheets_autogen/<head>.png
