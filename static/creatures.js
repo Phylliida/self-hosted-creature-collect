@@ -7150,6 +7150,7 @@
       }
       .pack-pick-row.active { border-color: #6d5ac0; border-width: 2px; }
       .pack-pick-status { font-size: 12px; opacity: 0.65; }
+      .pack-pick-redl { font-size: 15px; padding: 2px 6px; opacity: 0.7; }
       .pack-pick-msg { min-height: 18px; font-size: 12px; opacity: 0.75; margin: 8px 0 4px; }
       .pack-pick-close { margin-top: 8px; padding: 8px 18px; cursor: pointer; }
       /* Action icon row — centered on its own line below the
@@ -11700,6 +11701,9 @@
             + '" data-pack="' + p.id + '"' + (isActive ? ' disabled' : '') + '>'
             + '<span class="pack-pick-name">' + escapeHtml(p.name) + '</span>'
             + '<span class="pack-pick-status">' + status + '</span>'
+            + (installed && !isActive
+                ? '<span class="pack-pick-redl" data-redl="' + p.id + '" title="re-download">↻</span>'
+                : '')
             + '</button>';
         }).join('')
       + '<div class="pack-pick-msg"></div>'
@@ -11710,14 +11714,17 @@
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
     overlay.querySelector('.pack-pick-close').onclick = close;
     overlay.querySelectorAll('.pack-pick-row').forEach((btn) => {
-      btn.onclick = async () => {
+      btn.onclick = async (e) => {
         const id = btn.dataset.pack;
         const msg = overlay.querySelector('.pack-pick-msg');
+        // The ↻ badge forces a re-download (repairs a damaged/partial
+        // install, or pulls an update) instead of just switching.
+        const force = !!(e.target && e.target.dataset && e.target.dataset.redl);
         btn.disabled = true;
         try {
           // Download only happens from this tap (zero-network rule);
           // switching packs reloads into a fully isolated world.
-          if (!global.PackInstall.isInstalled(id)) {
+          if (force || !global.PackInstall.isInstalled(id)) {
             await global.PackInstall.download(id, (s) => {
               msg.textContent = _packPickStatusText(s);
             });
@@ -11725,8 +11732,8 @@
           msg.textContent = 'switching…';
           global.Packs.setActive(id);
           location.reload();
-        } catch (e) {
-          msg.textContent = 'failed: ' + (e && e.message ? e.message : e);
+        } catch (e2) {
+          msg.textContent = 'failed: ' + (e2 && e2.message ? e2.message : e2);
           btn.disabled = false;
         }
       };

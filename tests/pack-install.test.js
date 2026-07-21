@@ -189,6 +189,30 @@ async function main() {
       '5: sprite sheets skipped on native (packs are the cell source)');
   }
 
+  // --- 7) per-pack skip rule: sprites/ skipped ONLY for creature-fusion ---------
+  {
+    const writes = [];
+    globalThis.Capacitor = {
+      getPlatform: () => 'ios',
+      Plugins: {
+        Filesystem: {
+          writeFile: async (args) => { writes.push(args.path); },
+        },
+      },
+    };
+    const neoSink = PI.makeEntrySink('neopets');
+    await neoSink('sprites/acar_yellow_m.png', new Blob(['x']));
+    ok(writes.length === 1 && writes[0].includes('neopets/sprites/acar_yellow_m.png'),
+      '7: neopets keeps its sprites/ art (the missing-icons regression)');
+    const fusionSink = PI.makeEntrySink('creature-fusion');
+    await fusionSink('sprites/1/autogen/1.png', new Blob(['x']));
+    ok(writes.length === 1, '7: creature-fusion still skips sheets');
+    await fusionSink('sprite-packs/1.pack', new Blob(['x']));
+    ok(writes.length === 2 && writes[1].includes('creature-fusion/sprite-packs/1.pack'),
+      '7: creature-fusion keeps sprite-packs');
+    delete globalThis.Capacitor;
+  }
+
   // --- 6) zero-network rule + first-load prompt ---------------------------------------
   {
     const indexSrc = fs.readFileSync(path.join(root, 'static', 'index.html'), 'utf8');
