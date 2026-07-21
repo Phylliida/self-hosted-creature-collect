@@ -225,13 +225,16 @@
   }
 
   // ── platform sink: where each entry's bytes go ──
-  function _blobToBase64(blob) {
-    return new Promise((resolve, reject) => {
-      const r = new FileReader();
-      r.onload = () => resolve(String(r.result).split(',')[1] || '');
-      r.onerror = () => reject(r.error || new Error('read failed'));
-      r.readAsDataURL(blob);
-    });
+  async function _blobToBase64(blob) {
+    const buf = new Uint8Array(await blob.arrayBuffer());
+    let bin = '';
+    const CHUNK = 0x8000;
+    for (let i = 0; i < buf.length; i += CHUNK) {
+      bin += String.fromCharCode.apply(null, buf.subarray(i, i + CHUNK));
+    }
+    return (typeof btoa === 'function')
+      ? btoa(bin)
+      : Buffer.from(bin, 'binary').toString('base64');
   }
   function _skipped(logical, packId) {
     // Sprite sheets are only the FUSION pack's web-crop input (native
@@ -253,7 +256,7 @@
       // pack's dir (see active.txt marker + LocalServer.swift).
       const dir = CONTENT_DIR + '/' + (packId || DEFAULT_PACK_ID);
       return async (logical, blob) => {
-        if (_skipped(logical)) return;
+        if (_skipped(logical, packId)) return;
         const data = await _blobToBase64(blob);
         await fs.writeFile({
           path: dir + '/' + logical,
@@ -271,7 +274,7 @@
       let cachePromise = null;
       const open = () => (cachePromise || (cachePromise = caches.open(ANDROID_CACHE)));
       return async (logical, blob) => {
-        if (_skipped(logical)) return;
+        if (_skipped(logical, packId)) return;
         const cache = await open();
         const resp = () => new Response(blob, {
           headers: { 'Content-Type': mimeFor(logical) },
@@ -413,7 +416,7 @@
     sourceForMode, currentSource, readMeta, isInstalled,
     checkForUpdate, download, deletePackData, setActiveNative,
     // exposed for tests:
-    makeEntryCutter, mimeFor, metaKey, META_KEY, CONTENT_DIR, SKIP_PREFIXES,
+    makeEntryCutter, makeEntrySink, mimeFor, metaKey, META_KEY, CONTENT_DIR, SKIP_PREFIXES,
   };
 
 })(typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : this));
