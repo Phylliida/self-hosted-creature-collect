@@ -111,12 +111,79 @@ _TRACKED_JS = {
     # pick up changes (they already have the SCRIPT_VERSION='auto' hook).
     "extras-apps.js", "extras-almanac.js", "extras-vibration.js", "extras-skymap.js",
     "extras-sudoku.js", "extras-sensors.js", "extras-tuner.js", "extras-scapes.js",
+    "extras-todos.js",
 }
+
+# Extras mini-app subtrees (the iframe apps: Pixel Art, Draw, both fractal
+# viewers), as paths relative to static/. Shared by _TRACKED_JS /
+# _TRACKED_HTML (serve no-store + stamp) and _SCRIPT_VERSION_FILES (the
+# version map that drives Refresh / native live-update), so a file only
+# ever needs adding once. The JS files declare no SCRIPT_VERSION, so
+# stamping rewrites nothing for them; the CSS is served raw (stamping is
+# a JS/HTML affair and CSS must keep its text/css mimetype) and rides
+# along purely via the version map.
+_SUBTREE_JS = [
+    "pixelart/app.js",
+    "draw/src/animexport.js", "draw/src/app.js", "draw/src/camera.js",
+    "draw/src/commands.js", "draw/src/frieze.js", "draw/src/generators.js",
+    "draw/src/gif.js", "draw/src/hat.js", "draw/src/history.js",
+    "draw/src/laves.js", "draw/src/minimap.js", "draw/src/penrose.js",
+    "draw/src/pixel.js", "draw/src/renderer.js", "draw/src/scene.js",
+    "draw/src/spectre.js", "draw/src/storage.js", "draw/src/svg.js",
+    "draw/src/uniform.js", "draw/src/util.js", "draw/src/wallpaper.js",
+    "fractals2/src/flightRecorder.js", "fractals2/src/main.js",
+    "fractals2/src/palette.js", "fractals2/src/pngMetadata.js",
+    "fractals2/src/viewer.js", "fractals2/src/worker.js",
+    "fractals2/src/gpu/glsl.js", "fractals2/src/gpu/gpu-worker-client.js",
+    "fractals2/src/gpu/gpu-worker.js", "fractals2/src/gpu/renderer.js",
+    "fractals2/src/gpu/validate.js",
+    "fractals2/src/math/bignum.js", "fractals2/src/math/bla.js",
+    "fractals2/src/math/naive.js", "fractals2/src/math/perturb.js",
+    "fractals2/src/math/reference.js", "fractals2/src/math/render.js",
+    "fractals2/src/math/series.js",
+    "mandelbrot/favorites.js", "mandelbrot/flightRecorder.js",
+    "mandelbrot/fxp.js", "mandelbrot/index.js",
+    "mandelbrot/mandelbrotAbsFamily.js",
+    "mandelbrot/mandelbrotAbsFamilyPerturbation.js",
+    "mandelbrot/mandelbrotBurningShip.js",
+    "mandelbrot/mandelbrotBurningShipPerturbation.js",
+    "mandelbrot/mandelbrotFloat.js", "mandelbrot/mandelbrotFxP.js",
+    "mandelbrot/mandelbrotGyre.js",
+    "mandelbrot/mandelbrotGyrePerturbation.js",
+    "mandelbrot/mandelbrotKali.js",
+    "mandelbrot/mandelbrotKaliPerturbation.js",
+    "mandelbrot/mandelbrotLyra.js", "mandelbrot/mandelbrotMirage.js",
+    "mandelbrot/mandelbrotMiragePerturbation.js",
+    "mandelbrot/mandelbrotMultibrot.js",
+    "mandelbrot/mandelbrotMultibrotPerturbation.js",
+    "mandelbrot/mandelbrotPerturbation.js",
+    "mandelbrot/mandelbrotPerturbationExtFloat.js",
+    "mandelbrot/mandelbrotPhoenix.js",
+    "mandelbrot/mandelbrotPhoenixPerturbation.js",
+    "mandelbrot/mandelbrotTricorn.js",
+    "mandelbrot/mandelbrotTricornPerturbation.js",
+    "mandelbrot/mandelbrotWebGPU.js", "mandelbrot/palette.js",
+    "mandelbrot/pngMetadata.js", "mandelbrot/referencePointProvider.js",
+    "mandelbrot/sharedCalculations.js", "mandelbrot/workerContext.js",
+    "mandelbrot/worker.js",
+]
+_SUBTREE_HTML = [
+    "pixelart/index.html", "draw/index.html",
+    "fractals2/index.html", "mandelbrot/index.html",
+]
+_SUBTREE_CSS = [
+    "draw/style.css", "fractals2/styles.css", "mandelbrot/style.css",
+]
+_TRACKED_JS |= set(_SUBTREE_JS)
+
 # synth.html / quiver.html are the flat single-file mini-apps loaded in
-# Extras iframes — tracked so the Refresh button / native live-update
-# picks up edits without an IPA/APK rebuild (the multi-file subtrees
-# like static/draw and static/mandelbrot still need a rebuild on native).
-_TRACKED_HTML = {"index.html", "dex.html", "synth.html", "quiver.html"}
+# Extras iframes; the subtree index.html files are the entry points of the
+# multi-file apps. All tracked so the Refresh button / native live-update
+# picks up edits without an IPA/APK rebuild.
+_TRACKED_HTML = {
+    "index.html", "dex.html", "synth.html", "quiver.html",
+    *_SUBTREE_HTML,
+}
 # Authoritative list (ordered) of every file the version system tracks.
 # Used both to build the HTML-injected `_serverScriptVersions` map and
 # by the /script-versions fallback endpoint.
@@ -125,9 +192,10 @@ _SCRIPT_VERSION_FILES = [
     "species.js", "spawns.js", "trip-planner.js", "live-update.js", "extras.js",
     "extras-apps.js", "extras-almanac.js", "extras-vibration.js", "extras-skymap.js",
     "extras-sudoku.js", "extras-sensors.js", "extras-tuner.js", "extras-scapes.js",
+    "extras-todos.js",
     "synth.html", "quiver.html",
     "sw.js", "index.html", "dex.html",
-]
+] + _SUBTREE_JS + _SUBTREE_HTML + _SUBTREE_CSS
 # Capture the declaration keyword (group 1) so we can preserve it
 # during substitution — strict-mode JS rejects bare assignment to an
 # undeclared identifier, so dropping the `const` would break every

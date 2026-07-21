@@ -162,6 +162,7 @@ jobs:
           cp ios-overrides/MotionPedometerPlugin.swift   ios/App/App/MotionPedometerPlugin.swift
           cp ios-overrides/HapticPatternPlugin.swift     ios/App/App/HapticPatternPlugin.swift
           cp ios-overrides/SensorProbePlugin.swift       ios/App/App/SensorProbePlugin.swift
+          cp ios-overrides/SaveImagePlugin.swift         ios/App/App/SaveImagePlugin.swift
 
           # Point Main.storyboard at our subclass instead of stock CAPBridgeViewController.
           STORYBOARD=ios/App/App/Base.lproj/Main.storyboard
@@ -233,6 +234,12 @@ jobs:
           # meter and the tuner (local analysis, nothing recorded or sent).
           /usr/libexec/PlistBuddy -c "Delete :NSMicrophoneUsageDescription" "$PLIST" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'Power the tuner and the sound-level meter. Audio is analyzed on the device only and never recorded or sent anywhere.'" "$PLIST"
+          # Photo library (add-only): the creature detail view's long-press
+          # "Save image" button saves sprite art to Photos via SaveImagePlugin.
+          # Without this key the save silently never lands (and the share
+          # sheet's "Save Image" fails too).
+          /usr/libexec/PlistBuddy -c "Delete :NSPhotoLibraryAddUsageDescription" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryAddUsageDescription string 'Save creature artwork to your photo library.'" "$PLIST"
           # Background audio: the Extras soundscapes tool is a sleep aid —
           # its WebAudio graph must keep playing when the screen locks.
           # Without this mode iOS suspends the WKWebView's audio on lock.

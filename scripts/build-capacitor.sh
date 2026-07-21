@@ -107,10 +107,69 @@ TRACKED_JS = {
     "species.js", "spawns.js", "trip-planner.js",
     "live-update.js", "sw.js", "extras.js",
     "extras-apps.js", "extras-almanac.js", "extras-vibration.js",
-    "extras-skymap.js", "extras-sudoku.js",
+    "extras-skymap.js", "extras-sudoku.js", "extras-sensors.js",
+    "extras-tuner.js", "extras-scapes.js", "extras-todos.js",
 }
-TRACKED_HTML = {"index.html", "dex.html", "synth.html", "quiver.html"}
-ALL_FILES = sorted(TRACKED_JS | TRACKED_HTML)
+# Extras mini-app subtrees (Pixel Art, Draw, both fractal viewers) —
+# same lists as run.py's _SUBTREE_JS / _SUBTREE_HTML / _SUBTREE_CSS.
+SUBTREE_JS = [
+    "pixelart/app.js",
+    "draw/src/animexport.js", "draw/src/app.js", "draw/src/camera.js",
+    "draw/src/commands.js", "draw/src/frieze.js", "draw/src/generators.js",
+    "draw/src/gif.js", "draw/src/hat.js", "draw/src/history.js",
+    "draw/src/laves.js", "draw/src/minimap.js", "draw/src/penrose.js",
+    "draw/src/pixel.js", "draw/src/renderer.js", "draw/src/scene.js",
+    "draw/src/spectre.js", "draw/src/storage.js", "draw/src/svg.js",
+    "draw/src/uniform.js", "draw/src/util.js", "draw/src/wallpaper.js",
+    "fractals2/src/flightRecorder.js", "fractals2/src/main.js",
+    "fractals2/src/palette.js", "fractals2/src/pngMetadata.js",
+    "fractals2/src/viewer.js", "fractals2/src/worker.js",
+    "fractals2/src/gpu/glsl.js", "fractals2/src/gpu/gpu-worker-client.js",
+    "fractals2/src/gpu/gpu-worker.js", "fractals2/src/gpu/renderer.js",
+    "fractals2/src/gpu/validate.js",
+    "fractals2/src/math/bignum.js", "fractals2/src/math/bla.js",
+    "fractals2/src/math/naive.js", "fractals2/src/math/perturb.js",
+    "fractals2/src/math/reference.js", "fractals2/src/math/render.js",
+    "fractals2/src/math/series.js",
+    "mandelbrot/favorites.js", "mandelbrot/flightRecorder.js",
+    "mandelbrot/fxp.js", "mandelbrot/index.js",
+    "mandelbrot/mandelbrotAbsFamily.js",
+    "mandelbrot/mandelbrotAbsFamilyPerturbation.js",
+    "mandelbrot/mandelbrotBurningShip.js",
+    "mandelbrot/mandelbrotBurningShipPerturbation.js",
+    "mandelbrot/mandelbrotFloat.js", "mandelbrot/mandelbrotFxP.js",
+    "mandelbrot/mandelbrotGyre.js",
+    "mandelbrot/mandelbrotGyrePerturbation.js",
+    "mandelbrot/mandelbrotKali.js",
+    "mandelbrot/mandelbrotKaliPerturbation.js",
+    "mandelbrot/mandelbrotLyra.js", "mandelbrot/mandelbrotMirage.js",
+    "mandelbrot/mandelbrotMiragePerturbation.js",
+    "mandelbrot/mandelbrotMultibrot.js",
+    "mandelbrot/mandelbrotMultibrotPerturbation.js",
+    "mandelbrot/mandelbrotPerturbation.js",
+    "mandelbrot/mandelbrotPerturbationExtFloat.js",
+    "mandelbrot/mandelbrotPhoenix.js",
+    "mandelbrot/mandelbrotPhoenixPerturbation.js",
+    "mandelbrot/mandelbrotTricorn.js",
+    "mandelbrot/mandelbrotTricornPerturbation.js",
+    "mandelbrot/mandelbrotWebGPU.js", "mandelbrot/palette.js",
+    "mandelbrot/pngMetadata.js", "mandelbrot/referencePointProvider.js",
+    "mandelbrot/sharedCalculations.js", "mandelbrot/workerContext.js",
+    "mandelbrot/worker.js",
+]
+SUBTREE_HTML = [
+    "pixelart/index.html", "draw/index.html",
+    "fractals2/index.html", "mandelbrot/index.html",
+]
+# Version-map only — CSS is never stamped (it has no SCRIPT_VERSION and
+# injecting the HTML snippet would corrupt it), but it must be in the
+# bundled map or the first refresh would re-download it as "stale".
+SUBTREE_CSS = [
+    "draw/style.css", "fractals2/styles.css", "mandelbrot/style.css",
+]
+TRACKED_JS |= set(SUBTREE_JS)
+TRACKED_HTML = {"index.html", "dex.html", "synth.html", "quiver.html", *SUBTREE_HTML}
+ALL_FILES = sorted(TRACKED_JS | TRACKED_HTML | set(SUBTREE_CSS))
 SV_RE = re.compile(r"""((?:const|let|var)\s+)SCRIPT_VERSION\s*=\s*['"]([^'"]+)['"]""")
 HEAD_RE = re.compile(r"<head\b[^>]*>", re.IGNORECASE)
 def vfor(p):
@@ -140,6 +199,8 @@ for n in ALL_FILES:
 count = 0
 for path, name in to_stamp:
     if not path.is_file(): continue
+    if name not in TRACKED_JS and name not in TRACKED_HTML:
+        continue  # CSS: version-map entry only, content left untouched
     text = path.read_text(encoding="utf-8")
     ver = versions.get(name, "unknown")
     out = stamp_js(text, ver) if name in TRACKED_JS else stamp_html(text, name, ver)
