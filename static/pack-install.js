@@ -233,7 +233,13 @@
       r.readAsDataURL(blob);
     });
   }
-  function _skipped(logical) {
+  function _skipped(logical, packId) {
+    // Sprite sheets are only the FUSION pack's web-crop input (native
+    // cell art comes from sprite-packs/), so they're skipped there to
+    // halve write time + disk. Other packs keep EVERYTHING — neopets
+    // monster art lives under sprites/ too, and skipping it leaves a
+    // pack with no visible creatures.
+    if ((packId || DEFAULT_PACK_ID) !== DEFAULT_PACK_ID) return false;
     return SKIP_PREFIXES.some((p) => logical.startsWith(p));
   }
   function makeEntrySink(packId) {

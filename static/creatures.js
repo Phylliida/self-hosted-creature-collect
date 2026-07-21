@@ -2357,6 +2357,9 @@
   // autogen. Different players see the same variant for the same spawn
   // because variantSeed is part of the deterministic spawn generation.
   async function resolveSpawnVariant(spawn) {
+    // Solo spawns (specials + pack monsters) have a single fixed art —
+    // never touch the (pair-keyed) cell/variant machinery for them.
+    if (spawn && typeof spawn.solo === 'string' && spawn.solo) return 'auto';
     if (!global.Sprites || typeof spawn.variantSeed !== 'number') return null;
     try {
       const count = await global.Sprites.getCellVariantCount(spawn.speciesA, spawn.speciesB);
@@ -14414,16 +14417,22 @@
       // pipelined read.
       let variants;
       try {
-        if (global.Sprites && global.Sprites.getCellVariantCountsBatch) {
-          const cells = records.map(({ spawn }) => [spawn.speciesA, spawn.speciesB]);
+        // Solo spawns skip the cell/variant machinery entirely (fixed
+        // 'auto' art) — the batch read below is pair-only.
+        const cells = records
+          .filter(({ spawn }) => !(typeof spawn.solo === 'string' && spawn.solo))
+          .map(({ spawn }) => [spawn.speciesA, spawn.speciesB]);
+        if (cells.length && global.Sprites && global.Sprites.getCellVariantCountsBatch) {
           await global.Sprites.getCellVariantCountsBatch(cells);
         }
         variants = await Promise.all(
           records.map(({ spawn }) =>
-            resolveSpawnVariant(spawn).catch((e) => {
-              _logCreatureError(`addMarkersBatch/resolveVariant/${spawn.id}`, e);
-              return null;
-            }))
+            (typeof spawn.solo === 'string' && spawn.solo)
+              ? Promise.resolve('auto')
+              : resolveSpawnVariant(spawn).catch((e) => {
+                  _logCreatureError(`addMarkersBatch/resolveVariant/${spawn.id}`, e);
+                  return null;
+                }))
         );
       } catch (e) {
         _logCreatureError('addMarkersBatch/Promise.all(resolveSpawnVariant)', e);

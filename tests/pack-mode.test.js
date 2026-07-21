@@ -251,6 +251,13 @@ function makeCtx(extra) {
       '5: pack dex view exists');
     ok(creatures.includes("pushView({ view: 'packdex' })"),
       '5: Pokédex button branches to pack dex in solo mode');
+    // Regression: solo spawns must never reach the pair-keyed
+    // cell/variant sprite machinery (undefined.pack / undefined.png).
+    ok(/async function resolveSpawnVariant\(spawn\) \{\s*\/\/ Solo spawns[\s\S]{0,200}?return 'auto';/.test(creatures),
+      '5: resolveSpawnVariant short-circuits solo spawns');
+    ok(/records\s*\n?\s*\.filter\(\(\{ spawn \}\) => !\(typeof spawn\.solo === 'string' && spawn\.solo\)\)/.test(creatures)
+      || creatures.includes(".filter(({ spawn }) => !(typeof spawn.solo === 'string' && spawn.solo))"),
+      '5: addMarkersBatch keeps solo spawns out of the variant batch read');
 
     console.log(`\n${passed} passed, ${failed} failed`);
     process.exit(failed ? 1 : 0);
