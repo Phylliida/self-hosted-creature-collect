@@ -149,10 +149,15 @@ console.error('[live-update] script-tag executing');
     if (!latest) return;            // no data reachable → no-op (refresh does nothing)
     const installed = loadInstalled();
 
-    // Take the union of file names — anything in the latest map that
-    // differs (or is unknown) from installed is in scope for download.
+    // Bundle-wins-unless-server-is-newer. Versions are mtime strings
+    // ("2026-07-21 23:32") which compare lexicographically. A plain
+    // `!==` would treat DOWNGRADES as updates: a refresh on a device
+    // whose BUNDLE is newer than the live server (fresh IPA, server
+    // not yet updated) would overlay the older server files on top of
+    // the newer bundle — the mixed-stale-code state that makes an app
+    // update load old JS. Only a strictly-newer server wins.
     const fnames = Object.keys(latest);
-    const changed = fnames.filter((k) => latest[k] !== installed[k]);
+    const changed = fnames.filter((k) => installed[k] == null || latest[k] > installed[k]);
     if (!changed.length) { log('all up to date'); return; }
     log(`update available: ${changed.length} file(s) changed (${changed.join(', ')})`);
 

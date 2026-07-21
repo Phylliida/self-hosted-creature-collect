@@ -57,6 +57,11 @@
     localStorage.removeItem('cc.speciesNames');
     localStorage.removeItem('cc.speciesTypes');
     localStorage.removeItem('cc.speciesEvolutions');
+    // Also drop live-update's installed-version map: it belongs to the
+    // OLD bundle's era. Re-seeding from this page's fresh map (next
+    // loadInstalled) is what lets the bundle-wins-unless-newer guard
+    // in live-update.js compare against the right baseline.
+    localStorage.removeItem('cc.installedVersions');
   } catch (e) {}
   // Persist the new marker eagerly so a failure in the IDB-clear
   // path doesn't trap us in a reload loop. Trade-off: a kill between
