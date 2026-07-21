@@ -106,7 +106,7 @@ app = Flask(__name__, static_folder=None)
 _TRACKED_JS = {
     "creatures.js", "sprites.js", "sprite-store.js", "appdata.js",
     "species.js", "spawns.js", "trip-planner.js",
-    "live-update.js", "extras.js", "types.js", "specials.js",
+    "live-update.js", "extras.js", "types.js", "specials.js", "pack-reader.js",
     # Extras add-on siblings — tracked so the Refresh button / live-update
     # pick up changes (they already have the SCRIPT_VERSION='auto' hook).
     "extras-apps.js", "extras-almanac.js", "extras-vibration.js", "extras-skymap.js",
@@ -190,7 +190,7 @@ _TRACKED_HTML = {
 _SCRIPT_VERSION_FILES = [
     "creatures.js", "sprites.js", "sprite-store.js", "appdata.js",
     "species.js", "spawns.js", "trip-planner.js", "live-update.js", "extras.js",
-    "types.js", "specials.js",
+    "types.js", "specials.js", "pack-reader.js",
     "extras-apps.js", "extras-almanac.js", "extras-vibration.js", "extras-skymap.js",
     "extras-sudoku.js", "extras-sensors.js", "extras-tuner.js", "extras-scapes.js",
     "extras-todos.js",
@@ -1705,6 +1705,37 @@ def regions_file(fname):
     # in dev) can fetch these. Range requests are required for
     # PMTiles to work — Flask's send_from_directory handles those
     # natively.
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    return resp
+
+
+@app.route("/content-pack/<path:fname>")
+def content_pack_file(fname):
+    """Serve the built creature content pack (pack.bin / pack.json)
+    from packs/creature-fusion/ (output of build-content-pack.py).
+    This is the LOCAL source for the Settings → Creature pack
+    download; the Hugging Face source (TessaCoil/creature-pack)
+    serves the same two filenames from the dataset, mirroring how
+    /regions mirrors the maps dataset.
+
+    Path-traversal defense: resolve inside packs/creature-fusion and
+    verify it stays within. pack.bin is fetched with streaming
+    progress; pack.json is the tiny version/manifest probe.
+    """
+    base = (ROOT / "packs" / "creature-fusion").resolve()
+    if not base.is_dir():
+        abort(404)
+    path = (base / fname).resolve()
+    try:
+        path.relative_to(base)
+    except ValueError:
+        abort(404)
+    if not path.is_file():
+        abort(404)
+    resp = send_from_directory(path.parent, path.name)
+    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    # CORS so the PWA (which may be loaded from a different origin
+    # in dev) can fetch these.
     resp.headers["Access-Control-Allow-Origin"] = "*"
     return resp
 

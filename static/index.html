@@ -3137,7 +3137,7 @@
        // overlays new code into this very cache in place, so deleting would
        // be pointless online and, offline, would wipe a prior update back to
        // the bundled version. (Refresh must never downgrade with no data.)
-       try{var _plat=(window.Capacitor&&window.Capacitor.getPlatform&&window.Capacitor.getPlatform())||'web';if(_plat!=='android'){caches.open('app-v1').then(function(c){['/','/manifest.webmanifest','/static/icon.svg','/static/trip-planner.js','/static/types.js','/static/specials.js','/static/extras.js','/static/extras-apps.js','/static/extras-almanac.js','/static/extras-vibration.js','/static/extras-skymap.js','/static/extras-sudoku.js','/static/extras-sensors.js','/static/extras-tuner.js','/static/extras-scapes.js','/static/extras-todos.js','/static/synth.html','/static/quiver.html','/static/vendor/maplibre-gl.css','/static/vendor/maplibre-gl.js'].forEach(function(u){c.delete(u)});c.keys().then(function(ks){ks.forEach(function(r){var p=new URL(r.url).pathname;if(/^\/static\/(draw|pixelart|fractals2|mandelbrot)\//.test(p))c.delete(r)})})})}}catch(_){}
+       try{var _plat=(window.Capacitor&&window.Capacitor.getPlatform&&window.Capacitor.getPlatform())||'web';if(_plat!=='android'){caches.open('app-v1').then(function(c){['/','/manifest.webmanifest','/static/icon.svg','/static/trip-planner.js','/static/types.js','/static/specials.js','/static/pack-reader.js','/static/extras.js','/static/extras-apps.js','/static/extras-almanac.js','/static/extras-vibration.js','/static/extras-skymap.js','/static/extras-sudoku.js','/static/extras-sensors.js','/static/extras-tuner.js','/static/extras-scapes.js','/static/extras-todos.js','/static/synth.html','/static/quiver.html','/static/vendor/maplibre-gl.css','/static/vendor/maplibre-gl.js'].forEach(function(u){c.delete(u)});c.keys().then(function(ks){ks.forEach(function(r){var p=new URL(r.url).pathname;if(/^\/static\/(draw|pixelart|fractals2|mandelbrot)\//.test(p))c.delete(r)})})})}}catch(_){}
        try{localStorage.removeItem('cc.lastUpdateFailedAt');}catch(_){}
        var btn=document.getElementById('emergencyRefresh');
        if(btn){btn.style.opacity='0.5';btn.style.pointerEvents='none';}
@@ -4423,6 +4423,7 @@
 <script src="/static/shiny-store.js"></script>
 <script src="/static/appdata.js"></script>
 <script src="/static/species.js"></script>
+<script src="/static/pack-reader.js"></script>
 <script src="/static/specials.js"></script>
 <script src="/static/creatures.js"></script>
 <script src="/static/live-update.js"></script>

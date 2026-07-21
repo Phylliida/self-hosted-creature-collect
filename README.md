@@ -642,6 +642,15 @@ hf upload-large-folder \
 Or use the wrapper: `scripts/upload-regions.sh [repo-id]` — same
 command, with preflight checks and the env vars baked in.
 
+The creature content pack (fusion data, sprites, shiny palettes,
+egg/candy icons, types, categories — see `build-content-pack.py`) has
+the same shape of wrapper:
+
+```bash
+python3 build-content-pack.py            # → packs/creature-fusion/pack.bin
+scripts/upload-content-pack.sh           # → TessaCoil/creature-pack
+```
+
 For cron, `scripts/update-transit-and-upload.sh` first runs
 `update-transit-schedules.py` (GTFS refresh + region `schedule.json`
 re-export) and then the upload, with overlap locking and logging to

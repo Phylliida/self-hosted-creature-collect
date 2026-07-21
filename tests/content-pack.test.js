@@ -1,0 +1,153 @@
+// Guards the creature content pack format (content_pack.py writer ↔
+// static/pack-reader.js reader round-trip) and its wiring.
+//
+//   (1) Round-trip — a fixture pack built in Python is opened in Node:
+//       TOC parses, entries slice BYTE-EXACT vs sources, .json()
+//       round-trips, .has/.list work, sha256 verification passes,
+//       offsets are 8-byte aligned.
+//   (2) Rejection — bad magic and truncated files fail loudly.
+//   (3) Builder — build-content-pack.py produces the generated
+//       artifacts (types/categories/specials) with the right shape
+//       (run against a tiny --max-entries pack so the test stays fast).
+//   (4) Wiring — script tag, refresh list, run.py, build-capacitor,
+//       upload script defaults to TessaCoil/creature-pack.
+//
+// Run: node tests/content-pack.test.js
+'use strict';
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { execFileSync } = require('child_process');
+
+let failed = 0, passed = 0;
+function ok(cond, msg) { if (cond) { passed++; } else { failed++; console.error('FAIL: ' + msg); } }
+
+const root = path.join(__dirname, '..');
+require(path.join(root, 'static', 'pack-reader.js'));
+const PackReader = globalThis.PackReader;
+ok(!!PackReader, 'PackReader exported under Node');
+
+function py(script) {
+  return execFileSync('python3', ['-c', script], { cwd: root, encoding: 'utf8' });
+}
+
+// --- 1) writer ↔ reader round-trip ----------------------------------------------
+async function main() {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-pack-test-'));
+  const files = {
+    'types.json': JSON.stringify({ order: ['NORMAL', 'FIRE'], types: { NORMAL: {}, FIRE: {} } }),
+    'sprites/4/autogen/4.png': Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4, 5]).toString('binary'),
+    'sprite-packs/4.pack': 'PACK-PACK-PACK',
+    'logo.svg': '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+    'z-last.bin': '\x00\x01\x02\x03',
+  };
+  const srcDir = path.join(tmp, 'src');
+  for (const [logical, content] of Object.entries(files)) {
+    const p = path.join(srcDir, logical);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, Buffer.from(content, 'binary'));
+  }
+  const binPath = path.join(tmp, 'pack.bin');
+  const manPath = path.join(tmp, 'pack.json');
+  py(
+    'import content_pack\n'
+    + 'from pathlib import Path\n'
+    + 'src = Path(' + JSON.stringify(srcDir) + ')\n'
+    + 'entries = [(str(p.relative_to(src)).replace(chr(92), "/"), p) for p in sorted(src.rglob("*")) if p.is_file()]\n'
+    + 'content_pack.write_pack(entries, ' + JSON.stringify(binPath) + ', ' + JSON.stringify(manPath) + ')\n'
+  );
+
+  const blob = new Blob([fs.readFileSync(binPath)]);
+  const reader = await PackReader.open(blob);
+  ok(reader.toc.id === 'creature-fusion' && reader.toc.format === 1,
+    '1: TOC parses (id + format)');
+  ok(reader.list().length === Object.keys(files).length, '1: every file is in the TOC');
+
+  for (const [logical, content] of Object.entries(files)) {
+    ok(reader.has(logical), '1: has ' + logical);
+    const slice = reader.get(logical);
+    const got = Buffer.from(await slice.arrayBuffer());
+    const want = Buffer.from(content, 'binary');
+    ok(got.equals(want), '1: ' + logical + ' slices byte-exact');
+    const e = reader.entries[logical];
+    ok(e.offset % 8 === 0, '1: ' + logical + ' offset is 8-byte aligned');
+    const v = await reader.getVerified(logical);
+    ok(!!v, '1: ' + logical + ' passes sha256 verification');
+  }
+  const types = await reader.json('types.json');
+  ok(types && types.order.join() === 'NORMAL,FIRE', '1: .json() round-trips');
+  ok(reader.get('nope.json') === null && (await reader.text('nope.json')) === null,
+    '1: missing entry -> null');
+  ok(reader.list('sprites/').join() === 'sprites/4/autogen/4.png', '1: list(prefix) filters');
+
+  const man = JSON.parse(fs.readFileSync(manPath, 'utf8'));
+  ok(man.entryCount === Object.keys(files).length
+    && typeof man.sha256 === 'string' && man.sha256.length === 64
+    && man.totalBytes === fs.statSync(binPath).size,
+    '1: pack.json manifest agrees with the file');
+
+  // --- 2) rejection ------------------------------------------------------------
+  let threw = false;
+  try { await PackReader.open(new Blob([Buffer.from('not a pack at all.....')])); }
+  catch (e) { threw = /magic|small/.test(e.message); }
+  ok(threw, '2: bad magic rejected');
+  threw = false;
+  try { await PackReader.open(new Blob([fs.readFileSync(binPath).subarray(0, 10)])); }
+  catch (e) { threw = true; }
+  ok(threw, '2: truncated header rejected');
+
+  // --- 3) builder artifacts (tiny pack) ------------------------------------------
+  const outDir = path.join(tmp, 'out');
+  execFileSync('python3', ['build-content-pack.py', '--out', outDir, '--max-entries', '40'],
+    { cwd: root, encoding: 'utf8' });
+  const small = await PackReader.open(new Blob([fs.readFileSync(path.join(outDir, 'pack.bin'))]));
+  const tj = await small.json('types.json');
+  ok(tj && Array.isArray(tj.order) && tj.order.length === 18
+    && tj.types.FIRE && tj.types.FIRE.color === '#EE8130'
+    && tj.types.ELECTRIC.immune.join() === 'GROUND',
+    '3: types.json dumps the canonical registry');
+  const cats = await small.json('categories.json');
+  ok(cats && Array.isArray(cats.categories) && cats.categories.length > 150,
+    '3: categories.json has one category per supported species + specials');
+  const bulb = cats.categories.find((c) => c.id === 'species:1');
+  const mewtwo = cats.categories.find((c) => c.id === 'species:150');
+  const glitch = cats.categories.find((c) => c.id === 'glitch');
+  ok(bulb && bulb.name === 'Bulbasaur' && bulb.legendary === false && bulb.evolved === false,
+    '3: Bulbasaur category shape');
+  ok(mewtwo && mewtwo.legendary === true, '3: legendary flag lands (Mewtwo)');
+  ok(glitch && glitch.special === true && cats.soloCategories.missingno.join() === 'glitch',
+    '3: glitch category + solo membership');
+  const venusaur = cats.categories.find((c) => c.id === 'species:3');
+  const bulbaEvolved = cats.categories.find((c) => c.id === 'species:1').evolved;
+  ok(venusaur && venusaur.evolved === true && bulbaEvolved === false,
+    '3: evolved flags match candy-root semantics (Venusaur yes, Bulbasaur no)');
+  const specials = await small.json('specials.json');
+  ok(Array.isArray(specials) && specials[0].id === 'missingno',
+    '3: specials.json dumps the registry');
+  const logo = await small.text('logo.svg');
+  ok(logo && logo.includes('<svg'), '3: logo.svg (poke-ball) included');
+  ok(small.has('species-types.json') && small.has('shiny-palettes.bin')
+    && small.has('eggs.png') && small.has('candies.png'),
+    '3: root bundled files present (species types, shiny, eggs, candy)');
+
+  // --- 4) wiring ------------------------------------------------------------------
+  const indexSrc = fs.readFileSync(path.join(root, 'static', 'index.html'), 'utf8');
+  ok(indexSrc.includes('<script src="/static/pack-reader.js"></script>'),
+    '4: index.html: pack-reader script tag present');
+  ok(indexSrc.includes("'/static/pack-reader.js'"),
+    '4: index.html: pack-reader in the refresh cache-delete list');
+  const runPy = fs.readFileSync(path.join(root, 'run.py'), 'utf8');
+  ok(/_TRACKED_JS = \{[\s\S]*?pack-reader\.js[\s\S]*?\}/.test(runPy)
+    && /_SCRIPT_VERSION_FILES = \[[\s\S]*?pack-reader\.js[\s\S]*?\]/.test(runPy),
+    '4: run.py: pack-reader tracked');
+  const buildCap = fs.readFileSync(path.join(root, 'scripts', 'build-capacitor.sh'), 'utf8');
+  ok(buildCap.includes('"pack-reader.js"'), '4: build-capacitor.sh: pack-reader stamped');
+  const up = fs.readFileSync(path.join(root, 'scripts', 'upload-content-pack.sh'), 'utf8');
+  ok(up.includes('TessaCoil/creature-pack') && up.includes('upload-large-folder'),
+    '4: upload script targets TessaCoil/creature-pack via upload-large-folder');
+
+  console.log(`\n${passed} passed, ${failed} failed`);
+  process.exit(failed ? 1 : 0);
+}
+
+main().catch((e) => { console.error(e); process.exit(1); });
