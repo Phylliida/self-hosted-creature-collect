@@ -3961,19 +3961,42 @@
   }
 
   // --- Long-press → "Save image" → save a sprite to the phone ----------
-  // The detail-view art is a blob: object URL. iOS WKWebView ignores the
-  // <a download> attribute for blob URLs *and* the OS's own long-press
-  // "Save Image" fails on blob: URLs, so the only reliable "Save to Photos"
-  // path on mobile is the Web Share sheet. navigator.share() requires
-  // transient user activation, which a setTimeout-driven long-press would
-  // have already spent — so the long-press only *reveals* a "Save image"
-  // button, and the actual share fires from that button's own tap (a fresh
-  // activation). Desktop / Android Chrome fall back to a real download.
+  // The detail-view art is a blob: object URL. In the native app the save
+  // goes through our SaveImage Capacitor plugin (ios-overrides /
+  // android-overrides), which writes straight to the photo library and
+  // requests "add photos" access on first use. On mobile web, iOS Safari
+  // ignores <a download> for blob URLs *and* the OS's own long-press
+  // "Save Image" fails on blob: URLs, so the fallback path there is the
+  // Web Share sheet. navigator.share() requires transient user activation,
+  // which a setTimeout-driven long-press would have already spent — so the
+  // long-press only *reveals* a "Save image" button, and the actual save
+  // fires from that button's own tap (a fresh activation). Desktop /
+  // Android Chrome fall back to a real download.
   function _safeFileName(s) {
     const base = String(s || 'creature')
       .normalize('NFKD').replace(/[^\w.\- ]+/g, '').trim()
       .replace(/\s+/g, '-').slice(0, 60);
     return base || 'creature';
+  }
+
+  // Transient bottom-of-screen notice for save results (no app-wide toast
+  // system exists, and this is the only place that needs one).
+  function _saveImageNotice(text, ms) {
+    const el = document.createElement('div');
+    el.className = 'save-image-notice';
+    el.textContent = text;
+    document.body.appendChild(el);
+    requestAnimationFrame(() => el.classList.add('show'));
+    setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 250); }, ms || 2200);
+  }
+
+  function _blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result).split(',')[1] || '');
+      r.onerror = () => reject(r.error || new Error('read failed'));
+      r.readAsDataURL(blob);
+    });
   }
 
   async function saveImageToPhone(img, filename) {
@@ -3982,7 +4005,26 @@
     const name = _safeFileName(filename) + '.png';
     let blob = null;
     try { blob = await (await fetch(src)).blob(); } catch (_) { /* ignore */ }
-    // Native share sheet — the reliable "Save to Photos" path on mobile.
+    // Native app (iOS/Android Capacitor): save straight into the photo
+    // library via our SaveImage plugin — one tap, no share sheet. The
+    // plugin requests photo-library ("add photos") access on first use.
+    const savePlugin = window.Capacitor && window.Capacitor.Plugins
+      && window.Capacitor.Plugins.SaveImage;
+    if (blob && savePlugin && typeof savePlugin.saveImage === 'function') {
+      try {
+        const base64 = await _blobToBase64(blob);
+        await savePlugin.saveImage({ base64, filename: name.replace(/\.png$/, '') });
+        _saveImageNotice('Saved to Photos ✓');
+        return;
+      } catch (e) {
+        if (e && (e.code === 'DENIED' || /denied/i.test(e.message || ''))) {
+          _saveImageNotice('Photo access denied — allow it in Settings to save images', 4200);
+          return;
+        }
+        /* else fall through to share/download */
+      }
+    }
+    // Native share sheet — the reliable "Save to Photos" path on mobile web.
     if (blob && typeof navigator.canShare === 'function') {
       try {
         const file = new File([blob], name, { type: blob.type || 'image/png' });
@@ -7018,6 +7060,18 @@
         from { opacity: 0; transform: translate(-50%, -50%) scale(0.85); }
         to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
       }
+      /* Transient "Saved to Photos" / error notice after a sprite save. */
+      .save-image-notice {
+        position: fixed; left: 50%; bottom: 90px; z-index: 60;
+        transform: translateX(-50%) translateY(8px);
+        padding: 9px 16px; border-radius: 999px; max-width: 82vw;
+        font-size: 13.5px; font-weight: 600; text-align: center;
+        color: #fff; background: rgba(0, 0, 0, 0.8);
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+        opacity: 0; pointer-events: none;
+        transition: opacity 200ms ease, transform 200ms ease;
+      }
+      .save-image-notice.show { opacity: 1; transform: translateX(-50%) translateY(0); }
       #creatureInventory .rename-form {
         display: flex; gap: 6px; justify-content: center;
         align-items: center;

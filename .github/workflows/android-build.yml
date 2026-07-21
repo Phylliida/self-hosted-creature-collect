@@ -319,6 +319,11 @@ jobs:
           #      page's PermissionRequest when the host app can hold
           #      RECORD_AUDIO (runtime prompt fires on first use). Audio
           #      is analyzed locally, never recorded or sent.
+          #    - WRITE_EXTERNAL_STORAGE (API ≤ 28 only): SaveImagePlugin
+          #      writes saved creature art to the gallery via MediaStore,
+          #      which predates scoped storage on those old devices and
+          #      still needs this (runtime-prompted by the plugin). On
+          #      API 29+ no permission is needed at all.
           perms = (
               '    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n'
               '    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n'
@@ -329,6 +334,7 @@ jobs:
               '    <uses-permission android:name="android.permission.VIBRATE" />\n'
               '    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n'
               '    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n'
+              '    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />\n'
           )
           if "ACCESS_FINE_LOCATION" not in text:
               new = re.sub(r'(<manifest\b[^>]*>\s*\n)', r'\1' + perms, text, count=1)
@@ -462,6 +468,7 @@ jobs:
                   registerPlugin(HealthConnectStepPlugin.class);
                   registerPlugin(HapticPatternPlugin.class);
                   registerPlugin(SensorProbePlugin.class);
+                  registerPlugin(SaveImagePlugin.class);
                   super.onCreate(savedInstanceState);
                   // Capacitor wires WebViewAssetLoader for page-originated
                   // requests via WebViewClient. SW-originated requests
