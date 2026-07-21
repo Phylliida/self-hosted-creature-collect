@@ -153,10 +153,12 @@ async function main() {
   const fullCopyCount = (bcs.match(/cp -R data\/BundledData\/\. /g) || []).length;
   ok(fullCopyCount === 1 && bcs.includes('if [ "$FULL_DATA" = "1" ]; then'),
     '4: the full BundledData copy exists ONLY inside the --full-data branch');
-  for (const keep of ['icons', 'fonts', 'tiles', 'regions.json']) {
-    ok(new RegExp('BundledData/' + keep.replace('.', '\\.')).test(bcs),
-      '4: slim bundle keeps map essential: ' + keep);
+  for (const keep of ['icons', 'fonts', 'tiles']) {
+    ok(new RegExp('BundledData/' + keep).test(bcs),
+      '4: slim bundle keeps map essential dir: ' + keep);
   }
+  ok(/for f in regions\.json icons-list\.json fonts-list\.json/.test(bcs),
+    '4: slim bundle keeps the map manifests (regions/icons-list/fonts-list)');
   for (const drop of ['sprites', 'sprite-packs', 'species-names', 'eggs.png', 'candies.png', 'shiny-palettes']) {
     ok(!new RegExp('cp .*BundledData/' + drop).test(bcs),
       '4: slim bundle does NOT copy creature path: ' + drop);
