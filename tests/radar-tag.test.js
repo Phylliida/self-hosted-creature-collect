@@ -46,6 +46,7 @@ function normalize(records) {
     performance: { now: () => 0 },
     readCapturedCreatures: () => records,
     fusionName: () => 'Test Fusion',
+    creatureName: () => 'Test Fusion',
     _perfMark: () => {},
     _invPerf: { fn: { getInventory: {} } },
   };
@@ -76,6 +77,16 @@ function normalize(records) {
   ok(radarPredicate(out[0]) === true, 'B: radar catch (E:) is tagged Radar');
   ok(radarPredicate(out[1]) === false, 'B: normal catch is NOT tagged Radar');
   ok(radarPredicate(out[2]) === false, 'B: egg hatch is NOT tagged Radar');
+}
+
+// ── C. solo field round-trips (non-fusion special creatures) ──
+{
+  const out = normalize([
+    { id: 'c1', solo: 'missingno', speciesA: null, speciesB: null, level: 5, sizeM: null },
+    { id: 'c2', spawnId: '1:2:3:0', speciesA: 1, speciesB: 4, level: 5, sizeM: 1 },
+  ]);
+  ok(out[0].solo === 'missingno', 'C: solo id preserved through normalization');
+  ok(out[1].solo === null, 'C: fusion records normalize solo to null');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

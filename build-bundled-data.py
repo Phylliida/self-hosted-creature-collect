@@ -565,6 +565,36 @@ def build_eggs_sheet() -> tuple[int, int]:
     return (present, len(ALLOWED_SPECIES) - present)
 
 
+def build_specials() -> int:
+    """Normalize solo-creature ("specials", e.g. Missingno) sprites from
+    data/specials/*.png into BundledData/specials/<id>.png.
+
+    Specials are non-fusion creatures — they live outside the (head,
+    body) sheet/pack key space entirely and are served as plain
+    full-PNG files (same trick as evo-items/). Sources may be
+    palette-mode with transparency-index (Missingno is), so each is
+    converted to RGBA and pasted CENTERED on a CELL_PX × CELL_PX
+    transparent canvas (no upscaling — the same convention the egg
+    fallback generator uses). Returns the count of sprites written."""
+    src_dir = ROOT / "data" / "specials"
+    if not src_dir.is_dir():
+        print("  ⚠ no data/specials directory, skipping")
+        return 0
+    dst_dir = OUT_DIR / "specials"
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    count = 0
+    for src in sorted(src_dir.glob("*.png")):
+        with Image.open(src) as img:
+            img = img.convert("RGBA")
+            canvas = Image.new("RGBA", (CELL_PX, CELL_PX), (0, 0, 0, 0))
+            x = (CELL_PX - img.width) // 2
+            y = (CELL_PX - img.height) // 2
+            canvas.paste(img, (x, y), img)
+        canvas.save(dst_dir / src.name, optimize=True)
+        count += 1
+    return count
+
+
 def copy_evo_items(evos: dict) -> int:
     """Copy evolution-item PNGs (Fire Stone, Thunder Stone, Linking
     Cord, etc.) from PIF's Graphics/Items/ into BundledData/evo-items/.
@@ -879,6 +909,10 @@ def main() -> None:
     print("→ Copying evolution-item art...")
     evo_item_count = copy_evo_items(evos)
     print(f"  {evo_item_count} evolution items")
+
+    print("→ Normalizing special (solo-creature) sprites...")
+    specials_count = build_specials()
+    print(f"  {specials_count} special sprites")
 
     print("→ Copying app data (icons + fonts)...")
     icon_count, font_count = copy_app_data()
