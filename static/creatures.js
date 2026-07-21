@@ -14454,11 +14454,15 @@
       // the subsequent showSprite calls await per-entry Promises that
       // resolve from that single read.
       try {
-        await global.SpriteStore.preload(
-          records.map(({ spawn }, i) => ({
-            a: spawn.speciesA, b: spawn.speciesB, variant: variants[i],
-          }))
-        );
+        // Preload is pair-only: solo spawns have fixed full-PNG art
+        // that never touches the sprite cell machinery.
+        const pairEntries = [];
+        for (let i = 0; i < records.length; i++) {
+          const spawn = records[i].spawn;
+          if (typeof spawn.solo === 'string' && spawn.solo) continue;
+          pairEntries.push({ a: spawn.speciesA, b: spawn.speciesB, variant: variants[i] });
+        }
+        if (pairEntries.length) await global.SpriteStore.preload(pairEntries);
       } catch (e) {
         _logCreatureError('addMarkersBatch/preload', e);
       }
@@ -14466,6 +14470,14 @@
         const { rec, spawn } = records[i];
         const img = rec.marker.getElement().querySelector('img.creature-sprite');
         if (!img) continue;
+        // Solo spawn: full-PNG art via the specials/pack path, never
+        // SpriteStore's pair-keyed cells (this was the
+        // sprite-packs/undefined.pack + undefined.png retry loop).
+        if (typeof spawn.solo === 'string' && spawn.solo) {
+          showCreatureArt(img, { solo: spawn.solo, shinyVariant: rec.shinyVariant },
+            { onReady: _markerOnReady(rec) });
+          continue;
+        }
         global.SpriteStore.showSprite(
           img, spawn.speciesA, spawn.speciesB, variants[i],
           { onReady: _markerOnReady(rec) },
