@@ -16,6 +16,12 @@ const TILES_CACHE = 'tiles-v1';
 // trip-planner searches yield (3.0s freeze on a 95km plan) and
 // traceback is linear (was O(n^2) unshift). trip-planner.js is in
 // APP_SHELL, so this bump re-precaches it too.
+// Shell bump 2026-07-21 (#6): creature content pack — types/specials/
+// pack-reader/pack-install modules, the slim-bundle first-run pack
+// prompt, and the Settings → Creature pack row all live in index.html,
+// which is cache-first in APP_SHELL. Without this bump existing
+// installs keep serving the OLD index.html from the precache and
+// never see the pack flow.
 
 const APP_SHELL = [
   '/',

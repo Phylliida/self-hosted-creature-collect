@@ -1044,6 +1044,9 @@
     const id = `e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const record = {
       id,
+      // Multi-pack: which pack this egg belongs to (defaults to the
+      // active pack at creation; legacy eggs predate the field).
+      pack: egg.pack || (global.Packs ? global.Packs.active() : 'creature-fusion'),
       sizeM: typeof egg.sizeM === 'number' ? egg.sizeM : 1.0,
       // Incubation distance — meters walked while this egg occupied
       // an incubator slot. Persists across slot swaps; capped at
@@ -1247,6 +1250,12 @@
       })(),
     };
     if (isSoloEgg) entry.solo = egg.solo;
+    // Eggs carry the pack they were laid in; the hatched creature
+    // inherits it. Pair hatches are creature-fusion by definition;
+    // legacy solo eggs fall back to the active pack.
+    if (egg.pack) entry.pack = egg.pack;
+    else if (!isSoloEgg) entry.pack = 'creature-fusion';
+    else if (global.Packs) entry.pack = global.Packs.active();
     const list = readCapturedCreatures();
     list.push(entry);
     writeCapturedCreatures(list);
@@ -1387,14 +1396,24 @@
     const u6 = draw();
 
     // Solo parent in daycare: the Missingno duplication fantasy. Loot
-    // is solo candy or a solo EGG (hatches into the same special);
-    // solos have no evolution items, so the evo branch collapses to
-    // candy. Uses only u1 (kind) and u3 (size) — the pair draws below
-    // are untouched, so pool construction above is inert for solos.
+    // is solo candy, a solo EGG (hatches into the same special), or an
+    // evo item from the pack (paintbrushes — how neopets evolve).
+    // Uses only u1 (kind), u2 (item pick) and u3 (size) — the pair
+    // draws below are untouched, so pool construction above is inert
+    // for solos.
     if (isSoloCreature(creature)) {
       const soloDef = global.Specials && global.Specials.get(creature.solo);
       const soloName = soloDef ? soloDef.name : creature.solo;
-      if (u1 < DAYCARE_PROB_CANDY + DAYCARE_PROB_EGG && u1 >= DAYCARE_PROB_CANDY) {
+      if (u1 >= DAYCARE_PROB_CANDY + DAYCARE_PROB_EGG) {
+        const packItems = (global.Packs && global.Packs.packData
+          && global.Packs.packData().items) || [];
+        if (packItems.length) {
+          const item = packItems[Math.floor(u2 * packItems.length)] || packItems[0];
+          return { kind: 'evo_item', itemKey: item.key, label: item.name };
+        }
+        return { kind: 'candy', solo: creature.solo, label: `${soloName} candy` };
+      }
+      if (u1 >= DAYCARE_PROB_CANDY) {
         const sizeM = Math.round((0.5 + u3 * 1.5) * 100) / 100;
         return { kind: 'egg', solo: creature.solo, sizeM, label: `${soloName} egg` };
       }
@@ -2308,6 +2327,7 @@
       // record, so a dropped field silently disables the tag.
       spawnId: e.spawnId,
       solo: (typeof e.solo === 'string') ? e.solo : null,
+      pack: (typeof e.pack === 'string') ? e.pack : null,
       speciesA: e.speciesA,
       speciesB: e.speciesB,
       variant: (typeof e.variant === 'number') ? e.variant : 'auto',
@@ -4005,6 +4025,40 @@
       }
     } catch {}
 
+    return updated;
+  }
+
+  // Solo evolution (pack creatures, e.g. neopets + paintbrushes): cost
+  // is the pack item + a level gate — no candy, no variant picking
+  // (solos have fixed art). Mirrors performEvolution's mutation + dex
+  // bookkeeping.
+  function _canAffordSoloEvolution(c, evo) {
+    if (!c || !evo) return false;
+    if (evo.itemKey && (readBag()[evo.itemKey] || 0) < 1) return false;
+    if (typeof evo.level === 'number' && (c.level || 0) < evo.level) return false;
+    return true;
+  }
+  async function performSoloEvolution({ creatureId, target, itemKey, level }) {
+    if (creatureId == null || !target) return null;
+    const list = readCapturedCreatures();
+    const idx = list.findIndex((x) => x && x.id === creatureId);
+    if (idx < 0) return null;
+    const c = list[idx];
+    if (!isSoloCreature(c)) return null;
+    if (!_canAffordSoloEvolution(c, { itemKey, level })) return null;
+    if (itemKey && !consumeItem(itemKey, 1)) return null;
+    const oldSolo = c.solo;
+    const updated = { ...c, solo: target };
+    list[idx] = updated;
+    writeCapturedCreatures(list);
+    // Dex: the new form is seen; the old form's row gets the evolved-away
+    // flag (same "Fresh" semantics as fusion caught-away).
+    try { markSoloSeen(target, 'auto'); } catch {}
+    try {
+      const seen = readSeenFusions();
+      const key = 'solo:' + oldSolo;
+      if (seen[key]) { seen[key].caught = true; writeSeenFusions(seen); }
+    } catch {}
     return updated;
   }
 
@@ -6763,6 +6817,30 @@
         width: 96px; height: 96px; object-fit: contain; image-rendering: pixelated;
       }
       #creatureInventory .glitch-art img.silhouette { filter: brightness(0); opacity: 0.85; }
+      /* Pack dex (solo packs): family cards with member grids. */
+      #creatureInventory .packdex-view { display: none; }
+      #creatureInventory .packdex-view.show { display: flex; flex-direction: column; }
+      #creatureInventory .packdex-stats { text-align: center; font-size: 12px; opacity: 0.8; margin: 2px 0 10px; }
+      #creatureInventory .packdex-grid { display: flex; flex-direction: column; gap: 12px; padding: 0 2px 14px; }
+      #creatureInventory .packdex-fam-head {
+        display: flex; justify-content: space-between; align-items: baseline;
+        font-weight: 700; margin: 2px 0 6px;
+      }
+      #creatureInventory .packdex-fam-head.legendary { color: #8a6d1a; }
+      #creatureInventory .packdex-fam-count { font-size: 12px; font-weight: 600; opacity: 0.65; }
+      #creatureInventory .packdex-fam-members {
+        display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+      }
+      #creatureInventory .packdex-mon {
+        text-align: center; font-size: 11.5px; cursor: pointer;
+        border: 1px solid rgba(127,127,127,0.25); border-radius: 10px; padding: 6px 2px;
+      }
+      #creatureInventory .packdex-mon.unseen { cursor: default; opacity: 0.75; }
+      #creatureInventory .packdex-mon img {
+        width: 56px; height: 56px; object-fit: contain; display: block; margin: 0 auto;
+      }
+      #creatureInventory .packdex-mon img.silhouette { filter: brightness(0); opacity: 0.8; }
+      #creatureInventory .packdex-mon-name { margin-top: 3px; }
       #creatureInventory .glitch-name { font-weight: 700; margin-top: 4px; }
       #creatureInventory .glitch-blurb { font-size: 12.5px; opacity: 0.8; margin-top: 6px; }
       #creatureInventory .glitch-when { font-size: 11.5px; opacity: 0.6; margin-top: 4px; }
@@ -7040,6 +7118,37 @@
         margin: 0 0 6px;
       }
       #creatureInventory .browse-header h3 { margin: 0; }
+      /* Pack name + swap button in the browse header. The button sits
+         right of the title text ("Pokémon" ↔ "Neopets"). */
+      #creatureInventory .pack-swap-btn {
+        margin-left: 8px; padding: 2px 8px; font-size: 14px;
+        border-radius: 999px; border: 1px solid var(--ui-border, rgba(0,0,0,0.2));
+        background: none; color: inherit; cursor: pointer; line-height: 1.2;
+        vertical-align: middle;
+      }
+      /* Pack picker overlay */
+      .pack-picker-overlay {
+        position: fixed; inset: 0; z-index: 70; display: flex;
+        align-items: center; justify-content: center;
+        background: rgba(0,0,0,0.55); padding: 16px;
+      }
+      .pack-picker-card {
+        background: var(--ui-bg, #fff); color: var(--ui-text, #111);
+        border-radius: 14px; padding: 18px; width: 320px; max-width: 92vw;
+        box-shadow: 0 8px 40px rgba(0,0,0,0.35); text-align: center;
+      }
+      .pack-picker-card h3 { margin: 0 0 12px; }
+      .pack-pick-row {
+        display: flex; justify-content: space-between; align-items: center;
+        width: 100%; padding: 12px 14px; margin: 6px 0;
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
+        border-radius: 10px; background: none; color: inherit;
+        font-size: 14.5px; cursor: pointer;
+      }
+      .pack-pick-row.active { border-color: #6d5ac0; border-width: 2px; }
+      .pack-pick-status { font-size: 12px; opacity: 0.65; }
+      .pack-pick-msg { min-height: 18px; font-size: 12px; opacity: 0.75; margin: 8px 0 4px; }
+      .pack-pick-close { margin-top: 8px; padding: 8px 18px; cursor: pointer; }
       /* Action icon row — centered on its own line below the
          "Pokémon" title. Tags / Bag / Candy / Pokédex. */
       #creatureInventory .header-actions {
@@ -7649,7 +7758,8 @@
         <button class="close cc-x-btn inventory-x" type="button" aria-label="close">×</button>
         <div class="browse-view">
           <div class="browse-header">
-            <h3>Pokémon</h3>
+            <h3><span class="pack-name">Pokémon</span><button class="pack-swap-btn" type="button"
+              aria-label="switch creature pack" title="switch creature pack">⇄</button></h3>
           </div>
           <div class="header-actions"></div>
           <div class="weather-bar"></div>
@@ -7803,6 +7913,12 @@
           <h3 class="subview-title">Glitch</h3>
           <div class="glitch-stats"></div>
           <div class="glitch-grid"></div>
+        </div>
+        <div class="packdex-view">
+          <button class="packdex-back" type="button" aria-label="back">←</button>
+          <h3 class="subview-title packdex-title">Dex</h3>
+          <div class="packdex-stats"></div>
+          <div class="packdex-grid"></div>
         </div>
       </div>
     `;
@@ -8117,6 +8233,9 @@
     panel.querySelector('.completion-back').addEventListener('click', popView);
     panel.querySelector('.speciesdex-back').addEventListener('click', popView);
     panel.querySelector('.glitch-back').addEventListener('click', popView);
+    panel.querySelector('.packdex-back').addEventListener('click', popView);
+    // Pack swap (⇄ next to the pack name) → pack picker.
+    panel.querySelector('.pack-swap-btn').addEventListener('click', _showPackPicker);
     // Completion button (top of the pokédex) → species-completion list.
     panel.querySelector('.pokedex-completion-btn').addEventListener('click',
       () => pushView({ view: 'completion' }));
@@ -8290,6 +8409,7 @@
     panel.querySelector('.completion-view').classList.remove('show');
     panel.querySelector('.speciesdex-view').classList.remove('show');
     panel.querySelector('.glitch-view').classList.remove('show');
+    panel.querySelector('.packdex-view').classList.remove('show');
     // Post-catch context follows the active stack frame: the Done
     // button surfaces ONLY while the user is on the specific detail
     // entry that was opened by a successful catch (top.fromCatch).
@@ -8411,6 +8531,11 @@
       case 'glitch': {
         panel.querySelector('.glitch-view').classList.add('show');
         renderGlitch(top.focus);
+        return;
+      }
+      case 'packdex': {
+        panel.querySelector('.packdex-view').classList.add('show');
+        renderPackDex();
         return;
       }
     }
@@ -8844,6 +8969,11 @@
   }
 
   function showPokedex(opts) {
+    // Pack mode: the dex is the pack's family dex, not the fusion one.
+    if (global.Packs && global.Packs.isSoloMode && global.Packs.isSoloMode()) {
+      pushView({ view: 'packdex' });
+      return;
+    }
     // When called with a search seed (species-link click from a
     // fusion entry), embed a CLEARED filter snapshot directly in
     // the new entry — type / sort / tag filters from the previous
@@ -9033,7 +9163,12 @@
       body._incubatorTickHandler = handler;
       window.addEventListener('cc-incubator-tick', handler);
     }
-    const eggs = readEggs();
+    const allEggs = readEggs();
+    // Multi-pack isolation: the eggs view shows only the active pack's
+    // eggs (legacy eggs without a pack field are creature-fusion).
+    const activePack = global.Packs ? global.Packs.active() : 'creature-fusion';
+    const eggs = allEggs.filter((e) =>
+      (e.pack || 'creature-fusion') === activePack);
     if (!eggs.length) {
       body.innerHTML = `
         <div class="eggs-empty">
@@ -10406,11 +10541,16 @@
     // deleted shows up as empty rather than a dangling reference.
     const rawSlots = readDaycareSlots();
     const nickMap = readNicknames();
+    // Multi-pack isolation: daycare shows only slots holding the active
+    // pack's creatures (the slot itself keeps ticking either way).
+    const activePack = global.Packs ? global.Packs.active() : 'creature-fusion';
     const slotItems = [];
     for (let i = 0; i < DAYCARE_SLOT_COUNT; i++) {
       const slot = rawSlots[i] || null;
       const c = slot ? findCreature(slot.id) : null;
-      slotItems.push(c ? { c, slot } : null);
+      const visible = c
+        && (global.Packs ? global.Packs.packOfRecord(c) === activePack : true);
+      slotItems.push(visible ? { c, slot } : null);
     }
     const slotsHtml = `
       <div class="daycare-slots">
@@ -11478,6 +11618,118 @@
     pushView({ view: 'glitch', focus: soloId });
   }
 
+  // Pack dex (solo packs like Neopets): every family from the pack's
+  // categories.json with per-family seen counts + an overall bar.
+  // Unseen monsters silhouette; tapping a caught one opens its detail.
+  function renderPackDex() {
+    const panel = document.getElementById('creatureInventory');
+    if (!panel || !global.Packs) return;
+    const statsEl = panel.querySelector('.packdex-stats');
+    const grid = panel.querySelector('.packdex-grid');
+    if (!grid) return;
+    const pd = global.Packs.packData();
+    const cats = (pd.categories && pd.categories.categories) || [];
+    const seen = readSeenFusions();
+    const totalMon = pd.species.length;
+    const seenMon = pd.species.filter((s) => seen['solo:' + s.id]).length;
+    if (statsEl) statsEl.innerHTML = `<b>${seenMon}</b> / ${totalMon} discovered`;
+    const captured = readCapturedCreatures();
+    const caughtBySolo = new Map();
+    for (const c of captured) {
+      if (isSoloCreature(c) && !caughtBySolo.has(c.solo)) caughtBySolo.set(c.solo, c.id);
+    }
+    grid.innerHTML = cats.map((cat) => {
+      const members = (cat.members || [])
+        .map((id) => pd.speciesById.get(id)).filter(Boolean);
+      const seenCount = members.filter((m) => seen['solo:' + m.id]).length;
+      return `<div class="packdex-fam">`
+        + `<div class="packdex-fam-head${cat.legendary ? ' legendary' : ''}">`
+        + `<span>${escapeHtml(cat.name)}</span>`
+        + `<span class="packdex-fam-count">${seenCount}/${members.length}</span></div>`
+        + `<div class="packdex-fam-members">`
+        + members.map((m) => {
+            const isSeen = !!seen['solo:' + m.id];
+            const url = (global.Specials && global.Specials.spriteUrl(m.id)) || '';
+            return `<div class="packdex-mon${isSeen ? '' : ' unseen'}" data-solo="${escapeHtml(m.id)}">`
+              + `<img alt=""${isSeen ? '' : ' class="silhouette"'} src="${escapeHtml(url)}">`
+              + `<div class="packdex-mon-name">${escapeHtml(isSeen ? m.name : '???')}</div>`
+              + `</div>`;
+          }).join('')
+        + `</div></div>`;
+    }).join('');
+    grid.querySelectorAll('.packdex-mon:not(.unseen)').forEach((el) => {
+      el.addEventListener('click', () => {
+        const cid = caughtBySolo.get(el.dataset.solo);
+        if (cid) showDetail(cid);
+      });
+    });
+  }
+
+  // ── Multi-pack: header + pack picker ──────────────────────────  // The browse header shows the ACTIVE pack's name ("Pokémon" ↔
+  // "Neopets"); the ⇄ button next to it opens the picker.
+  function renderPackHeader() {
+    const panel = document.getElementById('creatureInventory');
+    if (!panel || !global.Packs) return;
+    const el = panel.querySelector('.pack-name');
+    if (el) el.textContent = global.Packs.activeName();
+  }
+
+  function _packPickStatusText(s) {
+    const mb = (n) => ((n || 0) / (1024 * 1024)).toFixed(0) + ' MB';
+    if (s.phase === 'download') return `downloading… ${mb(s.downloaded)} / ${mb(s.total)}`;
+    if (s.phase === 'install') return `installing… ${s.entries} files`;
+    if (s.phase === 'done') return 'switching…';
+    return '';
+  }
+
+  function _showPackPicker() {
+    if (!global.Packs || !global.PackInstall) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'pack-picker-overlay';
+    const active = global.Packs.active();
+    overlay.innerHTML = '<div class="pack-picker-card">'
+      + '<h3>Creature packs</h3>'
+      + global.Packs.list().map((p) => {
+          const installed = global.PackInstall.isInstalled(p.id);
+          const isActive = p.id === active;
+          const status = isActive ? 'active' : (installed ? 'installed' : 'not downloaded');
+          return '<button type="button" class="pack-pick-row' + (isActive ? ' active' : '')
+            + '" data-pack="' + p.id + '"' + (isActive ? ' disabled' : '') + '>'
+            + '<span class="pack-pick-name">' + escapeHtml(p.name) + '</span>'
+            + '<span class="pack-pick-status">' + status + '</span>'
+            + '</button>';
+        }).join('')
+      + '<div class="pack-pick-msg"></div>'
+      + '<button type="button" class="pack-pick-close">Close</button>'
+      + '</div>';
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    overlay.querySelector('.pack-pick-close').onclick = close;
+    overlay.querySelectorAll('.pack-pick-row').forEach((btn) => {
+      btn.onclick = async () => {
+        const id = btn.dataset.pack;
+        const msg = overlay.querySelector('.pack-pick-msg');
+        btn.disabled = true;
+        try {
+          // Download only happens from this tap (zero-network rule);
+          // switching packs reloads into a fully isolated world.
+          if (!global.PackInstall.isInstalled(id)) {
+            await global.PackInstall.download(id, (s) => {
+              msg.textContent = _packPickStatusText(s);
+            });
+          }
+          msg.textContent = 'switching…';
+          global.Packs.setActive(id);
+          location.reload();
+        } catch (e) {
+          msg.textContent = 'failed: ' + (e && e.message ? e.message : e);
+          btn.disabled = false;
+        }
+      };
+    });
+  }
+
   function renderCompletion() {
     const panel = document.getElementById('creatureInventory');
     if (!panel) return;
@@ -11792,6 +12044,7 @@
     const typesHtml = typeChipsHtml(creatureTypes(c));
     let evosHtml = '';
     let evoEntries = [];
+    let soloEvoRows = [];   // pack-mode solo evolutions {target, itemKey, level, itemName}
     if (c.speciesA != null && c.speciesB != null) {
       evoEntries = fusionEvolutionsFor(c.speciesA, c.speciesB);
       if (evoEntries.length) {
@@ -11839,6 +12092,42 @@
     const pokedexLinkHtml = (isSoloCreature(c) || (c.speciesA != null && c.speciesB != null))
       ? `<button class="detail-pokedex-link" type="button">View dex entry →</button>`
       : '';
+    // Solo (pack) evolutions: paintbrush item + level gate. Rows mirror
+    // the fusion evo list but cost an item instead of candy.
+    if (isSoloCreature(c) && global.Packs && global.Packs.packData) {
+      const spec = global.Packs.packData().speciesById
+        ? global.Packs.packData().speciesById.get(c.solo) : null;
+      const packItems = global.Packs.packData().items || [];
+      const evos = (spec && spec.evolutions) || [];
+      if (evos.length) {
+        soloEvoRows = evos.map((e) => {
+          const meta = packItems.find((it) => it.name === e.item) || {};
+          return { target: e.target, itemKey: meta.key || null, level: e.level, itemName: e.item || '' };
+        });
+        evoEntries = soloEvoRows;   // perf counter parity
+        evosHtml = `<div class="detail-evos">`
+          + `<div class="detail-evos-label">Evolves to</div>`
+          + soloEvoRows.map((e, i) => {
+              const targetSpec = global.Packs.packData().speciesById.get(e.target);
+              const seen = !!readSeenFusions()['solo:' + e.target];
+              const targetName = (seen && targetSpec) ? targetSpec.name : '???';
+              const affordable = !!e.itemKey && _canAffordSoloEvolution(c, e);
+              const reqBits = [];
+              if (e.itemName) reqBits.push(escapeHtml(e.itemName));
+              if (typeof e.level === 'number') reqBits.push('Lv ' + e.level);
+              const cls = ['evo-row'];
+              if (!seen) cls.push('silhouette');
+              if (affordable) cls.push('evo-ready');
+              return `<div class="${cls.join(' ')}" data-solo-evo-idx="${i}"`
+                + (affordable ? ' role="button" tabindex="0"' : '') + '>'
+                + `<span class="evo-arrow">→</span>`
+                + `<div class="evo-name">${escapeHtml(targetName)}</div>`
+                + `<div class="evo-req">${reqBits.join(' + ') || '—'}</div>`
+                + `</div>`;
+            }).join('')
+          + `</div>`;
+      }
+    }
     body.innerHTML = `
       <div class="detail-name-row" data-mode="view">
         <div class="detail-name detail-name-clickable" role="button" tabindex="0" title="tap to rename">${escapeHtml(name)}</div>
@@ -11865,6 +12154,20 @@
         else showFusionView(c.speciesA, c.speciesB);
       });
     }
+    // Solo evo rows: tap an affordable one → confirm → perform.
+    body.querySelectorAll('.evo-row[data-solo-evo-idx]').forEach((row) => {
+      row.addEventListener('click', async () => {
+        const e = soloEvoRows[+row.dataset.soloEvoIdx];
+        if (!e || !e.itemKey || !_canAffordSoloEvolution(c, e)) return;
+        const reqText = e.itemName
+          + (typeof e.level === 'number' ? ' (Lv ' + e.level + '+)' : '');
+        if (!confirm(`Evolve with ${reqText}?`)) return;
+        const updated = await performSoloEvolution({
+          creatureId: c.id, target: e.target, itemKey: e.itemKey, level: e.level,
+        });
+        if (updated) renderDetail(findCreature(c.id) || updated);
+      });
+    });
     if (caughtClickable) {
       const caughtEl = body.querySelector('.detail-caught-clickable');
       if (caughtEl) {
@@ -12169,9 +12472,16 @@
     if (!panel) return;
     const bar = panel.querySelector('.weather-bar');
     if (!bar) return;
-    const typesLoaded = global.Species
-      && global.Species.typesFor
-      && (global.Species.typesFor(1) || []).length > 0;
+    // Data readiness is pack-dependent: fusion mode needs the pokémon
+    // species table; solo-pack mode needs the pack's pools (loaded by
+    // packs.js at boot). The "no data" banner only makes sense for the
+    // active mode's own data.
+    const packMode = global.Packs && global.Packs.isSoloMode && global.Packs.isSoloMode();
+    const typesLoaded = packMode
+      ? (global.Spawns && global.Spawns.getPack && global.Spawns.getPack())
+      : (global.Species
+          && global.Species.typesFor
+          && (global.Species.typesFor(1) || []).length > 0);
     if (!typesLoaded) {
       // Species data isn't in memory yet. Kick off the load and
       // re-render once it's ready — runs both in the IPA (auto-
@@ -12180,6 +12490,15 @@
       // until then; only fall back to the heavy "no data" warning
       // if the load actually fails or takes more than 8 seconds.
       bar.innerHTML = `<div class="weather-warning weather-loading">Loading creature data…</div>`;
+      if (packMode) {
+        if (global.Packs && !bar._cc_packHooked) {
+          bar._cc_packHooked = true;
+          global.Packs.loadActivePackData()
+            .catch(() => {})
+            .finally(() => { bar._cc_packHooked = false; renderWeatherBar(); });
+        }
+        return;
+      }
       if (global.Species && global.Species.ensureLoaded && !bar._cc_loadingHooked) {
         bar._cc_loadingHooked = true;
         const fail = setTimeout(() => {
@@ -12302,6 +12621,7 @@
   function renderList(listEl) {
     const _tTotal = performance.now();
     renderWeatherBar();
+    renderPackHeader();
     renderSaveReminder();
     const panel = document.getElementById('creatureInventory');
     if (panel) updateFilterIndicators(panel, INV_FILTER_SELECTORS);
@@ -12310,6 +12630,12 @@
     const q = (searchEl && searchEl.value || '').trim().toLowerCase();
     const _tData = performance.now();
     let items = sortedCreatures();
+    // Multi-pack isolation: the inventory shows only the ACTIVE pack's
+    // creatures (legacy records without a pack field are creature-fusion).
+    if (global.Packs) {
+      const activePack = global.Packs.active();
+      items = items.filter((c) => global.Packs.packOfRecord(c) === activePack);
+    }
     const _dataMs = performance.now() - _tData;
     const _inputN = items.length;
     const _tFilter = performance.now();
@@ -13492,6 +13818,9 @@
       },
     };
     if (!isSolo) delete entry.solo;
+    // Multi-pack: tag the record with the pack that was active when it
+    // was caught (legacy records predate the field = creature-fusion).
+    if (global.Packs) entry.pack = global.Packs.active();
     // Tag incense-spawned catches so the detail view can show "From
     // <type> Incense" (parallel to fromEgg's "Hatched from egg").
     if (spawn.incense) {
@@ -13544,6 +13873,7 @@
       sizeM: null,
       caughtAt: { timestamp: Date.now() },
     };
+    if (global.Packs) entry.pack = global.Packs.active();
     const list = readCapturedCreatures();
     list.push(entry);
     writeCapturedCreatures(list);
@@ -14465,11 +14795,17 @@
   }
   // Toggle the bubble's visibility from the current egg state. Cheap + safe to
   // call from any incubation / hatch path (no-op before the map installs).
+  // Multi-pack: only the active pack's eggs count (the bubble's hatch
+  // flow opens this pack's eggs view).
   function _updateEggBubble() {
     const ctrl = _ensureEggBubble();
     if (!ctrl || !ctrl._container) return;
     let ready = false;
-    try { ready = _anyEggReadyToHatch(readEggs()); } catch (e) { ready = false; }
+    try {
+      const activePack = global.Packs ? global.Packs.active() : 'creature-fusion';
+      ready = _anyEggReadyToHatch(
+        readEggs().filter((e) => (e.pack || 'creature-fusion') === activePack));
+    } catch (e) { ready = false; }
     ctrl._container.style.display = ready ? '' : 'none';
   }
   // Bubble click: hatch the oldest ready egg and open the new creature. Mirrors
@@ -14477,7 +14813,10 @@
   // so it opens the inventory panel (show()) before pushing the detail view.
   async function _hatchReadyEggFromMap() {
     if (_eggHatchInFlight) return;
-    const ready = readEggs().find(eggReadyToHatch);
+    const activePack = global.Packs ? global.Packs.active() : 'creature-fusion';
+    const ready = readEggs()
+      .filter((e) => (e.pack || 'creature-fusion') === activePack)
+      .find(eggReadyToHatch);
     if (!ready) { _updateEggBubble(); return; }
     _eggHatchInFlight = true;
     let entry = null;
@@ -15028,7 +15367,23 @@
     const i = Math.floor(Math.random() * COLLECTIBLE_ITEM_KEYS.length);
     return COLLECTIBLE_ITEM_KEYS[i];
   }
-  function getItemMeta(key) { return ITEMS[key] || null; }
+  function getItemMeta(key) { return ITEMS[key] || _packItems.get(key) || null; }
+
+  // Pack items (e.g. neopets paintbrushes) registered when a solo pack
+  // loads. Namespaced keys ('neo_paintbrush_red'), icon is a full URL
+  // into the pack's image tree. Bag/daycare/bag-sort all consume
+  // getItemMeta, so this one map covers every surface.
+  const _packItems = new Map();
+  function registerPackItems(items) {
+    for (const it of items || []) {
+      if (!it || typeof it.key !== 'string' || !it.key) continue;
+      _packItems.set(it.key, {
+        name: it.name || it.key,
+        desc: it.kind === 'evo' ? 'Evolves certain creatures.' : '',
+        icon: it.icon || '',
+      });
+    }
+  }
   global.Creatures = {
     install, isEnabled: readEnabled,
     // Settings "i" bubble → guaranteed-catch explainer popup (reuses the
@@ -15054,6 +15409,8 @@
     setActiveIncenseState,
     getCandy: readCandy, getBag: readBag, getTags: readTags,
     grantItem, consumeItem, rollCollectibleItem, getItemMeta,
+    // Solo-pack items (paintbrushes etc.) registered by packs.js at boot.
+    registerPackItems,
     timeSinceLastSave,
     remarkAutogenCapturesWithCustomArt,  // temp: see fn comment
     // Daycare distance tracker.

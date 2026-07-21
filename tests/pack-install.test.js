@@ -39,11 +39,11 @@ ok(!!PI, 'PackInstall exported under Node');
   for (const m of ['bbox-flask', 'static-flask']) {
     const local = PI.sourceForMode(m, 'https://poke.example.org');
     ok(local.source === 'local'
-      && local.packBinUrl === 'https://poke.example.org/content-pack/pack.bin',
-      '1: ' + m + ' → server /content-pack route (CC_API_BASE)');
+      && local.packBinUrl === 'https://poke.example.org/pack-files/creature-fusion/pack.bin',
+      '1: ' + m + ' → server /pack-files/<id> route (CC_API_BASE)');
   }
   const web = PI.sourceForMode('bbox-flask', '');
-  ok(web.packBinUrl === '/content-pack/pack.bin', '1: empty apiBase → same-origin relative');
+  ok(web.packBinUrl === '/pack-files/creature-fusion/pack.bin', '1: empty apiBase → same-origin relative');
 }
 
 // --- 2) streaming entry cutter ------------------------------------------------------
@@ -134,7 +134,7 @@ async function main() {
     r = await PI.checkForUpdate();
     ok(r.state === 'available', '3: older version → update available');
 
-    lsStore[PI.META_KEY] = JSON.stringify(
+    lsStore[PI.metaKey('creature-fusion')] = JSON.stringify(
       { contentVersion: 'v1', sha256: 'abc', installedAt: 2 });
     r = await PI.checkForUpdate();
     ok(r.state === 'up-to-date', '3: same version+hash → up-to-date');
@@ -155,7 +155,7 @@ async function main() {
     ok(swift.includes('path.hasPrefix("/bundled-data/")'),
       '4: LocalServer overlays /bundled-data/* from the pack');
     const sw = fs.readFileSync(path.join(root, 'static', 'sw.js'), 'utf8');
-    ok(!sw.includes('cc-content-pack') && !sw.includes('pack-reader'),
+    ok(!sw.includes('cc-content-pack') && !sw.includes("importScripts('/static/pack-reader.js')"),
       '4: sw.js stays OUT of the pack business (data goes where it already lived)');
     const iosYml = fs.readFileSync(path.join(root, '.github', 'workflows', 'ios-build.yml'), 'utf8');
     ok(iosYml.includes('cp ios-overrides/LocalServer.swift'),

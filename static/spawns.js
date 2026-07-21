@@ -201,11 +201,35 @@
   // player's world. Registered pack types are appended (safe).
   const TYPES = global.Types.list();
 
+  // ── Pack mode (GMS solo packs, e.g. Neopets) ──────────────────
+  // When a pack is active, the SAME deterministic streams (cells,
+  // ticks, positions, levels, sizes, birth offsets, legendary
+  // candidates, the full RNG draw sequence) are preserved — only the
+  // species lookup changes: pack monsters are SOLOS (record.solo)
+  // drawn from the pack's pools. A pokémon-mode player and a pack-mode
+  // player standing in the same cell in the same minute therefore see
+  // different creatures at the SAME spot — that's the co-location
+  // promise, and it falls out of not touching the seed stream at all.
+  let _pack = null;  // { id, types, monsters: [{key, types, forms, genders}], rares: [...] } | null
+  function setPack(def) {
+    _pack = def || null;
+    _byPrimary = null; _bySecondary = null;
+    _cachedSampler = null; _cachedSamplerKey = null;
+    _ctMemo.clear(); _ctMemoSampler = null; _ctMemoOldestTick = -1;
+    _incMemo.clear(); _incMemoKey = null; _incMemoOldest = -1;
+  }
+  function getPack() { return _pack; }
+  // Weather always rotates over the ACTIVE type list — the pokémon 18
+  // in fusion mode, the pack's own types in pack mode. (Each mode is a
+  // consistent world; the type ORDER contract of the original 18 is
+  // untouched either way.)
+  function _weatherTypes() { return _pack ? _pack.types : TYPES; }
+
   // Deterministic Fisher-Yates shuffle of TYPES seeded by `cycleIdx`.
   // Returns a fresh permutation per cycle so every cycle visits every
   // type exactly once. Same input → same permutation for all users.
   function shuffledTypesForCycle(cycleIdx) {
-    const arr = TYPES.slice();
+    const arr = _weatherTypes().slice();
     const rng = getxor4069((cycleIdx ^ WEEKLY_SALT) | 0);
     for (let i = arr.length - 1; i > 0; i--) {
       const j = Math.floor(rng() * (i + 1));
@@ -216,6 +240,7 @@
 
   function currentWeather(nowMs) {
     const now = nowMs == null ? Date.now() : nowMs;
+    const types = _weatherTypes();
     const dayIdx = Math.floor(now / DAY_MS);
     const weekIdx = Math.floor(now / WEEK_MS);
     const dailyRng = getxor4069((dayIdx ^ DAILY_SALT) | 0);
@@ -224,12 +249,12 @@
     // re-shuffle (cycleIdx bumps, new permutation). Guarantees every
     // type comes up once per cycle without back-to-back-week
     // repetition skew that pure hashing produces.
-    const cycleLen = TYPES.length;
+    const cycleLen = types.length;
     const cycleIdx = Math.floor(weekIdx / cycleLen);
     const weekInCycle = goodMod(weekIdx, cycleLen);
     const weeklyPerm = shuffledTypesForCycle(cycleIdx);
     return {
-      daily: TYPES[Math.floor(dailyRng() * TYPES.length)],
+      daily: types[Math.floor(dailyRng() * types.length)],
       weekly: weeklyPerm[weekInCycle],
     };
   }
@@ -263,6 +288,21 @@
   let _bySecondary = null;
   function _buildTypeIndices() {
     if (_byPrimary && _bySecondary) return true;
+    if (_pack) {
+      // Pack mode: pools come from the pack's monsters (solo entries,
+      // keyed objects — the spawn record uses .key).
+      const byPrimary = Object.create(null);
+      const bySecondary = Object.create(null);
+      for (const t of _pack.types) { byPrimary[t] = []; bySecondary[t] = []; }
+      for (const m of _pack.monsters) {
+        if (!m.types || !m.types.length) continue;
+        byPrimary[m.types[0]].push(m);
+        bySecondary[m.types[1] || m.types[0]].push(m);
+      }
+      _byPrimary = byPrimary;
+      _bySecondary = bySecondary;
+      return true;
+    }
     const Species = global.Species;
     if (!Species || !Species.typesFor) return false;
     const probe = Species.typesFor(SPAWNABLE_SPECIES_A[0]);
@@ -306,7 +346,8 @@
   // the survivors are renormalized into a cumulative distribution for fast
   // binary-search sampling.
   function _composePairSampler(byPrimary, bySecondary, daily, weekly) {
-    const N = TYPES.length;
+    const types = _weatherTypes();
+    const N = types.length;
     const otherD = N - 1;   // count of types other than DAILY
     const otherW = N - 1;   // count of types other than WEEKLY
     // Weight of one concrete (a, b) pair under the mixture. Each bucket either
@@ -329,10 +370,10 @@
     };
     const entries = [];
     let total = 0;
-    for (const a of TYPES) {
-      if (!byPrimary[a].length) continue;
-      for (const b of TYPES) {
-        if (!bySecondary[b].length) continue;
+    for (const a of types) {
+      if (!byPrimary[a] || !byPrimary[a].length) continue;
+      for (const b of types) {
+        if (!bySecondary[b] || !bySecondary[b].length) continue;
         const wv = weightOf(a, b);
         if (wv <= 0) continue;
         entries.push({ a, b, w: wv });
@@ -383,7 +424,7 @@
     const sampler = _composePairSampler(_byPrimary, _bySecondary, w.daily, w.weekly);
     if (!sampler) return null;
     const perType = Object.create(null);
-    for (const t of TYPES) perType[t] = 0;
+    for (const t of _weatherTypes()) perType[t] = 0;
     let total = 0;
     for (const e of sampler.entries) {
       perType[e.a] += e.w;   // primary slot
@@ -391,7 +432,7 @@
       total += e.w;
     }
     const denom = 2 * total;   // two type-slots per spawn
-    if (denom > 0) for (const t of TYPES) perType[t] /= denom;
+    if (denom > 0) for (const t of _weatherTypes()) perType[t] /= denom;
     const same = w.daily === w.weekly;
     const dailyShare = perType[w.daily] || 0;
     const weeklyShare = perType[w.weekly] || 0;
@@ -502,6 +543,18 @@
     // it from spawn-time means variant count never affects density (a
     // cell with 5 variants is no more likely to spawn than one with 1).
     const variantSeed = arng();
+    if (_pack) {
+      // Pack mode: the A draw's monster IS the spawn (a solo). The B
+      // draw is consumed (keeping the RNG stream aligned with pair
+      // mode — positions/level/size/birth all identical to what pair
+      // mode produces here) but unused for identity; the solo's form
+      // resolves downstream from variantSeed + its gender weights.
+      return {
+        id: `${cellX}:${cellY}:${tick}:0`,
+        lat, lng, solo: speciesA.key, level, sizeM, variantSeed,
+        startMs, expireMs: startMs + LIFETIME_MS,
+      };
+    }
     return {
       id: `${cellX}:${cellY}:${tick}:0`,
       lat, lng, speciesA, speciesB, level, sizeM, variantSeed,
@@ -600,6 +653,31 @@
   }
   function generateLegendaryAtTick(cellX, cellY, ltick) {
     if (!_legCandidate(cellX, cellY, ltick)) return null;
+    if (_pack) {
+      // Pack mode: the pack's rare family takes the legendary slot
+      // (same cadence, same spots — a Pant Devil stands exactly where
+      // a Mewtwo would in fusion mode).
+      if (!_pack.rares || !_pack.rares.length) return null;
+      const arng = getxor4069(legCellTickSeed(cellX, cellY, ltick));
+      const fx = arng();
+      const fy = arng();
+      const lat = (cellX + fx) / SCALE - 90;
+      const lng = (cellY + fy) / SCALE - 180;
+      const rare = _pack.rares[Math.floor(arng() * _pack.rares.length)];
+      arng();   // partner draw consumed for stream alignment
+      const level = expDistr(8, 50, arng()) + 5;
+      const sizeM = 0.15 + arng() * 2.0;
+      const bornOffset = Math.floor(arng() * LEG_TICK_MS);
+      const startMs = ltick * LEG_TICK_MS + bornOffset;
+      const variantSeed = arng();
+      return {
+        id: 'L:' + cellX + ':' + cellY + ':' + ltick + ':0',
+        lat, lng, solo: rare.key,
+        level, sizeM, variantSeed,
+        startMs, expireMs: startMs + LEG_LIFETIME_MS,
+        legendary: true,
+      };
+    }
     const all = _legAllSpecies();
     if (!all) return null;
     const legs = _legLegendaries(all);
@@ -940,8 +1018,8 @@
   }
   function generateIncenseCellAtTick(cellX, cellY, tick, incenseType) {
     if (!_buildTypeIndices()) return null;
-    const typeIdx = TYPES.indexOf(incenseType);
-    if (typeIdx < 0) return null;
+    const typeIdx = _weatherTypes().indexOf(incenseType);
+    if (typeIdx < 0) return null;   // incl. pokémon incense in pack mode (v1)
     const arng = getxor4069(incenseCellTickSeed(cellX, cellY, tick, typeIdx));
     if (arng() >= SPAWN_CHANCE_PER_TICK * INCENSE_RATE_FACTOR) return null;
     const fx = arng();
@@ -950,9 +1028,10 @@
     const lng = (cellY + fy) / SCALE - 180;
     // The non-incense slot: 40% any-uniform, 30% weekly, 30% daily.
     const w = currentWeather(tick * TICK_MS);
+    const types = _weatherTypes();
     const rt = arng();
     let otherType;
-    if (rt < 0.40) otherType = TYPES[Math.floor(arng() * TYPES.length)];
+    if (rt < 0.40) otherType = types[Math.floor(arng() * types.length)];
     else if (rt < 0.70) otherType = w.weekly;
     else otherType = w.daily;
     // Place the incense type in whichever slot yields non-empty pools
@@ -977,6 +1056,14 @@
     const bornOffset = Math.floor(arng() * TICK_MS);
     const startMs = tick * TICK_MS + bornOffset;
     const variantSeed = arng();
+    if (_pack) {
+      return {
+        id: 'I:' + cellX + ':' + cellY + ':' + tick + ':' + typeIdx,
+        lat, lng, solo: speciesA.key, level, sizeM, variantSeed,
+        startMs, expireMs: startMs + LIFETIME_MS,
+        incense: true, incenseType: incenseType,
+      };
+    }
     return {
       // typeIdx in the trailing slot (where normal/legendary ids carry a
       // 0) keeps the tick at parts[3] for isSpawnIdStale while making the
@@ -1093,9 +1180,12 @@
     for (let i = 0; i < legs.length; i++) out.push(legs[i]);
     // Fold in the evolved stream (rare; same cheap hash-gated coarse-tick scan
     // as legendaries). Evolved spawn objects share the normal shape, so the
-    // marker/encounter pipeline handles them as-is.
-    const evos = evolvedInBbox(bbox, now);
-    for (let i = 0; i < evos.length; i++) out.push(evos[i]);
+    // marker/encounter pipeline handles them as-is. Pack mode: pokémon-only
+    // stream (neopets evolve via paintbrush items, not radar) — skipped.
+    if (!_pack) {
+      const evos = evolvedInBbox(bbox, now);
+      for (let i = 0; i < evos.length; i++) out.push(evos[i]);
+    }
     // Fold in the incense stream — only non-empty while an incense is
     // active. Normal density, so this is what doubles the spawn count.
     const inc = incenseSpawnsInBbox(bbox, now);
@@ -1161,6 +1251,9 @@
     // future event drops) can seed their own streams from a stable,
     // proven PRNG rather than each rolling their own hash.
     getRng: getxor4069,
+    // Pack mode (GMS solo packs): packs.js sets the active pack's
+    // types/monsters/rares; null restores fusion behavior.
+    setPack, getPack,
     TICK_MS, LIFETIME_MS,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
