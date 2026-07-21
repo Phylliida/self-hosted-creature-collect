@@ -126,6 +126,36 @@
 
   function isReady() { return _ready; }
 
+  // ── Solo (special) shinies ─────────────────────────────────────
+  // Solo creatures (static/specials.js — Missingno et al.) live outside
+  // the family-pair key space. Their 12 transforms are content-
+  // independent hue rotations (the same (φ, ΔL, κ) OKLAB transform as
+  // pair shinies), so there's no bake step: a shared default set covers
+  // every solo, and specials can override with their own 12 triples via
+  // registerSoloTriples (the pack seam).
+  const DEFAULT_SOLO_TRIPLES = (() => {
+    const t = new Float32Array(TRIPLES_PER_ENTRY * 3);
+    for (let i = 0; i < TRIPLES_PER_ENTRY; i++) {
+      t[i * 3 + 0] = (i / TRIPLES_PER_ENTRY) * 2 * Math.PI - Math.PI;  // φ
+      t[i * 3 + 1] = (i % 2 === 0 ? 1 : -1) * 0.04;                    // ΔL
+      t[i * 3 + 2] = 1.05;                                             // κ
+    }
+    return t;
+  })();
+  const _soloTriples = new Map();  // soloId -> Float32Array(36)
+  function registerSoloTriples(soloId, triples) {
+    if (typeof soloId !== 'string' || !soloId) return;
+    if (!triples || triples.length !== TRIPLES_PER_ENTRY * 3) return;
+    _soloTriples.set(soloId, Float32Array.from(triples));
+  }
+  function getSoloTriple(soloId, variantIdx) {
+    if (typeof variantIdx !== 'number'
+        || variantIdx < 0 || variantIdx >= TRIPLES_PER_ENTRY) return null;
+    const triples = _soloTriples.get(soloId) || DEFAULT_SOLO_TRIPLES;
+    const base = variantIdx * 3;
+    return { phi: triples[base], deltaL: triples[base + 1], kappa: triples[base + 2] };
+  }
+
   function getTriple(rootA, rootB, variantIdx) {
     if (!_ready) return null;
     if (typeof variantIdx !== 'number'
@@ -290,10 +320,37 @@
     }
   }
 
+  // Solo variant of transformBlob: same per-pixel OKLAB transform, but
+  // the triple comes from the solo table (no palette bin needed).
+  async function transformSoloBlob(blob, soloId, shinyVariant) {
+    if (!blob) return null;
+    const triple = getSoloTriple(soloId, shinyVariant);
+    if (!triple) return null;
+    let bmp;
+    try {
+      bmp = await createImageBitmap(blob);
+    } catch { return null; }
+    try {
+      const w = bmp.width, h = bmp.height;
+      const canvas = _makeCanvas(w, h);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(bmp, 0, 0);
+      const imgData = ctx.getImageData(0, 0, w, h);
+      _applyTransformInPlace(imgData.data, triple.phi, triple.deltaL, triple.kappa);
+      ctx.putImageData(imgData, 0, 0);
+      const outBlob = await _canvasToBlob(canvas);
+      if (!outBlob) return null;
+      return URL.createObjectURL(outBlob);
+    } finally {
+      if (bmp.close) bmp.close();
+    }
+  }
+
   global.ShinyStore = {
     RATE: SHINY_RATE,
     VARIANT_COUNT: TRIPLES_PER_ENTRY,
     load, isReady, setRootResolver, getTriple, transformBlob,
+    transformSoloBlob, getSoloTriple, registerSoloTriples,
     // Exposed for tests / debug only:
     _internals: { rgbToOklab, oklabToRgb, gamutClipOklab },
   };

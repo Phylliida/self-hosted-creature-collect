@@ -105,7 +105,7 @@ STATIC_SRC = pathlib.Path("static")
 TRACKED_JS = {
     "creatures.js", "sprites.js", "sprite-store.js", "appdata.js",
     "species.js", "spawns.js", "trip-planner.js",
-    "live-update.js", "sw.js", "extras.js", "types.js",
+    "live-update.js", "sw.js", "extras.js", "types.js", "specials.js",
     "extras-apps.js", "extras-almanac.js", "extras-vibration.js",
     "extras-skymap.js", "extras-sudoku.js", "extras-sensors.js",
     "extras-tuner.js", "extras-scapes.js", "extras-todos.js",

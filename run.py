@@ -106,7 +106,7 @@ app = Flask(__name__, static_folder=None)
 _TRACKED_JS = {
     "creatures.js", "sprites.js", "sprite-store.js", "appdata.js",
     "species.js", "spawns.js", "trip-planner.js",
-    "live-update.js", "extras.js", "types.js",
+    "live-update.js", "extras.js", "types.js", "specials.js",
     # Extras add-on siblings — tracked so the Refresh button / live-update
     # pick up changes (they already have the SCRIPT_VERSION='auto' hook).
     "extras-apps.js", "extras-almanac.js", "extras-vibration.js", "extras-skymap.js",
@@ -190,7 +190,7 @@ _TRACKED_HTML = {
 _SCRIPT_VERSION_FILES = [
     "creatures.js", "sprites.js", "sprite-store.js", "appdata.js",
     "species.js", "spawns.js", "trip-planner.js", "live-update.js", "extras.js",
-    "types.js",
+    "types.js", "specials.js",
     "extras-apps.js", "extras-almanac.js", "extras-vibration.js", "extras-skymap.js",
     "extras-sudoku.js", "extras-sensors.js", "extras-tuner.js", "extras-scapes.js",
     "extras-todos.js",

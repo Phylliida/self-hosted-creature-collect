@@ -474,6 +474,14 @@
     function _addToIndices(c) {
       if (!c) return;
       if (c.id != null) _byId.set(c.id, c);
+      if (isSoloCreature(c)) {
+        // Solos index under 'solo:<id>' — a single art variant ('auto').
+        const k = creatureKeyOf(c);
+        let bucket = _variantsByFusion.get(k);
+        if (!bucket) { bucket = new Map(); _variantsByFusion.set(k, bucket); }
+        bucket.set('auto', (bucket.get('auto') || 0) + 1);
+        return;
+      }
       if (c.speciesA == null || c.speciesB == null) return;
       const k = `${c.speciesA}-${c.speciesB}`;
       let bucket = _variantsByFusion.get(k);
@@ -484,6 +492,17 @@
     function _removeFromIndices(c) {
       if (!c) return;
       if (c.id != null) _byId.delete(c.id);
+      if (isSoloCreature(c)) {
+        const k = creatureKeyOf(c);
+        const bucket = _variantsByFusion.get(k);
+        if (!bucket) return;
+        const count = bucket.get('auto');
+        if (count == null) return;
+        if (count <= 1) bucket.delete('auto');
+        else bucket.set('auto', count - 1);
+        if (bucket.size === 0) _variantsByFusion.delete(k);
+        return;
+      }
       if (c.speciesA == null || c.speciesB == null) return;
       const k = `${c.speciesA}-${c.speciesB}`;
       const bucket = _variantsByFusion.get(k);
@@ -849,8 +868,7 @@
   function awardCandyForCapture(speciesA, speciesB, total) {
     if (speciesA == null || speciesB == null) return;
     const rootA = candyRootFor(speciesA);
-    const rootB = candyRootFor(speciesB);
-    // Special captures (evolved / legendary) pass a larger haul; each
+    const rootB = candyRootFor(speciesB);    // Special captures (evolved / legendary) pass a larger haul; each
     // unit is sampled independently between the two morphs' roots.
     if (typeof total === 'number' && total > 2) {
       if (rootA === rootB) {
@@ -878,6 +896,12 @@
       bumpCandy(rootA, 1);
       bumpCandy(rootB, 1);
     }
+  }
+  // Solo creatures have no evolution family — each special is its own
+  // candy bucket, keyed 'solo:<id>' (bumpCandy keys by string already).
+  function awardCandyForSolo(soloId, total) {
+    if (!soloId) return;
+    bumpCandy('solo:' + soloId, (typeof total === 'number' && total > 0) ? total : 2);
   }
   // One-shot lazy migration to the current candy schema (family-root
   // keyed). Triggered from readCandy on first call when the flag is
@@ -983,7 +1007,9 @@
 
   // Egg inventory. Each entry is an unhatched fusion egg dropped
   // from the daycare loot rolls (or, in the future, traded /
-  // gifted). Shape: { id, speciesA, speciesB, sizeM, createdAt }.
+  // gifted). Shape: { id, speciesA, speciesB, sizeM, createdAt } —
+  // or, for a solo (special) egg from daycare duplication:
+  // { id, solo, sizeM, createdAt } with no speciesA/B.
   // sizeM is rolled at drop time and burned in so the eventual
   // hatched creature's size is deterministic in the egg's PRNG seed.
   // The incubator (which slots eggs hatch into + a per-egg distance
@@ -999,8 +1025,9 @@
       return arr.filter((e) =>
         e && typeof e === 'object'
         && typeof e.id === 'string' && e.id
-        && Number.isInteger(e.speciesA)
-        && Number.isInteger(e.speciesB));
+        && ((Number.isInteger(e.speciesA) && Number.isInteger(e.speciesB))
+          // Solo eggs (daycare duplication of a special creature).
+          || (typeof e.solo === 'string' && e.solo)));
     } catch { return []; }
   }
   function writeEggs(arr) {
@@ -1008,15 +1035,15 @@
     catch {}
   }
   function addEgg(egg) {
-    if (!egg || !Number.isInteger(egg.speciesA) || !Number.isInteger(egg.speciesB)) {
+    if (!egg) return null;
+    const isSoloEgg = typeof egg.solo === 'string' && egg.solo;
+    if (!isSoloEgg && (!Number.isInteger(egg.speciesA) || !Number.isInteger(egg.speciesB))) {
       return null;
     }
     const arr = readEggs();
     const id = `e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const record = {
       id,
-      speciesA: egg.speciesA,
-      speciesB: egg.speciesB,
       sizeM: typeof egg.sizeM === 'number' ? egg.sizeM : 1.0,
       // Incubation distance — meters walked while this egg occupied
       // an incubator slot. Persists across slot swaps; capped at
@@ -1024,12 +1051,18 @@
       incubatedM: 0,
       createdAt: Date.now(),
     };
-    // displaySpecies is the egg's depicted-art species — independent
-    // of the hatching content but still normalised to baby form.
-    // Older pre-cross-breed eggs don't have it; the eggs view falls
-    // back to speciesA when missing.
-    if (Number.isInteger(egg.displaySpecies)) {
-      record.displaySpecies = egg.displaySpecies;
+    if (isSoloEgg) {
+      record.solo = egg.solo;
+    } else {
+      record.speciesA = egg.speciesA;
+      record.speciesB = egg.speciesB;
+      // displaySpecies is the egg's depicted-art species — independent
+      // of the hatching content but still normalised to baby form.
+      // Older pre-cross-breed eggs don't have it; the eggs view falls
+      // back to speciesA when missing.
+      if (Number.isInteger(egg.displaySpecies)) {
+        record.displaySpecies = egg.displaySpecies;
+      }
     }
     arr.push(record);
     writeEggs(arr);
@@ -1170,13 +1203,16 @@
     // sprites-module failure doesn't leave us with a half-hatched
     // egg. Uniform pick across all custom variants for this fusion
     // (falls back to 'auto' if there are none, same as wild catches).
-    const variant = await _pickHatchVariant(egg.speciesA, egg.speciesB, egg.id);
+    const isSoloEgg = typeof egg.solo === 'string' && egg.solo;
+    const variant = isSoloEgg
+      ? 'auto'
+      : await _pickHatchVariant(egg.speciesA, egg.speciesB, egg.id);
     const entry = {
       id: `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       spawnId: null,
       fromEgg: true,
-      speciesA: egg.speciesA,
-      speciesB: egg.speciesB,
+      speciesA: isSoloEgg ? null : egg.speciesA,
+      speciesB: isSoloEgg ? null : egg.speciesB,
       variant,
       // Per-player shiny roll happens at hatch (the moment the player
       // first sees the creature) — independent of any other player who
@@ -1210,6 +1246,7 @@
         };
       })(),
     };
+    if (isSoloEgg) entry.solo = egg.solo;
     const list = readCapturedCreatures();
     list.push(entry);
     writeCapturedCreatures(list);
@@ -1221,10 +1258,15 @@
     // before that restart would overwrite the record's species, losing
     // the pre-evolution dex entry for good.
     try {
-      markFusionSeen(egg.speciesA, egg.speciesB,
-        { lat: entry.caughtAt.lat, lng: entry.caughtAt.lng }, variant);
+      if (isSoloEgg) {
+        markSoloSeen(egg.solo, 'auto');
+      } else {
+        markFusionSeen(egg.speciesA, egg.speciesB,
+          { lat: entry.caughtAt.lat, lng: entry.caughtAt.lng }, variant);
+      }
     } catch {}
-    awardCandyForCapture(egg.speciesA, egg.speciesB, CANDY_HATCH_CAPTURE);
+    if (isSoloEgg) awardCandyForSolo(egg.solo, CANDY_HATCH_CAPTURE);
+    else awardCandyForCapture(egg.speciesA, egg.speciesB, CANDY_HATCH_CAPTURE);
     eggs.splice(idx, 1);
     writeEggs(eggs);
     removeFromIncubator(eggId);
@@ -1292,7 +1334,7 @@
     if (!creature) return null;
     const a = creature.speciesA;
     const b = creature.speciesB;
-    if (!Number.isInteger(a) || !Number.isInteger(b)) return null;
+    if (!isSoloCreature(creature) && (!Number.isInteger(a) || !Number.isInteger(b))) return null;
     if (!global.Spawns || !global.Spawns.getRng) return null;
 
     // Cross-breed pool: pull every daycare slot's species into two
@@ -1320,8 +1362,8 @@
     }
     // Defensive — this slot's species should always be in the pool
     // even if readDaycareSlots somehow doesn't include it.
-    firstPool.add(a);
-    secondPool.add(b);
+    if (Number.isInteger(a)) firstPool.add(a);
+    if (Number.isInteger(b)) secondPool.add(b);
     const allSpeciesSet = new Set([...firstPool, ...secondPool]);
 
     // Six independent uniform draws from the per-milestone seed.
@@ -1343,6 +1385,21 @@
     const u4 = draw();
     const u5 = draw();
     const u6 = draw();
+
+    // Solo parent in daycare: the Missingno duplication fantasy. Loot
+    // is solo candy or a solo EGG (hatches into the same special);
+    // solos have no evolution items, so the evo branch collapses to
+    // candy. Uses only u1 (kind) and u3 (size) — the pair draws below
+    // are untouched, so pool construction above is inert for solos.
+    if (isSoloCreature(creature)) {
+      const soloDef = global.Specials && global.Specials.get(creature.solo);
+      const soloName = soloDef ? soloDef.name : creature.solo;
+      if (u1 < DAYCARE_PROB_CANDY + DAYCARE_PROB_EGG && u1 >= DAYCARE_PROB_CANDY) {
+        const sizeM = Math.round((0.5 + u3 * 1.5) * 100) / 100;
+        return { kind: 'egg', solo: creature.solo, sizeM, label: `${soloName} egg` };
+      }
+      return { kind: 'candy', solo: creature.solo, label: `${soloName} candy` };
+    }
 
     const rootA = candyRootFor(a);
     const rootB = candyRootFor(b);
@@ -1442,6 +1499,17 @@
     const noRepeat = 'background-repeat: no-repeat;'
       + 'image-rendering: pixelated;'
       + 'image-rendering: crisp-edges;';
+    // Solo loot (special candy / duplication egg): the special's own
+    // full-PNG sprite, no sheet math.
+    if (loot.solo) {
+      const url = (global.Specials && global.Specials.spriteUrl(loot.solo)) || '';
+      return (
+        `background-image: url('${url}');`
+        + `background-size: contain;`
+        + `background-position: center;`
+        + noRepeat
+      );
+    }
     if (loot.kind === 'candy') {
       const id = loot.species;
       const col = id % CANDY_SHEET_COLS;
@@ -1500,10 +1568,14 @@
   function _grantLoot(loot) {
     if (!loot) return false;
     if (loot.kind === 'candy') {
-      bumpCandy(loot.species, 1);
+      if (loot.solo) awardCandyForSolo(loot.solo, 1);
+      else bumpCandy(loot.species, 1);
       return true;
     }
     if (loot.kind === 'egg') {
+      if (loot.solo) {
+        return !!addEgg({ solo: loot.solo, sizeM: loot.sizeM });
+      }
       return !!addEgg({
         speciesA: loot.a,
         speciesB: loot.b,
@@ -1972,6 +2044,11 @@
       predicate: (c) => c && c.speciesA != null && c.speciesA === c.speciesB,
     },
     {
+      name: 'Glitch',
+      description: 'A glitch pokémon — a solo special, not a fusion.',
+      predicate: (c) => isSoloCreature(c),
+    },
+    {
       name: 'Shiny',
       description: 'Rolled shiny when first encountered (rare).',
       predicate: (c) => c && typeof c.shinyVariant === 'number',
@@ -2230,6 +2307,7 @@
       // the predicates run on THIS normalized object, not the raw stored
       // record, so a dropped field silently disables the tag.
       spawnId: e.spawnId,
+      solo: (typeof e.solo === 'string') ? e.solo : null,
       speciesA: e.speciesA,
       speciesB: e.speciesB,
       variant: (typeof e.variant === 'number') ? e.variant : 'auto',
@@ -2244,7 +2322,7 @@
       incenseType: (typeof e.incenseType === 'string') ? e.incenseType : null,
       level: e.level,
       sizeM: e.sizeM,
-      name: fusionName(e.speciesA, e.speciesB),
+      name: creatureName(e),
       caughtAt: e.caughtAt,
       tags: Array.isArray(e.tags) ? e.tags.slice() : [],
     }));
@@ -2889,6 +2967,82 @@
     return `#${a} × #${b}`;
   }
 
+  // ── Solo (special) creatures ──────────────────────────────────────
+  // A creature is either a fusion pair (speciesA × speciesB) or a SOLO
+  // special: `solo: '<id>'` with speciesA/speciesB null. Solo defs live
+  // in static/specials.js (global.Specials). These helpers are the ONLY
+  // sanctioned way to branch on the distinction — pairs flow through
+  // them unchanged.
+  function isSoloCreature(c) { return !!(c && typeof c.solo === 'string' && c.solo); }
+  // Composite key for dex/variant indexing: pairs 'a-b', solos 'solo:<id>'.
+  function creatureKeyOf(c) {
+    if (isSoloCreature(c)) return 'solo:' + c.solo;
+    return c ? `${c.speciesA}-${c.speciesB}` : '';
+  }
+  function creatureName(c) {
+    if (isSoloCreature(c)) {
+      const s = global.Specials && global.Specials.get(c.solo);
+      return s ? s.name : c.solo;
+    }
+    return fusionName(c.speciesA, c.speciesB);
+  }
+  function creatureTypes(c) {
+    if (isSoloCreature(c)) {
+      const s = global.Specials && global.Specials.get(c.solo);
+      return s ? s.types.slice() : [];
+    }
+    return fusionTypesFor(c.speciesA, c.speciesB);
+  }
+  // Art routing: solos render the bundled full-PNG (optional shiny
+  // transform via the solo palette table); pairs go through SpriteStore.
+  // Mirrors showSprite's generation guard + readyClass/onReady opts.
+  async function showCreatureArt(img, c, opts) {
+    if (!img) return;
+    if (!isSoloCreature(c)) {
+      return global.SpriteStore.showSprite(img, c.speciesA, c.speciesB, c.variant, opts);
+    }
+    opts = opts || {};
+    const gen = (img._spriteGen || 0) + 1;
+    img._spriteGen = gen;
+    const url = global.Specials && global.Specials.spriteUrl(c.solo);
+    if (!url) return;
+    let finalUrl = url;
+    const sv = (typeof opts.shinyVariant === 'number' && opts.shinyVariant >= 0)
+      ? opts.shinyVariant
+      : ((typeof c.shinyVariant === 'number' && c.shinyVariant >= 0) ? c.shinyVariant : null);
+    if (sv != null && global.ShinyStore && global.ShinyStore.transformSoloBlob) {
+      try {
+        const blob = await (await fetch(url)).blob();
+        const shinyUrl = await global.ShinyStore.transformSoloBlob(blob, c.solo, sv);
+        if (shinyUrl) finalUrl = shinyUrl;
+      } catch (_) { /* fall back to base art */ }
+    }
+    if (img._spriteGen !== gen) return;
+    img.src = finalUrl;
+    if (opts.readyClass) img.classList.add(opts.readyClass);
+    if (typeof opts.onReady === 'function') {
+      try { opts.onReady(img); }
+      catch (e) { console.error('showCreatureArt/onReady', e); }
+    }
+  }
+
+  // Dex bookkeeping for a solo sighting/catch — same seenFusions entry
+  // shape as fusions, keyed 'solo:<id>'.
+  function markSoloSeen(soloId, variant) {
+    if (!soloId) return;
+    const seen = readSeenFusions();
+    const key = 'solo:' + soloId;
+    const now = Date.now();
+    if (!seen[key]) seen[key] = { firstSeen: now };
+    seen[key].lastSeen = now;
+    if (variant !== undefined) {
+      if (!seen[key].variants) seen[key].variants = {};
+      const vKey = (typeof variant === 'number' && variant >= 0) ? String(variant) : 'auto';
+      if (!seen[key].variants[vKey]) seen[key].variants[vKey] = now;
+    }
+    writeSeenFusions(seen);
+  }
+
   // Pokémon types, colors and the effectiveness chart live in ONE place:
   // static/types.js (global.Types). The old local copies (TYPE_COLORS,
   // _TYPE_REDUCED, _TYPE_STRONG) were deleted — use the Types API.
@@ -3097,6 +3251,24 @@
         + `</span>`;
     });
     return `<div class="candy-tally">${parts.join(' · ')}</div>`;
+  }
+
+  // Detail-view candy line for ANY creature: pairs use the family-root
+  // tally above; solos show their own 'solo:<id>' bucket with the
+  // special's sprite as the icon (it's not in the candies.png sheet).
+  function candyTallyForCreature(c) {
+    if (!isSoloCreature(c)) return candyTallyHtml(c.speciesA, c.speciesB);
+    const candy = readCandy();
+    const count = candy['solo:' + c.solo] || 0;
+    const s = global.Specials && global.Specials.get(c.solo);
+    const name = s ? s.name : c.solo;
+    const url = (global.Specials && global.Specials.spriteUrl(c.solo)) || '';
+    const label = `${name} candy`;
+    return `<div class="candy-tally"><span class="candy-tally-pip">`
+      + `<img class="candy-tally-icon-solo" src="${escapeHtml(url)}" `
+      + `title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}" alt="">`
+      + ` <b>×${count}</b>`
+      + `</span></div>`;
   }
 
   // The bundled data set covers gen 1 (1-150) PLUS specific gen-2/3/4
@@ -6577,6 +6749,28 @@
       /* ── Completion view + species-dex view ───────────────────── */
       #creatureInventory .completion-view { display: none; }
       #creatureInventory .completion-view.show { display: flex; flex-direction: column; }
+      /* ── Glitch dex: solo (non-fusion) creatures ── */
+      #creatureInventory .glitch-view { display: none; }
+      #creatureInventory .glitch-view.show { display: flex; flex-direction: column; }
+      #creatureInventory .glitch-stats { text-align: center; font-size: 12px; opacity: 0.8; margin: 2px 0 10px; }
+      #creatureInventory .glitch-grid { display: flex; flex-direction: column; gap: 10px; padding: 0 2px 14px; }
+      #creatureInventory .glitch-card {
+        border: 1px solid rgba(127, 127, 127, 0.35); border-radius: 12px;
+        padding: 12px; text-align: center;
+      }
+      #creatureInventory .glitch-card.glitch-focus { outline: 2px solid #6d5ac0; }
+      #creatureInventory .glitch-art img {
+        width: 96px; height: 96px; object-fit: contain; image-rendering: pixelated;
+      }
+      #creatureInventory .glitch-art img.silhouette { filter: brightness(0); opacity: 0.85; }
+      #creatureInventory .glitch-name { font-weight: 700; margin-top: 4px; }
+      #creatureInventory .glitch-blurb { font-size: 12.5px; opacity: 0.8; margin-top: 6px; }
+      #creatureInventory .glitch-when { font-size: 11.5px; opacity: 0.6; margin-top: 4px; }
+      /* Solo candy icon (special sprite, not the candies.png sheet). */
+      #creatureInventory .candy-tally-icon-solo {
+        width: 24px; height: 24px; object-fit: contain; vertical-align: middle;
+        image-rendering: pixelated;
+      }
       #creatureInventory .speciesdex-view { display: none; }
       #creatureInventory .speciesdex-view.show { display: flex; flex-direction: column; }
       #creatureInventory .completion-stats,
@@ -7604,6 +7798,12 @@
           </div>
           <div class="speciesdex-grid"></div>
         </div>
+        <div class="glitch-view">
+          <button class="glitch-back" type="button" aria-label="back">←</button>
+          <h3 class="subview-title">Glitch</h3>
+          <div class="glitch-stats"></div>
+          <div class="glitch-grid"></div>
+        </div>
       </div>
     `;
     panel.addEventListener('click', (e) => {
@@ -7916,6 +8116,7 @@
     panel.querySelector('.tags-back').addEventListener('click', popView);
     panel.querySelector('.completion-back').addEventListener('click', popView);
     panel.querySelector('.speciesdex-back').addEventListener('click', popView);
+    panel.querySelector('.glitch-back').addEventListener('click', popView);
     // Completion button (top of the pokédex) → species-completion list.
     panel.querySelector('.pokedex-completion-btn').addEventListener('click',
       () => pushView({ view: 'completion' }));
@@ -8088,6 +8289,7 @@
     panel.querySelector('.tags-view').classList.remove('show');
     panel.querySelector('.completion-view').classList.remove('show');
     panel.querySelector('.speciesdex-view').classList.remove('show');
+    panel.querySelector('.glitch-view').classList.remove('show');
     // Post-catch context follows the active stack frame: the Done
     // button surfaces ONLY while the user is on the specific detail
     // entry that was opened by a successful catch (top.fromCatch).
@@ -8204,6 +8406,11 @@
         const sheet = panel.querySelector('.sheet');
         if (sheet) sheet.scrollTop = (top.scrollY || 0);
         renderSpeciesDex(top.species);
+        return;
+      }
+      case 'glitch': {
+        panel.querySelector('.glitch-view').classList.add('show');
+        renderGlitch(top.focus);
         return;
       }
     }
@@ -8723,6 +8930,34 @@
     );
   }
 
+  // ── Solo-egg aware helpers (eggs from daycare duplication of a
+  // special creature). Pair eggs flow through unchanged.
+  function _isSoloEgg(egg) { return !!(egg && typeof egg.solo === 'string' && egg.solo); }
+  function _eggName(egg) {
+    if (_isSoloEgg(egg)) return creatureName(egg);
+    return fusionName(egg.speciesA, egg.speciesB);
+  }
+  function _eggTypes(egg) {
+    if (_isSoloEgg(egg)) return creatureTypes(egg);
+    return global.Species ? global.Species.fusionTypesFor(egg.speciesA, egg.speciesB) : [];
+  }
+  // Art for ANY egg: solo eggs render the special's full-PNG sprite;
+  // pair eggs render their eggs.png sheet cell as before.
+  function _eggArtCss(egg, cellPx) {
+    if (_isSoloEgg(egg)) {
+      const url = (global.Specials && global.Specials.spriteUrl(egg.solo)) || '';
+      return (
+        `background-image: url('${url}');`
+        + `background-size: contain;`
+        + `background-position: center;`
+        + `background-repeat: no-repeat;`
+        + `image-rendering: pixelated;`
+        + `image-rendering: crisp-edges;`
+      );
+    }
+    return _eggArtBackgroundCss(_eggArtSpecies(egg), cellPx);
+  }
+
   function _formatIncubationKm(meters) {
     const km = (meters || 0) / 1000;
     return `${km.toFixed(2)} / ${(INCUBATOR_HATCH_M / 1000).toFixed(0)} km`;
@@ -8740,9 +8975,8 @@
     const incubatedM = eggIncubatedM(egg);
     const pct = Math.min(100,
       Math.round((incubatedM / INCUBATOR_HATCH_M) * 100));
-    const artId = _eggArtSpecies(egg);
-    const artStyle = _eggArtBackgroundCss(artId, 48);
-    const name = fusionName(egg.speciesA, egg.speciesB);
+    const artStyle = _eggArtCss(egg, 48);
+    const name = _eggName(egg);
     const cls = `incubator-slot${ready ? ' ready' : ''}`;
     const hatchBtn = ready
       ? `<button class="slot-hatch" type="button" data-hatch-id="${escapeHtml(egg.id)}">Tap to hatch</button>`
@@ -8761,9 +8995,8 @@
   }
 
   function _eggTileHtml(egg) {
-    const artId = _eggArtSpecies(egg);
-    const artStyle = _eggArtBackgroundCss(artId, 48);
-    const name = fusionName(egg.speciesA, egg.speciesB);
+    const artStyle = _eggArtCss(egg, 48);
+    const name = _eggName(egg);
     const incubatedM = eggIncubatedM(egg);
     const pct = Math.min(100,
       Math.round((incubatedM / INCUBATOR_HATCH_M) * 100));
@@ -9239,9 +9472,7 @@
     const slotted = new Set((readIncubator() || []).filter(Boolean));
     return readEggs().filter((e) => {
       if (slotted.has(e.id)) return false;
-      const types = (global.Species && global.Species.fusionTypesFor)
-        ? global.Species.fusionTypesFor(e.speciesA, e.speciesB) : [];
-      return eggTypesNeutralOrEffectiveVs(types, type);
+      return eggTypesNeutralOrEffectiveVs(_eggTypes(e), type);
     });
   }
   function _craftSetTitle(text) {
@@ -9297,10 +9528,9 @@
         return;
       }
       const tiles = eggs.map((e) => {
-        const artStyle = _eggArtBackgroundCss(_eggArtSpecies(e), 56);
-        const name = fusionName(e.speciesA, e.speciesB);
-        const types = (global.Species && global.Species.fusionTypesFor)
-          ? global.Species.fusionTypesFor(e.speciesA, e.speciesB) : [];
+        const artStyle = _eggArtCss(e, 56);
+        const name = _eggName(e);
+        const types = _eggTypes(e);
         const mult = craftMultiplier(types, st.type);
         const badge = mult > 1
           ? `<span class="craft-egg-mult">${mult}&times;</span>` : '';
@@ -9333,10 +9563,9 @@
     _craftSetTitle('Confirm');
     const egg = readEggs().find((e) => e.id === st.eggId);
     if (!egg) { _craftState = { step: 1, type: null, eggId: null }; renderCraft(); return; }
-    const name = fusionName(egg.speciesA, egg.speciesB);
-    const artStyle = _eggArtBackgroundCss(_eggArtSpecies(egg), 72);
-    const eggTypes = (global.Species && global.Species.fusionTypesFor)
-      ? global.Species.fusionTypesFor(egg.speciesA, egg.speciesB) : [];
+    const name = _eggName(egg);
+    const artStyle = _eggArtCss(egg, 72);
+    const eggTypes = _eggTypes(egg);
     const mult = craftMultiplier(eggTypes, st.type);
     const yieldLabel = mult + '× ' + global.Types.displayName(st.type) + ' Incense';
     const orbMult = mult > 1 ? `<span class="craft-egg-mult on-orb">${mult}&times;</span>` : '';
@@ -10195,7 +10424,7 @@
           // Same name resolution detail-view uses: nickname overrides
           // canonical fused name when present.
           const name = nickMap[c.id] || c.name
-            || fusionName(c.speciesA, c.speciesB);
+            || creatureName(c);
           // Distance walked while THIS occupancy lasted. Resets to 0
           // each time the creature is removed and re-added — see
           // addToDaycare. Format with the same _formatMeters helper
@@ -10294,14 +10523,14 @@
       });
       const c = findCreature(id);
       if (!c || !global.SpriteStore) return;
-      if (c.speciesA == null || c.speciesB == null) return;
+      if (!isSoloCreature(c) && (c.speciesA == null || c.speciesB == null)) return;
       const img = slot.querySelector('.daycare-slot-art-img');
       const ph = slot.querySelector('.daycare-slot-art-placeholder');
       if (!img) return;
       // Numeric variant for captures; undefined → "best available"
       // for legacy captures saved before per-capture variant tracking.
       const v = (typeof c.variant === 'number') ? c.variant : undefined;
-      global.SpriteStore.showSprite(img, c.speciesA, c.speciesB, v, {
+      showCreatureArt(img, Object.assign({}, c, { variant: v }), {
         shinyVariant: c.shinyVariant,
         onReady: () => {
           if (ph) ph.style.display = 'none';
@@ -11200,6 +11429,55 @@
   // and counted. Independent of the completion-list toggle above.
   let _speciesdexNonEvolvedOnly = false;
 
+  // ── Glitch dex: solo (special, non-fusion) creatures ───────────
+  // Separate section with its own progress bar; does NOT feed the
+  // fusion completion % (solo keys carry no '-' and are skipped by
+  // computeSpeciesCompletion's pair parsing).
+  function renderGlitch(focusId) {
+    const panel = document.getElementById('creatureInventory');
+    if (!panel) return;
+    const specials = (global.Specials && global.Specials.byCategory('glitch')) || [];
+    const seen = readSeenFusions();
+    const seenCount = specials.filter((s) => seen['solo:' + s.id]).length;
+    const statsEl = panel.querySelector('.glitch-stats');
+    if (statsEl) statsEl.innerHTML = `<b>${seenCount}</b> / ${specials.length} discovered`;
+    const grid = panel.querySelector('.glitch-grid');
+    if (!grid) return;
+    if (!specials.length) {
+      grid.innerHTML = '<div class="creature-empty">No glitch pokémon known.</div>';
+      return;
+    }
+    grid.innerHTML = specials.map((s) => {
+      const entry = seen['solo:' + s.id];
+      const isSeen = !!entry;
+      const when = isSeen && entry.firstSeen
+        ? new Date(entry.firstSeen).toLocaleDateString() : '';
+      return `<div class="glitch-card" data-solo="${escapeHtml(s.id)}">`
+        + `<div class="glitch-art"><img alt=""${isSeen ? '' : ' class="silhouette"'} data-solo-img="${escapeHtml(s.id)}"></div>`
+        + `<div class="glitch-name">${escapeHtml(isSeen ? s.name : '???')}</div>`
+        + (isSeen ? typeChipsHtml(s.types) : '')
+        + (isSeen && s.blurb ? `<div class="glitch-blurb">${escapeHtml(s.blurb)}</div>` : '')
+        + (when ? `<div class="glitch-when">First seen ${escapeHtml(when)}</div>` : '')
+        + `</div>`;
+    }).join('');
+    grid.querySelectorAll('[data-solo-img]').forEach((img) => {
+      const url = global.Specials.spriteUrl(img.dataset.soloImg);
+      if (url) img.src = url;
+    });
+    if (focusId) {
+      const el = grid.querySelector(`[data-solo="${focusId}"]`);
+      if (el) {
+        el.classList.add('glitch-focus');
+        el.scrollIntoView({ block: 'center' });
+      }
+    }
+  }
+  // "View dex entry →" from a solo's detail view: the glitch grid
+  // scrolled to (and highlighting) this special's card.
+  function showSoloView(soloId) {
+    pushView({ view: 'glitch', focus: soloId });
+  }
+
   function renderCompletion() {
     const panel = document.getElementById('creatureInventory');
     if (!panel) return;
@@ -11511,9 +11789,7 @@
         + 'From ' + escapeHtml((c.incenseType ? global.Types.displayName(c.incenseType) + ' ' : '') + 'Incense')
         + `</div>`
       : '';
-    const typesHtml = (c.speciesA != null && c.speciesB != null)
-      ? typeChipsHtml(fusionTypesFor(c.speciesA, c.speciesB))
-      : '';
+    const typesHtml = typeChipsHtml(creatureTypes(c));
     let evosHtml = '';
     let evoEntries = [];
     if (c.speciesA != null && c.speciesB != null) {
@@ -11560,7 +11836,7 @@
         </div>`;
       }
     }
-    const pokedexLinkHtml = (c.speciesA != null && c.speciesB != null)
+    const pokedexLinkHtml = (isSoloCreature(c) || (c.speciesA != null && c.speciesB != null))
       ? `<button class="detail-pokedex-link" type="button">View dex entry →</button>`
       : '';
     body.innerHTML = `
@@ -11578,14 +11854,15 @@
       ${statsHtml}
       ${incenseHtml}
       ${caughtLine}
-      ${candyTallyHtml(c.speciesA, c.speciesB)}
+      ${candyTallyForCreature(c)}
       ${detailTagsHtml(c)}
       ${evosHtml}
     `;
     const pokedexLink = body.querySelector('.detail-pokedex-link');
     if (pokedexLink) {
       pokedexLink.addEventListener('click', () => {
-        showFusionView(c.speciesA, c.speciesB);
+        if (isSoloCreature(c)) showSoloView(c.solo);
+        else showFusionView(c.speciesA, c.speciesB);
       });
     }
     if (caughtClickable) {
@@ -11608,7 +11885,7 @@
     // If no header sprite is going to fire (no SpriteStore loaded,
     // or no img element), commit the header phase now so the metric
     // can still finalize.
-    if (!global.SpriteStore || c.speciesA == null || c.speciesB == null
+    if (!global.SpriteStore || (!isSoloCreature(c) && (c.speciesA == null || c.speciesB == null))
         || !body.querySelector('.detail-art-img')) {
       _perfState.headerReady = true;
       _perfState.headerSpriteMs = _perfState.syncMs;
@@ -11749,7 +12026,7 @@
         if (fresh) renderDetail(fresh);
       });
     });
-    if (global.SpriteStore && c.speciesA != null && c.speciesB != null) {
+    if (global.SpriteStore && (isSoloCreature(c) || (c.speciesA != null && c.speciesB != null))) {
       const img = body.querySelector('.detail-art-img');
       const ph = body.querySelector('.detail-art-placeholder');
       const art = body.querySelector('.detail-art');
@@ -11759,7 +12036,7 @@
         // both fall back to the default-variant picker (custom v0 /
         // autogen) via undefined.
         const v = (typeof c.variant === 'number') ? c.variant : undefined;
-        global.SpriteStore.showSprite(img, c.speciesA, c.speciesB, v, {
+        showCreatureArt(img, Object.assign({}, c, { variant: v }), {
           shinyVariant: c.shinyVariant,
           onReady: () => {
             if (ph) ph.style.display = 'none';
@@ -12052,8 +12329,9 @@
     const filterTypeB = readInvFilterTypeB();
     if (filterType || filterTypeA || filterTypeB) {
       items = items.filter((c) => {
-        if (c.speciesA == null || c.speciesB == null) return false;
-        const types = fusionTypesFor(c.speciesA, c.speciesB);
+        const types = isSoloCreature(c)
+          ? creatureTypes(c)
+          : ((c.speciesA == null || c.speciesB == null) ? null : fusionTypesFor(c.speciesA, c.speciesB));
         if (!types || !types.length) return false;
         if (filterType && !types.includes(filterType)) return false;
         if (filterTypeA && types[0] !== filterTypeA) return false;
@@ -12165,7 +12443,7 @@
       },
       loadSpriteFor(card, c) {
         if (!global.SpriteStore) return;
-        if (c.speciesA == null || c.speciesB == null) return;
+        if (!isSoloCreature(c) && (c.speciesA == null || c.speciesB == null)) return;
         const img = card.querySelector('.art-img');
         const ph = card.querySelector('.art-placeholder');
         if (!img) return;
@@ -12174,7 +12452,7 @@
         // Legacy captures and explicit-null both fall back to the
         // default-variant picker (custom v0 / autogen) via undefined.
         const v = (typeof c.variant === 'number') ? c.variant : undefined;
-        global.SpriteStore.showSprite(img, c.speciesA, c.speciesB, v, {
+        showCreatureArt(img, Object.assign({}, c, { variant: v }), {
           shinyVariant: c.shinyVariant,
           onReady: () => {
             if (ph) ph.style.display = 'none';
@@ -12922,7 +13200,8 @@
     //   • "New Art" — we own the fusion but not this variant (art)
     // The variant can resolve asynchronously, so the badge is finalised once
     // it's known (defaults to hidden for an owned fusion until then).
-    const ownsFusion = isFusionOwned(spawn.speciesA, spawn.speciesB);
+    const isSoloSpawn = typeof spawn.solo === 'string' && spawn.solo;
+    const ownsFusion = !isSoloSpawn && isFusionOwned(spawn.speciesA, spawn.speciesB);
     // Caught-then-evolved-away flag on the dex row (see markFusionCaughtAway).
     // Read before markFusionSeen below (which never touches `caught`, so order
     // is not load-bearing, but the intent is "what did we know coming in").
@@ -12967,7 +13246,9 @@
     // post-throw capture record, and any re-open of the same encounter
     // all see the same answer.
     _rollShinyForRecord(_seenRec);
-    if (_seenRec && 'variant' in _seenRec) {
+    if (isSoloSpawn) {
+      markSoloSeen(spawn.solo, 'auto');
+    } else if (_seenRec && 'variant' in _seenRec) {
       markFusionSeen(spawn.speciesA, spawn.speciesB, spawn, _seenRec.variant);
       decideArtBadge(_seenRec.variant);
     } else {
@@ -12979,11 +13260,11 @@
     }
     const nameEl = el.querySelector('.battle-name');
     const statsEl = el.querySelector('.battle-stats');
-    nameEl.textContent = fusionName(spawn.speciesA, spawn.speciesB);
+    nameEl.textContent = isSoloSpawn ? creatureName(spawn) : fusionName(spawn.speciesA, spawn.speciesB);
     statsEl.textContent = `Lv ${spawn.level} · ${formatSize(spawn.sizeM)}`;
     const typesEl = el.querySelector('.battle-types');
     if (typesEl) {
-      typesEl.innerHTML = typeChipsHtml(fusionTypesFor(spawn.speciesA, spawn.speciesB));
+      typesEl.innerHTML = typeChipsHtml(creatureTypes(spawn));
     }
     // Incense badge — a little type-coloured orb in the info bubble's
     // top-right when this spawn came from an active incense.
@@ -13062,27 +13343,33 @@
     // happen, but defensively) can't clobber the current bind either.
     if (global.SpriteStore) {
       const rec = _markers.get(spawn.id);
+      const shinyVariant = (rec && typeof rec.shinyVariant === 'number')
+        ? rec.shinyVariant : null;
+      const onSpriteReady = () => {
+        if (_currentBattleSpawn !== spawn) return;
+        el.classList.add('battle-sprite-ready');
+        if (shinyVariant != null) el.classList.add('battle-sprite-shiny');
+        else el.classList.remove('battle-sprite-shiny');
+      };
+      if (isSoloSpawn) {
+        // Solo spawn (future stream): full-PNG art, no variant resolve.
+        showCreatureArt(img, { solo: spawn.solo, shinyVariant }, { onReady: onSpriteReady });
+      } else {
       const variantPromise = (rec && 'variant' in rec)
         ? Promise.resolve(rec.variant)
         : resolveSpawnVariant(spawn);
-      const shinyVariant = (rec && typeof rec.shinyVariant === 'number')
-        ? rec.shinyVariant : null;
       variantPromise.then((variant) => {
         if (_currentBattleSpawn !== spawn) return;
         global.SpriteStore.showSprite(
           img, spawn.speciesA, spawn.speciesB, variant, {
             shinyVariant,
-            onReady: () => {
-              if (_currentBattleSpawn !== spawn) return;
-              el.classList.add('battle-sprite-ready');
-              if (shinyVariant != null) el.classList.add('battle-sprite-shiny');
-              else el.classList.remove('battle-sprite-shiny');
-            },
+            onReady: onSpriteReady,
           },
         );
       }).catch((e) => {
         _logCreatureError(`openBattleScreen/load/${spawn.speciesA}-${spawn.speciesB}`, e);
       });
+      }
     }
     el.classList.add('show');
   }
@@ -13184,11 +13471,14 @@
     // player saw. The cache entry is no longer needed once it's persisted here.
     const shinyVariant = _resolveShinyForCatch(spawn);
     if (spawn && spawn.id != null) _shinyBySpawn.delete(spawn.id);
+    const isSolo = typeof spawn.solo === 'string' && spawn.solo;
     const entry = {
       id: `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       spawnId: spawn.id,
-      speciesA: spawn.speciesA,
-      speciesB: spawn.speciesB,
+      // Solo spawn (future stream): speciesA/B stay null, solo id set.
+      solo: isSolo ? spawn.solo : undefined,
+      speciesA: isSolo ? null : spawn.speciesA,
+      speciesB: isSolo ? null : spawn.speciesB,
       variant,
       shinyVariant,
       level: spawn.level,
@@ -13201,6 +13491,7 @@
         place: place || null,
       },
     };
+    if (!isSolo) delete entry.solo;
     // Tag incense-spawned catches so the detail view can show "From
     // <type> Incense" (parallel to fromEgg's "Hatched from egg").
     if (spawn.incense) {
@@ -13219,7 +13510,8 @@
       const candyTotal = spawn.legendary
         ? CANDY_LEGENDARY_CAPTURE
         : (spawn.evolved ? CANDY_EVOLVED_CAPTURE : 2);
-      awardCandyForCapture(spawn.speciesA, spawn.speciesB, candyTotal);
+      if (isSolo) awardCandyForSolo(spawn.solo, candyTotal);
+      else awardCandyForCapture(spawn.speciesA, spawn.speciesB, candyTotal);
     }
     catch (e) { _logCreatureError('recordCapture/awardCandy', e); }
     try { markSpawnCaught(spawn.id); }
@@ -13228,6 +13520,37 @@
     if (list.length === 1 && navigator.storage && navigator.storage.persist) {
       navigator.storage.persist().catch(() => {});
     }
+    return entry;
+  }
+
+  // Dev/admin grant for solo (special) creatures — the ONLY way to
+  // obtain one until solo spawn streams land. Builds the same record
+  // shape a solo catch would, marks the dex entry seen, awards candy.
+  // Returns the new capture record, or null for an unknown solo id.
+  async function grantSolo(soloId, opts) {
+    if (!(global.Specials && global.Specials.isSolo(soloId))) return null;
+    opts = opts || {};
+    await _whenReady();
+    const entry = {
+      id: `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      spawnId: null,
+      solo: soloId,
+      speciesA: null,
+      speciesB: null,
+      variant: 'auto',
+      shinyVariant: (typeof opts.shinyVariant === 'number' && opts.shinyVariant >= 0)
+        ? opts.shinyVariant : null,
+      level: (typeof opts.level === 'number' && opts.level > 0) ? opts.level : 5,
+      sizeM: null,
+      caughtAt: { timestamp: Date.now() },
+    };
+    const list = readCapturedCreatures();
+    list.push(entry);
+    writeCapturedCreatures(list);
+    try { markSoloSeen(soloId, 'auto'); }
+    catch (e) { _logCreatureError('grantSolo/markSoloSeen', e); }
+    try { awardCandyForSolo(soloId, 2); }
+    catch (e) { _logCreatureError('grantSolo/awardCandy', e); }
     return entry;
   }
 
@@ -13666,6 +13989,15 @@
   function loadMarkerSprite(record) {
     if (!global.SpriteStore) return;
     const { spawn } = record;
+    // Solo spawn (future stream): full-PNG art, no variant resolution.
+    if (typeof spawn.solo === 'string' && spawn.solo) {
+      record.variant = 'auto';
+      const img = record.marker.getElement().querySelector('img.creature-sprite');
+      if (!img) return;
+      showCreatureArt(img, { solo: spawn.solo, shinyVariant: record.shinyVariant },
+        { onReady: _markerOnReady(record) });
+      return;
+    }
     resolveSpawnVariant(spawn)
       .then((variant) => {
         record.variant = variant;
@@ -14180,15 +14512,21 @@
     if (global.SpriteStore) {
       const img = el.querySelector('.radar-marker-img');
       // best-available sprite; the .silhouette filter blacks it out to a shape
-      global.SpriteStore.showSprite(img, sp.speciesA, sp.speciesB, undefined, {
-        onReady: () => el.classList.add('ready'),
-      });
+      if (typeof sp.solo === 'string' && sp.solo) {
+        showCreatureArt(img, { solo: sp.solo }, { onReady: () => el.classList.add('ready') });
+      } else {
+        global.SpriteStore.showSprite(img, sp.speciesA, sp.speciesB, undefined, {
+          onReady: () => el.classList.add('ready'),
+        });
+      }
     }
     // "autogen" pill (Settings-gated): the variant count is O(1) once the
     // sprite summary has loaded, so resolve it async and drop the pill under
     // the countdown when the fusion has no hand-drawn art. Re-check the
     // setting inside .then() in case it flipped while the lookup was pending.
-    if (_radarAutogenLabelsOn() && global.Sprites && global.Sprites.getCellVariantCount) {
+    // Solos have a single fixed art — never labelled.
+    if (!(typeof sp.solo === 'string' && sp.solo)
+        && _radarAutogenLabelsOn() && global.Sprites && global.Sprites.getCellVariantCount) {
       global.Sprites.getCellVariantCount(sp.speciesA, sp.speciesB)
         .catch(() => 0)
         .then((count) => {
@@ -14748,5 +15086,8 @@
     // into the collection without going through the daycare roll.
     getEggs: readEggs,
     addEgg,
+    // Solo (special, non-fusion) creatures — dev/admin grant; the only
+    // source of solos until spawn streams exist.
+    grantSolo,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
