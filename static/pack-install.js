@@ -250,6 +250,11 @@
 
   // ── the download ──
   async function download(onStatus) {
+    const platform = (global.Capacitor && global.Capacitor.getPlatform
+      && global.Capacitor.getPlatform()) || 'web';
+    if (platform !== 'ios' && platform !== 'android') {
+      throw new Error('the creature pack is a mobile (Capacitor) flow');
+    }
     const src = currentSource();
     const manResp = await fetch(src.packJsonUrl, { cache: 'no-store' });
     if (!manResp.ok) throw new Error('pack.json: HTTP ' + manResp.status);
