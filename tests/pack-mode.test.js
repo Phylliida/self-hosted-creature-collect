@@ -258,6 +258,10 @@ function makeCtx(extra) {
     ok(/records\s*\n?\s*\.filter\(\(\{ spawn \}\) => !\(typeof spawn\.solo === 'string' && spawn\.solo\)\)/.test(creatures)
       || creatures.includes(".filter(({ spawn }) => !(typeof spawn.solo === 'string' && spawn.solo))"),
       '5: addMarkersBatch keeps solo spawns out of the variant batch read');
+    ok(creatures.includes('// Preload is pair-only'),
+      '5: SpriteStore.preload is pair-only (no undefined-undefined entries)');
+    ok(/if \(typeof spawn\.solo === 'string' && spawn\.solo\) \{\s*showCreatureArt\(img, \{ solo: spawn\.solo/.test(creatures),
+      '5: marker batch routes solo spawns to showCreatureArt, not SpriteStore');
 
     console.log(`\n${passed} passed, ${failed} failed`);
     process.exit(failed ? 1 : 0);
