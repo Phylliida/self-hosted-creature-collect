@@ -189,6 +189,36 @@ async function main() {
       '5: sprite sheets skipped on native (packs are the cell source)');
   }
 
+  // --- 6) zero-network rule + first-load prompt ---------------------------------------
+  {
+    const indexSrc = fs.readFileSync(path.join(root, 'static', 'index.html'), 'utf8');
+    // The settings row label must be local-only: _refreshCreaturePackRow
+    // performs NO update probe (checkForUpdate fetches pack.json).
+    const fnStart = indexSrc.indexOf('async function _refreshCreaturePackRow');
+    const fnEnd = indexSrc.indexOf('creaturePackBtn.onclick', fnStart);
+    const fnBody = indexSrc.slice(fnStart, fnEnd);
+    ok(fnStart > 0 && !fnBody.includes('checkForUpdate'),
+      '6: settings row label is local-only (no probe on open/dropdown-flip)');
+    // The probe happens inside the button handler instead.
+    ok(indexSrc.includes("creaturePackStatus.textContent = 'checking for updates…';"),
+      '6: update check runs on tap (user-initiated)');
+    // First-load prompt card exists, gated on Capacitor + not-installed,
+    // and its own show path performs no fetch before the tap.
+    ok(indexSrc.includes('id="packWelcome"') && indexSrc.includes('id="packWelcomeStart"'),
+      '6: first-load prompt card present');
+    ok(/window\.Capacitor && window\.PackInstall\s*&& !window\.PackInstall\.isInstalled\(\)/.test(indexSrc),
+      '6: prompt gated on mobile + pack-not-installed');
+    {
+      const pStart = indexSrc.indexOf('packWelcomeStart.onclick');
+      const pEnd = indexSrc.indexOf('packWelcomeLater.onclick');
+      ok(pStart > 0 && indexSrc.slice(pStart, pEnd).includes('PackInstall.download'),
+        '6: prompt download starts only from the tap');
+    }
+    // pack-install: web platform is refused outright.
+    const piSrc = fs.readFileSync(path.join(root, 'static', 'pack-install.js'), 'utf8');
+    ok(/mobile \(Capacitor\) flow/.test(piSrc), '6: web platform refused in download()');
+  }
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
 }

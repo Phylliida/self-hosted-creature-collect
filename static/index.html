@@ -278,6 +278,31 @@
             env(safe-area-inset-bottom) env(safe-area-inset-left);
   }
   #welcome.show { display: flex; }
+  /* First-load creature-pack prompt (mobile). Mirrors #welcome. */
+  #packWelcome {
+    position: fixed; inset: 0; z-index: 50; display: none;
+    justify-content: center; align-items: center;
+    background: rgba(0, 0, 0, 0.55);
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+            env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  #packWelcome.show { display: flex; }
+  #packWelcome .card {
+    background: var(--ui-bg); color: var(--ui-text);
+    border: 1px solid var(--ui-border); box-shadow: var(--ui-shadow);
+    border-radius: var(--ui-radius); padding: 24px;
+    max-width: 360px; width: 92%; box-sizing: border-box;
+    text-align: center; font-size: 14px; line-height: 1.45;
+  }
+  #packWelcome h2 { margin: 0 0 10px; font-size: 20px; }
+  #packWelcome p { margin: 0 0 18px; color: var(--ui-muted); }
+  #packWelcomeStart { padding: 12px 24px; font-size: 15px; cursor: pointer; width: 100%; }
+  #packWelcomeLater {
+    margin-top: 8px; background: none; border: none; cursor: pointer;
+    color: var(--ui-muted); text-decoration: underline;
+    padding: 6px; font-size: 13px;
+  }
+  #packWelcomeStatus { min-height: 18px; font-size: 12px; color: var(--ui-muted); margin-top: 8px; }
   #welcome .card {
     background: var(--ui-bg); border-radius: var(--ui-radius); padding: 24px;
     max-width: 360px; width: 92%; box-sizing: border-box;
@@ -3657,6 +3682,17 @@
        visit.</p>
     <button id="welcomeDone" hidden>Got it!</button>
     <div id="welcomeStatus"></div>
+  </div>
+</div>
+<div id="packWelcome">
+  <div class="card">
+    <h2>Creature data pack</h2>
+    <p>The pokémon fusion data pack (~609&nbsp;MB) isn’t on this device
+       yet. It’s a one-time download — after that everything works
+       offline. Nothing downloads without your tap.</p>
+    <button id="packWelcomeStart">↓ Download creature pack</button>
+    <button id="packWelcomeLater" type="button">Later</button>
+    <div id="packWelcomeStatus"></div>
   </div>
 </div>
 <div id="panel">
@@ -17101,41 +17137,44 @@ function fmtDate(ts) {
   const _fmtPackMb = (n) => ((n || 0) / (1024 * 1024)).toFixed(0) + ' MB';
   async function _refreshCreaturePackRow() {
     if (!window.PackInstall) return;
+    // Label is strictly local — probing the source for a newer pack
+    // happens only on button tap (zero-network rule).
     const meta = window.PackInstall.readMeta();
     const src = window.PackInstall.currentSource();
     const srcLabel = src.source === 'hf' ? 'Hugging Face' : 'this server';
     if (meta && meta.installedAt) {
       creaturePackStatus.textContent =
         `installed ${meta.contentVersion || ''} · ${_fmtPackMb(meta.bytes)} · source: ${srcLabel}`;
-      creaturePackBtn.textContent = '↻ check for update';
+      creaturePackBtn.textContent = '↻ update / re-download';
     } else {
       creaturePackStatus.textContent =
         `not downloaded · source: ${srcLabel} (follows Region data source)`;
       creaturePackBtn.textContent = '↓ creature pack';
     }
-    try {
-      const check = await window.PackInstall.checkForUpdate();
-      if (check.state === 'available') {
-        creaturePackBtn.textContent = '↓ update available';
-      } else if (check.state === 'up-to-date') {
-        creaturePackBtn.textContent = '✓ up to date';
-      }
-    } catch (_) { /* offline — leave the base label */ }
+  }
+  function _packStatusText(s) {
+    if (s.phase === 'download') {
+      return `downloading pack… ${_fmtPackMb(s.downloaded)} / ${_fmtPackMb(s.total)}`;
+    }
+    if (s.phase === 'install') {
+      return `installing… ${s.entries} files (${_fmtPackMb(s.downloaded)} / ${_fmtPackMb(s.total)})`;
+    }
+    if (s.phase === 'done') return 'creature data ready — reloading…';
+    return '';
   }
   creaturePackBtn.onclick = async () => {
     if (!checkWifiGate() || !window.PackInstall) return;
     creaturePackBtn.disabled = true;
     try {
+      creaturePackStatus.textContent = 'checking for updates…';
+      const check = await window.PackInstall.checkForUpdate();
+      if (check.state === 'up-to-date') {
+        creaturePackStatus.textContent = 'already up to date';
+        creaturePackBtn.disabled = false;
+        return;
+      }
       await window.PackInstall.download((s) => {
-        if (s.phase === 'download') {
-          creaturePackStatus.textContent =
-            `downloading pack… ${_fmtPackMb(s.downloaded)} / ${_fmtPackMb(s.total)}`;
-        } else if (s.phase === 'install') {
-          creaturePackStatus.textContent =
-            `installing… ${s.entries} files (${_fmtPackMb(s.downloaded)} / ${_fmtPackMb(s.total)})`;
-        } else if (s.phase === 'done') {
-          creaturePackStatus.textContent = 'creature data ready — reloading…';
-        }
+        creaturePackStatus.textContent = _packStatusText(s);
       });
       requestPersistent();
       setTimeout(() => location.reload(), 400);
@@ -17155,6 +17194,39 @@ function fmtDate(ts) {
   // Same source choice as the maps — re-check when that dropdown flips.
   document.getElementById('regionsModeSelect')
     .addEventListener('change', _refreshCreaturePackRow);
+
+  // First-load prompt (mobile): if the creature pack isn't installed,
+  // ASK — the card itself performs no network access; the download
+  // only starts from the tap (zero-network rule). Session-dismissable
+  // via "Later"; it re-asks on the next launch until installed.
+  const packWelcomeEl = document.getElementById('packWelcome');
+  const packWelcomeStart = document.getElementById('packWelcomeStart');
+  const packWelcomeLater = document.getElementById('packWelcomeLater');
+  const packWelcomeStatus = document.getElementById('packWelcomeStatus');
+  if (packWelcomeEl && window.Capacitor && window.PackInstall
+      && !window.PackInstall.isInstalled()) {
+    setTimeout(() => {
+      if (!window.PackInstall.isInstalled()) packWelcomeEl.classList.add('show');
+    }, 2000);
+    packWelcomeStart.onclick = async () => {
+      if (!checkWifiGate()) { packWelcomeEl.classList.remove('show'); return; }
+      packWelcomeStart.disabled = true;
+      packWelcomeLater.hidden = true;
+      try {
+        await window.PackInstall.download((s) => {
+          packWelcomeStatus.textContent = _packStatusText(s);
+        });
+        requestPersistent();
+        packWelcomeStatus.textContent = 'creature data ready — reloading…';
+        setTimeout(() => location.reload(), 400);
+      } catch (e) {
+        packWelcomeStatus.textContent = 'download failed: ' + (e && e.message ? e.message : e);
+        packWelcomeStart.disabled = false;
+        packWelcomeLater.hidden = false;
+      }
+    };
+    packWelcomeLater.onclick = () => packWelcomeEl.classList.remove('show');
+  }
 
   // App-data missing detector. After the welcome card has been seen
   // (so we don't double-prompt new users), check IDB for icons + fonts.

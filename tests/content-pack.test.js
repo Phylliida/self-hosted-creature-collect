@@ -146,6 +146,22 @@ async function main() {
   ok(up.includes('TessaCoil/creature-pack') && up.includes('upload-large-folder'),
     '4: upload script targets TessaCoil/creature-pack via upload-large-folder');
 
+  // Slim bundle: build-capacitor.sh ships ONLY map essentials by
+  // default; the full creature tree is behind --full-data.
+  const bcs = fs.readFileSync(path.join(root, 'scripts', 'build-capacitor.sh'), 'utf8');
+  ok(bcs.includes('--full-data'), '4: build-capacitor.sh has a --full-data escape hatch');
+  const fullCopyCount = (bcs.match(/cp -R data\/BundledData\/\. /g) || []).length;
+  ok(fullCopyCount === 1 && bcs.includes('if [ "$FULL_DATA" = "1" ]; then'),
+    '4: the full BundledData copy exists ONLY inside the --full-data branch');
+  for (const keep of ['icons', 'fonts', 'tiles', 'regions.json']) {
+    ok(new RegExp('BundledData/' + keep.replace('.', '\\.')).test(bcs),
+      '4: slim bundle keeps map essential: ' + keep);
+  }
+  for (const drop of ['sprites', 'sprite-packs', 'species-names', 'eggs.png', 'candies.png', 'shiny-palettes']) {
+    ok(!new RegExp('cp .*BundledData/' + drop).test(bcs),
+      '4: slim bundle does NOT copy creature path: ' + drop);
+  }
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
 }

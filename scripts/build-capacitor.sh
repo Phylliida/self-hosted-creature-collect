@@ -12,7 +12,15 @@
 #   dist/sw.js                    ← service worker (registered as /sw.js)
 #   dist/manifest.webmanifest     ← PWA manifest (Flask serves it at /)
 #   dist/static/*                 ← everything in static/ (sprites.js, vendor/, …)
-#   dist/bundled-data/*           ← entire data/BundledData/ tree
+#   dist/bundled-data/*           ← MAP essentials only (icons, fonts, z0–z5
+#                                   tiles, regions manifest) — SLIM bundle.
+#                                   All creature data (sprites, sprite-packs,
+#                                   species JSON, eggs/candies, shiny, specials,
+#                                   evo items) is NOT bundled anymore: it's
+#                                   downloaded once via the first-run prompt /
+#                                   Settings → Creature pack (~620MB saved).
+#                                   Pass --full-data for the old fat bundle
+#                                   (dev/debug builds).
 #   dist/icons/*                  ← img <src="/icons/X.svg"> targets
 #   dist/fonts/*                  ← MapLibre font ranges (.pbf)
 #   dist/tiles/*                  ← z0..z5 base map tiles
@@ -27,6 +35,12 @@
 set -euo pipefail
 
 DIST="${1:-dist}"
+FULL_DATA=0
+for arg in "$@"; do
+  case "$arg" in
+    --full-data) FULL_DATA=1 ;;
+  esac
+done
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
@@ -76,8 +90,24 @@ fi
 # stamping check).
 cp -R static/. "$DIST/static/"
 
-# The full BundledData tree at /bundled-data.
-cp -R data/BundledData/. "$DIST/bundled-data/"
+# BundledData at /bundled-data — SLIM by default: only the map
+# essentials ship in the app bundle. Creature data (sprites/,
+# sprite-packs/, species-*.json, split-names, cells/manifest/credits,
+# eggs/candies, shiny palettes, specials/, evo-items/) is downloaded
+# once via the first-run creature-pack prompt instead — LocalServer's
+# CCContentPack overlay serves it from there. --full-data restores the
+# old everything-bundled layout for dev.
+if [ "$FULL_DATA" = "1" ]; then
+  echo "── FULL_DATA: copying the entire BundledData tree ──"
+  cp -R data/BundledData/. "$DIST/bundled-data/"
+else
+  echo "── slim bundle: map essentials only (creature data via pack) ──"
+  mkdir -p "$DIST/bundled-data"
+  for d in icons fonts tiles; do
+    [ -d "data/BundledData/$d" ] && cp -R "data/BundledData/$d" "$DIST/bundled-data/$d"
+  done
+  [ -f data/BundledData/regions.json ] && cp data/BundledData/regions.json "$DIST/bundled-data/regions.json"
+fi
 
 # /icons, /fonts, /tiles are aliases of subtrees inside BundledData.
 # The client's <img src="/icons/X.svg"> + MapLibre's /fonts/ + tile
