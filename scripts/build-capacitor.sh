@@ -106,7 +106,11 @@ else
   for d in icons fonts tiles; do
     [ -d "data/BundledData/$d" ] && cp -R "data/BundledData/$d" "$DIST/bundled-data/$d"
   done
-  [ -f data/BundledData/regions.json ] && cp data/BundledData/regions.json "$DIST/bundled-data/regions.json"
+  # The map-asset manifests too — the icon/font bulk-download flows
+  # enumerate via these (504'd on fresh slim installs without them).
+  for f in regions.json icons-list.json fonts-list.json; do
+    [ -f "data/BundledData/$f" ] && cp "data/BundledData/$f" "$DIST/bundled-data/$f"
+  done
 fi
 
 # /icons, /fonts, /tiles are aliases of subtrees inside BundledData.
