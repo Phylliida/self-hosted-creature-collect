@@ -527,6 +527,19 @@ import UIKit
         return url
     }
 
+    /// Directory the creature content pack extracts into (Settings →
+    /// Creature pack → Library/CCContentPack). Resolved per request so
+    /// a pack downloaded AFTER server start still serves; nil when the
+    /// directory doesn't exist yet (pre-download → bundled data).
+    private func contentPackDir() -> URL? {
+        guard let lib = FileManager.default
+            .urls(for: .libraryDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        let url = lib.appendingPathComponent("CCContentPack", isDirectory: true)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
     /// Update the liveDir override and persist for next launch. Pass
     /// nil to clear. `path` is the absolute path the JS side just
     /// wrote files to; we keep that as the in-memory URL but persist
@@ -695,6 +708,32 @@ import UIKit
 
         // SPA-ish: bare `/` serves index.html.
         let path = (rawPath == "/" || rawPath.isEmpty) ? "/index.html" : rawPath
+
+        // Creature content pack overlay: /bundled-data/* serves from
+        // the extracted pack (Library/CCContentPack/<rest>) when the
+        // file exists there — i.e. once the user has run Settings →
+        // Creature pack. Presence of the file IS the signal, so a pack
+        // downloaded after server start works with no persistence
+        // dance; anything missing falls through to the normal roots
+        // (liveDir, then the app bundle).
+        if path.hasPrefix("/bundled-data/"),
+           let cdir = contentPackDir() {
+            let rel = String(path.dropFirst("/bundled-data/".count))
+            let resolved = cdir.appendingPathComponent(rel).standardizedFileURL.path
+            let rootResolved = cdir.standardizedFileURL.path
+            if resolved.hasPrefix(rootResolved) {
+                var isDir: ObjCBool = false
+                if FileManager.default.fileExists(atPath: resolved, isDirectory: &isDir),
+                   !isDir.boolValue {
+                    let resp = GCDWebServerFileResponse(file: resolved)
+                    resp?.cacheControlMaxAge = 0
+                    if resolved.hasSuffix(".pbf") {
+                        resp?.contentType = "application/x-protobuf"
+                    }
+                    return resp ?? GCDWebServerErrorResponse(statusCode: 500)
+                }
+            }
+        }
 
         // Try each root in order; first hit wins. Path is URL-decoded
         // by GCDWebServer before reaching us, so spaces / unicode

@@ -3137,7 +3137,7 @@
        // overlays new code into this very cache in place, so deleting would
        // be pointless online and, offline, would wipe a prior update back to
        // the bundled version. (Refresh must never downgrade with no data.)
-       try{var _plat=(window.Capacitor&&window.Capacitor.getPlatform&&window.Capacitor.getPlatform())||'web';if(_plat!=='android'){caches.open('app-v1').then(function(c){['/','/manifest.webmanifest','/static/icon.svg','/static/trip-planner.js','/static/types.js','/static/specials.js','/static/pack-reader.js','/static/extras.js','/static/extras-apps.js','/static/extras-almanac.js','/static/extras-vibration.js','/static/extras-skymap.js','/static/extras-sudoku.js','/static/extras-sensors.js','/static/extras-tuner.js','/static/extras-scapes.js','/static/extras-todos.js','/static/synth.html','/static/quiver.html','/static/vendor/maplibre-gl.css','/static/vendor/maplibre-gl.js'].forEach(function(u){c.delete(u)});c.keys().then(function(ks){ks.forEach(function(r){var p=new URL(r.url).pathname;if(/^\/static\/(draw|pixelart|fractals2|mandelbrot)\//.test(p))c.delete(r)})})})}}catch(_){}
+       try{var _plat=(window.Capacitor&&window.Capacitor.getPlatform&&window.Capacitor.getPlatform())||'web';if(_plat!=='android'){caches.open('app-v1').then(function(c){['/','/manifest.webmanifest','/static/icon.svg','/static/trip-planner.js','/static/types.js','/static/specials.js','/static/pack-reader.js','/static/pack-install.js','/static/extras.js','/static/extras-apps.js','/static/extras-almanac.js','/static/extras-vibration.js','/static/extras-skymap.js','/static/extras-sudoku.js','/static/extras-sensors.js','/static/extras-tuner.js','/static/extras-scapes.js','/static/extras-todos.js','/static/synth.html','/static/quiver.html','/static/vendor/maplibre-gl.css','/static/vendor/maplibre-gl.js'].forEach(function(u){c.delete(u)});c.keys().then(function(ks){ks.forEach(function(r){var p=new URL(r.url).pathname;if(/^\/static\/(draw|pixelart|fractals2|mandelbrot)\//.test(p))c.delete(r)})})})}}catch(_){}
        try{localStorage.removeItem('cc.lastUpdateFailedAt');}catch(_){}
        var btn=document.getElementById('emergencyRefresh');
        if(btn){btn.style.opacity='0.5';btn.style.pointerEvents='none';}
@@ -3483,6 +3483,18 @@
         <button id="bundleCacheClearBtn" type="button" style="padding: 6px 10px; font-size: 13px; margin-left: 4px;" title="Wipe cached species lists, credits, and split-names. Useful when a new build's bundled data isn't showing up (rare — the boot script normally handles this automatically).">clear bundle cache</button>
       </span>
     </div>
+    <!-- Creature content pack: the full fusion dataset as one download.
+         Source follows the "Region data source" dropdown above (local
+         server vs Hugging Face). On iOS the pack extracts to files
+         LocalServer serves; on Android it overlays the SW cache. -->
+    <div class="row" id="creaturePackRow">
+      <label>Creature pack</label>
+      <span>
+        <button id="creaturePackBtn" type="button" style="padding: 6px 10px; font-size: 13px;">↓ creature pack</button>
+        <button id="creaturePackDeleteBtn" type="button" style="padding: 6px 10px; font-size: 13px; margin-left: 4px;">remove</button>
+      </span>
+    </div>
+    <div id="creaturePackStatus" style="font-size: 11px; color: var(--ui-muted); margin: -4px 0 6px;"></div>
     <!-- TEMP: one-shot migration for users whose captures were saved as
          autogen back when the bundled cells.json fallback wasn't wired
          up. Promotes any capture with variant=null to variant=0 (the
@@ -4424,6 +4436,7 @@
 <script src="/static/appdata.js"></script>
 <script src="/static/species.js"></script>
 <script src="/static/pack-reader.js"></script>
+<script src="/static/pack-install.js"></script>
 <script src="/static/specials.js"></script>
 <script src="/static/creatures.js"></script>
 <script src="/static/live-update.js"></script>
@@ -17076,6 +17089,72 @@ function fmtDate(ts) {
     map.setStyle(map.getStyle());
     window.dispatchEvent(new CustomEvent('cc:app-data-ready'));
   };
+
+  // ── Creature pack (content pack download) ─────────────────────
+  // One button: stream the pack from the selected source (same "Region
+  // data source" dropdown as the maps) and put its bytes where the app
+  // data already lives (iOS: LocalServer-served files; Android: SW
+  // cache overlay). See static/pack-install.js.
+  const creaturePackBtn = document.getElementById('creaturePackBtn');
+  const creaturePackDeleteBtn = document.getElementById('creaturePackDeleteBtn');
+  const creaturePackStatus = document.getElementById('creaturePackStatus');
+  const _fmtPackMb = (n) => ((n || 0) / (1024 * 1024)).toFixed(0) + ' MB';
+  async function _refreshCreaturePackRow() {
+    if (!window.PackInstall) return;
+    const meta = window.PackInstall.readMeta();
+    const src = window.PackInstall.currentSource();
+    const srcLabel = src.source === 'hf' ? 'Hugging Face' : 'this server';
+    if (meta && meta.installedAt) {
+      creaturePackStatus.textContent =
+        `installed ${meta.contentVersion || ''} · ${_fmtPackMb(meta.bytes)} · source: ${srcLabel}`;
+      creaturePackBtn.textContent = '↻ check for update';
+    } else {
+      creaturePackStatus.textContent =
+        `not downloaded · source: ${srcLabel} (follows Region data source)`;
+      creaturePackBtn.textContent = '↓ creature pack';
+    }
+    try {
+      const check = await window.PackInstall.checkForUpdate();
+      if (check.state === 'available') {
+        creaturePackBtn.textContent = '↓ update available';
+      } else if (check.state === 'up-to-date') {
+        creaturePackBtn.textContent = '✓ up to date';
+      }
+    } catch (_) { /* offline — leave the base label */ }
+  }
+  creaturePackBtn.onclick = async () => {
+    if (!checkWifiGate() || !window.PackInstall) return;
+    creaturePackBtn.disabled = true;
+    try {
+      await window.PackInstall.download((s) => {
+        if (s.phase === 'download') {
+          creaturePackStatus.textContent =
+            `downloading pack… ${_fmtPackMb(s.downloaded)} / ${_fmtPackMb(s.total)}`;
+        } else if (s.phase === 'install') {
+          creaturePackStatus.textContent =
+            `installing… ${s.entries} files (${_fmtPackMb(s.downloaded)} / ${_fmtPackMb(s.total)})`;
+        } else if (s.phase === 'done') {
+          creaturePackStatus.textContent = 'creature data ready — reloading…';
+        }
+      });
+      requestPersistent();
+      setTimeout(() => location.reload(), 400);
+    } catch (e) {
+      creaturePackStatus.textContent = 'download failed: ' + (e && e.message ? e.message : e);
+      creaturePackBtn.disabled = false;
+    }
+  };
+  creaturePackDeleteBtn.onclick = async () => {
+    if (!window.PackInstall) return;
+    if (!confirm('Remove the downloaded creature pack? The app falls back to bundled data.')) return;
+    await window.PackInstall.deletePackData();
+    creaturePackStatus.textContent = 'pack removed — reload to fully fall back.';
+    creaturePackBtn.textContent = '↓ creature pack';
+  };
+  _refreshCreaturePackRow();
+  // Same source choice as the maps — re-check when that dropdown flips.
+  document.getElementById('regionsModeSelect')
+    .addEventListener('change', _refreshCreaturePackRow);
 
   // App-data missing detector. After the welcome card has been seen
   // (so we don't double-prompt new users), check IDB for icons + fonts.
