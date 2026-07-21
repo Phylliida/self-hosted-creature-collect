@@ -107,7 +107,7 @@ _TRACKED_JS = {
     "creatures.js", "sprites.js", "sprite-store.js", "appdata.js",
     "species.js", "spawns.js", "trip-planner.js",
     "live-update.js", "extras.js", "types.js", "specials.js", "pack-reader.js",
-    "pack-install.js",
+    "pack-install.js", "packs.js",
     # Extras add-on siblings — tracked so the Refresh button / live-update
     # pick up changes (they already have the SCRIPT_VERSION='auto' hook).
     "extras-apps.js", "extras-almanac.js", "extras-vibration.js", "extras-skymap.js",
@@ -191,7 +191,7 @@ _TRACKED_HTML = {
 _SCRIPT_VERSION_FILES = [
     "creatures.js", "sprites.js", "sprite-store.js", "appdata.js",
     "species.js", "spawns.js", "trip-planner.js", "live-update.js", "extras.js",
-    "types.js", "specials.js", "pack-reader.js", "pack-install.js",
+    "types.js", "specials.js", "pack-reader.js", "pack-install.js", "packs.js",
     "extras-apps.js", "extras-almanac.js", "extras-vibration.js", "extras-skymap.js",
     "extras-sudoku.js", "extras-sensors.js", "extras-tuner.js", "extras-scapes.js",
     "extras-todos.js",
@@ -1737,6 +1737,34 @@ def content_pack_file(fname):
     resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     # CORS so the PWA (which may be loaded from a different origin
     # in dev) can fetch these.
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    return resp
+
+
+@app.route("/pack-files/<packId>/<path:fname>")
+def pack_files(packId, fname):
+    """Multi-pack local source: serve packs/<packId>/ (pack.bin /
+    pack.json) for any pack (creature-fusion, neopets, …). Same
+    layout as the per-pack Hugging Face datasets, so the client's
+    local-vs-HF dropdown works identically for every pack.
+    """
+    packs_root = (ROOT / "packs").resolve()
+    base = (packs_root / packId).resolve()
+    try:
+        base.relative_to(packs_root)
+    except ValueError:
+        abort(404)
+    if not base.is_dir():
+        abort(404)
+    path = (base / fname).resolve()
+    try:
+        path.relative_to(base)
+    except ValueError:
+        abort(404)
+    if not path.is_file():
+        abort(404)
+    resp = send_from_directory(path.parent, path.name)
+    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     resp.headers["Access-Control-Allow-Origin"] = "*"
     return resp
 

@@ -540,6 +540,19 @@ import UIKit
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
+    /// The active pack id, from the active.txt marker the JS side
+    /// writes on pack switch (PackInstall.setActiveNative). Read per
+    /// request so a switch takes effect on the very next fetch —
+    /// default creature-fusion when the marker is absent/unreadable.
+    private func activePackId(_ cdir: URL) -> String {
+        let url = cdir.appendingPathComponent("active.txt")
+        guard let raw = try? String(contentsOf: url, encoding: .utf8) else {
+            return "creature-fusion"
+        }
+        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? "creature-fusion" : t
+    }
+
     /// Update the liveDir override and persist for next launch. Pass
     /// nil to clear. `path` is the absolute path the JS side just
     /// wrote files to; we keep that as the in-memory URL but persist
@@ -710,18 +723,24 @@ import UIKit
         let path = (rawPath == "/" || rawPath.isEmpty) ? "/index.html" : rawPath
 
         // Creature content pack overlay: /bundled-data/* serves from
-        // the extracted pack (Library/CCContentPack/<rest>) when the
-        // file exists there — i.e. once the user has run Settings →
-        // Creature pack. Presence of the file IS the signal, so a pack
-        // downloaded after server start works with no persistence
-        // dance; anything missing falls through to the normal roots
-        // (liveDir, then the app bundle).
+        // the ACTIVE pack's extracted files
+        // (Library/CCContentPack/<active>/<rest>, where <active> comes
+        // from the active.txt marker the JS side writes on pack
+        // switch; default creature-fusion). Pre-multi-pack installs
+        // have files at the CCContentPack root — the legacy direct
+        // path is the next fallback, then the normal roots (liveDir,
+        // then the app bundle).
         if path.hasPrefix("/bundled-data/"),
            let cdir = contentPackDir() {
             let rel = String(path.dropFirst("/bundled-data/".count))
-            let resolved = cdir.appendingPathComponent(rel).standardizedFileURL.path
+            let candidates = [
+                cdir.appendingPathComponent(activePackId(cdir))
+                    .appendingPathComponent(rel).standardizedFileURL.path,
+                cdir.appendingPathComponent(rel).standardizedFileURL.path,
+            ]
             let rootResolved = cdir.standardizedFileURL.path
-            if resolved.hasPrefix(rootResolved) {
+            for resolved in candidates {
+                guard resolved.hasPrefix(rootResolved) else { continue }
                 var isDir: ObjCBool = false
                 if FileManager.default.fileExists(atPath: resolved, isDirectory: &isDir),
                    !isDir.boolValue {
