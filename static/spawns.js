@@ -194,11 +194,12 @@
   const WEEK_MS = 7 * DAY_MS;
   const DAILY_SALT = 0xA1D4;
   const WEEKLY_SALT = 0x7EE7;
-  const TYPES = [
-    'NORMAL', 'FIRE', 'WATER', 'GRASS', 'ELECTRIC', 'ICE',
-    'FIGHTING', 'POISON', 'GROUND', 'FLYING', 'PSYCHIC', 'BUG',
-    'ROCK', 'GHOST', 'DRAGON', 'DARK', 'STEEL', 'FAIRY',
-  ];
+  // The canonical type list + effectiveness chart now lives in ONE place:
+  // static/types.js (global.Types). The list order is contractual —
+  // daily/weekly weather rotation and the incense spawn stream seed from
+  // TYPES.indexOf, so reordering the original 18 would reshuffle every
+  // player's world. Registered pack types are appended (safe).
+  const TYPES = global.Types.list();
 
   // Deterministic Fisher-Yates shuffle of TYPES seeded by `cycleIdx`.
   // Returns a fresh permutation per cycle so every cycle visits every

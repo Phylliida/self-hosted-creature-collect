@@ -2889,94 +2889,30 @@
     return `#${a} × #${b}`;
   }
 
-  // Standard Pokémon type colors (close-enough to canon for chips).
-  const TYPE_COLORS = {
-    NORMAL:   '#A8A77A', FIGHTING: '#C22E28', FLYING:   '#A98FF3',
-    POISON:   '#A33EA1', GROUND:   '#E2BF65', ROCK:     '#B6A136',
-    BUG:      '#A6B91A', GHOST:    '#735797', STEEL:    '#B7B7CE',
-    FIRE:     '#EE8130', WATER:    '#6390F0', GRASS:    '#7AC74C',
-    ELECTRIC: '#F7D02C', PSYCHIC:  '#F95587', ICE:      '#96D9D6',
-    DRAGON:   '#6F35FC', DARK:     '#705746', FAIRY:    '#D685AD',
-  };
-  const ALL_TYPES = Object.keys(TYPE_COLORS);
+  // Pokémon types, colors and the effectiveness chart live in ONE place:
+  // static/types.js (global.Types). The old local copies (TYPE_COLORS,
+  // _TYPE_REDUCED, _TYPE_STRONG) were deleted — use the Types API.
+  // ALL_TYPES is a local snapshot for the loops below; list order is
+  // contractual (see types.js).
+  const ALL_TYPES = global.Types.list();
 
-  // Offensive type chart, stored as the set of defenders each attacking
-  // type is REDUCED against (not-very-effective 0.5× ∪ no-effect 0×).
-  // That's all the craft filter needs: an egg type is "neutral or
-  // effective against" an incense type T iff T is NOT in this set for
-  // that egg type. (Gen 6+ chart, includes Fairy.)
-  const _TYPE_REDUCED = {
-    NORMAL:   ['ROCK', 'STEEL', 'GHOST'],
-    FIRE:     ['FIRE', 'WATER', 'ROCK', 'DRAGON'],
-    WATER:    ['WATER', 'GRASS', 'DRAGON'],
-    ELECTRIC: ['ELECTRIC', 'GRASS', 'DRAGON', 'GROUND'],
-    GRASS:    ['FIRE', 'GRASS', 'POISON', 'FLYING', 'BUG', 'DRAGON', 'STEEL'],
-    ICE:      ['FIRE', 'WATER', 'ICE', 'STEEL'],
-    FIGHTING: ['POISON', 'FLYING', 'PSYCHIC', 'BUG', 'FAIRY', 'GHOST'],
-    POISON:   ['POISON', 'GROUND', 'ROCK', 'GHOST', 'STEEL'],
-    GROUND:   ['GRASS', 'BUG', 'FLYING'],
-    FLYING:   ['ELECTRIC', 'ROCK', 'STEEL'],
-    PSYCHIC:  ['PSYCHIC', 'STEEL', 'DARK'],
-    BUG:      ['FIRE', 'FIGHTING', 'POISON', 'FLYING', 'GHOST', 'STEEL', 'FAIRY'],
-    ROCK:     ['FIGHTING', 'GROUND', 'STEEL'],
-    GHOST:    ['DARK', 'NORMAL'],
-    DRAGON:   ['STEEL', 'FAIRY'],
-    DARK:     ['FIGHTING', 'DARK', 'FAIRY'],
-    STEEL:    ['FIRE', 'WATER', 'ELECTRIC', 'STEEL'],
-    FAIRY:    ['FIRE', 'POISON', 'STEEL'],
-  };
-  const _TYPE_REDUCED_SETS = (() => {
-    const out = {};
-    for (const t of ALL_TYPES) out[t] = new Set(_TYPE_REDUCED[t] || []);
-    return out;
-  })();
   // One of the egg's types being neutral-or-effective vs the incense type
   // qualifies it (a dual-type egg only needs one workable type).
   function eggTypesNeutralOrEffectiveVs(eggTypes, incenseType) {
     if (!eggTypes || !eggTypes.length) return false;
     for (const et of eggTypes) {
-      const reduced = _TYPE_REDUCED_SETS[et];
       // Unknown attacking type → treat as neutral (don't hide eggs).
-      if (!reduced || !reduced.has(incenseType)) return true;
+      if (!global.Types.isValid(et) || !global.Types.isReduced(et, incenseType)) return true;
     }
     return false;
   }
-  // Super-effective (2×) sets per attacking type — used for the craft
-  // bonus: each of an egg's types that is super-effective against the
-  // incense type adds +1 to the yield (1× base → 2× one match → 3× two).
-  const _TYPE_STRONG = {
-    NORMAL:   [],
-    FIRE:     ['GRASS', 'ICE', 'BUG', 'STEEL'],
-    WATER:    ['FIRE', 'GROUND', 'ROCK'],
-    ELECTRIC: ['WATER', 'FLYING'],
-    GRASS:    ['WATER', 'GROUND', 'ROCK'],
-    ICE:      ['GRASS', 'GROUND', 'FLYING', 'DRAGON'],
-    FIGHTING: ['NORMAL', 'ICE', 'ROCK', 'DARK', 'STEEL'],
-    POISON:   ['GRASS', 'FAIRY'],
-    GROUND:   ['FIRE', 'ELECTRIC', 'POISON', 'ROCK', 'STEEL'],
-    FLYING:   ['GRASS', 'FIGHTING', 'BUG'],
-    PSYCHIC:  ['FIGHTING', 'POISON'],
-    BUG:      ['GRASS', 'PSYCHIC', 'DARK'],
-    ROCK:     ['FIRE', 'ICE', 'FLYING', 'BUG'],
-    GHOST:    ['PSYCHIC', 'GHOST'],
-    DRAGON:   ['DRAGON'],
-    DARK:     ['PSYCHIC', 'GHOST'],
-    STEEL:    ['ICE', 'ROCK', 'FAIRY'],
-    FAIRY:    ['FIGHTING', 'DRAGON', 'DARK'],
-  };
-  const _TYPE_STRONG_SETS = (() => {
-    const out = {};
-    for (const t of ALL_TYPES) out[t] = new Set(_TYPE_STRONG[t] || []);
-    return out;
-  })();
   // Incense yield from an egg: 1 base, +1 for each of the egg's (deduped)
   // types that is super-effective against the incense type → 1× / 2× / 3×.
   function craftMultiplier(eggTypes, incenseType) {
     let mult = 1;
     if (!eggTypes) return mult;
     for (const et of eggTypes) {
-      const strong = _TYPE_STRONG_SETS[et];
-      if (strong && strong.has(incenseType)) mult += 1;
+      if (global.Types.isSuperEffective(et, incenseType)) mult += 1;
     }
     return mult;
   }
@@ -2986,7 +2922,6 @@
   // later; for now they're collectible bag items whose art is a shaded
   // orb in the type colour.
   function _incenseKey(type) { return 'incense_' + type.toLowerCase(); }
-  function _titleCaseType(t) { return t.charAt(0) + t.slice(1).toLowerCase(); }
   function _incenseOrbIcon(color) {
     // Shaded orb: a top-left highlight, the type colour, and a dark rim.
     const svg =
@@ -3009,10 +2944,10 @@
   }
   for (const t of ALL_TYPES) {
     ITEMS[_incenseKey(t)] = {
-      name: _titleCaseType(t) + ' Incense',
-      desc: 'Use it for 30 min of extra ' + _titleCaseType(t)
+      name: global.Types.displayName(t) + ' Incense',
+      desc: 'Use it for 30 min of extra ' + global.Types.displayName(t)
         + '-type spawns (double shiny rate). Crafted from eggs.',
-      icon: _incenseOrbIcon(TYPE_COLORS[t]),
+      icon: _incenseOrbIcon(global.Types.color(t)),
       incenseType: t,
     };
   }
@@ -3030,7 +2965,7 @@
     let s = null;
     try { s = JSON.parse(localStorage.getItem(ACTIVE_INCENSE_KEY) || 'null'); } catch { s = null; }
     if (!s || typeof s.type !== 'string' || typeof s.startMs !== 'number') return null;
-    if (!TYPE_COLORS[s.type]) return null;
+    if (!global.Types.isValid(s.type)) return null;
     if (Date.now() >= s.startMs + _incenseDurationMs()) {
       // Expired — clean up so the bag/overlay stop treating it as active.
       try { localStorage.removeItem(ACTIVE_INCENSE_KEY); } catch (_) {}
@@ -3067,7 +3002,7 @@
   // honouring its original start time so the remaining window is correct.
   function setActiveIncenseState(state) {
     if (!state || typeof state.type !== 'string' || typeof state.startMs !== 'number') return;
-    if (!TYPE_COLORS[state.type]) return;
+    if (!global.Types.isValid(state.type)) return;
     if (Date.now() >= state.startMs + _incenseDurationMs()) return; // already expired
     try { localStorage.setItem(ACTIVE_INCENSE_KEY, JSON.stringify({ type: state.type, startMs: state.startMs })); } catch (_) {}
     _pushActiveIncenseToSpawns();
@@ -3077,8 +3012,8 @@
   function typeChipsHtml(types) {
     if (!types || !types.length) return '';
     return `<div class="type-chips">` + types.map((t) => {
-      const bg = TYPE_COLORS[t] || '#888';
-      const label = t.charAt(0) + t.slice(1).toLowerCase();
+      const bg = global.Types.color(t);
+      const label = global.Types.displayName(t);
       return `<span class="type-chip" style="background:${bg}">${escapeHtml(label)}</span>`;
     }).join('') + `</div>`;
   }
@@ -4338,18 +4273,14 @@
     localStorage.setItem('cc.pokedexTagFilter', JSON.stringify(arr));
   }
   // Shared list used to generate the type-filter <select> options for
-  // both the Pokédex and the inventory. Pokédex's hardcoded options
-  // pre-date this helper and stay as-is to avoid noisy diffs; new
-  // surfaces (inventory) use this.
-  const TYPE_FILTER_LIST = [
-    'NORMAL', 'FIRE', 'WATER', 'GRASS', 'ELECTRIC', 'ICE',
-    'FIGHTING', 'POISON', 'GROUND', 'FLYING', 'PSYCHIC', 'BUG',
-    'ROCK', 'GHOST', 'DRAGON', 'DARK', 'STEEL', 'FAIRY',
-  ];
+  // both the Pokédex and the inventory comes from global.Types (the
+  // single source of truth — see static/types.js). Pokédex's hardcoded
+  // options pre-date this helper and stay as-is to avoid noisy diffs;
+  // new surfaces (inventory) use this.
   function typeFilterSelectHtml(id) {
     const opts = ['<option value="">Any</option>'].concat(
-      TYPE_FILTER_LIST.map((t) => {
-        const label = t.charAt(0) + t.slice(1).toLowerCase();
+      global.Types.list().map((t) => {
+        const label = global.Types.displayName(t);
         return `<option value="${t}">${label}</option>`;
       })
     );
@@ -4357,12 +4288,12 @@
   }
   // Paint a type-filter <select> with the type's canonical color when
   // a real type is selected, or strip the inline styles back to the
-  // theme's defaults when it's "any". Defined after TYPE_COLORS but
-  // referenced by name later — function declaration so it hoists.
+  // theme's defaults when it's "any". Defined after the Types registry
+  // but referenced by name later — function declaration so it hoists.
   function applyTypeSelectColor(selectEl) {
     if (!selectEl) return;
     const v = selectEl.value;
-    const bg = TYPE_COLORS[v];
+    const bg = global.Types.isValid(v) ? global.Types.color(v) : undefined;
     if (bg) {
       selectEl.style.backgroundColor = bg;
       selectEl.style.borderColor = bg;
@@ -9205,7 +9136,7 @@
     if (active) {
       const meta = ITEMS[_incenseKey(active.type)] || {};
       const mins = Math.ceil(incenseRemainingMs() / 60000);
-      const tn = _titleCaseType(active.type);
+      const tn = global.Types.displayName(active.type);
       bannerHtml = `<div class="bag-incense-banner">`
         + (meta.icon ? `<img class="bag-icon" src="${escapeHtml(meta.icon)}" alt="">` : '')
         + `<div class="bag-info"><div class="bag-name">${escapeHtml(tn)} Incense active</div>`
@@ -9259,13 +9190,13 @@
     wire();
   }
   function _confirmUseIncense(type) {
-    if (!type || !TYPE_COLORS[type]) return;
-    const tn = _titleCaseType(type);
+    if (!type || !global.Types.isValid(type)) return;
+    const tn = global.Types.displayName(type);
     const active = readActiveIncense();
     let msg = `Use ${tn} Incense?\n\nFor 30 minutes you'll see extra ${tn}-type spawns, with double the shiny rate.`;
     if (active) {
       const mins = Math.ceil(incenseRemainingMs() / 60000);
-      msg += `\n\nThis replaces your active ${_titleCaseType(active.type)} Incense (~${mins} min left).`;
+      msg += `\n\nThis replaces your active ${global.Types.displayName(active.type)} Incense (~${mins} min left).`;
     }
     if (!confirm(msg)) return;
     if (activateIncense(type)) renderBag();
@@ -9331,12 +9262,12 @@
     if (st.step === 1 || !st.type) {
       _craftSetTitle('Choose incense');
       const orbs = ALL_TYPES.map((t) => {
-        const color = TYPE_COLORS[t];
+        const color = global.Types.color(t);
         const n = _craftableEggsFor(t).length;
         return `
           <button class="craft-orb" type="button" data-type="${t}">
             <img class="craft-orb-img" src="${escapeHtml(_incenseOrbIcon(color))}" alt="">
-            <span class="craft-orb-name">${escapeHtml(_titleCaseType(t))}</span>
+            <span class="craft-orb-name">${escapeHtml(global.Types.displayName(t))}</span>
             <span class="craft-orb-count">${n} egg${n === 1 ? '' : 's'}</span>
           </button>`;
       }).join('');
@@ -9355,13 +9286,13 @@
 
     // Step 2 — choose a valid egg for the chosen incense type.
     if (st.step === 2) {
-      _craftSetTitle(_titleCaseType(st.type) + ' Incense');
+      _craftSetTitle(global.Types.displayName(st.type) + ' Incense');
       const eggs = _craftableEggsFor(st.type);
       if (!eggs.length) {
         body.innerHTML = `
           <div class="craft-chosen">${_incenseChipHtml(st.type)}</div>
           <div class="craft-empty">No eggs whose type is neutral or effective against
-            ${escapeHtml(_titleCaseType(st.type))}. (Eggs in the incubator can't be crafted.)</div>
+            ${escapeHtml(global.Types.displayName(st.type))}. (Eggs in the incubator can't be crafted.)</div>
         `;
         return;
       }
@@ -9385,7 +9316,7 @@
       body.innerHTML = `
         <div class="craft-chosen">${_incenseChipHtml(st.type)}</div>
         <div class="craft-hint">Tap an egg to convert it. A type super-effective against
-          ${escapeHtml(_titleCaseType(st.type))} yields <b>2&times;</b> incense; two
+          ${escapeHtml(global.Types.displayName(st.type))} yields <b>2&times;</b> incense; two
           super-effective types yield <b>3&times;</b>.</div>
         <div class="craft-egg-list">${tiles}</div>
       `;
@@ -9407,7 +9338,7 @@
     const eggTypes = (global.Species && global.Species.fusionTypesFor)
       ? global.Species.fusionTypesFor(egg.speciesA, egg.speciesB) : [];
     const mult = craftMultiplier(eggTypes, st.type);
-    const yieldLabel = mult + '× ' + _titleCaseType(st.type) + ' Incense';
+    const yieldLabel = mult + '× ' + global.Types.displayName(st.type) + ' Incense';
     const orbMult = mult > 1 ? `<span class="craft-egg-mult on-orb">${mult}&times;</span>` : '';
     body.innerHTML = `
       <div class="craft-confirm">
@@ -9415,7 +9346,7 @@
           <div class="craft-egg-art big" style="${artStyle}"></div>
           <span class="craft-arrow">&rarr;</span>
           <span class="craft-orb-wrap">
-            <img class="craft-confirm-orb" src="${escapeHtml(_incenseOrbIcon(TYPE_COLORS[st.type]))}" alt="">
+            <img class="craft-confirm-orb" src="${escapeHtml(_incenseOrbIcon(global.Types.color(st.type)))}" alt="">
             ${orbMult}
           </span>
         </div>
@@ -9443,7 +9374,7 @@
       _craftSetTitle('Crafted!');
       body.innerHTML = `
         <div class="craft-done">
-          <img class="craft-done-orb" src="${escapeHtml(_incenseOrbIcon(TYPE_COLORS[st.type]))}" alt="">
+          <img class="craft-done-orb" src="${escapeHtml(_incenseOrbIcon(global.Types.color(st.type)))}" alt="">
           <div class="craft-done-text">Crafted <b>${escapeHtml(yieldLabel)}</b>!
             It's in your bag.</div>
           <div class="craft-confirm-actions">
@@ -9462,8 +9393,8 @@
   // Small inline incense chip (orb + label) for the chosen incense.
   function _incenseChipHtml(type) {
     return `<span class="craft-chip">`
-      + `<img class="craft-chip-orb" src="${escapeHtml(_incenseOrbIcon(TYPE_COLORS[type]))}" alt="">`
-      + `${escapeHtml(_titleCaseType(type))} Incense</span>`;
+      + `<img class="craft-chip-orb" src="${escapeHtml(_incenseOrbIcon(global.Types.color(type)))}" alt="">`
+      + `${escapeHtml(global.Types.displayName(type))} Incense</span>`;
   }
 
   // Candy view: rows of species name + cumulative count. Sorted by
@@ -9817,7 +9748,7 @@
   // ── Incense explainer + type-chart explorer ─────────────────────────
   function _ccTypeChip(t, dim) {
     return '<span class="cc-typechip' + (dim ? ' dim' : '') + '" style="background:'
-      + (TYPE_COLORS[t] || '#888') + '">' + escapeHtml(_titleCaseType(t)) + '</span>';
+      + global.Types.color(t) + '">' + escapeHtml(global.Types.displayName(t)) + '</span>';
   }
   function _ccTypeChips(types) {
     if (!types || !types.length) return '<span class="cc-tdb-none">none</span>';
@@ -9907,10 +9838,10 @@
   // eligible species in that slot today) stay visible.
   function _ccOddsGrid(pair) {
     const OTHER = '#8a8f98';
-    const colOf = (c) => c === 'daily' ? (TYPE_COLORS[pair.daily] || '#6d5ac0')
-      : c === 'weekly' ? (TYPE_COLORS[pair.weekly] || '#c06a8a') : OTHER;
-    const labelOf = (c) => c === 'daily' ? _titleCaseType(pair.daily)
-      : c === 'weekly' ? _titleCaseType(pair.weekly) : 'Other';
+    const colOf = (c) => c === 'daily' ? (global.Types.isValid(pair.daily) ? global.Types.color(pair.daily) : '#6d5ac0')
+      : c === 'weekly' ? (global.Types.isValid(pair.weekly) ? global.Types.color(pair.weekly) : '#c06a8a') : OTHER;
+    const labelOf = (c) => c === 'daily' ? global.Types.displayName(pair.daily)
+      : c === 'weekly' ? global.Types.displayName(pair.weekly) : 'Other';
     const classes = pair.classes;
     const pct = (x) => Math.round(x * 100);
     let max = 0;
@@ -9944,11 +9875,11 @@
         + 'creature data is still loading. Try again in a moment.</p>';
     }
     const pct = (x) => Math.round(x * 100);
-    const dName = _titleCaseType(odds.daily);
-    const wName = _titleCaseType(odds.weekly);
+    const dName = global.Types.displayName(odds.daily);
+    const wName = global.Types.displayName(odds.weekly);
     const OTHER = '#8a8f98';
-    const dCol = TYPE_COLORS[odds.daily] || '#6d5ac0';
-    const wCol = TYPE_COLORS[odds.weekly] || '#c06a8a';
+    const dCol = global.Types.isValid(odds.daily) ? global.Types.color(odds.daily) : '#6d5ac0';
+    const wCol = global.Types.isValid(odds.weekly) ? global.Types.color(odds.weekly) : '#c06a8a';
 
     let h = '';
     h += '<p class="cc-info-p">Every day the world runs a <b>type weather</b>: '
@@ -10088,24 +10019,19 @@
 
   // Type-chart explorer: tap an attacking type to see what it beats / is
   // resisted by, plus (crafting-relevant) which egg types make the best
-  // incense of that type. `_typeStrongAgainst(T)` is the inverse of
-  // _TYPE_STRONG — the set of types super-effective *against* T.
+  // incense of that type. All chart data comes from global.Types
+  // (static/types.js) — strongAgainst(T) is the inverse lookup, the set
+  // of types super-effective *against* T.
   let _typeChartSel = null;
-  function _typeStrongAgainst(target) {
-    const out = [];
-    for (const atk of ALL_TYPES) {
-      if (_TYPE_STRONG_SETS[atk] && _TYPE_STRONG_SETS[atk].has(target)) out.push(atk);
-    }
-    return out;
-  }
   function _typeDetailHtml(T) {
-    const strong = _TYPE_STRONG[T] || [];
-    const weak = _TYPE_REDUCED[T] || [];
-    const bestEggs = _typeStrongAgainst(T);
+    const row = global.Types.attackRow(T);
+    const strong = row.strong;
+    const weak = row.reduced;
+    const bestEggs = global.Types.strongAgainst(T);
     let h = '<div class="cc-typedetail">';
     h += '<div class="cc-typedetail-head">'
-      + '<span class="cc-typedot" style="background:' + (TYPE_COLORS[T] || '#888') + '"></span>'
-      + '<span class="cc-typedetail-name">' + escapeHtml(_titleCaseType(T)) + '</span></div>';
+      + '<span class="cc-typedot" style="background:' + global.Types.color(T) + '"></span>'
+      + '<span class="cc-typedetail-name">' + escapeHtml(global.Types.displayName(T)) + '</span></div>';
     h += '<div class="cc-typedetail-block">'
       + '<div class="cc-tdb-label"><span class="cc-tdb-mult good">2×</span>Super-effective against</div>'
       + _ccTypeChips(strong) + '</div>';
@@ -10114,10 +10040,10 @@
       + _ccTypeChips(weak) + '</div>';
     h += '<div class="cc-typedetail-block">'
       + '<div class="cc-tdb-label"><span class="cc-tdb-mult craft">2×–3×</span>Best eggs for '
-      + escapeHtml(_titleCaseType(T)) + ' Incense</div>'
+      + escapeHtml(global.Types.displayName(T)) + ' Incense</div>'
       + _ccTypeChips(bestEggs)
       + '<div class="cc-info-note" style="margin-top:5px">Eggs of these types are super-effective '
-      + 'against ' + escapeHtml(_titleCaseType(T)) + ', so they craft extra incense.</div></div>';
+      + 'against ' + escapeHtml(global.Types.displayName(T)) + ', so they craft extra incense.</div></div>';
     h += '</div>';
     return h;
   }
@@ -10128,8 +10054,8 @@
     h += '<div class="cc-typegrid">'
       + ALL_TYPES.map((t) => '<button type="button" data-type="' + t + '"'
           + (t === _typeChartSel ? ' class="sel"' : '')
-          + ' style="background:' + (TYPE_COLORS[t] || '#888') + '">'
-          + escapeHtml(_titleCaseType(t)) + '</button>').join('')
+          + ' style="background:' + global.Types.color(t) + '">'
+          + escapeHtml(global.Types.displayName(t)) + '</button>').join('')
       + '</div>';
     h += '<div class="cc-typedetail-wrap">' + _typeDetailHtml(_typeChartSel) + '</div>';
     return h;
@@ -10148,7 +10074,7 @@
     });
   }
   function _pushTypeChartView(defaultType) {
-    _typeChartSel = (defaultType && TYPE_COLORS[defaultType]) ? defaultType : ALL_TYPES[0];
+    _typeChartSel = (defaultType && global.Types.isValid(defaultType)) ? defaultType : ALL_TYPES[0];
     _pushInfoView({
       title: 'Type chart',
       html: () => _typeChartHtml(),
@@ -11579,10 +11505,10 @@
     // the caught-location block.
     const incenseHtml = c.fromIncense
       ? `<div class="detail-incense-row">`
-        + ((c.incenseType && TYPE_COLORS[c.incenseType])
-          ? `<img class="detail-incense-orb" src="${escapeHtml(_incenseOrbIcon(TYPE_COLORS[c.incenseType]))}" alt="">`
+        + ((c.incenseType && global.Types.isValid(c.incenseType))
+          ? `<img class="detail-incense-orb" src="${escapeHtml(_incenseOrbIcon(global.Types.color(c.incenseType)))}" alt="">`
           : '')
-        + 'From ' + escapeHtml((c.incenseType ? _titleCaseType(c.incenseType) + ' ' : '') + 'Incense')
+        + 'From ' + escapeHtml((c.incenseType ? global.Types.displayName(c.incenseType) + ' ' : '') + 'Incense')
         + `</div>`
       : '';
     const typesHtml = (c.speciesA != null && c.speciesB != null)
@@ -11999,7 +11925,7 @@
       ? global.Spawns.currentWeather() : null;
     if (!w) { bar.innerHTML = ''; return; }
     const chip = (type) => {
-      const bg = TYPE_COLORS[type] || '#888';
+      const bg = global.Types.color(type);
       const label = type.charAt(0) + type.slice(1).toLowerCase();
       return `<span class="type-chip" style="background:${bg}">${escapeHtml(label)}</span>`;
     };
@@ -13063,9 +12989,9 @@
     // top-right when this spawn came from an active incense.
     const incEl = el.querySelector('.battle-incense');
     if (incEl) {
-      if (spawn.incense && spawn.incenseType && TYPE_COLORS[spawn.incenseType]) {
-        incEl.src = _incenseOrbIcon(TYPE_COLORS[spawn.incenseType]);
-        incEl.title = _titleCaseType(spawn.incenseType) + ' Incense';
+      if (spawn.incense && spawn.incenseType && global.Types.isValid(spawn.incenseType)) {
+        incEl.src = _incenseOrbIcon(global.Types.color(spawn.incenseType));
+        incEl.title = global.Types.displayName(spawn.incenseType) + ' Incense';
         incEl.hidden = false;
       } else {
         incEl.hidden = true;

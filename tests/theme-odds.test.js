@@ -18,6 +18,9 @@ let failed = 0, passed = 0;
 function ok(cond, msg) { if (cond) { passed++; } else { failed++; console.error('FAIL: ' + msg); } }
 
 // ── Part 1: Spawns.typeOdds math against real species data ──────────────
+// spawns.js reads its type list from global.Types at load — types.js must
+// be required first (same load order as index.html).
+require(path.join(__dirname, '..', 'static', 'types.js'));
 const typesMap = require(path.join(__dirname, '..', 'data', 'BundledData', 'species-types.json'));
 global.Species = {
   typesFor(idx) { const t = typesMap[String(idx)]; return t ? t.filter(Boolean) : []; },
@@ -173,22 +176,19 @@ function extract(marker) {
   return src.slice(start, i + 1);
 }
 
-const TYPE_COLORS = {
-  NORMAL: '#A8A77A', FIRE: '#EE8130', WATER: '#6390F0', GRASS: '#7AC74C',
-  ELECTRIC: '#F7D02C', ICE: '#96D9D6', FIGHTING: '#C22E28', POISON: '#A33EA1',
-  GROUND: '#E2BF65', FLYING: '#A98FF3', PSYCHIC: '#F95587', BUG: '#A6B91A',
-  ROCK: '#B6A136', GHOST: '#735797', DRAGON: '#6F35FC', DARK: '#705746',
-  STEEL: '#B7B7CE', FAIRY: '#D685AD',
-};
+// Type colors/names come from the single source of truth (no inline
+// mirror — the old TYPE_COLORS copy here was deleted with creatures.js's).
+require(path.join(__dirname, '..', 'static', 'types.js'));
 const ctx = {
   Object, Set, Array, Math, String, Number, JSON,
-  global: { Spawns: { typeOdds: () => null, typePairOdds: () => null } },
-  TYPE_COLORS,
+  global: {
+    Spawns: { typeOdds: () => null, typePairOdds: () => null },
+    Types: globalThis.Types,
+  },
 };
 vm.createContext(ctx);
 for (const m of [
   'function escapeHtml(',
-  'function _titleCaseType(',
   'function _ccOddsSeg(',
   'function _ccOddsLegend(',
   'function _ccOddsGrid(',
@@ -218,7 +218,7 @@ const call = (expr) => vm.runInContext(expr, ctx);
   ok(h.indexOf('All other types') >= 0, 'P2: has the "all other types" catch-all');
   ok(h.indexOf('42%') >= 0 && h.indexOf('27%') >= 0 && h.indexOf('31%') >= 0,
     'P2: shows the rounded percentages');
-  ok(h.indexOf(TYPE_COLORS.FIRE) >= 0 && h.indexOf(TYPE_COLORS.WATER) >= 0,
+  ok(h.indexOf(globalThis.Types.color('FIRE')) >= 0 && h.indexOf(globalThis.Types.color('WATER')) >= 0,
     'P2: segments/legend use the real type colors');
   ok(h.indexOf('16 types') >= 0, 'P2: notes "other" splits over the remaining 16 types');
 }
