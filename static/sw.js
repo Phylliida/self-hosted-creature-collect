@@ -40,6 +40,11 @@ const TILES_CACHE = 'tiles-v1';
 // offline included (precache fetches hit WebViewAssetLoader /
 // LocalServer, not the network). Data entries (/fonts, /icons,
 // /bundled-data, tiles) are kept.
+// Same build: the Settings → Creature pack row now passes the ACTIVE
+// pack id to readMeta/currentSource/checkForUpdate/deletePackData
+// (was hardcoded to the creature-fusion default), so a broken
+// non-default pack can actually be deleted + re-downloaded from the
+// UI. That change lives in cache-first index.html → this bump.
 
 const APP_SHELL = [
   '/',

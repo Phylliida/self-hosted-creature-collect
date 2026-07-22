@@ -17175,12 +17175,18 @@ function fmtDate(ts) {
   const creaturePackDeleteBtn = document.getElementById('creaturePackDeleteBtn');
   const creaturePackStatus = document.getElementById('creaturePackStatus');
   const _fmtPackMb = (n) => ((n || 0) / (1024 * 1024)).toFixed(0) + ' MB';
+  // The row tracks the ACTIVE pack (neopets when it's selected), not
+  // always creature-fusion — readMeta/currentSource/checkForUpdate/
+  // deletePackData all default to the fusion slot when called with no
+  // id, which used to leave a broken non-default pack with no UI path
+  // to delete or re-download it.
+  const _rowPackId = () => (window.Packs ? window.Packs.active() : 'creature-fusion');
   async function _refreshCreaturePackRow() {
     if (!window.PackInstall) return;
     // Label is strictly local — probing the source for a newer pack
     // happens only on button tap (zero-network rule).
-    const meta = window.PackInstall.readMeta();
-    const src = window.PackInstall.currentSource();
+    const meta = window.PackInstall.readMeta(_rowPackId());
+    const src = window.PackInstall.currentSource(_rowPackId());
     const srcLabel = src.source === 'hf' ? 'Hugging Face' : 'this server';
     if (meta && meta.installedAt) {
       creaturePackStatus.textContent =
@@ -17207,14 +17213,14 @@ function fmtDate(ts) {
     creaturePackBtn.disabled = true;
     try {
       creaturePackStatus.textContent = 'checking for updates…';
-      const check = await window.PackInstall.checkForUpdate();
+      const check = await window.PackInstall.checkForUpdate(_rowPackId());
       if (check.state === 'up-to-date') {
         creaturePackStatus.textContent = 'already up to date';
         creaturePackBtn.disabled = false;
         return;
       }
       await window.PackInstall.download(
-        (window.Packs ? window.Packs.active() : 'creature-fusion'),
+        _rowPackId(),
         (s) => { creaturePackStatus.textContent = _packStatusText(s); });
       requestPersistent();
       setTimeout(() => location.reload(), 400);
@@ -17226,7 +17232,7 @@ function fmtDate(ts) {
   creaturePackDeleteBtn.onclick = async () => {
     if (!window.PackInstall) return;
     if (!confirm('Remove the downloaded creature pack? The app falls back to bundled data.')) return;
-    await window.PackInstall.deletePackData();
+    await window.PackInstall.deletePackData(_rowPackId());
     creaturePackStatus.textContent = 'pack removed — reload to fully fall back.';
     creaturePackBtn.textContent = '↓ creature pack';
   };
