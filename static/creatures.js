@@ -3041,6 +3041,23 @@
       } catch (_) { /* fall back to base art */ }
     }
     if (img._spriteGen !== gen) return;
+    // Diagnostics: record solo-art load outcomes so the Settings dump
+    // can tell "sprite URL 404s/504s" from "image decoded fine"
+    // without remote devtools. Small ring of the most recent attempts.
+    (function () {
+      const d = window._soloSpriteDiag = window._soloSpriteDiag
+        || { attempts: 0, ok: 0, fail: 0, last: [] };
+      d.attempts++;
+      const rec = { url: finalUrl, st: 'pending' };
+      img.addEventListener('load', () => {
+        d.ok++; rec.st = `ok ${img.naturalWidth}x${img.naturalHeight}`;
+      }, { once: true });
+      img.addEventListener('error', () => {
+        d.fail++; rec.st = 'error';
+      }, { once: true });
+      d.last.push(rec);
+      if (d.last.length > 6) d.last.shift();
+    })();
     img.src = finalUrl;
     if (opts.readyClass) img.classList.add(opts.readyClass);
     if (typeof opts.onReady === 'function') {
@@ -11730,7 +11747,10 @@
             });
           }
           msg.textContent = 'switching…';
-          global.Packs.setActive(id);
+          // Await the native re-overlay (Android cache copy / iOS
+          // active.txt) BEFORE reloading, or the reload kills it and
+          // the new pack boots against the old pack's /bundled-data.
+          await global.Packs.setActive(id);
           location.reload();
         } catch (e2) {
           msg.textContent = 'failed: ' + (e2 && e2.message ? e2.message : e2);

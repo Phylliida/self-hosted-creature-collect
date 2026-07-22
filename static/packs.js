@@ -64,9 +64,20 @@
     try { localStorage.setItem(ACTIVE_KEY, id); } catch { /* ignore */ }
     // Point the native layer at the newly-active pack's files
     // (iOS: active.txt marker LocalServer reads; Android: cache
-    // re-overlay). Fire-and-forget — the caller reloads anyway.
+    // re-overlay). The returned Promise resolves when the overlay is
+    // done — the caller MUST await it before reloading. It used to be
+    // fire-and-forget, but on Android the re-overlay (delete hundreds
+    // of /bundled-data keys, then cache-to-cache copy) is far slower
+    // than the reload that followed it, so the switch "took" in
+    // localStorage while /bundled-data kept serving the OLD pack —
+    // active=creature-fusion booting against neopets JSONs with every
+    // fusion sprite-pack 504ing. (Returns true under Node/tests where
+    // no PackInstall exists.)
     if (global.PackInstall && global.PackInstall.setActiveNative) {
-      try { global.PackInstall.setActiveNative(id).catch(() => {}); } catch { /* ignore */ }
+      try {
+        return global.PackInstall.setActiveNative(id)
+          .then(() => true, () => true);
+      } catch { /* ignore */ }
     }
     return true;
   }

@@ -52,6 +52,16 @@ const S = globalThis.Specials;
   const tm = S.get('testmon');
   ok(tm && tm.types.join() === 'FIRE', '1: unknown types filtered at register');
   ok(S.list()[0].id === 'missingno', '1: registry order stable (append-only)');
+  // Regression: GMS pack monsters carry namespaced ids ('neo:acar_1yellow').
+  // The id validator used to reject ':' — register() returned false, the
+  // monster never entered the registry, spriteUrl() stayed null, and no
+  // neopets art ever rendered anywhere.
+  ok(S.register({ id: 'neo:acar_1yellow', name: 'Acara', category: 'special',
+    types: ['NORMAL'], sprite: 'sprites/acar_yellow_m.png' }) === true,
+    '1: namespaced pack id (neo:…) accepted');
+  ok(S.isSolo('neo:acar_1yellow'), '1: namespaced id isSolo');
+  ok(S.spriteUrl('neo:acar_1yellow').endsWith('/sprites/acar_yellow_m.png'),
+    '1: namespaced id spriteUrl resolves');
 }
 
 // --- helpers for vm extraction (same approach as radar-tag.test.js) ------------

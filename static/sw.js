@@ -45,6 +45,25 @@ const TILES_CACHE = 'tiles-v1';
 // (was hardcoded to the creature-fusion default), so a broken
 // non-default pack can actually be deleted + re-downloaded from the
 // UI. That change lives in cache-first index.html → this bump.
+// Shell bump 2026-07-22 (#9): pack diagnostics — the Settings dump
+// gains a [pack] block (active pack, install meta, packData counts)
+// and creatures.js records solo-sprite <img> load outcomes
+// (window._soloSpriteDiag) to chase "neopets icons don't render".
+// Same build, the actual fix: Specials.register's id validator
+// rejected ':' so every 'neo:*' monster id failed to register —
+// spriteUrl() stayed null and no neopets art ever rendered. All
+// three live in cache-first files (index.html, /static/creatures.js,
+// /static/specials.js) → bump to re-precache.
+// Shell bump 2026-07-22 (#10): pack-switch race — Packs.setActive's
+// native re-overlay (Android /bundled-data cache delete+copy) was
+// fire-and-forget against an immediate location.reload(), so the
+// reload killed it and the newly-active pack booted against the OLD
+// pack's overlay (fusion mode serving neopets JSONs, every
+// sprite-pack 504). The caller now awaits setActive before reloading.
+// Also: the Android download sink only writes /bundled-data/* when
+// the downloaded pack IS the active one — downloading a non-active
+// pack no longer clobbers the live overlay. All in cache-first files
+// (/static/packs.js, /static/creatures.js, /static/pack-install.js).
 
 const APP_SHELL = [
   '/',

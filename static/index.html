@@ -13578,6 +13578,37 @@ function fmtDate(ts) {
       if (sd.errors && sd.errors.length) {
         for (const e of sd.errors) lines.push(`  • ${e}`);
       }
+      // Creature pack state — which pack is active, what its install
+      // meta claims, whether the boot loader actually folded the pack's
+      // species into the runtime, and (from creatures.js) whether solo
+      // sprite <img> loads are succeeding. Distinguishes the three
+      // ways "pack X doesn't show" happens: pack not installed /
+      // installed-but-not-loaded / loaded-but-art-missing.
+      try {
+        const pid = window.Packs ? window.Packs.active() : 'creature-fusion';
+        const meta = window.PackInstall ? window.PackInstall.readMeta(pid) : null;
+        const pd = window.Packs && window.Packs.packData ? window.Packs.packData() : null;
+        const soloN = window.Specials ? window.Specials.list().length : 0;
+        lines.push(
+          `[pack]`,
+          `  active=${pid} solo=${window.Packs && window.Packs.isSoloMode() ? 'y' : 'n'}`,
+          `  meta: ${meta && meta.installedAt
+            ? `installed v=${meta.contentVersion || '?'} entries=${meta.entryCount ?? '?'} ` +
+              `bytes=${meta.bytes ?? '?'} src=${meta.source || '?'}`
+            : 'NONE (not installed)'}`,
+          `  packData: loaded=${pd && pd.loaded ? 'y' : 'n'} ` +
+            `species=${pd && pd.species ? pd.species.length : 0} ` +
+            `items=${pd && pd.items ? pd.items.length : 0} ` +
+            `specials=${soloN}`,
+        );
+        const ssd = window._soloSpriteDiag;
+        if (ssd) {
+          lines.push(`  solo sprites: attempts=${ssd.attempts} ok=${ssd.ok} fail=${ssd.fail}`);
+          for (const r of ssd.last || []) lines.push(`    ${r.st}  ${r.url}`);
+        } else {
+          lines.push(`  solo sprites: no attempts`);
+        }
+      } catch (_) { /* diagnostics must never break the dump */ }
       const cd = window._creditDiag || {};
       lines.push(
         `[credit lookup]`,

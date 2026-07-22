@@ -56,12 +56,15 @@
 
   // ── pack extension point ──
   // register({ id, name, category, types, sprite, blurb? }) -> bool.
-  // ids are lowercase strings ('missingno'); types reference global.Types
+  // ids are lowercase strings ('missingno'); pack monsters use
+  // namespaced ids ('neo:acar_1yellow'), so ':' is allowed — every
+  // downstream consumer treats the id as an opaque map key or a
+  // 'solo:'-prefixed dex/candy string. types reference global.Types
   // ids (unknown ones are dropped). New specials are appended.
   function register(def) {
     if (!def || typeof def.id !== 'string' || typeof def.name !== 'string') return false;
     const id = def.id.toLowerCase();
-    if (!/^[a-z][a-z0-9_-]*$/.test(id) || _specials.has(id)) return false;
+    if (!/^[a-z][a-z0-9_:-]*$/.test(id) || _specials.has(id)) return false;
     const types = (Array.isArray(def.types) ? def.types : [])
       .filter((t) => global.Types && global.Types.isValid(t));
     _define({
