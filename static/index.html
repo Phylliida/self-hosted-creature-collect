@@ -73,6 +73,31 @@
   // IDB — async; reload once it settles (success OR failure) so the
   // modules that load below this script start from a clean slate.
   function done() { try { location.reload(); } catch (e) {} }
+  // Android's live-update overlays CODE into the SW app cache
+  // (/static/*), and that cache survives APK/IPA installs — served in
+  // preference to the bundle, so an app update keeps loading stale JS
+  // forever (the pack-era example: packs.js 22:44 shadowing the new
+  // bundle's). On bundle change, drop every /static/* overlay entry so
+  // the fresh bundle's code wins. The /bundled-data/* entries are DATA
+  // (the downloaded creature packs) and are deliberately kept — the
+  // APK does not include them. Chained BEFORE the IDB wipe + reload so
+  // the reload can't race past the cleanup.
+  var overlayCleanup;
+  try {
+    overlayCleanup = (window.caches && caches.open)
+      ? caches.open('app-v1').then(function (c) {
+          return c.keys().then(function (keys) {
+            return Promise.all(keys.map(function (r) {
+              try {
+                if (new URL(r.url).pathname.indexOf('/static/') === 0) return c.delete(r);
+              } catch (_) {}
+              return null;
+            }));
+          });
+        }).catch(function () {})
+      : Promise.resolve();
+  } catch (e) { overlayCleanup = Promise.resolve(); }
+  overlayCleanup.then(function () {
   try {
     // Open without a version arg so we don't trigger onupgradeneeded
     // here — that's sprites.js's job. If the DB doesn't exist yet
@@ -102,6 +127,7 @@
     req.onerror   = done;
     req.onblocked = done;
   } catch (e) { done(); }
+  });
 })();
 </script>
 <script>

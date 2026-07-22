@@ -22,6 +22,13 @@ const TILES_CACHE = 'tiles-v1';
 // which is cache-first in APP_SHELL. Without this bump existing
 // installs keep serving the OLD index.html from the precache and
 // never see the pack flow.
+// Shell bump 2026-07-22 (#7): Android stale-code fix — the boot
+// cache-bust now also clears /static/* live-update overlay entries
+// from the app-v1 cache on bundle change (they shadowed the fresh
+// bundle's JS across APK installs). The cleanup lives in index.html,
+// so this bump is required for it to propagate: without an sw.js byte
+// change the SW never reinstalls, never re-precaches '/', and the old
+// boot script (without the cleanup) keeps running.
 
 const APP_SHELL = [
   '/',
