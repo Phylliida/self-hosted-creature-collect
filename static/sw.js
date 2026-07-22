@@ -29,6 +29,17 @@ const TILES_CACHE = 'tiles-v1';
 // so this bump is required for it to propagate: without an sw.js byte
 // change the SW never reinstalls, never re-precaches '/', and the old
 // boot script (without the cleanup) keeps running.
+// Shell bump 2026-07-22 (#8): Capacitor stale-code fix, take 2 — the
+// #7 cleanup lives in index.html, which is itself served cache-first,
+// so it only runs AFTER a launch that already loaded stale code (the
+// "relaunch once to see the update" bug). The same cleanup now runs
+// in the SW install handler itself (Capacitor only), guaranteed to
+// complete before any page load: every code entry ('/', '/dex.html',
+// '/sw.js', '/static/*') is dropped from app-v1 before re-precache,
+// so a new APK/IPA serves its own bundled code on the FIRST launch,
+// offline included (precache fetches hit WebViewAssetLoader /
+// LocalServer, not the network). Data entries (/fonts, /icons,
+// /bundled-data, tiles) are kept.
 
 const APP_SHELL = [
   '/',
@@ -45,6 +56,38 @@ const APP_SHELL = [
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(APP_CACHE).then(async (c) => {
+    // Capacitor only: drop every CODE entry from app-v1 before
+    // re-precaching. `adb install -r` / IPA sideloads keep app data,
+    // so live-update overlay entries ('/static/*.js', but also '/' and
+    // '/dex.html' — the boot-script cleanup in index.html only deletes
+    // /static/*) survive the install and shadow the fresh bundle's
+    // code, making an app update load old JS until something else
+    // clears them. Doing it HERE — not in the page's boot script —
+    // means it runs before any page load, so the new bundle's code is
+    // served on the FIRST launch. The precache fetches below are local
+    // (WebViewAssetLoader on Android, LocalServer on iOS), so this all
+    // works offline. DATA entries are deliberately kept: /fonts and
+    // /icons (user-downloaded, zero-network rule) and /bundled-data
+    // (creature packs, not in the APK). Gated on IS_CAPACITOR so the
+    // web PWA — whose precache fetches DO need the network — never
+    // wipes code it might be unable to re-fetch while offline.
+    // (IS_CAPACITOR is declared further down; the handler body only
+    // runs after the whole script has evaluated, so no TDZ issue.)
+    if (IS_CAPACITOR) {
+      try {
+        const keys = await c.keys();
+        await Promise.all(keys.map((r) => {
+          try {
+            const p = new URL(r.url).pathname;
+            if (p === '/' || p === '/dex.html' || p === '/sw.js' ||
+                p.startsWith('/static/')) {
+              return c.delete(r);
+            }
+          } catch {}
+          return null;
+        }));
+      } catch {}
+    }
     await Promise.all(APP_SHELL.map(async (url) => {
       try {
         // Delete first so Safari reliably frees the old response body;
