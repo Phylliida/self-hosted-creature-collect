@@ -271,6 +271,13 @@
       // then overlay the active /bundled-data/* keys (the same
       // mechanism live-update's updateViaCache uses).
       const pid = packId || DEFAULT_PACK_ID;
+      // Only the ACTIVE pack may write the live /bundled-data/* overlay.
+      // Downloading a non-active pack (pack picker downloads before
+      // switching) must not clobber the running pack's data — its
+      // activation goes through setActiveNative once the switch happens.
+      // (No Packs registry — headless tests — treats it as active.)
+      const isActivePack = !global.Packs || typeof global.Packs.active !== 'function'
+        || global.Packs.active() === pid;
       let cachePromise = null;
       const open = () => (cachePromise || (cachePromise = caches.open(ANDROID_CACHE)));
       return async (logical, blob) => {
@@ -280,7 +287,7 @@
           headers: { 'Content-Type': mimeFor(logical) },
         });
         await cache.put('/pack-files/' + pid + '/' + logical, resp());
-        await cache.put('/bundled-data/' + logical, resp());
+        if (isActivePack) await cache.put('/bundled-data/' + logical, resp());
       };
     }
     // Web/dev: no-op sink (browser mode isn't a pack target).
