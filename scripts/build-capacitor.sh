@@ -89,6 +89,11 @@ fi
 # /static/-prefixed path still works (run.py does, for the version
 # stamping check).
 cp -R static/. "$DIST/static/"
+# static/anki is canonical for the oss-anki flashcards app and carries its
+# dev harness alongside the runtime; only the runtime belongs in the bundle.
+rm -rf "$DIST/static/anki/node_modules" "$DIST/static/anki/test" \
+       "$DIST/static/anki/docs" "$DIST/static/anki/package-lock.json" \
+       "$DIST/static/anki/web/serve.py"
 
 # BundledData at /bundled-data — SLIM by default: only the map
 # essentials ship in the app bundle. Creature data (sprites/,
@@ -143,7 +148,7 @@ TRACKED_JS = {
     "pack-install.js", "packs.js",
     "extras-apps.js", "extras-almanac.js", "extras-vibration.js",
     "extras-skymap.js", "extras-sudoku.js", "extras-sensors.js",
-    "extras-tuner.js", "extras-scapes.js", "extras-todos.js",
+    "extras-tuner.js", "extras-scapes.js", "extras-todos.js", "extras-anki.js",
 }
 # Extras mini-app subtrees (Pixel Art, Draw, both fractal viewers) —
 # same lists as run.py's _SUBTREE_JS / _SUBTREE_HTML / _SUBTREE_CSS.
@@ -191,16 +196,26 @@ SUBTREE_JS = [
     "mandelbrot/pngMetadata.js", "mandelbrot/referencePointProvider.js",
     "mandelbrot/sharedCalculations.js", "mandelbrot/workerContext.js",
     "mandelbrot/worker.js",
+    "anki/src/apkg.js", "anki/src/backup.js", "anki/src/csv.js",
+    "anki/src/fsrs.js", "anki/src/html-to-md.js", "anki/src/ids.js",
+    "anki/src/index.js", "anki/src/markdown.js", "anki/src/mathify.js",
+    "anki/src/merge.js", "anki/src/model.js", "anki/src/scheduler.js",
+    "anki/src/search.js", "anki/src/sha1.js", "anki/src/sqljs-node.js",
+    "anki/src/stats.js", "anki/src/storage.js", "anki/src/sync.js",
+    "anki/src/template.js", "anki/src/text.js", "anki/src/timing.js",
+    "anki/web/app.js",
 ]
 SUBTREE_HTML = [
     "pixelart/index.html", "draw/index.html",
     "fractals2/index.html", "mandelbrot/index.html",
+    "anki/web/index.html",
 ]
 # Version-map only — CSS is never stamped (it has no SCRIPT_VERSION and
 # injecting the HTML snippet would corrupt it), but it must be in the
 # bundled map or the first refresh would re-download it as "stale".
 SUBTREE_CSS = [
     "draw/style.css", "fractals2/styles.css", "mandelbrot/style.css",
+    "anki/web/styles.css",
 ]
 TRACKED_JS |= set(SUBTREE_JS)
 TRACKED_HTML = {"index.html", "dex.html", "synth.html", "quiver.html", *SUBTREE_HTML}

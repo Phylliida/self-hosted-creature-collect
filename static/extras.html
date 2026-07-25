@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Extras workbench</title>
+<!--
+  Extras workbench — served at /extras by the LAN (home) instance only
+  (run_as_lan.py; the gated public instance 403s the route). Hosts the
+  same Extras mini-apps as the phone app — anki flashcards, draw, synth,
+  fractals, todos, … — on any browser on the home network, with Load /
+  Save round-tripping the server savefile (see extras-workbench.js: all
+  non-extras save data passes through untouched).
+
+  The extras scripts inject their own CSS but rely on the host page for
+  the theme variables, the .sheet background rule, and the .cc-x-btn
+  close-button rule (mirrored from index.html's defaults below, plus a
+  dark variant since this page has no theme system).
+-->
+<style>
+  :root {
+    --ui-bg:            #ffffff;
+    --ui-text:          #333;
+    --ui-muted:         #888;
+    --ui-border:        transparent;
+    --ui-hairline:      #eee;
+    --ui-hover:         #f5f5f5;
+    --ui-input-bg:      #ffffff;
+    --ui-radius:        8px;
+    --ui-shadow:        0 2px 8px rgba(0, 0, 0, 0.2);
+    --ui-accent:        #3b7fdf;
+    --ui-accent-text:   #ffffff;
+    --ui-accent-border: #3070c8;
+    --ui-danger:        #c44;
+    --wb-page-bg:       #eef0f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ui-bg:            #23262f;
+      --ui-text:          #e6e7ea;
+      --ui-muted:         #9aa0ab;
+      --ui-border:        rgba(255, 255, 255, 0.08);
+      --ui-hairline:      rgba(255, 255, 255, 0.09);
+      --ui-hover:         rgba(255, 255, 255, 0.07);
+      --ui-input-bg:      #1b1d24;
+      --ui-shadow:        0 2px 10px rgba(0, 0, 0, 0.55);
+      --wb-page-bg:       #14161c;
+    }
+  }
+  html, body { margin: 0; padding: 0; background: var(--wb-page-bg); color: var(--ui-text);
+    font-family: system-ui, -apple-system, sans-serif; min-height: 100%; }
+
+  /* Host-page rules the extras suite expects (from index.html). */
+  #extrasPanel .sheet {
+    background: var(--ui-bg); color: var(--ui-text);
+    border: 1px solid var(--ui-border); box-shadow: var(--ui-shadow);
+    border-radius: var(--ui-radius);
+  }
+  button.close.cc-x-btn {
+    background: transparent !important; border: none !important;
+    color: var(--ui-text) !important; box-shadow: none !important;
+    font-size: 26px; line-height: 1; cursor: pointer; padding: 4px 8px;
+  }
+  /* Roomier sheet on desktop — the grid just flows more bubbles per row. */
+  @media (min-width: 700px) {
+    #extrasPanel .sheet { max-width: 620px !important; }
+  }
+
+  /* Top bar — permanently visible: it's fixed above EVERYTHING (the
+     extras sheet at z-31, the fractals/anki windows at z-60, the
+     synth/draw/pixel .exapp-win windows at z-1200), and every one of
+     those fullscreen overlays is pushed down below it via --wb-top so
+     Load / Save stay reachable while any tool is open. --wb-top tracks
+     the bar's real height (it wraps on narrow screens) from a
+     ResizeObserver in extras-workbench.js. */
+  :root { --wb-top: 56px; }
+  .wb-bar {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    padding: max(10px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right))
+             10px max(14px, env(safe-area-inset-left));
+    background: var(--ui-bg); box-shadow: var(--ui-shadow);
+    position: fixed; top: 0; left: 0; right: 0; z-index: 2000;
+  }
+  body { padding-top: calc(var(--wb-top) + 8px); }
+  #extrasPanel, .fractals-window, .exapp-win {
+    top: var(--wb-top) !important;
+  }
+  .wb-bar h1 { font-size: 16px; margin: 0 8px 0 0; font-weight: 600; }
+  .wb-bar input {
+    flex: 1; min-width: 110px; max-width: 240px; padding: 8px 10px;
+    font-size: 14px; border-radius: var(--ui-radius);
+    border: 1px solid var(--ui-hairline); background: var(--ui-input-bg);
+    color: var(--ui-text); font-family: inherit;
+  }
+  .wb-bar button {
+    padding: 8px 16px; font-size: 14px; cursor: pointer; font-family: inherit;
+    border-radius: var(--ui-radius); border: 1px solid var(--ui-hairline);
+    background: var(--ui-input-bg); color: var(--ui-text);
+  }
+  .wb-bar button:disabled { opacity: 0.45; cursor: default; }
+  /* extras.js styles #extrasBtn as a full-width Settings row button —
+     in the top bar it's just another inline button. */
+  .wb-bar #extrasBtn { display: inline-block !important; width: auto !important;
+    margin: 0 !important; font-weight: 600; }
+  .wb-bar #wbSave { border-color: var(--ui-accent-border); background: var(--ui-accent);
+    color: var(--ui-accent-text); }
+  #wbStatus { flex-basis: 100%; font-size: 12.5px; color: var(--ui-muted); min-height: 16px; }
+  #wbStatus.err { color: var(--ui-danger); }
+
+  .wb-hint { max-width: 640px; margin: 18px auto; padding: 0 16px;
+    font-size: 13px; color: var(--ui-muted); line-height: 1.5; }
+</style>
+</head>
+<body>
+  <div class="wb-bar">
+    <h1>✨ Extras workbench</h1>
+    <input type="text" id="wbName" placeholder="trainer name" maxlength="40"
+           autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button id="wbLoad" type="button">Load</button>
+    <button id="wbSave" type="button" disabled>Save</button>
+    <button id="extrasBtn" type="button">✨ Extras</button>
+    <span id="wbStatus">Load your save, edit in any tool, then Save — everything else in the save passes through untouched.</span>
+  </div>
+  <div class="wb-hint">
+    Load pulls your newest server save and merges its extras data (anki decks,
+    drawings, songs, fractals, todos…) into this browser. Save round-trips the
+    same save with your edits — creatures, eggs and settings ride along
+    unchanged. Heads-up: this browser keeps the merged data locally, so on a
+    shared PC, loading two different trainers will cross-merge their extras.
+  </div>
+
+  <script src="/static/extras.js"></script>
+  <script src="/static/extras-apps.js"></script>
+  <script src="/static/extras-almanac.js"></script>
+  <script src="/static/extras-vibration.js"></script>
+  <script src="/static/extras-skymap.js"></script>
+  <script src="/static/extras-sudoku.js"></script>
+  <script src="/static/extras-sensors.js"></script>
+  <script src="/static/extras-tuner.js"></script>
+  <script src="/static/extras-scapes.js"></script>
+  <script src="/static/extras-todos.js"></script>
+  <script src="/static/extras-anki.js"></script>
+  <script src="/static/extras-workbench.js"></script>
+</body>
+</html>

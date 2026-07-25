@@ -1617,7 +1617,9 @@
      the end. wrap is allowed for narrow viewports. */
   #settingsPanel .backup-row { flex-wrap: wrap; }
   #settingsPanel .backup-row label { flex: 0 0 auto; }
-  #settingsPanel .backup-row #backupName {
+  #settingsPanel .backup-row #backupName,
+  #settingsPanel .backup-row #saveServerUrl,
+  #settingsPanel .backup-row #loadServerUrl {
     flex: 1; min-width: 80px;
   }
   #settingsPanel .backup-row .backup-actions {
@@ -3193,7 +3195,7 @@
        // overlays new code into this very cache in place, so deleting would
        // be pointless online and, offline, would wipe a prior update back to
        // the bundled version. (Refresh must never downgrade with no data.)
-       try{var _plat=(window.Capacitor&&window.Capacitor.getPlatform&&window.Capacitor.getPlatform())||'web';if(_plat!=='android'){caches.open('app-v1').then(function(c){['/','/manifest.webmanifest','/static/icon.svg','/static/trip-planner.js','/static/types.js','/static/specials.js','/static/pack-reader.js','/static/packs.js','/static/pack-install.js','/static/extras.js','/static/extras-apps.js','/static/extras-almanac.js','/static/extras-vibration.js','/static/extras-skymap.js','/static/extras-sudoku.js','/static/extras-sensors.js','/static/extras-tuner.js','/static/extras-scapes.js','/static/extras-todos.js','/static/synth.html','/static/quiver.html','/static/vendor/maplibre-gl.css','/static/vendor/maplibre-gl.js'].forEach(function(u){c.delete(u)});c.keys().then(function(ks){ks.forEach(function(r){var p=new URL(r.url).pathname;if(/^\/static\/(draw|pixelart|fractals2|mandelbrot)\//.test(p))c.delete(r)})})})}}catch(_){}
+       try{var _plat=(window.Capacitor&&window.Capacitor.getPlatform&&window.Capacitor.getPlatform())||'web';if(_plat!=='android'){caches.open('app-v1').then(function(c){['/','/manifest.webmanifest','/static/icon.svg','/static/trip-planner.js','/static/types.js','/static/specials.js','/static/pack-reader.js','/static/packs.js','/static/pack-install.js','/static/extras.js','/static/extras-apps.js','/static/extras-almanac.js','/static/extras-vibration.js','/static/extras-skymap.js','/static/extras-sudoku.js','/static/extras-sensors.js','/static/extras-tuner.js','/static/extras-scapes.js','/static/extras-todos.js','/static/extras-anki.js','/static/synth.html','/static/quiver.html','/static/vendor/maplibre-gl.css','/static/vendor/maplibre-gl.js'].forEach(function(u){c.delete(u)});c.keys().then(function(ks){ks.forEach(function(r){var p=new URL(r.url).pathname;if(/^\/static\/(draw|pixelart|fractals2|mandelbrot|anki)\//.test(p))c.delete(r)})})})}}catch(_){}
        try{localStorage.removeItem('cc.lastUpdateFailedAt');}catch(_){}
        var btn=document.getElementById('emergencyRefresh');
        if(btn){btn.style.opacity='0.5';btn.style.pointerEvents='none';}
@@ -3593,6 +3595,20 @@
       </span>
     </div>
     <div id="backupStatus" style="font-size: 11px; color: var(--ui-muted); margin: -4px 0 6px;"></div>
+    <!-- Split save/load servers: saves POST anywhere (the public tunnel
+         instance accepts them), but the server only serves /load on the
+         home network, so loads need the LAN address. Blank = this page's
+         own origin (web) / the built-in default (native app). -->
+    <div class="row backup-row">
+      <label for="saveServerUrl">Save server</label>
+      <input type="text" id="saveServerUrl" placeholder="default server"
+             autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url">
+    </div>
+    <div class="row backup-row">
+      <label for="loadServerUrl">Load server (home)</label>
+      <input type="text" id="loadServerUrl" placeholder="http://192.168.…:4539 (blank = save server)"
+             autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url">
+    </div>
     <div class="row">
       <label for="autoBackupToggle">Auto-backup daily on WiFi</label>
       <input type="checkbox" id="autoBackupToggle">
@@ -4518,6 +4534,7 @@
 <script src="/static/extras-tuner.js"></script>
 <script src="/static/extras-scapes.js"></script>
 <script src="/static/extras-todos.js"></script>
+<script src="/static/extras-anki.js"></script>
 <script>
 // Single source of truth for the app version. Bumped manually when shipping
 // a user-visible change (new features, data format upgrades, etc.). Shown
@@ -7907,6 +7924,30 @@ function fmtDate(ts) {
         if (nameInput) nameInput.value = name;
       } catch (_) {}
     }
+    // TOFU write token: the imported save's token wins (it's the one whose
+    // hash the server has on record for this name — a locally generated
+    // stray would just get saves rejected).
+    if (typeof data.writeToken === 'string' && data.writeToken
+        && typeof data.backupName === 'string' && data.backupName.trim()) {
+      try {
+        const map = JSON.parse(localStorage.getItem('cc.writeTokens.v1') || '{}') || {};
+        map[data.backupName.trim().slice(0, 40)] = data.writeToken;
+        localStorage.setItem('cc.writeTokens.v1', JSON.stringify(map));
+      } catch (_) {}
+    }
+    // Save/load server URLs — restored like backupName so routing
+    // travels with the save.
+    for (const [field, key] of [['saveServerUrl', 'cc.saveServerUrl'],
+                                ['loadServerUrl', 'cc.loadServerUrl']]) {
+      const v = data[field];
+      if (typeof v === 'string' && /^https?:\/\/\S+$/.test(v.trim())) {
+        localStorage.setItem(key, v.trim());
+        try {
+          const el = document.getElementById(field);
+          if (el) el.value = v.trim();
+        } catch (_) {}
+      }
+    }
   }
 
   async function buildBackupPayload() {
@@ -7981,6 +8022,17 @@ function fmtDate(ts) {
       // another device preserves exact progress.
       eggs: JSON.parse(localStorage.getItem('cc.eggs.v1') || '[]'),
       incubator: JSON.parse(localStorage.getItem('cc.incubator.v1') || '[]'),
+      // TOFU write token for this trainer name (see _writeTokenFor). It
+      // deliberately rides in the save: /load only answers on the home
+      // network, so loading at home is what re-grants a device the right
+      // to save as this name.
+      writeToken: (localStorage.getItem('cc.backupName') || '').trim()
+        ? _writeTokenFor((localStorage.getItem('cc.backupName') || '').trim())
+        : null,
+      // Server URL overrides (Settings → Backup), carried like backupName
+      // so a load restores the full save/load routing on a fresh device.
+      saveServerUrl: localStorage.getItem('cc.saveServerUrl') || null,
+      loadServerUrl: localStorage.getItem('cc.loadServerUrl') || null,
       // Todo extra (Extras → Todo) recurring task list — plain localStorage
       // JSON blob ({tasks: [...]}), carried along so it travels with the save.
       todos: JSON.parse(localStorage.getItem('cc.todos.v1') || 'null'),
@@ -8025,6 +8077,17 @@ function fmtDate(ts) {
       pixelart: (window.ExtrasPixelArt && window.ExtrasPixelArt.all)
         ? await window.ExtrasPixelArt.all()
         : [],
+      // Flashcards (Extras → Flashcards): the whole oss-anki collection —
+      // decks, notes, cards, review history, and media (base64) — as the
+      // app's native one-file backup object, read from its own IndexedDB.
+      // null when the tool has never been used. Restored via a
+      // deterministic sync-merge, so round-tripping through the server
+      // never loses reviews done since the save was written.
+      anki: (window.ExtrasAnki && window.ExtrasAnki.capture)
+        ? await window.ExtrasAnki.capture().catch((e) => {
+            console.error('anki capture failed', e); return null;
+          })
+        : null,
       // App preferences worth carrying across devices: the "count steps in
       // background" toggle, and the map data source (Flask vs Hugging Face).
       pedometerEnabled: localStorage.getItem('cc.pedometerEnabled'),
@@ -8087,6 +8150,43 @@ function fmtDate(ts) {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  // ── Split save/load servers ───────────────────────────────────────────
+  // Settings → "Save server" / "Load server (home)". Saves POST anywhere
+  // (the tunnel-facing instance accepts them), but the server only answers
+  // /load on the home-network instance, so Load needs the LAN address.
+  // Blank fields mean "default": same-origin on web, the CC_API_BASE
+  // fetch interceptor on native. A filled field produces an absolute URL,
+  // which both platforms pass through untouched. Load falls back to the
+  // save server so single-server setups keep working unchanged.
+  function _serverUrl(kind, path) {
+    const save = (localStorage.getItem('cc.saveServerUrl') || '').trim();
+    const load = (localStorage.getItem('cc.loadServerUrl') || '').trim();
+    const base = kind === 'load' ? (load || save) : save;
+    return base ? base.replace(/\/+$/, '') + path : path;
+  }
+  window._ccServerUrl = _serverUrl;
+
+  // TOFU write token: a random secret per trainer name, generated the
+  // first time this device saves that name. The server records the
+  // token's hash on first sight ("claims" the name) and afterwards
+  // rejects saves for the name that don't present it — so nobody can
+  // overwrite your active save through the public tunnel. The token
+  // travels INSIDE the save payload: /load is home-network-only, so
+  // loading your save at home hands a fresh device the token back.
+  function _writeTokenFor(name) {
+    let map = {};
+    try { map = JSON.parse(localStorage.getItem('cc.writeTokens.v1') || '{}') || {}; }
+    catch (_) { map = {}; }
+    if (typeof map[name] === 'string' && map[name]) return map[name];
+    const bytes = new Uint8Array(24);
+    crypto.getRandomValues(bytes);
+    const token = btoa(String.fromCharCode.apply(null, bytes))
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    map[name] = token;
+    localStorage.setItem('cc.writeTokens.v1', JSON.stringify(map));
+    return token;
+  }
+
   // opts.silent → no alerts (used by the WiFi auto-backup). Returns whether
   // the save succeeded so callers can react without a popup.
   async function saveToServer(opts) {
@@ -8098,7 +8198,7 @@ function fmtDate(ts) {
     }
     const data = await buildBackupPayload();
     try {
-      const resp = await fetch('/save', {
+      const resp = await fetch(_serverUrl('save', '/save'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -8529,6 +8629,14 @@ function fmtDate(ts) {
       try { await window.ExtrasPixelArt.importMerge(data.pixelart); }
       catch (e) { console.error('importPixelArt failed', e); }
     }
+    // Flashcards: deterministic sync-merge of the oss-anki collection
+    // (revlog union, notes by GUID, delete-wins) — never a blind replace,
+    // so loading an older save keeps reviews done since it was written.
+    if (data.anki && typeof data.anki === 'object'
+        && window.ExtrasAnki && window.ExtrasAnki.importMerge) {
+      try { await window.ExtrasAnki.importMerge(data.anki); }
+      catch (e) { console.error('importAnki failed', e); }
+    }
     // Todo extra tasks: union merge by task id (newer completion wins) so
     // combining devices keeps both sets of recurring tasks.
     if (data.todos && typeof data.todos === 'object' && window.TodoCore && window.TodoCore.importMerge) {
@@ -8568,9 +8676,14 @@ function fmtDate(ts) {
       return;
     }
     try {
-      const resp = await fetch(`/load?name=${encodeURIComponent(name)}`);
+      const resp = await fetch(_serverUrl('load', `/load?name=${encodeURIComponent(name)}`));
       if (resp.status === 404) {
         alert(`No saves found on the server for "${name}".`);
+        return;
+      }
+      if (resp.status === 403) {
+        alert('Loading only works on the home network — set "Load server (home)" '
+          + 'in Settings to your home server’s LAN address and try from home WiFi.');
         return;
       }
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -14385,7 +14498,8 @@ function fmtDate(ts) {
         const text = composeLogsText();
         upBtn.disabled = true;
         try {
-          const resp = await fetch('/upload-logs', {
+          const resp = await fetch(window._ccServerUrl
+              ? window._ccServerUrl('save', '/upload-logs') : '/upload-logs', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ backupName: name, logs: text }),
@@ -17929,6 +18043,21 @@ function fmtDate(ts) {
       if (v) localStorage.setItem('cc.backupName', v);
       else localStorage.removeItem('cc.backupName');
     });
+  }
+
+  // Save / Load server URL overrides — same persistence pattern as the
+  // trainer name. Blank = default routing (see _serverUrl).
+  for (const [id, key] of [['saveServerUrl', 'cc.saveServerUrl'],
+                           ['loadServerUrl', 'cc.loadServerUrl']]) {
+    const el = document.getElementById(id);
+    if (el) {
+      el.value = localStorage.getItem(key) || '';
+      el.addEventListener('input', () => {
+        const v = el.value.trim();
+        if (v) localStorage.setItem(key, v);
+        else localStorage.removeItem(key);
+      });
+    }
   }
 
   // Backup status: small line under the backup row that clarifies Save

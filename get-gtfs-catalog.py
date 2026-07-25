@@ -39,6 +39,10 @@ def main():
                     help="prefer urls.latest (MD mirror) over urls.direct_download")
     ap.add_argument("--include-auth", action="store_true",
                     help="include feeds that require API keys (default: skip)")
+    ap.add_argument("--include-inactive-mirror", action="store_true",
+                    help="include inactive feeds when the MD mirror still serves them "
+                         "(e.g. Lane Transit District mdb-131, marked inactive only "
+                         "because the agency's direct URL died)")
     args = ap.parse_args()
 
     text = fetch_catalog(args.catalog)
@@ -47,12 +51,16 @@ def main():
     for row in reader:
         if row.get("location.country_code") != args.country: continue
         if row.get("data_type") != "gtfs": continue
-        if row.get("status") != "active": continue
         if row.get("redirect.id"): continue
         auth = row.get("urls.authentication_type") or "0"
         if auth != "0" and not args.include_auth: continue
         direct = (row.get("urls.direct_download") or "").strip()
         latest = (row.get("urls.latest") or "").strip()
+        # Inactive feeds are skipped unless --include-inactive-mirror is set
+        # and the MD mirror still serves them — some agencies (e.g. Lane
+        # Transit District, mdb-131) are marked inactive only because their
+        # direct URL died; the mirror keeps the last known feed.
+        if row.get("status") != "active" and not (args.include_inactive_mirror and latest): continue
         if args.use_latest:
             url, fallback = latest or direct, ""
         else:
