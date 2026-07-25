@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#1b1d24" />
+  <title>oss-anki</title>
+  <!--
+    Import map so the .apkg interop module's bare imports (fflate/fzstd) and
+    sql.js resolve in the browser without a build step. All vendored under
+    ../vendor/ (zero-network); they only load when you import/export a deck.
+  -->
+  <script type="importmap">
+  {
+    "imports": {
+      "fflate": "../vendor/fflate.esm.js",
+      "fzstd": "../vendor/fzstd.esm.js",
+      "sql.js": "../vendor/sqljs/sqljs.esm.js"
+    }
+  }
+  </script>
+  <!-- MathJax for \( \) / \[ \] (all math syntaxes normalized by src/mathify.js). -->
+  <script>
+    window.MathJax = {
+      chtml: { fontURL: "../vendor/mathjax/output/chtml/fonts/woff-v2" },
+      tex: { inlineMath: [["\\(", "\\)"]], displayMath: [["\\[", "\\]"]] },
+      options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre"] },
+      startup: { typeset: false },
+    };
+  </script>
+  <script async src="../vendor/mathjax/tex-mml-chtml.js"></script>
+  <link rel="stylesheet" href="../vendor/highlight-theme.css" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header>
+    <h1>oss-anki</h1>
+    <div class="actions">
+      <button id="btn-add">+ Card</button>
+      <button id="btn-browse">Browse</button>
+      <button id="btn-stats">Stats</button>
+      <button id="btn-types">Types</button>
+      <button id="btn-import" title="Import an .apkg/.colpkg deck, a .csv/.tsv spreadsheet, or restore a .json backup">Import</button>
+      <button id="btn-export">Export .apkg</button>
+      <button id="btn-backup" title="Download a full JSON backup (collection + media)">Backup</button>
+      <input id="file-import" type="file" accept=".apkg,.colpkg,.json,.csv,.tsv,.txt" hidden />
+    </div>
+  </header>
+
+  <main id="view"></main>
+
+  <footer>
+    <span id="status"></span>
+    <span class="grow"></span>
+    <span class="muted">FSRS-6 · schema v11 · local-first</span>
+  </footer>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

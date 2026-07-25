@@ -29,15 +29,17 @@ const buildCap = fs.readFileSync(path.join(root, 'scripts', 'build-capacitor.sh'
 const FLAT_EXTRAS_JS = [
   'extras.js', 'extras-apps.js', 'extras-almanac.js', 'extras-vibration.js',
   'extras-skymap.js', 'extras-sudoku.js', 'extras-sensors.js',
-  'extras-tuner.js', 'extras-scapes.js', 'extras-todos.js',
+  'extras-tuner.js', 'extras-scapes.js', 'extras-todos.js', 'extras-anki.js',
 ];
 const FLAT_APPS_HTML = ['synth.html', 'quiver.html'];
-const SUBTREE_DIRS = ['draw', 'pixelart', 'fractals2', 'mandelbrot'];
+const SUBTREE_DIRS = ['draw', 'pixelart', 'fractals2', 'mandelbrot', 'anki'];
 const SUBTREE_HTML = [
   'pixelart/index.html', 'draw/index.html',
   'fractals2/index.html', 'mandelbrot/index.html',
+  'anki/web/index.html',
 ];
-const SUBTREE_CSS = ['draw/style.css', 'fractals2/styles.css', 'mandelbrot/style.css'];
+const SUBTREE_CSS = ['draw/style.css', 'fractals2/styles.css', 'mandelbrot/style.css',
+  'anki/web/styles.css'];
 const SUBTREE_JS = [
   'pixelart/app.js',
   ...['animexport', 'app', 'camera', 'commands', 'frieze', 'generators', 'gif',
@@ -63,6 +65,11 @@ const SUBTREE_JS = [
       'pngMetadata', 'referencePointProvider', 'sharedCalculations',
       'workerContext', 'worker']
     .map((n) => 'mandelbrot/' + n + '.js'),
+  ...['apkg', 'backup', 'csv', 'fsrs', 'html-to-md', 'ids', 'index', 'markdown',
+      'mathify', 'merge', 'model', 'scheduler', 'search', 'sha1', 'sqljs-node',
+      'stats', 'storage', 'sync', 'template', 'text', 'timing']
+    .map((n) => 'anki/src/' + n + '.js'),
+  'anki/web/app.js',
 ];
 
 // --- 1) flat extras JS: covered everywhere ------------------------------------
@@ -86,8 +93,8 @@ for (const f of FLAT_APPS_HTML) {
 // --- 3) mini-app subtrees ------------------------------------------------------
 // The refresh button sweeps cached entries by directory prefix, so new
 // files in these apps never need the index.html list edited.
-ok(/\(draw\|pixelart\|fractals2\|mandelbrot\)/.test(indexSrc) && indexSrc.includes('c.keys()'),
-  'index.html: refresh sweeps the draw/pixelart/fractals2/mandelbrot cache prefixes');
+ok(/\(draw\|pixelart\|fractals2\|mandelbrot\|anki\)/.test(indexSrc) && indexSrc.includes('c.keys()'),
+  'index.html: refresh sweeps the draw/pixelart/fractals2/mandelbrot/anki cache prefixes');
 
 // run.py shares one set of subtree constants across _TRACKED_JS /
 // _TRACKED_HTML / _SCRIPT_VERSION_FILES — assert the wiring exists, then
@@ -106,7 +113,9 @@ for (const f of [...SUBTREE_JS, ...SUBTREE_HTML, ...SUBTREE_CSS]) {
 
 // Reverse drift guard: every code file inside the subtree directories must
 // be registered (vendor/ third-party bundles excepted — they ride the
-// bundled app and are not versioned).
+// bundled app and are not versioned; anki's dev harness — test/,
+// node_modules/, docs/, serve.py — is pruned from the bundle entirely by
+// build-capacitor.sh and never served to the app).
 function walk(dir) {
   const out = [];
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -119,7 +128,8 @@ function walk(dir) {
 for (const d of SUBTREE_DIRS) {
   const files = walk(path.join(root, 'static', d))
     .map((p) => path.relative(path.join(root, 'static'), p).split(path.sep).join('/'))
-    .filter((f) => /\.(js|html|css)$/.test(f) && !f.includes('/vendor/'));
+    .filter((f) => /\.(js|html|css)$/.test(f) && !f.includes('/vendor/')
+      && !f.includes('/node_modules/') && !f.includes('/test/') && !f.includes('/docs/'));
   for (const f of files) {
     ok(runPy.includes(`"${f}"`), `run.py: ${f} registered (new file in ${d}/ subtree?)`);
     ok(buildCap.includes(`"${f}"`), `build-capacitor.sh: ${f} registered (new file in ${d}/ subtree?)`);

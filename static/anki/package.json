@@ -1,0 +1,41 @@
+{
+  "name": "oss-anki",
+  "version": "0.0.1",
+  "description": "Open-source, framework-free implementation of Anki: a precise FSRS-6 / SM-2 spaced-repetition core with full .apkg/.colpkg interop.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Phylliida Dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Phylliida/anki.git"
+  },
+  "exports": {
+    ".": "./src/index.js",
+    "./fsrs": "./src/fsrs.js",
+    "./model": "./src/model.js",
+    "./scheduler": "./src/scheduler.js",
+    "./template": "./src/template.js",
+    "./markdown": "./src/markdown.js",
+    "./html-to-md": "./src/html-to-md.js",
+    "./storage": "./src/storage.js",
+    "./apkg": "./src/apkg.js",
+    "./sqljs-node": "./src/sqljs-node.js"
+  },
+  "scripts": {
+    "test": "node --test",
+    "serve": "python3 web/serve.py 8000"
+  },
+  "files": [
+    "src",
+    "vendor"
+  ],
+  "comment": "Core (index/fsrs/model/text/ids/sha1) is dependency-free by import graph; only the ./apkg interop module imports sql.js, fflate, and fzstd. Markdown rendering (./markdown, used by ./template and ./apkg export) and HTML→markdown conversion (./html-to-md, used by ./apkg import and the app migration) import vendored single-file builds in vendor/ (marked, highlight.js, turndown, domino) — no npm dependencies at runtime, works offline.",
+  "dependencies": {
+    "fflate": "^0.8.3",
+    "fzstd": "^0.1.1",
+    "sql.js": "^1.14.1"
+  },
+  "devDependencies": {
+    "fake-indexeddb": "^6.2.5"
+  }
+}

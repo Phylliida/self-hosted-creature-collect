@@ -2,7 +2,10 @@ import array
 import base64
 import contextlib
 import gzip
+import hashlib
+import hmac
 import json
+import os
 import pathlib
 import re
 import sqlite3
@@ -112,7 +115,7 @@ _TRACKED_JS = {
     # pick up changes (they already have the SCRIPT_VERSION='auto' hook).
     "extras-apps.js", "extras-almanac.js", "extras-vibration.js", "extras-skymap.js",
     "extras-sudoku.js", "extras-sensors.js", "extras-tuner.js", "extras-scapes.js",
-    "extras-todos.js",
+    "extras-todos.js", "extras-anki.js",
 }
 
 # Extras mini-app subtrees (the iframe apps: Pixel Art, Draw, both fractal
@@ -167,13 +170,27 @@ _SUBTREE_JS = [
     "mandelbrot/pngMetadata.js", "mandelbrot/referencePointProvider.js",
     "mandelbrot/sharedCalculations.js", "mandelbrot/workerContext.js",
     "mandelbrot/worker.js",
+    # oss-anki flashcards app (static/anki is canonical; vendor/ bundles —
+    # marked, highlight.js, MathJax, sql.js, … — are deliberately NOT
+    # tracked, same as mandelbrot/vendor: they only change with a manual
+    # vendor refresh, so they don't need live-update stamping).
+    "anki/src/apkg.js", "anki/src/backup.js", "anki/src/csv.js",
+    "anki/src/fsrs.js", "anki/src/html-to-md.js", "anki/src/ids.js",
+    "anki/src/index.js", "anki/src/markdown.js", "anki/src/mathify.js",
+    "anki/src/merge.js", "anki/src/model.js", "anki/src/scheduler.js",
+    "anki/src/search.js", "anki/src/sha1.js", "anki/src/sqljs-node.js",
+    "anki/src/stats.js", "anki/src/storage.js", "anki/src/sync.js",
+    "anki/src/template.js", "anki/src/text.js", "anki/src/timing.js",
+    "anki/web/app.js",
 ]
 _SUBTREE_HTML = [
     "pixelart/index.html", "draw/index.html",
     "fractals2/index.html", "mandelbrot/index.html",
+    "anki/web/index.html",
 ]
 _SUBTREE_CSS = [
     "draw/style.css", "fractals2/styles.css", "mandelbrot/style.css",
+    "anki/web/styles.css",
 ]
 _TRACKED_JS |= set(_SUBTREE_JS)
 
@@ -194,7 +211,7 @@ _SCRIPT_VERSION_FILES = [
     "types.js", "specials.js", "pack-reader.js", "pack-install.js", "packs.js",
     "extras-apps.js", "extras-almanac.js", "extras-vibration.js", "extras-skymap.js",
     "extras-sudoku.js", "extras-sensors.js", "extras-tuner.js", "extras-scapes.js",
-    "extras-todos.js",
+    "extras-todos.js", "extras-anki.js",
     "synth.html", "quiver.html",
     "sw.js", "index.html", "dex.html",
 ] + _SUBTREE_JS + _SUBTREE_HTML + _SUBTREE_CSS
@@ -466,6 +483,77 @@ def icons_list():
 
 _SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\- ]{0,63}$")
 
+# ── Save privacy / write-integrity ──────────────────────────────────────
+#
+# Deployment model: TWO instances of this file run from the same checkout —
+# a LAN-only instance (firewalled to the home subnet) started with CC_LAN=1,
+# and a tunnel-facing public instance with no flag. Saves carry long-term
+# GPS traces, so READS are LAN-only: any instance NOT explicitly marked as
+# the home one refuses /load and /save-names outright (fail-safe default —
+# a dropped env var blocks reads rather than exposing them; listener-based
+# split, no spoofable header or remote_addr guessing). WRITES stay open
+# everywhere so saves work away from home, guarded by TOFU name-claiming
+# below.
+#
+# TOFU ("trust on first use") name claims: the client auto-generates a
+# random writeToken per trainer name and includes it in every save payload.
+# The first tokened save for a name claims it (sha256 of the token is
+# recorded in saves/.claims.json — never the token itself); from then on,
+# saves for that name must present the same token or they're rejected.
+# The token rides INSIDE the stored save JSON, and /load is LAN-only, so
+# a fresh device that loads at home automatically regains write access.
+# Tokenless saves are only allowed for unclaimed names (pre-update clients)
+# and never claim. The .claims.json filename can't collide with a save:
+# _SAFE_NAME_RE names can't start with a dot, and its dot-separated name
+# never matches the `<name>_<millis>.json` globs.
+_PUBLIC_INSTANCE = os.environ.get("CC_LAN") != "1"
+# Overridable so tests (and alternate deployments) can point saves at a
+# scratch directory instead of the real one.
+_SAVES_DIR = pathlib.Path(os.environ.get("CC_SAVES_DIR") or (ROOT / "saves"))
+_CLAIMS_PATH = _SAVES_DIR / ".claims.json"
+
+# A save is a single JSON document (largest real one to date is ~17 MB;
+# anki media can add a few more). Cap requests so an unauthenticated
+# writer can't stream gigabytes at the disk in one request.
+app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024
+
+
+def _load_claims():
+    try:
+        data = json.loads(_CLAIMS_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _store_claims(claims):
+    _CLAIMS_PATH.parent.mkdir(exist_ok=True)
+    tmp = _CLAIMS_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(claims, indent=2), encoding="utf-8")
+    tmp.replace(_CLAIMS_PATH)
+
+
+def _check_write_claim(name, payload, millis):
+    """Enforce/record the TOFU claim for `name`. Returns an error response
+    tuple to bounce the save, or None to let it through."""
+    token = payload.get("writeToken")
+    token = token.strip() if isinstance(token, str) else ""
+    claims = _load_claims()
+    rec = claims.get(name)
+    if rec:
+        digest = hashlib.sha256(token.encode("utf-8")).hexdigest() if token else ""
+        if not hmac.compare_digest(digest, rec.get("sha256", "")):
+            return (jsonify({"error":
+                "this name is claimed — save from a device that has its "
+                "write token (Load the save at home to pick it up)"}), 403)
+    elif len(token) >= 16:
+        claims[name] = {
+            "sha256": hashlib.sha256(token.encode("utf-8")).hexdigest(),
+            "claimedAt": millis,
+        }
+        _store_claims(claims)
+    return None
+
 
 @app.route("/save", methods=["POST"])
 def save_backup():
@@ -487,9 +575,12 @@ def save_backup():
         return jsonify({"error": "missing backupName"}), 400
     if not _SAFE_NAME_RE.fullmatch(name):
         return jsonify({"error": "invalid name (use letters/digits/._- and spaces)"}), 400
-    saves_dir = ROOT / "saves"
+    saves_dir = _SAVES_DIR
     saves_dir.mkdir(exist_ok=True)
     millis = int(time.time() * 1000)
+    bounce = _check_write_claim(name, payload, millis)
+    if bounce:
+        return bounce
     path = saves_dir / f"{name}_{millis}.json"
     # Atomic-ish write so a crash mid-save doesn't corrupt the file.
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -520,7 +611,7 @@ def upload_logs():
     logs = payload.get("logs")
     if not isinstance(logs, str) or not logs.strip():
         return jsonify({"error": "missing logs"}), 400
-    logs_dir = ROOT / "saves" / "logs"
+    logs_dir = _SAVES_DIR / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     millis = int(time.time() * 1000)
     path = logs_dir / f"{name}_{millis}.txt"
@@ -680,13 +771,36 @@ def sprite_credits_bundle():
     return resp
 
 
+@app.route("/extras")
+def extras_workbench():
+    """The Extras workbench: static/extras.html — the same Extras
+    mini-apps as the phone app (anki decks, draw, synth, …) for any
+    browser on the home network, with savefile Load/Save round-tripping
+    (extras slices editable, everything else passes through untouched).
+    Home-instance only, like /load: the page is useless without reads,
+    and gating it keeps the whole save-editing surface off the tunnel.
+    """
+    if _PUBLIC_INSTANCE:
+        return jsonify({"error": "the extras workbench is only available on the home network"}), 403
+    path = ROOT / "static" / "extras.html"
+    if not path.is_file():
+        abort(404)
+    resp = Response(path.read_text(encoding="utf-8"), mimetype="text/html")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.route("/save-names")
 def save_names():
     """Return the unique trainer names with at least one save on disk.
     Used by /dex (the standalone art browser) to gate the page on a
     trainer login + populate the trainer-name autocomplete.
+    LAN-only: enumerable names make save-reading trivial, so the
+    public (tunnel-facing) instance refuses.
     """
-    saves_dir = ROOT / "saves"
+    if _PUBLIC_INSTANCE:
+        return jsonify({"error": "loading is only available on the home network"}), 403
+    saves_dir = _SAVES_DIR
     if not saves_dir.is_dir():
         return jsonify([])
     names = set()
@@ -705,11 +819,18 @@ def load_backup():
     most recent is the one with the highest numeric suffix. Falls back
     to mtime ordering if any file's name doesn't match the pattern (e.g.
     a manual upload). 404 when no save exists for that name.
+
+    LAN-only: saves carry long-term GPS traces (and the name's write
+    token), so the public (tunnel-facing) instance refuses — loading
+    works only against the home-network instance (the "Load (home)
+    server URL" field in Settings).
     """
+    if _PUBLIC_INSTANCE:
+        return jsonify({"error": "loading is only available on the home network"}), 403
     name = (request.args.get("name") or "").strip()
     if not name or not _SAFE_NAME_RE.fullmatch(name):
         abort(400)
-    saves_dir = ROOT / "saves"
+    saves_dir = _SAVES_DIR
     if not saves_dir.is_dir():
         abort(404)
     candidates = []
