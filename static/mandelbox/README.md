@@ -56,7 +56,7 @@ Hard-won scene-scaling rules (from testing, they will matter for the app):
   2^sceneE, and sceneE tracks the MEASURED DE at the camera (probed ~8Hz
   through a render worker), so holding E is an exponential dive with steps
   that shrink as the surface approaches — "increases the scale of
-  everything". Interior probes soft-block forward motion (Q always escapes).
+  everything". Interior camera positions light a "surface!" HUD note — nothing is blocked.
 - **Quality toggle** (fractals2 Explore/Draw style, persisted): Explore
   renders everything at 1/3 canvas res; Hi-res renders idle frames at canvas
   res with 2×2 supersampling (rendered 2× linear, smooth-downscaled). Moving
