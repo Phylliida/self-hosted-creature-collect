@@ -50,13 +50,15 @@ Hard-won scene-scaling rules (from testing, they will matter for the app):
 `/static/mandelbox/index.html`; logic suite in `tests/mandelbox-app.test.js`):
 
 - **Controls:** W/S fly forward/back, A/D turn (yaw about the camera's up),
-  Space/Shift up/down, Q dive in / E back out (zoom = scale), 0 whole-box
+  Space/Shift up/down, Q zoom in / E zoom out (scale), scroll wheel = speed
+  multiplier (×1/64..×64, applies to translation and Q/E), 0 whole-box
   overview (also the boot view), 1-5 depth presets, T quality toggle,
-  G GPU/CPU toggle, H help. All motion scales with
-  2^sceneE, and sceneE tracks the MEASURED DE at the camera (probed ~8Hz
-  through a render worker), so holding E is an exponential dive with steps
-  that shrink as the surface approaches — "increases the scale of
-  everything". Interior camera positions light a "surface!" HUD note — nothing is blocked.
+  G GPU/CPU toggle, H help. Movement and scale are DECOUPLED: only Q/E
+  change sceneE (the scale exponent driving epsilon/tMax/maxIter and step
+  sizes); flying never re-zooms. Hold Q+W (wheel up for speed) for the deep
+  dive. Teleports do a one-shot scale sync from the next clearance probe so
+  presets land at the local geometry's scale. Interior camera positions
+  light a "surface!" HUD note — nothing is blocked.
 - **Quality toggle** (fractals2 Explore/Draw style, persisted): Explore
   renders everything at 1/3 canvas res; Hi-res renders idle frames at canvas
   res with 2×2 supersampling (rendered 2× linear, smooth-downscaled). Moving
@@ -111,8 +113,8 @@ Hard-won scene-scaling rules (from testing, they will matter for the app):
   worker pipeline verified with the repo's firefox-headless screenshot trick
   (delayed-load page holds the load event while workers render).
 
-**Not yet built:** extras bubble ("Fractals 3D"), touch controls, camera
-rotation (orientation is fixed per session), permalinks.
+**Not yet built:** extras bubble ("Fractals 3D"), touch controls, pitch /
+mouse-look (yaw only for now), permalinks, GL context-loss recovery.
 
 ## How it works
 
