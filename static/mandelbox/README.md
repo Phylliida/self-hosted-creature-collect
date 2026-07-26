@@ -46,8 +46,32 @@ Hard-won scene-scaling rules (from testing, they will matter for the app):
 - **Camera-relative lights** (key over the shoulder), since world-space light
   directions are meaningless inside the fractal.
 
-**Not yet built:** the browser app (canvas UI, in-browser workers, navigation
-/ progressive dive, extras bubble).
+**Browser app: working** (`index.html` + `src/app/`, served at
+`/static/mandelbox/index.html`; logic suite in `tests/mandelbox-app.test.js`):
+
+- **Controls:** W/S fly forward/back, A/D strafe, Space/Shift up/down,
+  E dive in / Q back out (zoom), 1-5 depth presets, H help. All motion scales
+  with 2^sceneE, and sceneE tracks the MEASURED DE at the camera (probed ~8Hz
+  through a render worker), so holding E is an exponential dive with steps
+  that shrink as the surface approaches — "increases the scale of
+  everything". Interior probes soft-block forward motion (Q always escapes).
+- **Boot:** a locate worker bisects the surface point at 2^-1040 (first run
+  ~10-30s; μ cached in localStorage `cc.mandelbox.locale.v1` → later boots
+  reconstruct it exactly and skip straight to the ~1s reference build). The
+  camera state persists in `cc.mandelbox.cam.v1`.
+- **Rendering:** module render workers (hardwareConcurrency−1, ≤12) each hold
+  the reference orbit and serve row jobs + DE probes; coarse preview frames
+  while keys are held, adaptive full resolution (~18s budget from a measured
+  evals/sec EMA) on idle; chunks shade + blit on arrival (in onmessage, not
+  rAF — deliberately, so rendering also completes under headless screenshot
+  verification).
+- **Dev knob:** `?depth=N` (60..1040) shrinks the bisection for fast boots.
+- Nav core (`src/app/nav.js`) is headless-safe and unit-tested; boot + full
+  worker pipeline verified with the repo's firefox-headless screenshot trick
+  (delayed-load page holds the load event while workers render).
+
+**Not yet built:** extras bubble ("Fractals 3D"), touch controls, camera
+rotation (orientation is fixed per session), permalinks.
 
 ## How it works
 
