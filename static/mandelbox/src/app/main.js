@@ -25,6 +25,7 @@ import { MbGpu } from '../gpu/renderer.js';
 const LS_LOCALE = 'cc.mandelbox.locale.v1';
 const LS_CAM = 'cc.mandelbox.cam.v1';
 const LS_QUALITY = 'cc.mandelbox.quality.v1';
+const LS_ITER = 'cc.mandelbox.iter.v1';
 const DEFAULT_RAY = [1, 9, 4];
 // ?depth=N (60..1040) shrinks the bisection for fast dev boots.
 const DEFAULT_DEPTH = (() => {
@@ -70,6 +71,41 @@ function boot() {
   const canvas = $('view'), ctx = canvas.getContext('2d');
   const statusEl = $('status'), scaleEl = $('scale'), hintEl = $('hint');
   const qBtns = Array.from(document.querySelectorAll('.qmode'));
+  const menuEl = $('menu'), menuBtn = $('menuBtn');
+  const iterAutoEl = $('iterAuto'), iterRangeEl = $('iterRange'), iterNumEl = $('iterNum');
+
+  // ---- iteration control (auto = derived from scale; manual via the menu) ----
+  let iterAuto = true, iterManual = 600;
+  try {
+    const s = JSON.parse(localStorage.getItem(LS_ITER) || 'null');
+    if (s) { iterAuto = s.auto !== false; iterManual = Math.max(20, Math.min(4000, s.manual | 0 || 600)); }
+  } catch (e) { /* ignore */ }
+  function currentMaxIter() {
+    return iterAuto ? deriveOpts(nav ? nav.state.sceneE : OVERVIEW_SCENEE).maxIter : iterManual;
+  }
+  function syncIterUI() {
+    iterAutoEl.checked = iterAuto;
+    const v = currentMaxIter();
+    if (document.activeElement !== iterNumEl) iterNumEl.value = v;
+    if (document.activeElement !== iterRangeEl) iterRangeEl.value = v;
+    iterRangeEl.disabled = iterAuto;
+    iterNumEl.disabled = iterAuto;
+  }
+  function saveIter() {
+    try { localStorage.setItem(LS_ITER, JSON.stringify({ auto: iterAuto, manual: iterManual })); } catch (e) { /* ignore */ }
+  }
+  function iterChanged() {
+    saveIter(); syncIterUI();
+    idleDone = false; dirty = true; lastMoveT = performance.now();
+  }
+  iterAutoEl.addEventListener('change', () => { iterAuto = iterAutoEl.checked; iterChanged(); });
+  const manualFrom = (v) => {
+    const n = Math.max(20, Math.min(4000, parseInt(v, 10) || iterManual));
+    iterAuto = false; iterManual = n; iterChanged();
+  };
+  iterRangeEl.addEventListener('input', () => manualFrom(iterRangeEl.value));
+  iterNumEl.addEventListener('change', () => manualFrom(iterNumEl.value));
+  menuBtn.addEventListener('click', () => { menuEl.hidden = !menuEl.hidden; syncIterUI(); menuBtn.blur(); });
 
   // ---- quality mode ----
   let quality = 'explore';
@@ -267,7 +303,7 @@ function boot() {
       W, H, kind, t0: performance.now(),
       cam: currentCam(),
       opts: {
-        maxIter: d.maxIter, maxSteps: mode.maxSteps, relax: mode.relax,
+        maxIter: currentMaxIter(), maxSteps: mode.maxSteps, relax: mode.relax,
         pixFactor: mode.cone * 2 * PLANE_SCALE / H,
         epsAbs: { m: 1, e: d.epsAbsE }, tMax: { m: 1, e: d.tMaxE },
       },
@@ -441,13 +477,13 @@ function boot() {
   function sendProbe() {
     if (!workers.length || !nav) return;
     const w = workers[probeSeq++ % workers.length];
-    const d = deriveOpts(nav.state.sceneE);
-    w.postMessage({ type: 'probe', id: probeSeq, dc: nav.offsetPlain(), maxIter: d.maxIter + 300, floorE: Math.round(nav.state.sceneE) - 30 });
+    w.postMessage({ type: 'probe', id: probeSeq, dc: nav.offsetPlain(), maxIter: currentMaxIter() + 300, floorE: Math.round(nav.state.sceneE) - 30 });
     lastProbeT = performance.now();
   }
 
   // ---- input ----
   window.addEventListener('keydown', (e) => {
+    if (e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return; // typing in the menu
     if (e.repeat) { if (KEYMAP[e.code]) e.preventDefault(); return; }
     if (e.code === 'Digit0' && nav) {
       jumpHome(); sendProbe();
@@ -469,7 +505,7 @@ function boot() {
       return;
     }
     if (e.code === 'KeyH' || (e.key === '?')) { hintEl.hidden = !hintEl.hidden; return; }
-    if (e.code === 'Escape') { hintEl.hidden = true; return; }
+    if (e.code === 'Escape') { hintEl.hidden = true; menuEl.hidden = true; return; }
     if (nav && nav.keydown(e.code)) { hintEl.hidden = true; e.preventDefault(); }
   });
   window.addEventListener('keyup', (e) => { if (nav) nav.keyup(e.code); });
@@ -525,7 +561,8 @@ function boot() {
       const dec = (se * Math.LN2 / Math.LN10).toFixed(0);
       const spd = nav.state.speedMul;
       const spdTxt = Math.abs(spd - 1) < 1e-9 ? '' : ` · speed ×${spd >= 1 ? spd.toFixed(1) : (1 / spd).toFixed(1) + '⁻¹'}`;
-      scaleEl.textContent = `scale 2^${se.toFixed(1)} ≈ 10^${dec}${spdTxt}${se <= -1079 ? ' · precision wall' : ''}${nav.state.blockedFwd ? ' · surface!' : ''}`;
+      scaleEl.textContent = `scale 2^${se.toFixed(1)} ≈ 10^${dec} · ${currentMaxIter()} it${iterAuto ? '' : ' (manual)'}${spdTxt}${se <= -1079 ? ' · precision wall' : ''}${nav.state.blockedFwd ? ' · surface!' : ''}`;
+      if (!menuEl.hidden && iterAuto) syncIterUI();
       const path = useGpu && gpu ? 'GPU' : `${workers.length} workers`;
       if (gpuBusy) {
         setStatus(`rendering ${genMeta.W}×${genMeta.H} ${genMeta.kind} on GPU… ${Math.round(100 * gpuProgress)}%`);
