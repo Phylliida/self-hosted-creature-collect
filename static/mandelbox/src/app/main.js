@@ -39,6 +39,16 @@ const TILT = 0.8;
 const PLANE_SCALE = 0.9;
 const OVERVIEW_DIST = 14;    // camera distance for the whole-object view
 const OVERVIEW_SCENEE = 3.5;
+// Per-mode march tuning. cone scales the pixel-footprint hit epsilon DOWN:
+// DE = r/dr is escape-time-quantized (≈2^12/2^n regardless of true
+// distance), so a raw pixel cone reads the near-set fog floor as surface and
+// renders "melted wax" — a tighter cone marches through it (at the price of
+// more, smaller steps; hence the larger step budgets).
+const MODES = {
+  preview: { cone: 0.25, maxSteps: 160, relax: 0.95 },
+  'idle-explore': { cone: 0.12, maxSteps: 400, relax: 0.85 },
+  'idle-draw': { cone: 0.08, maxSteps: 500, relax: 0.85 },
+};
 
 if (typeof document !== 'undefined' && typeof Worker !== 'undefined') boot();
 
@@ -184,11 +194,13 @@ function boot() {
     const { W, H } = kindRes(kind);
     const d = deriveOpts(nav.state.sceneE);
     const fast = kind === 'preview';
+    const mode = MODES[kind];
     genMeta = {
       W, H, kind, t0: performance.now(),
       cam: currentCam(),
       opts: {
-        maxIter: d.maxIter, maxSteps: fast ? 90 : 300, relax: fast ? 0.95 : 0.85,
+        maxIter: d.maxIter, maxSteps: mode.maxSteps, relax: mode.relax,
+        pixFactor: mode.cone * 2 * PLANE_SCALE / H,
         epsAbs: { m: 1, e: d.epsAbsE }, tMax: { m: 1, e: d.tMaxE },
       },
       sceneE: nav.state.sceneE,

@@ -104,7 +104,11 @@ export function normalAt(ref, p, h, maxIter, scratch) {
 // Returns { iters, evals, degen }.
 export function renderSpan(ref, cam, W, H, j, x0, x1, opts, out, off) {
   const aspect = W / H;
-  const pixFactor = 2 * cam.planeScale / H;
+  // Hit-cone constant. DE = r/dr is escape-time-quantized (any point escaping
+  // at iteration n reads ≲ 2^12/2^n regardless of true distance), so callers
+  // may pass a pixFactor tighter than the raw pixel footprint to keep the
+  // near-set "fog floor" from reading as surface.
+  const pixFactor = opts.pixFactor !== undefined ? opts.pixFactor : 2 * cam.planeScale / H;
   const mopts = { ...opts, pixFactor };
   const P = { x: fe(), y: fe(), z: fe() }, TT = fe(), HFE = fe();
   const sy = (1 - 2 * (j + 0.5) / H) * cam.planeScale;
@@ -194,7 +198,7 @@ export function renderRowsDouble(camPos, cam, W, H, y0, y1, opts) {
   const steps = new Uint16Array(W * rows);
   const tlog = new Float32Array(W * rows);
   const aspect = W / H;
-  const pixFactor = 2 * cam.planeScale / H;
+  const pixFactor = opts.pixFactor !== undefined ? opts.pixFactor : 2 * cam.planeScale / H;
   const mopts = { ...opts, pixFactor };
   for (let j = y0; j < y1; j++) {
     const sy = (1 - 2 * (j + 0.5) / H) * cam.planeScale;
