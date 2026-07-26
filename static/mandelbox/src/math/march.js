@@ -140,6 +140,11 @@ export function renderSpan(ref, cam, W, H, j, x0, x1, opts, out, off) {
     const n = normalAt(ref, P, HFE, opts.maxIter, opts.scratch);
     if (!n) degen++;
     const nn = n || [-dir[0], -dir[1], -dir[2]];
+    // Primary-hit normals must face the camera (shell-noise can invert the
+    // tetrahedron gradient — mirrors the GPU normal pass).
+    if (nn[0] * dir[0] + nn[1] * dir[1] + nn[2] * dir[2] > 0) {
+      nn[0] = -nn[0]; nn[1] = -nn[1]; nn[2] = -nn[2];
+    }
     out.nx[idx] = nn[0]; out.ny[idx] = nn[1]; out.nz[idx] = nn[2];
   }
   return { iters, evals, degen };

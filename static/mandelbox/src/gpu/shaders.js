@@ -272,5 +272,9 @@ void main() {
     float l = length(n);
     n = l < 1.0e-12 ? -dir : n / l;
   }
+  // A primary hit's surface must face the camera; gradient noise across the
+  // thin escape-time shells (worst at high iteration counts) occasionally
+  // inverts the tetrahedron normal — flip it back.
+  if (dot(n, dir) > 0.0) n = -n;
   outN = vec4(n, feLog2(t));
 }`;
