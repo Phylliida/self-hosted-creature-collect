@@ -74,16 +74,13 @@ async function main() {
     ok(nav.state.o[2].m !== 0, 'W did translate');
   }
 
-  // ---- blocked-forward + clamps ----
+  // ---- interior indicator (informational, never blocks) + clamps ----
   {
     const nav = createNav(basis, zero(), -100);
     nav.keydown('KeyW');
-    nav.tick(0.1, -Infinity); // interior probe: forward blocked
-    ok(nav.state.blockedFwd, 'interior probe sets blockedFwd');
-    ok(nav.state.o.every((x) => x.m === 0), 'blocked: W does not advance');
-    nav.clearKeys(); nav.keydown('KeyS');
-    nav.tick(0.1, -Infinity);
-    ok(nav.state.o[2].m * 2 ** (nav.state.o[2].e + 100) > 0.01, 'S backs out even when blocked');
+    nav.tick(0.1, -Infinity); // interior probe
+    ok(nav.state.blockedFwd, 'interior probe sets the surface! indicator');
+    ok(nav.state.o[2].m !== 0, 'W still advances into the surface (no blocking)');
     nav.clearKeys(); nav.keydown('KeyQ');
     for (let i = 0; i < 5000; i++) nav.tick(0.05, null);
     ok(nav.state.sceneE === -1080, `Q clamps at precision wall (${nav.state.sceneE})`);

@@ -43,7 +43,7 @@ export function createNav(basis, offset, sceneE) {
     o: offset.map((x) => fe(x.m, x.e)),  // floatexp vec3, camera − C
     sceneE,                               // scale exponent (Q/E-controlled)
     basis,
-    blockedFwd: false,                    // probe said interior ahead
+    blockedFwd: false,                    // probe said interior (HUD indicator only)
     speedMul: 1,                          // scroll-wheel movement multiplier
     syncScale: false,                     // teleported: app applies next probe to sceneE
   };
@@ -66,8 +66,9 @@ export function createNav(basis, offset, sceneE) {
   }
 
   // Advance dt seconds. probeDeE: latest measured log2(DE at camera), or null
-  // (unknown) or -Infinity (interior — blocks forward motion). Movement never
-  // touches sceneE; Q/E change ONLY sceneE. Returns true if anything changed.
+  // (unknown) or -Infinity (interior — informational only: the HUD shows
+  // "surface!", nothing is blocked). Movement never touches sceneE; Q/E
+  // change ONLY sceneE. Returns true if anything changed.
   function tick(dt, probeDeE) {
     state.blockedFwd = probeDeE === -Infinity;
 
@@ -77,7 +78,7 @@ export function createNav(basis, offset, sceneE) {
     const m = MOVE_RATE * dt * state.speedMul;
     const z = ZOOM_RATE * dt * state.speedMul;
     const go = (dir, k) => { step(dir, k); moved = true; };
-    if (held.has('fwd') && !state.blockedFwd) go(fwd, m);
+    if (held.has('fwd')) go(fwd, m);
     if (held.has('back')) go(fwd, -m);
     if (held.has('turnL')) { yaw(YAW_RATE * dt); moved = true; }
     if (held.has('turnR')) { yaw(-YAW_RATE * dt); moved = true; }
