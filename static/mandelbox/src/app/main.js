@@ -31,6 +31,10 @@ const DEFAULT_DEPTH = (() => {
   const d = parseInt(new URLSearchParams(location.search).get('depth') || '1040', 10);
   return Math.max(60, Math.min(1040, isNaN(d) ? 1040 : d));
 })();
+// ?selftest=1: chain preview → idle → done from worker messages instead of
+// the rAF loop, so headless-screenshot verification (where rAF and timers
+// never fire) can capture the true idle-quality frame.
+const SELFTEST = typeof location !== 'undefined' && new URLSearchParams(location.search).get('selftest') === '1';
 const PRESET_DEPTHS = DEFAULT_DEPTH === 1040
   ? [120, 300, 500, 750, 1015]
   : [1, 2, 3, 4, 5].map((k) => Math.max(40, Math.round(DEFAULT_DEPTH * k / 5) - 25));
@@ -98,6 +102,7 @@ function boot() {
 
   function setStatus(s) { statusEl.textContent = s; }
   setQuality(quality);
+  if (SELFTEST) hintEl.hidden = true; // captures should show the frame, not the overlay
 
   // ---- boot: locate worker ----
   try { locale = JSON.parse(localStorage.getItem(LS_LOCALE) || 'null'); } catch (e) { locale = null; }
@@ -173,6 +178,15 @@ function boot() {
       if (!msg.aborted && msg.gen === gen) {
         blitRows(msg);
         pending--;
+        if (SELFTEST && pending === 0) {
+          if (genMeta.kind === 'preview') {
+            setStatus('selftest: preview done, rendering idle…');
+            requestRender(quality === 'draw' ? 'idle-draw' : 'idle-explore');
+          } else {
+            setStatus(`selftest: idle frame complete (${genMeta.W}×${genMeta.H})`);
+            document.title = 'MB-DONE';
+          }
+        }
       }
       feed(w);
     }
@@ -328,7 +342,7 @@ function boot() {
       requestRender('preview');
       dirty = false;
     }
-    if (!dirty && !idleDone && nav.held.size === 0 && genMeta && pending === 0 && t - lastMoveT > 400) {
+    if (!SELFTEST && !dirty && !idleDone && nav.held.size === 0 && genMeta && pending === 0 && t - lastMoveT > 400) {
       requestRender(quality === 'draw' ? 'idle-draw' : 'idle-explore');
       idleDone = true;
     }

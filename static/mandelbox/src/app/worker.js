@@ -40,11 +40,16 @@ export function createWorkerState(post) {
       const t0 = performance.now();
       let aborted = false;
       for (let j = y0; j < y1 && !aborted; j++) {
-        for (let x = 0; x < W; x += st.sliceLen) {
+        // NOTE: advance x by the slice actually rendered (x = x1), NOT by
+        // st.sliceLen — the adapter below mutates sliceLen mid-row, and using
+        // it as the loop increment skipped pixels whenever it grew, leaving
+        // zeroed (background-shaded) rectangles in the frame.
+        for (let x = 0; x < W;) {
           const x1 = Math.min(W, x + st.sliceLen);
           const ts = performance.now();
           const sp = renderSpan(st.ref, cam, W, H, j, x, x1, o2, out, (j - y0) * W + x);
           stats.iters += sp.iters; stats.evals += sp.evals; stats.degen += sp.degen;
+          x = x1;
           const ms = performance.now() - ts;
           if (ms > 1) st.sliceLen = Math.max(4, Math.min(512, Math.round(st.sliceLen * (0.4 + 0.6 * Math.min(4, 60 / ms)))));
           // Macrotask yield: lets cancel/probe messages in mid-chunk.

@@ -76,7 +76,11 @@ Hard-won scene-scaling rules (from testing, they will matter for the app):
   evals/sec EMA) on idle; chunks shade + blit on arrival (in onmessage, not
   rAF — deliberately, so rendering also completes under headless screenshot
   verification).
-- **Dev knob:** `?depth=N` (60..1040) shrinks the bisection for fast boots.
+- **Dev knobs:** `?depth=N` (60..1040) shrinks the bisection for fast boots;
+  `?selftest=1` hides the hint overlay and chains preview → idle → done from
+  worker messages instead of rAF, so a firefox-headless screenshot (with the
+  delayed-load trick — rAF/timers never fire there) captures the app's TRUE
+  idle-quality frame for visual verification without a browser session.
 - **Caching note:** module files must not be served stale as a SET (a cached
   old march.js against a new worker.js kills workers with a bare import
   error). run.py serves these subtrees no-store on web, so this only bites

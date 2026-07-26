@@ -86,6 +86,42 @@ async function main() {
     console.log(`  interruption: cancel→first-abort ordering ok (${g1.length} aborted, gen2 done, ${(performance.now() - tCancel).toFixed(0)}ms window)`);
   }
 
+  // ---- 3. slice-adaptation coverage (regression: skipped-pixel bug) ----
+  // Wide rows force the adaptive slicer to change sliceLen mid-row; the
+  // assembled output must be bit-identical to a direct renderRows call and
+  // contain NO zeroed pixels (marchRay always reports steps ≥ 1, so steps=0
+  // means a span was skipped — the black-rectangles bug).
+  {
+    const MAR = await import(base + 'math/march.js');
+    const FE = await import(base + 'math/floatexp.js');
+    const { fe } = FE;
+    const W2 = 187, H2 = 48;
+    const camFe = { ...cam, o: o.map((x) => fe(x.m, x.e)) };
+    const msgs = [];
+    const { handle, st } = W.createWorkerState((m) => msgs.push(m));
+    st.sliceLen = 8; // start small so growth definitely occurs mid-row
+    handle({ type: 'init', ref: refPlain });
+    for (let y = 0; y < 8; y += 2) handle({ type: 'rows', gen: 1, W: W2, H: H2, y0: y, y1: y + 2, cam, opts });
+    const t0 = Date.now();
+    while (msgs.filter((m) => m.type === 'rows').length < 4 && Date.now() - t0 < 60000) await sleep(100);
+    const direct = MAR.renderRows(ref, camFe, W2, H2, 0, 8, { ...opts, epsAbs: fe(opts.epsAbs.m, opts.epsAbs.e), tMax: fe(opts.tMax.m, opts.tMax.e) });
+    let zeroSteps = 0, diffs = 0, got = 0;
+    for (const m of msgs) {
+      if (m.type !== 'rows' || m.aborted) continue;
+      got++;
+      const n = (m.y1 - m.y0) * W2;
+      for (let k = 0; k < n; k++) {
+        if (m.steps[k] === 0) zeroSteps++;
+        const gi = m.y0 * W2 + k;
+        if (m.hit[k] !== direct.hit[gi] || m.steps[k] !== direct.steps[gi] || m.tlog[k] !== direct.tlog[gi]) diffs++;
+      }
+    }
+    ok(got === 4, `[3] all wide chunks completed (${got})`);
+    ok(zeroSteps === 0, `[3] no skipped (zero-step) pixels (${zeroSteps})`);
+    ok(diffs === 0, `[3] sliced assembly bit-identical to direct render (${diffs} diffs)`);
+    console.log(`  [3] slice adaptation: 4 wide chunks, final sliceLen ${st.sliceLen}, 0 skips`);
+  }
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
 }
