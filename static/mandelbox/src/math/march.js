@@ -64,7 +64,11 @@ export function marchRay(ref, o, dir, opts) {
     feMulD(TT, r.de, relax); feAdd(t, t, TT);
     if (feCmp(t, tMax) > 0) return { hit: false, t, steps: step, iters };
   }
-  return { hit: false, t, steps: maxSteps, iters };
+  // Step budget exhausted: the ray is creeping through the fog crust hugging
+  // the surface (DE is escape-time-quantized, see renderSpan). Treat as a hit
+  // — AO shading darkens it like a crevice; returning a miss instead punches
+  // background-colored speckle into lit surfaces.
+  return { hit: true, t, steps: maxSteps, iters };
 }
 
 // Surface normal via the tetrahedron gradient of DE at p (floatexp vec3),
@@ -177,7 +181,7 @@ export function marchRayDouble(camPos, dir, opts) {
     t += de * relax;
     if (t > tMaxD) return { hit: false, t, steps: step, iters };
   }
-  return { hit: false, t, steps: maxSteps, iters };
+  return { hit: true, t, steps: maxSteps, iters }; // fog crust — see marchRay
 }
 
 export function normalAtDouble(camPos, px, py, pz, h, maxIter) {
