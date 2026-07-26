@@ -97,53 +97,65 @@ export function normalAt(ref, p, h, maxIter, scratch) {
   return [v[0] / l, v[1] / l, v[2] / l];
 }
 
-// Render scanline rows [y0, y1) of a W×H frame. Worker-friendly: plain typed
-// arrays out, no shading policy (the caller lights hit/normal/steps/tlog).
-//   cam  : from makeCamera
-//   opts : marchRay opts (pixFactor is derived here from planeScale/H)
+// March pixels [x0, x1) of row j in a W×H frame, writing into caller-provided
+// output arrays at offset `off`. This is the INTERRUPTIBLE unit: workers call
+// it in small spans with an event-loop yield between spans so a cancel
+// message can abort a render mid-chunk. Requires opts.scratch.
+// Returns { iters, evals, degen }.
+export function renderSpan(ref, cam, W, H, j, x0, x1, opts, out, off) {
+  const aspect = W / H;
+  const pixFactor = 2 * cam.planeScale / H;
+  const mopts = { ...opts, pixFactor };
+  const P = { x: fe(), y: fe(), z: fe() }, TT = fe(), HFE = fe();
+  const sy = (1 - 2 * (j + 0.5) / H) * cam.planeScale;
+  let iters = 0, evals = 0, degen = 0;
+  for (let i = x0; i < x1; i++) {
+    const sx = (2 * (i + 0.5) / W - 1) * cam.planeScale * aspect;
+    const dir = norm3([
+      cam.fwd[0] + sx * cam.right[0] + sy * cam.up[0],
+      cam.fwd[1] + sx * cam.right[1] + sy * cam.up[1],
+      cam.fwd[2] + sx * cam.right[2] + sy * cam.up[2],
+    ]);
+    const r = marchRay(ref, cam.o, dir, mopts);
+    iters += r.iters; evals += r.steps;
+    const idx = off + (i - x0);
+    out.steps[idx] = r.steps;
+    if (!r.hit) { out.hit[idx] = 0; continue; }
+    out.hit[idx] = 1;
+    out.tlog[idx] = r.t.m === 0 ? -1e9 : Math.log2(Math.abs(r.t.m)) + r.t.e;
+    // Hit point + normal (probe radius = half the local epsilon).
+    feMulD(TT, r.t, dir[0]); feAdd(P.x, cam.o[0], TT);
+    feMulD(TT, r.t, dir[1]); feAdd(P.y, cam.o[1], TT);
+    feMulD(TT, r.t, dir[2]); feAdd(P.z, cam.o[2], TT);
+    feMulD(HFE, r.t, pixFactor * 0.5);
+    if (feCmp(HFE, opts.epsAbs) < 0) feCopy(HFE, opts.epsAbs);
+    const n = normalAt(ref, P, HFE, opts.maxIter, opts.scratch);
+    if (!n) degen++;
+    const nn = n || [-dir[0], -dir[1], -dir[2]];
+    out.nx[idx] = nn[0]; out.ny[idx] = nn[1]; out.nz[idx] = nn[2];
+  }
+  return { iters, evals, degen };
+}
+
+// Render scanline rows [y0, y1) of a W×H frame in one call (renderSpan loop).
+// Worker-friendly: plain typed arrays out, no shading policy.
 // Returns { y0, y1, hit (Uint8), nx/ny/nz (Float32), steps (Uint16),
 //           tlog (Float32, log2 of hit distance), stats }.
 export function renderRows(ref, cam, W, H, y0, y1, opts) {
   const rows = y1 - y0;
-  const hit = new Uint8Array(W * rows);
-  const nx = new Float32Array(W * rows), ny = new Float32Array(W * rows), nz = new Float32Array(W * rows);
-  const steps = new Uint16Array(W * rows);
-  const tlog = new Float32Array(W * rows);
-  const scratch = makePerturbScratch();
-  const aspect = W / H;
-  const pixFactor = 2 * cam.planeScale / H;
-  const mopts = { ...opts, pixFactor, scratch };
-  const P = { x: fe(), y: fe(), z: fe() }, TT = fe(), HFE = fe();
-  let iters = 0, evals = 0, degen = 0;
+  const out = {
+    hit: new Uint8Array(W * rows),
+    nx: new Float32Array(W * rows), ny: new Float32Array(W * rows), nz: new Float32Array(W * rows),
+    steps: new Uint16Array(W * rows),
+    tlog: new Float32Array(W * rows),
+  };
+  const o2 = opts.scratch ? opts : { ...opts, scratch: makePerturbScratch() };
+  const stats = { iters: 0, evals: 0, degen: 0 };
   for (let j = y0; j < y1; j++) {
-    const sy = (1 - 2 * (j + 0.5) / H) * cam.planeScale;
-    for (let i = 0; i < W; i++) {
-      const sx = (2 * (i + 0.5) / W - 1) * cam.planeScale * aspect;
-      const dir = norm3([
-        cam.fwd[0] + sx * cam.right[0] + sy * cam.up[0],
-        cam.fwd[1] + sx * cam.right[1] + sy * cam.up[1],
-        cam.fwd[2] + sx * cam.right[2] + sy * cam.up[2],
-      ]);
-      const r = marchRay(ref, cam.o, dir, mopts);
-      iters += r.iters; evals += r.steps;
-      const idx = (j - y0) * W + i;
-      steps[idx] = r.steps;
-      if (!r.hit) continue;
-      hit[idx] = 1;
-      tlog[idx] = r.t.m === 0 ? -1e9 : Math.log2(Math.abs(r.t.m)) + r.t.e;
-      // Hit point + normal (probe radius = half the local epsilon).
-      feMulD(TT, r.t, dir[0]); feAdd(P.x, cam.o[0], TT);
-      feMulD(TT, r.t, dir[1]); feAdd(P.y, cam.o[1], TT);
-      feMulD(TT, r.t, dir[2]); feAdd(P.z, cam.o[2], TT);
-      feMulD(HFE, r.t, pixFactor * 0.5);
-      if (feCmp(HFE, opts.epsAbs) < 0) feCopy(HFE, opts.epsAbs);
-      const n = normalAt(ref, P, HFE, opts.maxIter, scratch);
-      if (!n) degen++;
-      const nn = n || [-dir[0], -dir[1], -dir[2]];
-      nx[idx] = nn[0]; ny[idx] = nn[1]; nz[idx] = nn[2];
-    }
+    const st = renderSpan(ref, cam, W, H, j, 0, W, o2, out, (j - y0) * W);
+    stats.iters += st.iters; stats.evals += st.evals; stats.degen += st.degen;
   }
-  return { y0, y1, hit, nx, ny, nz, steps, tlog, stats: { iters, evals, degen } };
+  return { y0, y1, ...out, stats };
 }
 
 // --- plain-double twin (shallow zoom + cross-check oracle) ---

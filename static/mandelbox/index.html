@@ -19,6 +19,12 @@
     #helpBtn { position: fixed; right: 10px; top: 10px; z-index: 6; width: 30px; height: 30px;
       border-radius: 50%; border: 1px solid #39406a; background: rgba(10, 14, 30, 0.7);
       color: #cfd6f0; font-size: 15px; cursor: pointer; }
+    #qualityToggle { position: fixed; left: 10px; top: 10px; z-index: 6; display: flex;
+      border: 1px solid #39406a; border-radius: 8px; overflow: hidden;
+      background: rgba(10, 14, 30, 0.7); }
+    .qmode { border: 0; background: transparent; color: #8d97c4; padding: 5px 12px;
+      font: inherit; cursor: pointer; }
+    .qmode[aria-pressed="true"] { background: #2c3560; color: #e8ecff; }
     #hint { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center;
       justify-content: center; background: rgba(3, 5, 12, 0.72); }
     #hint[hidden] { display: none; }
@@ -40,6 +46,13 @@
   </div>
   <button id="helpBtn" aria-label="Help" onclick="document.getElementById('hint').hidden = !document.getElementById('hint').hidden">?</button>
 
+  <div id="qualityToggle" role="group" aria-label="Render quality mode">
+    <button class="qmode" data-mode="explore" aria-pressed="true"
+            title="Fast: 1/3 resolution (T toggles)">Explore</button>
+    <button class="qmode" data-mode="draw" aria-pressed="false"
+            title="Crisp: full resolution + 2× anti-aliasing when idle (T toggles)">Hi-res</button>
+  </div>
+
   <div id="hint">
     <div class="hint-card">
       <h2>Mandelbox · deep zoom</h2>
@@ -48,7 +61,9 @@
         <tr><td>A / D</td><td>strafe left / right</td></tr>
         <tr><td>Space / Shift</td><td>up / down</td></tr>
         <tr><td>E / Q</td><td>dive in / back out (zoom)</td></tr>
+        <tr><td>0</td><td>overview (whole box)</td></tr>
         <tr><td>1 – 5</td><td>depth presets (2^-120 … 2^-1015)</td></tr>
+        <tr><td>T</td><td>Explore / Hi-res quality</td></tr>
         <tr><td>H or ?</td><td>this help</td></tr>
       </table>
       <div class="hint-foot">All motion scales with the measured distance to the

@@ -22,7 +22,7 @@ export const KEYMAP = {
 const MOVE_RATE = 1.6;   // lateral/vertical speed, units of 2^sceneE per second
 const DOLLY_RATE = 1.4;  // zoom dolly speed, units of 2^sceneE per second
 const SCENE_MIN = -1080; // precision wall (ref prec 1150 − ~70 guard bits)
-const SCENE_MAX = -6;    // whole-object scale
+const SCENE_MAX = 4;     // whole-object overview scale (camera ~14 out)
 
 // Derive render/marcher parameters from the scene scale exponent.
 export function deriveOpts(sceneE) {
@@ -92,7 +92,13 @@ export function createNav(basis, offset, sceneE) {
     state.sceneE = Math.max(SCENE_MIN, Math.min(SCENE_MAX, standoffE - 9));
   }
 
+  // Jump to an absolute offset given as plain doubles (whole-object views).
+  function jumpAbs(offsetDoubles, sceneE) {
+    for (let i = 0; i < 3; i++) { state.o[i] = fe(); feSetD(state.o[i], offsetDoubles[i]); }
+    state.sceneE = Math.max(SCENE_MIN, Math.min(SCENE_MAX, sceneE));
+  }
+
   function offsetPlain() { return state.o.map((x) => ({ m: x.m, e: x.e })); }
 
-  return { state, keydown, keyup, clearKeys, tick, jumpTo, offsetPlain, held };
+  return { state, keydown, keyup, clearKeys, tick, jumpTo, jumpAbs, offsetPlain, held };
 }

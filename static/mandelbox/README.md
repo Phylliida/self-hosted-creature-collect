@@ -50,11 +50,22 @@ Hard-won scene-scaling rules (from testing, they will matter for the app):
 `/static/mandelbox/index.html`; logic suite in `tests/mandelbox-app.test.js`):
 
 - **Controls:** W/S fly forward/back, A/D strafe, Space/Shift up/down,
-  E dive in / Q back out (zoom), 1-5 depth presets, H help. All motion scales
-  with 2^sceneE, and sceneE tracks the MEASURED DE at the camera (probed ~8Hz
+  E dive in / Q back out (zoom), 0 whole-box overview (also the boot view),
+  1-5 depth presets, T quality toggle, H help. All motion scales with
+  2^sceneE, and sceneE tracks the MEASURED DE at the camera (probed ~8Hz
   through a render worker), so holding E is an exponential dive with steps
   that shrink as the surface approaches — "increases the scale of
   everything". Interior probes soft-block forward motion (Q always escapes).
+- **Quality toggle** (fractals2 Explore/Draw style, persisted): Explore
+  renders everything at 1/3 canvas res; Hi-res renders idle frames at canvas
+  res with 2×2 supersampling (rendered 2× linear, smooth-downscaled). Moving
+  previews are always Explore-res.
+- **Interruptible rendering:** workers march each row in adaptive ~60ms pixel
+  spans (march.js renderSpan) with an event-loop yield between spans; a
+  generation bump broadcasts cancel and aborts in-flight chunks within one
+  slice, so movement restarts previews immediately and DE probes never queue
+  behind a long render. Protocol (incl. cancellation) is node-tested in
+  tests/mandelbox-worker.test.js via the exported createWorkerState.
 - **Boot:** a locate worker bisects the surface point at 2^-1040 (first run
   ~10-30s; μ cached in localStorage `cc.mandelbox.locale.v1` → later boots
   reconstruct it exactly and skip straight to the ~1s reference build). The
@@ -66,6 +77,10 @@ Hard-won scene-scaling rules (from testing, they will matter for the app):
   rAF — deliberately, so rendering also completes under headless screenshot
   verification).
 - **Dev knob:** `?depth=N` (60..1040) shrinks the bisection for fast boots.
+- **Caching note:** module files must not be served stale as a SET (a cached
+  old march.js against a new worker.js kills workers with a bare import
+  error). run.py serves these subtrees no-store on web, so this only bites
+  header-less dev servers.
 - Nav core (`src/app/nav.js`) is headless-safe and unit-tested; boot + full
   worker pipeline verified with the repo's firefox-headless screenshot trick
   (delayed-load page holds the load event while workers render).

@@ -101,6 +101,29 @@ async function main() {
     ok(maskAgree >= W * H * 0.95, `[1] hit masks agree ${maskAgree}/${W * H}`);
     ok(common > 0 && tAgree >= common * 0.9, `[1] hit distances agree ${tAgree}/${common}`);
     ok(common > 0 && nAgree >= common * 0.85, `[1] normals agree ${nAgree}/${common}`);
+
+    // renderSpan (the worker's interruptible slicing unit) must reproduce
+    // renderRows exactly when its pieces are assembled.
+    {
+      const PER2 = await import(base + 'perturb.js');
+      const rowsN = 4, n = W * rowsN;
+      const out = {
+        hit: new Uint8Array(n), nx: new Float32Array(n), ny: new Float32Array(n), nz: new Float32Array(n),
+        steps: new Uint16Array(n), tlog: new Float32Array(n),
+      };
+      const o2 = { ...opts, scratch: PER2.makePerturbScratch() };
+      for (let j = 0; j < rowsN; j++) {
+        for (let x = 0; x < W; x += 7) {
+          MAR.renderSpan(ref, cam, W, H, j, x, Math.min(W, x + 7), o2, out, j * W + x);
+        }
+      }
+      let same = true;
+      for (let i = 0; i < n && same; i++) {
+        if (out.hit[i] !== rp.hit[i] || out.steps[i] !== rp.steps[i] || out.tlog[i] !== rp.tlog[i]
+          || out.nx[i] !== rp.nx[i] || out.ny[i] !== rp.ny[i] || out.nz[i] !== rp.nz[i]) same = false;
+      }
+      ok(same, '[1] renderSpan slices assemble bit-identical to renderRows');
+    }
     console.log(`  [1] shallow 64x48: perturb ${hitsP} hits vs double ${hitsD}; mask ${maskAgree}, t ${tAgree}/${common}, n ${nAgree}/${common}`
       + ` — perturb frame ${perturbMs}ms, ${rp.stats.evals} evals, ${rp.stats.iters} iters (${((Date.now() - t) / 1000).toFixed(1)}s)`);
   }
