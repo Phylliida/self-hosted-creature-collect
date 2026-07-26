@@ -19,7 +19,35 @@ renderers top out around double precision (~10^13).
 - escape iteration + DE validated against the oracle on fast-escaping
   references; interior verdicts validated under reduced iteration caps.
 
-**Not yet built:** the raymarcher, workers, and UI (extras bubble).
+**Raymarcher: done and validated** (`src/math/march.js`, suite in
+`tests/mandelbox-march.test.js`):
+
+- δ-space sphere tracing: floatexp ray origins/distances relative to the
+  reference anchor, double directions, cone epsilon (pixel footprint · t),
+  dr-cap early exit, tetrahedron-gradient normals;
+- pixel-perfect agreement (mask, hit distance, normals) with an independent
+  plain-double marcher on a shallow scene, and an exact-oracle spot check at
+  depth 2^-650 confirming a marched hit point sits on the surface (oracle DE
+  2^-652.8 vs epsilon 2^-652.7);
+- `tools/render-demo.mjs` renders PNGs across worker threads with a
+  parallel "location scout" (the Mandelbox has big flat fold-faces; candidate
+  surface rays are tiny-rendered and scored for visual interest first).
+  `renders/mandelbox-2p1040.png` is a 256×192 frame at zoom depth **2^-1040**
+  (~10^313×): 3.7M perturbed DE evaluations, 112 s on 44 workers.
+
+Hard-won scene-scaling rules (from testing, they will matter for the app):
+
+- **Standoff rule:** camera at ~2^-(depthBits−7) from the bisected surface
+  point. Farther out, every nearby orbit takes many more folds and DE
+  collapses tens of bits below the standoff ("foam") — unmarchable.
+- **Clearance rule:** the visible scene sits at the scale of the MEASURED DE
+  at the camera (often 10-20 bits below standoff in foamy locales); epsilon
+  floor and tMax must derive from it, not from the standoff.
+- **Camera-relative lights** (key over the shoulder), since world-space light
+  directions are meaningless inside the fractal.
+
+**Not yet built:** the browser app (canvas UI, in-browser workers, navigation
+/ progressive dive, extras bubble).
 
 ## How it works
 
@@ -58,13 +86,12 @@ use a conservative DE step factor (standard practice anyway).
 
 ## Next steps
 
-1. Raymarcher in δ-space: camera-relative floatexp ray positions, march with
-   DE (dr-cap early exit: once dr > r_bailout/needed-resolution the point
-   reads as a hit), tetrahedron-gradient normals, simple shading.
-2. Workers + progressive tiles (fractals2's worker.js pattern).
-3. Navigation: high-precision camera anchor + double orientation; dive speed
-   scaled by DE at camera; re-anchor reference on dive.
-4. UI + extras bubble ("Fractals 3D"), permalinks with BigInt coords.
-5. Perf, later: Mandelbox BLA (the per-case maps are affine in δ within a
+1. Browser app: canvas UI, in-browser workers (fractals2's worker.js
+   pattern), progressive resolution.
+2. Navigation: high-precision camera anchor + double orientation; dive speed
+   scaled by DE at camera; re-anchor reference on dive (the scout/clearance
+   logic in tools/render-demo.mjs is the prototype).
+3. UI + extras bubble ("Fractals 3D"), permalinks with BigInt coords.
+4. Perf, later: Mandelbox BLA (the per-case maps are affine in δ within a
    region combo — 3×3-matrix BLA over region-stable runs should skip most of
-   the tracked phase).
+   the tracked phase). Supersampling for the blade edges.
