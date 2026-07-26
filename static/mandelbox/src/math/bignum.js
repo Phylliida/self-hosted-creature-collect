@@ -58,6 +58,15 @@ export function bigToFe(v, prec) {
   return feNorm({ m: neg ? -mant : mant, e: shift - prec });
 }
 
+// Convert floatexp {m, e} -> fixed-point BigInt at the given prec (inverse of
+// bigToFe; exact up to the 53-bit mantissa, which is all a floatexp carries).
+export function feToBig(v, prec) {
+  if (v.m === 0) return 0n;
+  const mant = BigInt(Math.round(v.m * 2 ** 52));   // |v.m| ∈ [1,2) → 53-bit int
+  const shift = BigInt(v.e - 52 + prec);
+  return shift >= 0n ? mant << shift : mant >> -shift;
+}
+
 // Convert a JS double -> fixed-point BigInt at the given prec.
 export function fromDouble(v, prec) {
   if (v === 0 || !isFinite(v)) return 0n;

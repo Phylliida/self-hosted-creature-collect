@@ -57,9 +57,12 @@ async function main() {
     });
     const dc = { x: BN.bigToFe(dcBig[0], prec), y: BN.bigToFe(dcBig[1], prec), z: BN.bigToFe(dcBig[2], prec) };
     const pz = [];
-    const p = PER.perturbDE(ref, dc, maxIter, stats, (n, m, zf, d) => {
-      pz[n] = [feToD(zf[0]), feToD(zf[1]), feToD(zf[2]),
-               Math.max(Math.abs(feToD(d[0])), Math.abs(feToD(d[1])), Math.abs(feToD(d[2])))];
+    const p = PER.perturbDE(ref, dc, maxIter, {
+      stats,
+      trace: (n, m, zf, d) => {
+        pz[n] = [feToD(zf[0]), feToD(zf[1]), feToD(zf[2]),
+                 Math.max(Math.abs(feToD(d[0])), Math.abs(feToD(d[1])), Math.abs(feToD(d[2])))];
+      },
     });
 
     // Tracked phase: |δ| ≤ 2^-25 · |z| for every iteration so far.

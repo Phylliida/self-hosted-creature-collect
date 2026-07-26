@@ -43,27 +43,46 @@ import {
   feNeg, feSqrt, feCmp, feCmpD, feSign,
 } from './floatexp.js';
 
-// One perturbed DE evaluation.
-//   ref : orbit from computeMbReference
-//   dc  : { x, y, z } floatexp — c − C, may be any magnitude
-//   maxIter : iteration cap (match the oracle's for comparisons)
-//   stats : optional { boxCross, sphCross } — incremented whenever the
-//           perturbed point lands in a different fold region than the
-//           reference (lets tests assert the crossing algebra was exercised)
-// Returns { n, interior, de, r, dr, rebases } (de/r/dr floatexp).
-export function perturbDE(ref, dc, maxIter, stats = null, trace = null) {
-  const { len, boxReg, uM, uE, wM, wE, bx, by, bz, rho2, sphReg, rMM, rME, rFM, rFE, zx, zy, zz } = ref;
-  if (len < 1) return { n: 0, interior: true, de: fe(), r: fe(), dr: fe(1), rebases: 0 };
+// Reusable working state. A raymarch render calls perturbDE ~10^6 times;
+// passing one scratch through opts avoids ~30 allocations per call. NOTE:
+// with a shared scratch, the returned de/r/dr are views into it — read or
+// feCopy them before the next perturbDE call on the same scratch.
+export function makePerturbScratch() {
+  return {
+    d: [fe(), fe(), fe()], beta: [fe(), fe(), fe()], sig: [fe(), fe(), fe()],
+    zf: [fe(), fe(), fe()],
+    U: fe(), W: fe(), EUP: fe(), EDN: fe(), T1: fe(), T2: fe(), T3: fe(),
+    DRHO: fe(), EM: fe(), EF: fe(), RHOZ: fe(), Z2: fe(), D2: fe(),
+    R: fe(), DE: fe(), DR: fe(),
+  };
+}
 
-  // δ, then a pool of temporaries (mutating floatexp ops, no per-op allocation).
-  const d = [fe(), fe(), fe()];
-  const beta = [fe(), fe(), fe()];
-  const sig = [fe(), fe(), fe()];
-  const zf = [fe(), fe(), fe()];
-  const U = fe(), W = fe(), EUP = fe(), EDN = fe(), T1 = fe(), T2 = fe(), T3 = fe();
-  const DRHO = fe(), EM = fe(), EF = fe(), RHOZ = fe(), Z2 = fe(), D2 = fe();
-  const R = fe(), DE = fe(), DR = fe(1);
+// One perturbed DE evaluation.
+//   ref     : orbit from computeMbReference
+//   dc      : { x, y, z } floatexp — c − C, may be any magnitude
+//   maxIter : iteration cap (match the oracle's for comparisons)
+//   opts:
+//     stats   : optional { boxCross, sphCross } — incremented when the
+//               perturbed point lands in a different fold region than the
+//               reference (lets tests assert crossings were exercised)
+//     trace   : optional fn(n, m, zf, d) called once per iteration with the
+//               true value and delta (validation hooks)
+//     drCapE  : optional exponent — once DR's exponent reaches it, the DE is
+//               provably below the caller's resolution (dr grows ≥2×/iter and
+//               DE = r/dr with r ≤ ~2^12 at escape), so return early with
+//               capped: true, de = 0. The raymarcher's interior/inside-eps
+//               fast path.
+//     scratch : optional makePerturbScratch() result
+// Returns { n, interior, capped, de, r, dr, rebases } (de/r/dr floatexp).
+export function perturbDE(ref, dc, maxIter, opts = {}) {
+  const { stats = null, trace = null, drCapE = null } = opts;
+  const S = opts.scratch || makePerturbScratch();
+  const { len, boxReg, uM, uE, wM, wE, bx, by, bz, rho2, sphReg, rMM, rME, rFM, rFE, zx, zy, zz } = ref;
+  const { d, beta, sig, zf, U, W, EUP, EDN, T1, T2, T3, DRHO, EM, EF, RHOZ, Z2, D2, R, DE, DR } = S;
+  feSetD(d[0], 0); feSetD(d[1], 0); feSetD(d[2], 0);
+  feSetD(DR, 1); feSetD(DE, 0); feSetD(R, 0);
   const ZARR = [zx, zy, zz];
+  if (len < 1) return { n: 0, interior: true, capped: false, de: DE, r: R, dr: DR, rebases: 0 };
 
   let m = 0, rebases = 0;
 
@@ -111,9 +130,9 @@ export function perturbDE(ref, dc, maxIter, stats = null, trace = null) {
     if (stats && zSph !== rSph) stats.sphCross++;
     feSetD(RHOZ, r2B); feAdd(RHOZ, RHOZ, DRHO);          // ρ²_z (used at O(1) scale only)
 
-    const BD = [Bx, By, Bz];
+    const BD0 = Bx, BD1 = By, BD2 = Bz;
     for (let i = 0; i < 3; i++) {
-      const bi = beta[i], si = sig[i], Bi = BD[i];
+      const bi = beta[i], si = sig[i], Bi = i === 0 ? BD0 : (i === 1 ? BD1 : BD2);
       if (rSph === zSph) {
         if (rSph === SPH_LIN) feMulD(si, bi, 4);
         else if (rSph === SPH_ID) feCopy(si, bi);
@@ -146,6 +165,12 @@ export function perturbDE(ref, dc, maxIter, stats = null, trace = null) {
     feMulD(DR, DR, SCALE * kz);
     feAddD(DR, DR, 1);
 
+    // dr-cap early exit: dr only grows (k ≥ 1), and DE = r/dr with r ≤ ~2^12
+    // at escape, so DR.e ≥ drCapE proves DE is below the caller's resolution.
+    if (drCapE !== null && DR.e >= drCapE) {
+      return { n, interior: false, capped: true, de: DE, r: R, dr: DR, rebases };
+    }
+
     // ---- Stage C: δ' = SCALE·σ + δc ; true value z' = Z_{m+1} + δ' ----
     for (let i = 0; i < 3; i++) {
       feMulD(d[i], sig[i], SCALE);
@@ -160,12 +185,12 @@ export function perturbDE(ref, dc, maxIter, stats = null, trace = null) {
     feMul(T1, zf[1], zf[1]); feAdd(Z2, Z2, T1);
     feMul(T1, zf[2], zf[2]); feAdd(Z2, Z2, T1);
 
-    if (trace) trace(n, m, zf, d, zSph, DR);
+    if (trace) trace(n, m, zf, d);
 
     if (feCmpD(Z2, BAILOUT2) > 0) {
       feSqrt(R, Z2);
       feDiv(DE, R, DR);
-      return { n, interior: false, de: DE, r: R, dr: DR, rebases };
+      return { n, interior: false, capped: false, de: DE, r: R, dr: DR, rebases };
     }
 
     m++;
@@ -182,5 +207,5 @@ export function perturbDE(ref, dc, maxIter, stats = null, trace = null) {
       rebases++;
     }
   }
-  return { n: maxIter, interior: true, de: fe(), r: R, dr: DR, rebases };
+  return { n: maxIter, interior: true, capped: false, de: DE, r: R, dr: DR, rebases };
 }
