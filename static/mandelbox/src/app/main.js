@@ -263,7 +263,7 @@ function boot() {
     ctx.imageSmoothingEnabled = W > canvasW;
     ctx.drawImage(temp, 0, 0, W, rows, 0, Math.round(msg.y0 * sy), canvasW, Math.max(1, Math.ceil(rows * sy)));
   }
-  const gamma = (x) => Math.round(255 * Math.pow(Math.max(0, Math.min(1, x)), 1 / 1.9));
+  const gamma = (x) => isFinite(x) ? Math.round(255 * Math.pow(Math.max(0, Math.min(1, x)), 1 / 1.9)) : 0;
   const norm3v = (x, y, z) => { const l = Math.hypot(x, y, z) || 1; return [x / l, y / l, z / l]; };
 
   // ---- probes ----
