@@ -217,6 +217,7 @@ export class MbGpu {
     gl.readPixels(0, 0, W, H, gl.RGBA, gl.FLOAT, this._stateArr);
     const st = this._stateArr, nm = this._normArr;
     const hit = new Uint8Array(W * H);
+    const unres = new Uint8Array(W * H); // 1 = still marching (blit keeps the old pixel)
     const nx = new Float32Array(W * H), ny = new Float32Array(W * H), nz = new Float32Array(W * H);
     const steps = new Uint16Array(W * H);
     const tlog = new Float32Array(W * H);
@@ -230,7 +231,7 @@ export class MbGpu {
         const si = (g * W + i) * 4, di = j * W + i;
         const status = st[si + 3];
         steps[di] = st[si + 2];
-        if (status === 0) unresolved++;
+        if (status === 0) { unresolved++; unres[di] = 1; }
         if (status !== 1) continue;
         hit[di] = 1;
         tlog[di] = st[si] === 0 ? -1e9 : Math.log2(Math.abs(st[si])) + st[si + 1];
@@ -244,6 +245,6 @@ export class MbGpu {
         }
       }
     }
-    return { hit, nx, ny, nz, steps, tlog, unresolved };
+    return { hit, unres, nx, ny, nz, steps, tlog, unresolved };
   }
 }

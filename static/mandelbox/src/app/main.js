@@ -108,6 +108,7 @@ function boot() {
   let gen = 0, jobs = [], pending = 0, totalJobs = 0, genMeta = null;
   let dirty = false, idleDone = false, lastMoveT = 0, lastProbeT = 0, lastKickT = 0;
   let gpu = null, gpuBusy = false, gpuK = 4, gpuProgress = 0, useGpu = false;
+  let previewChunks = [];
   let selfCapture = null, selfIdleMeta = null, selfPhase = 'cpu';
   const temp = document.createElement('canvas'), tctx = temp.getContext('2d');
 
@@ -214,7 +215,11 @@ function boot() {
     if (msg.type === 'rows') {
       w.outstanding--;
       if (!msg.aborted && msg.gen === gen) {
-        blitRows(msg);
+        // Preview chunks are held back and swapped in as one complete frame
+        // (same anti-strobe rule as the GPU path); idle chunks paint as they
+        // arrive.
+        if (genMeta.kind === 'preview') previewChunks.push(msg);
+        else blitRows(msg);
         if (SELFTEST && selfCapture && genMeta.kind !== 'preview') {
           const off = msg.y0 * genMeta.W, count = (msg.y1 - msg.y0) * genMeta.W;
           selfCapture.hit.set(msg.hit.subarray(0, count), off);
@@ -224,7 +229,11 @@ function boot() {
           selfCapture.tlog.set(msg.tlog.subarray(0, count), off);
         }
         pending--;
-        if (pending === 0) onGenComplete(selfCapture);
+        if (pending === 0) {
+          for (const c of previewChunks) blitRows(c);
+          previewChunks = [];
+          onGenComplete(selfCapture);
+        }
       }
       feed(w);
     }
@@ -257,6 +266,7 @@ function boot() {
       },
       sceneE: nav.state.sceneE,
     };
+    previewChunks = [];
     if (SELFTEST && kind !== 'preview') {
       const n = W * H;
       selfCapture = { hit: new Uint8Array(n), nx: new Float32Array(n), ny: new Float32Array(n), nz: new Float32Array(n), tlog: new Float32Array(n) };
@@ -282,6 +292,11 @@ function boot() {
 
   // ---- GPU stepping (from rAF normally; MessageChannel pump in selftest,
   // where rAF never fires under headless capture) ----
+  // Previews SWAP-ON-COMPLETE: the old frame stays up until the new one is
+  // fully resolved (no partial paints = no strobing while flying); a
+  // movement restart cancels the in-flight generation as before. Idle
+  // refinements still paint progressively — the camera is static there, so
+  // showing progress helps and nothing flickers.
   let gpuLastBlit = 0;
   function gpuStep() {
     if (!gpuBusy || !gpu) return;
@@ -299,7 +314,7 @@ function boot() {
       blitRows({ y0: 0, y1: genMeta.H, ...rf });
       gpuBusy = false;
       onGenComplete(rf);
-    } else if (!big || performance.now() - gpuLastBlit > 120) {
+    } else if (genMeta.kind !== 'preview' && (!big || performance.now() - gpuLastBlit > 120)) {
       blitRows({ y0: 0, y1: genMeta.H, ...r });
       gpuLastBlit = performance.now();
     }
@@ -374,6 +389,13 @@ function boot() {
     const sceneE = genMeta.sceneE;
     for (let i = 0; i < W * rows; i++) {
       let r, g, b;
+      if (msg.unres && msg.unres[i]) {
+        // Still marching (GPU progressive frame): leave the pixel transparent
+        // so the previous frame shows through instead of strobing to
+        // background on every movement restart.
+        px[i * 4 + 3] = 0;
+        continue;
+      }
       if (!msg.hit[i]) {
         const ty = (msg.y0 + (i / W | 0)) / H;
         const glow = Math.min(1, msg.steps[i] / 120);
@@ -467,10 +489,17 @@ function boot() {
       if (t - lastProbeT > 120) sendProbe();
     }
     if (gpuBusy) gpuStep();
-    // Interruptible scheduling: movement kicks a fresh preview at most every
-    // 200ms (GPU: ~80ms — frames come back fast enough to feel continuous);
-    // idle upgrades to the quality-mode frame once the last preview finished.
-    if (dirty && t - lastKickT > (useGpu && gpu ? 80 : 200)) {
+    // Interruptible scheduling with SWAP-ON-COMPLETE previews: while moving,
+    // start the next preview as soon as the last one finished (chaining at
+    // the latest camera), or preempt one that's gone stale (>450ms) so a
+    // slow deep frame can't freeze the view. Completed frames swap in whole
+    // — no partial paints, no strobing.
+    const inFlight = gpuBusy || pending > 0;
+    const minGap = useGpu && gpu ? 40 : 200;
+    // Movement preempts idle refinements immediately; an in-flight PREVIEW
+    // gets its chance to complete (up to 450ms) before being replaced.
+    const preemptOk = !inFlight || (genMeta && genMeta.kind !== 'preview') || t - lastKickT > 450;
+    if (dirty && t - lastKickT > minGap && preemptOk) {
       requestRender('preview');
       dirty = false;
     }
