@@ -36,27 +36,40 @@ async function main() {
     nav.keydown('Space'); nav.keydown('ShiftLeft');
     nav.tick(0.1, -100);
     ok(Math.abs(val(nav.state.o[1], -100)) < 1e-12, 'up+down cancel');
-    nav.clearKeys();
-    nav.keydown('KeyD');
-    nav.tick(0.1, -100);
-    ok(val(nav.state.o[0], -100) > 0.1, 'D strafes +right');
   }
 
-  // ---- zoom dolly + blocked-forward ----
+  // ---- yaw (A/D turn about the up axis, offset unchanged) ----
+  {
+    const b = { fwd: [0, 0, -1], right: [1, 0, 0], up: [0, 1, 0] };
+    const nav = createNav(b, zero(), -100);
+    nav.keydown('KeyA');
+    nav.tick(0.5, -100);
+    // turn left: fwd rotates toward -right (−x)
+    ok(b.fwd[0] < -0.3, `A turns fwd toward -right (fwd.x=${b.fwd[0].toFixed(3)})`);
+    ok(Math.abs(Math.hypot(...b.fwd) - 1) < 1e-9, 'fwd stays unit');
+    ok(Math.abs(b.fwd[0] * b.up[0] + b.fwd[1] * b.up[1] + b.fwd[2] * b.up[2]) < 1e-9, 'no roll (fwd ⊥ up)');
+    ok(Math.abs(b.right[0] * b.fwd[0] + b.right[1] * b.fwd[1] + b.right[2] * b.fwd[2]) < 1e-9, 'right ⊥ fwd');
+    ok(nav.state.o.every((x) => x.m === 0), 'turning does not move the camera');
+    nav.clearKeys(); nav.keydown('KeyD');
+    nav.tick(0.5, -100);
+    ok(Math.abs(b.fwd[0]) < 1e-9 && Math.abs(b.fwd[2] + 1) < 1e-9, 'D turns back (symmetry)');
+  }
+
+  // ---- zoom dolly (Q in / E out) + blocked-forward ----
   {
     const nav = createNav(basis, zero(), -100);
-    nav.keydown('KeyE');
+    nav.keydown('KeyQ');
     nav.tick(0.1, -100);
-    ok(val(nav.state.o[2], -100) < -0.05, 'E dives along fwd');
+    ok(val(nav.state.o[2], -100) < -0.05, 'Q dives along fwd (scale up)');
     nav.clearKeys();
     const before = nav.state.o[2].m * 2 ** nav.state.o[2].e;
-    nav.keydown('KeyE'); nav.keydown('KeyW');
+    nav.keydown('KeyQ'); nav.keydown('KeyW');
     nav.tick(0.1, -Infinity); // interior probe: forward blocked
     ok(nav.state.blockedFwd, 'interior probe sets blockedFwd');
-    ok(nav.state.o[2].m * 2 ** nav.state.o[2].e === before, 'blocked: E/W do not advance');
-    nav.clearKeys(); nav.keydown('KeyQ');
+    ok(nav.state.o[2].m * 2 ** nav.state.o[2].e === before, 'blocked: Q/W do not advance');
+    nav.clearKeys(); nav.keydown('KeyE');
     nav.tick(0.1, -Infinity);
-    ok(val(nav.state.o[2], -100) > -1e-3 * 0 || nav.state.o[2].m * 2 ** nav.state.o[2].e > before, 'Q backs out even when blocked');
+    ok(nav.state.o[2].m * 2 ** nav.state.o[2].e > before, 'E backs out even when blocked');
   }
 
   // ---- sceneE tracks probes, clamps, deepens step size ----
@@ -108,6 +121,8 @@ async function main() {
   {
     const want = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'KeyQ', 'KeyE'];
     ok(want.every((k) => KEYMAP[k]), 'all advertised controls mapped');
+    ok(KEYMAP.KeyA === 'turnL' && KEYMAP.KeyD === 'turnR', 'A/D are turns');
+    ok(KEYMAP.KeyQ === 'zin' && KEYMAP.KeyE === 'zout', 'Q zooms in, E zooms out');
   }
 
   // ---- import-graph checks (guarded modules must import cleanly in Node) ----

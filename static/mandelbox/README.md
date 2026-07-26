@@ -49,9 +49,10 @@ Hard-won scene-scaling rules (from testing, they will matter for the app):
 **Browser app: working** (`index.html` + `src/app/`, served at
 `/static/mandelbox/index.html`; logic suite in `tests/mandelbox-app.test.js`):
 
-- **Controls:** W/S fly forward/back, A/D strafe, Space/Shift up/down,
-  E dive in / Q back out (zoom), 0 whole-box overview (also the boot view),
-  1-5 depth presets, T quality toggle, H help. All motion scales with
+- **Controls:** W/S fly forward/back, A/D turn (yaw about the camera's up),
+  Space/Shift up/down, Q dive in / E back out (zoom = scale), 0 whole-box
+  overview (also the boot view), 1-5 depth presets, T quality toggle,
+  G GPU/CPU toggle, H help. All motion scales with
   2^sceneE, and sceneE tracks the MEASURED DE at the camera (probed ~8Hz
   through a render worker), so holding E is an exponential dive with steps
   that shrink as the surface approaches — "increases the scale of
@@ -76,11 +77,32 @@ Hard-won scene-scaling rules (from testing, they will matter for the app):
   evals/sec EMA) on idle; chunks shade + blit on arrival (in onmessage, not
   rAF — deliberately, so rendering also completes under headless screenshot
   verification).
+- **GPU rendering** (`src/gpu/`, default when WebGL2 + float render targets
+  exist; CPU workers remain for probes, fallback, and ground truth): the
+  entire perturbation DE — floatexp arithmetic included — runs in GLSL.
+  floatexp is vec2(mantissa float32 normalized ±[1,2), exponent carried in a
+  float), normalized via floatBitsToInt/intBitsToFloat with exact power-of-two
+  scaling, so exponents reach ±2^24 ≫ any zoom. The reference orbit + fold
+  residuals live in 7 one-texel-wide RGBA32F/RGBA32I textures; marching is
+  progressive (per-pixel state in ping-pong RGBA32F, ~adaptive K DE evals per
+  frame targeting ~11ms) with a second pass for tetrahedron normals.
+  **Validation** (fractals2 validate.js philosophy, via `?selftest=1&gpucheck=1`
+  — renders the idle frame on CPU then GPU and reports agreement): shallow
+  scenes pixel-exact (mask/t/normals 100%); deep fog-crust scenes agree on
+  the hit mask 100% while t/normals scatter — that is the documented
+  backward-stable chaotic-tail noise sampled at 24-bit vs 53-bit mantissas,
+  not a defect (the CPU wouldn't match a higher-precision oracle there
+  either). 24-bit relative-to-pixel-scale accuracy is the rendering bar.
 - **Dev knobs:** `?depth=N` (60..1040) shrinks the bisection for fast boots;
-  `?selftest=1` hides the hint overlay and chains preview → idle → done from
-  worker messages instead of rAF, so a firefox-headless screenshot (with the
-  delayed-load trick — rAF/timers never fire there) captures the app's TRUE
-  idle-quality frame for visual verification without a browser session.
+  `?selftest=1` hides the hint overlay, waits for the first clearance probe,
+  and chains preview → idle → done from worker messages/MessageChannel
+  instead of rAF, so a firefox-headless screenshot (with the delayed-load
+  trick — rAF/timers never fire there) captures the app's TRUE idle-quality
+  frame; `?gpucheck=1` adds the GPU-vs-CPU comparison; `?preset=1..5` starts
+  the selftest at a depth preset; `?tiny=1` shrinks the canvas so deep CPU
+  ground-truth frames stay affordable; `?gpu=0` disables the GPU path.
+  Headless firefox on this box has real-GPU WebGL2, so all of this runs
+  without a browser session (small windows render fastest).
 - **Caching note:** module files must not be served stale as a SET (a cached
   old march.js against a new worker.js kills workers with a bare import
   error). run.py serves these subtrees no-store on web, so this only bites

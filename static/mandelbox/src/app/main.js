@@ -20,6 +20,7 @@
 
 import { createNav, deriveOpts, KEYMAP } from './nav.js';
 import { makeCamera } from '../math/march.js';
+import { MbGpu } from '../gpu/renderer.js';
 
 const LS_LOCALE = 'cc.mandelbox.locale.v1';
 const LS_CAM = 'cc.mandelbox.cam.v1';
@@ -35,6 +36,14 @@ const DEFAULT_DEPTH = (() => {
 // the rAF loop, so headless-screenshot verification (where rAF and timers
 // never fire) can capture the true idle-quality frame.
 const SELFTEST = typeof location !== 'undefined' && new URLSearchParams(location.search).get('selftest') === '1';
+// ?gpu=0 disables the GPU path; with ?selftest=1&gpucheck=1 the selftest also
+// renders the idle frame on the GPU and reports GPU-vs-CPU agreement.
+const GPU_WANTED = typeof location === 'undefined' || new URLSearchParams(location.search).get('gpu') !== '0';
+const GPU_CHECK = typeof location !== 'undefined' && new URLSearchParams(location.search).get('gpucheck') === '1';
+// ?preset=1..5 starts a selftest at that depth preset; ?tiny=1 shrinks the
+// canvas so deep CPU ground-truth frames stay affordable in the harness.
+const SELF_PRESET = typeof location !== 'undefined' ? (parseInt(new URLSearchParams(location.search).get('preset') || '0', 10) || 0) : 0;
+const TINY = typeof location !== 'undefined' && new URLSearchParams(location.search).get('tiny') === '1';
 const PRESET_DEPTHS = DEFAULT_DEPTH === 1040
   ? [120, 300, 500, 750, 1015]
   : [1, 2, 3, 4, 5].map((k) => Math.max(40, Math.round(DEFAULT_DEPTH * k / 5) - 25));
@@ -83,7 +92,7 @@ function boot() {
   let canvasW = 560, canvasH = 420, exploreW = 187, exploreH = 140;
   function fitCanvas() {
     const cssW = Math.max(320, window.innerWidth), cssH = Math.max(240, window.innerHeight);
-    canvasW = Math.min(560, cssW);
+    canvasW = Math.min(TINY ? 168 : 560, cssW);
     canvasH = Math.max(160, Math.round(canvasW * cssH / cssW));
     exploreW = Math.round(canvasW / 3);
     exploreH = Math.round(canvasH / 3);
@@ -98,6 +107,8 @@ function boot() {
   let lastDeE = null;
   let gen = 0, jobs = [], pending = 0, totalJobs = 0, genMeta = null;
   let dirty = false, idleDone = false, lastMoveT = 0, lastProbeT = 0, lastKickT = 0;
+  let gpu = null, gpuBusy = false, gpuK = 4, gpuProgress = 0, useGpu = false;
+  let selfCapture = null, selfIdleMeta = null, selfPhase = 'cpu';
   const temp = document.createElement('canvas'), tctx = temp.getContext('2d');
 
   function setStatus(s) { statusEl.textContent = s; }
@@ -139,6 +150,9 @@ function boot() {
     basis = { fwd: camT.fwd, right: camT.right, up: camT.up };
     nav = createNav(basis, [{ m: 0, e: 0 }, { m: 0, e: 0 }, { m: 0, e: 0 }], OVERVIEW_SCENEE);
     jumpHome();
+    if (SELFTEST && SELF_PRESET >= 1 && SELF_PRESET <= 5) {
+      nav.jumpTo(bestV, -(PRESET_DEPTHS[SELF_PRESET - 1] - 7));
+    }
 
     const n = Math.max(2, Math.min(12, (navigator.hardwareConcurrency || 4) - 1));
     setStatus(`starting ${n} render workers…`);
@@ -149,6 +163,15 @@ function boot() {
       w.onerror = (e) => setStatus('worker error: ' + e.message);
       w.postMessage({ type: 'init', ref: refPlain });
       workers.push(w);
+    }
+    // GPU path (floatexp perturbation shaders). CPU workers stay for DE
+    // probes, fallback, and ground truth.
+    if (GPU_WANTED) {
+      try {
+        gpu = new MbGpu();
+        if (gpu.supported) { gpu.uploadRef(refPlain); useGpu = true; }
+        else gpu = null;
+      } catch (e) { gpu = null; }
     }
   }
   function normTilt(v) {
@@ -167,26 +190,41 @@ function boot() {
     lastDeE = null;
   }
 
+  let selfStarted = false;
   function onWorkerMsg(w, msg) {
     if (msg.type === 'ready') {
-      if (++readyWorkers === workers.length) { sendProbe(); lastMoveT = performance.now(); requestRender('preview'); }
+      if (++readyWorkers === workers.length) {
+        sendProbe(); lastMoveT = performance.now();
+        // Selftests wait for the first clearance probe so the scene scale is
+        // measured (like the live probe loop does) — a seeded-only sceneE can
+        // sit far above the local clearance and bury the camera in fog.
+        if (!SELFTEST) requestRender('preview');
+      }
       return;
     }
-    if (msg.type === 'probe') { lastDeE = msg.deE; return; }
+    if (msg.type === 'probe') {
+      lastDeE = msg.deE;
+      if (SELFTEST && !selfStarted) {
+        selfStarted = true;
+        if (Number.isFinite(lastDeE)) nav.state.sceneE = Math.max(-1080, Math.min(4, lastDeE));
+        requestRender('preview');
+      }
+      return;
+    }
     if (msg.type === 'rows') {
       w.outstanding--;
       if (!msg.aborted && msg.gen === gen) {
         blitRows(msg);
-        pending--;
-        if (SELFTEST && pending === 0) {
-          if (genMeta.kind === 'preview') {
-            setStatus('selftest: preview done, rendering idle…');
-            requestRender(quality === 'draw' ? 'idle-draw' : 'idle-explore');
-          } else {
-            setStatus(`selftest: idle frame complete (${genMeta.W}×${genMeta.H})`);
-            document.title = 'MB-DONE';
-          }
+        if (SELFTEST && selfCapture && genMeta.kind !== 'preview') {
+          const off = msg.y0 * genMeta.W, count = (msg.y1 - msg.y0) * genMeta.W;
+          selfCapture.hit.set(msg.hit.subarray(0, count), off);
+          selfCapture.nx.set(msg.nx.subarray(0, count), off);
+          selfCapture.ny.set(msg.ny.subarray(0, count), off);
+          selfCapture.nz.set(msg.nz.subarray(0, count), off);
+          selfCapture.tlog.set(msg.tlog.subarray(0, count), off);
         }
+        pending--;
+        if (pending === 0) onGenComplete(selfCapture);
       }
       feed(w);
     }
@@ -219,12 +257,101 @@ function boot() {
       },
       sceneE: nav.state.sceneE,
     };
-    const CH = fast ? 4 : 2;
-    jobs = [];
-    for (let y = 0; y < H; y += CH) jobs.push({ y0: y, y1: Math.min(H, y + CH) });
-    totalJobs = pending = jobs.length;
-    for (const w of workers) feed(w);
+    if (SELFTEST && kind !== 'preview') {
+      const n = W * H;
+      selfCapture = { hit: new Uint8Array(n), nx: new Float32Array(n), ny: new Float32Array(n), nz: new Float32Array(n), tlog: new Float32Array(n) };
+    }
+    // In gpucheck selftests the 'cpu' phase must really run on the CPU
+    // workers — it is the ground truth the GPU frame gets compared against.
+    const forceCpu = SELFTEST && GPU_CHECK && selfPhase === 'cpu';
+    if (useGpu && gpu && !forceCpu) {
+      jobs = []; pending = 0; totalJobs = 0;
+      gpu.begin(genMeta);
+      gpuBusy = true; gpuProgress = 0;
+      if (SELFTEST) pumpGpu();
+    } else {
+      gpuBusy = false;
+      const CH = fast ? 4 : 2;
+      jobs = [];
+      for (let y = 0; y < H; y += CH) jobs.push({ y0: y, y1: Math.min(H, y + CH) });
+      totalJobs = pending = jobs.length;
+      for (const w of workers) feed(w);
+    }
     lastKickT = performance.now();
+  }
+
+  // ---- GPU stepping (from rAF normally; MessageChannel pump in selftest,
+  // where rAF never fires under headless capture) ----
+  let gpuLastBlit = 0;
+  function gpuStep() {
+    if (!gpuBusy || !gpu) return;
+    const t0 = performance.now();
+    gpu.step(gpuK);
+    const r = gpu.read();
+    const ms = performance.now() - t0;
+    if (ms > 2) gpuK = Math.max(1, Math.min(48, Math.round(gpuK * (0.5 + 0.5 * Math.min(4, 11 / ms)))));
+    gpuProgress = 1 - r.unresolved / (genMeta.W * genMeta.H);
+    const big = genMeta.W * genMeta.H > 250000;
+    const done = r.unresolved === 0;
+    if (done) {
+      gpu.normals();
+      const rf = gpu.read();
+      blitRows({ y0: 0, y1: genMeta.H, ...rf });
+      gpuBusy = false;
+      onGenComplete(rf);
+    } else if (!big || performance.now() - gpuLastBlit > 120) {
+      blitRows({ y0: 0, y1: genMeta.H, ...r });
+      gpuLastBlit = performance.now();
+    }
+  }
+  const gpuPump = new MessageChannel();
+  gpuPump.port1.onmessage = () => { if (gpuBusy) { gpuStep(); gpuPump.port2.postMessage(0); } };
+  function pumpGpu() { gpuPump.port2.postMessage(0); }
+
+  // Completion hook shared by CPU (pending hits 0) and GPU paths.
+  function onGenComplete(buffers) {
+    if (!SELFTEST) return;
+    if (selfPhase === 'cpu' && genMeta.kind === 'preview') {
+      setStatus('selftest: preview done, rendering idle…');
+      requestRender(quality === 'draw' ? 'idle-draw' : 'idle-explore');
+      return;
+    }
+    if (selfPhase === 'cpu') {
+      if (GPU_CHECK && gpu) {
+        // Re-render the SAME idle frame (same genMeta) on the GPU and compare.
+        selfIdleMeta = genMeta;
+        selfPhase = 'gpu';
+        gen++;
+        gpu.begin(genMeta);
+        gpuBusy = true;
+        setStatus('selftest: rendering GPU frame…');
+        pumpGpu();
+        return;
+      }
+      setStatus(`selftest: idle frame complete (${genMeta.W}×${genMeta.H})`);
+      document.title = 'MB-DONE';
+      return;
+    }
+    // GPU compare phase done: buffers = GPU frame, selfCapture = CPU frame.
+    const c = selfCapture, g = buffers, n = genMeta.W * genMeta.H;
+    let mask = 0, common = 0, tclose = 0, nclose = 0;
+    for (let i = 0; i < n; i++) {
+      if ((c.hit[i] === 1) === (g.hit[i] === 1)) mask++;
+      if (c.hit[i] && g.hit[i]) {
+        common++;
+        if (Math.abs(c.tlog[i] - g.tlog[i]) < 0.1) tclose++;
+        if (c.nx[i] * g.nx[i] + c.ny[i] * g.ny[i] + c.nz[i] * g.nz[i] > 0.9) nclose++;
+      }
+    }
+    let sample = '';
+    for (let i = 0; i < n; i++) {
+      if (c.hit[i] && g.hit[i]) {
+        sample = ` | ex px${i}: gpu n=(${g.nx[i].toFixed(2)},${g.ny[i].toFixed(2)},${g.nz[i].toFixed(2)}) cpu n=(${c.nx[i].toFixed(2)},${c.ny[i].toFixed(2)},${c.nz[i].toFixed(2)}) t ${g.tlog[i].toFixed(1)}/${c.tlog[i].toFixed(1)}`;
+        break;
+      }
+    }
+    setStatus(`selftest GPU vs CPU: mask ${(100 * mask / n).toFixed(1)}%, t ${(100 * tclose / Math.max(1, common)).toFixed(1)}%, n ${(100 * nclose / Math.max(1, common)).toFixed(1)}% of ${common} hits${sample}`);
+    document.title = 'MB-DONE';
   }
 
   function feed(w) {
@@ -308,6 +435,10 @@ function boot() {
       return;
     }
     if (e.code === 'KeyT') { setQuality(quality === 'draw' ? 'explore' : 'draw'); return; }
+    if (e.code === 'KeyG') {
+      if (gpu) { useGpu = !useGpu; idleDone = false; dirty = true; lastMoveT = performance.now(); }
+      return;
+    }
     if (e.code === 'KeyH' || (e.key === '?')) { hintEl.hidden = !hintEl.hidden; return; }
     if (e.code === 'Escape') { hintEl.hidden = true; return; }
     if (nav && nav.keydown(e.code)) { hintEl.hidden = true; e.preventDefault(); }
@@ -335,14 +466,15 @@ function boot() {
       dirty = true; idleDone = false; lastMoveT = t;
       if (t - lastProbeT > 120) sendProbe();
     }
+    if (gpuBusy) gpuStep();
     // Interruptible scheduling: movement kicks a fresh preview at most every
-    // 200ms (cancel aborts the old one mid-slice); idle upgrades to the
-    // quality-mode frame once the last preview finished.
-    if (dirty && t - lastKickT > 200) {
+    // 200ms (GPU: ~80ms — frames come back fast enough to feel continuous);
+    // idle upgrades to the quality-mode frame once the last preview finished.
+    if (dirty && t - lastKickT > (useGpu && gpu ? 80 : 200)) {
       requestRender('preview');
       dirty = false;
     }
-    if (!SELFTEST && !dirty && !idleDone && nav.held.size === 0 && genMeta && pending === 0 && t - lastMoveT > 400) {
+    if (!SELFTEST && !dirty && !idleDone && nav.held.size === 0 && genMeta && pending === 0 && !gpuBusy && t - lastMoveT > 400) {
       requestRender(quality === 'draw' ? 'idle-draw' : 'idle-explore');
       idleDone = true;
     }
@@ -351,11 +483,14 @@ function boot() {
       const se = nav.state.sceneE;
       const dec = (se * Math.LN2 / Math.LN10).toFixed(0);
       scaleEl.textContent = `scale 2^${se.toFixed(1)} ≈ 10^${dec}${se <= -1079 ? ' · precision wall' : ''}${nav.state.blockedFwd ? ' · surface!' : ''}`;
-      if (pending > 0) {
+      const path = useGpu && gpu ? 'GPU' : `${workers.length} workers`;
+      if (gpuBusy) {
+        setStatus(`rendering ${genMeta.W}×${genMeta.H} ${genMeta.kind} on GPU… ${Math.round(100 * gpuProgress)}%`);
+      } else if (pending > 0) {
         const pct = Math.round(100 * (1 - pending / Math.max(1, totalJobs)));
         setStatus(`rendering ${genMeta.W}×${genMeta.H} ${genMeta.kind}… ${pct}%`);
       } else if (genMeta) {
-        setStatus(`idle · ${genMeta.kind} ${genMeta.W}×${genMeta.H} · ${quality} mode · ${workers.length} workers`);
+        setStatus(`idle · ${genMeta.kind} ${genMeta.W}×${genMeta.H} · ${quality} mode · ${path}`);
       }
     }
   }
