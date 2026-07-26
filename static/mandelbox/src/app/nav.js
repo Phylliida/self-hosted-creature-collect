@@ -1,15 +1,16 @@
 // nav.js — camera navigation state for the Mandelbox explorer. Headless-safe
 // (no DOM): unit-tested in tests/mandelbox-app.test.js.
 //
-// Model: the camera lives at anchor C + offset (floatexp vec3). Orientation
-// (fwd/right/up doubles) is fixed per session for now. All motion scales with
-// 2^sceneE, where sceneE tracks the MEASURED DE at the camera (the clearance
-// rule from the render experiments): as you dolly in with E the clearance
-// shrinks, sceneE follows it, and every subsequent step is proportionally
-// smaller — the classic exponential deep dive. Q backs out the same way.
+// Model: the camera lives at anchor C + offset (floatexp vec3). Movement and
+// scale are DECOUPLED: sceneE (the scale exponent driving epsilon/tMax/
+// maxIter and all step sizes) changes ONLY via Q/E (and one-shot syncs after
+// teleports, applied by the app from a clearance probe) — flying around
+// never re-zooms the view. Translation speed is 2^sceneE × speedMul (the
+// scroll-wheel multiplier), so Q + W together give the exponential dive.
 //
 // Controls (PC): W/S forward/back, A/D turn (yaw about the camera's up),
-// Space up, Shift down, Q dolly in (zoom — "scale up"), E dolly out.
+// Space up, Shift down, Q scale up (zoom in), E scale down (zoom out),
+// scroll wheel: movement speed multiplier.
 
 import { fe, feAdd, feSetD } from '../math/floatexp.js';
 
@@ -20,8 +21,9 @@ export const KEYMAP = {
 };
 
 const MOVE_RATE = 1.6;   // lateral/vertical speed, units of 2^sceneE per second
-const DOLLY_RATE = 1.4;  // zoom dolly speed, units of 2^sceneE per second
+const ZOOM_RATE = 5;     // Q/E scale change, bits per second (× speedMul)
 const YAW_RATE = 1.1;    // turn speed, radians per second
+const SPEED_MIN = 1 / 64, SPEED_MAX = 64;
 const SCENE_MIN = -1080; // precision wall (ref prec 1150 − ~70 guard bits)
 const SCENE_MAX = 4;     // whole-object overview scale (camera ~14 out)
 
@@ -39,9 +41,11 @@ export function createNav(basis, offset, sceneE) {
   const held = new Set();
   const state = {
     o: offset.map((x) => fe(x.m, x.e)),  // floatexp vec3, camera − C
-    sceneE,                               // smoothed log2(clearance)
+    sceneE,                               // scale exponent (Q/E-controlled)
     basis,
     blockedFwd: false,                    // probe said interior ahead
+    speedMul: 1,                          // scroll-wheel movement multiplier
+    syncScale: false,                     // teleported: app applies next probe to sceneE
   };
   const T = fe();
 
@@ -62,19 +66,16 @@ export function createNav(basis, offset, sceneE) {
   }
 
   // Advance dt seconds. probeDeE: latest measured log2(DE at camera), or null
-  // (unknown) or -Infinity (interior). Returns true if the camera moved.
+  // (unknown) or -Infinity (interior — blocks forward motion). Movement never
+  // touches sceneE; Q/E change ONLY sceneE. Returns true if anything changed.
   function tick(dt, probeDeE) {
-    // sceneE follows the measured clearance (smoothed, clamped).
-    if (probeDeE !== null && probeDeE !== -Infinity && Number.isFinite(probeDeE)) {
-      const target = Math.max(SCENE_MIN, Math.min(SCENE_MAX, probeDeE));
-      state.sceneE += Math.max(-8 * dt, Math.min(8 * dt, (target - state.sceneE) * 0.25));
-    }
     state.blockedFwd = probeDeE === -Infinity;
 
     if (held.size === 0) return false;
     const { fwd, right, up } = state.basis;
     let moved = false;
-    const m = MOVE_RATE * dt, z = DOLLY_RATE * dt;
+    const m = MOVE_RATE * dt * state.speedMul;
+    const z = ZOOM_RATE * dt * state.speedMul;
     const go = (dir, k) => { step(dir, k); moved = true; };
     if (held.has('fwd') && !state.blockedFwd) go(fwd, m);
     if (held.has('back')) go(fwd, -m);
@@ -82,9 +83,15 @@ export function createNav(basis, offset, sceneE) {
     if (held.has('turnR')) { yaw(-YAW_RATE * dt); moved = true; }
     if (held.has('up')) go(up, m);
     if (held.has('down')) go(up, -m);
-    if (held.has('zin') && !state.blockedFwd) go(fwd, z);
-    if (held.has('zout')) go(fwd, -z);
+    if (held.has('zin')) { state.sceneE = Math.max(SCENE_MIN, state.sceneE - z); moved = true; }
+    if (held.has('zout')) { state.sceneE = Math.min(SCENE_MAX, state.sceneE + z); moved = true; }
     return moved;
+  }
+
+  // Scroll-wheel speed multiplier (clamped ×1/64 .. ×64).
+  function adjustSpeed(factor) {
+    state.speedMul = Math.max(SPEED_MIN, Math.min(SPEED_MAX, state.speedMul * factor));
+    return state.speedMul;
   }
 
   // Yaw about the camera's own up axis (positive = turn left). Mutates the
@@ -101,19 +108,23 @@ export function createNav(basis, offset, sceneE) {
     for (let i = 0; i < 3; i++) right[i] = nr[i] / rl;
   }
 
-  // Jump to a preset standoff along direction v (unit double[3]).
+  // Jump to a preset standoff along direction v (unit double[3]). Teleports
+  // flag syncScale: the app applies the next clearance probe to sceneE once,
+  // so the landing scale matches the local geometry.
   function jumpTo(v, standoffE) {
     for (let i = 0; i < 3; i++) { state.o[i] = fe(v[i], standoffE); }
     state.sceneE = Math.max(SCENE_MIN, Math.min(SCENE_MAX, standoffE - 9));
+    state.syncScale = true;
   }
 
   // Jump to an absolute offset given as plain doubles (whole-object views).
   function jumpAbs(offsetDoubles, sceneE) {
     for (let i = 0; i < 3; i++) { state.o[i] = fe(); feSetD(state.o[i], offsetDoubles[i]); }
     state.sceneE = Math.max(SCENE_MIN, Math.min(SCENE_MAX, sceneE));
+    state.syncScale = true;
   }
 
   function offsetPlain() { return state.o.map((x) => ({ m: x.m, e: x.e })); }
 
-  return { state, keydown, keyup, clearKeys, tick, jumpTo, jumpAbs, offsetPlain, held };
+  return { state, keydown, keyup, clearKeys, tick, jumpTo, jumpAbs, adjustSpeed, offsetPlain, held };
 }

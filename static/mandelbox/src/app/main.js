@@ -205,9 +205,16 @@ function boot() {
     }
     if (msg.type === 'probe') {
       lastDeE = msg.deE;
+      // One-shot scale sync after teleports (jumpHome/presets): match the
+      // landing scale to the measured clearance. Ordinary movement never
+      // changes sceneE — only Q/E do.
+      if (nav && nav.state.syncScale && Number.isFinite(lastDeE)) {
+        nav.state.sceneE = Math.max(-1080, Math.min(4, lastDeE));
+        nav.state.syncScale = false;
+        if (!SELFTEST) { dirty = true; idleDone = false; lastMoveT = performance.now(); }
+      }
       if (SELFTEST && !selfStarted) {
         selfStarted = true;
-        if (Number.isFinite(lastDeE)) nav.state.sceneE = Math.max(-1080, Math.min(4, lastDeE));
         requestRender('preview');
       }
       return;
@@ -467,6 +474,11 @@ function boot() {
   });
   window.addEventListener('keyup', (e) => { if (nav) nav.keyup(e.code); });
   window.addEventListener('blur', () => { if (nav) nav.clearKeys(); });
+  window.addEventListener('wheel', (e) => {
+    if (!nav) return;
+    e.preventDefault();
+    nav.adjustSpeed(e.deltaY < 0 ? 1.2 : 1 / 1.2);
+  }, { passive: false });
   window.addEventListener('resize', () => { fitCanvas(); if (nav) { dirty = true; lastMoveT = performance.now(); } });
   const persist = () => {
     if (!nav || !locale) return;
@@ -511,7 +523,9 @@ function boot() {
       lastHud = t;
       const se = nav.state.sceneE;
       const dec = (se * Math.LN2 / Math.LN10).toFixed(0);
-      scaleEl.textContent = `scale 2^${se.toFixed(1)} ≈ 10^${dec}${se <= -1079 ? ' · precision wall' : ''}${nav.state.blockedFwd ? ' · surface!' : ''}`;
+      const spd = nav.state.speedMul;
+      const spdTxt = Math.abs(spd - 1) < 1e-9 ? '' : ` · speed ×${spd >= 1 ? spd.toFixed(1) : (1 / spd).toFixed(1) + '⁻¹'}`;
+      scaleEl.textContent = `scale 2^${se.toFixed(1)} ≈ 10^${dec}${spdTxt}${se <= -1079 ? ' · precision wall' : ''}${nav.state.blockedFwd ? ' · surface!' : ''}`;
       const path = useGpu && gpu ? 'GPU' : `${workers.length} workers`;
       if (gpuBusy) {
         setStatus(`rendering ${genMeta.W}×${genMeta.H} ${genMeta.kind} on GPU… ${Math.round(100 * gpuProgress)}%`);

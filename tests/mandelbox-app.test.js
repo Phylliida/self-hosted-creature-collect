@@ -55,32 +55,59 @@ async function main() {
     ok(Math.abs(b.fwd[0]) < 1e-9 && Math.abs(b.fwd[2] + 1) < 1e-9, 'D turns back (symmetry)');
   }
 
-  // ---- zoom dolly (Q in / E out) + blocked-forward ----
+  // ---- Q/E are PURE scale (no translation); movement never changes scale ----
   {
     const nav = createNav(basis, zero(), -100);
     nav.keydown('KeyQ');
     nav.tick(0.1, -100);
-    ok(val(nav.state.o[2], -100) < -0.05, 'Q dives along fwd (scale up)');
-    nav.clearKeys();
-    const before = nav.state.o[2].m * 2 ** nav.state.o[2].e;
-    nav.keydown('KeyQ'); nav.keydown('KeyW');
-    nav.tick(0.1, -Infinity); // interior probe: forward blocked
-    ok(nav.state.blockedFwd, 'interior probe sets blockedFwd');
-    ok(nav.state.o[2].m * 2 ** nav.state.o[2].e === before, 'blocked: Q/W do not advance');
+    ok(nav.state.sceneE < -100, `Q scales up / zooms in (sceneE ${nav.state.sceneE})`);
+    ok(nav.state.o.every((x) => x.m === 0), 'Q does not translate');
     nav.clearKeys(); nav.keydown('KeyE');
-    nav.tick(0.1, -Infinity);
-    ok(nav.state.o[2].m * 2 ** nav.state.o[2].e > before, 'E backs out even when blocked');
+    const before = nav.state.sceneE;
+    nav.tick(0.1, -100);
+    ok(nav.state.sceneE > before, 'E scales down / zooms out');
+    ok(nav.state.o.every((x) => x.m === 0), 'E does not translate');
+    nav.clearKeys(); nav.keydown('KeyW');
+    const se = nav.state.sceneE;
+    for (let i = 0; i < 50; i++) nav.tick(0.05, -100 - i); // probe values changing
+    ok(nav.state.sceneE === se, 'movement + probe changes never alter sceneE');
+    ok(nav.state.o[2].m !== 0, 'W did translate');
   }
 
-  // ---- sceneE tracks probes, clamps, deepens step size ----
+  // ---- blocked-forward + clamps ----
   {
     const nav = createNav(basis, zero(), -100);
-    for (let i = 0; i < 200; i++) nav.tick(0.05, -140);
-    ok(Math.abs(nav.state.sceneE + 140) < 1, `sceneE converges to probe (${nav.state.sceneE})`);
-    for (let i = 0; i < 2000; i++) nav.tick(0.05, -99999);
-    ok(nav.state.sceneE >= -1080, `sceneE clamps at precision wall (${nav.state.sceneE})`);
-    for (let i = 0; i < 2000; i++) nav.tick(0.05, 50);
-    ok(nav.state.sceneE <= 4, `sceneE clamps at whole-object scale (${nav.state.sceneE})`);
+    nav.keydown('KeyW');
+    nav.tick(0.1, -Infinity); // interior probe: forward blocked
+    ok(nav.state.blockedFwd, 'interior probe sets blockedFwd');
+    ok(nav.state.o.every((x) => x.m === 0), 'blocked: W does not advance');
+    nav.clearKeys(); nav.keydown('KeyS');
+    nav.tick(0.1, -Infinity);
+    ok(nav.state.o[2].m * 2 ** (nav.state.o[2].e + 100) > 0.01, 'S backs out even when blocked');
+    nav.clearKeys(); nav.keydown('KeyQ');
+    for (let i = 0; i < 5000; i++) nav.tick(0.05, null);
+    ok(nav.state.sceneE === -1080, `Q clamps at precision wall (${nav.state.sceneE})`);
+    nav.clearKeys(); nav.keydown('KeyE');
+    for (let i = 0; i < 5000; i++) nav.tick(0.05, null);
+    ok(nav.state.sceneE === 4, `E clamps at whole-object scale (${nav.state.sceneE})`);
+  }
+
+  // ---- scroll-wheel speed multiplier ----
+  {
+    const nav = createNav(basis, zero(), -100);
+    ok(Math.abs(nav.adjustSpeed(2) - 2) < 1e-12, 'adjustSpeed multiplies');
+    nav.keydown('KeyW');
+    nav.tick(0.1, null);
+    const fast = Math.abs(val(nav.state.o[2], -100));
+    const nav2 = createNav(basis, zero(), -100);
+    nav2.keydown('KeyW');
+    nav2.tick(0.1, null);
+    const slow = Math.abs(val(nav2.state.o[2], -100));
+    ok(Math.abs(fast / slow - 2) < 1e-9, `speedMul scales movement (${(fast / slow).toFixed(3)}×)`);
+    for (let i = 0; i < 100; i++) nav.adjustSpeed(10);
+    ok(nav.state.speedMul === 64, `speed clamps high (${nav.state.speedMul})`);
+    for (let i = 0; i < 100; i++) nav.adjustSpeed(0.1);
+    ok(nav.state.speedMul === 1 / 64, `speed clamps low (${nav.state.speedMul})`);
   }
   {
     // Motion magnitude scales with 2^sceneE: same key, deeper scene, smaller step.
@@ -99,6 +126,7 @@ async function main() {
     ok(Math.abs(val(nav.state.o[0], -493) - 0.6) < 1e-12, 'jumpTo x');
     ok(Math.abs(val(nav.state.o[1], -493) - 0.8) < 1e-12, 'jumpTo y');
     ok(nav.state.sceneE === -502, `jumpTo seeds sceneE (${nav.state.sceneE})`);
+    ok(nav.state.syncScale === true, 'jumpTo flags one-shot scale sync');
     const p = nav.offsetPlain();
     ok(p.length === 3 && typeof p[0].m === 'number' && typeof p[0].e === 'number', 'offsetPlain shape');
     nav.jumpAbs([-13.5, 2.25, -0.75], 3.5);
