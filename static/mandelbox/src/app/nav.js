@@ -8,19 +8,20 @@
 // shrinks, sceneE follows it, and every subsequent step is proportionally
 // smaller — the classic exponential deep dive. Q backs out the same way.
 //
-// Controls (PC): W/S forward/back, A/D strafe, Space up, Shift down,
-// E dolly in (zoom — "increases the scale of everything"), Q dolly out.
+// Controls (PC): W/S forward/back, A/D turn (yaw about the camera's up),
+// Space up, Shift down, Q dolly in (zoom — "scale up"), E dolly out.
 
 import { fe, feAdd, feSetD } from '../math/floatexp.js';
 
 export const KEYMAP = {
-  KeyW: 'fwd', KeyS: 'back', KeyA: 'left', KeyD: 'right',
+  KeyW: 'fwd', KeyS: 'back', KeyA: 'turnL', KeyD: 'turnR',
   Space: 'up', ShiftLeft: 'down', ShiftRight: 'down',
-  KeyE: 'zin', KeyQ: 'zout',
+  KeyQ: 'zin', KeyE: 'zout',
 };
 
 const MOVE_RATE = 1.6;   // lateral/vertical speed, units of 2^sceneE per second
 const DOLLY_RATE = 1.4;  // zoom dolly speed, units of 2^sceneE per second
+const YAW_RATE = 1.1;    // turn speed, radians per second
 const SCENE_MIN = -1080; // precision wall (ref prec 1150 − ~70 guard bits)
 const SCENE_MAX = 4;     // whole-object overview scale (camera ~14 out)
 
@@ -77,13 +78,27 @@ export function createNav(basis, offset, sceneE) {
     const go = (dir, k) => { step(dir, k); moved = true; };
     if (held.has('fwd') && !state.blockedFwd) go(fwd, m);
     if (held.has('back')) go(fwd, -m);
-    if (held.has('left')) go(right, -m);
-    if (held.has('right')) go(right, m);
+    if (held.has('turnL')) { yaw(YAW_RATE * dt); moved = true; }
+    if (held.has('turnR')) { yaw(-YAW_RATE * dt); moved = true; }
     if (held.has('up')) go(up, m);
     if (held.has('down')) go(up, -m);
     if (held.has('zin') && !state.blockedFwd) go(fwd, z);
     if (held.has('zout')) go(fwd, -z);
     return moved;
+  }
+
+  // Yaw about the camera's own up axis (positive = turn left). Mutates the
+  // shared basis object in place so every holder of the reference sees it.
+  function yaw(a) {
+    const { fwd, right, up } = state.basis;
+    const c = Math.cos(a), s = Math.sin(a);
+    const nf = [0, 1, 2].map((i) => fwd[i] * c - right[i] * s);
+    const nl = Math.hypot(nf[0], nf[1], nf[2]) || 1;
+    for (let i = 0; i < 3; i++) fwd[i] = nf[i] / nl;
+    // right = fwd × up (the makeCamera convention), renormalized
+    const nr = [fwd[1] * up[2] - fwd[2] * up[1], fwd[2] * up[0] - fwd[0] * up[2], fwd[0] * up[1] - fwd[1] * up[0]];
+    const rl = Math.hypot(nr[0], nr[1], nr[2]) || 1;
+    for (let i = 0; i < 3; i++) right[i] = nr[i] / rl;
   }
 
   // Jump to a preset standoff along direction v (unit double[3]).
