@@ -67,7 +67,7 @@ async function main() {
     for (let i = 0; i < 2000; i++) nav.tick(0.05, -99999);
     ok(nav.state.sceneE >= -1080, `sceneE clamps at precision wall (${nav.state.sceneE})`);
     for (let i = 0; i < 2000; i++) nav.tick(0.05, 50);
-    ok(nav.state.sceneE <= -6, `sceneE clamps at whole-object scale (${nav.state.sceneE})`);
+    ok(nav.state.sceneE <= 4, `sceneE clamps at whole-object scale (${nav.state.sceneE})`);
   }
   {
     // Motion magnitude scales with 2^sceneE: same key, deeper scene, smaller step.
@@ -79,7 +79,7 @@ async function main() {
     ok(Math.abs(shallow.state.o[2].m) - Math.abs(deep.state.o[2].m) < 1e-9, 'same mantissa magnitude');
   }
 
-  // ---- jumpTo + offsetPlain ----
+  // ---- jumpTo / jumpAbs + offsetPlain ----
   {
     const nav = createNav(basis, zero(), -50);
     nav.jumpTo([0.6, 0.8, 0], -493);
@@ -88,6 +88,12 @@ async function main() {
     ok(nav.state.sceneE === -502, `jumpTo seeds sceneE (${nav.state.sceneE})`);
     const p = nav.offsetPlain();
     ok(p.length === 3 && typeof p[0].m === 'number' && typeof p[0].e === 'number', 'offsetPlain shape');
+    nav.jumpAbs([-13.5, 2.25, -0.75], 3.5);
+    ok(Math.abs(val(nav.state.o[0], 0) + 13.5) < 1e-12, 'jumpAbs x');
+    ok(Math.abs(val(nav.state.o[1], 0) - 2.25) < 1e-12, 'jumpAbs y');
+    ok(nav.state.sceneE === 3.5, `jumpAbs sceneE within clamp (${nav.state.sceneE})`);
+    nav.jumpAbs([1, 1, 1], 99);
+    ok(nav.state.sceneE === 4, `jumpAbs clamps sceneE (${nav.state.sceneE})`);
   }
 
   // ---- deriveOpts ----

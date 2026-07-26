@@ -6,6 +6,7 @@ import { bisectSurface, muToC } from '../math/locate.js';
 import { computeMbReference } from '../math/reference.js';
 import { perturbDE } from '../math/perturb.js';
 import { fe } from '../math/floatexp.js';
+import { toDouble } from '../math/bignum.js';
 
 const CAM_CANDS = [[0.8, 0.5, 0.33], [-0.7, 0.6, -0.4], [0.25, -0.9, 0.42], [0.6, 0.2, -0.75], [-0.3, -0.5, 0.8], [13, 8, 3], [-13, -8, -3]];
 const norm3 = (v) => { const l = Math.hypot(v[0], v[1], v[2]); return [v[0] / l, v[1] / l, v[2] / l]; };
@@ -52,7 +53,11 @@ if (typeof self !== 'undefined' && typeof self.postMessage === 'function') self.
     rFM: ref.rFM.slice(), rFE: ref.rFE.slice(),
   };
   self.postMessage(
-    { type: 'done', mu: muBig.toString(), scaleBits: S, refLen: ref.len, best, ref: refPlain },
+    {
+      type: 'done', mu: muBig.toString(), scaleBits: S, refLen: ref.len, best, ref: refPlain,
+      // C as doubles — the main thread frames the whole-object view with it.
+      Cd: [toDouble(C.x, prec), toDouble(C.y, prec), toDouble(C.z, prec)],
+    },
     Object.values(refPlain).filter((v) => ArrayBuffer.isView(v)).map((v) => v.buffer),
   );
 };
