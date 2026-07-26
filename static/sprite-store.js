@@ -199,7 +199,7 @@
 
   // Pending-retry registry. Populated when a showSprite call hits a
   // transient failure (e.g. 504 during LocalServer's restart window).
-  // Drained on a ~1s poll; entries whose imgs have been removed from
+  // Drained on a ~500ms poll; entries whose imgs have been removed from
   // the DOM or superseded by a newer showSprite call get pruned.
   //
   // Each entry: { img, a, b, variant, opts, gen }.
@@ -257,7 +257,7 @@
       showSprite(r.img, r.a, r.b, r.variant, r.opts);
     }
   }
-  const RETRY_INTERVAL_MS = 1000;
+  const RETRY_INTERVAL_MS = 500;
   if (typeof setInterval === 'function') setInterval(retryPoll, RETRY_INTERVAL_MS);
 
   function invalidate(a, b, variant) {

@@ -13497,6 +13497,33 @@
   // double-taps and multi-button mashes are rejected at the door.
   let _throwInFlight = false;
 
+  // Startup / foreground reset. A true process restart already lands
+  // here with the flag false (it's in-memory), but a SUSPENDED webview
+  // keeps it: background the app mid-throw and the awaited animation
+  // chain may never settle after resume (a known WKWebView hazard for
+  // animation.finished across backgrounding), which would hold the
+  // encounter lock — Flee and backdrop tap both gate on this flag —
+  // forever. The throw's outcome is persisted BEFORE any animation
+  // runs (see _throwBallImpl), so releasing the lock on foreground can
+  // never lose a catch; worst case the chain was actually still alive
+  // and the player can now flee mid-animation, skipping the remaining
+  // visuals. Also drop the .throwing class so the action panel's
+  // pointer-events come back.
+  function _releaseThrowLockOnForeground() {
+    if (typeof document !== 'undefined'
+        && document.visibilityState
+        && document.visibilityState !== 'visible') return;
+    if (!_throwInFlight) return;
+    _throwInFlight = false;
+    if (typeof document === 'undefined') return;
+    const el = document.getElementById('battleScreen');
+    if (el) el.classList.remove('throwing');
+  }
+  if (typeof document !== 'undefined' && typeof window !== 'undefined') {
+    document.addEventListener('visibilitychange', _releaseThrowLockOnForeground);
+    window.addEventListener('pageshow', _releaseThrowLockOnForeground);
+  }
+
   function ensureBattleScreen() {
     let el = document.getElementById('battleScreen');
     if (el) return el;
@@ -13952,13 +13979,18 @@
 
   // Animation flow for throwing a ball at the current spawn:
   //  1. Consume the ball from the bag.
-  //  2. Suck-in: creature shrinks + fades, ball pops in at center,
+  //  2. Roll the outcome: per-shake stay-closed rate × 3, count
+  //     successes. 3 successes = caught; otherwise break out at the
+  //     failed shake. On a catch, record the capture IMMEDIATELY —
+  //     everything durable (ball spend, hidden guaranteed-catch
+  //     re-roll spends, the capture record) is persisted before any
+  //     cosmetic animation runs, so an app kill mid-throw can never
+  //     lose the result.
+  //  3. Suck-in: creature shrinks + fades, ball pops in at center,
   //     white flash overlay pulses.
-  //  3. Roll outcome: per-shake stay-closed rate × 3, count successes.
-  //     3 successes = caught; otherwise break out at the failed shake.
   //  4. Wobble the ball N times (N = successful shakes).
-  //  5a. Caught → brief celebration flash → record capture →
-  //      close battle → open inventory detail for the new entry.
+  //  5a. Caught → brief celebration flash → close battle → open
+  //      inventory detail for the already-recorded entry.
   //  5b. Break out → ball pops open with flash → creature reappears →
   //      re-enable buttons (and re-render in case bag is now empty).
   // Re-entry-guarded wrapper. Two rapid taps on a ball button (or
@@ -14040,6 +14072,55 @@
     // Silhouette flash mirrors the sprite's image (white-tinted via
     // CSS filter) so the flash takes the creature's outline.
     if (sprite.src) flash.src = sprite.src;
+
+    // Outcome decision — BEFORE any animation plays. The ball is
+    // already durably consumed, so the roll (and, on a catch, the
+    // capture record) must be persisted up front: if the app is killed
+    // or the webview wedges anywhere in the cosmetic stages below,
+    // relaunching still finds the throw fully resolved — ball spent,
+    // caught creature already in the inventory. A kill on a breakout
+    // only skips the pop-open visual; nothing more was owed.
+    const rate = meta.catchShakeRate || 0.65;
+    const rollShakes = () => {
+      let n = 0;
+      for (let i = 0; i < 3; i++) {
+        if (Math.random() < rate) n++;
+        else break;
+      }
+      return n;
+    };
+    let shakes, caught, wobbleMs = 380, pauseMs = 320;
+    if (_guaranteedCatchOn()) {
+      // Guaranteed-catch accessibility mode: same odds and same balls
+      // (hidden re-rolls consume extras via consumeItem — persisted as
+      // they happen), slower shakes so total time stays above the
+      // manual expectation — just one physical throw. See
+      // _guaranteedThrowPlan.
+      const plan = _guaranteedThrowPlan(rollShakes, () => consumeItem(ballKey, 1));
+      shakes = plan.wobbles;
+      caught = plan.caught;
+      wobbleMs = plan.wobbleMs;
+      pauseMs = plan.pauseMs;
+    } else {
+      shakes = rollShakes();
+      caught = shakes === 3;
+    }
+
+    // Persist a successful catch immediately (see above). The entry is
+    // kept for the post-animation navigation into the detail view. On
+    // a storage failure, bail cleanly: unlock the UI and leave the
+    // encounter open (ball spent, no capture) rather than wedging the
+    // screen in the throwing state.
+    let caughtEntry = null;
+    if (caught) {
+      try {
+        caughtEntry = await recordCaptureFromSpawn(spawn);
+      } catch (e) {
+        _logCreatureError('throwBall/recordCapture', e);
+        battleEl.classList.remove('throwing');
+        return;
+      }
+    }
 
     // Compute starting offset of the ball: the button's center
     // expressed relative to the ball's natural resting position
@@ -14127,33 +14208,7 @@
     flash.setAttribute('hidden', '');
     await delay(80);
 
-    // Stage 2: outcome decision (random 0-3 successful shakes).
-    const rate = meta.catchShakeRate || 0.65;
-    const rollShakes = () => {
-      let n = 0;
-      for (let i = 0; i < 3; i++) {
-        if (Math.random() < rate) n++;
-        else break;
-      }
-      return n;
-    };
-    let shakes, caught, wobbleMs = 380, pauseMs = 320;
-    if (_guaranteedCatchOn()) {
-      // Guaranteed-catch accessibility mode: same odds and same balls
-      // (hidden re-rolls consume extras via consumeItem), slower
-      // shakes so total time stays above the manual expectation —
-      // just one physical throw. See _guaranteedThrowPlan.
-      const plan = _guaranteedThrowPlan(rollShakes, () => consumeItem(ballKey, 1));
-      shakes = plan.wobbles;
-      caught = plan.caught;
-      wobbleMs = plan.wobbleMs;
-      pauseMs = plan.pauseMs;
-    } else {
-      shakes = rollShakes();
-      caught = shakes === 3;
-    }
-
-    // Stage 3: wobble for each successful shake. Each shake is a
+    // Stage 2: wobble for each successful shake. Each shake is a
     // full back-and-forth — center → lead direction → opposite →
     // center — with the leading direction alternating per shake so
     // the rocking pattern reads as a physical struggle rather than
@@ -14184,7 +14239,7 @@
 
     const burst = battleEl.querySelector('.battle-burst');
     if (caught) {
-      // Stage 4a: caught! The "click + lock" moment. Seam-glow
+      // Stage 3a: caught! The "click + lock" moment. Seam-glow
       // pulses (the line + center button glowing white-gold) +
       // a small celebratory ball squish. Warm gold radial burst
       // behind it. NO silhouette flash — the creature is sealed
@@ -14215,16 +14270,17 @@
         { duration: 540, easing: 'cubic-bezier(0.34, 1.56, 0.64, 1)' });
       await ding.finished.catch(() => {});
       if (burst) burst.setAttribute('hidden', '');
-      const entry = await recordCaptureFromSpawn(spawn);
+      // The capture was recorded before the animations ran; all that's
+      // left is the navigation into the new entry's detail view.
       closeBattleScreen();
       show();
       // fromCatch flips on .cc-post-catch so the Done button surfaces
       // for THIS specific entry into the detail view. Inventory taps
       // hit the same view but without the flag, so they don't get
       // the redundant footer.
-      showDetail(entry.id, undefined, undefined, { fromCatch: true });
+      showDetail(caughtEntry.id, undefined, undefined, { fromCatch: true });
     } else {
-      // Stage 4b: break out. Sequence:
+      // Stage 3b: break out. Sequence:
       //   1) Cool white burst radiates from the ball — the
       //      "energy release" moment.
       //   2) The ball physically splits — top half flips up + back
@@ -14898,12 +14954,18 @@
     });
     if (global.SpriteStore) {
       const img = el.querySelector('.radar-marker-img');
-      // best-available sprite; the .silhouette filter blacks it out to a shape
+      // Same art the real marker will show (resolved from the spawn's
+      // deterministic variantSeed); the .silhouette filter blacks it out
+      // to a shape. Passing `undefined` here would fall back to
+      // bestVariantFor (always custom slot 0), making the silhouette lie
+      // about which variant the spawn actually has.
       if (typeof sp.solo === 'string' && sp.solo) {
         showCreatureArt(img, { solo: sp.solo }, { onReady: () => el.classList.add('ready') });
       } else {
-        global.SpriteStore.showSprite(img, sp.speciesA, sp.speciesB, undefined, {
-          onReady: () => el.classList.add('ready'),
+        resolveSpawnVariant(sp).then((variant) => {
+          global.SpriteStore.showSprite(img, sp.speciesA, sp.speciesB, variant, {
+            onReady: () => el.classList.add('ready'),
+          });
         });
       }
     }
