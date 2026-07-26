@@ -53,11 +53,11 @@ export function createNav(basis, offset, sceneE) {
   function keyup(code) { if (KEYMAP[code]) { held.delete(KEYMAP[code]); return true; } return false; }
   function clearKeys() { held.clear(); }
 
-  // Add dir·(k·2^sceneE) to the offset. sceneE can be far below double range,
+  // Add dir·(k·2^eBase) to the offset. eBase can be far below double range,
   // so split it into a fractional mantissa factor and an integer exponent.
-  function step(dir, k) {
-    const eInt = Math.floor(state.sceneE);
-    const scale = k * 2 ** (state.sceneE - eInt);
+  function step(dir, k, eBase) {
+    const eInt = Math.floor(eBase);
+    const scale = k * 2 ** (eBase - eInt);
     for (let i = 0; i < 3; i++) {
       feSetD(T, dir[i] * scale);
       if (T.m !== 0) T.e += eInt;
@@ -68,16 +68,21 @@ export function createNav(basis, offset, sceneE) {
   // Advance dt seconds. probeDeE: latest measured log2(DE at camera), or null
   // (unknown) or -Infinity (interior — informational only: the HUD shows
   // "surface!", nothing is blocked). Movement never touches sceneE; Q/E
-  // change ONLY sceneE. Returns true if anything changed.
+  // change ONLY sceneE. Translation speed is 2^sceneE — capped by the
+  // measured clearance (~2·DE per second max), so approaching geometry
+  // auto-slows without the render scale changing. Returns true if anything
+  // changed.
   function tick(dt, probeDeE) {
     state.blockedFwd = probeDeE === -Infinity;
 
     if (held.size === 0) return false;
     const { fwd, right, up } = state.basis;
     let moved = false;
+    let moveE = state.sceneE;
+    if (Number.isFinite(probeDeE)) moveE = Math.min(moveE, probeDeE + 1);
     const m = MOVE_RATE * dt * state.speedMul;
     const z = ZOOM_RATE * dt * state.speedMul;
-    const go = (dir, k) => { step(dir, k); moved = true; };
+    const go = (dir, k) => { step(dir, k, moveE); moved = true; };
     if (held.has('fwd')) go(fwd, m);
     if (held.has('back')) go(fwd, -m);
     if (held.has('turnL')) { yaw(YAW_RATE * dt); moved = true; }

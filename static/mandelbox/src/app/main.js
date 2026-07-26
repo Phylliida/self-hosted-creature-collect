@@ -2,21 +2,19 @@
 //
 // Boot: a locate worker bisects the surface point (or reconstructs it from
 // the cached mu — exact, instant) and builds the reference orbit; render
-// workers each get a copy and serve row jobs + camera DE probes. The app
-// starts at a whole-object overview (preset 0) and the rAF loop integrates
-// nav input (nav.js), probes DE at the camera (~8 Hz) so the scale exponent
-// tracks measured clearance, and drives progressive rendering.
+// workers each get a copy and serve row jobs + camera DE probes; the GPU
+// path (src/gpu/) renders when WebGL2 exists. The app starts at a
+// whole-object overview (preset 0). The clearance probe (~8 Hz) feeds the
+// speed cap, the "surface!" indicator, and one-shot scale syncs after
+// teleports — the scale exponent itself is Q/E-controlled only.
 //
-// Rendering is INTERRUPTIBLE: every generation bump broadcasts a cancel and
-// workers abort mid-chunk within one ~60ms slice (see worker.js), so
-// movement always restarts a fresh preview quickly. Quality toggle (fractals2
-// Explore/Draw style): Explore renders everything at 1/3 canvas res; Hi-res
-// renders idle frames at canvas res with 2×2 supersampling (rendered at 2×
-// linear, smooth-downscaled). Moving previews are always Explore-res.
+// Rendering is INTERRUPTIBLE with SWAP-ON-COMPLETE previews; there is NO
+// automatic idle re-render — activating Hi-res (T or click) renders one
+// crisp supersampled frame on demand (user preference).
 //
-// Controls: W/S forward/back · A/D strafe · Space/Shift up/down ·
-// E dive in (zoom) · Q back out · 0 overview · 1-5 depth presets ·
-// T quality toggle · H help.
+// Controls: W/S forward/back · A/D turn · Space/Shift up/down · Q/E scale
+// in/out · wheel speed · 0 overview · 1-5 presets · T quality · G GPU ·
+// ☰ iterations menu · H help.
 
 import { createNav, deriveOpts, KEYMAP } from './nav.js';
 import { makeCamera } from '../math/march.js';
@@ -96,7 +94,7 @@ function boot() {
   }
   function iterChanged() {
     saveIter(); syncIterUI();
-    idleDone = false; dirty = true; lastMoveT = performance.now();
+    dirty = true; lastMoveT = performance.now();
   }
   iterAutoEl.addEventListener('change', () => { iterAuto = iterAutoEl.checked; iterChanged(); });
   const manualFrom = (v) => {
@@ -110,16 +108,15 @@ function boot() {
   // ---- quality mode ----
   let quality = 'explore';
   try { quality = localStorage.getItem(LS_QUALITY) === 'draw' ? 'draw' : 'explore'; } catch (e) { /* ignore */ }
+  // Quality is EXPLICIT (user request): there is no automatic idle re-render.
+  // Activating Hi-res (click or T, including re-clicking it) renders one
+  // crisp frame now; Explore just goes back to preview-quality live renders.
   function setQuality(q) {
     quality = q;
     try { localStorage.setItem(LS_QUALITY, q); } catch (e) { /* ignore */ }
     for (const b of qBtns) b.setAttribute('aria-pressed', String(b.dataset.mode === q));
-    idleDone = false; // re-render idle frame in the new mode
-    // Cancel an in-flight idle render of the old mode right away (previews
-    // are left alone — movement owns them).
-    if (nav && workers.length && readyWorkers === workers.length && pending > 0 && genMeta && genMeta.kind !== 'preview') {
-      requestRender(quality === 'draw' ? 'idle-draw' : 'idle-explore');
-      idleDone = true;
+    if (q === 'draw' && !SELFTEST && nav && workers.length && readyWorkers === workers.length) {
+      requestRender('idle-draw');
     }
   }
   for (const b of qBtns) b.addEventListener('click', () => { setQuality(b.dataset.mode); b.blur(); });
@@ -142,7 +139,7 @@ function boot() {
   let locale = null;
   let lastDeE = null;
   let gen = 0, jobs = [], pending = 0, totalJobs = 0, genMeta = null;
-  let dirty = false, idleDone = false, lastMoveT = 0, lastProbeT = 0, lastKickT = 0;
+  let dirty = false, lastMoveT = 0, lastProbeT = 0, lastKickT = 0;
   let gpu = null, gpuBusy = false, gpuK = 4, gpuProgress = 0, useGpu = false;
   let previewChunks = [];
   let selfCapture = null, selfIdleMeta = null, selfPhase = 'cpu';
@@ -247,7 +244,7 @@ function boot() {
       if (nav && nav.state.syncScale && Number.isFinite(lastDeE)) {
         nav.state.sceneE = Math.max(-1080, Math.min(4, lastDeE));
         nav.state.syncScale = false;
-        if (!SELFTEST) { dirty = true; idleDone = false; lastMoveT = performance.now(); }
+        if (!SELFTEST) { dirty = true; lastMoveT = performance.now(); }
       }
       if (SELFTEST && !selfStarted) {
         selfStarted = true;
@@ -501,7 +498,7 @@ function boot() {
     }
     if (e.code === 'KeyT') { setQuality(quality === 'draw' ? 'explore' : 'draw'); return; }
     if (e.code === 'KeyG') {
-      if (gpu) { useGpu = !useGpu; idleDone = false; dirty = true; lastMoveT = performance.now(); }
+      if (gpu) { useGpu = !useGpu; dirty = true; lastMoveT = performance.now(); }
       return;
     }
     if (e.code === 'KeyH' || (e.key === '?')) { hintEl.hidden = !hintEl.hidden; return; }
@@ -533,7 +530,7 @@ function boot() {
 
     const moved = nav.tick(dt, lastDeE);
     if (moved) {
-      dirty = true; idleDone = false; lastMoveT = t;
+      dirty = true; lastMoveT = t;
       if (t - lastProbeT > 120) sendProbe();
     }
     if (gpuBusy) gpuStep();
@@ -550,10 +547,6 @@ function boot() {
     if (dirty && t - lastKickT > minGap && preemptOk) {
       requestRender('preview');
       dirty = false;
-    }
-    if (!SELFTEST && !dirty && !idleDone && nav.held.size === 0 && genMeta && pending === 0 && !gpuBusy && t - lastMoveT > 400) {
-      requestRender(quality === 'draw' ? 'idle-draw' : 'idle-explore');
-      idleDone = true;
     }
     if (t - lastHud > 150) {
       lastHud = t;

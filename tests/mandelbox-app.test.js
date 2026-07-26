@@ -89,6 +89,19 @@ async function main() {
     ok(nav.state.sceneE === 4, `E clamps at whole-object scale (${nav.state.sceneE})`);
   }
 
+  // ---- clearance speed cap (approaching geometry auto-slows) ----
+  {
+    const nav = createNav(basis, zero(), -100);
+    nav.keydown('KeyW');
+    nav.tick(0.1, -120); // clearance far below the scale
+    ok(nav.state.o[2].e < -115, `clearance caps translation speed (e=${nav.state.o[2].e})`);
+    ok(nav.state.sceneE === -100, 'cap does not touch sceneE');
+    const nav2 = createNav(basis, zero(), -100);
+    nav2.keydown('KeyW');
+    nav2.tick(0.1, -50); // generous clearance: scale rules
+    ok(nav2.state.o[2].e > -110, `scale rules when clearance is generous (e=${nav2.state.o[2].e})`);
+  }
+
   // ---- scroll-wheel speed multiplier ----
   {
     const nav = createNav(basis, zero(), -100);
