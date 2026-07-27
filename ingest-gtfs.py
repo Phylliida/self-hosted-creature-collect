@@ -29,6 +29,10 @@ import zipfile
 
 BUILD_SCRIPT = pathlib.Path(__file__).parent / "build-schedule-db.py"
 VALIDATE_SCRIPT = pathlib.Path(__file__).parent / "validate-gtfs.py"
+BROWSER_DL_SCRIPT = pathlib.Path(__file__).parent / "browser-download.py"
+# zendriver lives in the housing-search venv, not the system python.
+BROWSER_DL_PYTHON = (pathlib.Path(__file__).parent / "housing-search"
+                     / ".venv" / "bin" / "python")
 
 
 def read_feeds_tsv(path):
@@ -106,12 +110,20 @@ def presort_stop_times_in_zip(zip_path):
     except zipfile.BadZipFile:
         return  # validator will flag
     try:
-        try:
-            raw = z.read("stop_times.txt")
-        except KeyError:
+        # The file may be nested in a subdirectory (repo archives etc.).
+        st_name = next(
+            (n for n in z.namelist()
+             if not n.startswith("__MACOSX/")
+             and n.rstrip("/").rsplit("/", 1)[-1] == "stop_times.txt"),
+            None,
+        )
+        if st_name is None:
             return
+        text = z.read(st_name).decode("utf-8-sig")
+        if "\r" in text:  # normalize stray/classic-Mac \r line endings
+            text = text.replace("\r\n", "\n").replace("\r", "\n")
         # Fast path: scan once. If no trip_id re-appears after its run, already sorted.
-        reader = csv.DictReader(io.StringIO(raw.decode("utf-8-sig")))
+        reader = csv.DictReader(io.StringIO(text), skipinitialspace=True)
         seen = set(); current = None; sorted_ = True
         for row in reader:
             tid = row.get("trip_id", "")
@@ -124,7 +136,7 @@ def presort_stop_times_in_zip(zip_path):
             return
         sys.stderr.write(f"[presort] stop_times.txt not grouped by trip_id — rewriting\n")
         # Re-parse and sort. Keep other files byte-identical.
-        reader = csv.DictReader(io.StringIO(raw.decode("utf-8-sig")))
+        reader = csv.DictReader(io.StringIO(text), skipinitialspace=True)
         rows = list(reader)
         fieldnames = reader.fieldnames or []
         def _seq(v):
@@ -137,19 +149,41 @@ def presort_stop_times_in_zip(zip_path):
         writer.writeheader()
         writer.writerows(rows)
         sorted_bytes = out.getvalue().encode("utf-8")
-        other_names = [n for n in z.namelist() if n != "stop_times.txt"]
+        other_names = [n for n in z.namelist() if n != st_name]
         others = {n: z.read(n) for n in other_names}
     finally:
         z.close()
     tmp = zip_path + ".tmp"
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
-        zout.writestr("stop_times.txt", sorted_bytes)
+        zout.writestr(st_name, sorted_bytes)
         for n, data in others.items():
             zout.writestr(n, data)
     os.replace(tmp, zip_path)
 
 
-def ingest_one(db_path, slug, url, name, tmp_root, skip_validate=False, fallback=""):
+def browser_download(url, dest):
+    """Last-resort download through a real (headful, undetected) browser for
+    feeds that bot-block plain HTTP clients. Returns None on success, or a
+    short reason string on failure."""
+    if not BROWSER_DL_PYTHON.exists():
+        return "browser fallback unavailable (housing-search/.venv missing)"
+    try:
+        proc = subprocess.run(
+            [str(BROWSER_DL_PYTHON), str(BROWSER_DL_SCRIPT), url, dest],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        return "browser download timed out"
+    except OSError as e:
+        return f"browser download failed to start: {e}"
+    sys.stderr.write(proc.stdout.decode("utf-8", errors="replace"))
+    if proc.returncode != 0:
+        return f"browser download failed (exit {proc.returncode})"
+    return None
+
+
+def ingest_one(db_path, slug, url, name, tmp_root, skip_validate=False, fallback="",
+               browser_fallback=False):
     if already_ingested(db_path, slug):
         sys.stderr.write(f"[skip] {slug} already ingested\n")
         return "skipped"
@@ -166,6 +200,12 @@ def ingest_one(db_path, slug, url, name, tmp_root, skip_validate=False, fallback
         if err and fallback and fallback != url:
             sys.stderr.write(f"[retry] {label}: {err} — trying fallback URL\n")
             err = try_download(fallback, tmp_path)
+        if err and browser_fallback:
+            sys.stderr.write(f"[browser] {label}: {err} — trying browser download\n")
+            err = browser_download(url, tmp_path)
+            if err and fallback and fallback != url:
+                sys.stderr.write(f"[browser] {label}: {err} — trying fallback URL\n")
+                err = browser_download(fallback, tmp_path)
         if err:
             sys.stderr.write(f"[fail] {label}: {err}\n")
             return "download_failed"
@@ -221,6 +261,10 @@ def main():
     ap.add_argument("--tmp", default=None, help="temp directory for zip downloads")
     ap.add_argument("--skip-validate", action="store_true",
                     help="skip format validation before ingesting")
+    ap.add_argument("--no-browser-fallback", action="store_true",
+                    help="don't retry bot-blocked feeds through a real browser "
+                         "(default: browser fallback on; needs the zendriver "
+                         "venv + chromium, quietly skipped when unavailable)")
     args = ap.parse_args()
 
     if not args.feeds and not args.single:
@@ -244,7 +288,8 @@ def main():
         try:
             result = ingest_one(args.schedule_db, slug, url, name, tmp_root,
                                 skip_validate=args.skip_validate,
-                                fallback=fallback)
+                                fallback=fallback,
+                                browser_fallback=not args.no_browser_fallback)
         except KeyboardInterrupt:
             sys.stderr.write("interrupted\n")
             break

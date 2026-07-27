@@ -439,6 +439,19 @@ missing `stop_times.txt`, broken references). You can inspect them with
 `ingest-gtfs.py` command skips anything already done, so crashes or pauses
 are harmless.
 
+**Bot-blocked feeds**: some agencies (mostly CivicPlus-hosted city sites and
+Cloudflare-fronted portals) return 403 to plain HTTP clients. Feeds whose
+plain download fails are automatically retried through a real headful
+chromium (`browser-download.py`, using zendriver from `housing-search/.venv`;
+spawns Xvfb when there's no display). Opt out with `--no-browser-fallback`.
+
+**Feed URL freshness**: `update-transit-schedules.py` re-fetches the Mobility
+Database catalog at the start of every run and merges it into `feeds-*.tsv`
+(updated URLs, new active agencies, deprecated ids dropped, manual entries
+like `stm` preserved, same-URL duplicates skipped). Disable with
+`--no-refresh-feeds`. The manual regeneration below is only needed for the
+first-ever setup or a new country.
+
 **Final sizes** (rough):
 - ~100 Canadian feeds → ~80 MB schedule.sqlite (without shapes: ~30 MB;
   shapes add ~50 MB)

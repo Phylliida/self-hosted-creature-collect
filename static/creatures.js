@@ -3146,6 +3146,176 @@
     };
   }
 
+  // ── Community Day Pass (biweekly timed item) ──
+  // Two are granted each community week (the event runs every OTHER week —
+  // the engine owns the schedule: Spawns.communityDayInfo, Monday 00:00
+  // GMT-12 → Sunday 24:00 GMT-12). Off weeks grant nothing and the item
+  // simply doesn't appear. Using one starts (or extends) a 1-hour session
+  // during which every wild, radar and incense spawn is a fusion of the
+  // week's featured species. Passes left over at week's end vanish; an
+  // in-progress session runs to its natural end even across the boundary,
+  // keeping its original species.
+  // The count does NOT live in the bag map — it lives in cc.communityDay.v1
+  // with the week stamp, so expiry/merge logic can't lose track of it.
+  function _communityPassIcon() {
+    // Gold star ticket.
+    const svg =
+      "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'>" +
+      "<rect x='3' y='8' width='34' height='24' rx='5' fill='#e8a13a'/>" +
+      "<rect x='3' y='8' width='34' height='24' rx='5' fill='none' stroke='#a96f1c' stroke-width='2'/>" +
+      "<path d='M20 13l2.2 4.6 5 .6-3.7 3.4 1 4.9-4.5-2.5-4.5 2.5 1-4.9-3.7-3.4 5-.6z' fill='#fff7e0'/>" +
+      "</svg>";
+    return 'data:image/svg+xml,' + encodeURIComponent(svg);
+  }
+  ITEMS.community_pass = {
+    name: 'Community Day Pass',
+    desc: '1 hour where every wild, radar and incense pokémon is a fusion of this week\'s featured species.',
+    icon: _communityPassIcon(),
+    communityDay: true,
+  };
+
+  // ── Community day state ──
+  // { weekKey, count, active: { speciesId, startMs, endMs } | null } in
+  // localStorage AND the save file (mirrors the active-incense pattern).
+  // Pushed to the spawn engine via Spawns.setCommunityDay.
+  const COMMUNITY_DAY_KEY = 'cc.communityDay.v1';
+  const COMMUNITY_PASS_DURATION_MS = 60 * 60 * 1000;   // 1 h per pass
+  const COMMUNITY_WEEKLY_PASSES = 2;
+  function _readCommunityRaw() {
+    let s = null;
+    try { s = JSON.parse(localStorage.getItem(COMMUNITY_DAY_KEY) || 'null'); } catch { s = null; }
+    if (!s || typeof s.weekKey !== 'number') return null;
+    return s;
+  }
+  function _writeCommunityRaw(s) {
+    try { localStorage.setItem(COMMUNITY_DAY_KEY, JSON.stringify(s)); } catch (_) {}
+  }
+  // Lazy biweekly grant: when the week stamp is stale, reset the pass
+  // count (leftovers expire with the week; off weeks grant 0 so the item
+  // doesn't appear). An unexpired session is kept — it may legitimately
+  // cross the boundary with last week's species.
+  function syncCommunityWeek() {
+    if (!global.Spawns || !global.Spawns.communityDayInfo) return null;
+    const info = global.Spawns.communityDayInfo(Date.now());
+    const s = _readCommunityRaw();
+    if (s && s.weekKey === info.weekKey) return s;
+    const active = (s && s.active && Date.now() < s.active.endMs) ? s.active : null;
+    const grant = info.speciesId ? COMMUNITY_WEEKLY_PASSES : 0;
+    const next = { weekKey: info.weekKey, count: grant, active };
+    _writeCommunityRaw(next);
+    if (global.Spawns && global.Spawns.setCommunityDay) global.Spawns.setCommunityDay(active);
+    return next;
+  }
+  function readCommunityDay() {
+    const s = syncCommunityWeek();
+    if (!s) return null;
+    if (s.active && Date.now() >= s.active.endMs) {
+      // Session lapsed — clean up so the bag/overlay stop treating it active.
+      s.active = null;
+      _writeCommunityRaw(s);
+      if (global.Spawns && global.Spawns.setCommunityDay) global.Spawns.setCommunityDay(null);
+    }
+    return s;
+  }
+  // Consume one pass: start a fresh 1-h session for this week's species,
+  // or extend the running one by 1 h.
+  function activateCommunityPass() {
+    const s = readCommunityDay();
+    if (!s || (s.count || 0) < 1) return false;
+    const now = Date.now();
+    if (s.active) {
+      s.active.endMs += COMMUNITY_PASS_DURATION_MS;
+    } else {
+      const info = global.Spawns.communityDayInfo(now);
+      s.active = { speciesId: info.speciesId, startMs: now, endMs: now + COMMUNITY_PASS_DURATION_MS };
+    }
+    s.count -= 1;
+    _writeCommunityRaw(s);
+    if (global.Spawns && global.Spawns.setCommunityDay) global.Spawns.setCommunityDay(s.active);
+    if (typeof refreshSpawnOverlay === 'function') refreshSpawnOverlay();
+    return true;
+  }
+  // Save-import hook (index.html): merge a backup's community-day state.
+  // Newer week wins outright; same week → max count (capped), and the
+  // unexpired session with the later endMs survives.
+  function setCommunityDayState(state) {
+    if (!state || typeof state.weekKey !== 'number') return;
+    const now = Date.now();
+    const validActive = (a) => (a && typeof a.speciesId === 'number'
+      && typeof a.startMs === 'number' && typeof a.endMs === 'number'
+      && now < a.endMs)
+      ? { speciesId: a.speciesId, startMs: a.startMs, endMs: a.endMs } : null;
+    const local = _readCommunityRaw();
+    const localActive = local ? validActive(local.active) : null;
+    const incActive = validActive(state.active);
+    const bestActive = (localActive && incActive)
+      ? (incActive.endMs > localActive.endMs ? incActive : localActive)
+      : (incActive || localActive);
+    let next;
+    if (!local || state.weekKey > local.weekKey) {
+      next = { weekKey: state.weekKey, count: Math.min(COMMUNITY_WEEKLY_PASSES, state.count || 0), active: bestActive };
+    } else if (state.weekKey === local.weekKey) {
+      next = { weekKey: local.weekKey, active: bestActive,
+               count: Math.min(COMMUNITY_WEEKLY_PASSES, Math.max(local.count || 0, state.count || 0)) };
+    } else {
+      next = { weekKey: local.weekKey, count: local.count || 0, active: bestActive };
+    }
+    _writeCommunityRaw(next);
+    // Re-stamp in case the adopted week is itself stale, then push.
+    const s = readCommunityDay();
+    if (global.Spawns && global.Spawns.setCommunityDay) {
+      global.Spawns.setCommunityDay(s && s.active ? s.active : null);
+    }
+    if (typeof refreshSpawnOverlay === 'function') refreshSpawnOverlay();
+  }
+  function _communitySpeciesName(id) {
+    return (global.Species && global.Species.nameFor) ? global.Species.nameFor(id) : '#' + id;
+  }
+  function _fmtCountdownHMS(ms) {
+    const s = Math.max(0, Math.ceil(ms / 1000));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+    return h + ':' + String(m).padStart(2, '0') + ':' + String(ss).padStart(2, '0');
+  }
+  function _fmtExpiryDh(ms) {
+    const mins = Math.max(0, Math.ceil(ms / 60000));
+    const d = Math.floor(mins / 1440), h = Math.floor((mins % 1440) / 60);
+    if (d > 0) return d + 'd ' + h + 'h';
+    if (h > 0) return h + 'h ' + (mins % 60) + 'm';
+    return mins + 'm';
+  }
+  function _communityPassDescHtml() {
+    const info = (global.Spawns && global.Spawns.communityDayInfo)
+      ? global.Spawns.communityDayInfo(Date.now()) : null;
+    if (!info || !info.speciesId) return '';
+    return `<div class="bag-desc">This week: ${escapeHtml(_communitySpeciesName(info.speciesId))} morphs`
+      + ` · expires in <span class="bag-cd-expiry">${_fmtExpiryDh(info.weekEndMs - Date.now())}</span></div>`;
+  }
+  // Live countdowns while the bag is open (the only place they show).
+  // Self-clears once the bag view is hidden; re-renders the bag if the
+  // active session lapses under us.
+  let _bagCommunityTick = null;
+  function _tickCommunityCountdowns() {
+    const panel = document.getElementById('creatureInventory');
+    const bagView = panel && panel.querySelector('.bag-view');
+    if (!panel || !bagView || !bagView.classList.contains('show')) {
+      if (_bagCommunityTick) { clearInterval(_bagCommunityTick); _bagCommunityTick = null; }
+      return;
+    }
+    const s = readCommunityDay();
+    if (panel.querySelector('.bag-community-banner') && !(s && s.active)) {
+      renderBag();
+      return;
+    }
+    panel.querySelectorAll('.bag-cd-countdown').forEach((el) => {
+      el.textContent = (s && s.active) ? _fmtCountdownHMS(s.active.endMs - Date.now()) : '';
+    });
+    const info = (global.Spawns && global.Spawns.communityDayInfo)
+      ? global.Spawns.communityDayInfo(Date.now()) : null;
+    panel.querySelectorAll('.bag-cd-expiry').forEach((el) => {
+      el.textContent = info ? _fmtExpiryDh(info.weekEndMs - Date.now()) : '';
+    });
+  }
+
   // ── Active incense state ──
   // Which incense is currently burning + when it started. Lives in
   // localStorage (tiny) AND the save file, so it keeps running across app
@@ -6493,6 +6663,8 @@
         border: 1px solid var(--ui-accent, #b06cff);
       }
       #creatureInventory .bag-incense-banner .bag-icon { width: 30px; height: 30px; align-self: center; }
+      /* Community-day variant of the banner — gold border. */
+      #creatureInventory .bag-incense-banner.bag-community-banner { border-color: #e8a13a; }
       #creatureInventory .bag-row-right {
         display: flex; flex-direction: column; align-items: flex-end;
         gap: 6px; align-self: center;
@@ -7496,6 +7668,11 @@
       }
       #battleScreen .battle-incense {
         position: absolute; top: 8px; right: 8px;
+        width: 26px; height: 26px;
+        filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3));
+      }
+      #battleScreen .battle-community {
+        position: absolute; top: 8px; right: 40px;
         width: 26px; height: 26px;
         filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3));
       }
@@ -9491,6 +9668,7 @@
   // placeholder). Lower rank sorts higher in the list.
   function _bagEntryRank(key) {
     const meta = ITEMS[key] || {};
+    if (meta.communityDay) return 0;        // community day pass
     if (meta.incenseType) return 0;         // incense
     if (EVO_ITEM_SET.has(key)) return 1;    // evolution items
     if (meta.catchShakeRate) return 2;      // poké balls
@@ -9532,14 +9710,31 @@
         + `<div class="bag-desc">~${mins} min left · extra ${escapeHtml(tn)} spawns, double shiny</div></div>`
         + `</div>`;
     }
+    // Active community-day banner (if a session is running).
+    const cd = readCommunityDay();
+    if (cd && cd.active) {
+      const cdName = _communitySpeciesName(cd.active.speciesId);
+      bannerHtml += `<div class="bag-incense-banner bag-community-banner">`
+        + `<img class="bag-icon" src="${ITEMS.community_pass.icon}" alt="">`
+        + `<div class="bag-info"><div class="bag-name">Community Day: ${escapeHtml(cdName)}</div>`
+        + `<div class="bag-desc"><span class="bag-cd-countdown">${_fmtCountdownHMS(cd.active.endMs - Date.now())}</span> left · every spawn is a ${escapeHtml(cdName)} fusion</div></div>`
+        + `</div>`;
+    }
     const wire = () => {
       const cb = body.querySelector('.bag-craft');
       if (cb) cb.addEventListener('click', showCraft);
       body.querySelectorAll('.bag-use').forEach((btn) => {
         btn.addEventListener('click', () => _confirmUseIncense(btn.dataset.incense));
       });
+      body.querySelectorAll('.bag-use-community').forEach((btn) => {
+        btn.addEventListener('click', _confirmUseCommunityPass);
+      });
     };
     const bag = readBag();
+    // The pass count lives outside the bag map (see cc.communityDay.v1);
+    // inject it as a synthetic entry so sorting/rendering treat it like
+    // any other item.
+    if (cd && (cd.count || 0) > 0) bag.community_pass = cd.count;
     const entries = _sortedBagEntries(bag);
     if (!entries.length) {
       body.innerHTML = craftBtnHtml + bannerHtml + `
@@ -9557,13 +9752,18 @@
         : '';
       const useBtn = meta.incenseType
         ? `<button class="bag-use" type="button" data-incense="${escapeHtml(meta.incenseType)}">Use</button>`
-        : '';
+        : (meta.communityDay
+          ? `<button class="bag-use bag-use-community" type="button">Use</button>`
+          : '');
+      const descHtml = meta.communityDay
+        ? _communityPassDescHtml()
+        : (meta.desc ? `<div class="bag-desc">${escapeHtml(meta.desc)}</div>` : '');
       return `
         <div class="bag-row${meta.incenseType ? ' bag-row-incense' : ''}">
           ${iconHtml}
           <div class="bag-info">
             <div class="bag-name">${escapeHtml(meta.name)}</div>
-            ${meta.desc ? `<div class="bag-desc">${escapeHtml(meta.desc)}</div>` : ''}
+            ${descHtml}
           </div>
           <div class="bag-row-right">
             <div class="bag-count">×${n}</div>
@@ -9577,6 +9777,25 @@
       <div class="bag-list">${rows}</div>
     `;
     wire();
+    // Live countdowns (session timer + weekly expiry) while the bag is
+    // open; the tick self-clears when the bag view is hidden.
+    if (_bagCommunityTick) clearInterval(_bagCommunityTick);
+    _bagCommunityTick = setInterval(_tickCommunityCountdowns, 1000);
+  }
+  function _confirmUseCommunityPass() {
+    const s = readCommunityDay();
+    if (!s || (s.count || 0) < 1) {
+      alert('No Community Day Passes left this week.');
+      return;
+    }
+    const info = global.Spawns.communityDayInfo(Date.now());
+    const name = _communitySpeciesName(info.speciesId);
+    let msg = `Use a Community Day Pass?\n\nFor 1 hour, every wild, radar and incense pokémon will be a ${name} fusion.`;
+    if (s.active) {
+      msg += `\n\nYour current session will be extended by 1 hour.`;
+    }
+    if (!confirm(msg)) return;
+    if (activateCommunityPass()) renderBag();
   }
   function _confirmUseIncense(type) {
     if (!type || !global.Types.isValid(type)) return;
@@ -13545,6 +13764,7 @@
       <div class="battle-info">
         <div class="battle-new-badge" hidden>New</div>
         <img class="battle-incense" alt="from incense" hidden>
+        <img class="battle-community" alt="community day" hidden>
         <div class="battle-name"></div>
         <div class="battle-stats"></div>
         <div class="battle-types"></div>
@@ -13660,6 +13880,19 @@
       } else {
         incEl.hidden = true;
         incEl.removeAttribute('src');
+      }
+    }
+    // Community-day badge — the gold pass star when this spawn is a
+    // community-day morph (the engine tags it with the featured species id).
+    const cdEl = el.querySelector('.battle-community');
+    if (cdEl) {
+      if (spawn.community) {
+        cdEl.src = _communityPassIcon();
+        cdEl.title = 'Community Day: ' + _communitySpeciesName(spawn.community);
+        cdEl.hidden = false;
+      } else {
+        cdEl.hidden = true;
+        cdEl.removeAttribute('src');
       }
     }
     const img = el.querySelector('img.battle-sprite');
@@ -15367,6 +15600,12 @@
     // Resume any incense still within its 30-min window from a previous
     // session (state lives in localStorage / the save file).
     _pushActiveIncenseToSpawns();
+    // Same for a community-day session; also stamps this week's pass
+    // grant (2 per community week, 0 on off weeks — see syncCommunityWeek).
+    const _cdBoot = readCommunityDay();
+    if (global.Spawns && global.Spawns.setCommunityDay) {
+      global.Spawns.setCommunityDay(_cdBoot && _cdBoot.active ? _cdBoot.active : null);
+    }
     // These read the captured + seenFusions stores, which now load
     // asynchronously from IndexedDB. Defer them until hydration resolves
     // so they operate on the real collection, not the empty pre-load
@@ -15517,6 +15756,10 @@
     // survives device hops + app restarts).
     getActiveIncense: readActiveIncense,
     setActiveIncenseState,
+    // Community day (weekly featured-species event): pass count + active
+    // session, carried in the save file the same way.
+    getCommunityDay: readCommunityDay,
+    setCommunityDayState,
     getCandy: readCandy, getBag: readBag, getTags: readTags,
     grantItem, consumeItem, rollCollectibleItem, getItemMeta,
     // Solo-pack items (paintbrushes etc.) registered by packs.js at boot.

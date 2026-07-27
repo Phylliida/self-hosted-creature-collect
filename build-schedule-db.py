@@ -23,13 +23,38 @@ import zipfile
 def time_to_sec(s):
     if not s:
         return None
-    parts = s.split(":")
-    if len(parts) != 3:
+    # Lenient: tolerate "HH:MM" (seconds optional) and odd separators some
+    # hand-made feeds use ("06_07" for 06:07).
+    parts = s.strip().replace("_", ":").split(":")
+    if len(parts) not in (2, 3):
         return None
     try:
-        return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+        h = int(parts[0]); m = int(parts[1])
+        sec = int(parts[2]) if len(parts) == 3 else 0
+        return h * 3600 + m * 60 + sec
     except ValueError:
         return None
+
+
+def interpolate_times(deps):
+    """Fill blank (None) times in a trip's departure list. GTFS allows empty
+    intermediate stop times (only timepoints carry times); interpolate
+    linearly by stop position between the surrounding known times. Edge
+    blanks take the nearest known value. Returns None if every time is blank."""
+    known = [i for i, d in enumerate(deps) if d is not None]
+    if not known:
+        return None
+    deps = list(deps)
+    for i in range(known[0]):
+        deps[i] = deps[known[0]]
+    for i in range(known[-1] + 1, len(deps)):
+        deps[i] = deps[known[-1]]
+    for a, b in zip(known, known[1:]):
+        if b - a > 1:
+            step = (deps[b] - deps[a]) / (b - a)
+            for k in range(a + 1, b):
+                deps[k] = round(deps[a] + step * (k - a))
+    return deps
 
 
 def varint_pack(values):
@@ -170,12 +195,37 @@ def record_feed(db, slug, url, n_trips, n_patterns, n_stops):
     )
 
 
-def read_csv(z, name):
-    try:
-        raw = z.read(name)
-    except KeyError:
+def gtfs_members(z):
+    """Map bare GTFS filename -> actual zip member. Some feeds nest the .txt
+    files inside a subdirectory (repo archives, manually-zipped folders) and
+    macOS zips add __MACOSX junk entries; resolve past both."""
+    out = {}
+    for n in z.namelist():
+        if n.startswith("__MACOSX/"):
+            continue
+        base = n.rstrip("/").rsplit("/", 1)[-1]
+        if base.startswith("._"):
+            continue
+        if base.endswith(".txt") and (base not in out or n.count("/") < out[base].count("/")):
+            out[base] = n
+    return out
+
+
+def normalize_text(raw):
+    text = raw.decode("utf-8-sig")
+    # Stray/classic-Mac \r line endings break csv's parser ("new-line
+    # character seen in unquoted field"); normalize everything to \n.
+    if "\r" in text:
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return text
+
+
+def read_csv(z, name, members):
+    actual = members.get(name)
+    if actual is None:
         return
-    for row in csv.DictReader(io.StringIO(raw.decode("utf-8-sig"))):
+    for row in csv.DictReader(io.StringIO(normalize_text(z.read(actual))),
+                              skipinitialspace=True):
         yield row
 
 
@@ -189,8 +239,9 @@ def ingest(db, slug, zip_path, url=""):
         return
     sys.stderr.write(f"  [{slug}] opening {zip_path}\n"); sys.stderr.flush()
     with zipfile.ZipFile(zip_path) as z:
+        members = gtfs_members(z)
         # agency
-        agencies = list(read_csv(z, "agency.txt"))
+        agencies = list(read_csv(z, "agency.txt", members))
         for a in agencies:
             aid = a.get("agency_id") or slug
             db.execute(
@@ -204,7 +255,7 @@ def ingest(db, slug, zip_path, url=""):
 
         # routes
         n = 0
-        for r in read_csv(z, "routes.txt"):
+        for r in read_csv(z, "routes.txt", members):
             try:
                 mode = int(r.get("route_type") or 0)
             except ValueError:
@@ -227,10 +278,10 @@ def ingest(db, slug, zip_path, url=""):
         # stops
         stop_num_map = {}
         n = 0
-        for s in read_csv(z, "stops.txt"):
+        for s in read_csv(z, "stops.txt", members):
             try:
                 lng = float(s["stop_lon"]); lat = float(s["stop_lat"])
-            except (KeyError, ValueError):
+            except (KeyError, ValueError, TypeError):
                 continue
             sid = namespace(slug, s.get("stop_id", ""))
             db.execute(
@@ -254,7 +305,7 @@ def ingest(db, slug, zip_path, url=""):
         # services (interned from GTFS calendar)
         service_num_map = {}  # service_id_str -> service_num
         n = 0
-        for c in read_csv(z, "calendar.txt"):
+        for c in read_csv(z, "calendar.txt", members):
             sid = namespace(slug, c.get("service_id", ""))
             cur = db.execute(
                 "INSERT OR IGNORE INTO service(service_id, monday, tuesday, "
@@ -275,11 +326,13 @@ def ingest(db, slug, zip_path, url=""):
         # calendar_dates (exception-only services: intern if not already)
         n = 0
         batch = []
-        for cd in read_csv(z, "calendar_dates.txt"):
+        for cd in read_csv(z, "calendar_dates.txt", members):
             try:
                 et = int(cd.get("exception_type") or 0)
             except ValueError:
                 continue
+            if et not in (1, 2):
+                continue  # junk exception_type — skip rather than store nonsense
             sid = namespace(slug, cd.get("service_id", ""))
             if sid not in service_num_map:
                 db.execute(
@@ -329,7 +382,7 @@ def ingest(db, slug, zip_path, url=""):
             if row:
                 shape_num_map[sid] = row[0]
                 shape_count += 1
-        for sh in read_csv(z, "shapes.txt"):
+        for sh in read_csv(z, "shapes.txt", members):
             sid_raw = sh.get("shape_id", "")
             try:
                 seq = int(sh.get("shape_pt_sequence") or 0)
@@ -356,7 +409,7 @@ def ingest(db, slug, zip_path, url=""):
 
         # trips → preload route/service/headsign/direction/shape
         trip_info = {}
-        for t in read_csv(z, "trips.txt"):
+        for t in read_csv(z, "trips.txt", members):
             try:
                 direction = int(t.get("direction_id") or 0)
             except ValueError:
@@ -385,6 +438,8 @@ def ingest(db, slug, zip_path, url=""):
         pattern_count = 0
         trip_count = 0
         dropped = 0
+        runs_split = 0      # trips that packed several runs into one trip_id
+        runs_dropped = 0    # individual runs that couldn't be salvaged
 
         def intern_headsign(text):
             if text in headsign_cache:
@@ -409,59 +464,83 @@ def ingest(db, slug, zip_path, url=""):
             return row[0]
 
         def flush_trip(trip_id, rows):
-            nonlocal pattern_count, trip_count, dropped
+            nonlocal pattern_count, trip_count, dropped, runs_split, runs_dropped
             info = trip_info.get(trip_id)
             if not info or not rows or info["service_num"] is None:
                 dropped += 1; return
             rows.sort(key=lambda r: r[0])
             seqs = [r[0] for r in rows]
             if any(seqs[i] == seqs[i - 1] for i in range(1, len(seqs))):
-                dropped += 1; return
-            stop_nums = tuple(r[1] for r in rows)
-            departures = [r[3] for r in rows]
-            if any(d is None for d in departures) or None in stop_nums:
-                dropped += 1; return
-            first_dep = departures[0]
-            deltas = []
-            prev = first_dep
-            for d in departures[1:]:
-                deltas.append(d - prev if d >= prev else 0)
-                prev = d
-            times_blob = varint_pack(deltas)
-            timing_id = intern_blob(times_blob)
+                # Some feeds pack several runs of a route into one trip_id,
+                # restarting stop_sequence per run. Reconstruct the runs:
+                # sort by time and cut where the sequence restarts.
+                runs = []
+                cur = []
+                prev_seq = None
+                for r in sorted(rows, key=lambda r: (r[3] is None, r[3] or 0, r[0])):
+                    if prev_seq is not None and r[0] <= prev_seq:
+                        runs.append(cur); cur = []
+                    cur.append(r); prev_seq = r[0]
+                runs.append(cur)
+                runs_split += 1
+            else:
+                runs = [rows]
+            emitted = False
+            for run in runs:
+                run.sort(key=lambda r: r[0])
+                rseqs = [r[0] for r in run]
+                if len(run) < 2 or any(rseqs[i] == rseqs[i - 1] for i in range(1, len(rseqs))):
+                    runs_dropped += 1; continue  # fragment / unrecoverable duplication
+                stop_nums = tuple(r[1] for r in run)
+                if None in stop_nums:
+                    runs_dropped += 1; continue
+                departures = interpolate_times([r[3] for r in run])
+                if departures is None:
+                    runs_dropped += 1; continue
+                first_dep = departures[0]
+                deltas = []
+                prev = first_dep
+                for d in departures[1:]:
+                    deltas.append(d - prev if d >= prev else 0)
+                    prev = d
+                times_blob = varint_pack(deltas)
+                timing_id = intern_blob(times_blob)
 
-            pid = pattern_cache.get(stop_nums)
-            if pid is None:
-                stops_blob = varint_pack(stop_nums)
-                cur = db.execute(
-                    "INSERT INTO pattern(route_id, stop_count, stops_blob) VALUES (?, ?, ?)",
-                    (info["route_id"], len(stop_nums), stops_blob),
-                )
-                pid = cur.lastrowid
-                pattern_cache[stop_nums] = pid
-                pattern_count += 1
-                for seq, snum in enumerate(stop_nums):
-                    pattern_stop_batch.append((snum, pid, seq))
-                    if len(pattern_stop_batch) >= 2000:
-                        db.executemany(
-                            "INSERT OR IGNORE INTO pattern_stop VALUES (?, ?, ?)",
-                            pattern_stop_batch)
-                        pattern_stop_batch.clear()
+                pid = pattern_cache.get(stop_nums)
+                if pid is None:
+                    stops_blob = varint_pack(stop_nums)
+                    cur = db.execute(
+                        "INSERT INTO pattern(route_id, stop_count, stops_blob) VALUES (?, ?, ?)",
+                        (info["route_id"], len(stop_nums), stops_blob),
+                    )
+                    pid = cur.lastrowid
+                    pattern_cache[stop_nums] = pid
+                    pattern_count += 1
+                    for seq, snum in enumerate(stop_nums):
+                        pattern_stop_batch.append((snum, pid, seq))
+                        if len(pattern_stop_batch) >= 2000:
+                            db.executemany(
+                                "INSERT OR IGNORE INTO pattern_stop VALUES (?, ?, ?)",
+                                pattern_stop_batch)
+                            pattern_stop_batch.clear()
 
-            headsign_id = intern_headsign(info["headsign"])
-            trip_batch.append((
-                pid, timing_id, info["service_num"], headsign_id,
-                info["direction"], first_dep, info.get("shape_num"),
-            ))
-            trip_count += 1
-            if len(trip_batch) >= 2000:
-                db.executemany(
-                    "INSERT INTO trip VALUES (?, ?, ?, ?, ?, ?, ?)", trip_batch)
-                trip_batch.clear()
+                headsign_id = intern_headsign(info["headsign"])
+                trip_batch.append((
+                    pid, timing_id, info["service_num"], headsign_id,
+                    info["direction"], first_dep, info.get("shape_num"),
+                ))
+                trip_count += 1
+                emitted = True
+                if len(trip_batch) >= 2000:
+                    db.executemany(
+                        "INSERT INTO trip VALUES (?, ?, ?, ?, ?, ?, ?)", trip_batch)
+                    trip_batch.clear()
+            if not emitted:
+                dropped += 1
 
         prev_trip = None
         buffer = []
-        for st in read_csv(z, "stop_times.txt"):
+        for st in read_csv(z, "stop_times.txt", members):
             trip_id = namespace(slug, st.get("trip_id", ""))
             stop_id = namespace(slug, st.get("stop_id", ""))
             try:
@@ -501,7 +580,8 @@ def ingest(db, slug, zip_path, url=""):
             f"\r\033[K    stop_times: {stop_time_count:,}  "
             f"patterns: {pattern_count:,}  trips: {trip_count:,}  "
             f"blobs: {len(blob_cache):,}  headsigns: {len(headsign_cache):,}  "
-            f"dropped: {dropped}  ({time.time() - t0:.1f}s)\n"
+            f"dropped: {dropped}  runs-split: {runs_split}  "
+            f"runs-dropped: {runs_dropped}  ({time.time() - t0:.1f}s)\n"
         )
         n_stops = len(stop_num_map)
         record_feed(db, slug, url, trip_count, pattern_count, n_stops)

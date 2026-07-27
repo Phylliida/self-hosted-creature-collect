@@ -9,21 +9,10 @@ instead of the direct agency URL (urls.direct_download). The MD mirror is
 stabler but adds indirection.
 """
 import argparse
-import csv
 import sys
-import urllib.request
 
-
-DEFAULT_CATALOG_URL = "https://files.mobilitydatabase.org/feeds_v2.csv"
-
-
-def fetch_catalog(url_or_path):
-    if url_or_path.startswith(("http://", "https://")):
-        sys.stderr.write(f"fetching catalog from {url_or_path}\n")
-        with urllib.request.urlopen(url_or_path, timeout=180) as resp:
-            return resp.read().decode("utf-8-sig")
-    with open(url_or_path, encoding="utf-8-sig") as f:
-        return f.read()
+from gtfs_catalog import (DEFAULT_CATALOG_URL, entries_from_catalog,
+                          fetch_catalog)
 
 
 def main():
@@ -46,34 +35,10 @@ def main():
     args = ap.parse_args()
 
     text = fetch_catalog(args.catalog)
-    reader = csv.DictReader(text.splitlines())
-    kept = []
-    for row in reader:
-        if row.get("location.country_code") != args.country: continue
-        if row.get("data_type") != "gtfs": continue
-        if row.get("redirect.id"): continue
-        auth = row.get("urls.authentication_type") or "0"
-        if auth != "0" and not args.include_auth: continue
-        direct = (row.get("urls.direct_download") or "").strip()
-        latest = (row.get("urls.latest") or "").strip()
-        # Inactive feeds are skipped unless --include-inactive-mirror is set
-        # and the MD mirror still serves them — some agencies (e.g. Lane
-        # Transit District, mdb-131) are marked inactive only because their
-        # direct URL died; the mirror keeps the last known feed.
-        if row.get("status") != "active" and not (args.include_inactive_mirror and latest): continue
-        if args.use_latest:
-            url, fallback = latest or direct, ""
-        else:
-            url, fallback = direct or latest, latest if direct and latest and latest != direct else ""
-        if not url: continue
-        slug = row.get("id", "").strip()
-        if not slug: continue
-        provider = (row.get("provider") or "").strip()
-        subdiv = (row.get("location.subdivision_name") or "").strip()
-        muni = (row.get("location.municipality") or "").strip()
-        label_parts = [p for p in (provider, muni, subdiv) if p]
-        name = " / ".join(label_parts) or slug
-        kept.append((slug, url, name, fallback))
+    kept = entries_from_catalog(
+        text, args.country, use_latest=args.use_latest,
+        include_auth=args.include_auth,
+        include_inactive_mirror=args.include_inactive_mirror)
 
     out = sys.stdout if args.output == "-" else open(args.output, "w", encoding="utf-8")
     try:
