@@ -9,6 +9,9 @@ transit trip planner (which reads the same schedule index) finds no rides.
 This script rebuilds that snapshot and re-exports it — and ONLY that. It does
 the whole pipeline end to end:
 
+  0. Refresh the feeds-*.tsv files from the live Mobility Database catalog
+     (new agencies, moved URLs, replacements for deprecated ids; manual
+     entries like `stm` are preserved). Skip with --no-refresh-feeds.
   1. Re-ingest current GTFS feeds into a fresh temporary schedule DB
      (ingest-gtfs.py). The feed URLs already serve the current feed, so a
      fresh download == fresh calendars.
@@ -56,6 +59,7 @@ import time
 from pathlib import Path
 
 from schedule_query import build_schedule_payload
+import gtfs_catalog
 
 HERE = Path(__file__).resolve().parent
 EMPTY_SCHEDULE_MAX_BYTES = 160   # a transit-free region gzips to ~this or less
@@ -119,6 +123,93 @@ def merge_max(dst, src):
             dst[k] = v
 
 
+# ---------- feeds TSV refresh (pick up new feeds + URL changes) ----------
+
+def refresh_feeds_tsvs(feeds, catalog_url, catalog_cache):
+    """Refresh each feeds-<cc>.tsv in `feeds` from the live Mobility
+    Database catalog, so new agencies and moved URLs are picked up
+    automatically instead of going stale between manual regenerations.
+
+    Merge rules per file:
+      * existing slugs keep their row, with the URL/name updated from the
+        fresh catalog when present
+      * existing slugs the catalog marks deprecated (or redirected) are
+        dropped — their replacements arrive as new catalog ids
+      * brand-new feeds are added only when active (mirrors of inactive
+        feeds serve stale schedules, so we don't grow the ingest with them)
+      * an entry whose URL another kept entry already serves is skipped,
+        so the same agency is never ingested twice under two slugs
+        (e.g. manual `stm` vs the catalog's mdb-2126, same zip URL)
+    A truncated/failed catalog fetch never clobbers a good TSV: on any
+    doubt the existing file is kept."""
+    import re
+    targets = []
+    for tsv in feeds:
+        m = re.fullmatch(r"feeds-([a-z]{2})\.tsv", Path(tsv).name)
+        if m:
+            targets.append((Path(tsv), m.group(1).upper()))
+    if not targets:
+        return
+    try:
+        text = gtfs_catalog.fetch_catalog(catalog_url)
+    except Exception as e:
+        log(f"  WARNING: catalog fetch failed ({e}) — keeping existing feeds TSVs")
+        return
+    catalog_rows = {row.get("id", ""): row for row in csv_reader(text)}
+    try:
+        catalog_cache = Path(catalog_cache)
+        catalog_cache.parent.mkdir(parents=True, exist_ok=True)
+        catalog_cache.write_text(text, encoding="utf-8")
+    except OSError:
+        pass
+
+    for tsv, country in targets:
+        if not tsv.exists():
+            continue
+        fresh = gtfs_catalog.entries_from_catalog(text, country)
+        fresh_by_slug = {e[0]: e for e in fresh}
+        existing = gtfs_catalog.read_feeds_tsv(tsv)
+        active_new = [e for e in fresh if e[0] not in {s for s, _, _, _ in existing}]
+        if len(fresh) < 0.5 * max(len(existing), 1):
+            log(f"  WARNING: fresh catalog has only {len(fresh)} active {country} feeds "
+                f"vs {len(existing)} in {tsv.name} — keeping existing file")
+            continue
+        merged = []
+        seen_urls = set()
+        n_updated = n_dropped = 0
+        for slug, url, name, fallback in existing:
+            row = catalog_rows.get(slug)
+            if row and (row.get("status") == "deprecated" or row.get("redirect.id")):
+                n_dropped += 1
+                continue
+            e = fresh_by_slug.get(slug)
+            if e and e[1] != url:
+                n_updated += 1
+            entry = e or (slug, url, name, fallback)
+            if entry[1] in seen_urls:
+                continue
+            seen_urls.add(entry[1])
+            merged.append(entry)
+        n_added = 0
+        for e in active_new:
+            if e[1] in seen_urls:
+                continue
+            seen_urls.add(e[1])
+            merged.append(e)
+            n_added += 1
+        if merged != existing:
+            gtfs_catalog.write_feeds_tsv(tsv, merged)
+            log(f"  refreshed {tsv.name}: {len(existing)} -> {len(merged)} feeds "
+                f"({n_updated} URLs updated, {n_added} new, {n_dropped} deprecated dropped)")
+        else:
+            log(f"  {tsv.name}: already up to date ({len(existing)} feeds)")
+
+
+def csv_reader(text):
+    import csv as _csv
+    return _csv.DictReader(text.splitlines())
+
+
 # ---------- pipeline steps ----------
 
 def run_script(script, *script_args):
@@ -129,7 +220,7 @@ def run_script(script, *script_args):
     return subprocess.run(argv).returncode
 
 
-def ingest_feeds(tmp_db, tsv, retries):
+def ingest_feeds(tmp_db, tsv, retries, browser_fallback):
     """Ingest one feeds TSV into tmp_db.
 
     ingest-gtfs.py exit codes: 0 = every feed OK; 2 = some feeds failed to
@@ -141,8 +232,9 @@ def ingest_feeds(tmp_db, tsv, retries):
     validate_db() is the real guard against a too-small rebuild.
     """
     name = Path(tsv).name
+    extra = [] if browser_fallback else ["--no-browser-fallback"]
     for attempt in range(retries + 1):
-        code = run_script("ingest-gtfs.py", tmp_db, "--feeds", tsv)
+        code = run_script("ingest-gtfs.py", tmp_db, "--feeds", tsv, *extra)
         if code == 0:
             return
         if code == 2:
@@ -158,7 +250,7 @@ def ingest_feeds(tmp_db, tsv, retries):
         die(f"ingest-gtfs.py exited {code} (fatal) on {name}")
 
 
-def rebuild_db(tmp_db, feeds, routes_db, retries, resume):
+def rebuild_db(tmp_db, feeds, routes_db, retries, resume, browser_fallback=False):
     """Ingest every feed file, then link to OSM. Fresh build unless
     --resume (which keeps an existing tmp_db so ingest can skip feeds
     already ingested — handy after a partial/interrupted run)."""
@@ -175,7 +267,7 @@ def rebuild_db(tmp_db, feeds, routes_db, retries, resume):
         if not Path(tsv).exists():
             die(f"feeds file not found: {tsv}")
         log(f"--- ingesting feeds: {tsv} ---")
-        ingest_feeds(tmp_db, tsv, retries)
+        ingest_feeds(tmp_db, tsv, retries, browser_fallback)
     if not Path(routes_db).exists():
         die(f"routes db (for OSM linking) not found: {routes_db}")
     log("--- linking GTFS stops to OSM nodes ---")
@@ -355,8 +447,17 @@ def main():
                     help="don't keep a .bak of the replaced DB")
     ap.add_argument("--allow-shrink", action="store_true",
                     help="swap even if the rebuilt DB has far fewer trips than the current one")
-    ap.add_argument("--ingest-retries", type=int, default=1,
-                    help="retry passes to sweep up feeds that failed to download (default 1)")
+    ap.add_argument("--ingest-retries", type=int, default=2,
+                    help="retry passes to sweep up feeds that failed to download (default 2)")
+    ap.add_argument("--no-browser-fallback", action="store_true",
+                    help="don't retry bot-blocked feeds through a real browser "
+                         "(default: browser fallback on — only feeds whose plain "
+                         "download failed get the browser attempt)")
+    ap.add_argument("--no-refresh-feeds", action="store_true",
+                    help="don't refresh feeds-*.tsv from the Mobility Database "
+                         "catalog before ingesting (default: refresh)")
+    ap.add_argument("--catalog-url", default=gtfs_catalog.DEFAULT_CATALOG_URL,
+                    help="catalog CSV URL (default: Mobility Database feeds_v2.csv)")
     ap.add_argument("--resume", action="store_true",
                     help="keep an existing *.rebuild.sqlite and resume ingest (skips feeds already done)")
     ap.add_argument("--keep-temp", action="store_true",
@@ -374,8 +475,13 @@ def main():
         feeds = args.feeds or default_feeds()
         if not feeds:
             die("no feeds .tsv found (looked for feeds-ca/us/mx.tsv); pass --feeds")
+        if not args.no_refresh_feeds:
+            log("--- refreshing feeds TSVs from the Mobility Database catalog ---")
+            refresh_feeds_tsvs(feeds, args.catalog_url,
+                               HERE / "data" / "mdb-catalog.csv")
         log(f"REBUILD: feeds={[Path(f).name for f in feeds]} routes_db={Path(args.routes_db).name}")
-        rebuild_db(tmp_db, feeds, args.routes_db, args.ingest_retries, args.resume)
+        rebuild_db(tmp_db, feeds, args.routes_db, args.ingest_retries, args.resume,
+                   browser_fallback=not args.no_browser_fallback)
 
         # Validate; --allow-shrink relaxes the shrink guard only.
         try:

@@ -19,8 +19,14 @@
 #   * the upload only runs if the transit refresh succeeded
 #   * exit code is non-zero on failure
 #
-# Example user crontab (`crontab -e`) — 03:30 on the 1st of each month:
-#   30 3 1 * * /home/bepis/prog/SimpleBot/repos/self-hosted-creature-collect/scripts/update-transit-and-upload.sh
+# Download-maximizing defaults (from update-transit-schedules.py):
+#   * feeds-*.tsv refreshed from the Mobility Database catalog each run
+#   * failed downloads retried twice more (transient timeouts/resets)
+#   * bot-blocked feeds retried through a real browser (zendriver);
+#     disable with --no-browser-fallback if chromium/Xvfb is unwanted
+#
+# Example user crontab (`crontab -e`) — 03:30 every Sunday:
+#   30 3 * * 0 /home/bepis/prog/SimpleBot/repos/self-hosted-creature-collect/scripts/update-transit-and-upload.sh
 #
 # Watch a running job with: tail -f logs/transit-refresh.log
 #

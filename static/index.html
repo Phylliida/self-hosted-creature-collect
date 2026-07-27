@@ -8105,6 +8105,10 @@ function fmtDate(ts) {
       // remaining time across devices / restarts.
       activeIncense: (window.Creatures && window.Creatures.getActiveIncense)
         ? window.Creatures.getActiveIncense() : null,
+      // Community day ({weekKey, count, active}) — weekly pass count and
+      // any running session, so both survive device hops.
+      communityDay: (window.Creatures && window.Creatures.getCommunityDay)
+        ? window.Creatures.getCommunityDay() : null,
     };
   }
 
@@ -8659,6 +8663,12 @@ function fmtDate(ts) {
     if (data.activeIncense && window.Creatures && window.Creatures.setActiveIncenseState) {
       try { window.Creatures.setActiveIncenseState(data.activeIncense); }
       catch (e) { console.error('importActiveIncense failed', e); }
+    }
+    // Community day — merge week stamp / pass count / active session
+    // (newer week wins; same week merges; expired sessions ignored).
+    if (data.communityDay && window.Creatures && window.Creatures.setCommunityDayState) {
+      try { window.Creatures.setCommunityDayState(data.communityDay); }
+      catch (e) { console.error('importCommunityDay failed', e); }
     }
     alert(
       `Imported: ${favAdded} favorite(s) (${favSkipped} skipped), ` +

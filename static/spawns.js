@@ -259,6 +259,76 @@
     };
   }
 
+  // ── Community day (weekly featured species) ─────────────────
+  // Every OTHER week features one species; while a player's community-day
+  // session is active, every wild/radar/incense spawn is a fusion with
+  // that species in one slot (the legendary stream is exempt). Weeks
+  // run Monday 00:00 → Sunday 24:00 in GMT-12 — i.e. the boundary is
+  // Monday 12:00 UTC for every player worldwide, so the "anywhere on
+  // earth" week has fully ended before the next featured species starts.
+  // Even weekKeys are community weeks; odd weeks have no event (and grant
+  // no passes). The featured species permutes through the whole wild pool
+  // (SPAWNABLE_SPECIES_A: base forms, no legendaries), advancing one step
+  // per COMMUNITY week (off weeks don't consume permutation slots), then
+  // re-shuffles; re-shuffles are rejection-sampled so no species recurs
+  // within COMMUNITY_NO_REPEAT_WEEKS appearances of its previous one
+  // across a cycle boundary. All deterministic from the week index —
+  // no server.
+  const COMMUNITY_WEEK_ANCHOR_MS = (4 * 24 + 12) * 3600 * 1000;  // Mon 1970-01-05 12:00 UTC
+  const COMMUNITY_NO_REPEAT_WEEKS = 26;   // 26 appearances ≈ 1 year at the biweekly cadence
+
+  function communityWeekKey(nowMs) {
+    const now = nowMs == null ? Date.now() : nowMs;
+    return Math.floor((now - COMMUNITY_WEEK_ANCHOR_MS) / WEEK_MS);
+  }
+
+  const _communityPermCache = new Map();   // cycleIdx -> permutation array
+  function _communityShuffle(cycleIdx, attempt) {
+    const arr = SPAWNABLE_SPECIES_A.slice();
+    const rng = getxor4069('community|cycle|' + cycleIdx + '|' + attempt);
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+    }
+    return arr;
+  }
+  function _communityPermutation(cycleIdx) {
+    if (_communityPermCache.has(cycleIdx)) return _communityPermCache.get(cycleIdx);
+    const n = SPAWNABLE_SPECIES_A.length;
+    const prev = cycleIdx > 0 ? _communityPermutation(cycleIdx - 1) : null;
+    const prevPos = new Map();
+    if (prev) prev.forEach((id, i) => prevPos.set(id, i));
+    let perm = null;
+    for (let attempt = 0; ; attempt++) {
+      const cand = _communityShuffle(cycleIdx, attempt);
+      if (!prev) { perm = cand; break; }
+      // A species at old position q appeared (n - q) weeks before this
+      // cycle starts; at new position p it appears p weeks after. The
+      // gap is p + (n - q) weeks and must exceed the no-repeat window.
+      let okAll = true;
+      for (let p = 0; p < n && okAll; p++) {
+        if (p + (n - prevPos.get(cand[p])) <= COMMUNITY_NO_REPEAT_WEEKS) okAll = false;
+      }
+      if (okAll) { perm = cand; break; }
+    }
+    _communityPermCache.set(cycleIdx, perm);
+    return perm;
+  }
+  function communityDayInfo(nowMs) {
+    const weekKey = communityWeekKey(nowMs);
+    const n = SPAWNABLE_SPECIES_A.length;
+    const weekEndMs = COMMUNITY_WEEK_ANCHOR_MS + (weekKey + 1) * WEEK_MS;
+    // Odd weekKeys are off weeks — no featured species, no passes.
+    if (goodMod(weekKey, 2) !== 0) return { weekKey, speciesId: null, weekEndMs };
+    const idx = Math.floor(weekKey / 2);        // community-week ordinal
+    const cycleIdx = Math.floor(idx / n);
+    return {
+      weekKey,
+      speciesId: _communityPermutation(cycleIdx)[goodMod(idx, n)],
+      weekEndMs,
+    };
+  }
+
   // ── Type-pair sampler ──
   // Replaces the older multiplicative-weight duplicate-pool design,
   // which produced extreme concentration when daily ≈ weekly on a
@@ -555,10 +625,26 @@
         startMs, expireMs: startMs + LIFETIME_MS,
       };
     }
+    let outA = speciesA, outB = speciesB;
+    const cd = _communityFor(startMs, startMs + LIFETIME_MS);
+    if (cd) {
+      // Community day: one slot is the week's featured species, the
+      // other a uniform draw from the wild pool (no type-weather bias —
+      // the weather-sampled species above are overridden). Draws are
+      // appended AFTER every existing draw and only consumed in this
+      // branch, so an inactive session leaves the stream bit-identical.
+      const slotCoin = arng();
+      const other = SPAWNABLE_SPECIES_A[Math.floor(arng() * SPAWNABLE_SPECIES_A.length)];
+      outA = slotCoin < 0.5 ? cd.speciesId : other;
+      outB = slotCoin < 0.5 ? other : cd.speciesId;
+    }
     return {
       id: `${cellX}:${cellY}:${tick}:0`,
-      lat, lng, speciesA, speciesB, level, sizeM, variantSeed,
+      lat, lng, speciesA: outA, speciesB: outB, level, sizeM, variantSeed,
       startMs, expireMs: startMs + LIFETIME_MS,
+      // Featured-species id when this spawn is a community-day morph
+      // (drives the battle badge + "From Community Day" tagging).
+      community: cd ? cd.speciesId : undefined,
     };
   }
 
@@ -767,7 +853,7 @@
   // wild species (SPAWNABLE_SPECIES_A), filtered to loaded species, bucketed by
   // primary/secondary type exactly like the normal pools. Rebuilt when the
   // loaded species count changes.
-  let _evoByPrimary = null, _evoBySecondary = null, _evoIdxLen = -1;
+  let _evoByPrimary = null, _evoBySecondary = null, _evoIdxLen = -1, _evoFlat = null;
   function _buildEvoIndices() {
     if (_evoByPrimary && _evoBySecondary) {
       const Species0 = global.Species;
@@ -804,6 +890,10 @@
     }
     _evoByPrimary = byPrimary;
     _evoBySecondary = bySecondary;
+    // Flat list of every evolved species — used by the community-day
+    // override for uniform (non-weather) partner draws. Set iteration
+    // order is insertion order, so this is deterministic.
+    _evoFlat = Array.from(evoSet);
     _evoIdxLen = all.length;
     return true;
   }
@@ -852,13 +942,25 @@
     const bornOffset = Math.floor(arng() * EVO_TICK_MS);
     const startMs = etick * EVO_TICK_MS + bornOffset;
     const variantSeed = arng();
+    let outA = speciesA, outB = speciesB;
+    const cd = _communityFor(startMs, startMs + EVO_LIFETIME_MS);
+    if (cd && _evoFlat.length) {
+      // Community day: one slot is the featured species, the other a
+      // uniform draw across ALL evolved forms (no weather bias). Same
+      // append-only draw convention as generateCellAtTick.
+      const slotCoin = arng();
+      const other = _evoFlat[Math.floor(arng() * _evoFlat.length)];
+      outA = slotCoin < 0.5 ? cd.speciesId : other;
+      outB = slotCoin < 0.5 ? other : cd.speciesId;
+    }
     return {
       // 'E:' namespace keeps evolved caught-IDs distinct and is recognized by
       // isSpawnIdStale (coarse evo-tick scale + 12 h window).
       id: 'E:' + cellX + ':' + cellY + ':' + etick + ':0',
-      lat, lng, speciesA, speciesB, level, sizeM, variantSeed,
+      lat, lng, speciesA: outA, speciesB: outB, level, sizeM, variantSeed,
       startMs, expireMs: startMs + EVO_LIFETIME_MS,
       evolved: true,
+      community: cd ? cd.speciesId : undefined,
     };
   }
   function evolvedInBbox(bbox, nowMs) {
@@ -1064,15 +1166,38 @@
         incense: true, incenseType: incenseType,
       };
     }
+    let outA = speciesA, outB = speciesB;
+    const cd = _communityFor(startMs, startMs + LIFETIME_MS);
+    if (cd) {
+      // Community day + incense: one slot is the featured species, the
+      // other a uniform draw from the incense-type pool (the 40/30/30
+      // weather mixture above is overridden — its draws were consumed
+      // but go unused, keeping this branch append-only). Placement
+      // follows the same non-empty-pool rule as the normal path.
+      const slotCoin = arng();
+      const otherDraw = arng();
+      const v1 = byS[incenseType].length > 0;   // featured in A, incense-typed partner in B
+      const v2 = byP[incenseType].length > 0;   // partner in A, featured in B
+      if (v1 && (slotCoin < 0.5 || !v2)) {
+        outA = cd.speciesId;
+        outB = byS[incenseType][Math.floor(otherDraw * byS[incenseType].length)];
+      } else if (v2) {
+        outA = byP[incenseType][Math.floor(otherDraw * byP[incenseType].length)];
+        outB = cd.speciesId;
+      } else {
+        return null;   // no species carry the incense type at all
+      }
+    }
     return {
       // typeIdx in the trailing slot (where normal/legendary ids carry a
       // 0) keeps the tick at parts[3] for isSpawnIdStale while making the
       // id unique per incense type — so catching a Fire-incense spawn
       // doesn't shadow a Water-incense spawn at the same cell/tick.
       id: 'I:' + cellX + ':' + cellY + ':' + tick + ':' + typeIdx,
-      lat, lng, speciesA, speciesB, level, sizeM, variantSeed,
+      lat, lng, speciesA: outA, speciesB: outB, level, sizeM, variantSeed,
       startMs, expireMs: startMs + LIFETIME_MS,
       incense: true, incenseType: incenseType,
+      community: cd ? cd.speciesId : undefined,
     };
   }
   // Memo mirrors _ctMemo — incense generation is ~normal-density, so an
@@ -1119,6 +1244,38 @@
       }
     }
     return out;
+  }
+
+  // ── Community day active session ────────────────────────────
+  // Per-player state (unlike the shared deterministic streams): pushed
+  // here from creatures.js via setCommunityDay, where it lives in the
+  // save file. A spawn adopts the override when its ALIVE window
+  // overlaps the session — [startMs, expireMs) ∩ [cd.startMs, cd.endMs)
+  // ≠ ∅ — so activating flips every currently-visible spawn immediately,
+  // spawns born during the session keep their community identity until
+  // they die of old age, and identity is stable for any fixed session.
+  // Changing the state clears the wild/incense memos so ticks are
+  // regenerated against the new session.
+  let _communityDay = null;   // { speciesId, startMs, endMs } | null
+  let _cdMemoKey = null;      // identity the memos were built against
+  function setCommunityDay(state) {
+    const next = (state && typeof state.speciesId === 'number'
+      && typeof state.startMs === 'number' && typeof state.endMs === 'number'
+      && state.endMs > state.startMs)
+      ? { speciesId: state.speciesId, startMs: state.startMs, endMs: state.endMs } : null;
+    const key = next ? next.speciesId + '|' + next.startMs + '|' + next.endMs : null;
+    if (key !== _cdMemoKey) {
+      _ctMemo.clear(); _ctMemoSampler = null; _ctMemoOldestTick = -1;
+      _incMemo.clear(); _incMemoKey = null; _incMemoOldest = -1;
+      _cdMemoKey = key;
+    }
+    _communityDay = next;
+  }
+  function getCommunityDay() { return _communityDay; }
+  function _communityFor(startMs, expireMs) {
+    if (!_communityDay) return null;
+    if (startMs < _communityDay.endMs && expireMs > _communityDay.startMs) return _communityDay;
+    return null;
   }
 
   function spawnsInBbox(bbox, nowMs) {
@@ -1247,6 +1404,10 @@
     // file); spawnsInBbox folds it in while active.
     setActiveIncense, getActiveIncense, incenseSpawnsInBbox,
     generateIncenseCellAtTick, INCENSE_DURATION_MS,
+    // Community day — weekly featured-species schedule (deterministic)
+    // plus the per-player active session pushed from creatures.js.
+    communityDayInfo, communityWeekKey, setCommunityDay, getCommunityDay,
+    SPAWNABLE_SPECIES_A,   // community-day pool; exposed for tests
     // Exposed so other deterministic features (e.g. daycare loot,
     // future event drops) can seed their own streams from a stable,
     // proven PRNG rather than each rolling their own hash.

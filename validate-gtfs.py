@@ -46,26 +46,71 @@ class Report:
         return "\n".join(out)
 
 
-def read_csv(z, name):
-    try:
-        raw = z.read(name)
-    except KeyError:
+def gtfs_members(z):
+    """Map bare GTFS filename -> actual zip member. Some feeds nest the .txt
+    files inside a subdirectory (repo archives, manually-zipped folders) and
+    macOS zips add __MACOSX junk entries; resolve past both."""
+    out = {}
+    for n in z.namelist():
+        if n.startswith("__MACOSX/"):
+            continue
+        base = n.rstrip("/").rsplit("/", 1)[-1]
+        if base.startswith("._"):
+            continue
+        if base.endswith(".txt") and (base not in out or n.count("/") < out[base].count("/")):
+            out[base] = n
+    return out
+
+
+def normalize_text(raw):
+    text = raw.decode("utf-8-sig")
+    # Stray/classic-Mac \r line endings break csv's parser ("new-line
+    # character seen in unquoted field"); normalize everything to \n.
+    if "\r" in text:
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return text
+
+
+def members_of(z, cache):
+    if "members" not in cache:
+        cache["members"] = gtfs_members(z)
+    return cache["members"]
+
+
+def read_csv(z, name, cache):
+    members = members_of(z, cache)
+    actual = members.get(name)
+    if actual is None:
         return None
-    return list(csv.DictReader(io.StringIO(raw.decode("utf-8-sig"))))
+    return list(csv.DictReader(io.StringIO(normalize_text(z.read(actual))),
+                               skipinitialspace=True))
+
+
+def read_stop_times(z, cache):
+    """Raw stop_times.txt text (resolved + normalized), or None if absent."""
+    members = members_of(z, cache)
+    actual = members.get("stop_times.txt")
+    if actual is None:
+        return None
+    return normalize_text(z.read(actual))
 
 
 REQUIRED_FILES = ["agency.txt", "routes.txt", "stops.txt", "trips.txt", "stop_times.txt"]
 OPTIONAL_FILES = ["calendar.txt", "calendar_dates.txt", "feed_info.txt"]
 
 
-def check_required_files(z, _cache):
+def check_required_files(z, cache):
     r = Report("required-files")
-    names = set(z.namelist())
+    members = members_of(z, cache)
     for f in REQUIRED_FILES:
-        if f not in names:
+        if f not in members:
             r.error(f"missing required file: {f}")
-    has_cal = "calendar.txt" in names
-    has_cald = "calendar_dates.txt" in names
+    nested = {members[f] for f in REQUIRED_FILES + OPTIONAL_FILES
+              if f in members and "/" in members[f]}
+    if nested:
+        r.note(f"GTFS files nested in a subdirectory (e.g. {sorted(nested)[0]})")
+    has_cal = "calendar.txt" in members
+    has_cald = "calendar_dates.txt" in members
     if not has_cal and not has_cald:
         r.error("neither calendar.txt nor calendar_dates.txt present")
     elif not has_cal:
@@ -73,9 +118,9 @@ def check_required_files(z, _cache):
     return r
 
 
-def check_stop_coords(z, _cache):
+def check_stop_coords(z, cache):
     r = Report("stop-coordinates")
-    rows = read_csv(z, "stops.txt")
+    rows = read_csv(z, "stops.txt", cache)
     if rows is None:
         r.error("stops.txt missing"); return r
     bad_parse = []
@@ -104,9 +149,9 @@ def check_stop_coords(z, _cache):
     return r
 
 
-def check_route_types(z, _cache):
+def check_route_types(z, cache):
     r = Report("route-types")
-    rows = read_csv(z, "routes.txt")
+    rows = read_csv(z, "routes.txt", cache)
     if rows is None:
         r.error("routes.txt missing"); return r
     bad = []
@@ -128,11 +173,10 @@ def check_route_types(z, _cache):
 def check_stop_times_sorted(z, cache):
     """Critical: we stream stop_times.txt and flush per trip_id transition."""
     r = Report("stop-times-sorted-by-trip")
-    try:
-        raw = z.read("stop_times.txt")
-    except KeyError:
+    text = read_stop_times(z, cache)
+    if text is None:
         r.error("stop_times.txt missing"); return r
-    reader = csv.DictReader(io.StringIO(raw.decode("utf-8-sig")))
+    reader = csv.DictReader(io.StringIO(text), skipinitialspace=True)
     seen_trip_ids = set()
     current = None
     transitions = 0
@@ -164,13 +208,13 @@ def check_stop_times_sorted(z, cache):
 
 def check_stop_time_fields(z, cache):
     r = Report("stop-time-fields")
-    try:
-        raw = z.read("stop_times.txt")
-    except KeyError:
+    text = read_stop_times(z, cache)
+    if text is None:
         return r
-    reader = csv.DictReader(io.StringIO(raw.decode("utf-8-sig")))
+    reader = csv.DictReader(io.StringIO(text), skipinitialspace=True)
     bad_times = 0
     bad_seqs = 0
+    blank_times = 0
     non_monotonic = 0
     dup_sequence = 0
     trip_seqs = defaultdict(set)  # only tracks current trip to save memory
@@ -200,6 +244,8 @@ def check_stop_time_fields(z, cache):
         current_seqs.add(seq)
         dep = _time_to_sec(row.get("departure_time", ""))
         arr = _time_to_sec(row.get("arrival_time", ""))
+        if dep is None and arr is None and not (row.get("departure_time") or row.get("arrival_time")):
+            blank_times += 1
         if dep is None and row.get("departure_time"):
             bad_times += 1
             if len(sample_bad_times) < MAX_SAMPLES:
@@ -217,9 +263,17 @@ def check_stop_time_fields(z, cache):
     if bad_times:
         r.warn(f"{bad_times:,} stop_time rows with unparseable times "
                f"(sample: {sample_bad_times[:MAX_SAMPLES]})")
+    if blank_times:
+        # Spec-legal (only timepoints carry times); build-schedule-db.py
+        # interpolates the blanks linearly between known times.
+        r.note(f"{blank_times:,} stop_time rows with blank times "
+               f"— will be interpolated at ingest")
     if dup_sequence:
-        r.error(f"{dup_sequence:,} duplicate (trip_id, stop_sequence) pairs "
-                f"(sample: {sample_dup[:MAX_SAMPLES]}) — trip will be dropped")
+        # Downgraded: build-schedule-db.py splits such trips into separate
+        # runs at each sequence restart and only drops unsalvageable runs.
+        r.warn(f"{dup_sequence:,} duplicate (trip_id, stop_sequence) pairs "
+               f"(sample: {sample_dup[:MAX_SAMPLES]}) — trips will be split "
+               f"into runs at sequence restarts")
     if non_monotonic:
         r.warn(f"{non_monotonic:,} non-monotonic departure times "
                f"(sample: {sample_non_mono[:MAX_SAMPLES]}) — deltas will be clamped to 0")
@@ -228,21 +282,25 @@ def check_stop_time_fields(z, cache):
 
 def _time_to_sec(s):
     if not s: return None
-    parts = s.split(":")
-    if len(parts) != 3: return None
+    # Lenient: tolerate "HH:MM" (seconds optional) and odd separators some
+    # hand-made feeds use ("06_07" for 06:07).
+    parts = s.strip().replace("_", ":").split(":")
+    if len(parts) not in (2, 3): return None
     try:
-        return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+        h = int(parts[0]); m = int(parts[1])
+        sec = int(parts[2]) if len(parts) == 3 else 0
+        return h * 3600 + m * 60 + sec
     except ValueError:
         return None
 
 
-def check_referential_integrity(z, _cache):
+def check_referential_integrity(z, cache):
     r = Report("referential-integrity")
-    routes = read_csv(z, "routes.txt") or []
-    stops = read_csv(z, "stops.txt") or []
-    trips = read_csv(z, "trips.txt") or []
-    cal = read_csv(z, "calendar.txt") or []
-    cald = read_csv(z, "calendar_dates.txt") or []
+    routes = read_csv(z, "routes.txt", cache) or []
+    stops = read_csv(z, "stops.txt", cache) or []
+    trips = read_csv(z, "trips.txt", cache) or []
+    cal = read_csv(z, "calendar.txt", cache) or []
+    cald = read_csv(z, "calendar_dates.txt", cache) or []
 
     route_ids = {r_.get("route_id", "") for r_ in routes}
     stop_ids = {s.get("stop_id", "") for s in stops}
@@ -264,11 +322,10 @@ def check_referential_integrity(z, _cache):
         r.warn(f"{len(trip_svc_misses):,} trips reference unknown service_id "
                f"(sample: {trip_svc_misses[:MAX_SAMPLES]}) — will be dropped")
 
-    try:
-        raw = z.read("stop_times.txt")
-    except KeyError:
+    text = read_stop_times(z, cache)
+    if text is None:
         return r
-    reader = csv.DictReader(io.StringIO(raw.decode("utf-8-sig")))
+    reader = csv.DictReader(io.StringIO(text), skipinitialspace=True)
     bad_trip = 0; bad_stop = 0
     sample_bad_trip = []; sample_bad_stop = []
     for row in reader:
@@ -289,9 +346,9 @@ def check_referential_integrity(z, _cache):
     return r
 
 
-def check_calendar(z, _cache):
+def check_calendar(z, cache):
     r = Report("calendar-fields")
-    cal = read_csv(z, "calendar.txt")
+    cal = read_csv(z, "calendar.txt", cache)
     if cal is None:
         return r
     bad_dow = 0; bad_date = 0
@@ -310,21 +367,24 @@ def check_calendar(z, _cache):
     if bad_date:
         r.warn(f"{bad_date:,} calendar rows with malformed start_date/end_date "
                f"(expected YYYYMMDD)")
-    cald = read_csv(z, "calendar_dates.txt") or []
+    cald = read_csv(z, "calendar_dates.txt", cache) or []
     bad_et = 0
     for c in cald:
         v = c.get("exception_type", "")
         if v and v not in ("1", "2"):
             bad_et += 1
     if bad_et:
-        r.error(f"{bad_et:,} calendar_dates rows with exception_type not in {{1,2}}")
+        # Downgraded: build-schedule-db.py skips these rows, so they're
+        # ignored rather than breaking the ingest.
+        r.warn(f"{bad_et:,} calendar_dates rows with exception_type not in {{1,2}} "
+               f"— rows will be skipped")
     r.note(f"{len(cal):,} calendar rows, {len(cald):,} calendar_dates rows")
     return r
 
 
-def check_direction_ids(z, _cache):
+def check_direction_ids(z, cache):
     r = Report("direction-ids")
-    rows = read_csv(z, "trips.txt") or []
+    rows = read_csv(z, "trips.txt", cache) or []
     bad = 0
     for t in rows:
         v = t.get("direction_id", "")
@@ -335,11 +395,11 @@ def check_direction_ids(z, _cache):
     return r
 
 
-def check_feed_freshness(z, _cache):
+def check_feed_freshness(z, cache):
     r = Report("feed-freshness")
     import datetime
     today = datetime.date.today().strftime("%Y%m%d")
-    cal = read_csv(z, "calendar.txt") or []
+    cal = read_csv(z, "calendar.txt", cache) or []
     if not cal:
         r.note("no calendar.txt — cannot determine freshness from calendar")
         return r
