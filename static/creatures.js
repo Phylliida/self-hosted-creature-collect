@@ -561,6 +561,11 @@
       loadFromArray,
       list() { _ensureLoaded(); return _list; },
       byId(id) { _ensureLoaded(); return _byId.get(id) || null; },
+      // O(1) owned-fusion test — the variant index's key set IS the set
+      // of owned fusions (solo keys are 'solo:<id>', no collision).
+      // isFusionOwned funnels here so hot paths (badge labels, pokédex
+      // rows, egg tiles/sorts) don't rescan the whole collection.
+      ownsFusion(a, b) { _ensureLoaded(); return _variantsByFusion.has(`${a}-${b}`); },
       // Returns a fresh Set of variant keys ('auto' | '0' | '1' | ...)
       // currently captured for this fusion. Caller may union with
       // seenFusions[key].variants to get the full "ever-seen" set.
@@ -1049,8 +1054,8 @@
       pack: egg.pack || (global.Packs ? global.Packs.active() : 'creature-fusion'),
       sizeM: typeof egg.sizeM === 'number' ? egg.sizeM : 1.0,
       // Incubation distance — meters walked while this egg occupied
-      // an incubator slot. Persists across slot swaps; capped at
-      // INCUBATOR_HATCH_M when the egg is ready.
+      // an incubator slot. Persists across slot swaps; capped at its
+      // hatch target (eggHatchM — 5 km, or 10 km for legendary eggs).
       incubatedM: 0,
       createdAt: Date.now(),
     };
@@ -1073,15 +1078,29 @@
   }
 
   // Incubator: two slots a player can place eggs into. While
-  // occupied, an egg accumulates walked distance toward
-  // INCUBATOR_HATCH_M; the count lives on the egg itself
+  // occupied, an egg accumulates walked distance toward its hatch
+  // target (eggHatchM); the count lives on the egg itself
   // (`incubatedM`), so swapping out for another egg and coming
   // back later resumes from the same distance. Storage here is
   // just the slot bindings — the per-egg state lives on the egg
   // record in cc.eggs.v1.
   const INCUBATOR_KEY = 'cc.incubator.v1';
   const INCUBATOR_HATCH_M = 5000;
+  // Legendary eggs (a legendary species on either side of the fusion)
+  // take twice as long to hatch.
+  const LEGENDARY_EGG_HATCH_M = 10000;
   const INCUBATOR_SLOTS = 2;
+
+  // An egg is "legendary" when either fusion half is a legendary
+  // species. Solo eggs (pack specials) have no legendary concept.
+  function _isLegendaryEgg(egg) {
+    return !!egg && !_isSoloEgg(egg)
+      && (isLegendarySpecies(egg.speciesA) || isLegendarySpecies(egg.speciesB));
+  }
+  // Per-egg hatch distance target.
+  function eggHatchM(egg) {
+    return _isLegendaryEgg(egg) ? LEGENDARY_EGG_HATCH_M : INCUBATOR_HATCH_M;
+  }
 
   function readIncubator() {
     try {
@@ -1163,7 +1182,7 @@
     return (typeof v === 'number' && v >= 0) ? v : 0;
   }
   function eggReadyToHatch(egg) {
-    return eggIncubatedM(egg) >= INCUBATOR_HATCH_M;
+    return eggIncubatedM(egg) >= eggHatchM(egg);
   }
 
   // Hatch a fully-incubated egg: create a level-1 capture record
@@ -2097,6 +2116,12 @@
         && (_isEvolvedSpecies(c.speciesA) || _isEvolvedSpecies(c.speciesB)),
     },
     {
+      name: 'Legendary',
+      description: 'At least one side is a legendary pokémon.',
+      predicate: (c) => c
+        && (isLegendarySpecies(c.speciesA) || isLegendarySpecies(c.speciesB)),
+    },
+    {
       name: 'Radar',
       description: 'Caught from a poké-radar evolved spawn.',
       // Evolved poké-radar spawns mint 'E:'-namespaced spawn ids
@@ -2960,9 +2985,25 @@
     }
     return set;
   }
-  // Do we already own (have captured) this fusion?
+  // Do we already own (have captured) this fusion? O(1) via the
+  // captures store's variant index (see _capStore.ownsFusion) — the
+  // old caughtFusionsSet() rescan made every badge label O(collection).
   function isFusionOwned(a, b) {
-    return caughtFusionsSet().has(`${a}-${b}`);
+    return _capStore.ownsFusion(a, b);
+  }
+  // The "New" / "Fresh" label for a fusion pair, mirroring the encounter
+  // badge: '' when owned (nothing new about it), "Fresh" when we caught
+  // it before but evolved the copy away, otherwise "New". Shared by the
+  // egg tiles (which never show the Art variants of the badge — an egg's
+  // art isn't known until it hatches). Callers rendering MANY labels
+  // (egg grid, sorts) should hoist the seen map once and pass it as
+  // `seenF` — readSeenFusions()'s perf bookkeeping alone is O(dex size)
+  // per call.
+  function newFreshLabelFor(a, b, seenF) {
+    if (a == null || b == null) return '';
+    if (isFusionOwned(a, b)) return '';
+    const seen = seenF || readSeenFusions();
+    return (seen[`${a}-${b}`] || {}).caught ? 'Fresh' : 'New';
   }
   // Do we own (have captured) this specific variant ("art") of a fusion?
   // `variant`: a non-negative number (custom slot) or 'auto'/null (autogen) —
@@ -4663,6 +4704,38 @@
   function readInvFilterTypeB() {
     return localStorage.getItem('cc.invFilterTypeB') || '';
   }
+  // Eggs-view toolbar state (same conventions as the pokédex controls).
+  const EGGS_SORT_KEYS = new Set(['new', 'species']);
+  function readEggsSortKey() {
+    const v = localStorage.getItem('cc.eggsSortBy');
+    return EGGS_SORT_KEYS.has(v) ? v : 'new';
+  }
+  function readEggsSortDir() {
+    const v = localStorage.getItem('cc.eggsSortDir');
+    return SORT_DIRS.has(v) ? v : 'desc';
+  }
+  function readEggsFilterType() {
+    return localStorage.getItem('cc.eggsFilterType') || '';
+  }
+  function readEggsFilterTypeA() {
+    return localStorage.getItem('cc.eggsFilterTypeA') || '';
+  }
+  function readEggsFilterTypeB() {
+    return localStorage.getItem('cc.eggsFilterTypeB') || '';
+  }
+  // Eggs tag filter: the two badge states, 'New' and 'Fresh'. They're
+  // states of the same dimension, so selected chips OR together (both
+  // selected = show every unowned egg) rather than the pokédex's AND.
+  function readEggsTagFilter() {
+    try {
+      const raw = localStorage.getItem('cc.eggsTagFilter');
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr : [];
+    } catch { return []; }
+  }
+  function writeEggsTagFilter(arr) {
+    localStorage.setItem('cc.eggsTagFilter', JSON.stringify(arr));
+  }
   // Inventory tag filter: array of selected tag names. Multiple
   // selected tags use AND semantics (creature must have all of them).
   function readInvTagFilter() {
@@ -5760,10 +5833,6 @@
       #creatureInventory .daycare-view.show { display: flex; flex-direction: column; }
       #creatureInventory .eggs-view { display: none; }
       #creatureInventory .eggs-view.show { display: flex; flex-direction: column; }
-      #creatureInventory .eggs-subtitle {
-        font-size: 12px; color: var(--ui-muted, #666);
-        text-align: center; margin: 0 0 12px;
-      }
       #creatureInventory .eggs-empty {
         padding: 24px 14px;
         text-align: center;
@@ -5906,6 +5975,34 @@
         touch-action: none;
         user-select: none;
         -webkit-user-select: none;
+      }
+      /* "New"/"Fresh" pill overlaid on the tile's top-left corner —
+         same look as the encounter screen's .battle-new-badge, minus
+         the pop animation (this view re-renders on every incubator
+         tick, so an animation would replay constantly). */
+      #creatureInventory .egg-new-badge {
+        position: absolute;
+        top: -6px; left: -6px;
+        padding: 2px 7px;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #fff;
+        background: var(--ui-accent, #b6896c);
+        border-radius: 999px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+        text-shadow: 0 1px 1px rgba(0,0,0,0.35);
+        transform: rotate(-8deg);
+        pointer-events: none;
+        white-space: nowrap;
+        z-index: 1;
+      }
+      /* Legendary eggs (10 km hatch): gold border so they read as
+         special at a glance, in the grid and in incubator slots. */
+      #creatureInventory .egg-tile.egg-legendary {
+        border-color: #e8a13a;
+        box-shadow: 0 0 0 1px #e8a13a inset;
       }
       #creatureInventory .egg-tile.dragging {
         opacity: 0.35;
@@ -6897,8 +6994,16 @@
         justify-content: flex-start;
         margin: 6px 0 12px;
       }
+      /* Eggs tag row: same layout, tighter margins (0 above, 10px below)
+         than the shared 6px/12px. */
+      #creatureInventory .eggs-tag-filter-row {
+        display: flex; flex-wrap: wrap; gap: 6px;
+        justify-content: flex-start;
+        margin: 0 0 10px;
+      }
       #creatureInventory .inv-tag-filter-row:empty,
-      #creatureInventory .pokedex-tag-filter-row:empty { display: none; }
+      #creatureInventory .pokedex-tag-filter-row:empty,
+      #creatureInventory .eggs-tag-filter-row:empty { display: none; }
       #creatureInventory .detail-tag-chip,
       #creatureInventory .inv-tag-chip {
         display: inline-block;
@@ -6951,12 +7056,14 @@
         justify-content: center;
         text-align: center;
       }
-      #creatureInventory .pokedex-stats {
+      #creatureInventory .pokedex-stats,
+      #creatureInventory .eggs-stats {
         text-align: center;
         font-size: 12px; color: var(--ui-muted, #666);
         margin: 0 0 10px;
       }
-      #creatureInventory .pokedex-stats b {
+      #creatureInventory .pokedex-stats b,
+      #creatureInventory .eggs-stats b {
         color: var(--ui-text, #111);
       }
       #creatureInventory .pokedex-grid {
@@ -8070,6 +8177,36 @@
         <div class="eggs-view">
           <button class="eggs-back" type="button" aria-label="back">←</button>
           <h3 class="subview-title">Eggs</h3>
+          <div class="eggs-stats"></div>
+          <div class="search-row">
+            <input id="eggsSearch" type="search" placeholder="Search by name" autocomplete="off">
+          </div>
+          <div class="search-row pokedex-search-row">
+            <div class="ac-field">
+              <input id="eggsSearchA" type="search" placeholder="First Species" autocomplete="off">
+              <ul class="ac-list" id="eggsAcA" role="listbox"></ul>
+            </div>
+            <button id="eggsSwap" class="pokedex-swap-btn" type="button"
+                    aria-label="swap first and second species" title="swap species">⇄</button>
+            <div class="ac-field">
+              <input id="eggsSearchB" type="search" placeholder="Second Species" autocomplete="off">
+              <ul class="ac-list" id="eggsAcB" role="listbox"></ul>
+            </div>
+          </div>
+          <div class="type-filter-row">
+            <label class="type-pair"><span>Either:</span>${typeFilterSelectHtml('eggsFilterType')}</label>
+            <label class="type-pair"><span>First:</span>${typeFilterSelectHtml('eggsFilterTypeA')}</label>
+            <label class="type-pair"><span>Second:</span>${typeFilterSelectHtml('eggsFilterTypeB')}</label>
+          </div>
+          <div class="eggs-tag-filter-row"></div>
+          <div class="sort-row">
+            <label for="eggsSortBy">Sort</label>
+            <select id="eggsSortBy">
+              <option value="new">New</option>
+              <option value="species">Species</option>
+            </select>
+            <button class="dir" type="button" id="eggsSortDir" aria-label="toggle sort direction"></button>
+          </div>
           <div class="eggs-body"></div>
         </div>
         <div class="bag-view">
@@ -8564,6 +8701,63 @@
         pokedexSearchA.value = pokedexSearchB.value;
         pokedexSearchB.value = a;
         renderPokedex();
+      });
+    }
+
+    // Eggs-view toolbar — same controls as the pokédex, wired the same
+    // way (sort + type filters persist to localStorage; search text
+    // lives in the inputs; tag chips render per renderEggs).
+    const eggsSortBy = panel.querySelector('#eggsSortBy');
+    const eggsSortDir = panel.querySelector('#eggsSortDir');
+    const syncEggsDirButton = () => {
+      const dir = readEggsSortDir();
+      eggsSortDir.textContent = dir === 'asc' ? '↑' : '↓';
+      eggsSortDir.title = dir === 'asc'
+        ? 'ascending (oldest / A→Z)'
+        : 'descending (newest / Z→A)';
+    };
+    eggsSortBy.value = readEggsSortKey();
+    syncEggsDirButton();
+    eggsSortBy.addEventListener('change', () => {
+      localStorage.setItem('cc.eggsSortBy', eggsSortBy.value);
+      renderEggs();
+    });
+    eggsSortDir.addEventListener('click', () => {
+      const next = readEggsSortDir() === 'asc' ? 'desc' : 'asc';
+      localStorage.setItem('cc.eggsSortDir', next);
+      syncEggsDirButton();
+      renderEggs();
+    });
+    const _wireEggsTypeFilter = (id, key) => {
+      const sel = panel.querySelector('#' + id);
+      sel.value = localStorage.getItem(key) || '';
+      applyTypeSelectColor(sel);
+      sel.addEventListener('change', () => {
+        localStorage.setItem(key, sel.value);
+        applyTypeSelectColor(sel);
+        renderEggs();
+      });
+    };
+    _wireEggsTypeFilter('eggsFilterType', 'cc.eggsFilterType');
+    _wireEggsTypeFilter('eggsFilterTypeA', 'cc.eggsFilterTypeA');
+    _wireEggsTypeFilter('eggsFilterTypeB', 'cc.eggsFilterTypeB');
+    const eggsSearch = panel.querySelector('#eggsSearch');
+    const eggsSearchA = panel.querySelector('#eggsSearchA');
+    const eggsSearchB = panel.querySelector('#eggsSearchB');
+    eggsSearch.addEventListener('input', renderEggs);
+    eggsSearchA.addEventListener('input', renderEggs);
+    eggsSearchB.addEventListener('input', renderEggs);
+    attachSpeciesAutocomplete(eggsSearchA, panel.querySelector('#eggsAcA'),
+      () => _eggSpeciesIds('a'));
+    attachSpeciesAutocomplete(eggsSearchB, panel.querySelector('#eggsAcB'),
+      () => _eggSpeciesIds('b'));
+    const eggsSwap = panel.querySelector('#eggsSwap');
+    if (eggsSwap) {
+      eggsSwap.addEventListener('click', () => {
+        const a = eggsSearchA.value;
+        eggsSearchA.value = eggsSearchB.value;
+        eggsSearchB.value = a;
+        renderEggs();
       });
     }
 
@@ -9219,7 +9413,8 @@
   // Eggs view: shows the two incubator slots at the top + a grid of
   // available (un-incubated) eggs below. Eggs drag between the grid
   // and the slots; while in a slot they accumulate walked distance
-  // toward INCUBATOR_HATCH_M, persisted on the egg record so swaps
+  // toward their hatch target (eggHatchM — 5 km, 10 km for legendary
+  // eggs), persisted on the egg record so swaps
   // are non-destructive. When an egg's incubatedM hits the
   // threshold, the slot card surfaces a "Tap to hatch" CTA which
   // creates a level-1 capture record from the egg's content +
@@ -9286,12 +9481,135 @@
     return _eggArtBackgroundCss(_eggArtSpecies(egg), cellPx);
   }
 
-  function _formatIncubationKm(meters) {
-    const km = (meters || 0) / 1000;
-    return `${km.toFixed(2)} / ${(INCUBATOR_HATCH_M / 1000).toFixed(0)} km`;
+  function _formatIncubationKm(egg) {
+    const km = eggIncubatedM(egg) / 1000;
+    return `${km.toFixed(2)} / ${(eggHatchM(egg) / 1000).toFixed(0)} km`;
   }
 
-  function _incubatorSlotHtml(idx, egg) {
+  // "New"/"Fresh" overlay pill for an egg tile — same label semantics as
+  // the encounter badge (see newFreshLabelFor), but never the Art
+  // variants: an egg's art isn't known until it hatches. Solo eggs (pack
+  // specials) don't participate in fusion New/Fresh tracking — no badge.
+  // `seenF`: per-render hoisted seen-fusions map (see _filterSortEggs).
+  function _eggNewBadgeHtml(egg, seenF) {
+    if (_isSoloEgg(egg)) return '';
+    const label = newFreshLabelFor(egg.speciesA, egg.speciesB, seenF);
+    return label ? `<div class="egg-new-badge">${label}</div>` : '';
+  }
+
+  // ── Eggs-view toolbar (mirrors the pokédex controls) ──────────
+  // Species ids present in the egg box, for the First/Second species
+  // autocompletes (same role as _capturedSpeciesIds for the inventory).
+  function _eggSpeciesIds(slot) {
+    const out = new Set();
+    for (const e of readEggs()) {
+      if (typeof e.speciesA !== 'number' || typeof e.speciesB !== 'number') continue;
+      if (slot === 'a') out.add(e.speciesA);
+      else out.add(e.speciesB);
+    }
+    return out;
+  }
+  const EGG_FILTER_TAGS = ['New', 'Fresh'];
+  const EGGS_FILTER_SELECTORS = [
+    '#eggsSearch', '#eggsSearchA', '#eggsSearchB',
+    '#eggsFilterType', '#eggsFilterTypeA', '#eggsFilterTypeB',
+  ];
+  // Apply the eggs-view filters + sort to a list of eggs. Pulled out of
+  // renderEggs so it can be unit-tested; `opts` carries every input:
+  //   { name, qA, qB, type, typeA, typeB, tags: [], sort, dir }
+  // `dir` mirrors the pokédex convention: 'desc' (default) = badges-first
+  // & newest-first / Z→A, 'asc' = the reverse (oldest / A→Z).
+  function _filterSortEggs(eggs, opts) {
+    let out = eggs;
+    // Per-call memoization. The 'new' sort's rank() runs per COMPARISON
+    // (O(n log n)) and the tag filter + name search run per egg, so
+    // labels and names are computed once per egg against ONE hoisted
+    // seen-fusions snapshot — readSeenFusions() per call is O(dex size)
+    // in perf bookkeeping alone.
+    const seenF = opts.seenF || readSeenFusions();
+    const labelCache = new Map();
+    const labelOf = (e) => {
+      let l = labelCache.get(e);
+      if (l === undefined) {
+        l = newFreshLabelFor(e.speciesA, e.speciesB, seenF);
+        labelCache.set(e, l);
+      }
+      return l;
+    };
+    const nameCache = new Map();
+    const nameOf = (e) => {
+      let n = nameCache.get(e);
+      if (n === undefined) { n = _eggName(e).toLowerCase(); nameCache.set(e, n); }
+      return n;
+    };
+    const nameOfLower = (idx) => global.Species
+      ? global.Species.nameFor(idx).toLowerCase()
+      : `#${idx}`;
+    const nameQ = (opts.name || '').trim().toLowerCase();
+    if (nameQ) out = out.filter((e) => nameOf(e).includes(nameQ));
+    const qA = (opts.qA || '').trim().toLowerCase();
+    const qB = (opts.qB || '').trim().toLowerCase();
+    // Solo eggs have no fusion slots — they can't satisfy species filters.
+    if (qA) out = out.filter((e) => !_isSoloEgg(e) && nameOfLower(e.speciesA).includes(qA));
+    if (qB) out = out.filter((e) => !_isSoloEgg(e) && nameOfLower(e.speciesB).includes(qB));
+    if (opts.type || opts.typeA || opts.typeB) {
+      out = out.filter((e) => {
+        const types = _eggTypes(e);
+        if (!types || !types.length) return false;
+        // Same Either/First/Second semantics as the pokédex: "Either"
+        // matches any type, "First" the primary slot, "Second" the
+        // (post-dedup) secondary slot.
+        if (opts.type && !types.includes(opts.type)) return false;
+        if (opts.typeA && types[0] !== opts.typeA) return false;
+        if (opts.typeB && types[1] !== opts.typeB) return false;
+        return true;
+      });
+    }
+    if (opts.tags && opts.tags.length) {
+      // OR semantics — see readEggsTagFilter.
+      const want = new Set(opts.tags);
+      out = out.filter((e) => want.has(labelOf(e)));
+    }
+    const recent = (x, y) => (y.createdAt || 0) - (x.createdAt || 0);
+    if (opts.sort === 'species') {
+      const sign = opts.dir === 'asc' ? 1 : -1;
+      out = out.slice().sort((x, y) => sign * (nameOf(x).localeCompare(nameOf(y)) || recent(x, y)));
+    } else {
+      // 'new' (default): badge-having eggs first — New before Fresh —
+      // then everything else, most recent first within each group.
+      // 'asc' reverses the whole thing (unbadged first, oldest first).
+      const rank = (e) => {
+        const l = labelOf(e);
+        return l === 'New' ? 0 : l === 'Fresh' ? 1 : 2;
+      };
+      const sign = opts.dir === 'asc' ? -1 : 1;
+      out = out.slice().sort((x, y) => sign * ((rank(x) - rank(y)) || recent(x, y)));
+    }
+    return out;
+  }
+  // The New/Fresh toggle chips. Re-rendered (and re-bound) by renderEggs.
+  function _renderEggsTagFilterRow(panel) {
+    const row = panel.querySelector('.eggs-tag-filter-row');
+    if (!row) return;
+    const selected = new Set(readEggsTagFilter());
+    row.innerHTML = EGG_FILTER_TAGS.map((t) => {
+      const cls = selected.has(t) ? 'inv-tag-chip applied' : 'inv-tag-chip';
+      return `<button class="${cls}" data-tag="${t}" type="button">${t}</button>`;
+    }).join('');
+    row.querySelectorAll('.inv-tag-chip').forEach((chip) => {
+      chip.addEventListener('click', () => {
+        const t = chip.dataset.tag;
+        if (!t) return;
+        const sel = readEggsTagFilter();
+        const i = sel.indexOf(t);
+        if (i >= 0) sel.splice(i, 1); else sel.push(t);
+        writeEggsTagFilter(sel);
+        renderEggs();
+      });
+    });
+  }
+
+  function _incubatorSlotHtml(idx, egg, seenF) {
     if (!egg) {
       return (
         `<div class="incubator-slot empty" data-slot="${idx}" data-zone="slot">`
@@ -9302,37 +9620,41 @@
     const ready = eggReadyToHatch(egg);
     const incubatedM = eggIncubatedM(egg);
     const pct = Math.min(100,
-      Math.round((incubatedM / INCUBATOR_HATCH_M) * 100));
+      Math.round((incubatedM / eggHatchM(egg)) * 100));
     const artStyle = _eggArtCss(egg, 48);
     const name = _eggName(egg);
     const cls = `incubator-slot${ready ? ' ready' : ''}`;
+    const legendary = _isLegendaryEgg(egg) ? ' egg-legendary' : '';
     const hatchBtn = ready
       ? `<button class="slot-hatch" type="button" data-hatch-id="${escapeHtml(egg.id)}">Tap to hatch</button>`
       : '';
     return (
       `<div class="${cls}" data-slot="${idx}" data-zone="slot">`
-      + `<div class="egg-tile slot-egg-tile" data-egg-id="${escapeHtml(egg.id)}" data-from-slot="${idx}" aria-label="${escapeHtml(name)} egg">`
+      + `<div class="egg-tile slot-egg-tile${legendary}" data-egg-id="${escapeHtml(egg.id)}" data-from-slot="${idx}" aria-label="${escapeHtml(name)} egg">`
+      +   _eggNewBadgeHtml(egg, seenF)
       +   `<div class="tile-art" style="${artStyle}"></div>`
       +   `<div class="tile-name">${escapeHtml(name)}</div>`
       + `</div>`
       + `<div class="slot-progress" aria-hidden="true"><div class="fill" style="width:${pct}%"></div></div>`
-      + `<div class="slot-distance">${_formatIncubationKm(incubatedM)}</div>`
+      + `<div class="slot-distance">${_formatIncubationKm(egg)}</div>`
       + hatchBtn
       + `</div>`
     );
   }
 
-  function _eggTileHtml(egg) {
+  function _eggTileHtml(egg, seenF) {
     const artStyle = _eggArtCss(egg, 48);
     const name = _eggName(egg);
     const incubatedM = eggIncubatedM(egg);
     const pct = Math.min(100,
-      Math.round((incubatedM / INCUBATOR_HATCH_M) * 100));
+      Math.round((incubatedM / eggHatchM(egg)) * 100));
     const progress = incubatedM > 0
       ? `<div class="tile-progress" aria-hidden="true"><div class="fill" style="width:${pct}%"></div></div>`
       : '';
+    const legendary = _isLegendaryEgg(egg) ? ' egg-legendary' : '';
     return (
-      `<div class="egg-tile" data-egg-id="${escapeHtml(egg.id)}" aria-label="${escapeHtml(name)} egg">`
+      `<div class="egg-tile${legendary}" data-egg-id="${escapeHtml(egg.id)}" aria-label="${escapeHtml(name)} egg">`
+      + _eggNewBadgeHtml(egg, seenF)
       + `<div class="tile-art" style="${artStyle}"></div>`
       + `<div class="tile-name">${escapeHtml(name)}</div>`
       + progress
@@ -9368,6 +9690,8 @@
     const eggs = allEggs.filter((e) =>
       (e.pack || 'creature-fusion') === activePack);
     if (!eggs.length) {
+      const statsEl0 = panel.querySelector('.eggs-stats');
+      if (statsEl0) statsEl0.innerHTML = '<b>0</b> eggs';
       body.innerHTML = `
         <div class="eggs-empty">
           No eggs yet — keep walking with a pokémon in the daycare and one will eventually drop.
@@ -9377,26 +9701,54 @@
     }
     const incubSlots = readIncubator();
     const eggById = new Map(eggs.map((e) => [e.id, e]));
+    // One seen-fusions snapshot for the whole render — every badge label
+    // and the 'new' sort read it (per-call reads are O(dex size)).
+    const seenF = readSeenFusions();
     const incubatorHtml = (
       `<div class="incubator">`
-      + _incubatorSlotHtml(0, eggById.get(incubSlots[0]) || null)
-      + _incubatorSlotHtml(1, eggById.get(incubSlots[1]) || null)
+      + _incubatorSlotHtml(0, eggById.get(incubSlots[0]) || null, seenF)
+      + _incubatorSlotHtml(1, eggById.get(incubSlots[1]) || null, seenF)
       + `</div>`
     );
     const slottedSet = new Set(incubSlots.filter((id) => !!id));
     const remainingEggs = eggs
       .filter((e) => !slottedSet.has(e.id))
       .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    const subtitle = `${eggs.length} egg${eggs.length === 1 ? '' : 's'}`;
-    const tiles = remainingEggs.map(_eggTileHtml).join('');
+    // Toolbar (name/species/type/tag filters + sort) — applies to the
+    // grid only; incubator occupants always show.
+    updateFilterIndicators(panel, EGGS_FILTER_SELECTORS);
+    _renderEggsTagFilterRow(panel);
+    const visibleEggs = _filterSortEggs(remainingEggs, {
+      name: (panel.querySelector('#eggsSearch') || {}).value || '',
+      qA: (panel.querySelector('#eggsSearchA') || {}).value || '',
+      qB: (panel.querySelector('#eggsSearchB') || {}).value || '',
+      type: readEggsFilterType(),
+      typeA: readEggsFilterTypeA(),
+      typeB: readEggsFilterTypeB(),
+      tags: readEggsTagFilter(),
+      sort: readEggsSortKey(),
+      dir: readEggsSortDir(),
+      seenF,
+    });
+    // Egg count in the pokédex-stats slot (under the title): total box
+    // count, narrowing to "X of Y" while a filter is active.
+    const filtered = visibleEggs.length !== remainingEggs.length;
+    const statsEl = panel.querySelector('.eggs-stats');
+    if (statsEl) {
+      statsEl.innerHTML = filtered
+        ? `<b>${visibleEggs.length}</b> of <b>${eggs.length}</b> egg${eggs.length === 1 ? '' : 's'}`
+        : `<b>${eggs.length}</b> egg${eggs.length === 1 ? '' : 's'}`;
+    }
+    const tiles = visibleEggs.map((e) => _eggTileHtml(e, seenF)).join('');
     const gridHtml = (
       `<div class="eggs-grid-zone" data-zone="grid">`
-      + `<div class="eggs-grid">${tiles}</div>`
+      + (visibleEggs.length
+        ? `<div class="eggs-grid">${tiles}</div>`
+        : `<div class="eggs-empty">No eggs match the current filters.</div>`)
       + `</div>`
     );
     body.innerHTML = (
-      `<div class="eggs-subtitle">${escapeHtml(subtitle)}</div>`
-      + incubatorHtml
+      incubatorHtml
       + gridHtml
     );
     // Wire pointer-based drag-and-drop for the incubator + grid.
@@ -13558,12 +13910,13 @@
         const i = eggs.findIndex((e) => e.id === slotEggId);
         if (i < 0) continue;
         const before = eggIncubatedM(eggs[i]);
-        if (before >= INCUBATOR_HATCH_M) continue;
-        const after = Math.min(before + d, INCUBATOR_HATCH_M);
+        const need = eggHatchM(eggs[i]);   // 10 km for legendary eggs
+        if (before >= need) continue;
+        const after = Math.min(before + d, need);
         if (after !== before) {
           eggs[i] = { ...eggs[i], incubatedM: after };
           eggsChanged = true;
-          if (after >= INCUBATOR_HATCH_M && before < INCUBATOR_HATCH_M) {
+          if (after >= need && before < need) {
             ready.push(slotEggId);
           }
         }
