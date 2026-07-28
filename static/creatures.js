@@ -3258,6 +3258,33 @@
     }
     return s;
   }
+  // Rebuild every spawn marker + radar blip from scratch, then refresh.
+  // Needed when spawn IDENTITIES change under stable ids (community-day
+  // activation/expiry) — the normal refresh reconciles markers by id and
+  // would keep showing the pre-transform sprites until an app restart.
+  // The per-spawn shiny cache (_shinyBySpawn) is untouched, so a shiny
+  // decision survives the transform.
+  function _hardRefreshSpawns() {
+    _lastRefreshAt = 0;   // bypass the stationary-user refresh dedupe
+    clearMarkers();
+    rerenderRadarMarkers();
+    if (typeof refreshSpawnOverlay === 'function') refreshSpawnOverlay();
+  }
+  // Arm a one-shot timer that ends the community session at its endMs:
+  // clears the state (which pushes null to the engine) and reverts the
+  // map. Re-armed on every activation/extend/boot/import.
+  let _communityExpiryTimer = null;
+  function _scheduleCommunityExpiry() {
+    if (_communityExpiryTimer) { clearTimeout(_communityExpiryTimer); _communityExpiryTimer = null; }
+    const s = readCommunityDay();
+    if (!s || !s.active) return;
+    const delay = Math.min(2147483647, Math.max(0, s.active.endMs - Date.now()) + 250);
+    _communityExpiryTimer = setTimeout(() => {
+      _communityExpiryTimer = null;
+      readCommunityDay();   // lazily clears the lapsed session + pushes null
+      _hardRefreshSpawns();
+    }, delay);
+  }
   // Consume one pass: start a fresh 1-h session for this week's species,
   // or extend the running one by 1 h.
   function activateCommunityPass() {
@@ -3273,7 +3300,8 @@
     s.count -= 1;
     _writeCommunityRaw(s);
     if (global.Spawns && global.Spawns.setCommunityDay) global.Spawns.setCommunityDay(s.active);
-    if (typeof refreshSpawnOverlay === 'function') refreshSpawnOverlay();
+    _hardRefreshSpawns();
+    _scheduleCommunityExpiry();
     return true;
   }
   // Save-import hook (index.html): merge a backup's community-day state.
@@ -3307,7 +3335,8 @@
     if (global.Spawns && global.Spawns.setCommunityDay) {
       global.Spawns.setCommunityDay(s && s.active ? s.active : null);
     }
-    if (typeof refreshSpawnOverlay === 'function') refreshSpawnOverlay();
+    _hardRefreshSpawns();
+    _scheduleCommunityExpiry();
   }
   function _communitySpeciesName(id) {
     return (global.Species && global.Species.nameFor) ? global.Species.nameFor(id) : '#' + id;
@@ -15954,11 +15983,13 @@
     // session (state lives in localStorage / the save file).
     _pushActiveIncenseToSpawns();
     // Same for a community-day session; also stamps this week's pass
-    // grant (2 per community week, 0 on off weeks — see syncCommunityWeek).
+    // grant (2 per community week, 0 on off weeks — see syncCommunityWeek)
+    // and arms the expiry timer that reverts the map when it ends.
     const _cdBoot = readCommunityDay();
     if (global.Spawns && global.Spawns.setCommunityDay) {
       global.Spawns.setCommunityDay(_cdBoot && _cdBoot.active ? _cdBoot.active : null);
     }
+    _scheduleCommunityExpiry();
     // These read the captured + seenFusions stores, which now load
     // asynchronously from IndexedDB. Defer them until hydration resolves
     // so they operate on the real collection, not the empty pre-load

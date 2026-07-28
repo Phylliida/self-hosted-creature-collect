@@ -4,8 +4,10 @@
 //   - Featured-species permutation: full-cycle coverage + 26-appearance
 //     no-repeat across cycle boundaries (advances only on community weeks).
 //   - Generation override: wild/evolved/incense spawns become fusions with
-//     the featured species while a session overlaps; legendary stream exempt;
-//     inactive sessions leave every stream bit-identical.
+//     the featured species while a session is active at the QUERY MOMENT
+//     (activation transforms all living spawns in place; expiry reverts
+//     them); legendary stream exempt; inactive sessions leave every stream
+//     bit-identical.
 //   - Multi-player co-location: two players with active sessions (same week,
 //     different windows) see identical spawns; same incense ⇒ identical
 //     incense+community spawns, different incense ⇒ different ones.
@@ -153,6 +155,13 @@ const wildOnly = (arr) => arr.filter((s) => !s.legendary && !s.evolved && !s.inc
   const restored = S.spawnsInBbox(BBOX, NOW).map(shape);
   ok(JSON.stringify(restored) === JSON.stringify(baseline),
     '3: clearing the session restores the original stream exactly');
+  // An ENDED session (endMs before the query moment) reverts everything —
+  // the map goes back to normal the instant the pass runs out.
+  S.setCommunityDay({ speciesId: X, startMs: NOW - 90 * MIN, endMs: NOW - 30 * MIN });
+  const reverted = S.spawnsInBbox(BBOX, NOW).map(shape);
+  S.setCommunityDay(null);
+  ok(JSON.stringify(reverted) === JSON.stringify(baseline),
+    '3: an ended session leaves no community morphs behind (revert-on-expiry)');
 }
 
 // ── 4) Legendary stream exempt ──────────────────────────────────
@@ -206,10 +215,11 @@ const wildOnly = (arr) => arr.filter((s) => !s.legendary && !s.evolved && !s.inc
   for (let cx = 70000; cx < 70300 && spawns.length < 30; cx++) {
     for (let cy = 80000; cy < 80300 && spawns.length < 30; cy++) {
       for (const e of [et - 1, et]) {
-        const p = S.generateEvolvedAtTick(cx, cy, e);
-        // Only spawns whose alive window overlaps the session adopt the
-        // override (dead-of-old-age ones legitimately keep normal forms).
-        if (p && p.startMs < sess.endMs && p.expireMs > sess.startMs) spawns.push(p);
+        // Query-time semantics: every spawn generated while the session
+        // is active at the query moment adopts the override, whatever
+        // its age.
+        const p = S.generateEvolvedAtTick(cx, cy, e, NOW);
+        if (p) spawns.push(p);
       }
     }
   }
@@ -219,6 +229,24 @@ const wildOnly = (arr) => arr.filter((s) => !s.legendary && !s.evolved && !s.inc
     '5: every evolved spawn has the featured species in a slot');
   ok(spawns.every((s) => (s.speciesA === X ? evoSet.has(s.speciesB) : evoSet.has(s.speciesA))),
     '5: the other evolved half is an evolved-form species');
+
+  // nearestRadar (the blip source) uses the REAL clock for aliveness +
+  // query-time activity, so drive it with a real-time session.
+  const realNow = Date.now();
+  const liveSess = { speciesId: X, startMs: realNow - 30 * MIN, endMs: realNow + 60 * MIN };
+  S.setCommunityDay(liveSess);
+  const radarOn = S.nearestRadar(45.5, -73.6, 10, 20000);
+  S.setCommunityDay(null);
+  const radarEvo = radarOn.filter((s) => !s.legendary);
+  ok(radarEvo.length > 0, '5: nearestRadar found evolved targets (' + radarEvo.length + ')');
+  ok(radarEvo.every((s) => s.speciesA === X || s.speciesB === X),
+    '5: radar blips transform while the session is live');
+  const endedSess = { speciesId: X, startMs: realNow - 90 * MIN, endMs: realNow - 30 * MIN };
+  S.setCommunityDay(endedSess);
+  const radarOff = S.nearestRadar(45.5, -73.6, 10, 20000);
+  S.setCommunityDay(null);
+  ok(radarOff.filter((s) => !s.legendary).every((s) => s.speciesA !== X && s.speciesB !== X),
+    '5: radar blips revert once the session has ended');
 }
 
 // ── 6) Incense + community ──────────────────────────────────────
@@ -228,7 +256,7 @@ const wildOnly = (arr) => arr.filter((s) => !s.legendary && !s.evolved && !s.inc
     const out = [];
     for (let cx = 100000; cx < 100400; cx++) {
       for (let cy = 110000; cy < 110400; cy++) {
-        const p = S.generateIncenseCellAtTick(cx, cy, tick, type);
+        const p = S.generateIncenseCellAtTick(cx, cy, tick, type, NOW);
         if (p) out.push(p);
       }
     }
@@ -282,7 +310,7 @@ const wildOnly = (arr) => arr.filter((s) => !s.legendary && !s.evolved && !s.inc
     const out = [];
     for (let cx = 100000; cx < 100400; cx++) {
       for (let cy = 110000; cy < 110400; cy++) {
-        const p = S.generateIncenseCellAtTick(cx, cy, tick, type);
+        const p = S.generateIncenseCellAtTick(cx, cy, tick, type, NOW);
         if (p) out.push(shape(p));
       }
     }

@@ -572,8 +572,10 @@
   // tick is the integer minute-tick at which the spawn was born. The
   // ID format is `${cellX}:${cellY}:${tick}:0` — the trailing 0 leaves
   // room for >1 spawn per cell-tick in the future without changing
-  // existing caught-spawn keys.
-  function generateCellAtTick(cellX, cellY, tick) {
+  // existing caught-spawn keys. nowMs is the query time (defaults to
+  // the real now); it only affects the query-time community-day
+  // override, never the underlying deterministic identity.
+  function generateCellAtTick(cellX, cellY, tick, nowMs) {
     const arng = getxor4069(cellTickSeed(cellX, cellY, tick));
     if (arng() >= SPAWN_CHANCE_PER_TICK) return null;
     const fx = arng();
@@ -626,7 +628,7 @@
       };
     }
     let outA = speciesA, outB = speciesB;
-    const cd = _communityFor(startMs, startMs + LIFETIME_MS);
+    const cd = _communityActiveAt(nowMs);
     if (cd) {
       // Community day: one slot is the week's featured species, the
       // other a uniform draw from the wild pool (no type-weather bias —
@@ -912,7 +914,7 @@
       ((curX + 1) * LAT_MOD + (curY + 1) * LAT_MOD * LON_MOD) * 7477
     ) + ((etick ^ EVO_SALT) >>> 0) * 983) | 0;
   }
-  function generateEvolvedAtTick(cellX, cellY, etick) {
+  function generateEvolvedAtTick(cellX, cellY, etick, nowMs) {
     if (!_evoCandidate(cellX, cellY, etick)) return null;
     if (!_buildTypeIndices() || !_buildEvoIndices()) return null;
     const arng = getxor4069(evoCellTickSeed(cellX, cellY, etick));
@@ -943,7 +945,7 @@
     const startMs = etick * EVO_TICK_MS + bornOffset;
     const variantSeed = arng();
     let outA = speciesA, outB = speciesB;
-    const cd = _communityFor(startMs, startMs + EVO_LIFETIME_MS);
+    const cd = _communityActiveAt(nowMs);
     if (cd && _evoFlat.length) {
       // Community day: one slot is the featured species, the other a
       // uniform draw across ALL evolved forms (no weather bias). Same
@@ -977,7 +979,7 @@
     for (let cx = minLatCell; cx <= maxLatCell; cx++) {
       for (let cy = minLngCell; cy <= maxLngCell; cy++) {
         for (let et = firstET; et <= curET; et++) {
-          const p = generateEvolvedAtTick(cx, cy, et);
+          const p = generateEvolvedAtTick(cx, cy, et, now);
           if (!p) continue;
           if (now < p.startMs || now >= p.expireMs) continue;
           if (p.lat < south || p.lat > north || p.lng < west || p.lng > east) continue;
@@ -1012,7 +1014,7 @@
       for (let cx = minLatCell; cx <= maxLatCell; cx++) {
         for (let cy = minLngCell; cy <= maxLngCell; cy++) {
           for (let et = firstET; et <= curET; et++) {
-            const p = generateEvolvedAtTick(cx, cy, et);
+            const p = generateEvolvedAtTick(cx, cy, et, now);
             if (!p) continue;
             if (now < p.startMs || now >= p.expireMs) continue;
             if (!found.has(p.id)) found.set(p.id, p);
@@ -1054,7 +1056,7 @@
       for (let cx = minLatCell; cx <= maxLatCell; cx++) {
         for (let cy = minLngCell; cy <= maxLngCell; cy++) {
           for (let et = firstET; et <= curET; et++) {
-            const p = generateEvolvedAtTick(cx, cy, et);
+            const p = generateEvolvedAtTick(cx, cy, et, now);
             if (p && now >= p.startMs && now < p.expireMs && !found.has(p.id)) found.set(p.id, p);
           }
           for (let lt = firstLT; lt <= curLT; lt++) {
@@ -1118,7 +1120,7 @@
       ((curX + 1) * LAT_MOD + (curY + 1) * LAT_MOD * LON_MOD) * 7477
     ) + (((tick ^ INCENSE_SALT) >>> 0) + Math.imul(typeIdx + 1, 0x9E3779B1)) * 983) | 0;
   }
-  function generateIncenseCellAtTick(cellX, cellY, tick, incenseType) {
+  function generateIncenseCellAtTick(cellX, cellY, tick, incenseType, nowMs) {
     if (!_buildTypeIndices()) return null;
     const typeIdx = _weatherTypes().indexOf(incenseType);
     if (typeIdx < 0) return null;   // incl. pokémon incense in pack mode (v1)
@@ -1167,7 +1169,7 @@
       };
     }
     let outA = speciesA, outB = speciesB;
-    const cd = _communityFor(startMs, startMs + LIFETIME_MS);
+    const cd = _communityActiveAt(nowMs);
     if (cd) {
       // Community day + incense: one slot is the featured species, the
       // other a uniform draw from the incense-type pool (the 40/30/30
@@ -1235,7 +1237,7 @@
           const mk = cx + ':' + cy + ':' + t;
           let p;
           if (_incMemo.has(mk)) p = _incMemo.get(mk);
-          else { p = generateIncenseCellAtTick(cx, cy, t, inc.type); _incMemo.set(mk, p); }
+          else { p = generateIncenseCellAtTick(cx, cy, t, inc.type, now); _incMemo.set(mk, p); }
           if (!p) continue;
           if (now < p.startMs || now >= p.expireMs) continue;
           if (p.lat < south || p.lat > north || p.lng < west || p.lng > east) continue;
@@ -1249,13 +1251,17 @@
   // ── Community day active session ────────────────────────────
   // Per-player state (unlike the shared deterministic streams): pushed
   // here from creatures.js via setCommunityDay, where it lives in the
-  // save file. A spawn adopts the override when its ALIVE window
-  // overlaps the session — [startMs, expireMs) ∩ [cd.startMs, cd.endMs)
-  // ≠ ∅ — so activating flips every currently-visible spawn immediately,
-  // spawns born during the session keep their community identity until
-  // they die of old age, and identity is stable for any fixed session.
-  // Changing the state clears the wild/incense memos so ticks are
-  // regenerated against the new session.
+  // save file. The override is QUERY-TIME: a spawn is a community morph
+  // iff the session is active at the moment of the query, regardless of
+  // when the spawn was born. So activating instantly transforms every
+  // living spawn in place (positions/levels/sizes unchanged — the
+  // override draws are appended last), expiring reverts everything at
+  // the next refresh, and two players with active sessions at the same
+  // moment still see identical spawns (same seeds, same featured
+  // species). Catches pin species at catch time, so a caught morph
+  // keeps its identity after the session ends. Changing the state
+  // clears the wild/incense memos so ticks are regenerated against the
+  // new session.
   let _communityDay = null;   // { speciesId, startMs, endMs } | null
   let _cdMemoKey = null;      // identity the memos were built against
   function setCommunityDay(state) {
@@ -1272,9 +1278,10 @@
     _communityDay = next;
   }
   function getCommunityDay() { return _communityDay; }
-  function _communityFor(startMs, expireMs) {
+  function _communityActiveAt(nowMs) {
     if (!_communityDay) return null;
-    if (startMs < _communityDay.endMs && expireMs > _communityDay.startMs) return _communityDay;
+    const now = nowMs == null ? Date.now() : nowMs;
+    if (now >= _communityDay.startMs && now < _communityDay.endMs) return _communityDay;
     return null;
   }
 
@@ -1319,7 +1326,7 @@
           if (_ctMemo.has(key)) {
             p = _ctMemo.get(key);
           } else {
-            p = generateCellAtTick(cx, cy, t);
+            p = generateCellAtTick(cx, cy, t, now);
             if (sampler) _ctMemo.set(key, p);
           }
           if (!p) continue;
