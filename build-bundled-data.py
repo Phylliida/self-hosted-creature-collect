@@ -451,7 +451,8 @@ def build_species_pool(evos: dict) -> dict:
 
     spawnable: curated SPAWNVABLE_SPECIES for the default pool; in gens
     mode (CC_SPECIES_GENS) derived as pool minus in-pool evolution
-    targets minus legendaries — i.e. wild spawns are family roots."""
+    targets minus legendaries minus babies — i.e. wild spawns are
+    non-baby family roots (babies are egg-only)."""
     evo_targets = {
         row[0] for rows in evos.values() for row in rows
     }
@@ -462,6 +463,7 @@ def build_species_pool(evos: dict) -> dict:
         spawnable = [
             s for s in ALLOWED_SPECIES
             if s not in evo_targets and s not in LEGENDARY_SPECIES
+            and s not in CANDY_ROOT_BABIES
         ]
     return {
         "species": list(ALLOWED_SPECIES),

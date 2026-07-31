@@ -136,19 +136,30 @@ export function makeDroste(src, srcBBox, frame, opts = {}) {
 }
 
 /**
- * BY-REFERENCE transform copies (fold / spin). These items store NO geometry of
- * their own beyond a guide (the fold line / the spin pivot) plus a list of
- * source item ids; the renderer re-draws the SOURCES under a rigid transform
- * (reflection across the fold line / k rotations about the pivot). Editing a
- * source updates every copy live, and composing (a fold whose ids include a
- * spin, etc.) costs nothing in storage — that's the fractal payoff.
- *   fold : { ids:[id...], ax, ay, bx, by }  — mirror every source across the line
- *   spin : { ids:[id...], cx, cy, angle, count } — `count` rotated copies,
- *          copy k turned by k·angle about (cx,cy) (k = 1..count; the originals
- *          render themselves, so they're not re-drawn)
+ * BY-REFERENCE transform ops (fold / spin / glide). An op stores NO geometry of
+ * its own beyond a guide (fold line / spin pivot / glide arrow) plus source
+ * ids; the renderer re-draws the SOURCES under the op's rigid transform.
+ *   fold  : { ids, ax, ay, bx, by }  — mirror every source across the line
+ *   spin  : { ids, cx, cy, angle, count } — `count` rotated copies, copy k
+ *           turned by k·angle about (cx,cy) (the originals render themselves)
+ *   glide : { ids, ax, ay, bx, by }  — one copy translated by (bx−ax, by−ay)
+ *   depth (optional, default 1): how many times this op may be ENTERED along
+ *           one reference chain — i.e. how many ROUNDS of recursion it takes
+ *           part in.
+ *
+ * PROGRAMS: the tools auto-link ops into one cyclic program in PLACEMENT order
+ * (App._commitRef: each new op is appended to the previous op's ids and points
+ * back at the first), so placing PAN → ROTATE → FOLD makes the expansion apply
+ * pan, rotate, fold, pan, rotate, fold … — every op's transform reapplies to
+ * the accumulated output of the previous ones, round after round, until depth
+ * budgets run out. That's the fractal mode: pure references, nothing baked.
+ * The earliest op in a program (document order) is its RENDER ROOT — the only
+ * member that draws the shared recursion (they'd all draw the same orbit); the
+ * others draw just their guides. Lone ops are their own root and simply draw
+ * their copies once (turn-1 behaviour). Hard caps: MAXREFSTACK chain length +
+ * per-expansion node budgets, so a pathological doc stalls gracefully.
  * Dangling ids (source deleted) are skipped everywhere, so delete+undo revives
- * a reference for free — the same grace as `parent` links. Cycles (a fold that
- * transitively references itself) are pruned by the `stack` guard in refSources.
+ * a reference for free — the same grace as `parent` links.
  */
 export function makeFold(ids, a, b) {
   return { id: uid('fold'), type: 'fold', ids: ids.slice(), ax: a.x, ay: a.y, bx: b.x, by: b.y };
@@ -156,6 +167,22 @@ export function makeFold(ids, a, b) {
 export function makeSpin(ids, cx, cy, angle, count) {
   return { id: uid('spin'), type: 'spin', ids: ids.slice(), cx, cy, angle, count };
 }
+export function makeGlide(ids, a, b) {
+  return { id: uid('glide'), type: 'glide', ids: ids.slice(), ax: a.x, ay: a.y, bx: b.x, by: b.y };
+}
+
+/** The transform-op types (fold / spin / glide) — program members. */
+export const REFOPS = new Set(['fold', 'spin', 'glide']);
+
+/** How many times an op may be entered along one reference chain (default 1 =
+ *  one round). Clamped; the App's depth commands use the same 1..12 range. */
+export function refDepth(it) {
+  return Math.max(0, Math.min(12, Math.round(it.depth ?? 1)));
+}
+
+/** Hard cap on reference-chain length — backstops the per-item depth budgets
+ *  (and hand-edited JSON) so expansion always terminates. */
+export const MAXREFSTACK = 24;
 
 /** How many rotated copies a spin draws (clamped; stored count may be hand-edited). */
 export function spinCopyCount(it) {
@@ -179,23 +206,38 @@ export function spinMatrix(it, k) {
            f: it.cy - s * it.cx - c * it.cy };
 }
 
+/** Affine of a glide's copy: translation by k·(delta) (k is ±1 for draw/hit-test). */
+export function glideMatrix(it, k = 1) {
+  return { a: 1, b: 0, c: 0, d: 1, e: (it.bx - it.ax) * k, f: (it.by - it.ay) * k };
+}
+
 /** Apply affine m to a point: x' = a·x + c·y + e, y' = b·x + d·y + f. */
 export function applyAffine(m, x, y) {
   return { x: m.a * x + m.c * y + m.e, y: m.b * x + m.d * y + m.f };
 }
 
-/** Resolve a fold/spin's source ids to live items, skipping dangling ids and
- *  any id already in `stack` (the reference chain being expanded — the cycle
- *  guard). `byId` is the scene's id→item resolver. */
+/** Resolve an op's source ids to live items. A fold/spin/glide source may be
+ *  ENTERED at most refDepth(s) times along one reference chain (`stack`) — the
+ *  budget that makes cyclic programs (fold→spin→glide→fold→…) expand for
+ *  exactly `depth` rounds and then stop. Plain items are always allowed. */
 export function refSources(it, byId, stack = []) {
-  if (!byId || !Array.isArray(it.ids)) return [];
+  if (!byId || !Array.isArray(it.ids) || stack.length >= MAXREFSTACK) return [];
   const out = [];
   for (const id of it.ids) {
-    if (stack.includes(id)) continue;
     const s = byId(id);
-    if (s) out.push(s);
+    if (!s) continue;
+    if (REFOPS.has(s.type) && stack.filter(x => x === id).length >= refDepth(s)) continue;
+    out.push(s);
   }
   return out;
+}
+
+/** The matrices an op applies to its sources: fold/glide transform once, spin
+ *  transforms `count` times (k = 1..count). */
+export function refMatrices(it) {
+  if (it.type === 'fold') return [foldMatrix(it)];
+  if (it.type === 'glide') return [glideMatrix(it)];
+  return Array.from({ length: spinCopyCount(it) }, (_, i) => spinMatrix(it, i + 1));
 }
 
 /**
@@ -334,19 +376,25 @@ function xformBox(b, m) {
   return r;
 }
 
-/** Union of a fold/spin's transformed COPY bboxes (sources resolved via `byId`,
- *  cycle-guarded by `stack`). Null when no copies resolve. */
+/** Union of an op's transformed COPY bboxes (sources resolved via `byId`,
+ *  budget-guarded by `stack` — the chain of ops ENTERED so far; each entry
+ *  pushes the source's own id). `_boxBudget` caps the total corner-union work
+ *  per top-level itemBBox call so a deep cyclic program can't hang the
+ *  spatial-index build. */
+let _boxBudget = 0;
 function refCopiesBox(it, byId, stack) {
-  const sub = [...stack, it.id];
+  if (!byId || _boxBudget <= 0) return null;
   let acc = null;
-  const absorb = (m) => {
+  for (const m of refMatrices(it)) {
     for (const s of refSources(it, byId, stack)) {
-      const b = xformBox(itemBBox(s, byId, sub), m);
+      if (_boxBudget-- <= 0) return acc;
+      const sub = REFOPS.has(s.type) ? [...stack, s.id] : stack;
+      const bb = itemBBox(s, byId, sub);
+      if (!bb) continue;                    // op with no copies this deep
+      const b = xformBox(bb, m);
       acc = acc ? unionBox(acc, b) : b;
     }
-  };
-  if (it.type === 'fold') absorb(foldMatrix(it));
-  else for (let k = 1, n = spinCopyCount(it); k <= n; k++) absorb(spinMatrix(it, k));
+  }
   return acc;
 }
 
@@ -373,16 +421,19 @@ function localBox(it, byId = null, stack = []) {
       const { w, h } = textMetrics(it);
       return { minX: it.x, minY: it.y, maxX: it.x + w, maxY: it.y + h };
     }
-    case 'fold': {
-      // guide line + every mirrored copy (copies need the scene resolver;
-      // without one the line alone is the fallback so the item stays grabbable)
-      let b = bboxOfPoints([{ x: it.ax, y: it.ay }, { x: it.bx, y: it.by }]);
+    case 'fold':
+    case 'glide': {
       const copies = refCopiesBox(it, byId, stack);
+      // Mid-expansion the op contributes its COPIES only — the guide is chrome,
+      // never content, so it must not pollute the program's bbox (or be copied).
+      if (stack.length) return copies;
+      let b = bboxOfPoints([{ x: it.ax, y: it.ay }, { x: it.bx, y: it.by }]);
       return copies ? unionBox(b, copies) : b;
     }
     case 'spin': {
-      let b = { minX: it.cx, minY: it.cy, maxX: it.cx, maxY: it.cy };
       const copies = refCopiesBox(it, byId, stack);
+      if (stack.length) return copies;
+      let b = { minX: it.cx, minY: it.cy, maxX: it.cx, maxY: it.cy };
       return copies ? unionBox(b, copies) : b;
     }
     default:
@@ -419,6 +470,7 @@ export function shiftItem(it, dx, dy) {
                                      maxX: it.srcBBox.maxX + dx, maxY: it.srcBBox.maxY + dy };
       break;
     case 'fold':
+    case 'glide':
       it.ax += dx; it.ay += dy; it.bx += dx; it.by += dy;
       break;
     case 'spin':
@@ -438,10 +490,12 @@ export function rotCenter(it) {
 
 /** World-space bounding box for any item type, padded by half stroke width.
  *  For a rotated item this is the AABB of its rotated corners. `byId` (the
- *  scene's resolver) lets fold/spin include their transformed copies; `stack`
- *  is the internal reference-cycle guard. */
+ *  scene's resolver) lets fold/spin/glide ops include their transformed copies;
+ *  `stack` is the internal reference-chain guard. */
 export function itemBBox(it, byId = null, stack = []) {
+  if (!stack.length) _boxBudget = 100000;   // per top-level expansion, see refCopiesBox
   let b = localBox(it, byId, stack);
+  if (!b) return null;                      // op mid-expansion with no resolvable copies
   if (it.rot && ROTATABLE.has(it.type)) {
     const cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2;
     let nx0 = Infinity, ny0 = Infinity, nx1 = -Infinity, ny1 = -Infinity;
@@ -533,7 +587,8 @@ export function itemCentroidMass(it) {
       const len = dist(it.ax, it.ay, it.bx, it.by);
       return { x: mx, y: my, mass: len * (it.width || 0), len };
     }
-    case 'fold': {
+    case 'fold':
+    case 'glide': {
       const len = dist(it.ax, it.ay, it.bx, it.by);
       return { x: (it.ax + it.bx) / 2, y: (it.ay + it.by) / 2, mass: len, len };
     }
@@ -567,8 +622,9 @@ export function itemCentroidMass(it) {
 }
 
 /** Does an item lie under world point (x,y) within `tol` world units? `byId`
- *  (scene resolver) lets fold/spin hit-test their transformed copies by mapping
- *  the query point into source space; `stack` is the reference-cycle guard. */
+ *  (scene resolver) lets fold/spin/glide ops hit-test their transformed copies
+ *  by mapping the query point into source space; `stack` is the chain of ops
+ *  entered so far (the depth-budget guard). */
 export function hitTest(it, x, y, tol, byId = null, stack = []) {
   // For a rotated box, map the query point into the item's local frame so the
   // existing axis-aligned tests below work unchanged.
@@ -633,24 +689,31 @@ export function hitTest(it, x, y, tol, byId = null, stack = []) {
       // local (unrotated) box — the point is already in local space above
       return pointInRect(x, y, localBox(it));
     }
-    case 'fold': {
-      // grab the fold line itself, or any mirrored copy (query point mapped
-      // into source space by the reflection — its own inverse)
+    case 'fold':
+    case 'glide': {
+      // grab the guide (fold line / glide arrow), or any transformed copy —
+      // the query point mapped into source space by the inverse transform
+      // (reflection and translation are their own inverses, up to sign)
       if (distToSegment(x, y, it.ax, it.ay, it.bx, it.by) <= reach) return true;
-      const p = applyAffine(foldMatrix(it), x, y);
-      const sub = [...stack, it.id];
-      for (const s of refSources(it, byId, stack))
+      if (stack.length >= MAXREFSTACK) return false;
+      const m = it.type === 'fold' ? foldMatrix(it) : glideMatrix(it, -1);
+      const p = applyAffine(m, x, y);
+      for (const s of refSources(it, byId, stack)) {
+        const sub = REFOPS.has(s.type) ? [...stack, s.id] : stack;
         if (hitTest(s, p.x, p.y, tol, byId, sub)) return true;
+      }
       return false;
     }
     case 'spin': {
       // grab the pivot handle, or any rotated copy (inverse-rotate the query)
       if (dist(x, y, it.cx, it.cy) <= reach) return true;
-      const sub = [...stack, it.id];
+      if (stack.length >= MAXREFSTACK) return false;
       for (let k = 1, n = spinCopyCount(it); k <= n; k++) {
         const p = applyAffine(spinMatrix(it, -k), x, y);
-        for (const s of refSources(it, byId, stack))
+        for (const s of refSources(it, byId, stack)) {
+          const sub = REFOPS.has(s.type) ? [...stack, s.id] : stack;
           if (hitTest(s, p.x, p.y, tol, byId, sub)) return true;
+        }
       }
       return false;
     }
@@ -696,6 +759,7 @@ export function scaleItemAbout(it, cx, cy, s) {
       it.points = it.points.map(p => ({ ...p, x: cx + (p.x - cx) * s, y: cy + (p.y - cy) * s }));
       break;
     case 'fold':
+    case 'glide':
       it.ax = cx + (it.ax - cx) * s; it.ay = cy + (it.ay - cy) * s;
       it.bx = cx + (it.bx - cx) * s; it.by = cy + (it.by - cy) * s;
       break;
@@ -726,7 +790,7 @@ export function rotateItemsAbout(items, px, py, ang) {
     if (it.type === 'stroke' || it.type === 'line' || it.type === 'arrow') {
       // spread the original point so per-point extras (brush `p`) survive
       it.points = it.points.map(p => ({ ...p, ...rotatePoint(p.x, p.y, px, py, ang) }));
-    } else if (it.type === 'fold') {
+    } else if (it.type === 'fold' || it.type === 'glide') {
       const a = rotatePoint(it.ax, it.ay, px, py, ang);
       const b = rotatePoint(it.bx, it.by, px, py, ang);
       it.ax = a.x; it.ay = a.y; it.bx = b.x; it.by = b.y;
@@ -764,7 +828,7 @@ export function reflectItemsAbout(items, cx, cy, a) {
   for (const it of items) {
     if (it.type === 'stroke' || it.type === 'line' || it.type === 'arrow') {
       it.points = it.points.map(p => ({ ...p, ...reflectPoint(p.x, p.y, cx, cy, a) }));
-    } else if (it.type === 'fold') {
+    } else if (it.type === 'fold' || it.type === 'glide') {
       const p = reflectPoint(it.ax, it.ay, cx, cy, a);
       const q = reflectPoint(it.bx, it.by, cx, cy, a);
       it.ax = p.x; it.ay = p.y; it.bx = q.x; it.by = q.y;
@@ -793,6 +857,7 @@ export function translateItem(it, dx, dy) {
       it.points = it.points.map(p => ({ ...p, x: p.x + dx, y: p.y + dy }));
       break;
     case 'fold':
+    case 'glide':
       it.ax += dx; it.ay += dy; it.bx += dx; it.by += dy;
       break;
     case 'spin':
@@ -872,6 +937,42 @@ export class Scene {
   _touch() { this._rev++; this._boundsCache = null; if (this.onChange) this.onChange(); }
 
   /**
+   * Map of opId → the earliest op (document order) in its weakly-connected
+   * reference component — the component's stable identity, used to group a
+   * linked program (App.bumpRefDepth adjusts depth for the whole program at
+   * once). Rev-cached; the op graph is tiny, so the BFS is cheap.
+   */
+  refRootMap() {
+    if (this._refRoots && this._refRoots.rev === this._rev) return this._refRoots.map;
+    const pos = new Map(this.items.map((it, i) => [it.id, i]));
+    const ops = this.items.filter(it => REFOPS.has(it.type));
+    const map = new Map();
+    for (const seed of ops) {
+      if (map.has(seed.id)) continue;
+      const comp = [];
+      const seen = new Set([seed.id]);
+      const q = [seed];
+      while (q.length) {
+        const cur = q.pop();
+        comp.push(cur);
+        for (const id of cur.ids || []) {
+          const s = this.byId(id);
+          if (s && REFOPS.has(s.type) && !seen.has(s.id)) { seen.add(s.id); q.push(s); }
+        }
+        for (const other of ops) {
+          if (!seen.has(other.id) && Array.isArray(other.ids) && other.ids.includes(cur.id)) {
+            seen.add(other.id); q.push(other);
+          }
+        }
+      }
+      comp.sort((a, b) => pos.get(a.id) - pos.get(b.id));   // document order
+      for (const op of comp) map.set(op.id, comp[0]);
+    }
+    this._refRoots = { rev: this._rev, map };
+    return map;
+  }
+
+  /**
    * Build (or reuse) the x-sorted spatial index: one `{it, zi, minX..maxY}`
    * entry per item, ascending `minX`, plus `maxW` (the TRUE global max item
    * width — the lower-bound of any x-slice search starts at `minX - maxW`, so it
@@ -892,7 +993,7 @@ export class Scene {
     if (cur && cur.items === items && cur.rev === this._rev) return cur;
     const n = items.length;
     const entries = new Array(n);
-    const byId = id => this._index.get(id) || null;   // resolves fold/spin copies
+    const byId = id => this._index.get(id) || null;   // resolves op sources
     let maxW = 0;
     for (let i = 0; i < n; i++) {
       const it = items[i];
@@ -1201,7 +1302,7 @@ export class Scene {
    *  jank when erasing/hovering over tens of thousands of items — into O(log N +
    *  candidates). Below the threshold it's the original exact linear scan. */
   pick(x, y, tol, filter = null) {
-    const byId = id => this._index.get(id) || null;   // resolves fold/spin copies
+    const byId = id => this._index.get(id) || null;   // resolves op sources
     const ents = this.queryEntries({ minX: x - tol, minY: y - tol, maxX: x + tol, maxY: y + tol });
     if (ents === null) {
       for (let i = this.items.length - 1; i >= 0; i--) {

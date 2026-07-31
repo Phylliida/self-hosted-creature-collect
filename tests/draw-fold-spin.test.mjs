@@ -1,11 +1,11 @@
-// Headless tests for the draw app's BY-REFERENCE transform copies (fold / spin)
-// — static/draw/src/scene.js geometry, bbox, hit-test, cycle safety and SVG
-// export. Run: node tests/draw-fold-spin.test.mjs
+// Headless tests for the draw app's BY-REFERENCE transform ops (fold / spin /
+// glide) — static/draw/src/scene.js geometry, cyclic-program expansion, bbox,
+// hit-test, cycle safety and SVG export. Run: node tests/draw-fold-spin.test.mjs
 
 import {
-  Scene, makeRect, makeLine, makeFold, makeSpin,
-  foldMatrix, spinMatrix, applyAffine, spinCopyCount, refSources,
-  itemBBox, hitTest, translateItem, scaleItemAbout, rotateItemsAbout,
+  Scene, makeRect, makeLine, makeFold, makeSpin, makeGlide, REFOPS,
+  foldMatrix, spinMatrix, glideMatrix, applyAffine, spinCopyCount, refSources,
+  refDepth, itemBBox, hitTest, translateItem, scaleItemAbout, rotateItemsAbout,
   reflectItemsAbout, shiftItem,
 } from '../static/draw/src/scene.js';
 import { sceneToSVG } from '../static/draw/src/svg.js';
@@ -150,6 +150,79 @@ const near = (a, b, eps = 1e-9) => Math.abs(a - b) <= eps;
   A.ids.push(B.id);
   scene.add(A); scene.add(B);
   ok(typeof sceneToSVG(scene) === 'string', 'SVG export survives a fold cycle');
+}
+
+// ---- glideMatrix: translation by the dragged offset ----
+{
+  const g = makeGlide([], { x: 1, y: 1 }, { x: 5, y: 3 });
+  const p = applyAffine(glideMatrix(g), 10, 10);
+  ok(near(p.x, 14) && near(p.y, 12), 'glideMatrix translates by (bx−ax, by−ay)');
+  const q = applyAffine(glideMatrix(g, -1), p.x, p.y);
+  ok(near(q.x, 10) && near(q.y, 10), 'glideMatrix k=−1 is the inverse');
+}
+
+// ---- PROGRAMS: linked ops recurse in placement order; every op expands ----
+{
+  const scene = new Scene();
+  const M = scene.add(makeRect(2, 0, 1, 1, { color: '#fff', width: 0, fill: '#fff' })); // [2..3]×[0..1]
+  const G = scene.add(makeGlide([M.id], { x: 0, y: 0 }, { x: 4, y: 0 }));   // δ = (4,0)
+  const F = scene.add(makeFold([M.id, G.id], { x: 3, y: 0 }, { x: 3, y: 5 })); // fold across x=3
+  G.ids.push(F.id);                                   // the _commitRef auto-link
+  const byId = id => scene.byId(id);
+  const roots = scene.refRootMap();
+
+  ok(roots.get(G.id) === G && roots.get(F.id) === G, 'refRootMap groups the linked program');
+
+  // depth 1 (default): every op is ENTERED once per chain → alternating words
+  // up to length 3 (the top-level application is free). F: x → 6−x.
+  //   G's chain: G(M)=[6..7], G(F(M))=[7..8], G(F(G(M)))=[3..4]  + guide [0..4]
+  //   F's chain: F(M)=[3..4], F(G(M))=[−1..0], F(G(F(M)))=[−2..−1] + guide x=3
+  const bG = itemBBox(G, byId);
+  ok(bG.minX >= -1e-6 && bG.maxX >= 8 - 1e-6 && bG.maxY <= 1 + 1e-6,
+     `glide expands its chain; guides stay chrome (got ${JSON.stringify(bG)})`);
+  const bF = itemBBox(F, byId);
+  ok(bF.minX <= -2 + 1e-6 && bF.maxX >= 4 - 1e-6,
+     `fold expands its own chain too (got ${JSON.stringify(bF)})`);
+
+  // picking a copy selects the op whose transform produced it
+  ok(scene.pick(6.5, 0.5, 0.2)?.id === G.id, 'pick on G(M) returns the glide');
+  ok(scene.pick(7.5, 0.5, 0.2)?.id === G.id, 'pick on G(F(M)) returns the glide');
+  ok(scene.pick(-0.5, 0.5, 0.2)?.id === F.id, 'pick on F(G(M)) returns the fold');
+  ok(scene.pick(3, 4.5, 0.2)?.id === F.id, 'pick on the fold guide grabs the fold itself');
+}
+
+// ---- PROGRAMS: depth = rounds; two parallel folds translate by 2 per round ----
+{
+  const scene = new Scene();
+  const M = scene.add(makeRect(2, 0, 1, 1, { color: '#fff', width: 0, fill: '#fff' })); // [2..3]×[0..1]
+  const F1 = scene.add(makeFold([M.id], { x: 0, y: 0 }, { x: 0, y: 5 }));   // fold across x=0
+  const F2 = scene.add(makeFold([M.id, F1.id], { x: 1, y: 0 }, { x: 1, y: 5 })); // fold across x=1
+  F1.ids.push(F2.id);
+  const byId = id => scene.byId(id);
+
+  // depth 1: words ≤ 3 — F1(F2(F1(M))) = M−6 reaches [−5..−4]
+  const b1 = itemBBox(F1, byId);
+  ok(b1.minX <= -5 + 1e-6 && b1.minX > -7, `depth 1 reaches −5 (got ${JSON.stringify(b1)})`);
+  // depth 2: words ≤ 5 — F1(F2(F1(F2(F1(M))))) = x→−4−x reaches [−7..−6]
+  F1.depth = 2; F2.depth = 2; scene._touch();
+  const b2 = itemBBox(F1, byId);
+  ok(b2.minX <= -7 + 1e-6 && b2.minX < b1.minX, `depth 2: recursion reaches further (got ${JSON.stringify(b2)})`);
+}
+
+// ---- SVG export: every op expands; cycles stay finite ----
+{
+  const scene = new Scene();
+  const M = scene.add(makeRect(2, 0, 1, 1, { color: '#ff0000', width: 1 }));
+  const G = scene.add(makeGlide([M.id], { x: 0, y: 0 }, { x: 4, y: 0 }));
+  const F = scene.add(makeFold([M.id, G.id], { x: 3, y: 0 }, { x: 3, y: 5 }));
+  G.ids.push(F.id);
+  const svg = sceneToSVG(scene);
+  // each op nests the other's full subtree: 3 transform groups per op chain
+  const groups = (svg.match(/<g transform="matrix\(/g) || []).length;
+  ok(groups === 6, `SVG: both ops expand, chains of 3 (6 groups, got ${groups})`);
+  // 6 copies + the motif itself + the export's background rect
+  const rects = (svg.match(/<rect/g) || []).length;
+  ok(rects === 8, `SVG: motif + 6 word-copies + background (8 rects, got ${rects})`);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -1,4 +1,4 @@
-import { polygonVertices, rotCenter, ROTATABLE, foldMatrix, spinMatrix, spinCopyCount, refSources } from './scene.js';
+import { polygonVertices, rotCenter, ROTATABLE, refMatrices, refSources, refDepth, REFOPS, MAXREFSTACK } from './scene.js';
 import { ribbonOutline, catmullRom } from './util.js';
 
 // Serialize the whole document to a standalone SVG string. World coordinates
@@ -142,19 +142,19 @@ export function sceneToSVG(scene, { pad = 0.06, background = '#0e0f13' } = {}) {
   // the fold/spin reference chain (cycle guard) — see below.
   const emitItem = (it, stack = []) => {
     if (it.hidden) return null;        // hidden items are omitted, like on-canvas
-    // BY-REFERENCE copies (fold/spin): each copy is the sources' own SVG under a
-    // transform group — the SVG analogue of the renderer's ctx.transform path,
-    // recursing for composed folds/spins. (Guides are chrome, not exported.)
-    if (it.type === 'fold' || it.type === 'spin') {
-      if (stack.includes(it.id)) return null;
-      const sub = [...stack, it.id];
-      const mats = it.type === 'fold'
-        ? [foldMatrix(it)]
-        : Array.from({ length: spinCopyCount(it) }, (_, i) => spinMatrix(it, i + 1));
+    // BY-REFERENCE ops (fold/spin/glide): each copy is the sources' own SVG
+    // under a transform group — the SVG analogue of the renderer's
+    // ctx.transform path, recursing through linked ops (the program). Per-op
+    // depth budgets + the chain cap keep cyclic programs finite. (Guides are
+    // chrome, not exported.)
+    if (it.type === 'fold' || it.type === 'spin' || it.type === 'glide') {
+      if (stack.length >= MAXREFSTACK) return null;
+      if (stack.filter(id => id === it.id).length > refDepth(it)) return null;
       const parts = [];
-      for (const m of mats) {
+      for (const m of refMatrices(it)) {
         const inner = refSources(it, id => scene.byId(id), stack)
-          .map(s => emitItem(s, sub)).filter(Boolean).join('');
+          .map(s => emitItem(s, REFOPS.has(s.type) ? [...stack, s.id] : stack))
+          .filter(Boolean).join('');
         if (inner) parts.push(`<g transform="matrix(${round(m.a)} ${round(m.b)} ${round(m.c)} ${round(m.d)} ${round(m.e)} ${round(m.f)})">${inner}</g>`);
       }
       return parts.length ? parts.join('') : null;

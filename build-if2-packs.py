@@ -347,16 +347,19 @@ def slice_subset(combo: tuple[int, ...], gen_map: dict[int, int],
         })
 
         # species-pool.json — spawnable derived from the sliced evos so
-        # wild spawns are family roots *within the subset*.
+        # wild spawns are non-baby family roots *within the subset*
+        # (babies are egg-only).
         evo_targets = {row[0] for rows in evos.values() for row in rows}
         legendaries = sorted(set(union_pool["legendaries"]) & keep)
+        babies = set(union_pool["babies"]) & keep
         wjson("species-pool.json", {
             "species": ids,
             "legendaries": legendaries,
-            "babies": sorted(set(union_pool["babies"]) & keep),
+            "babies": sorted(babies),
             "spawnable": [s for s in ids
                           if s not in evo_targets
-                          and s not in set(union_pool["legendaries"])],
+                          and s not in set(union_pool["legendaries"])
+                          and s not in babies],
             "maxSpecies": smax,
         })
 

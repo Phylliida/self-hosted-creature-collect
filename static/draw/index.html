@@ -31,6 +31,7 @@
       <symbol id="ic-sym" viewBox="0 0 24 24"><path d="M12 3v18"/><path d="M4.2 7.5 19.8 16.5"/><path d="M4.2 16.5 19.8 7.5"/><circle cx="12" cy="12" r="2.4"/></symbol>
       <symbol id="ic-fold" viewBox="0 0 24 24"><path d="M12 3v18" stroke-dasharray="3 2.5"/><path d="M9 8.5 4.5 12 9 15.5"/><path d="m15 8.5 4.5 3.5-4.5 3.5"/></symbol>
       <symbol id="ic-spin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1.5"/><path d="M19 12a7 7 0 1 1-4.4-6.5"/><path d="M14.6 2.6v3.4H18"/></symbol>
+      <symbol id="ic-glide" viewBox="0 0 24 24"><path d="M3 15.5h11" stroke-dasharray="3 2.5"/><path d="M6 8.5h12"/><path d="m14.5 5 3.5 3.5-3.5 3.5"/></symbol>
       <symbol id="ic-pixel" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="1"/><path d="M9.33 4v16"/><path d="M14.67 4v16"/><path d="M4 9.33h16"/><path d="M4 14.67h16"/></symbol>
       <symbol id="ic-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-4"/></symbol>
       <symbol id="ic-redo" viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h4"/></symbol>
@@ -117,8 +118,9 @@
     <button class="tool" data-tool="star"    title="Star / polygon (S)"><svg class="ic" aria-hidden="true"><use href="#ic-star"/></svg></button>
     <button class="tool" data-tool="text"    title="Text (T)"><svg class="ic" aria-hidden="true"><use href="#ic-text"/></svg></button>
     <button class="tool" data-tool="connector" title="Connector — drag between two objects (C)"><svg class="ic" aria-hidden="true"><use href="#ic-connector"/></svg></button>
-    <button class="tool" data-tool="fold"    title="Fold — drag a mirror line; the selection (or everything) is reflected across it as a live reference (J)"><svg class="ic" aria-hidden="true"><use href="#ic-fold"/></svg></button>
-    <button class="tool" data-tool="spin"    title="Spin — click a pivot, then drag to sweep an angle; rotated copies of the selection, live by reference (K)"><svg class="ic" aria-hidden="true"><use href="#ic-spin"/></svg></button>
+    <button class="tool" data-tool="fold"    title="Fold — drag a mirror line; content is reflected across it live by reference (J)"><svg class="ic" aria-hidden="true"><use href="#ic-fold"/></svg></button>
+    <button class="tool" data-tool="spin"    title="Spin — click a pivot, then drag to sweep an angle; rotated copies, live by reference (K)"><svg class="ic" aria-hidden="true"><use href="#ic-spin"/></svg></button>
+    <button class="tool" data-tool="glide"   title="Glide — drag a copy offset; translated copies, live by reference (N)"><svg class="ic" aria-hidden="true"><use href="#ic-glide"/></svg></button>
     <button class="tool" data-tool="select"  title="Select (V)"><svg class="ic" aria-hidden="true"><use href="#ic-select"/></svg></button>
     <button class="tool" data-tool="eraser"  title="Eraser (E)"><svg class="ic" aria-hidden="true"><use href="#ic-eraser"/></svg></button>
     <button class="tool" data-tool="pan"     title="Pan (H / hold Space)"><svg class="ic" aria-hidden="true"><use href="#ic-pan"/></svg></button>

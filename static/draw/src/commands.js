@@ -22,6 +22,7 @@
 
 const hasSel    = app => app.selectedIds.size > 0;
 const multiSel  = app => app.selectedIds.size >= 2;
+const hasRefSel = app => [...app.selectedIds].some(id => { const it = app.scene.byId(id); return it && (it.type === 'fold' || it.type === 'spin' || it.type === 'glide'); });
 const pixelMode = app => !!(app.pixel && app.pixel.editing);
 const flipMode  = app => !!(app.anim && app.anim.on);
 const vectorMode = app => !pixelMode(app);
@@ -39,8 +40,9 @@ export function buildCommands(app) {
     { id: 'tool.star',    title: 'Star / polygon', cat: 'Tools', icon: '★',  keys: ['S'], keywords: 'polygon shape points', when: vectorMode, run: () => app.setTool('star') },
     { id: 'tool.text',    title: 'Text',           cat: 'Tools', icon: 'T',  keys: ['T'], keywords: 'label type words', when: vectorMode, run: () => app.setTool('text') },
     { id: 'tool.connector', title: 'Connector',    cat: 'Tools', icon: '⇢',  keys: ['C'], keywords: 'link diagram glue between', when: vectorMode, run: () => app.setTool('connector') },
-    { id: 'tool.fold',    title: 'Fold (mirror by reference)', cat: 'Tools', icon: '◧', keys: ['J'], keywords: 'mirror reflect symmetry line copy live reference fractal', when: vectorMode, run: () => app.setTool('fold') },
-    { id: 'tool.spin',    title: 'Spin (rotate copies by reference)', cat: 'Tools', icon: '↻', keys: ['K'], keywords: 'rotate copies pivot angle rosette live reference fractal', when: vectorMode, run: () => app.setTool('spin') },
+    { id: 'tool.fold',    title: 'Fold (mirror by reference)', cat: 'Tools', icon: '◧', keys: ['J'], keywords: 'mirror reflect symmetry line copy live reference fractal recurse', when: vectorMode, run: () => app.setTool('fold') },
+    { id: 'tool.spin',    title: 'Spin (rotate copies by reference)', cat: 'Tools', icon: '↻', keys: ['K'], keywords: 'rotate copies pivot angle rosette live reference fractal recurse', when: vectorMode, run: () => app.setTool('spin') },
+    { id: 'tool.glide',   title: 'Glide (copy + pan by reference)', cat: 'Tools', icon: '➚', keys: ['N'], keywords: 'translate shift move copy pan offset live reference fractal recurse', when: vectorMode, run: () => app.setTool('glide') },
     { id: 'tool.select',  title: 'Select',         cat: 'Tools', icon: '⬚',  keys: ['V'], keywords: 'pick move marquee', when: vectorMode, run: () => app.setTool('select') },
     { id: 'tool.eraser',  title: 'Eraser',         cat: 'Tools', icon: '🩹', keys: ['E'], keywords: 'delete rub remove', when: vectorMode, run: () => app.setTool('eraser') },
     { id: 'tool.pan',     title: 'Pan',            cat: 'Tools', icon: '✋', keys: ['H'], keywords: 'hand move scroll', when: vectorMode, run: () => app.setTool('pan') },
@@ -82,6 +84,8 @@ export function buildCommands(app) {
     { id: 'arr.drosteloop', title: 'Export seamless Droste zoom-loop (GIF)', cat: 'Arrange', icon: '🎞', keywords: 'droste portal loop gif movie video infinite zoom dive seamless export animation', enabled: app => !!app._targetDroste(), run: () => app.downloadDrosteLoop() },
     { id: 'arr.showall', title: 'Show all hidden',  cat: 'Arrange', icon: '👁', keywords: 'reveal recover', run: () => app.showAll() },
     { id: 'arr.unlockall', title: 'Unlock all',     cat: 'Arrange', icon: '🔓', keywords: 'recover free', run: () => app.unlockAll() },
+    { id: 'ref.deeper',   title: 'Fold/Spin/Glide: iterate deeper (+1 round)', cat: 'Arrange', icon: '🕸', keywords: 'fractal recursion depth iterate rounds levels fold spin glide reference program', enabled: hasRefSel, run: () => app.bumpRefDepth(1) },
+    { id: 'ref.shallower', title: 'Fold/Spin/Glide: iterate shallower (−1 round)', cat: 'Arrange', icon: '🕸', keywords: 'fractal recursion depth iterate rounds levels fold spin glide reference program', enabled: hasRefSel, run: () => app.bumpRefDepth(-1) },
 
     // ---------------- Align & distribute (need 2+) ----------------
     { id: 'al.left',   title: 'Align left edges',        cat: 'Align', icon: '⇤', enabled: multiSel, keywords: 'snap edge', run: () => app.alignSelection('left') },
@@ -206,8 +210,9 @@ const TOOL_BASE = {
   star:    'drag to size a star / polygon',
   text:    'click to place, then type',
   connector: 'drag between two objects to link them',
-  fold:    'drag a mirror line — reflects the selection (or everything) across it, live by reference',
-  spin:    'click a pivot, then drag to sweep the copy angle — rotated copies, live by reference',
+  fold:    'drag a mirror line — reflects content live; placed ops recurse in order',
+  spin:    'click a pivot, then drag to sweep the copy angle — live rotated copies',
+  glide:   'drag a copy offset (tail → head) — translated copies, live by reference',
   select:  'click to pick · drag a marquee · drag to move',
   eraser:  'click or drag across strokes to remove',
   pan:     'drag to move the canvas',
@@ -249,7 +254,7 @@ export function contextHint(app, mods = {}) {
   const out = { base: `${t}: ${TOOL_BASE[t] || ''}`, mods: [] };
   const sel = app.selectedIds.size;
 
-  if (t === 'line' || t === 'arrow' || t === 'fold' || t === 'spin') {
+  if (t === 'line' || t === 'arrow' || t === 'fold' || t === 'spin' || t === 'glide') {
     out.mods.push({ key: '⇧', label: 'snap angle', active: shift });
   } else if (t === 'rect' || t === 'ellipse' || t === 'star') {
     out.mods.push({ key: '⇧', label: 'keep square', active: shift });

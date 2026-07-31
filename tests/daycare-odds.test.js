@@ -42,6 +42,7 @@ function build(slots, creatures) {
     readNicknames: () => ({}),
     findCreature: (id) => creatures[id] || null,
     candyRootFor: (id) => (id === 26 ? 25 : id),   // Raichu → Pikachu root
+    _eggRootFor: (id) => (id === 26 ? 25 : id),    // same here (no babies in this stub)
     speciesNameFor: (id) => NAMES[id] || ('#' + id),
     fusionName: (a, b) => (NAMES[a] || ('#' + a)) + '×' + (NAMES[b] || ('#' + b)),
     // Pikachu family (25/26) evolves via Thunder Stone; the others are level-only.
@@ -129,6 +130,26 @@ function build(slots, creatures) {
   const { pct } = build([], {});
   ok(pct(0.7) === '70%' && pct(0.15) === '15%' && pct(0.425) === '42.5%' && pct(0.3 / 12) === '2.5%',
      '4: _fmtPct trims whole numbers and keeps one decimal');
+}
+
+// ── 5. _eggRootFor: eggs hatch the family ROOT (the baby when it's in the
+//       pack's dataset), unlike candyRootFor which skips babies ──
+{
+  const ctx = {
+    Number, Set, Map, Array, Object, Math, String,
+    global: {
+      Species: {
+        // IF2-style chains: Munchlax(446)→Snorlax(143), Pichu(172)→Pikachu(25)→Raichu(26)
+        familyOf: (id) => ({ 143: [446, 143], 26: [172, 25, 26], 25: [172, 25], 1: [1] })[id] || [id],
+      },
+    },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(extract('function _eggRootFor('), ctx);
+  const rootOf = (id) => vm.runInContext(`_eggRootFor(${id})`, ctx);
+  ok(rootOf(143) === 446, '5: Snorlax egg → Munchlax (baby in dataset)');
+  ok(rootOf(26) === 172 && rootOf(25) === 172, '5: Raichu/Pikachu egg → Pichu');
+  ok(rootOf(1) === 1, '5: baby-less family root is itself');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
