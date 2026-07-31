@@ -155,10 +155,35 @@ function makeCtx(extra) {
     '3: addEgg tags the active pack');
   ok(src.includes("else if (!isSoloEgg) entry.pack = 'creature-fusion';"),
     '3: pair hatches always land in creature-fusion');
-  ok(src.includes('global.Packs.packOfRecord(c) === activePack'),
-    '3: inventory filters by active pack');
-  ok(src.includes("(e.pack || 'creature-fusion') === activePack"),
-    '3: eggs view + egg bubble filter by active pack');
+  ok(src.includes('global.Packs.packOfRecord(c) === activeGroup'),
+    '3: inventory filters by active pack share group');
+  ok(src.includes('global.Packs.packOfRecord(e) === activeGroup'),
+    '3: eggs view + egg bubble filter by active pack share group');
+}
+
+// --- 3b) share groups: the two fusion packs share one collection ---------------------
+{
+  const ls = { 'cc.activePack': 'creature-if2' };
+  globalThis.localStorage = {
+    getItem: (k) => (k in ls ? ls[k] : null),
+    setItem: (k, v) => { ls[k] = String(v); },
+    removeItem: (k) => { delete ls[k]; },
+  };
+  delete require.cache[require.resolve(path.join(root, 'static', 'packs.js'))];
+  require(path.join(root, 'static', 'packs.js'));
+  const P = globalThis.Packs;
+  ok(P.groupOf('creature-if2') === 'creature-fusion'
+    && P.groupOf('creature-fusion') === 'creature-fusion',
+    '3b: both fusion packs map to the creature-fusion group');
+  ok(P.groupOf('neopets') === 'neopets', '3b: neopets stays in its own group');
+  ok(P.activeGroup() === 'creature-fusion', '3b: active group resolved via cc.activePack');
+  ok(P.packOfRecord({ pack: 'creature-if2' }) === 'creature-fusion',
+    '3b: if2 records read as creature-fusion');
+  ok(P.packOfRecord({ pack: 'neopets' }) === 'neopets',
+    '3b: neopets records stay neopets');
+  ok(P.packOfRecord({}) === 'creature-fusion', '3b: legacy records unchanged');
+  delete globalThis.localStorage;
+  delete require.cache[require.resolve(path.join(root, 'static', 'packs.js'))];
 }
 
 // --- 4) solo evolution ------------------------------------------------------------------
