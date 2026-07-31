@@ -32,6 +32,11 @@
   // Pack catalog. `remote.hfRepo` feeds pack-install's HF source; logo
   // for non-active packs is a static placeholder (never fetched without
   // a tap). New packs = new entry here (+ a build-gms-pack.py run).
+  // `shareGroup` merges inventory/eggs/daycare visibility across packs:
+  // records whose pack maps to the same group show up together (used so
+  // creature-fusion and creature-if2 share one Pokémon collection while
+  // neopets stays isolated). Only affects record visibility — content
+  // (names/sprites/spawns) still comes from the ACTIVE pack.
   const CATALOG = [
     {
       id: 'creature-fusion',
@@ -40,6 +45,7 @@
       builtin: true,
       hfRepo: 'TessaCoil/creature-pack',
       solo: false,
+      shareGroup: 'creature-fusion',
     },
     {
       id: 'neopets',
@@ -60,6 +66,7 @@
       // as <hfRepo>/<subdir>/pack.bin where subdir = 'gen-1-2' etc.
       // The picker's gear icon toggles which gens are selected.
       genRange: [1, 5],
+      shareGroup: 'creature-fusion',
     },
   ];
 
@@ -130,9 +137,16 @@
   function isSoloMode() { return !!activeDef().solo; }
 
   // The pack a record belongs to: explicit field wins, legacy records
-  // (pairs, missingno grants) are creature-fusion.
+  // (pairs, missingno grants) are creature-fusion. Records resolve to
+  // their pack's share GROUP so packs that share an inventory group
+  // (creature-fusion + creature-if2) read as the same collection.
+  function groupOf(id) {
+    const def = get(id);
+    return (def && def.shareGroup) || id;
+  }
+  function activeGroup() { return groupOf(active()); }
   function packOfRecord(rec) {
-    if (rec && typeof rec.pack === 'string' && get(rec.pack)) return rec.pack;
+    if (rec && typeof rec.pack === 'string' && get(rec.pack)) return groupOf(rec.pack);
     return DEFAULT_PACK;
   }
 
@@ -256,7 +270,7 @@
 
   global.Packs = {
     list, get, active, setActive, activeDef, activeName, isSoloMode,
-    packOfRecord, packData, loadActivePackData,
+    packOfRecord, groupOf, activeGroup, packData, loadActivePackData,
     selectedGens, setSelectedGens, subdirFor,
     ACTIVE_KEY, DEFAULT_PACK,
   };

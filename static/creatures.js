@@ -9839,10 +9839,11 @@
     }
     const allEggs = readEggs();
     // Multi-pack isolation: the eggs view shows only the active pack's
-    // eggs (legacy eggs without a pack field are creature-fusion).
-    const activePack = global.Packs ? global.Packs.active() : 'creature-fusion';
+    // eggs — through share groups, so the two fusion packs share eggs
+    // (legacy eggs without a pack field are creature-fusion).
+    const activeGroup = global.Packs ? global.Packs.activeGroup() : 'creature-fusion';
     const eggs = allEggs.filter((e) =>
-      (e.pack || 'creature-fusion') === activePack);
+      global.Packs.packOfRecord(e) === activeGroup);
     if (!eggs.length) {
       const statsEl0 = panel.querySelector('.eggs-stats');
       if (statsEl0) statsEl0.innerHTML = '<b>0</b> eggs';
@@ -11309,14 +11310,15 @@
     const rawSlots = readDaycareSlots();
     const nickMap = readNicknames();
     // Multi-pack isolation: daycare shows only slots holding the active
-    // pack's creatures (the slot itself keeps ticking either way).
-    const activePack = global.Packs ? global.Packs.active() : 'creature-fusion';
+    // pack's creatures (share-group resolved; the slot itself keeps
+    // ticking either way).
+    const activeGroup = global.Packs ? global.Packs.activeGroup() : 'creature-fusion';
     const slotItems = [];
     for (let i = 0; i < DAYCARE_SLOT_COUNT; i++) {
       const slot = rawSlots[i] || null;
       const c = slot ? findCreature(slot.id) : null;
       const visible = c
-        && (global.Packs ? global.Packs.packOfRecord(c) === activePack : true);
+        && (global.Packs ? global.Packs.packOfRecord(c) === activeGroup : true);
       slotItems.push(visible ? { c, slot } : null);
     }
     const slotsHtml = `
@@ -13494,10 +13496,12 @@
     const _tData = performance.now();
     let items = sortedCreatures();
     // Multi-pack isolation: the inventory shows only the ACTIVE pack's
-    // creatures (legacy records without a pack field are creature-fusion).
+    // creatures — resolved through share groups, so creature-fusion and
+    // creature-if2 (same group) see one shared Pokémon collection
+    // (legacy records without a pack field are creature-fusion).
     if (global.Packs) {
-      const activePack = global.Packs.active();
-      items = items.filter((c) => global.Packs.packOfRecord(c) === activePack);
+      const activeGroup = global.Packs.activeGroup();
+      items = items.filter((c) => global.Packs.packOfRecord(c) === activeGroup);
     }
     const _dataMs = performance.now() - _tData;
     const _inputN = items.length;
@@ -15761,9 +15765,9 @@
     if (!ctrl || !ctrl._container) return;
     let ready = false;
     try {
-      const activePack = global.Packs ? global.Packs.active() : 'creature-fusion';
+      const activeGroup = global.Packs ? global.Packs.activeGroup() : 'creature-fusion';
       ready = _anyEggReadyToHatch(
-        readEggs().filter((e) => (e.pack || 'creature-fusion') === activePack));
+        readEggs().filter((e) => global.Packs.packOfRecord(e) === activeGroup));
     } catch (e) { ready = false; }
     ctrl._container.style.display = ready ? '' : 'none';
   }
@@ -15772,9 +15776,9 @@
   // so it opens the inventory panel (show()) before pushing the detail view.
   async function _hatchReadyEggFromMap() {
     if (_eggHatchInFlight) return;
-    const activePack = global.Packs ? global.Packs.active() : 'creature-fusion';
+    const activeGroup = global.Packs ? global.Packs.activeGroup() : 'creature-fusion';
     const ready = readEggs()
-      .filter((e) => (e.pack || 'creature-fusion') === activePack)
+      .filter((e) => global.Packs.packOfRecord(e) === activeGroup)
       .find(eggReadyToHatch);
     if (!ready) { _updateEggBubble(); return; }
     _eggHatchInFlight = true;
