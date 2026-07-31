@@ -46,6 +46,18 @@
   const DB_VERSION = 2;
   const STORE_ICONS = 'icons';
   const STORE_VARIANTS = 'variants';
+  // Active-pack namespace for IDB metadata keys (summary/credits/
+  // manifest/cells/split-names): content packs carry their own copies
+  // of those files, so caches built from /bundled-data must not bleed
+  // across packs. '' for the default pack (existing caches stay valid),
+  // '.<packId>' otherwise. Read straight from localStorage because
+  // packs.js loads after this file.
+  const _PACK_NS = (() => {
+    try {
+      const v = localStorage.getItem('cc.activePack');
+      return (v && v !== 'creature-fusion') ? '.' + v : '';
+    } catch { return ''; }
+  })();
   const SPRITE_SIZE = 96;
   // Autogen sheets are 10 cols × N rows (typically 10×51 upstream;
   // we ship cropped 10×16 covering the first 150 partners). Custom
@@ -64,6 +76,13 @@
   // (Froslass = 429). Gen-1-only operations should use the dedicated
   // SPECIES_MAX_DIM = 150 instead.
   const SPECIES_MAX = 429;
+  // Pool-driven ceiling: the active pack's species-pool.json wins (via
+  // Species.pool()); SPECIES_MAX is the fallback for bundles that
+  // predate the pool file.
+  function _speciesMax() {
+    const p = global.Species && global.Species.pool ? global.Species.pool() : null;
+    return (p && p.max) || SPECIES_MAX;
+  }
 
   let _dbPromise = null;
   let _customManifest = null;     // species id (string) -> [variant suffixes]
@@ -383,15 +402,16 @@
   // a user hasn't downloaded under this scheme yet, we fall back to
   // a per-cell lookup (slow first miss, cached after) so existing
   // sprites still render.
-  const VARIANT_SUMMARY_KEY = '__summary__';
-  const CREDITS_BUNDLE_KEY = '__credits__';
+  const VARIANT_SUMMARY_KEY = '__summary__' + _PACK_NS;
+  const CREDITS_BUNDLE_KEY = '__credits__' + _PACK_NS;
   // Key bumped 2026-06-07 when split-names.json migrated to PIF-id
   // indexing (was national-dex indexed). Old key's data is left in
   // IDB harmlessly; the new key starts empty so _ensureSplitNames
-  // re-fetches via _downloadSplitNames on next call.
-  const SPLIT_NAMES_KEY = '__splitnames_v2__';
-  const MANIFEST_KEY = '__manifest__';
-  const CELLS_KEY = '__cells__';
+  // re-fetches via _downloadSplitNames on next call. Namespaced per
+  // non-default pack (packs carry their own split-names.json).
+  const SPLIT_NAMES_KEY = '__splitnames_v2__' + _PACK_NS;
+  const MANIFEST_KEY = '__manifest__' + _PACK_NS;
+  const CELLS_KEY = '__cells__' + _PACK_NS;
   const SPECIES_MAX_DIM = 150;
   let _variantSummaryLoaded = false;
   let _creditsBundleCache = null;
@@ -1417,7 +1437,7 @@
       iconsPresent,
       iconsTotal: (sheetTo - sheetFrom + 1) * neededPerSheet,
       customSpeciesDone: customDone.size,
-      customSpeciesTotal: SPECIES_MAX,
+      customSpeciesTotal: _speciesMax(),
       creditsReady,
       namesReady,
     };
@@ -1486,7 +1506,7 @@
     const totalSheets = sheetTo - sheetFrom + 1;
     let finished = sheetComplete.size;
     const customDone = getCustomDoneSpecies();
-    const totalCustom = Math.min(SPECIES_MAX, sheetTo);
+    const totalCustom = Math.min(_speciesMax(), sheetTo);
 
     // Each "sheet" here is one head species — its autogen PNG
     // (10×16 cells of 96px). Fetch the sheet once, decode to an
@@ -1569,13 +1589,13 @@
       const body = parseInt(key.slice(0, dash), 10);
       const head = parseInt(key.slice(dash + 1), 10);
       if (!body || !head) continue;
-      if (head < sheetFrom || head > Math.min(sheetTo, SPECIES_MAX)) continue;
-      if (body < indexFrom || body > Math.min(indexTo, SPECIES_MAX)) continue;
+      if (head < sheetFrom || head > Math.min(sheetTo, _speciesMax())) continue;
+      if (body < indexFrom || body > Math.min(indexTo, _speciesMax())) continue;
       if (!cellsByHead.has(head)) cellsByHead.set(head, []);
       cellsByHead.get(head).push([body, cells[key]]);
     }
 
-    for (let b = sheetFrom; b <= Math.min(sheetTo, SPECIES_MAX); b++) {
+    for (let b = sheetFrom; b <= Math.min(sheetTo, _speciesMax()); b++) {
       if (signal && signal.aborted) return { cancelled: true };
       if (customDone.has(b)) continue;
       const variants = manifest[String(b)];

@@ -26,12 +26,27 @@
   const BUNDLED_BASE = (global.CC_BUNDLED_DATA_BASE || '/bundled-data')
     .replace(/\/$/, '');
 
-  const NAMES_KEY = 'cc.speciesNames';
-  const TYPES_KEY = 'cc.speciesTypes';
-  const EVOS_KEY  = 'cc.speciesEvolutions';
+  // Species data is pack content (each pack serves its own
+  // species-*.json), so the localStorage caches are namespaced per
+  // pack — otherwise switching packs would keep serving the previous
+  // pack's names/types/evolutions/pool. '' for the default pack (keys
+  // stay exactly as before); '.<packId>' otherwise. Read straight from
+  // localStorage because packs.js loads after this file.
+  const _PACK_NS = (() => {
+    try {
+      const v = localStorage.getItem('cc.activePack');
+      return (v && v !== 'creature-fusion') ? '.' + v : '';
+    } catch { return ''; }
+  })();
+
+  const NAMES_KEY = 'cc.speciesNames' + _PACK_NS;
+  const TYPES_KEY = 'cc.speciesTypes' + _PACK_NS;
+  const EVOS_KEY  = 'cc.speciesEvolutions' + _PACK_NS;
+  const POOL_KEY  = 'cc.speciesPool' + _PACK_NS;
   let _names = null;
   let _types = null;
   let _evos = null;
+  let _pool = null;
   let _loadPromise = null;
 
   try {
@@ -46,12 +61,17 @@
     const raw = localStorage.getItem(EVOS_KEY);
     if (raw) _evos = JSON.parse(raw);
   } catch { /* corrupt entry — re-fetch */ }
+  try {
+    const raw = localStorage.getItem(POOL_KEY);
+    if (raw) _pool = JSON.parse(raw);
+  } catch { /* corrupt entry — re-fetch */ }
 
   function ensureLoaded() {
     const namesNeeded = !(_names && _names.length);
     const typesNeeded = !(_types && Object.keys(_types).length);
     const evosNeeded  = !(_evos  && Object.keys(_evos).length);
-    if (!namesNeeded && !typesNeeded && !evosNeeded) return Promise.resolve();
+    const poolNeeded  = !(_pool && Array.isArray(_pool.species) && _pool.species.length);
+    if (!namesNeeded && !typesNeeded && !evosNeeded && !poolNeeded) return Promise.resolve();
     if (_loadPromise) return _loadPromise;
     _loadPromise = (async () => {
       // Explicit fetch helper that logs errors via console.error so
@@ -90,6 +110,16 @@
         if (map && typeof map === 'object') {
           _evos = map;
           try { localStorage.setItem(EVOS_KEY, JSON.stringify(map)); } catch {}
+        }
+      })());
+      if (poolNeeded) tasks.push((async () => {
+        // species-pool.json — which species/legendaries/spawnables the
+        // active data set contains. Absent in older bundles: pool()
+        // returns null and callers fall back to their hardcoded lists.
+        const doc = await _fetchJson(`${BUNDLED_BASE}/species-pool.json`, 'pool');
+        if (doc && Array.isArray(doc.species) && doc.species.length) {
+          _pool = doc;
+          try { localStorage.setItem(POOL_KEY, JSON.stringify(doc)); } catch {}
         }
       })());
       await Promise.all(tasks);
@@ -225,10 +255,37 @@
     return out;
   }
 
+  // The active data set's species pool, or null when no
+  // species-pool.json is available (older bundles / web static tree
+  // from before the file existed). Callers fall back to their
+  // hardcoded gen-1 lists in that case. Shape:
+  //   { ids:Set, max:int, legendaries:Set, babies:Set, spawnable:[int],
+  //     nonlegCount:int, has(id), isLegendary(id) }
+  let _poolView = null;
+  function pool() {
+    if (!_pool) return null;
+    if (_poolView) return _poolView;
+    const ids = new Set(_pool.species || []);
+    const legendaries = new Set(_pool.legendaries || []);
+    let nonleg = 0;
+    for (const id of ids) if (!legendaries.has(id)) nonleg++;
+    _poolView = {
+      ids,
+      max: _pool.maxSpecies || Math.max(...ids),
+      legendaries,
+      babies: new Set(_pool.babies || []),
+      spawnable: Array.isArray(_pool.spawnable) ? _pool.spawnable.slice() : [],
+      nonlegCount: nonleg,
+      has: (id) => ids.has(id),
+      isLegendary: (id) => legendaries.has(id),
+    };
+    return _poolView;
+  }
+
   global.Species = {
     nameFor, typesFor, fusionTypesFor,
     evolutionsFor, fusionEvolutionsFor, familyOf,
-    allSpecies,
+    allSpecies, pool,
     ensureLoaded,
   };
   // Intentionally no auto-fetch in web mode — ensureLoaded() is

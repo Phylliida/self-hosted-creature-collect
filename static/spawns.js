@@ -152,6 +152,17 @@
     325,  // Nosepass    (Rock)
   ];
   const SPAWNABLE_SPECIES_B = SPAWNABLE_SPECIES_A;
+
+  // Wild spawn pool: the active pack's species-pool.json wins (each
+  // IF2 gen-subset pack ships its own spawnable list, computed at
+  // build time); SPAWNABLE_SPECIES_A is the fallback for bundles that
+  // predate the pool file. For the default pack the pool file carries
+  // exactly SPAWNABLE_SPECIES_A, so behavior is unchanged.
+  function _spawnPoolA() {
+    const p = global.Species && global.Species.pool ? global.Species.pool() : null;
+    return (p && p.spawnable && p.spawnable.length) ? p.spawnable : SPAWNABLE_SPECIES_A;
+  }
+  function _spawnPoolB() { return _spawnPoolA(); }
   // Drop-in replacement for SPAWNABLE_SPECIES_A when expanding to the
   // full gen 1-4 head range (requires bulkDownload indexTo: 509).
   // eslint-disable-next-line no-unused-vars
@@ -284,7 +295,7 @@
 
   const _communityPermCache = new Map();   // cycleIdx -> permutation array
   function _communityShuffle(cycleIdx, attempt) {
-    const arr = SPAWNABLE_SPECIES_A.slice();
+    const arr = _spawnPoolA().slice();
     const rng = getxor4069('community|cycle|' + cycleIdx + '|' + attempt);
     for (let i = arr.length - 1; i > 0; i--) {
       const j = Math.floor(rng() * (i + 1));
@@ -294,7 +305,7 @@
   }
   function _communityPermutation(cycleIdx) {
     if (_communityPermCache.has(cycleIdx)) return _communityPermCache.get(cycleIdx);
-    const n = SPAWNABLE_SPECIES_A.length;
+    const n = _spawnPoolA().length;
     const prev = cycleIdx > 0 ? _communityPermutation(cycleIdx - 1) : null;
     const prevPos = new Map();
     if (prev) prev.forEach((id, i) => prevPos.set(id, i));
@@ -316,7 +327,7 @@
   }
   function communityDayInfo(nowMs) {
     const weekKey = communityWeekKey(nowMs);
-    const n = SPAWNABLE_SPECIES_A.length;
+    const n = _spawnPoolA().length;
     const weekEndMs = COMMUNITY_WEEK_ANCHOR_MS + (weekKey + 1) * WEEK_MS;
     // Odd weekKeys are off weeks — no featured species, no passes.
     if (goodMod(weekKey, 2) !== 0) return { weekKey, speciesId: null, weekEndMs };
@@ -375,17 +386,17 @@
     }
     const Species = global.Species;
     if (!Species || !Species.typesFor) return false;
-    const probe = Species.typesFor(SPAWNABLE_SPECIES_A[0]);
+    const probe = Species.typesFor(_spawnPoolA()[0]);
     if (!probe || !probe.length) return false;
     const byPrimary = Object.create(null);
     const bySecondary = Object.create(null);
     for (const t of TYPES) { byPrimary[t] = []; bySecondary[t] = []; }
-    for (const sp of SPAWNABLE_SPECIES_A) {
+    for (const sp of _spawnPoolA()) {
       const types = Species.typesFor(sp) || [];
       if (!types.length) continue;
       byPrimary[types[0]].push(sp);
     }
-    for (const sp of SPAWNABLE_SPECIES_B) {
+    for (const sp of _spawnPoolB()) {
       const types = Species.typesFor(sp) || [];
       if (!types.length) continue;
       bySecondary[types[1] || types[0]].push(sp);
@@ -636,7 +647,8 @@
       // appended AFTER every existing draw and only consumed in this
       // branch, so an inactive session leaves the stream bit-identical.
       const slotCoin = arng();
-      const other = SPAWNABLE_SPECIES_A[Math.floor(arng() * SPAWNABLE_SPECIES_A.length)];
+      const poolA = _spawnPoolA();
+      const other = poolA[Math.floor(arng() * poolA.length)];
       outA = slotCoin < 0.5 ? cd.speciesId : other;
       outB = slotCoin < 0.5 ? other : cd.speciesId;
     }
@@ -699,7 +711,8 @@
   const LEG_SALT = 0x4C45470A;                    // distinct seed namespace
   // Gen 1 legendaries (PIF id == national dex in gen 1); all <= 429 so
   // they're inside the downloaded sprite range. Filtered against the loaded
-  // species list at roll time in case data isn't fully present.
+  // species list at roll time in case data isn't fully present. The active
+  // pack's species-pool.json overrides this list when present.
   const GEN1_LEGENDARY_IDS = [144, 145, 146, 150, 151];
 
   function currentLegTick(nowMs) {
@@ -722,7 +735,9 @@
   }
   function _legLegendaries(allIds) {
     const have = new Set(allIds);
-    return GEN1_LEGENDARY_IDS.filter((id) => have.has(id));
+    const p = global.Species && global.Species.pool ? global.Species.pool() : null;
+    const ids = p ? Array.from(p.legendaries) : GEN1_LEGENDARY_IDS;
+    return ids.filter((id) => have.has(id));
   }
   function legCellTickSeed(cellX, cellY, ltick) {
     const curX = goodMod(cellX, LAT_MOD);
@@ -868,7 +883,7 @@
     if (!all.length) return false;
     const loaded = new Set(all.map((s) => s.id));
     const evoSet = new Set();
-    for (const base of SPAWNABLE_SPECIES_A) {
+    for (const base of _spawnPoolA()) {
       const stack = [base];
       const seen = new Set([base]);
       while (stack.length) {

@@ -693,7 +693,7 @@
     const family = global.Species.familyOf(idx);
     if (!family || !family.length) return idx;
     let i = 0;
-    while (i < family.length - 1 && CANDY_ROOT_BABIES.has(family[i])) {
+    while (i < family.length - 1 && _candyRootBabies().has(family[i])) {
       i++;
     }
     return family[i];
@@ -3645,15 +3645,39 @@
   // their fusions would make 100% (and its shiny bonus) unreachable. Legendary
   // species still get their own — uncounted — row in the completion dex.
   const LEGENDARY_SPECIES_SET = new Set([144, 145, 146, 150, 151]);
-  function isLegendarySpecies(id) { return LEGENDARY_SPECIES_SET.has(id); }
   // How many supported species actually count toward completion — the partner
   // pool and the aggregate %. Excludes the legendaries in the pool
   // (Articuno/Zapdos/Moltres/Mewtwo; Mew 151 isn't a supported species anyway).
   const SUPPORTED_NONLEG_COUNT = (() => {
     let n = 0;
-    for (const id of SUPPORTED_SPECIES_SET) if (!isLegendarySpecies(id)) n++;
+    for (const id of SUPPORTED_SPECIES_SET) if (!LEGENDARY_SPECIES_SET.has(id)) n++;
     return n;
   })();
+
+  // ── Pack-driven pool accessors ──────────────────────────────────
+  // The active pack's species-pool.json (via Species.pool()) overrides
+  // the hardcoded gen-1 sets above; those remain the fallback for
+  // bundles that predate the pool file. The default pack's pool file
+  // carries exactly these values, so behavior is identical either way.
+  function _pool() {
+    return (global.Species && global.Species.pool) ? global.Species.pool() : null;
+  }
+  function _supportedSet() {
+    const p = _pool();
+    return p ? p.ids : SUPPORTED_SPECIES_SET;
+  }
+  function _nonlegCount() {
+    const p = _pool();
+    return p ? p.nonlegCount : SUPPORTED_NONLEG_COUNT;
+  }
+  function _candyRootBabies() {
+    const p = _pool();
+    return p ? p.babies : CANDY_ROOT_BABIES;
+  }
+  function isLegendarySpecies(id) {
+    const p = _pool();
+    return p ? p.isLegendary(id) : LEGENDARY_SPECIES_SET.has(id);
+  }
 
   function fusionEvolutionsFor(a, b) {
     if (!global.Species || !global.Species.fusionEvolutionsFor) return [];
@@ -3661,8 +3685,9 @@
     // Drop any evolution whose target species is outside the supported
     // pool. Both sides of the resulting fusion must be in-pool — even
     // one out-of-pool half breaks sprite / type / name lookups.
+    const poolSet = _supportedSet();
     return all.filter((e) =>
-      SUPPORTED_SPECIES_SET.has(e.newA) && SUPPORTED_SPECIES_SET.has(e.newB));
+      poolSet.has(e.newA) && poolSet.has(e.newB));
   }
 
   // Windowed virtualizer for the pokédex / inventory grids. Renders
@@ -7521,6 +7546,21 @@
       .pack-pick-row.active { border-color: #6d5ac0; border-width: 2px; }
       .pack-pick-status { font-size: 12px; opacity: 0.65; }
       .pack-pick-redl { font-size: 15px; padding: 2px 6px; opacity: 0.7; }
+      .pack-pick-gear { font-size: 15px; padding: 2px 6px; opacity: 0.7; }
+      /* Generation-subset picker (gear icon on variant packs) */
+      .pack-gens-overlay {
+        position: fixed; inset: 0; z-index: 71; display: flex;
+        align-items: center; justify-content: center;
+        background: rgba(0,0,0,0.55); padding: 16px;
+      }
+      .pack-gens-card { text-align: left; }
+      .pack-gens-card h3 { text-align: center; }
+      .pack-gens-row {
+        display: flex; align-items: center; gap: 8px;
+        padding: 9px 6px; font-size: 14.5px; cursor: pointer;
+      }
+      .pack-gens-range { font-size: 12px; opacity: 0.6; }
+      .pack-gens-save { margin-top: 8px; padding: 8px 18px; cursor: pointer; }
       .pack-pick-msg { min-height: 18px; font-size: 12px; opacity: 0.75; margin: 8px 0 4px; }
       .pack-pick-close { margin-top: 8px; padding: 8px 18px; cursor: pointer; }
       /* Action icon row — centered on its own line below the
@@ -11805,9 +11845,9 @@
       // fusionEvolutionsFor filter — both gates extend together by
       // editing SUPPORTED_SPECIES_EXTRAS.
       famA = global.Species.familyOf(a)
-        .filter((id) => SUPPORTED_SPECIES_SET.has(id));
+        .filter((id) => _supportedSet().has(id));
       famB = global.Species.familyOf(b)
-        .filter((id) => SUPPORTED_SPECIES_SET.has(id));
+        .filter((id) => _supportedSet().has(id));
       if (famA.length > 1 || famB.length > 1) {
         const ariaExp = expandFamily ? 'true' : 'false';
         const toggleText = expandFamily
@@ -12264,21 +12304,25 @@
   // signal that drives the silhouettes.
   let _supSpeciesSortedCache = null;
   function supportedSpeciesSorted() {
-    if (!_supSpeciesSortedCache) {
-      _supSpeciesSortedCache = Array.from(SUPPORTED_SPECIES_SET).sort((x, y) => x - y);
+    // Keyed on the Set's identity so a late-arriving pack pool (which
+    // replaces the fallback set object) invalidates the cache.
+    const set = _supportedSet();
+    if (!_supSpeciesSortedCache || _supSpeciesSortedCache.set !== set) {
+      _supSpeciesSortedCache = { set, sorted: Array.from(set).sort((x, y) => x - y) };
     }
-    return _supSpeciesSortedCache;
+    return _supSpeciesSortedCache.sorted;
   }
   // One pass over seenFusions → per-species head/body seen counts.
   function computeSpeciesCompletion() {
     const seen = readSeenFusions();
+    const poolSet = _supportedSet();
     const head = new Map(), body = new Map();
     for (const key in seen) {
       if (!Object.prototype.hasOwnProperty.call(seen, key)) continue;
       const dash = key.indexOf('-');
       if (dash < 0) continue;
       const a = +key.slice(0, dash), b = +key.slice(dash + 1);
-      if (!SUPPORTED_SPECIES_SET.has(a) || !SUPPORTED_SPECIES_SET.has(b)) continue;
+      if (!poolSet.has(a) || !poolSet.has(b)) continue;
       // Legendaries are far too rare to fairly gate completion, so a fusion
       // only advances a species when its PARTNER is non-legendary. (The
       // legendary morph still lights up in the species-dex grid — it just
@@ -12286,7 +12330,7 @@
       if (!isLegendarySpecies(b)) head.set(a, (head.get(a) || 0) + 1);
       if (!isLegendarySpecies(a)) body.set(b, (body.get(b) || 0) + 1);
     }
-    const total = 2 * SUPPORTED_NONLEG_COUNT;
+    const total = 2 * _nonlegCount();
     return supportedSpeciesSorted().map((id) => {
       const s = (head.get(id) || 0) + (body.get(id) || 0);
       return {
@@ -12418,6 +12462,63 @@
     return '';
   }
 
+  // National-dex ranges shown next to each generation toggle.
+  const GEN_DEX_RANGES = { 1: '1–151', 2: '152–251', 3: '252–386', 4: '387–493', 5: '494–649' };
+
+  // Gear-icon dialog for packs with generation variants (genRange in
+  // the packs.js CATALOG): one toggle per generation, ≥1 required.
+  // onDone fires after a successful save so the caller can refresh.
+  function _showGenPicker(packDef, onDone) {
+    const sel = new Set(global.Packs.selectedGens(packDef.id));
+    const overlay = document.createElement('div');
+    overlay.className = 'pack-gens-overlay';
+    const lo = packDef.genRange[0], hi = packDef.genRange[1];
+    let rows = '';
+    for (let g = lo; g <= hi; g++) {
+      rows += '<label class="pack-gens-row"><input type="checkbox" data-gen="' + g + '"'
+        + (sel.has(g) ? ' checked' : '') + '> Gen ' + g
+        + ' <span class="pack-gens-range">(' + (GEN_DEX_RANGES[g] || '') + ')</span></label>';
+    }
+    overlay.innerHTML = '<div class="pack-picker-card pack-gens-card">'
+      + '<h3>' + escapeHtml(packDef.name) + ' — generations</h3>'
+      + rows
+      + '<div class="pack-pick-msg"></div>'
+      + '<div style="text-align:center">'
+      + '<button type="button" class="pack-gens-save">Save</button> '
+      + '<button type="button" class="pack-pick-close">Cancel</button>'
+      + '</div></div>';
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    overlay.querySelector('.pack-pick-close').onclick = close;
+    overlay.querySelector('.pack-gens-save').onclick = () => {
+      const gens = Array.from(overlay.querySelectorAll('input[data-gen]:checked'))
+        .map((c) => parseInt(c.dataset.gen, 10));
+      if (!gens.length) {
+        overlay.querySelector('.pack-pick-msg').textContent = 'pick at least one generation';
+        return;
+      }
+      global.Packs.setSelectedGens(packDef.id, gens);
+      close();
+      if (onDone) onDone();
+    };
+  }
+
+  function _packRowStatus(p, isActive, installed) {
+    let status = isActive ? 'active' : (installed ? 'installed' : 'not downloaded');
+    if (p.genRange && global.Packs.selectedGens) {
+      const sel = global.Packs.selectedGens(p.id).join(',');
+      const meta = installed ? global.PackInstall.readMeta(p.id) : null;
+      const ig = (meta && meta.gens) || '';
+      if (isActive) status = 'active (gens ' + (ig || sel) + ')';
+      else if (installed) {
+        status = 'installed (gens ' + (ig || '?') + ')'
+          + (ig && ig !== sel ? ' · selected ' + sel : '');
+      } else status = 'not downloaded (gens ' + sel + ')';
+    }
+    return status;
+  }
+
   function _showPackPicker() {
     if (!global.Packs || !global.PackInstall) return;
     const overlay = document.createElement('div');
@@ -12428,11 +12529,14 @@
       + global.Packs.list().map((p) => {
           const installed = global.PackInstall.isInstalled(p.id);
           const isActive = p.id === active;
-          const status = isActive ? 'active' : (installed ? 'installed' : 'not downloaded');
+          const status = _packRowStatus(p, isActive, installed);
           return '<button type="button" class="pack-pick-row' + (isActive ? ' active' : '')
-            + '" data-pack="' + p.id + '"' + (isActive ? ' disabled' : '') + '>'
+            + '" data-pack="' + p.id + '"' + (isActive && !p.genRange ? ' disabled' : '') + '>'
             + '<span class="pack-pick-name">' + escapeHtml(p.name) + '</span>'
             + '<span class="pack-pick-status">' + status + '</span>'
+            + (p.genRange
+                ? '<span class="pack-pick-gear" data-gear="' + p.id + '" title="choose generations">⚙</span>'
+                : '')
             + (installed && !isActive
                 ? '<span class="pack-pick-redl" data-redl="' + p.id + '" title="re-download">↻</span>'
                 : '')
@@ -12449,14 +12553,28 @@
       btn.onclick = async (e) => {
         const id = btn.dataset.pack;
         const msg = overlay.querySelector('.pack-pick-msg');
+        // The ⚙ badge opens the generation toggle dialog (variant
+        // packs) instead of downloading — saving re-opens the picker
+        // so the status line reflects the new selection.
+        if (e.target && e.target.dataset && e.target.dataset.gear) {
+          const def = global.Packs.get(id);
+          _showGenPicker(def, () => { overlay.remove(); _showPackPicker(); });
+          return;
+        }
         // The ↻ badge forces a re-download (repairs a damaged/partial
         // install, or pulls an update) instead of just switching.
         const force = !!(e.target && e.target.dataset && e.target.dataset.redl);
+        // A variant pack whose selected gens differ from the installed
+        // ones re-downloads the new subset (even when already active).
+        const def = global.Packs.get(id);
+        const meta = global.PackInstall.readMeta(id);
+        const gensChanged = !!(def && def.genRange && meta
+          && (meta.gens || '') !== global.Packs.selectedGens(id).join(','));
         btn.disabled = true;
         try {
           // Download only happens from this tap (zero-network rule);
           // switching packs reloads into a fully isolated world.
-          if (force || !global.PackInstall.isInstalled(id)) {
+          if (force || !global.PackInstall.isInstalled(id) || gensChanged) {
             await global.PackInstall.download(id, (s) => {
               msg.textContent = _packPickStatusText(s);
             });
