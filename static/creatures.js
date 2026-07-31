@@ -698,6 +698,19 @@
     }
     return family[i];
   }
+  // Eggs hatch the EARLIEST form of a family — the baby when the active
+  // pack's dataset includes it (Pichu/Munchlax in the IF2 packs), else
+  // the base form (Pikachu/Snorlax — the IF1 tree has no baby data, so
+  // familyOf stops there). Distinct from candyRootFor, which
+  // deliberately promotes PAST babies into the family's candy bucket.
+  // familyOf[0] is the root by construction (reverse-walk to the
+  // earliest ancestor).
+  function _eggRootFor(idx) {
+    if (idx == null) return idx;
+    if (!global.Species || !global.Species.familyOf) return idx;
+    const family = global.Species.familyOf(idx);
+    return (family && family.length) ? family[0] : idx;
+  }
   // Test-only override toggle (Settings → "Force shiny catches"). When
   // on, every shiny roll succeeds; the variant index is still uniformly
   // random so different captures show different shinies. Reads
@@ -766,31 +779,40 @@
     };
   }
 
-  // Completion-dex shiny bonus. A fusion morph's Completion % maps to a
-  // multiplier in 10% bands: 20%→+2×, 30%→+3×, … 90%→+9×, 100%→+10× (below
-  // 20% gives nothing). The two morphs' bonuses ADD (e.g. a 40% head + 20%
-  // body → 4 + 2 = 6× shiny), so two low-completion species stay at the base
-  // rate. Banded off the ROUNDED % the Completion dex shows, so the number on
-  // a dex row is exactly what that morph is worth.
-  function _speciesShinyBonus(pct) {
-    const shown = Math.round(pct * 100); // match the % printed on the dex row
-    if (shown < 20) return 0;            // 10% band (and below) gives no bonus
-    return Math.min(10, Math.floor(shown / 10)); // 20→2, 30→3, … 90→9, 100→10
+  // Completion-dex shiny bonus. Each species' seen count (head + body
+  // fusions seen — the N/2N fraction on its dex row) maps to a threshold
+  // multiplier: 1× per full 30, so 1× at 0–29, 2× at 30–59, 3× at 60–89,
+  // etc. Reaching 100% (seen === total) rounds UP to the next tier when
+  // the count isn't evenly divisible by 30 — completing a species always
+  // moves it past its last threshold. The two morphs' bonuses add on one
+  // shared base (bonusA + bonusB − 1): a pair of fresh species rolls at
+  // the base rate, and every 30-fusion milestone on either side adds
+  // another 1×.
+  function _speciesShinyBonus(seen, total) {
+    seen = seen || 0;
+    if (total && seen >= total) return Math.ceil(seen / 30) + 1;
+    return Math.floor(seen / 30) + 1;
   }
   function _fusionShinyBonusSum(speciesA, speciesB) {
-    const byId = new Map(computeSpeciesCompletion().map((r) => [r.id, r.pct]));
-    let m = 0;
-    if (speciesA != null) m += _speciesShinyBonus(byId.get(speciesA) || 0);
-    if (speciesB != null) m += _speciesShinyBonus(byId.get(speciesB) || 0);
+    const byId = new Map(computeSpeciesCompletion().map((r) => [r.id, r]));
+    let m = -1;
+    if (speciesA != null) {
+      const r = byId.get(speciesA);
+      m += _speciesShinyBonus(r && r.seen, r && r.total);
+    }
+    if (speciesB != null) {
+      const r = byId.get(speciesB);
+      m += _speciesShinyBonus(r && r.seen, r && r.total);
+    }
     return m;
   }
   function _fusionShinyMultiplier(speciesA, speciesB) {
-    // 0 (both morphs below 20%) → base rate
+    // Both morphs unknown (nulls) → base rate
     return _fusionShinyBonusSum(speciesA, speciesB) || 1;
   }
   // Community Day Pass shiny bonus: community morphs (spawns flagged
   // while a pass session is live) get +3×, ADDED to the completion-dex
-  // band sum — a 4× completion fusion during a pass rolls at 7×. (The
+  // sum — a 4× completion fusion during a pass rolls at 7×. (The
   // legendary 10× / incense 2× factors stay multiplicative on top, as
   // before; egg hatches don't get this — they aren't community morphs.)
   const COMMUNITY_SHINY_BONUS = 3;
@@ -842,7 +864,7 @@
     // legendary spawns is deterministic and shared.
     if (rec.spawn && rec.spawn.legendary) rate *= 10;
     else if (rec.spawn && rec.spawn.incense) rate *= 2;
-    // Additive bonuses on top: the two morphs' completion-dex bands +
+    // Additive bonuses on top: the two morphs' completion-dex thresholds +
     // the community-day pass bonus (see _shinyMultiplierForSpawn).
     rate *= _shinyMultiplierForSpawn(rec.spawn);
     const count = (global.ShinyStore && global.ShinyStore.VARIANT_COUNT) || 12;
@@ -1505,16 +1527,16 @@
       const pool = useNatural ? naturals : others;
       const [rawA, rawB] = pool[Math.floor(u5 * pool.length)] || [a, b];
       const rawDisplay = allSpeciesArr[Math.floor(u6 * allSpeciesArr.length)] || rawA;
-      // Eggs always contain the baby form of whatever species got
-      // picked — Raichu and Pikachu both hatch as Pikachu, all
-      // three Charmander-line evos hatch as Charmander, etc. Same
-      // applies to the display art so the egg's appearance matches
-      // its eventual contents. candyRootFor walks the evolution
-      // family and returns the earliest gen-1 form (skipping gen-2+
-      // babies like Pichu that aren't in our 1–150 dataset).
-      const eggA = candyRootFor(rawA);
-      const eggB = candyRootFor(rawB);
-      const displaySpecies = candyRootFor(rawDisplay);
+      // Eggs always contain the earliest form of whatever species got
+      // picked — the baby when it's in the pack's dataset (Raichu and
+      // Pikachu both hatch as Pichu under IF2, as Pikachu under the
+      // baby-less IF1 tree; Snorlax hatches as Munchlax under IF2).
+      // Same applies to the display art so the egg's appearance matches
+      // its eventual contents. _eggRootFor walks the evolution family
+      // to its root — unlike candyRootFor it does NOT skip babies.
+      const eggA = _eggRootFor(rawA);
+      const eggB = _eggRootFor(rawB);
+      const displaySpecies = _eggRootFor(rawDisplay);
       const sizeM = Math.round((0.5 + u3 * 1.5) * 100) / 100;
       return {
         kind: 'egg',
@@ -10668,10 +10690,11 @@
     for (const x of U) for (const y of U) if (!natKeys.has(x + ',' + y)) others.push([x, y]);
     const natShare = others.length ? 0.7 : 1.0;
     const othShare = others.length ? 0.3 : 0;
-    // Aggregate by the baby-form pair the egg actually hatches into.
+    // Aggregate by the earliest-form (baby) pair the egg actually
+    // hatches into.
     const agg = new Map();
     const add = (x, y, p, natural) => {
-      const a = candyRootFor(x), b = candyRootFor(y);
+      const a = _eggRootFor(x), b = _eggRootFor(y);
       const key = a + ',' + b;
       const cur = agg.get(key) || { a, b, pct: 0, natural: false };
       cur.pct += p; cur.natural = cur.natural || natural;
@@ -12644,7 +12667,7 @@
       initialScrollTop: sheet ? sheet.scrollTop : 0,
       makeCardEl(r) {
         const pct = Math.round(r.pct * 100);
-        const bonus = _speciesShinyBonus(r.pct);
+        const bonus = _speciesShinyBonus(r.seen, r.total);
         const card = document.createElement('div');
         card.className = 'completion-row';
         card.dataset.species = r.id;

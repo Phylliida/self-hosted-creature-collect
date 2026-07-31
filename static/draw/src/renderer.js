@@ -1,5 +1,5 @@
 import { itemBBox, lodVisible, polygonVertices, rotCenter, ROTATABLE, drosteMatrix,
-         foldMatrix, spinMatrix, spinCopyCount, refSources } from './scene.js';
+         refMatrices, refSources, refDepth, REFOPS, MAXREFSTACK } from './scene.js';
 import { withAlpha, clamp, ribbonOutline, catmullRom, hueShiftedItem } from './util.js';
 import { pixelRGBA } from './pixel.js';
 
@@ -294,8 +294,9 @@ export class Renderer {
   /** Full repaint. `state` carries draft/selection info from the app. */
   render(scene, state = {}) {
     const { ctx, camera } = this;
-    this._scene = scene;          // fold/spin copies resolve their sources through it
-    this._refStack = [];          // fold/spin reference chain being drawn (cycle guard)
+    this._scene = scene;          // op copies resolve their sources through it
+    this._refStack = [];          // op reference chain being drawn (depth guard)
+    this._refBudget = 30000;      // node budget for cyclic-program expansion
     this._screenSpace();
     ctx.clearRect(0, 0, camera.width, camera.height);
     ctx.fillStyle = this.bg;
@@ -945,7 +946,8 @@ export class Renderer {
         break;
       }
       case 'fold':
-      case 'spin': {
+      case 'spin':
+      case 'glide': {
         this._drawRefCopies(it, alphaMul, tint);
         break;
       }
@@ -956,41 +958,50 @@ export class Renderer {
     ctx.globalCompositeOperation = 'source-over';
   }
 
-  // ---- BY-REFERENCE transform copies (fold / spin) --------------------------
-  // A fold/spin stores only a guide + source ids (see scene.js); here we re-draw
-  // each SOURCE under the item's rigid transform(s) — reflection across the fold
-  // line, or k rotations about the spin pivot. Sources are drawn through the
+  // ---- BY-REFERENCE transform ops (fold / spin / glide) ---------------------
+  // An op stores only a guide + source ids (see scene.js); here we re-draw each
+  // SOURCE under the op's rigid transform(s). Sources are drawn through the
   // normal _drawItem path under a ctx.transform, so every style/width/gradient
-  // rule applies unchanged (the transforms are rigid: no scale distortion), and
-  // a source that is ITSELF a fold/spin recurses naturally — composition for
-  // free. `this._refStack` (reset per frame in render()) is the cycle guard: a
-  // fold that transitively references itself draws nothing below the repeat.
+  // rule applies unchanged (the transforms are rigid: no scale distortion).
+  //
+  // PROGRAMS: ops auto-link into one cyclic program in placement order, and
+  // EVERY op expands at top level — the drawing is the union of all op-words
+  // applied to the base content (each word is drawn once, by its outermost
+  // op). A source that is itself an op recurses: its entry is pushed onto
+  // _refStack, and refDepth caps how often each op may appear in one chain —
+  // so placing glide then fold then spin yields glide∘fold∘spin applied to
+  // the accumulated output, round after round. Guides are never part of the
+  // recursion: they draw only at top level, so pivots / fold lines / glide
+  // arrows are never copied. Guards: MAXREFSTACK chain cap + _refBudget node
+  // cap per frame — a pathological doc truncates instead of hanging.
 
   _drawRefCopies(it, alphaMul, tint) {
     const scene = this._scene;
-    if (scene && !this._refStack.includes(it.id)) {
+    const topLevel = this._refStack.length === 0;
+    if (scene && this._refStack.filter(id => id === it.id).length <= refDepth(it)
+               && this._refStack.length < MAXREFSTACK && this._refBudget > 0) {
       const byId = id => scene.byId(id);
       const scale = this.camera.scale;
-      const mats = it.type === 'fold'
-        ? [foldMatrix(it)]
-        : Array.from({ length: spinCopyCount(it) }, (_, i) => spinMatrix(it, i + 1));
-      this._refStack.push(it.id);
-      for (const m of mats) {
+      for (const m of refMatrices(it)) {
         this.ctx.save();
         this.ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f);
         for (const s of refSources(it, byId, this._refStack)) {
+          if (this._refBudget-- <= 0) { this.ctx.restore(); if (topLevel) this._drawRefGuide(it); return; }
           if (s.hidden || !lodVisible(s, scale)) continue;
+          const isOp = REFOPS.has(s.type);
+          if (isOp) this._refStack.push(s.id);   // entering the op: one application
           this._drawItem(s, false, alphaMul, tint);
+          if (isOp) this._refStack.pop();
         }
         this.ctx.restore();
       }
-      this._refStack.pop();
     }
-    this._drawRefGuide(it);
+    // Guides are top-level chrome only — never copied by the recursion above.
+    if (topLevel) this._drawRefGuide(it);
   }
 
-  /** The fold/spin's on-canvas guide — the fold line / spin pivot crosshair —
-   *  drawn faint so there's always something visible to grab. World space. */
+  /** The op's on-canvas guide — fold line / spin pivot crosshair / glide
+   *  arrow — drawn faint so there's always something visible to grab. */
   _drawRefGuide(it) {
     const { ctx, camera } = this;
     const px = n => camera.screenToWorldLen(n);
@@ -999,12 +1010,7 @@ export class Renderer {
     ctx.globalCompositeOperation = 'source-over';
     ctx.strokeStyle = withAlpha('#5b8cff', 0.55);
     ctx.lineWidth = px(1.2);
-    if (it.type === 'fold') {
-      ctx.setLineDash([px(6), px(4)]);
-      ctx.beginPath();
-      ctx.moveTo(it.ax, it.ay); ctx.lineTo(it.bx, it.by);
-      ctx.stroke();
-    } else {
+    if (it.type === 'spin') {
       const r = px(8);
       ctx.setLineDash([]);
       ctx.beginPath();
@@ -1012,6 +1018,14 @@ export class Renderer {
       ctx.moveTo(it.cx, it.cy - r); ctx.lineTo(it.cx, it.cy + r);
       ctx.stroke();
       ctx.beginPath(); ctx.arc(it.cx, it.cy, r * 0.45, 0, Math.PI * 2); ctx.stroke();
+    } else if (it.type === 'glide') {
+      ctx.setLineDash([px(6), px(4)]);
+      this._drawArrowSeg({ x: it.ax, y: it.ay }, { x: it.bx, y: it.by }, withAlpha('#5b8cff', 0.55), px(1.2), true);
+    } else {
+      ctx.setLineDash([px(6), px(4)]);
+      ctx.beginPath();
+      ctx.moveTo(it.ax, it.ay); ctx.lineTo(it.bx, it.by);
+      ctx.stroke();
     }
     ctx.restore();
   }
@@ -1106,7 +1120,7 @@ export class Renderer {
     // Not yet ported to the screen-space path → draw via the world CTM. Correct to
     // the ~2^28 Skia ceiling (quantises beyond) — identical to pre-batch behaviour,
     // so no regression; these are the "come second" types (NOTES extreme-zoom pt 2).
-    if (t === 'image' || t === 'pixel' || t === 'text' || t === 'droste' || t === 'fold' || t === 'spin') {
+    if (t === 'image' || t === 'pixel' || t === 'text' || t === 'droste' || t === 'fold' || t === 'spin' || t === 'glide') {
       this._worldSpace();
       this._drawItem(it, isDraft, alphaMul, tint);
       this._screenSpace();

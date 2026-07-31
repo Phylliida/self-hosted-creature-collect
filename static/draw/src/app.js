@@ -1,6 +1,6 @@
 import { Camera } from './camera.js';
 import { Scene, makeStroke, makeLine, makeRect, makeEllipse, makeText, makeArrow, makePolygon,
-         makeImage, makeConnector, makeDroste, makeFold, makeSpin, boxEdgePoint, translateItem, scaleItemAbout, rotateItemsAbout,
+         makeImage, makeConnector, makeDroste, makeFold, makeSpin, makeGlide, REFOPS, boxEdgePoint, translateItem, scaleItemAbout, rotateItemsAbout,
          reflectItemsAbout, itemBBox, itemCentroidMass, lodVisible, drosteSelfSimilarity, cloneFill } from './scene.js';
 import { Renderer } from './renderer.js';
 import { Minimap } from './minimap.js';
@@ -689,9 +689,9 @@ class App {
     // relevant — the brush's smooth/taper + the star's points live in Shape & brush.
     if (name === 'brush' || name === 'star') this._revealSection('sect-shape');
     this.commitText();
-    // fold/spin CAPTURE the selection when they commit (drag a mirror line /
+    // fold/spin/glide CAPTURE the selection when they commit (drag a guide /
     // sweep an angle), so unlike the other drawing tools they must not clear it.
-    if (name !== 'select' && name !== 'fold' && name !== 'spin') { this.selectedIds.clear(); this.pivot = null; this._activeId = null; }
+    if (name !== 'select' && !REFOPS.has(name)) { this.selectedIds.clear(); this.pivot = null; this._activeId = null; }
     this._spinPivot = null; this._refGuide = null;
     document.querySelectorAll('.tool').forEach(b =>
       b.classList.toggle('active', b.dataset.tool === name));
@@ -977,6 +977,11 @@ class App {
         this.draft = makeLine(w, w, ns);
         this.active = { kind: 'foldline', start: w };
         break;
+      case 'glide':
+        // drag the copy offset as an arrow (tail = here, head = where the copy lands)
+        this.draft = makeArrow(w, w, ns);
+        this.active = { kind: 'glideline', start: w };
+        break;
       case 'spin':
         if (!this._spinPivot) {
           // stage 1: place the pivot; the next press starts the angle sweep
@@ -1049,7 +1054,8 @@ class App {
         this._updateShape(this.active.start, w, e);
         break;
       }
-      case 'foldline': {
+      case 'foldline':
+      case 'glideline': {
         let end = w;
         if (e && e.shiftKey) end = this._constrainAngle(this.active.start, w);
         this.draft.points = [this.active.start, end];
@@ -1226,6 +1232,7 @@ class App {
       case 'brush': this._commitBrush(); break;
       case 'shape': this._commitShape(); break;
       case 'foldline': this._commitFold(); break;
+      case 'glideline': this._commitGlide(); break;
       case 'spinarm': this._commitSpin(a.angle ?? 0); break;
       case 'erase':
         if (a.removed.length) this.history.pushApplied(removeItemsCmd(this.scene, a.removed));
@@ -1864,18 +1871,55 @@ class App {
     this._commitDrawn([d]);
   }
 
-  // ---- fold / spin: BY-REFERENCE transform copies ----
-  // Both tools capture a SOURCE SET at commit time: the current selection, or —
-  // with nothing selected — every item in the document. The new item stores only
-  // the source ids + its guide geometry; copies are rendered live by the
-  // renderer (edit a source and every copy follows; select a fold/spin itself as
-  // a source to compose transforms for fractals — nothing is ever duplicated in
-  // the document).
+  // ---- fold / spin / glide: BY-REFERENCE transform ops ----
+  // The tools place GUIDES; the op captures BASE (non-op) content at commit
+  // time — the current selection, or everything not already referenced. Ops
+  // auto-link into ONE cyclic program in placement order: the new op is
+  // appended to the previous op's ids and points back at the first, so the
+  // expansion applies the ops' transforms in the order they were placed,
+  // round after round (pan rotate fold pan rotate fold …) — a live fractal
+  // with nothing ever baked. `depth` (default 1) = rounds; see bumpRefDepth.
 
-  /** The ids a fold/spin would reference right now (selection, else the whole doc). */
+  /** Base (non-op) ids a new op should capture: the selection, else everything
+   *  not already referenced by an op (re-referencing would double-draw). */
   _refSourceIds() {
-    const sel = [...this.selectedIds].filter(id => this.scene.byId(id));
-    return sel.length ? sel : this.scene.items.map(it => it.id);
+    const taken = new Set();
+    for (const it of this.scene.items)
+      if (REFOPS.has(it.type) && Array.isArray(it.ids)) for (const id of it.ids) taken.add(id);
+    const base = it => it && !REFOPS.has(it.type) && !taken.has(it.id);
+    const sel = [...this.selectedIds].map(id => this.scene.byId(id)).filter(base);
+    return (sel.length ? sel : this.scene.items.filter(base)).map(it => it.id);
+  }
+
+  /** Add `item` (a fresh fold/spin/glide) and link it into the op program:
+   *  every program op gains the newly captured base ids (each op applies its
+   *  transform to ALL content), the previous op links to the new one, and the
+   *  new one points back at the first — one cyclic program in placement order.
+   *  One undoable step covering the add + all link mutations. */
+  _commitRef(item, baseIds) {
+    const scene = this.scene;
+    const ops = scene.items.filter(it => REFOPS.has(it.type));
+    const first = ops[0] || null, prev = ops[ops.length - 1] || null;
+    item.ids.push(...baseIds);
+    if (prev) item.ids.push(first.id);          // close the loop in placement order
+    this._assignFrame([item]);
+    this.history.push({
+      label: item.type,
+      do() {
+        for (const op of ops) for (const id of baseIds) if (!op.ids.includes(id)) op.ids.push(id);
+        if (prev && !prev.ids.includes(item.id)) prev.ids.push(item.id);
+        scene.addMany([item]);
+        scene._touch();
+      },
+      undo() {
+        scene.removeMany([item.id]);
+        if (prev) { const i = prev.ids.lastIndexOf(item.id); if (i >= 0) prev.ids.splice(i, 1); }
+        for (const op of ops) for (const id of baseIds) { const i = op.ids.lastIndexOf(id); if (i >= 0) op.ids.splice(i, 1); }
+        scene._touch();
+      },
+    });
+    const rounds = prev ? ' · linked into the program (iterate deeper for more rounds)' : '';
+    this._toast(`${item.type} placed — live by reference${rounds}`);
   }
 
   _commitFold() {
@@ -1885,11 +1929,23 @@ class App {
     const [a, b] = d.points;
     if (dist(a.x, a.y, b.x, b.y) < this.camera.screenToWorldLen(2)) return;
     const ids = this._refSourceIds();
-    if (!ids.length) { this._toast('Nothing to fold — draw something first'); return; }
-    const it = makeFold(ids, a, b);
-    this._assignFrame([it]);
-    this.history.push(addItemsCmd(this.scene, [it]));
-    this._toast(`Fold: ${ids.length} source${ids.length === 1 ? '' : 's'} mirrored (live)`);
+    if (!ids.length && !this.scene.items.some(it => REFOPS.has(it.type))) {
+      this._toast('Nothing to fold — draw something first'); return;
+    }
+    this._commitRef(makeFold([], a, b), ids);
+  }
+
+  _commitGlide() {
+    const d = this.draft;
+    this.draft = null;
+    if (!d) return;
+    const [a, b] = d.points;
+    if (dist(a.x, a.y, b.x, b.y) < this.camera.screenToWorldLen(2)) return;
+    const ids = this._refSourceIds();
+    if (!ids.length && !this.scene.items.some(it => REFOPS.has(it.type))) {
+      this._toast('Nothing to glide — draw something first'); return;
+    }
+    this._commitRef(makeGlide([], a, b), ids);
   }
 
   _commitSpin(angle) {
@@ -1899,18 +1955,40 @@ class App {
     this._refGuide = null;
     if (!pivot || Math.abs(angle) < Math.PI / 180) return;   // swept < ~1°: cancel
     const ids = this._refSourceIds();
-    if (!ids.length) { this._toast('Nothing to spin — draw something first'); return; }
+    if (!ids.length && !this.scene.items.some(it => REFOPS.has(it.type))) {
+      this._toast('Nothing to spin — draw something first'); return;
+    }
     // Copy count: when the swept angle divides the circle, complete the rosette
     // (the k = n copy would land exactly on the originals, so n−1 copies). Any
     // other angle gives ONE rotated copy — the primitive for composing fractals.
     const n = Math.round(Math.PI * 2 / Math.abs(angle));
     const closes = n >= 2 && Math.abs(n * Math.abs(angle) - Math.PI * 2) < 0.02;
     const count = closes ? n - 1 : 1;
-    const it = makeSpin(ids, pivot.x, pivot.y, angle, count);
-    this._assignFrame([it]);
-    this.history.push(addItemsCmd(this.scene, [it]));
+    this._commitRef(makeSpin([], pivot.x, pivot.y, angle, count), ids);
     const deg = Math.round(angle * 180 / Math.PI);
     this._toast(closes ? `Spin: rosette of ${n} × ${deg}°` : `Spin: one copy at ${deg}°`);
+  }
+
+  /** Adjust the recursion DEPTH (rounds) of the program containing the selected
+   *  op(s), as one undoable step. The whole linked program moves together. */
+  bumpRefDepth(d) {
+    const scene = this.scene;
+    const map = scene.refRootMap();
+    const seed = [...this.selectedIds].map(id => scene.byId(id)).find(it => it && REFOPS.has(it.type));
+    if (!seed) return;
+    const root = map.get(seed.id) || seed;
+    const program = scene.items.filter(it => REFOPS.has(it.type) && (map.get(it.id) || it) === root);
+    const changes = program
+      .map(it => ({ it, had: 'depth' in it, before: it.depth ?? 1, after: clamp((it.depth ?? 1) + d, 1, 12) }))
+      .filter(c => c.after !== c.before);
+    if (!changes.length) { this._toast(d > 0 ? 'Recursion depth already at max (12)' : 'Already at 1 round'); return; }
+    this.history.push({
+      label: 'ref depth',
+      do() { for (const c of changes) c.it.depth = c.after; scene._touch(); },
+      undo() { for (const c of changes) { if (c.had) c.it.depth = c.before; else delete c.it.depth; } scene._touch(); },
+    });
+    this._toast(`Recursion depth → ${changes[0].after} round${changes[0].after === 1 ? '' : 's'}`);
+    this.requestRender();
   }
 
   // ---- eraser ----
@@ -2547,13 +2625,13 @@ class App {
     }
   }
 
-  /** Fold/spin clones: re-point source ids that were copied in the SAME batch at
-   *  the new clones (copy a motif + its fold together and the new fold mirrors
-   *  the new motif). Ids outside the batch stay as-is — the by-reference link to
-   *  the live originals is the point of these items. */
+  /** Fold/spin/glide clones: re-point source ids that were copied in the SAME
+   *  batch at the new clones (copy a motif + its op together and the new op
+   *  references the new motif). Ids outside the batch stay as-is — the
+   *  by-reference link to the live originals is the point of these items. */
   _relinkRefs(items, idMap) {
     for (const it of items) {
-      if ((it.type !== 'fold' && it.type !== 'spin') || !Array.isArray(it.ids)) continue;
+      if (!REFOPS.has(it.type) || !Array.isArray(it.ids)) continue;
       it.ids = it.ids.map(id => idMap.get(id) || id);
     }
   }
@@ -3340,6 +3418,7 @@ class App {
         case 'h': this.setTool('pan'); break;
         case 'j': this.setTool('fold'); break;
         case 'k': this.setTool('spin'); break;
+        case 'n': this.setTool('glide'); break;
         case 'f': this.fitAll(); break;
         case '0': this.resetView(); break;
         case '+': case '=': this.zoomAtCenter(1.25); break;

@@ -325,5 +325,34 @@ const wildOnly = (arr) => arr.filter((s) => !s.legendary && !s.evolved && !s.inc
     '7: different incense types ⇒ different incense+community spawns');
 }
 
+// ── 8) Community day never features babies (pack pool path) ─────────────
+{
+  const BABIES = [172, 173, 174, 175, 236, 238, 239, 240];
+  const LEGS = [144, 145, 146, 150, 151, 243, 244, 245, 249, 250, 251];
+  const species = [];
+  for (let i = 1; i <= 251; i++) species.push(i);
+  // Mirror the pack's species-pool.json: babies/legendaries in the pool
+  // but NOT in spawnable (babies are egg-only).
+  const spawnable = species.filter((id) => !BABIES.includes(id) && !LEGS.includes(id));
+  global.Species.pool = () => ({
+    ids: new Set(species), max: 251, legendaries: new Set(LEGS),
+    babies: new Set(BABIES), spawnable, nonlegCount: spawnable.length,
+    has: (id) => species.includes(id), isLegendary: (id) => LEGS.includes(id),
+  });
+  // Far-future weeks so cycle indices are computed fresh against this
+  // pool (earlier sections cached permutations of the fallback pool).
+  const t0 = Date.UTC(2126, 0, 5, 12);
+  const featured = new Set();
+  for (let w = 0; w < 600; w++) {
+    const info = S.communityDayInfo(t0 + w * WEEK);
+    if (info.speciesId != null) featured.add(info.speciesId);
+  }
+  ok(featured.size > 50, '8: sweep featured many species (' + featured.size + ')');
+  ok([...featured].every((id) => !BABIES.includes(id)), '8: no baby ever featured');
+  ok([...featured].every((id) => spawnable.includes(id)),
+    '8: featured species always come from the pack spawnable list');
+  delete global.Species.pool;
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
