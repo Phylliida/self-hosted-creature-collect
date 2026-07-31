@@ -26,22 +26,24 @@ from collections import deque
 from pathlib import Path
 
 import content_pack
-from species_pool import ALLOWED_SPECIES
+from species_pool import (
+    ALLOWED_SPECIES, LEGENDARY_SPECIES, CANDY_ROOT_BABIES, env_path,
+)
 
 ROOT = Path(__file__).resolve().parent
-BUNDLED = ROOT / "data" / "BundledData"
+BUNDLED = env_path("CC_BUNDLED_OUT", ROOT / "data" / "BundledData")
 DEFAULT_OUT = ROOT / "packs" / "creature-fusion"
 
-# Mirrors LEGENDARY_SPECIES_SET in static/creatures.js (line ~3328) —
-# keep in sync; completion scoring excludes these from the denominator.
-LEGENDARY_SPECIES = {144, 145, 146, 150, 151}
-# Mirrors CANDY_ROOT_BABIES in static/creatures.js (lines 317-326) —
-# gen-2 baby pre-evolutions the candy root promotes past.
-CANDY_ROOT_BABIES = {172, 173, 174, 175, 236, 238, 239, 240}
+# LEGENDARY_SPECIES / CANDY_ROOT_BABIES come from species_pool.py (they
+# mirror LEGENDARY_SPECIES_SET / CANDY_ROOT_BABIES in static/creatures.js
+# for the default pool, and expand to the selected generations in
+# CC_SPECIES_GENS mode). Completion scoring excludes legendaries from
+# the denominator; babies are skipped as candy roots.
 
 # Root-level bundled files every client needs (same logical path in pack).
 ROOT_FILES = [
     "species-names.json", "species-types.json", "species-evolutions.json",
+    "species-pool.json",
     "split-names.json", "cells.json", "manifest.json", "credits.json",
     "evo-items-list.json",
     "eggs.png", "egg-default.png", "egg-base.png", "egg-cracks.png",

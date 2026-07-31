@@ -54,7 +54,7 @@ except ImportError:
     sys.exit(1)
 
 # Shared species pool — same set every pipeline script uses.
-from species_pool import ALLOWED_SPECIES, ALLOWED_SET, MAX_SPECIES  # noqa: E402
+from species_pool import ALLOWED_SPECIES, ALLOWED_SET, MAX_SPECIES, env_path  # noqa: E402
 
 CELL_PX = 96
 AUTOGEN_COLS = 10
@@ -62,7 +62,7 @@ CUSTOM_COLS = 20
 ALPHA_MIN = 8
 
 ROOT = Path(__file__).resolve().parent
-BUNDLE_DIR = ROOT / "data" / "BundledData"
+BUNDLE_DIR = env_path("CC_BUNDLED_OUT", ROOT / "data" / "BundledData")
 SPRITES_DIR = BUNDLE_DIR / "sprites"
 PACKS_DIR = BUNDLE_DIR / "sprite-packs"
 MANIFEST_PATH = BUNDLE_DIR / "manifest.json"

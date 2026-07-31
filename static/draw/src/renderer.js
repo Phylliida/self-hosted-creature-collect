@@ -1,4 +1,5 @@
-import { itemBBox, lodVisible, polygonVertices, rotCenter, ROTATABLE, drosteMatrix } from './scene.js';
+import { itemBBox, lodVisible, polygonVertices, rotCenter, ROTATABLE, drosteMatrix,
+         foldMatrix, spinMatrix, spinCopyCount, refSources } from './scene.js';
 import { withAlpha, clamp, ribbonOutline, catmullRom, hueShiftedItem } from './util.js';
 import { pixelRGBA } from './pixel.js';
 
@@ -293,6 +294,8 @@ export class Renderer {
   /** Full repaint. `state` carries draft/selection info from the app. */
   render(scene, state = {}) {
     const { ctx, camera } = this;
+    this._scene = scene;          // fold/spin copies resolve their sources through it
+    this._refStack = [];          // fold/spin reference chain being drawn (cycle guard)
     this._screenSpace();
     ctx.clearRect(0, 0, camera.width, camera.height);
     ctx.fillStyle = this.bg;
@@ -369,6 +372,7 @@ export class Renderer {
     if (state.scaleHandles) this._drawScaleHandles(state.scaleHandles);
     if (state.rotHandle) this._drawRotHandle(state.rotHandle);
     if (state.pivot) this._drawPivot(state.pivot);
+    if (state.refGuide) this._drawSpinGuide(state.refGuide);
     if (state.marquee) this._drawMarquee(state.marquee);
     if (state.eraserCursor) this._drawEraserCursor(state.eraserCursor);
   }
@@ -402,7 +406,7 @@ export class Renderer {
         if (!fs) continue;
         alphaMul = fs.alpha; tint = fs.tint;
       }
-      const b = itemBBox(it);
+      const b = itemBBox(it, id => scene.byId(id));
       if (b.maxX < cull.minX || b.minX > cull.maxX || b.maxY < cull.minY || b.minY > cull.maxY) continue;
       // on-screen footprint: the larger of the two bbox dimensions, in px
       const sizePx = Math.max(b.maxX - b.minX, b.maxY - b.minY) * scale;
@@ -940,11 +944,110 @@ export class Renderer {
         this._drawDroste(it, alphaMul);
         break;
       }
+      case 'fold':
+      case 'spin': {
+        this._drawRefCopies(it, alphaMul, tint);
+        break;
+      }
     }
     if (rotated) ctx.restore();
     if (isDraft) { /* draft uses same styling; hook kept for future ghosting */ }
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // ---- BY-REFERENCE transform copies (fold / spin) --------------------------
+  // A fold/spin stores only a guide + source ids (see scene.js); here we re-draw
+  // each SOURCE under the item's rigid transform(s) — reflection across the fold
+  // line, or k rotations about the spin pivot. Sources are drawn through the
+  // normal _drawItem path under a ctx.transform, so every style/width/gradient
+  // rule applies unchanged (the transforms are rigid: no scale distortion), and
+  // a source that is ITSELF a fold/spin recurses naturally — composition for
+  // free. `this._refStack` (reset per frame in render()) is the cycle guard: a
+  // fold that transitively references itself draws nothing below the repeat.
+
+  _drawRefCopies(it, alphaMul, tint) {
+    const scene = this._scene;
+    if (scene && !this._refStack.includes(it.id)) {
+      const byId = id => scene.byId(id);
+      const scale = this.camera.scale;
+      const mats = it.type === 'fold'
+        ? [foldMatrix(it)]
+        : Array.from({ length: spinCopyCount(it) }, (_, i) => spinMatrix(it, i + 1));
+      this._refStack.push(it.id);
+      for (const m of mats) {
+        this.ctx.save();
+        this.ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f);
+        for (const s of refSources(it, byId, this._refStack)) {
+          if (s.hidden || !lodVisible(s, scale)) continue;
+          this._drawItem(s, false, alphaMul, tint);
+        }
+        this.ctx.restore();
+      }
+      this._refStack.pop();
+    }
+    this._drawRefGuide(it);
+  }
+
+  /** The fold/spin's on-canvas guide — the fold line / spin pivot crosshair —
+   *  drawn faint so there's always something visible to grab. World space. */
+  _drawRefGuide(it) {
+    const { ctx, camera } = this;
+    const px = n => camera.screenToWorldLen(n);
+    ctx.save();
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = withAlpha('#5b8cff', 0.55);
+    ctx.lineWidth = px(1.2);
+    if (it.type === 'fold') {
+      ctx.setLineDash([px(6), px(4)]);
+      ctx.beginPath();
+      ctx.moveTo(it.ax, it.ay); ctx.lineTo(it.bx, it.by);
+      ctx.stroke();
+    } else {
+      const r = px(8);
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(it.cx - r, it.cy); ctx.lineTo(it.cx + r, it.cy);
+      ctx.moveTo(it.cx, it.cy - r); ctx.lineTo(it.cx, it.cy + r);
+      ctx.stroke();
+      ctx.beginPath(); ctx.arc(it.cx, it.cy, r * 0.45, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /** Screen-space placement preview for the spin tool: a bright crosshair at the
+   *  chosen pivot, a dashed arm to the cursor, and the swept-angle arc (sampled
+   *  in world space so it stays correct under canvas rotation). `g` is
+   *  {pivot, arm?, ang0?, angle?} in world coords. */
+  _drawSpinGuide(g) {
+    const { ctx, camera } = this;
+    const c = camera.worldToScreen(g.pivot.x, g.pivot.y);
+    ctx.save();
+    ctx.strokeStyle = withAlpha('#5b8cff', 0.9);
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(c.x - 9, c.y); ctx.lineTo(c.x + 9, c.y);
+    ctx.moveTo(c.x, c.y - 9); ctx.lineTo(c.x, c.y + 9);
+    ctx.stroke();
+    if (g.arm) {
+      const a = camera.worldToScreen(g.arm.x, g.arm.y);
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath(); ctx.moveTo(c.x, c.y); ctx.lineTo(a.x, a.y); ctx.stroke();
+      ctx.setLineDash([]);
+      if (g.angle && g.ang0 != null) {
+        const rw = Math.hypot(g.arm.x - g.pivot.x, g.arm.y - g.pivot.y);
+        ctx.beginPath();
+        const steps = Math.max(8, Math.ceil(Math.abs(g.angle) / (Math.PI / 36)));
+        for (let i = 0; i <= steps; i++) {
+          const th = g.ang0 + g.angle * (i / steps);
+          const p = camera.worldToScreen(g.pivot.x + Math.cos(th) * rw, g.pivot.y + Math.sin(th) * rw);
+          i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
+        }
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
   }
 
   // ---- EXTREME ZOOM: screen-space item draw (above DEEP_ZOOM_SCALE) ----------
@@ -1003,7 +1106,7 @@ export class Renderer {
     // Not yet ported to the screen-space path → draw via the world CTM. Correct to
     // the ~2^28 Skia ceiling (quantises beyond) — identical to pre-batch behaviour,
     // so no regression; these are the "come second" types (NOTES extreme-zoom pt 2).
-    if (t === 'image' || t === 'pixel' || t === 'text' || t === 'droste') {
+    if (t === 'image' || t === 'pixel' || t === 'text' || t === 'droste' || t === 'fold' || t === 'spin') {
       this._worldSpace();
       this._drawItem(it, isDraft, alphaMul, tint);
       this._screenSpace();
@@ -1408,7 +1511,7 @@ export class Renderer {
       if (!it || it.hidden) continue;
       if (!lodVisible(it, camera.scale)) continue; // don't frame invisible items
       any = true;
-      const b = itemBBox(it);
+      const b = itemBBox(it, id => scene.byId(id));
       const isActive = showActive && id === activeId;
       if (isActive) {
         ctx.strokeStyle = withAlpha('#ffb454', 0.95); // warm = active / parent target

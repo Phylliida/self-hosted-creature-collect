@@ -83,7 +83,20 @@ def normalise(v)
   end
 end
 
+# Infinite Fusion 6.7+ ("performance" builds) XOR-encrypts its Data/*.dat
+# files with a 16-byte repeating key before writing them; the game
+# decrypts in Data/Scripts/001_Technical/000_Encryption.rb and falls back
+# to plain Marshal when the magic bytes already read \x04\x08. Mirror
+# that: decrypt only when the Marshal magic is missing.
+IF2_XOR_KEY = [0x4A, 0x8F, 0x2C, 0xE1, 0x73, 0xB5, 0x96, 0x0D,
+               0x5E, 0xA2, 0x3F, 0xC7, 0x81, 0x14, 0x6B, 0xD9].freeze
+
+def maybe_decrypt(raw)
+  return raw if raw.start_with?("\x04\x08".b)
+  raw.bytes.each_with_index.map { |b, i| b ^ IF2_XOR_KEY[i % IF2_XOR_KEY.length] }.pack("C*")
+end
+
 path = ARGV[0] or abort("usage: ruby extract-pif-dat.rb <path/to/file.dat>")
 abort("not a file: #{path}") unless File.file?(path)
-data = Marshal.load(File.binread(path))
+data = Marshal.load(maybe_decrypt(File.binread(path)))
 $stdout.write(JSON.generate(normalise(data)))

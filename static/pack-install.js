@@ -58,19 +58,24 @@
   // ── source resolution (mirrors _regionBaseUrl semantics) ──
   function sourceForMode(mode, apiBase, hfRepo, packId) {
     const repo = hfRepo || 'TessaCoil/creature-pack';
+    const pid = packId || DEFAULT_PACK_ID;
+    // Generation-subset variants live in a subfolder of the same repo /
+    // local pack dir (e.g. gen-1-2/pack.bin). '' for plain packs.
+    const gens = (global.Packs && global.Packs.subdirFor)
+      ? global.Packs.subdirFor(pid) : '';
+    const prefix = gens ? gens + '/' : '';
     if (mode === 'static-hf') {
       return {
         source: 'hf',
-        packBinUrl: `${HF_BASE}${repo}/resolve/main/pack.bin`,
-        packJsonUrl: `${HF_BASE}${repo}/resolve/main/pack.json`,
+        packBinUrl: `${HF_BASE}${repo}/resolve/main/${prefix}pack.bin`,
+        packJsonUrl: `${HF_BASE}${repo}/resolve/main/${prefix}pack.json`,
       };
     }
     const base = String(apiBase || '').replace(/\/$/, '');
-    const pid = packId || DEFAULT_PACK_ID;
     return {
       source: 'local',
-      packBinUrl: `${base}/pack-files/${pid}/pack.bin`,
-      packJsonUrl: `${base}/pack-files/${pid}/pack.json`,
+      packBinUrl: `${base}/pack-files/${pid}/${prefix}pack.bin`,
+      packJsonUrl: `${base}/pack-files/${pid}/${prefix}pack.json`,
     };
   }
   function _mode() {

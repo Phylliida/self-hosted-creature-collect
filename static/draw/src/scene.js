@@ -136,6 +136,69 @@ export function makeDroste(src, srcBBox, frame, opts = {}) {
 }
 
 /**
+ * BY-REFERENCE transform copies (fold / spin). These items store NO geometry of
+ * their own beyond a guide (the fold line / the spin pivot) plus a list of
+ * source item ids; the renderer re-draws the SOURCES under a rigid transform
+ * (reflection across the fold line / k rotations about the pivot). Editing a
+ * source updates every copy live, and composing (a fold whose ids include a
+ * spin, etc.) costs nothing in storage — that's the fractal payoff.
+ *   fold : { ids:[id...], ax, ay, bx, by }  — mirror every source across the line
+ *   spin : { ids:[id...], cx, cy, angle, count } — `count` rotated copies,
+ *          copy k turned by k·angle about (cx,cy) (k = 1..count; the originals
+ *          render themselves, so they're not re-drawn)
+ * Dangling ids (source deleted) are skipped everywhere, so delete+undo revives
+ * a reference for free — the same grace as `parent` links. Cycles (a fold that
+ * transitively references itself) are pruned by the `stack` guard in refSources.
+ */
+export function makeFold(ids, a, b) {
+  return { id: uid('fold'), type: 'fold', ids: ids.slice(), ax: a.x, ay: a.y, bx: b.x, by: b.y };
+}
+export function makeSpin(ids, cx, cy, angle, count) {
+  return { id: uid('spin'), type: 'spin', ids: ids.slice(), cx, cy, angle, count };
+}
+
+/** How many rotated copies a spin draws (clamped; stored count may be hand-edited). */
+export function spinCopyCount(it) {
+  return Math.max(0, Math.min(720, Math.round(it.count || 0)));
+}
+
+/** Affine {a,b,c,d,e,f} of the reflection across a fold's line (self-inverse). */
+export function foldMatrix(it) {
+  const th = Math.atan2(it.by - it.ay, it.bx - it.ax);
+  const c = Math.cos(2 * th), s = Math.sin(2 * th);
+  return { a: c, b: s, c: s, d: -c,
+           e: it.ax - c * it.ax - s * it.ay,
+           f: it.ay - s * it.ax + c * it.ay };
+}
+
+/** Affine {a,b,c,d,e,f} of a spin's k-th copy: rotation by k·angle about the pivot. */
+export function spinMatrix(it, k) {
+  const th = k * (it.angle || 0), c = Math.cos(th), s = Math.sin(th);
+  return { a: c, b: s, c: -s, d: c,
+           e: it.cx - c * it.cx + s * it.cy,
+           f: it.cy - s * it.cx - c * it.cy };
+}
+
+/** Apply affine m to a point: x' = a·x + c·y + e, y' = b·x + d·y + f. */
+export function applyAffine(m, x, y) {
+  return { x: m.a * x + m.c * y + m.e, y: m.b * x + m.d * y + m.f };
+}
+
+/** Resolve a fold/spin's source ids to live items, skipping dangling ids and
+ *  any id already in `stack` (the reference chain being expanded — the cycle
+ *  guard). `byId` is the scene's id→item resolver. */
+export function refSources(it, byId, stack = []) {
+  if (!byId || !Array.isArray(it.ids)) return [];
+  const out = [];
+  for (const id of it.ids) {
+    if (stack.includes(id)) continue;
+    const s = byId(id);
+    if (s) out.push(s);
+  }
+  return out;
+}
+
+/**
  * The world→world affine M that maps a droste's source bbox onto its frame rect
  * (x,y,w,h,rot): M(srcBBox) === the frame, so applying it k times nests the art
  * k levels deep. A {a,b,c,d,e,f} tuple (x' = a·x + c·y + e, y' = b·x + d·y + f).
@@ -255,8 +318,40 @@ function pointsBox(it) {
   return box;
 }
 
+function unionBox(a, b) {
+  return { minX: Math.min(a.minX, b.minX), minY: Math.min(a.minY, b.minY),
+           maxX: Math.max(a.maxX, b.maxX), maxY: Math.max(a.maxY, b.maxY) };
+}
+
+/** AABB of box `b` under affine `m` (transform the four corners, re-bound). */
+function xformBox(b, m) {
+  let r = null;
+  for (const [x, y] of [[b.minX, b.minY], [b.maxX, b.minY], [b.maxX, b.maxY], [b.minX, b.maxY]]) {
+    const p = applyAffine(m, x, y);
+    r = r ? unionBox(r, { minX: p.x, minY: p.y, maxX: p.x, maxY: p.y })
+          : { minX: p.x, minY: p.y, maxX: p.x, maxY: p.y };
+  }
+  return r;
+}
+
+/** Union of a fold/spin's transformed COPY bboxes (sources resolved via `byId`,
+ *  cycle-guarded by `stack`). Null when no copies resolve. */
+function refCopiesBox(it, byId, stack) {
+  const sub = [...stack, it.id];
+  let acc = null;
+  const absorb = (m) => {
+    for (const s of refSources(it, byId, stack)) {
+      const b = xformBox(itemBBox(s, byId, sub), m);
+      acc = acc ? unionBox(acc, b) : b;
+    }
+  };
+  if (it.type === 'fold') absorb(foldMatrix(it));
+  else for (let k = 1, n = spinCopyCount(it); k <= n; k++) absorb(spinMatrix(it, k));
+  return acc;
+}
+
 /** Axis-aligned bbox in the item's OWN (unrotated) frame — no padding. */
-function localBox(it) {
+function localBox(it, byId = null, stack = []) {
   switch (it.type) {
     case 'stroke':
     case 'line':
@@ -277,6 +372,18 @@ function localBox(it) {
     case 'text': {
       const { w, h } = textMetrics(it);
       return { minX: it.x, minY: it.y, maxX: it.x + w, maxY: it.y + h };
+    }
+    case 'fold': {
+      // guide line + every mirrored copy (copies need the scene resolver;
+      // without one the line alone is the fallback so the item stays grabbable)
+      let b = bboxOfPoints([{ x: it.ax, y: it.ay }, { x: it.bx, y: it.by }]);
+      const copies = refCopiesBox(it, byId, stack);
+      return copies ? unionBox(b, copies) : b;
+    }
+    case 'spin': {
+      let b = { minX: it.cx, minY: it.cy, maxX: it.cx, maxY: it.cy };
+      const copies = refCopiesBox(it, byId, stack);
+      return copies ? unionBox(b, copies) : b;
     }
     default:
       return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
@@ -311,6 +418,12 @@ export function shiftItem(it, dx, dy) {
       if (it.srcBBox) it.srcBBox = { minX: it.srcBBox.minX + dx, minY: it.srcBBox.minY + dy,
                                      maxX: it.srcBBox.maxX + dx, maxY: it.srcBBox.maxY + dy };
       break;
+    case 'fold':
+      it.ax += dx; it.ay += dy; it.bx += dx; it.by += dy;
+      break;
+    case 'spin':
+      it.cx += dx; it.cy += dy;
+      break;
     default:                                // rect, ellipse, polygon, image, text, pixel
       if (Number.isFinite(it.x)) it.x += dx;
       if (Number.isFinite(it.y)) it.y += dy;
@@ -324,9 +437,11 @@ export function rotCenter(it) {
 }
 
 /** World-space bounding box for any item type, padded by half stroke width.
- *  For a rotated item this is the AABB of its rotated corners. */
-export function itemBBox(it) {
-  let b = localBox(it);
+ *  For a rotated item this is the AABB of its rotated corners. `byId` (the
+ *  scene's resolver) lets fold/spin include their transformed copies; `stack`
+ *  is the internal reference-cycle guard. */
+export function itemBBox(it, byId = null, stack = []) {
+  let b = localBox(it, byId, stack);
   if (it.rot && ROTATABLE.has(it.type)) {
     const cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2;
     let nx0 = Infinity, ny0 = Infinity, nx1 = -Infinity, ny1 = -Infinity;
@@ -418,6 +533,12 @@ export function itemCentroidMass(it) {
       const len = dist(it.ax, it.ay, it.bx, it.by);
       return { x: mx, y: my, mass: len * (it.width || 0), len };
     }
+    case 'fold': {
+      const len = dist(it.ax, it.ay, it.bx, it.by);
+      return { x: (it.ax + it.bx) / 2, y: (it.ay + it.by) / 2, mass: len, len };
+    }
+    case 'spin':
+      return { x: it.cx, y: it.cy, mass: 0, len: 0 };
     case 'polygon': {
       let verts = polygonVertices(it);
       if (it.rot) { const c = rotCenter(it); verts = verts.map(p => rotatePoint(p.x, p.y, c.x, c.y, it.rot)); }
@@ -445,8 +566,10 @@ export function itemCentroidMass(it) {
   }
 }
 
-/** Does an item lie under world point (x,y) within `tol` world units? */
-export function hitTest(it, x, y, tol) {
+/** Does an item lie under world point (x,y) within `tol` world units? `byId`
+ *  (scene resolver) lets fold/spin hit-test their transformed copies by mapping
+ *  the query point into source space; `stack` is the reference-cycle guard. */
+export function hitTest(it, x, y, tol, byId = null, stack = []) {
   // For a rotated box, map the query point into the item's local frame so the
   // existing axis-aligned tests below work unchanged.
   if (it.rot && ROTATABLE.has(it.type)) {
@@ -510,6 +633,27 @@ export function hitTest(it, x, y, tol) {
       // local (unrotated) box — the point is already in local space above
       return pointInRect(x, y, localBox(it));
     }
+    case 'fold': {
+      // grab the fold line itself, or any mirrored copy (query point mapped
+      // into source space by the reflection — its own inverse)
+      if (distToSegment(x, y, it.ax, it.ay, it.bx, it.by) <= reach) return true;
+      const p = applyAffine(foldMatrix(it), x, y);
+      const sub = [...stack, it.id];
+      for (const s of refSources(it, byId, stack))
+        if (hitTest(s, p.x, p.y, tol, byId, sub)) return true;
+      return false;
+    }
+    case 'spin': {
+      // grab the pivot handle, or any rotated copy (inverse-rotate the query)
+      if (dist(x, y, it.cx, it.cy) <= reach) return true;
+      const sub = [...stack, it.id];
+      for (let k = 1, n = spinCopyCount(it); k <= n; k++) {
+        const p = applyAffine(spinMatrix(it, -k), x, y);
+        for (const s of refSources(it, byId, stack))
+          if (hitTest(s, p.x, p.y, tol, byId, sub)) return true;
+      }
+      return false;
+    }
   }
   return false;
 }
@@ -551,6 +695,13 @@ export function scaleItemAbout(it, cx, cy, s) {
       // spread keeps per-point extras (e.g. brush pressure `p`) intact
       it.points = it.points.map(p => ({ ...p, x: cx + (p.x - cx) * s, y: cy + (p.y - cy) * s }));
       break;
+    case 'fold':
+      it.ax = cx + (it.ax - cx) * s; it.ay = cy + (it.ay - cy) * s;
+      it.bx = cx + (it.bx - cx) * s; it.by = cy + (it.by - cy) * s;
+      break;
+    case 'spin':
+      it.cx = cx + (it.cx - cx) * s; it.cy = cy + (it.cy - cy) * s;
+      break;
     default:
       it.x = cx + (it.x - cx) * s;
       it.y = cy + (it.y - cy) * s;
@@ -575,6 +726,13 @@ export function rotateItemsAbout(items, px, py, ang) {
     if (it.type === 'stroke' || it.type === 'line' || it.type === 'arrow') {
       // spread the original point so per-point extras (brush `p`) survive
       it.points = it.points.map(p => ({ ...p, ...rotatePoint(p.x, p.y, px, py, ang) }));
+    } else if (it.type === 'fold') {
+      const a = rotatePoint(it.ax, it.ay, px, py, ang);
+      const b = rotatePoint(it.bx, it.by, px, py, ang);
+      it.ax = a.x; it.ay = a.y; it.bx = b.x; it.by = b.y;
+    } else if (it.type === 'spin') {
+      const c = rotatePoint(it.cx, it.cy, px, py, ang);
+      it.cx = c.x; it.cy = c.y;          // swing the pivot; per-copy angle is unchanged
     } else if (ROTATABLE.has(it.type)) {
       const c = rotCenter(it);
       const nc = rotatePoint(c.x, c.y, px, py, ang);
@@ -606,6 +764,14 @@ export function reflectItemsAbout(items, cx, cy, a) {
   for (const it of items) {
     if (it.type === 'stroke' || it.type === 'line' || it.type === 'arrow') {
       it.points = it.points.map(p => ({ ...p, ...reflectPoint(p.x, p.y, cx, cy, a) }));
+    } else if (it.type === 'fold') {
+      const p = reflectPoint(it.ax, it.ay, cx, cy, a);
+      const q = reflectPoint(it.bx, it.by, cx, cy, a);
+      it.ax = p.x; it.ay = p.y; it.bx = q.x; it.by = q.y;
+    } else if (it.type === 'spin') {
+      const c = reflectPoint(it.cx, it.cy, cx, cy, a);
+      it.cx = c.x; it.cy = c.y;
+      it.angle = -(it.angle || 0);       // a mirror flips the rotation's chirality
     } else if (ROTATABLE.has(it.type)) {
       const c = rotCenter(it);
       const nc = reflectPoint(c.x, c.y, cx, cy, a);
@@ -625,6 +791,12 @@ export function translateItem(it, dx, dy) {
     case 'line':
     case 'arrow':
       it.points = it.points.map(p => ({ ...p, x: p.x + dx, y: p.y + dy }));
+      break;
+    case 'fold':
+      it.ax += dx; it.ay += dy; it.bx += dx; it.by += dy;
+      break;
+    case 'spin':
+      it.cx += dx; it.cy += dy;
       break;
     default:
       it.x += dx; it.y += dy;
@@ -720,10 +892,11 @@ export class Scene {
     if (cur && cur.items === items && cur.rev === this._rev) return cur;
     const n = items.length;
     const entries = new Array(n);
+    const byId = id => this._index.get(id) || null;   // resolves fold/spin copies
     let maxW = 0;
     for (let i = 0; i < n; i++) {
       const it = items[i];
-      const b = itemBBox(it);
+      const b = itemBBox(it, byId);
       entries[i] = { it, zi: i, minX: b.minX, minY: b.minY, maxX: b.maxX, maxY: b.maxY };
       const w = b.maxX - b.minX;
       if (w > maxW && isFinite(w)) maxW = w;   // empty/degenerate boxes don't widen the search
@@ -1002,7 +1175,7 @@ export class Scene {
    *  the spatial index for big scenes; an exact-match linear scan below it. */
   itemsInRect(rect) {
     const ents = this.queryEntries(rect);
-    if (ents === null) return this.items.filter(it => rectsIntersect(itemBBox(it), rect));
+    if (ents === null) return this.items.filter(it => rectsIntersect(itemBBox(it, id => this.byId(id)), rect));
     ents.sort((a, b) => a.zi - b.zi);               // restore document z-order
     return ents.map(e => e.it);
   }
@@ -1013,7 +1186,8 @@ export class Scene {
   itemsContainedIn(rect) {
     const ents = this.queryEntries(rect);
     const cand = ents === null ? this.items : (ents.sort((a, b) => a.zi - b.zi), ents.map(e => e.it));
-    return cand.filter(it => !this.isItemHidden(it) && !this.isItemLocked(it) && rectContains(rect, itemBBox(it)));
+    const byId = id => this.byId(id);
+    return cand.filter(it => !this.isItemHidden(it) && !this.isItemLocked(it) && rectContains(rect, itemBBox(it, byId)));
   }
 
   /** Top-most item under a world point, or null. Optional `filter` excludes
@@ -1027,6 +1201,7 @@ export class Scene {
    *  jank when erasing/hovering over tens of thousands of items — into O(log N +
    *  candidates). Below the threshold it's the original exact linear scan. */
   pick(x, y, tol, filter = null) {
+    const byId = id => this._index.get(id) || null;   // resolves fold/spin copies
     const ents = this.queryEntries({ minX: x - tol, minY: y - tol, maxX: x + tol, maxY: y + tol });
     if (ents === null) {
       for (let i = this.items.length - 1; i >= 0; i--) {
@@ -1034,7 +1209,7 @@ export class Scene {
         if (this.isItemHidden(it)) continue;
         if (filter && !filter(it)) continue;
         if (it.type === 'connector' && (!this._index.get(it.from) || !this._index.get(it.to))) continue;
-        if (hitTest(it, x, y, tol)) return it;
+        if (hitTest(it, x, y, tol, byId)) return it;
       }
       return null;
     }
@@ -1044,7 +1219,7 @@ export class Scene {
       if (this.isItemHidden(it)) continue;
       if (filter && !filter(it)) continue;
       if (it.type === 'connector' && (!this._index.get(it.from) || !this._index.get(it.to))) continue;
-      if (hitTest(it, x, y, tol)) return it;
+      if (hitTest(it, x, y, tol, byId)) return it;
     }
     return null;
   }
@@ -1056,10 +1231,11 @@ export class Scene {
   bounds() {
     if (!this.items.length) return null;
     if (this._boundsCache && this._boundsCache.rev === this._rev) return { ...this._boundsCache.box };
-    let r = itemBBox(this.items[0]);
+    const byId = id => this.byId(id);
+    let r = itemBBox(this.items[0], byId);
     r = { ...r };
     for (let i = 1; i < this.items.length; i++) {
-      const b = itemBBox(this.items[i]);
+      const b = itemBBox(this.items[i], byId);
       if (b.minX < r.minX) r.minX = b.minX;
       if (b.minY < r.minY) r.minY = b.minY;
       if (b.maxX > r.maxX) r.maxX = b.maxX;

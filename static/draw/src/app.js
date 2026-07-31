@@ -1,6 +1,6 @@
 import { Camera } from './camera.js';
 import { Scene, makeStroke, makeLine, makeRect, makeEllipse, makeText, makeArrow, makePolygon,
-         makeImage, makeConnector, makeDroste, boxEdgePoint, translateItem, scaleItemAbout, rotateItemsAbout,
+         makeImage, makeConnector, makeDroste, makeFold, makeSpin, boxEdgePoint, translateItem, scaleItemAbout, rotateItemsAbout,
          reflectItemsAbout, itemBBox, itemCentroidMass, lodVisible, drosteSelfSimilarity, cloneFill } from './scene.js';
 import { Renderer } from './renderer.js';
 import { Minimap } from './minimap.js';
@@ -233,6 +233,10 @@ class App {
 
     // interaction state
     this.draft = null;
+    // Spin-tool placement state: the pivot set by the first click (awaiting the
+    // angle-sweep drag), and the live guide preview handed to the renderer.
+    this._spinPivot = null;
+    this._refGuide = null;
     this.selectedIds = new Set();
     // The "active" item — the most recently clicked member of the selection. It
     // is the PARENT target for parentSelection() (Blender-style) and is drawn
@@ -685,7 +689,10 @@ class App {
     // relevant — the brush's smooth/taper + the star's points live in Shape & brush.
     if (name === 'brush' || name === 'star') this._revealSection('sect-shape');
     this.commitText();
-    if (name !== 'select') { this.selectedIds.clear(); this.pivot = null; this._activeId = null; }
+    // fold/spin CAPTURE the selection when they commit (drag a mirror line /
+    // sweep an angle), so unlike the other drawing tools they must not clear it.
+    if (name !== 'select' && name !== 'fold' && name !== 'spin') { this.selectedIds.clear(); this.pivot = null; this._activeId = null; }
+    this._spinPivot = null; this._refGuide = null;
     document.querySelectorAll('.tool').forEach(b =>
       b.classList.toggle('active', b.dataset.tool === name));
     this.canvas.className = '';
@@ -964,6 +971,23 @@ class App {
         this.draft = makePolygon(w.x, w.y, 0, 0, ns);
         this.active = { kind: 'shape', start: w };
         break;
+      case 'fold':
+        // drag out the mirror line (a line draft IS the preview); on release the
+        // selection (or everything) is referenced by a new fold item
+        this.draft = makeLine(w, w, ns);
+        this.active = { kind: 'foldline', start: w };
+        break;
+      case 'spin':
+        if (!this._spinPivot) {
+          // stage 1: place the pivot; the next press starts the angle sweep
+          this._spinPivot = w;
+          this._refGuide = { pivot: w };
+        } else {
+          this.draft = makeLine(this._spinPivot, w, ns);
+          this.active = { kind: 'spinarm', pivot: this._spinPivot,
+                          ang0: Math.atan2(w.y - this._spinPivot.y, w.x - this._spinPivot.x) };
+        }
+        break;
       case 'eraser':
         this.active = { kind: 'erase', removed: [] };
         this._eraseAt(w, s);
@@ -1023,6 +1047,21 @@ class App {
       }
       case 'shape': {
         this._updateShape(this.active.start, w, e);
+        break;
+      }
+      case 'foldline': {
+        let end = w;
+        if (e && e.shiftKey) end = this._constrainAngle(this.active.start, w);
+        this.draft.points = [this.active.start, end];
+        break;
+      }
+      case 'spinarm': {
+        const p = this.active.pivot;
+        let ang = Math.atan2(w.y - p.y, w.x - p.x) - this.active.ang0;
+        if (e && e.shiftKey) { const step = Math.PI / 12; ang = Math.round(ang / step) * step; }
+        this.active.angle = ang;
+        this.draft.points = [p, w];
+        this._refGuide = { pivot: p, arm: w, ang0: this.active.ang0, angle: ang };
         break;
       }
       case 'erase':
@@ -1186,6 +1225,8 @@ class App {
       case 'pen': this._commitStroke(); break;
       case 'brush': this._commitBrush(); break;
       case 'shape': this._commitShape(); break;
+      case 'foldline': this._commitFold(); break;
+      case 'spinarm': this._commitSpin(a.angle ?? 0); break;
       case 'erase':
         if (a.removed.length) this.history.pushApplied(removeItemsCmd(this.scene, a.removed));
         this.eraserCursor = null;
@@ -1823,6 +1864,55 @@ class App {
     this._commitDrawn([d]);
   }
 
+  // ---- fold / spin: BY-REFERENCE transform copies ----
+  // Both tools capture a SOURCE SET at commit time: the current selection, or —
+  // with nothing selected — every item in the document. The new item stores only
+  // the source ids + its guide geometry; copies are rendered live by the
+  // renderer (edit a source and every copy follows; select a fold/spin itself as
+  // a source to compose transforms for fractals — nothing is ever duplicated in
+  // the document).
+
+  /** The ids a fold/spin would reference right now (selection, else the whole doc). */
+  _refSourceIds() {
+    const sel = [...this.selectedIds].filter(id => this.scene.byId(id));
+    return sel.length ? sel : this.scene.items.map(it => it.id);
+  }
+
+  _commitFold() {
+    const d = this.draft;
+    this.draft = null;
+    if (!d) return;
+    const [a, b] = d.points;
+    if (dist(a.x, a.y, b.x, b.y) < this.camera.screenToWorldLen(2)) return;
+    const ids = this._refSourceIds();
+    if (!ids.length) { this._toast('Nothing to fold — draw something first'); return; }
+    const it = makeFold(ids, a, b);
+    this._assignFrame([it]);
+    this.history.push(addItemsCmd(this.scene, [it]));
+    this._toast(`Fold: ${ids.length} source${ids.length === 1 ? '' : 's'} mirrored (live)`);
+  }
+
+  _commitSpin(angle) {
+    const pivot = this._spinPivot;
+    this.draft = null;
+    this._spinPivot = null;
+    this._refGuide = null;
+    if (!pivot || Math.abs(angle) < Math.PI / 180) return;   // swept < ~1°: cancel
+    const ids = this._refSourceIds();
+    if (!ids.length) { this._toast('Nothing to spin — draw something first'); return; }
+    // Copy count: when the swept angle divides the circle, complete the rosette
+    // (the k = n copy would land exactly on the originals, so n−1 copies). Any
+    // other angle gives ONE rotated copy — the primitive for composing fractals.
+    const n = Math.round(Math.PI * 2 / Math.abs(angle));
+    const closes = n >= 2 && Math.abs(n * Math.abs(angle) - Math.PI * 2) < 0.02;
+    const count = closes ? n - 1 : 1;
+    const it = makeSpin(ids, pivot.x, pivot.y, angle, count);
+    this._assignFrame([it]);
+    this.history.push(addItemsCmd(this.scene, [it]));
+    const deg = Math.round(angle * 180 / Math.PI);
+    this._toast(closes ? `Spin: rosette of ${n} × ${deg}°` : `Spin: one copy at ${deg}°`);
+  }
+
   // ---- eraser ----
   _lodFilter() { const s = this.camera.scale; return it => lodVisible(it, s) && this._frameInteractive(it); }
   /** Pick filter for selection/erase: also excludes locked items (hidden ones
@@ -2454,6 +2544,17 @@ class App {
       if (it.type !== 'connector') continue;
       if (idMap.has(it.from)) it.from = idMap.get(it.from);
       if (idMap.has(it.to)) it.to = idMap.get(it.to);
+    }
+  }
+
+  /** Fold/spin clones: re-point source ids that were copied in the SAME batch at
+   *  the new clones (copy a motif + its fold together and the new fold mirrors
+   *  the new motif). Ids outside the batch stay as-is — the by-reference link to
+   *  the live originals is the point of these items. */
+  _relinkRefs(items, idMap) {
+    for (const it of items) {
+      if ((it.type !== 'fold' && it.type !== 'spin') || !Array.isArray(it.ids)) continue;
+      it.ids = it.ids.map(id => idMap.get(id) || id);
     }
   }
 
@@ -3187,7 +3288,7 @@ class App {
       }
 
       if (e.key === 'Delete' || e.key === 'Backspace') { if (this.selectedIds.size) { e.preventDefault(); this.deleteSelection(); } return; }
-      if (e.key === 'Escape') { this.selectedIds.clear(); this._activeId = null; this.draft = null; this.active = null; this.requestRender(); return; }
+      if (e.key === 'Escape') { this.selectedIds.clear(); this._activeId = null; this.draft = null; this.active = null; this._spinPivot = null; this._refGuide = null; this.requestRender(); return; }
 
       // Shift+L / Shift+H lock / hide the selection (must run before the
       // lowercase tool switch, where 'l' = line and 'h' = pan).
@@ -3237,6 +3338,8 @@ class App {
         case 'c': this.setTool('connector'); break;
         case 'e': this.setTool('eraser'); break;
         case 'h': this.setTool('pan'); break;
+        case 'j': this.setTool('fold'); break;
+        case 'k': this.setTool('spin'); break;
         case 'f': this.fitAll(); break;
         case '0': this.resetView(); break;
         case '+': case '=': this.zoomAtCenter(1.25); break;
@@ -3283,6 +3386,7 @@ class App {
       return n;
     });
     this._relinkConnectors(clones, idMap);
+    this._relinkRefs(clones, idMap);
     this._relinkParents(clones, idMap);
     this._remapGroups(clones);
     let b = itemBBox(clones[0]); b = { ...b };
@@ -3313,6 +3417,7 @@ class App {
       return c;
     }).filter(Boolean);
     this._relinkConnectors(clones, idMap);
+    this._relinkRefs(clones, idMap);
     this._relinkParents(clones, idMap);
     this._remapGroups(clones);
     this._assignFrame(clones);
@@ -4474,6 +4579,7 @@ class App {
       return c;
     });
     this._relinkConnectors(clones, idMap);
+    this._relinkRefs(clones, idMap);
     this._remapGroups(clones);
     const oldCount = this.anim.count, oldCur = this.anim.current;
     this.history.push({
@@ -6057,6 +6163,8 @@ class App {
       scaleHandles: (pxEdit || gk === 'scale' || gk === 'rotate' || gk === 'marquee') ? null : this._scaleHandlesScreen(),
       // transform pivot marker (shown during rotate/scale so you see what you spin about)
       pivot: (pxEdit || gk === 'marquee') ? null : this._pivotScreen(),
+      // spin-tool placement preview (pivot crosshair + swept-angle arc)
+      refGuide: this._refGuide,
       // flipbook: which page is live + onion-skin reach (no onion during playback)
       frame: this.anim.on ? { current: this.anim.current,
                               onion: this.anim.playing ? 0 : this.anim.onion,

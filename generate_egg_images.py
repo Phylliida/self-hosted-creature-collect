@@ -49,13 +49,13 @@ from generate_candy_images import (
 )
 
 # Shared species pool.
-from species_pool import ALLOWED_SPECIES, ALLOWED_SET, MAX_SPECIES  # noqa: E402
+from species_pool import ALLOWED_SPECIES, ALLOWED_SET, MAX_SPECIES, env_path  # noqa: E402
 
 EGG_PX = 160
 EGG_COLS = 10
 
 ROOT = Path(__file__).resolve().parent
-OUT_DIR = ROOT / "data" / "BundledData"
+OUT_DIR = env_path("CC_BUNDLED_OUT", ROOT / "data" / "BundledData")
 EGGS_PATH = OUT_DIR / "eggs.png"
 
 
