@@ -351,6 +351,14 @@
   const DAYCARE_DIST_MIN_M     = 10;    // ignore < 10 m segments (jitter floor)
   const DAYCARE_DIST_MAX_GAP_MS = 60000;// drop segments after a >60 s gap
   const DAYCARE_DIST_MAX_SPEED  = 50;   // m/s (~180 km/h) — drop teleports
+  // Rate cap for CREDITED distance (GPS path, pedometer toggle off).
+  // Each accepted segment credits at most this speed × its elapsed
+  // time, so riding a car/train still earns distance — but only as if
+  // it had been covered at a fast jog (~12.6 km/h). Cars/bikes stop
+  // being a distance cheat; the recorded map path is NOT affected
+  // (the polyline keeps the real track). 3.5 m/s chosen to leave
+  // walking/running gameplay untouched.
+  const DAYCARE_DIST_SPEED_CAP  = 3.5;  // m/s (~12.6 km/h) — fast jog
   const SAVE_REMINDER_DAYS = 7;
 
   // Item catalog. Bag is stored as a flat `{ <key>: <count> }` map (same
@@ -14086,7 +14094,14 @@
     // gameplay (markers, halos, "where I've been today" view) keeps
     // working unchanged.
     if (!_isPedometerActive()) {
-      _creditMeters(d, ts);
+      // Rate-cap the credit to a fast jog (DAYCARE_DIST_SPEED_CAP):
+      // driving/riding still earns distance, but only as if covered at
+      // jogging pace, so vehicles stop being a distance cheat. Only
+      // the CREDITED meters are clamped — the anchor advances by the
+      // real segment and the recorded path keeps the true track, so
+      // next-segment dt and the route view are unaffected.
+      const credited = Math.min(d, DAYCARE_DIST_SPEED_CAP * (dt / 1000));
+      _creditMeters(credited, ts);
       _markFitnessSynced(ts);
     }
     _distAnchorLat = lat;
