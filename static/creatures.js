@@ -777,12 +777,27 @@
     if (shown < 20) return 0;            // 10% band (and below) gives no bonus
     return Math.min(10, Math.floor(shown / 10)); // 20→2, 30→3, … 90→9, 100→10
   }
-  function _fusionShinyMultiplier(speciesA, speciesB) {
+  function _fusionShinyBonusSum(speciesA, speciesB) {
     const byId = new Map(computeSpeciesCompletion().map((r) => [r.id, r.pct]));
     let m = 0;
     if (speciesA != null) m += _speciesShinyBonus(byId.get(speciesA) || 0);
     if (speciesB != null) m += _speciesShinyBonus(byId.get(speciesB) || 0);
-    return m || 1; // 0 (both morphs below 20%) → base rate
+    return m;
+  }
+  function _fusionShinyMultiplier(speciesA, speciesB) {
+    // 0 (both morphs below 20%) → base rate
+    return _fusionShinyBonusSum(speciesA, speciesB) || 1;
+  }
+  // Community Day Pass shiny bonus: community morphs (spawns flagged
+  // while a pass session is live) get +3×, ADDED to the completion-dex
+  // band sum — a 4× completion fusion during a pass rolls at 7×. (The
+  // legendary 10× / incense 2× factors stay multiplicative on top, as
+  // before; egg hatches don't get this — they aren't community morphs.)
+  const COMMUNITY_SHINY_BONUS = 3;
+  function _shinyMultiplierForSpawn(spawn) {
+    let m = _fusionShinyBonusSum(spawn && spawn.speciesA, spawn && spawn.speciesB);
+    if (spawn && spawn.community) m += COMMUNITY_SHINY_BONUS;
+    return m || 1;
   }
 
   // A shiny decision, once made for a spawn, must outlive the map marker: the
@@ -827,8 +842,9 @@
     // legendary spawns is deterministic and shared.
     if (rec.spawn && rec.spawn.legendary) rate *= 10;
     else if (rec.spawn && rec.spawn.incense) rate *= 2;
-    // Completion-dex bonus: the two morphs' per-species bonuses add on top.
-    rate *= _fusionShinyMultiplier(rec.spawn && rec.spawn.speciesA, rec.spawn && rec.spawn.speciesB);
+    // Additive bonuses on top: the two morphs' completion-dex bands +
+    // the community-day pass bonus (see _shinyMultiplierForSpawn).
+    rate *= _shinyMultiplierForSpawn(rec.spawn);
     const count = (global.ShinyStore && global.ShinyStore.VARIANT_COUNT) || 12;
     const hit = _forceShinyOn() || (Math.random() < rate);
     rec.shinyVariant = hit ? Math.floor(Math.random() * count) : null;
@@ -2982,6 +2998,24 @@
       shinyVariant: (typeof shinyVariant === 'number') ? shinyVariant : null,
     };
     writeSeenFusions(seen);
+    // Other cached fusion body-slots can display (a,b)'s art — family-tree
+    // cells pick their sprite from favoriteArtFor at render time — so a
+    // cached slot built before this change shows the OLD art when the user
+    // backs into it. Drop every cached fusion slot except (a,b)'s own (the
+    // live view; _refreshFavoriteArt syncs it in place right after this
+    // returns). _slotCache / revokeObjectUrlsIn are declared later in this
+    // scope; fine at runtime since this only runs on user interaction.
+    for (const k of [..._slotCache.keys()]) {
+      if (!k.startsWith('fusion:')) continue;
+      if (k === `fusion:${a}-${b}`) continue;
+      const slot = _slotCache.get(k);
+      if (slot) {
+        const inner = slot.firstChild;
+        if (inner && inner.querySelectorAll) revokeObjectUrlsIn(inner);
+        if (slot.parentNode) slot.remove();
+      }
+      _slotCache.delete(k);
+    }
     return true;
   }
   function caughtFusionsSet() {
@@ -3218,7 +3252,7 @@
   }
   ITEMS.community_pass = {
     name: 'Community Day Pass',
-    desc: '1 hour where every wild, radar and incense pokémon is a fusion of this week\'s featured species.',
+    desc: '1 hour where every wild, radar and incense pokémon is a fusion of this week\'s featured species — with 3× shiny chance, added to other shiny bonuses.',
     icon: _communityPassIcon(),
     communityDay: true,
   };
@@ -8622,19 +8656,20 @@
     // Completion button (top of the pokédex) → species-completion list.
     panel.querySelector('.pokedex-completion-btn').addEventListener('click',
       () => pushView({ view: 'completion' }));
-    // Non-evolved filter toggle in the completion header. Reset scroll so the
+    // Non-evolved filter toggle in the completion header. Shared with the
+    // species-partner grid (see _nonEvolvedOnly). Reset scroll so the
     // (now shorter/longer) list starts from the top after re-rendering.
     panel.querySelector('.completion-filter').addEventListener('click', () => {
-      _completionNonEvolvedOnly = !_completionNonEvolvedOnly;
+      _nonEvolvedOnly = !_nonEvolvedOnly;
       const sheet = panel.querySelector('.sheet');
       if (sheet) sheet.scrollTop = 0;
       renderCompletion();
     });
-    // Same non-evolved filter for a species' partner grid. Re-render the
-    // species currently on top of the view stack; reset scroll so the
-    // (now shorter/longer) grid starts from the top.
+    // Same non-evolved filter for a species' partner grid (same shared
+    // state). Re-render the species currently on top of the view stack;
+    // reset scroll so the (now shorter/longer) grid starts from the top.
     panel.querySelector('.speciesdex-filter').addEventListener('click', () => {
-      _speciesdexNonEvolvedOnly = !_speciesdexNonEvolvedOnly;
+      _nonEvolvedOnly = !_nonEvolvedOnly;
       const sheet = panel.querySelector('.sheet');
       if (sheet) sheet.scrollTop = 0;
       const top = _viewStack[_viewStack.length - 1];
@@ -8953,6 +8988,10 @@
         panel.querySelector('.tags-view').classList.add('show');
         return;
       case 'completion': {
+        // Back-nav: restore the non-evolved toggle state this entry was
+        // left with. Fresh pushes carry no snapshot and keep the shared
+        // current value (that's what carries the filter INTO this view).
+        if (top.filters) _nonEvolvedOnly = !!top.filters.nonEvolvedOnly;
         // Show first so virtualizeGrid's offsetParent check passes, then
         // restore any saved scroll before the grid's first paint.
         panel.querySelector('.completion-view').classList.add('show');
@@ -8962,6 +9001,8 @@
         return;
       }
       case 'speciesdex': {
+        // Same non-evolved toggle restore as the completion case above.
+        if (top.filters) _nonEvolvedOnly = !!top.filters.nonEvolvedOnly;
         panel.querySelector('.speciesdex-view').classList.add('show');
         const sheet = panel.querySelector('.sheet');
         if (sheet) sheet.scrollTop = (top.scrollY || 0);
@@ -9114,6 +9155,10 @@
       top.filters = _capturePokedexFilters(panel);
     } else if (top.view === 'browse') {
       top.filters = _captureInventoryFilters(panel);
+    } else if (top.view === 'completion' || top.view === 'speciesdex') {
+      // The shared non-evolved toggle is these views' only filter;
+      // snapshot it so back-nav restores the state the view was left in.
+      top.filters = { nonEvolvedOnly: _nonEvolvedOnly };
     }
   }
 
@@ -12220,15 +12265,14 @@
     });
   }
 
-  // Completion view: when true, only non-evolved species (base forms +
-  // pre-evo babies — the ones you actually CATCH or HATCH) are listed and
-  // counted, so the % reflects "how much of the catchable pool have I found".
-  // View-local (not persisted), like the family-tree expand toggle.
-  let _completionNonEvolvedOnly = false;
-  // Same idea for a species' partner grid: when true, only non-evolved
-  // partners (the ones you can catch / hatch to make the fusion) are listed
-  // and counted. Independent of the completion-list toggle above.
-  let _speciesdexNonEvolvedOnly = false;
+  // Non-evolved filter, SHARED by the completion list and a species'
+  // partner grid: toggling it in one view carries into the other (e.g.
+  // completion → Ditto dex keeps the filter). The value is snapshotted
+  // onto the outgoing view-stack entry on every push and restored on
+  // back-nav (see _captureCurrentFilters / applyTopView), so Back
+  // returns each view to the toggle state it was left in. Session-local
+  // (not persisted to localStorage), like the family-tree expand toggle.
+  let _nonEvolvedOnly = false;
 
   // ── Glitch dex: solo (special, non-fusion) creatures ───────────
   // Separate section with its own progress bar; does NOT feed the
@@ -12403,7 +12447,7 @@
   function renderCompletion() {
     const panel = document.getElementById('creatureInventory');
     if (!panel) return;
-    const nonEvoOnly = _completionNonEvolvedOnly;
+    const nonEvoOnly = _nonEvolvedOnly;
     // In "non-evolved only" mode drop evolved forms entirely — you can't catch
     // or hatch those directly, so hiding them shows exactly what's left to find
     // in the wild / from eggs. Legendaries are non-evolved so they stay in the
@@ -12492,7 +12536,7 @@
     const X = parseInt(speciesId, 10);
     if (!isFinite(X)) return;
     const name = speciesNameFor(X);
-    const nonEvoOnly = _speciesdexNonEvolvedOnly;
+    const nonEvoOnly = _nonEvolvedOnly;
     // In "non-evolved only" mode drop evolved partners — those fusions can't be
     // made by catching/hatching a partner directly, so the grid (and its %)
     // shows exactly the pairings still worth chasing in the wild / from eggs.

@@ -49,6 +49,7 @@ function makeCtx({ forceShiny = false, rng = Math.random, cap = 1000 } = {}) {
     _SHINY_CACHE_CAP: cap,
     _forceShinyOn: () => forceShiny,
     _fusionShinyMultiplier: () => 1,
+    _shinyMultiplierForSpawn: () => 1,
   };
   vm.createContext(ctx);
   for (const fn of ['_cacheShiny(', '_rollShinyForRecord(', '_rollFreshShinyVariant(', '_resolveShinyForCatch(']) {
