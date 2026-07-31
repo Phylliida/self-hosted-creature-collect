@@ -3888,8 +3888,10 @@
     // fusion sub-view onto the stack — the existing carousel + back-
     // button machinery handles popping back to this entry. Pass
     // expandFamily so the destination opens with its OWN family tree
-    // already unfolded — the user is obviously interested in the
-    // family relationships if they just tapped a family tile.
+    // already unfolded: family-tile taps are the ONE way a fresh entry
+    // starts with the tree open ("keep browsing the family"), every
+    // other fresh entry starts collapsed. From then on the toggle owns
+    // the flag (see renderFusionView) and back-nav restores it.
     gridEl.querySelectorAll('.family-cell.tappable').forEach((cell) => {
       const a = +cell.dataset.a;
       const b = +cell.dataset.b;
@@ -9220,8 +9222,10 @@
     }
     // Optional UX flags carried on the state so they survive carousel
     // navigation through cached slots. expandFamily: open the family
-    // tree by default (used when navigating in from a family-tree
-    // tile — the user obviously already cares about the family).
+    // tree by default — seeded ONLY by family-tree tile taps (every
+    // other fresh entry starts collapsed). After entry creation the
+    // in-view toggle owns the flag (see renderFusionView), and
+    // back-nav / slot rebuilds restore whatever it was left as.
     if (opts && opts.expandFamily) state.expandFamily = true;
     // Opened by tapping an egg outcome in the daycare odds popup — remember so
     // popping back re-opens that popup (at its saved scroll) instead of just
@@ -9359,10 +9363,12 @@
     const list = Array.isArray(top.list) ? top.list : null;
     const idx = typeof top.idx === 'number' ? top.idx : null;
     // Center slot — always present. Built from the current top state
-    // even when there's no list (single-item view).
+    // even when there's no list (single-item view). expandFamily rides
+    // along so a REBUILT slot (eviction, seen/fav invalidation) restores
+    // the family tree open/closed the way the entry was left.
     const centerItem = viewName === 'detail'
       ? { id: top.id }
-      : { a: top.a, b: top.b };
+      : { a: top.a, b: top.b, expandFamily: !!top.expandFamily };
     const center = _getOrCreateSlot(viewName, centerItem);
     if (center) {
       center.classList.remove('prev', 'next');
@@ -11873,9 +11879,10 @@
 
     // Family-tree expand/collapse: lazy-renders the grid on first
     // expand so we don't pay for it on entries the user never
-    // unfolds. When the caller asked for expandFamily (e.g. when
-    // navigating in from a family-tree tile elsewhere) we render
-    // eagerly so the grid is visible on first paint.
+    // unfolds. expandFamily here is the entry's current tree state —
+    // seeded by family-tile navigation, owned afterwards by the
+    // toggle, restored on back-nav / slot rebuilds — so render eagerly
+    // whenever it was left (or arrived) open.
     if (famA && famB && famHasContent(famA, famB)) {
       const toggle = body.querySelector('.family-toggle');
       const grid = body.querySelector('.family-grid');
@@ -11886,6 +11893,15 @@
         }
         toggle.addEventListener('click', () => {
           const expanded = toggle.getAttribute('aria-expanded') === 'true';
+          // Record the new state on the stack entry (when this body is
+          // the current center) so it's part of the navigation history:
+          // slot rebuilds (eviction, seen/fav invalidation) and back-nav
+          // restore the tree open/closed the way the user left it.
+          const topEntry = _viewStack[_viewStack.length - 1];
+          if (topEntry && topEntry.view === 'fusion'
+              && topEntry.a === a && topEntry.b === b) {
+            topEntry.expandFamily = !expanded;
+          }
           if (expanded) {
             grid.hidden = true;
             toggle.setAttribute('aria-expanded', 'false');
