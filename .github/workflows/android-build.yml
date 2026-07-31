@@ -307,6 +307,10 @@ jobs:
           #    - health.READ_STEPS / READ_DISTANCE : Health Connect data
           #      types HealthConnectStepPlugin reads. Both are subject to
           #      a user-visible grant flow launched by the plugin.
+          #    - ACTIVITY_RECOGNITION : HealthConnectStepPlugin's
+          #      TYPE_STEP_COUNTER fallback (used when Health Connect has
+          #      no step writer, e.g. de-Googled ROMs) needs this runtime
+          #      permission on API 29+ to read the hardware step sensor.
           #    - VIBRATE : navigator.vibrate() in the WebView silently
           #      no-ops (returns true, no buzz, no error) unless the host
           #      app holds this permission — the Extras vibration tool's
@@ -331,6 +335,7 @@ jobs:
               '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />\n'
               '    <uses-permission android:name="android.permission.health.READ_STEPS" />\n'
               '    <uses-permission android:name="android.permission.health.READ_DISTANCE" />\n'
+              '    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />\n'
               '    <uses-permission android:name="android.permission.VIBRATE" />\n'
               '    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n'
               '    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n'

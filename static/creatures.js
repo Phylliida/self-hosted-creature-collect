@@ -4876,6 +4876,10 @@
         position: fixed; inset: 0; z-index: 30;
         background: rgba(0,0,0,0.45);
         display: none; align-items: center; justify-content: center;
+        /* The panel is a full-screen tap target (backdrop tap = close),
+           so the default iOS tap-highlight would flash the whole screen
+           dark whenever a click lands on it. */
+        -webkit-tap-highlight-color: transparent;
       }
       #creatureInventory.show { display: flex; }
       #creatureInventory .sheet {
@@ -8287,7 +8291,14 @@
       </div>
     `;
     panel.addEventListener('click', (e) => {
-      if (e.target === panel) hide();
+      if (e.target !== panel) return;
+      // iOS ghost-click guard: when an egg drag ends, the eggs view is
+      // synchronously re-rendered and Safari can mis-hit-test the drag's
+      // trailing synthesized click against the rebuilt DOM, landing it
+      // on the backdrop and closing the panel from under the user.
+      // Ignore backdrop clicks in the short window after a drag ends.
+      if (Date.now() - _lastEggDragEndAt < EGG_DRAG_CLICK_GUARD_MS) return;
+      hide();
     });
     panel.querySelectorAll('button.close').forEach((btn) => {
       btn.addEventListener('click', hide);
@@ -9815,6 +9826,14 @@
   // No HTML5 DnD — that API is unreliable on touch devices and
   // would need a polyfill. Pointer events work uniformly across
   // mouse + touch + pen, on Capacitor Android, iOS, and desktop.
+  // Timestamp of the last completed egg drag. The creature-inventory
+  // panel's backdrop-click handler ignores clicks arriving within
+  // EGG_DRAG_CLICK_GUARD_MS of a drag ending — iOS can mis-target the
+  // drag's trailing synthesized click onto the backdrop after the
+  // eggs view re-renders (ghost click), closing the panel even though
+  // the user never tapped outside the sheet.
+  let _lastEggDragEndAt = 0;
+  const EGG_DRAG_CLICK_GUARD_MS = 400;
   let _eggDragState = null;
   function _setupEggDragDrop(rootEl) {
     if (!rootEl) return;
@@ -9832,6 +9851,9 @@
     // more than DRAG_THRESHOLD px before committing visuals. Below
     // that, treat the gesture as a tap (no-op for now).
     const DRAG_THRESHOLD = 5;
+    // Only the pointer that started the drag drives it — extra touches
+    // (palm contact, a second finger) must not move, drop, or cancel it.
+    const dragPointerId = ev.pointerId;
     const startX = ev.clientX;
     const startY = ev.clientY;
     let started = false;
@@ -9886,6 +9908,7 @@
     };
 
     const onMove = (e) => {
+      if (e.pointerId !== dragPointerId) return;
       const dx = e.clientX - startX;
       const dy = e.clientY - startY;
       if (!started && (dx * dx + dy * dy) < DRAG_THRESHOLD * DRAG_THRESHOLD) return;
@@ -9914,8 +9937,14 @@
     };
 
     const onUp = (e) => {
+      if (e.pointerId !== dragPointerId) return;
       cleanup();
       if (!started) return;
+      // Stamp the drag end even when the drop is a no-op: iOS may still
+      // deliver this gesture's trailing synthesized click, mis-targeted
+      // after a mid-drag re-render. The panel's backdrop-close handler
+      // ignores clicks inside this window (see EGG_DRAG_CLICK_GUARD_MS).
+      _lastEggDragEndAt = Date.now();
       const drop = findDropZone(e.clientX, e.clientY);
       if (!drop) return;  // Snap back: no state change, re-render not needed.
       const zone = drop.dataset.zone;
@@ -9944,7 +9973,10 @@
       }
     };
 
-    const onCancel = () => cleanup();
+    const onCancel = (e) => {
+      if (e.pointerId !== dragPointerId) return;
+      cleanup();
+    };
 
     const cleanup = () => {
       if (scrollRAF) { cancelAnimationFrame(scrollRAF); scrollRAF = 0; }
