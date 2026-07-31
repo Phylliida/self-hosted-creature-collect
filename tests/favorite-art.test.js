@@ -40,9 +40,8 @@ const ctx = {
   pickPreferredSeenVariant: () => pref,
   // setFavoriteArt now also drops stale cached fusion body-slots (their
   // family-tree cells picked the old favorite at render time). Stub the
-  // slot cache + URL revoker — irrelevant to what's being tested here.
-  _slotCache: new Map(),
-  revokeObjectUrlsIn: () => {},
+  // cache-drop helper — irrelevant to what's being tested here.
+  _dropCachedSlots: () => {},
 };
 vm.createContext(ctx);
 vm.runInContext(extract('function favoriteArtFor'), ctx);
