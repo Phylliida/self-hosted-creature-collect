@@ -1,8 +1,35 @@
-// Capacitor plugin reading background step + distance from Health
-// Connect — the Android analogue of iOS's CMPedometer/HealthKit. While
-// the app is closed (or even after the OS killed it), Health Connect
-// keeps aggregating step counts from every registered source (phone
-// pedometer, Wear OS watch, Google Fit if it's still alive, etc.).
+// Capacitor plugin reading background step + distance data — the
+// Android analogue of iOS's CMPedometer/HealthKit. Two backends,
+// tried in order on every read:
+//
+//   1. Health Connect (preferred). While the app is closed (or even
+//      after the OS killed it), Health Connect keeps aggregating step
+//      counts from every registered source (phone pedometer, Wear OS
+//      watch, Google Fit if it's still alive, etc.).
+//   2. TYPE_STEP_COUNTER hardware sensor (fallback). The phone's
+//      sensor hub counts steps continuously — screen off, Doze, app
+//      dead — as a cumulative-since-boot counter, at effectively zero
+//      battery cost. We persist a baseline (SharedPreferences) and
+//      credit the diff on each sync, so movement while the app was
+//      closed is recovered WITHOUT needing a foreground service. This
+//      is the same trick classic FOSS pedometers (Paseo, j4velin's
+//      Pedometer) use, and it's what keeps "count steps while closed"
+//      working on de-Googled ROMs (/e/OS, microG) where Health Connect
+//      itself is installed but no app ever writes steps into it
+//      (aggregate() would return zero forever).
+//
+//      Caveats: the counter resets at every reboot (detected when the
+//      current value drops below the saved baseline — we then credit
+//      only what's accumulated since boot), and the first-ever read
+//      just establishes the baseline (credits nothing — we can't know
+//      which pre-existing steps fall inside the sync window).
+//
+// Baseline invariant: the sensor baseline is advanced on every sync
+// that resolves ok=true — including ones served by Health Connect —
+// so steps are never double-credited when the serving backend changes.
+// It is NOT advanced on ok=false (the page must not advance its
+// lastSync marker either — same "never lose movement" contract as the
+// iOS plugin).
 //
 // Written in Kotlin because Health Connect's 1.0.x API is genuinely
 // Kotlin-first: getReadPermission takes a KClass, aggregate() and
@@ -31,12 +58,14 @@
 // User-visible flow:
 //   1. Settings → "Count steps while app is closed" toggle (the same
 //      one iOS uses). Tap to enable.
-//   2. The page calls Ped.requestAuth(); we launch the Health Connect
-//      permission grant intent.
+//   2. The page calls Ped.requestAuth(); we ask for the runtime
+//      ACTIVITY_RECOGNITION permission first (sensor fallback), then
+//      launch the Health Connect permission grant intent.
 //   3. The user picks which data types to share.
 //   4. On every subsequent visibility=visible transition the page
 //      calls Ped.getDistanceMeters({fromMs, toMs}); we aggregate
-//      StepsRecord + DistanceRecord and resolve {meters, steps, ok}.
+//      StepsRecord + DistanceRecord (or diff the sensor baseline) and
+//      resolve {meters, steps, ok, source}.
 //
 // IMPORTANT: appId in capacitor.config.json is currently
 //   org.phylliidaassets.creaturecollect
@@ -45,8 +74,17 @@
 
 package org.phylliidaassets.creaturecollect
 
+import android.Manifest
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import android.os.Build
 import androidx.activity.result.ActivityResult
+import androidx.core.content.ContextCompat
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.permission.HealthPermission
@@ -60,23 +98,49 @@ import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.ActivityCallback
 import com.getcapacitor.annotation.CapacitorPlugin
+import com.getcapacitor.annotation.Permission
+import com.getcapacitor.annotation.PermissionCallback
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Instant
+import kotlin.coroutines.resume
 
-@CapacitorPlugin(name = "MotionPedometer")
+@CapacitorPlugin(
+    name = "MotionPedometer",
+    permissions = [
+        Permission(
+            alias = "activityRecognition",
+            strings = [Manifest.permission.ACTIVITY_RECOGNITION],
+        ),
+    ],
+)
 class HealthConnectStepPlugin : Plugin() {
 
     companion object {
         // Fallback stride length used when DistanceRecord isn't
-        // available for the window (some sources only emit steps).
-        // 0.74 m is the average adult walking stride; could be wired
-        // to a Settings knob later if users find their daycare
+        // available for the window (some sources only emit steps) —
+        // and for every step-sensor read, which has no distance notion
+        // at all. 0.74 m is the average adult walking stride; could be
+        // wired to a Settings knob later if users find their daycare
         // distances feel off.
         private const val STRIDE_METERS = 0.74
+        // Step-sensor fallback state. The hardware counter is
+        // cumulative since boot; we persist the value seen at the last
+        // successful sync and credit the diff. Float matches the
+        // sensor's own delivery (SensorEvent.values[0]); the reboot
+        // reset keeps real-world values far below float's exact-integer
+        // ceiling (~16.7M steps).
+        private const val PREFS_NAME = "cc.stepfallback"
+        private const val KEY_BASELINE = "baseline"
+        // Registration with this on-change sensor fires one event with
+        // the current count immediately; the timeout only covers a
+        // pathological sensor hub that never delivers.
+        private const val SENSOR_READ_TIMEOUT_MS = 3000L
     }
 
     private var client: HealthConnectClient? = null
@@ -115,6 +179,80 @@ class HealthConnectStepPlugin : Plugin() {
         }
     }
 
+    // ─── step-sensor fallback helpers ──────────────────────────────
+
+    private fun sensorManager(): SensorManager =
+        context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+
+    private fun stepSensorPresent(): Boolean = try {
+        sensorManager().getDefaultSensor(Sensor.TYPE_STEP_COUNTER) != null
+    } catch (_: Throwable) { false }
+
+    // ACTIVITY_RECOGNITION is a runtime permission on API 29+; on older
+    // devices the step sensors need no permission at all.
+    private fun hasActivityPermission(): Boolean =
+        Build.VERSION.SDK_INT < 29 ||
+        ContextCompat.checkSelfPermission(
+            context, Manifest.permission.ACTIVITY_RECOGNITION,
+        ) == PackageManager.PERMISSION_GRANTED
+
+    private fun sensorBackendUsable(): Boolean =
+        stepSensorPresent() && hasActivityPermission()
+
+    // Read the current cumulative-since-boot step count. SensorManager
+    // has no polling API, but registering a listener on this on-change
+    // sensor delivers the current value as an immediate first event,
+    // so a register → first event → unregister round-trip acts as a
+    // one-shot read. Returns null when the fallback can't serve
+    // (no sensor / no permission / hub never answered).
+    private suspend fun readCurrentStepCount(): Float? {
+        if (!sensorBackendUsable()) return null
+        val sensor = sensorManager()
+            .getDefaultSensor(Sensor.TYPE_STEP_COUNTER) ?: return null
+        return withTimeoutOrNull(SENSOR_READ_TIMEOUT_MS) {
+            suspendCancellableCoroutine<Float> { cont ->
+                val listener = object : SensorEventListener {
+                    override fun onSensorChanged(e: SensorEvent) {
+                        sensorManager().unregisterListener(this)
+                        if (cont.isActive) cont.resume(e.values[0])
+                    }
+                    override fun onAccuracyChanged(s: Sensor?, accuracy: Int) {}
+                }
+                cont.invokeOnCancellation {
+                    sensorManager().unregisterListener(listener)
+                }
+                sensorManager().registerListener(
+                    listener, sensor, SensorManager.SENSOR_DELAY_NORMAL,
+                )
+            }
+        }
+    }
+
+    // Diff the just-read counter against the persisted baseline and
+    // advance the baseline. Only call this on code paths that resolve
+    // ok=true (see the header invariant) — an ok=false sync must leave
+    // the baseline untouched so the movement isn't lost.
+    private fun stepSensorDelta(current: Float): Long {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val steps = if (!prefs.contains(KEY_BASELINE)) {
+            // First ever read: establish the baseline, credit nothing.
+            0f
+        } else {
+            val baseline = prefs.getFloat(KEY_BASELINE, 0f)
+            if (current < baseline) {
+                // Counter went DOWN → the phone rebooted between syncs
+                // and the counter restarted at 0. Steps between the
+                // last sync and the reboot are unrecoverable; credit
+                // what's accumulated since boot.
+                current
+            } else {
+                current - baseline
+            }
+        }
+        prefs.edit().putFloat(KEY_BASELINE, current).apply()
+        return steps.toLong()
+    }
+
     // ─── isAvailable ─────────────────────────────────────────────
     //
     // Cheap snapshot of capability + auth state. The page-side bridge
@@ -130,12 +268,33 @@ class HealthConnectStepPlugin : Plugin() {
 
     // ─── requestAuth ─────────────────────────────────────────────
     //
-    // Launches Health Connect's permission grant UI (separate activity,
-    // not an in-app dialog). Resolves with the post-prompt snapshot
-    // once control returns to our activity.
+    // Asks for everything either backend needs, in order:
+    //   1. ACTIVITY_RECOGNITION runtime permission (API 29+) for the
+    //      sensor fallback. On de-Googled ROMs without Health Connect
+    //      this grant alone is enough to reach "authorized".
+    //   2. Health Connect's permission grant UI (separate activity,
+    //      not an in-app dialog). Resolves with the post-prompt
+    //      snapshot once control returns to our activity.
     @PluginMethod
     fun requestAuth(call: PluginCall) {
         tryInitClient()
+        if (Build.VERSION.SDK_INT >= 29 && !hasActivityPermission()) {
+            requestPermissionForAlias(
+                "activityRecognition", call, "handleActivityPermResult",
+            )
+            return
+        }
+        launchHealthConnectAuth(call)
+    }
+
+    @PermissionCallback
+    private fun handleActivityPermResult(call: PluginCall) {
+        // Chain into the Health Connect grant regardless of how the
+        // sensor prompt went — the snapshot reports the combined state.
+        launchHealthConnectAuth(call)
+    }
+
+    private fun launchHealthConnectAuth(call: PluginCall) {
         if (client == null) {
             call.resolve(currentSnapshot())
             return
@@ -163,52 +322,88 @@ class HealthConnectStepPlugin : Plugin() {
 
     // ─── getDistanceMeters ───────────────────────────────────────
     //
-    // Aggregate Health Connect for the [fromMs, toMs] window and
-    // report { ok, meters, steps, error? }. ok=false means the
-    // caller MUST NOT advance its lastSync marker (otherwise movement
-    // is silently lost — same invariant as the iOS plugin).
+    // Report movement for the [fromMs, toMs] window as
+    // { ok, meters, steps, source, error? }. ok=false means the caller
+    // MUST NOT advance its lastSync marker (otherwise movement is
+    // silently lost — same invariant as the iOS plugin).
     //
-    // Distance comes from DistanceRecord.DISTANCE_TOTAL when present
-    // (most accurate — sourced from the original device's pedometer).
-    // Falls back to steps × stride when no Distance records exist.
+    // Health Connect is tried first: distance comes from
+    // DistanceRecord.DISTANCE_TOTAL when present (most accurate —
+    // sourced from the original device's pedometer), else steps ×
+    // stride. When Health Connect is absent OR answers with nothing
+    // (no writer app — the de-Googled-ROM case), the step-sensor
+    // baseline diff takes over.
     @PluginMethod
     fun getDistanceMeters(call: PluginCall) {
         tryInitClient()
-        val c = client
-        if (c == null) {
-            call.resolve(failRet("health_connect_unavailable"))
-            return
-        }
         val fromMs = call.getLong("fromMs")
         val toMs = call.getLong("toMs")
         if (fromMs == null || toMs == null || toMs <= fromMs) {
             call.resolve(failRet("invalid_window"))
             return
         }
+        val c = client
         val range = TimeRangeFilter.between(
             Instant.ofEpochMilli(fromMs),
             Instant.ofEpochMilli(toMs),
         )
-        val req = AggregateRequest(
-            metrics = setOf(StepsRecord.COUNT_TOTAL, DistanceRecord.DISTANCE_TOTAL),
-            timeRangeFilter = range,
-            dataOriginFilter = emptySet(),
-        )
         scope.launch {
-            try {
-                val agg = c.aggregate(req)
-                val steps: Long = agg[StepsRecord.COUNT_TOTAL] ?: 0L
-                val distance = agg[DistanceRecord.DISTANCE_TOTAL]
-                val meters: Double = distance?.inMeters
-                    ?: (steps.toDouble() * STRIDE_METERS)
-                val ret = JSObject()
-                ret.put("ok", true)
-                ret.put("meters", meters)
-                ret.put("steps", steps)
-                call.resolve(ret)
-            } catch (t: Throwable) {
-                call.resolve(failRet(t.message ?: t.javaClass.simpleName))
+            // Backend 1: Health Connect.
+            var hcSteps = 0L
+            var hcDistanceM: Double? = null
+            var hcError: String? = null
+            if (c != null) {
+                val req = AggregateRequest(
+                    metrics = setOf(StepsRecord.COUNT_TOTAL, DistanceRecord.DISTANCE_TOTAL),
+                    timeRangeFilter = range,
+                    dataOriginFilter = emptySet(),
+                )
+                try {
+                    val agg = c.aggregate(req)
+                    hcSteps = agg[StepsRecord.COUNT_TOTAL] ?: 0L
+                    hcDistanceM = agg[DistanceRecord.DISTANCE_TOTAL]?.inMeters
+                } catch (t: Throwable) {
+                    hcError = t.message ?: t.javaClass.simpleName
+                }
             }
+            // Backend 2: hardware step counter. Read it (and advance
+            // the baseline) on every sync that will resolve ok=true —
+            // including Health-Connect-served ones — so steps credited
+            // via one backend are never re-credited by the other.
+            val current = readCurrentStepCount()
+            val sensorSteps = if (current != null) stepSensorDelta(current) else null
+
+            val ret = JSObject()
+            when {
+                hcSteps > 0 || (hcDistanceM ?: 0.0) > 0.0 -> {
+                    ret.put("ok", true)
+                    ret.put("meters", hcDistanceM ?: (hcSteps.toDouble() * STRIDE_METERS))
+                    ret.put("steps", hcSteps)
+                    ret.put("source", "health_connect")
+                }
+                sensorSteps != null && sensorSteps > 0 -> {
+                    ret.put("ok", true)
+                    ret.put("meters", sensorSteps.toDouble() * STRIDE_METERS)
+                    ret.put("steps", sensorSteps)
+                    ret.put("source", "step_sensor")
+                }
+                c != null || current != null -> {
+                    // A backend answered and there was genuinely no
+                    // movement in the window.
+                    ret.put("ok", true)
+                    ret.put("meters", 0)
+                    ret.put("steps", 0)
+                    ret.put(
+                        "source",
+                        if (c != null) "health_connect" else "step_sensor",
+                    )
+                }
+                else -> {
+                    call.resolve(failRet(hcError ?: "no_step_source"))
+                    return@launch
+                }
+            }
+            call.resolve(ret)
         }
     }
 
@@ -224,21 +419,40 @@ class HealthConnectStepPlugin : Plugin() {
     // ─── helpers ─────────────────────────────────────────────────
 
     private fun currentSnapshot(): JSObject {
-        // `client != null` is our availability signal in 1.0.x — see
-        // tryInitClient. Newer Health Connect versions expose a richer
-        // tri-state (available / not_installed / update_required) via
-        // getSdkStatus; when we bump the dep we can plumb that through.
-        val available = (client != null)
+        // `client != null` is our Health Connect availability signal in
+        // 1.0.x — see tryInitClient. Newer Health Connect versions
+        // expose a richer tri-state (available / not_installed /
+        // update_required) via getSdkStatus; when we bump the dep we
+        // can plumb that through. The step-sensor fallback has its own
+        // availability probe, and either backend satisfies the page.
+        val hcAvailable = (client != null)
+        val sensorOk = sensorBackendUsable()
         val ret = JSObject()
-        ret.put("stepsAvailable", available)
-        ret.put("distanceAvailable", available)
-        ret.put("authStatus", resolveAuthStatus(available))
-        ret.put("sdkStatus", if (available) "available" else "unavailable")
+        ret.put("stepsAvailable", hcAvailable || sensorOk)
+        ret.put("distanceAvailable", hcAvailable)
+        ret.put("sensorAvailable", sensorOk)
+        ret.put(
+            "backend",
+            if (hcAvailable) "health_connect"
+            else if (sensorOk) "step_sensor"
+            else "none",
+        )
+        ret.put("authStatus", resolveAuthStatus(hcAvailable))
+        ret.put("sdkStatus", if (hcAvailable || sensorOk) "available" else "unavailable")
         return ret
     }
 
-    private fun resolveAuthStatus(available: Boolean): String {
-        if (!available) return "unknown"
+    private fun resolveAuthStatus(hcAvailable: Boolean): String {
+        // The page's Settings toggle only sticks on "authorized", and
+        // EITHER backend is enough to serve reads — so if the sensor
+        // fallback is already good to go, that's an authorize.
+        if (sensorBackendUsable()) return "authorized"
+        if (!hcAvailable) {
+            // No Health Connect and no usable sensor. If a sensor
+            // exists but the runtime grant is missing, requestAuth can
+            // still fix it — that's "notDetermined".
+            return if (stepSensorPresent()) "notDetermined" else "unknown"
+        }
         val c = client ?: return "unknown"
         return try {
             // runBlocking is acceptable here — getGrantedPermissions is
