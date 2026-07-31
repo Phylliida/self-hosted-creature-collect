@@ -27,13 +27,13 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'static', 'creatures.js')
 // ── 1. The real source carries every piece of the toggle ────────────────
 ok(/class="speciesdex-filter"/.test(src),
   'speciesdex-view has a .speciesdex-filter button');
-ok(/let _speciesdexNonEvolvedOnly = false;/.test(src),
-  'view-local _speciesdexNonEvolvedOnly state exists');
+ok(/let _nonEvolvedOnly = false;/.test(src),
+  'shared _nonEvolvedOnly state exists (completion + speciesdex)');
 ok(/\.filter\(\(p\) => !nonEvoOnly \|\| !_isEvolvedSpecies\(p\)\)/.test(src),
   'renderSpeciesDex filters partners by !_isEvolvedSpecies when the toggle is on');
 ok(/\.speciesdex-filter'\)\.addEventListener\('click'/.test(src),
   'the .speciesdex-filter button has a click handler');
-ok(/_speciesdexNonEvolvedOnly = !_speciesdexNonEvolvedOnly/.test(src),
+ok(/_nonEvolvedOnly = !_nonEvolvedOnly/.test(src),
   'the click handler toggles the state');
 ok(/top\.view === 'speciesdex'\) renderSpeciesDex\(top\.species\)/.test(src),
   're-renders the species currently on the view stack after toggling');
