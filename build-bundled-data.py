@@ -55,6 +55,7 @@ Run:
 Idempotent — overwrites existing BundledData/ contents. Safe to re-run."""
 
 import json
+import os
 import re
 import shutil
 import sqlite3
@@ -78,7 +79,10 @@ except ImportError:
 # need to position) — positional cells between gen 1 and the highest
 # extra stay in the sheet but are mostly transparent (PNG compresses
 # them away).
-from species_pool import ALLOWED_SPECIES, ALLOWED_SET, MAX_SPECIES  # noqa: E402
+from species_pool import (  # noqa: E402
+    ALLOWED_SPECIES, ALLOWED_SET, MAX_SPECIES,
+    LEGENDARY_SPECIES, SPAWNABLE_SPECIES, CANDY_ROOT_BABIES,
+)
 
 CELL_PX = 96
 
@@ -100,7 +104,19 @@ CUSTOM_ROWS_NEEDED = (MAX_SPECIES // CUSTOM_COLS) + 1
 CUSTOM_HEIGHT_NEEDED = CUSTOM_ROWS_NEEDED * CELL_PX
 
 ROOT = Path(__file__).resolve().parent
-INFINITEFUSION = ROOT / "data" / "InfiniteFusion"
+
+# Path overrides for building from an alternate game tree (used by
+# build-if2-packs.py for the InfiniteFusion2 generation-subset packs).
+# Defaults preserve the original IF1 behavior exactly.
+def _env_path(name: str, default: Path) -> Path:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    p = Path(raw)
+    return p if p.is_absolute() else ROOT / p
+
+
+INFINITEFUSION = _env_path("CC_INFINITEFUSION", ROOT / "data" / "InfiniteFusion")
 # Sprite sheet sources live inside InfiniteFusion's Graphics tree —
 # Battlers/ is for the autogen sheets, CustomBattlers/ for custom.
 AUTOGEN_SHEETS_DIR = INFINITEFUSION / "Graphics" / "Battlers" / "spritesheets_autogen"
@@ -108,7 +124,11 @@ CUSTOM_SHEETS_DIR = (INFINITEFUSION / "Graphics" / "CustomBattlers"
                      / "spritesheets" / "spritesheets_custom")
 EGGS_DIR = INFINITEFUSION / "Graphics" / "Battlers" / "Eggs"
 EVO_ITEMS_SRC = INFINITEFUSION / "Graphics" / "Items"
-SPECIES_DAT = INFINITEFUSION / "Data" / "species.dat"
+SPECIES_DAT = _env_path("CC_SPECIES_DAT", INFINITEFUSION / "Data" / "species.dat")
+SPLITNAMES_RB = _env_path(
+    "CC_SPLITNAMES_RB",
+    INFINITEFUSION / "Data" / "Scripts" / "052_InfiniteFusion" / "Fusion" / "SplitNames.rb",
+)
 EXTRACTOR_SCRIPT = ROOT / "extract-pif-dat.rb"
 
 # App-data sources — the same files /icons and /fonts serve at runtime.
@@ -122,7 +142,7 @@ DATA_DIR = ROOT / "data"
 # us drop the prefetch step in the native app.
 BASE_MAP_MAX_ZOOM = 5
 
-OUT_DIR = ROOT / "data" / "BundledData"
+OUT_DIR = _env_path("CC_BUNDLED_OUT", ROOT / "data" / "BundledData")
 
 # Egg sprite sheet layout. 160×160 cells matches the upstream files;
 # 10 cols mirrors the autogen sheet convention so the client can use
@@ -220,9 +240,10 @@ def build_split_names() -> list:
 
     Gen 1 and most of gen 2 have id_number == national_dex; gen 3+
     diverges (Mawile national 303 → PIF 300, etc.) — without the
-    translation Mawile fusions inherit Skitty's suffix."""
-    path = (INFINITEFUSION / "Data" / "Scripts" / "052_InfiniteFusion"
-            / "Fusion" / "SplitNames.rb")
+    translation Mawile fusions inherit Skitty's suffix. The path comes
+    from SPLITNAMES_RB (CC_SPLITNAMES_RB override) since game trees
+    disagree on the directory depth (IF2 nests it one level deeper)."""
+    path = SPLITNAMES_RB
     text = path.read_text(encoding="utf-8", errors="replace")
 
     # 1. The positional [prefix, suffix] table — national-dex indexed.
@@ -419,6 +440,36 @@ def build_species_evolutions() -> dict:
         if rows:
             out[str(idn)] = rows
     return out
+
+
+def build_species_pool(evos: dict) -> dict:
+    """Emit species-pool.json — the client-side replacement for the
+    hardcoded pool constants (SUPPORTED_SPECIES_SET in creatures.js,
+    SPAWNVABLE_SPECIES_A in spawns.js, etc.). Values for the default
+    pool are exactly the current hardcoded ones, so gameplay is
+    unchanged when the client reads this file.
+
+    spawnable: curated SPAWNVABLE_SPECIES for the default pool; in gens
+    mode (CC_SPECIES_GENS) derived as pool minus in-pool evolution
+    targets minus legendaries — i.e. wild spawns are family roots."""
+    evo_targets = {
+        row[0] for rows in evos.values() for row in rows
+    }
+    legendaries = sorted(LEGENDARY_SPECIES)
+    if SPAWNABLE_SPECIES is not None:
+        spawnable = sorted(SPAWNABLE_SPECIES)
+    else:
+        spawnable = [
+            s for s in ALLOWED_SPECIES
+            if s not in evo_targets and s not in LEGENDARY_SPECIES
+        ]
+    return {
+        "species": list(ALLOWED_SPECIES),
+        "legendaries": legendaries,
+        "babies": sorted(CANDY_ROOT_BABIES),
+        "spawnable": spawnable,
+        "maxSpecies": MAX_SPECIES,
+    }
 
 
 def process_custom_head(head: int) -> tuple[list[str], dict[str, list[int]]]:
@@ -863,6 +914,12 @@ def main() -> None:
     evos = build_species_evolutions()
     write_json(OUT_DIR / "species-evolutions.json", evos)
     print(f"  {len(evos)} evolution entries")
+
+    print("→ Writing species pool manifest...")
+    pool = build_species_pool(evos)
+    write_json(OUT_DIR / "species-pool.json", pool)
+    print(f"  {len(pool['species'])} species, {len(pool['legendaries'])} legendaries, "
+          f"{len(pool['spawnable'])} spawnable")
 
     print("→ Pre-cropping sprite cells (this is the slow part)...")
     manifest, cells = build_sprites_and_manifest()

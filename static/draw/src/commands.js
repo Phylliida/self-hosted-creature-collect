@@ -39,6 +39,8 @@ export function buildCommands(app) {
     { id: 'tool.star',    title: 'Star / polygon', cat: 'Tools', icon: '★',  keys: ['S'], keywords: 'polygon shape points', when: vectorMode, run: () => app.setTool('star') },
     { id: 'tool.text',    title: 'Text',           cat: 'Tools', icon: 'T',  keys: ['T'], keywords: 'label type words', when: vectorMode, run: () => app.setTool('text') },
     { id: 'tool.connector', title: 'Connector',    cat: 'Tools', icon: '⇢',  keys: ['C'], keywords: 'link diagram glue between', when: vectorMode, run: () => app.setTool('connector') },
+    { id: 'tool.fold',    title: 'Fold (mirror by reference)', cat: 'Tools', icon: '◧', keys: ['J'], keywords: 'mirror reflect symmetry line copy live reference fractal', when: vectorMode, run: () => app.setTool('fold') },
+    { id: 'tool.spin',    title: 'Spin (rotate copies by reference)', cat: 'Tools', icon: '↻', keys: ['K'], keywords: 'rotate copies pivot angle rosette live reference fractal', when: vectorMode, run: () => app.setTool('spin') },
     { id: 'tool.select',  title: 'Select',         cat: 'Tools', icon: '⬚',  keys: ['V'], keywords: 'pick move marquee', when: vectorMode, run: () => app.setTool('select') },
     { id: 'tool.eraser',  title: 'Eraser',         cat: 'Tools', icon: '🩹', keys: ['E'], keywords: 'delete rub remove', when: vectorMode, run: () => app.setTool('eraser') },
     { id: 'tool.pan',     title: 'Pan',            cat: 'Tools', icon: '✋', keys: ['H'], keywords: 'hand move scroll', when: vectorMode, run: () => app.setTool('pan') },
@@ -204,6 +206,8 @@ const TOOL_BASE = {
   star:    'drag to size a star / polygon',
   text:    'click to place, then type',
   connector: 'drag between two objects to link them',
+  fold:    'drag a mirror line — reflects the selection (or everything) across it, live by reference',
+  spin:    'click a pivot, then drag to sweep the copy angle — rotated copies, live by reference',
   select:  'click to pick · drag a marquee · drag to move',
   eraser:  'click or drag across strokes to remove',
   pan:     'drag to move the canvas',
@@ -245,7 +249,7 @@ export function contextHint(app, mods = {}) {
   const out = { base: `${t}: ${TOOL_BASE[t] || ''}`, mods: [] };
   const sel = app.selectedIds.size;
 
-  if (t === 'line' || t === 'arrow') {
+  if (t === 'line' || t === 'arrow' || t === 'fold' || t === 'spin') {
     out.mods.push({ key: '⇧', label: 'snap angle', active: shift });
   } else if (t === 'rect' || t === 'ellipse' || t === 'star') {
     out.mods.push({ key: '⇧', label: 'keep square', active: shift });

@@ -24,8 +24,8 @@ if ! command -v hf >/dev/null 2>&1; then
   echo "ERROR: hf CLI not found — pip install huggingface_hub hf_transfer, then hf auth login" >&2
   exit 1
 fi
-if [ ! -f "$PACK_DIR/pack.bin" ]; then
-  echo "ERROR: $PACK_DIR/pack.bin not found — run the pack builder first" >&2
+if [ ! -f "$PACK_DIR/pack.bin" ] && ! find "$PACK_DIR" -mindepth 2 -maxdepth 2 -name pack.bin -print -quit | grep -q .; then
+  echo "ERROR: no pack.bin under $PACK_DIR — run the pack builder first" >&2
   exit 1
 fi
 

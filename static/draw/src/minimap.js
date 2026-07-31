@@ -53,7 +53,7 @@ export class Minimap {
     const sx = W / rw, sy = H / rh;
     for (const it of this.scene.items) {
       if (it.hidden) continue;
-      const b = itemBBox(it);
+      const b = itemBBox(it, id => this.scene.byId(id));   // resolver ⇒ fold/spin copies included
       const x0 = (b.minX - region.minX) * sx, y0 = (b.minY - region.minY) * sy;
       lc.fillStyle = withAlpha(it.color || '#e8e8ef', 0.85);
       lc.fillRect(x0, y0, Math.max((b.maxX - b.minX) * sx, 1.2), Math.max((b.maxY - b.minY) * sy, 1.2));

@@ -49,7 +49,51 @@
       hfRepo: 'TessaCoil/neopets-pack',
       solo: true,
     },
+    {
+      id: 'creature-if2',
+      name: 'Pokémon (IF2)',
+      logo: '/static/poke-ball.svg',
+      builtin: false,
+      hfRepo: 'TessaCoil/creature-pack-if2',
+      solo: false,
+      // Generation-subset variants: the pack is uploaded per gen subset
+      // as <hfRepo>/<subdir>/pack.bin where subdir = 'gen-1-2' etc.
+      // The picker's gear icon toggles which gens are selected.
+      genRange: [1, 5],
+    },
   ];
+
+  // ── generation-subset variants ──
+  // Selected gens per pack live in localStorage `cc.packGens.<id>` as a
+  // comma list ("1,2"); default is gen 1 only (smallest download).
+  function _gensKey(id) { return 'cc.packGens.' + id; }
+  function selectedGens(id) {
+    const def = get(id);
+    if (!def || !def.genRange) return [];
+    const fallback = [def.genRange[0]];
+    try {
+      const raw = localStorage.getItem(_gensKey(id));
+      if (!raw) return fallback;
+      const gens = raw.split(',').map((s) => parseInt(s, 10))
+        .filter((g) => g >= def.genRange[0] && g <= def.genRange[1]);
+      return gens.length ? Array.from(new Set(gens)).sort((a, b) => a - b) : fallback;
+    } catch { return fallback; }
+  }
+  function setSelectedGens(id, gens) {
+    const def = get(id);
+    if (!def || !def.genRange) return;
+    const clean = Array.from(new Set(
+      (gens || []).filter((g) => g >= def.genRange[0] && g <= def.genRange[1])
+    )).sort((a, b) => a - b);
+    if (!clean.length) return;  // never store an empty subset
+    try { localStorage.setItem(_gensKey(id), clean.join(',')); } catch { /* ignore */ }
+  }
+  // URL subfolder for the selected variant ('' for packs without
+  // genRange). Mirrors build-if2-packs.py's subset_key().
+  function subdirFor(id) {
+    const gens = selectedGens(id);
+    return gens.length ? 'gen-' + gens.join('-') : '';
+  }
 
   function list() { return CATALOG.slice(); }
   function get(id) { return CATALOG.find((p) => p.id === id) || null; }
@@ -213,6 +257,7 @@
   global.Packs = {
     list, get, active, setActive, activeDef, activeName, isSoloMode,
     packOfRecord, packData, loadActivePackData,
+    selectedGens, setSelectedGens, subdirFor,
     ACTIVE_KEY, DEFAULT_PACK,
   };
 

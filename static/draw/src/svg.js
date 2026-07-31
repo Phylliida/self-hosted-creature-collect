@@ -1,4 +1,4 @@
-import { polygonVertices, rotCenter, ROTATABLE } from './scene.js';
+import { polygonVertices, rotCenter, ROTATABLE, foldMatrix, spinMatrix, spinCopyCount, refSources } from './scene.js';
 import { ribbonOutline, catmullRom } from './util.js';
 
 // Serialize the whole document to a standalone SVG string. World coordinates
@@ -138,9 +138,27 @@ export function sceneToSVG(scene, { pad = 0.06, background = '#0e0f13' } = {}) {
   const defs = [];                      // gradient <defs> collected from items
   const body = [];
   // Serialize one item to its (possibly rotation- / blend-wrapped) SVG, or null
-  // if hidden/empty. Shared by the flat and per-layer export paths.
-  const emitItem = (it) => {
+  // if hidden/empty. Shared by the flat and per-layer export paths. `stack` is
+  // the fold/spin reference chain (cycle guard) — see below.
+  const emitItem = (it, stack = []) => {
     if (it.hidden) return null;        // hidden items are omitted, like on-canvas
+    // BY-REFERENCE copies (fold/spin): each copy is the sources' own SVG under a
+    // transform group — the SVG analogue of the renderer's ctx.transform path,
+    // recursing for composed folds/spins. (Guides are chrome, not exported.)
+    if (it.type === 'fold' || it.type === 'spin') {
+      if (stack.includes(it.id)) return null;
+      const sub = [...stack, it.id];
+      const mats = it.type === 'fold'
+        ? [foldMatrix(it)]
+        : Array.from({ length: spinCopyCount(it) }, (_, i) => spinMatrix(it, i + 1));
+      const parts = [];
+      for (const m of mats) {
+        const inner = refSources(it, id => scene.byId(id), stack)
+          .map(s => emitItem(s, sub)).filter(Boolean).join('');
+        if (inner) parts.push(`<g transform="matrix(${round(m.a)} ${round(m.b)} ${round(m.c)} ${round(m.d)} ${round(m.e)} ${round(m.f)})">${inner}</g>`);
+      }
+      return parts.length ? parts.join('') : null;
+    }
     let s = itemToSVG(it, defs);
     if (!s) return null;
     if (it.rot && ROTATABLE.has(it.type)) {

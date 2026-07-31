@@ -28,7 +28,7 @@ except ImportError:
     sys.exit(1)
 
 # Shared species pool.
-from species_pool import ALLOWED_SPECIES, ALLOWED_SET, MAX_SPECIES  # noqa: E402
+from species_pool import ALLOWED_SPECIES, ALLOWED_SET, MAX_SPECIES, env_path  # noqa: E402
 
 EGG_PX = 160
 EGG_COLS = 10
@@ -41,7 +41,7 @@ CANDY_COLS = EGG_COLS
 CANDY_ROWS_NEEDED = (MAX_SPECIES // CANDY_COLS) + 1
 
 ROOT = Path(__file__).resolve().parent
-OUT_DIR = ROOT / "data" / "BundledData"
+OUT_DIR = env_path("CC_BUNDLED_OUT", ROOT / "data" / "BundledData")
 EGGS_PATH = OUT_DIR / "eggs.png"
 CANDIES_PATH = OUT_DIR / "candies.png"
 EVOLUTIONS_PATH = OUT_DIR / "species-evolutions.json"
@@ -95,7 +95,8 @@ def _load_family_roots() -> dict[int, int]:
 # is Pichu (#172) in gen 2). For those, we crop the BABY's egg art
 # instead so the candy bucket — which is keyed on the gen-1 species
 # (Pikachu, not Pichu) — still has a recognizable visual identity.
-PIF_EGGS_DIR = ROOT / "data" / "InfiniteFusion" / "Graphics" / "Battlers" / "Eggs"
+PIF_ROOT = env_path("CC_INFINITEFUSION", ROOT / "data" / "InfiniteFusion")
+PIF_EGGS_DIR = PIF_ROOT / "Graphics" / "Battlers" / "Eggs"
 
 # PIF autogen sprite sheets — used as a FINAL fallback for species
 # that have no own egg art AND no baby egg art (Snorlax, Mr. Mime —
@@ -103,7 +104,7 @@ PIF_EGGS_DIR = ROOT / "data" / "InfiniteFusion" / "Graphics" / "Battlers" / "Egg
 # species' solo sprite lives at cell (id%10, id//10) of the
 # <id>.png sheet (a sprite at that diagonal position is the species
 # fusing with itself, which is just the canonical solo art).
-PIF_AUTOGEN_SHEETS_DIR = (ROOT / "data" / "InfiniteFusion" / "Graphics"
+PIF_AUTOGEN_SHEETS_DIR = (PIF_ROOT / "Graphics"
                           / "Battlers" / "spritesheets_autogen")
 AUTOGEN_CELL_PX = 96
 AUTOGEN_COLS = 10
