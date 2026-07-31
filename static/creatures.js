@@ -2521,7 +2521,8 @@
     const seen = readSeenFusions();
     const key = `${a}-${b}`;
     const now = Date.now();
-    if (!seen[key]) seen[key] = { firstSeen: now };
+    const isNewEntry = !seen[key];
+    if (isNewEntry) seen[key] = { firstSeen: now };
     seen[key].lastSeen = now;
     if (spawn && spawn.lat != null && spawn.lng != null) {
       // Record the encounter location once (on the first sighting); the
@@ -2548,6 +2549,13 @@
       if (!seen[key].variants[vKey]) seen[key].variants[vKey] = now;
     }
     writeSeenFusions(seen);
+    // First sighting of a fusion: cached body-slots rendered before
+    // this moment may silhouette / "???" it ("Evolves to" rows, family
+    // cells) — e.g. evolve Vulon, then swipe to a second Vulon whose
+    // evo row must now show the evolved form. Drop them so the next
+    // navigation re-renders against the fresh seen store. Only fires
+    // on FIRST sightings — the every-encounter path keeps the cache.
+    if (isNewEntry) _dropCachedSlots(() => true);
   }
   // Returns a Set of seen variant keys for a fusion. Set members are
   // 'auto' (for the autogen sprite) or stringified integers for
@@ -3001,21 +3009,10 @@
     // Other cached fusion body-slots can display (a,b)'s art — family-tree
     // cells pick their sprite from favoriteArtFor at render time — so a
     // cached slot built before this change shows the OLD art when the user
-    // backs into it. Drop every cached fusion slot except (a,b)'s own (the
-    // live view; _refreshFavoriteArt syncs it in place right after this
-    // returns). _slotCache / revokeObjectUrlsIn are declared later in this
-    // scope; fine at runtime since this only runs on user interaction.
-    for (const k of [..._slotCache.keys()]) {
-      if (!k.startsWith('fusion:')) continue;
-      if (k === `fusion:${a}-${b}`) continue;
-      const slot = _slotCache.get(k);
-      if (slot) {
-        const inner = slot.firstChild;
-        if (inner && inner.querySelectorAll) revokeObjectUrlsIn(inner);
-        if (slot.parentNode) slot.remove();
-      }
-      _slotCache.delete(k);
-    }
+    // swipes/backs into it. Drop every cached fusion slot except (a,b)'s
+    // own (the live view; _refreshFavoriteArt syncs it in place right
+    // after this returns).
+    _dropCachedSlots((k) => k.startsWith('fusion:') && k !== `fusion:${a}-${b}`);
     return true;
   }
   function caughtFusionsSet() {
@@ -9287,6 +9284,24 @@
     if (view === 'detail') return `detail:${item.id}`;
     if (view === 'fusion') return `fusion:${item.a}-${item.b}`;
     return null;
+  }
+  // Drop cache entries matching `shouldDrop(key)` because their content
+  // went stale (seen-store / favorite-art changes). CRITICAL: slots
+  // currently attached to a swipe track (prev/center/next — the user
+  // may be looking at one right now) must stay in the DOM with their
+  // blob URLs intact, or the view blanks out mid-interaction. They
+  // only leave the cache, so the next _populateTrack rebuilds them
+  // fresh; the stale DOM copy is discarded by that rebuild's
+  // track.innerHTML reset. Detached slots are revoked outright.
+  function _dropCachedSlots(shouldDrop) {
+    for (const [k, slot] of [..._slotCache]) {
+      if (!shouldDrop(k)) continue;
+      if (slot && !slot.parentNode) {
+        const inner = slot.firstChild;
+        if (inner && inner.querySelectorAll) revokeObjectUrlsIn(inner);
+      }
+      _slotCache.delete(k);
+    }
   }
   function _evictDistantSlots(view, list, idx) {
     if (!list || idx == null) return;
