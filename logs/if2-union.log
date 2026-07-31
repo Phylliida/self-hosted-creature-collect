@@ -1,0 +1,87 @@
+→ Parsing SplitNames.rb...
+  571 entries
+→ Filtering credits to 507 allowed species' fusions...
+  139283 fusion cells with at least one credit
+→ Extracting names from species.dat...
+  → ruby extract-pif-dat.rb species.dat
+  570 names
+→ Extracting types from species.dat...
+  507 type entries
+→ Extracting evolutions from species.dat...
+  240 evolution entries
+→ Writing species pool manifest...
+  507 species, 33 legendaries, 218 spawnable
+→ Pre-cropping sprite cells (this is the slow part)...
+  506 species have custom variants
+  137218 (head, body) fusions have ≥1 custom variant
+→ Composing eggs sprite sheet...
+  240 egg cells filled, 267 blank (species without dedicated egg art)
+→ Filling egg sprite-sheet fallbacks...
+  492 egg cells filled, 15 blank
+→ Composing candy sprite sheet from eggs.png...
+  492 candy cells filled, 15 blank
+→ Pre-cropping sprite cells into per-partner pack files...
+  pack  10:  990 cells,  1959 KB
+  pack  20:  904 cells,  2370 KB
+  pack  30:  710 cells,  1588 KB
+  pack  40:  946 cells,  1920 KB
+  pack  50: 1137 cells,  1961 KB
+  pack  60:  860 cells,  2116 KB
+  pack  70:  810 cells,  1655 KB
+  pack  80:  877 cells,  2589 KB
+  pack  90:  755 cells,  1405 KB
+  pack 100: 1177 cells,  2054 KB
+  pack 110:  845 cells,  2110 KB
+  pack 120:  769 cells,  1663 KB
+  pack 130:  974 cells,  3772 KB
+  pack 140:  878 cells,  1392 KB
+  pack 150:  874 cells,  2273 KB
+  pack 160:  758 cells,  2012 KB
+  pack 170: 1004 cells,  2147 KB
+  pack 180:  865 cells,  1703 KB
+  pack 190:  795 cells,  1895 KB
+  pack 200:  879 cells,  1616 KB
+  pack 210:  739 cells,  1723 KB
+  pack 220:  871 cells,  1421 KB
+  pack 230:  724 cells,  2238 KB
+  pack 240:  692 cells,  1477 KB
+  pack 250: 1141 cells,  4378 KB
+  pack 260:  763 cells,  1428 KB
+  pack 270:  777 cells,  2152 KB
+  pack 280:  722 cells,  1635 KB
+  pack 290: 1072 cells,  2489 KB
+  pack 300:  658 cells,  1629 KB
+  pack 310: 1124 cells,  2694 KB
+  pack 320:  665 cells,  1759 KB
+  pack 330:  745 cells,  1639 KB
+  pack 340:  997 cells,  3189 KB
+  pack 350:  951 cells,  2979 KB
+  pack 360: 1081 cells,  2606 KB
+  pack 380:  929 cells,  2391 KB
+  pack 390:  863 cells,  1434 KB
+  pack 400:  822 cells,  1549 KB
+  pack 410:  678 cells,  1739 KB
+  pack 420:  737 cells,  1341 KB
+  pack 510:  630 cells,  1718 KB
+  pack 520:  591 cells,   965 KB
+  pack 530:  595 cells,  1325 KB
+  pack 540:  579 cells,  1409 KB
+  pack 550:  676 cells,  1564 KB
+  pack 560:  566 cells,  1333 KB
+  pack 570:  601 cells,  1707 KB
+  507 packs, 421621 cells total
+→ Copying evolution-item art...
+  24 evolution items
+→ Normalizing special (solo-creature) sprites...
+  1 special sprites
+→ Copying app data (icons + fonts)...
+  215 POI icons, 256 font glyph PBFs
+→ Bundling regions manifest...
+  1 manifest file
+→ Extracting base-map tiles (z0..z5)...
+  683 tiles
+
+✓ Wrote 3387 files, 2113.0 MB total → /home/bepis/prog/SimpleBot/repos/self-hosted-creature-collect/data/BundledData-if2
+→ Building union pool (gens 1,2,3,4,5) from /home/bepis/prog/SimpleBot/repos/self-hosted-creature-collect/data/InfiniteFusion2 → /home/bepis/prog/SimpleBot/repos/self-hosted-creature-collect/data/BundledData-if2
+→ No shiny-palettes.bin — writing empty header-only bin
+✓ union build done

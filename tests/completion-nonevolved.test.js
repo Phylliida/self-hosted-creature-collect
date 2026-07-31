@@ -57,8 +57,8 @@ const seenMap = { '1-2': 1, '1-3': 1, '1-4': 1, '2-1': 1, '3-4': 1 };
 
 const ctx = {
   Object, Set, Array, Math, Map, Number, String, JSON,
-  SUPPORTED_SPECIES_SET: SUPPORTED,
-  SUPPORTED_NONLEG_COUNT: NONLEG_COUNT,
+  _supportedSet: () => SUPPORTED,
+  _nonlegCount: () => NONLEG_COUNT,
   isLegendarySpecies: () => false,
   _isEvolvedSpecies: (id) => EVOLVED.has(id),
   supportedSpeciesSorted: () => [...SUPPORTED].sort((a, b) => a - b),

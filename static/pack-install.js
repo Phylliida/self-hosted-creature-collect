@@ -125,9 +125,15 @@
     } catch { /* offline */ }
     if (!remote) return { state: 'unknown', source: src, remote: null };
     const meta = readMeta(packId);
+    // A gen-subset pack whose installed variant differs from the current
+    // selection counts as "update available" even if the contentVersion
+    // matches — switching gens means downloading the other variant.
+    const selGens = (global.Packs && global.Packs.selectedGens)
+      ? global.Packs.selectedGens(packId || DEFAULT_PACK_ID).join(',') : '';
     if (meta && meta.installedAt
         && meta.contentVersion === remote.contentVersion
-        && meta.sha256 === remote.sha256) {
+        && meta.sha256 === remote.sha256
+        && (!selGens || (meta.gens || '') === selGens)) {
       return { state: 'up-to-date', source: src, remote };
     }
     return { state: isInstalled(packId) ? 'available' : 'none', source: src, remote };
@@ -242,12 +248,16 @@
       : Buffer.from(bin, 'binary').toString('base64');
   }
   function _skipped(logical, packId) {
-    // Sprite sheets are only the FUSION pack's web-crop input (native
+    // Sprite sheets are only the FUSION packs' web-crop input (native
     // cell art comes from sprite-packs/), so they're skipped there to
-    // halve write time + disk. Other packs keep EVERYTHING — neopets
+    // halve write time + disk. Solo packs keep EVERYTHING — neopets
     // monster art lives under sprites/ too, and skipping it leaves a
     // pack with no visible creatures.
-    if ((packId || DEFAULT_PACK_ID) !== DEFAULT_PACK_ID) return false;
+    const pid = packId || DEFAULT_PACK_ID;
+    if (pid !== DEFAULT_PACK_ID) {
+      const def = global.Packs && global.Packs.get ? global.Packs.get(pid) : null;
+      if (!def || def.solo) return false;
+    }
     return SKIP_PREFIXES.some((p) => logical.startsWith(p));
   }
   function makeEntrySink(packId) {
@@ -383,6 +393,11 @@
       entryCount: count,
       installedAt: Date.now(),
       source: src.source,
+      // Which gen subset was downloaded ('' for non-variant packs) — lets
+      // the picker show "installed (gens 1,2)" and checkForUpdate flag a
+      // variant switch.
+      gens: (global.Packs && global.Packs.selectedGens)
+        ? global.Packs.selectedGens(packId).join(',') : '',
     };
     writeMeta(packId, meta);
     // A fresh download of the ACTIVE pack re-points the native layer at

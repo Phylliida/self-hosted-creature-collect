@@ -52,11 +52,18 @@
   console.log('[bundle-id] changed:',
               stored || '(none)', '→', current,
               '— wiping bundle-derived caches');
-  // localStorage — sync, fast.
+  // localStorage — sync, fast. Species caches are namespaced per pack
+  // (cc.speciesNames.creature-if2 etc.), so wipe by prefix.
   try {
-    localStorage.removeItem('cc.speciesNames');
-    localStorage.removeItem('cc.speciesTypes');
-    localStorage.removeItem('cc.speciesEvolutions');
+    var speciesPrefixes = ['cc.speciesNames', 'cc.speciesTypes',
+                           'cc.speciesEvolutions', 'cc.speciesPool'];
+    var lsKeys = [];
+    for (var li = 0; li < localStorage.length; li++) lsKeys.push(localStorage.key(li));
+    lsKeys.forEach(function (k) {
+      if (speciesPrefixes.some(function (p) { return k === p || k.indexOf(p + '.') === 0; })) {
+        localStorage.removeItem(k);
+      }
+    });
     // Also drop live-update's installed-version map: it belongs to the
     // OLD bundle's era. Re-seeding from this page's fresh map (next
     // loadInstalled) is what lets the bundle-wins-unless-newer guard
@@ -3773,6 +3780,15 @@
   // — e.g. `window.CC_BUNDLED_DATA_BASE = 'https://cdn.../...';`.
   // Trailing slash is stripped at use-site.
   window.CC_BUNDLED_DATA_BASE = '/bundled-data';
+
+  // Species-id ceiling for sprite download/status ranges: the active
+  // pack's species-pool.json wins (IF2 gen-subset packs go up to 570);
+  // 429 is the fallback for bundles predating the pool file (and before
+  // Species data has loaded).
+  window._ccSpeciesMax = function () {
+    const p = window.Species && window.Species.pool ? window.Species.pool() : null;
+    return (p && p.max) || 429;
+  };
 
   // Capacitor (iOS/Android wrapper) detection. The page is served
   // from an in-app HTTP server (LocalServer.swift) on
@@ -17283,11 +17299,11 @@ function fmtDate(ts) {
       } catch {}
       try {
         await window.Sprites.bulkDownload({
-          // Span gen-1 + the gen-2/3/4 extras (max id 478). The
-          // sparse middle (ids 151..478 that aren't in our set) just
-          // 404s through harmlessly — ~286 extra fetches, a few
-          // seconds of overhead on the web download path.
-          sheetFrom: 1, sheetTo: 429, indexFrom: 1, indexTo: 429,
+          // Span the whole active pool (gen-1 + extras for the default
+          // pack; the subset's max for IF2 packs). The sparse middle
+          // (ids that aren't in our set) just 404s through harmlessly —
+          // a few seconds of overhead on the web download path.
+          sheetFrom: 1, sheetTo: _ccSpeciesMax(), indexFrom: 1, indexTo: _ccSpeciesMax(),
           onProgress: (p) => {
             const { sheetsDone, sheetsTotal, currentSheet, phase,
                     customSpeciesDone, customSpeciesTotal,
@@ -18112,7 +18128,6 @@ function fmtDate(ts) {
   // wipe it for testing.
   const spritesClearBtn = document.getElementById('spritesClearBtn');
   const spritesStatus = document.getElementById('spritesStatus');
-  const SPRITE_SHEETS = 429;
 
   async function updateSpritesStatus(extra) {
     if (!spritesStatus) return;
@@ -18123,8 +18138,8 @@ function fmtDate(ts) {
     if (extra) { spritesStatus.textContent = extra; return; }
     try {
       const s = await window.Sprites.getDownloadStatus({
-        sheetFrom: 1, sheetTo: SPRITE_SHEETS,
-        indexFrom: 1, indexTo: 429,
+        sheetFrom: 1, sheetTo: _ccSpeciesMax(),
+        indexFrom: 1, indexTo: _ccSpeciesMax(),
       });
       const customTail = (s.customSpeciesTotal && s.customSpeciesDone < s.customSpeciesTotal)
         ? ` · ${s.customSpeciesDone}/${s.customSpeciesTotal} hand-drawn`

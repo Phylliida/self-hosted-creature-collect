@@ -61,8 +61,8 @@ let seenMap = {
 
 const ctx = {
   Object, Set, Array, Math, Map, Number, String, JSON,
-  SUPPORTED_SPECIES_SET: SUPPORTED,
-  SUPPORTED_NONLEG_COUNT: NONLEG_COUNT,
+  _supportedSet: () => SUPPORTED,
+  _nonlegCount: () => NONLEG_COUNT,
   isLegendarySpecies: (id) => LEG.has(id),
   // In this stub pool nothing is an evolution (each id is its own family);
   // the non-evolved filter is exercised separately in completion-nonevolved.test.
