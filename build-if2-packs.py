@@ -10,9 +10,10 @@ Two-phase driver around the existing bundled-data pipeline:
           IF2's encrypted species.dat is decoded by extract-pif-dat.rb
           (XOR key from IF2's own 000_Encryption.rb).
 
-  slice   Emit one content pack per non-empty generation subset (31 for
-          gens 1-5) into packs/creature-if2/gen-<g>-<g>.../pack.bin,
-          by filtering/cropping the union tree — no pipeline re-runs.
+  slice   Emit one content pack per (generation subset × families flag)
+          variant (31 gen combos × 2 = 62 for gens 1-5) into
+          packs/creature-if2/gen-<g>-<g>...[-fam]/pack.bin, by
+          filtering/cropping the union tree — no pipeline re-runs.
 
   upload  Upload packs/creature-if2/ to the Hugging Face dataset
           (one repo, one subfolder per subset).
@@ -53,7 +54,6 @@ PACK_ID = "creature-if2"
 HF_REPO = "TessaCoil/creature-pack-if2"
 
 GENS = [1, 2, 3, 4, 5]
-GEN_RANGES = {g: species_pool.GEN_NATIONAL_RANGES[g] for g in GENS}
 
 CELL_PX = 96
 AUTOGEN_COLS = 10
@@ -69,41 +69,58 @@ SHIN_ENTRY_BYTES = 52  # u16 a, u16 b + 12 x 4B quantized triples
 
 
 # ── Subsets ──────────────────────────────────────────────────────────
-def all_subsets() -> list[tuple[int, ...]]:
-    """Every non-empty subset of GENS, sorted (31 for gens 1-5)."""
-    out = []
+# A variant is (gen combo, families flag). 31 gen combos × 2 = 62 packs.
+# The families flag closes the combo over evolution families (using the
+# union build's evolution data): gen 1+2 +fam also includes gen-3/4
+# evolutions and later-gen babies of gen-1/2 species (Crobat, Mamoswine,
+# Munchlax…), and even gen-6/7 stragglers like Sylveon when IF2 has them.
+def all_subsets() -> list[tuple[tuple[int, ...], bool]]:
+    """Every (non-empty gen combo, families flag) pair — 62 for gens 1-5."""
+    combos = []
     for r in range(1, len(GENS) + 1):
-        out.extend(itertools.combinations(GENS, r))
-    return out
+        combos.extend(itertools.combinations(GENS, r))
+    return [(c, fam) for c in combos for fam in (False, True)]
 
 
-def subset_key(combo: tuple[int, ...]) -> str:
-    return "gen-" + "-".join(str(g) for g in combo)
+def subset_key(combo: tuple[int, ...], fam: bool = False) -> str:
+    return "gen-" + "-".join(str(g) for g in combo) + ("-fam" if fam else "")
 
 
-def parse_subsets_arg(raw: str) -> list[tuple[int, ...]]:
-    """Parse --subsets '1,1-2,3-5' into combo tuples."""
+def parse_subsets_arg(raw: str) -> list[tuple[tuple[int, ...], bool]]:
+    """Parse --subsets '1,1-2,1-2-fam' into (combo, fam) tuples."""
     combos = []
     for part in raw.split(","):
         part = part.strip()
         if not part:
             continue
+        fam = part.endswith("-fam")
+        if fam:
+            part = part[:-4]
         combo = tuple(sorted({int(g) for g in part.split("-")}))
         if not combo or any(g not in GENS for g in combo):
             raise ValueError(f"bad subset {part!r} (gens are {GENS})")
-        if combo not in combos:
-            combos.append(combo)
+        if (combo, fam) not in combos:
+            combos.append((combo, fam))
     return combos
 
 
 # ── Union phase ──────────────────────────────────────────────────────
 def union_env() -> dict:
     env = dict(os.environ)
+    merged = ROOT / "data" / "MergedCustom"
+    if not (merged / "spritesheets_custom").is_dir():
+        raise SystemExit(
+            f"{merged} missing — run `python3 merge-custom-art.py` first "
+            "(merges IF1+IF2+Battlers custom art with IF1 indices preserved)")
     env.update({
-        "CC_SPECIES_GENS": ",".join(str(g) for g in GENS),
+        "CC_SPECIES_GENS": "1,2,3,4,5,6,7",  # full IF2 roster — family
+        # closures may reach past gen 5 (Sylveon etc.); gen subsets still
+        # filter to gens 1-5 at slice time.
         "CC_INFINITEFUSION": str(IF2),
         "CC_SPECIES_DAT": str(IF2 / "Data" / "species.dat"),
         "CC_SPLITNAMES_RB": str(SPLITNAMES_RB),
+        "CC_CUSTOM_SHEETS_DIR": str(merged / "spritesheets_custom"),
+        "CC_CREDITS_CSV": str(merged / "credits.csv"),
         "CC_BUNDLED_OUT": str(UNION_DIR),
     })
     return env
@@ -141,16 +158,39 @@ def cmd_union(args) -> None:
 
 # ── Slice helpers ────────────────────────────────────────────────────
 def load_gen_map() -> dict[int, int]:
-    """PIF id -> generation number, for every id in the union pool."""
+    """PIF id -> generation number, for every id in the union pool
+    (which spans gens 1-7 — the toggle dimension is gens 1-5, but
+    family closures may pull in gen-6/7 species)."""
     mapping = species_pool.load_nat_dex_mapping(SPLITNAMES_RB)
     pool = json.loads((UNION_DIR / "species-pool.json").read_text())
     out = {}
     for pif in pool["species"]:
         national = mapping.get(pif, pif)
-        for g, (lo, hi) in GEN_RANGES.items():
+        for g, (lo, hi) in species_pool.GEN_NATIONAL_RANGES.items():
             if lo <= national <= hi:
                 out[pif] = g
                 break
+    return out
+
+
+def family_closure(ids: set[int], evos: dict) -> set[int]:
+    """Close a species set over evolution families (undirected) — every
+    species sharing a family with any member is included."""
+    adj: dict[int, set[int]] = {}
+    for src, rows in evos.items():
+        s = int(src)
+        adj.setdefault(s, set())
+        for row in rows:
+            adj[s].add(row[0])
+            adj.setdefault(row[0], set()).add(s)
+    out = set(ids)
+    stack = list(ids)
+    while stack:
+        cur = stack.pop()
+        for nxt in adj.get(cur, ()):
+            if nxt not in out:
+                out.add(nxt)
+                stack.append(nxt)
     return out
 
 
@@ -303,23 +343,30 @@ def _slice_worker_init(gen_map: dict, generic_dir: str, specials_defs: list) -> 
     }
 
 
-def _slice_worker(combo: tuple[int, ...]) -> tuple[str, int]:
-    key = slice_subset(combo, _WORKER["gen_map"], _WORKER["generic"], PACKS_OUT)
+def _slice_worker(variant: tuple[tuple[int, ...], bool]) -> tuple[str, int]:
+    key = slice_subset(variant, _WORKER["gen_map"], _WORKER["generic"], PACKS_OUT)
     size = (PACKS_OUT / key / "pack.bin").stat().st_size
     return key, size
 
 
-def slice_subset(combo: tuple[int, ...], gen_map: dict[int, int],
+def slice_subset(variant: tuple[tuple[int, ...], bool], gen_map: dict[int, int],
                  generic: dict, out_root: Path) -> str:
     """Build packs/creature-if2/<subset-key>/ from the union tree.
-    `generic` carries the subset-independent staged files (types.json,
-    specials.json, specials defs, logo). Returns the subset key."""
-    key = subset_key(combo)
-    union_species = sorted(gen_map)
-    ids = sorted(p for p in union_species if gen_map[p] in combo)
+    `variant` is (gen combo, families flag); `generic` carries the
+    subset-independent staged files (types.json, specials.json, specials
+    defs, logo). Returns the subset key."""
+    combo, fam = variant
+    key = subset_key(combo, fam)
+    union_pool = json.loads((UNION_DIR / "species-pool.json").read_text())
+    base = {p for p in union_pool["species"] if gen_map.get(p) in combo}
+    if fam:
+        union_evos = json.loads(
+            (UNION_DIR / "species-evolutions.json").read_text())
+        ids = sorted(family_closure(base, union_evos))
+    else:
+        ids = sorted(base)
     keep = frozenset(ids)
     smax = ids[-1]
-    union_pool = json.loads((UNION_DIR / "species-pool.json").read_text())
 
     with tempfile.TemporaryDirectory() as tmp:
         staging = Path(tmp) / "stage"
@@ -367,18 +414,23 @@ def slice_subset(combo: tuple[int, ...], gen_map: dict[int, int],
             if all(int(p) in keep for p in k.split("-", 1))
         })
 
-        # species-pool.json — spawnable derived from the sliced evos so
-        # wild spawns are non-baby family roots *within the subset*
-        # (babies are egg-only).
-        evo_targets = {row[0] for rows in evos.values() for row in rows}
-        legendaries = sorted(set(union_pool["legendaries"]) & keep)
+        # species-pool.json — spawnable derived from the sliced evos:
+        # non-legendary, non-baby species that aren't the target of a
+        # NON-BABY in-subset evolution — each family's first non-baby
+        # form (Snorlax spawns even with Munchlax in the pack; babies
+        # are egg-only, evolved forms candy-only).
         babies = set(union_pool["babies"]) & keep
+        non_baby_targets = {
+            row[0] for src, rows in evos.items() if int(src) not in babies
+            for row in rows
+        }
+        legendaries = sorted(set(union_pool["legendaries"]) & keep)
         wjson("species-pool.json", {
             "species": ids,
             "legendaries": legendaries,
             "babies": sorted(babies),
             "spawnable": [s for s in ids
-                          if s not in evo_targets
+                          if s not in non_baby_targets
                           and s not in set(union_pool["legendaries"])
                           and s not in babies],
             "maxSpecies": smax,
@@ -405,7 +457,7 @@ def slice_subset(combo: tuple[int, ...], gen_map: dict[int, int],
         # ── Sprite sheets: crop + blank out-of-subset body cells ──
         autogen_rows = (smax // AUTOGEN_COLS) + 1
         custom_rows = (smax // CUSTOM_COLS) + 1
-        full = keep == frozenset(union_species)
+        full = keep == frozenset(union_pool["species"])
         for head in ids:
             src_dir = UNION_DIR / "sprites" / str(head)
             if not src_dir.is_dir():
@@ -520,16 +572,18 @@ def main() -> None:
     ap.add_argument("--list-subsets", action="store_true",
                     help="print the subset keys as JSON and exit")
     ap.add_argument("--subsets", default="",
-                    help="comma list of subsets to slice, e.g. '1,1-2,3-5' "
-                         "(default: all 31)")
+                    help="comma list of subsets to slice, e.g. '1,1-2,1-2-fam' "
+                         "(default: all 62)")
     ap.add_argument("--with-shiny", action="store_true",
                     help="union: also bake shiny palettes (hours)")
     ap.add_argument("--jobs", type=int, default=1,
-                    help="parallel workers (shiny bake, and slice across subsets)")
+                    help="parallel workers (shiny bake, and slice across subsets). "
+                         "WARNING: keep the shiny bake at 5 or below on this "
+                         "machine — 32 workers hard-crashed it (twice).")
     args = ap.parse_args()
 
     if args.list_subsets:
-        print(json.dumps([subset_key(c) for c in all_subsets()]))
+        print(json.dumps([subset_key(c, fam) for c, fam in all_subsets()]))
         return
     if not args.command:
         ap.error("need a command (union/slice/upload/all) or --list-subsets")

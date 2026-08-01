@@ -409,7 +409,9 @@ def main():
     ap.add_argument('--jobs', '-j', type=int, default=1,
                     help='Parallel worker processes for --all bake '
                          '(default 1 = serial). Pairs are independent, so '
-                         'this scales near-linearly; 0 = use all CPUs.')
+                         'this scales near-linearly; 0 = use all CPUs. '
+                         'WARNING: big worker counts (32) have hard-crashed '
+                         'this machine — stay at 5 or below.')
     args = ap.parse_args()
 
     if not args.pair and not args.all:

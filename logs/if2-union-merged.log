@@ -1,0 +1,125 @@
+→ Wiping existing /home/bepis/prog/SimpleBot/repos/self-hosted-creature-collect/data/BundledData-if2
+→ Parsing SplitNames.rb...
+  573 entries
+→ Filtering credits to 572 allowed species' fusions...
+  173509 fusion cells with at least one credit
+→ Extracting names from species.dat...
+  → ruby extract-pif-dat.rb species.dat
+  572 names
+→ Extracting types from species.dat...
+  572 type entries
+→ Extracting evolutions from species.dat...
+  267 evolution entries
+→ Writing species pool manifest...
+  572 species, 42 legendaries, 251 spawnable
+→ Pre-cropping sprite cells (this is the slow part)...
+  572 species have custom variants
+  173517 (head, body) fusions have ≥1 custom variant
+→ Composing eggs sprite sheet...
+  274 egg cells filled, 298 blank (species without dedicated egg art)
+→ Filling egg sprite-sheet fallbacks...
+  554 egg cells filled, 18 blank
+→ Composing candy sprite sheet from eggs.png...
+  554 candy cells filled, 18 blank
+→ Pre-cropping sprite cells into per-partner pack files...
+  pack  10: 1619 cells,  3202 KB
+  pack  20: 1433 cells,  3644 KB
+  pack  30: 1011 cells,  2217 KB
+  pack  40: 1596 cells,  3367 KB
+  pack  50: 2081 cells,  3646 KB
+  pack  60: 1358 cells,  3052 KB
+  pack  70: 1234 cells,  2501 KB
+  pack  80: 1377 cells,  3880 KB
+  pack  90: 1232 cells,  2286 KB
+  pack 100: 2088 cells,  3721 KB
+  pack 110: 1349 cells,  3585 KB
+  pack 120: 1174 cells,  2500 KB
+  pack 130: 1607 cells,  5853 KB
+  pack 140: 1361 cells,  2180 KB
+  pack 150: 1485 cells,  3797 KB
+  pack 160: 1287 cells,  3526 KB
+  pack 170: 1675 cells,  3733 KB
+  pack 180: 1336 cells,  2679 KB
+  pack 190: 1195 cells,  2761 KB
+  pack 200: 1400 cells,  2736 KB
+  pack 210: 1201 cells,  2749 KB
+  pack 220: 1539 cells,  2528 KB
+  pack 230: 1139 cells,  3369 KB
+  pack 240: 1011 cells,  2020 KB
+  pack 250: 2180 cells,  7720 KB
+  pack 260: 1263 cells,  2310 KB
+  pack 270: 1244 cells,  3454 KB
+  pack 280: 1056 cells,  2342 KB
+  pack 290: 1868 cells,  4429 KB
+  pack 300: 2099 cells,  5010 KB
+  pack 310: 1991 cells,  4718 KB
+  pack 320:  962 cells,  2475 KB
+  pack 330: 1169 cells,  2463 KB
+  pack 340: 1630 cells,  5092 KB
+  pack 350: 1572 cells,  4717 KB
+  pack 360: 1946 cells,  4540 KB
+  pack 370: 1863 cells,  3492 KB
+  pack 380: 1537 cells,  4043 KB
+  pack 390: 1374 cells,  2252 KB
+  pack 400: 1314 cells,  2399 KB
+  pack 410:  985 cells,  2462 KB
+  pack 420: 1173 cells,  2151 KB
+  pack 430: 1273 cells,  4061 KB
+  pack 440: 1179 cells,  3122 KB
+  pack 450: 1722 cells,  4640 KB
+  pack 460: 1436 cells,  3450 KB
+  pack 470: 1404 cells,  6517 KB
+  pack 480:  782 cells,  1756 KB
+  pack 490: 1280 cells,  3532 KB
+  pack 500: 1405 cells,  4239 KB
+  pack 510:  797 cells,  2168 KB
+  pack 520:  752 cells,  1225 KB
+  pack 530:  754 cells,  1732 KB
+  pack 540:  720 cells,  1758 KB
+  pack 550:  916 cells,  2020 KB
+  pack 560:  691 cells,  1619 KB
+  pack 570:  837 cells,  2585 KB
+  572 packs, 764126 cells total
+→ Copying evolution-item art...
+  24 evolution items
+→ Normalizing special (solo-creature) sprites...
+  1 special sprites
+→ Copying app data (icons + fonts)...
+  215 POI icons, 256 font glyph PBFs
+→ Bundling regions manifest...
+  1 manifest file
+→ Extracting base-map tiles (z0..z5)...
+  683 tiles
+
+✓ Wrote 7532 files, 3710.0 MB total → /home/bepis/prog/SimpleBot/repos/self-hosted-creature-collect/data/BundledData-if2
+baking 82369 family pairs (287 roots × 287 roots)
+  baking in parallel across 12 workers…
+  [500/82369] 9.5 pairs/s, ETA 143.8m, 500 non-empty
+  [1000/82369] 11.1 pairs/s, ETA 121.7m, 1000 non-empty
+  [1500/82369] 11.4 pairs/s, ETA 118.3m, 1500 non-empty
+  [2000/82369] 12.6 pairs/s, ETA 106.7m, 2000 non-empty
+  [2500/82369] 12.9 pairs/s, ETA 102.9m, 2500 non-empty
+  [3000/82369] 13.6 pairs/s, ETA 97.6m, 3000 non-empty
+  [3500/82369] 13.6 pairs/s, ETA 96.4m, 3500 non-empty
+  [4000/82369] 13.5 pairs/s, ETA 97.0m, 4000 non-empty
+  [4500/82369] 13.7 pairs/s, ETA 95.1m, 4500 non-empty
+  [5000/82369] 14.0 pairs/s, ETA 91.8m, 5000 non-empty
+  [5500/82369] 14.0 pairs/s, ETA 91.2m, 5500 non-empty
+  [6000/82369] 14.5 pairs/s, ETA 87.7m, 6000 non-empty
+  [6500/82369] 14.2 pairs/s, ETA 88.8m, 6500 non-empty
+  [7000/82369] 13.9 pairs/s, ETA 90.6m, 7000 non-empty
+  [7500/82369] 13.9 pairs/s, ETA 90.0m, 7500 non-empty
+  [8000/82369] 14.2 pairs/s, ETA 87.2m, 8000 non-empty
+  [8500/82369] 13.9 pairs/s, ETA 88.5m, 8500 non-empty
+  [9000/82369] 14.1 pairs/s, ETA 86.8m, 9000 non-empty
+  [9500/82369] 14.2 pairs/s, ETA 85.3m, 9499 non-empty
+  [10000/82369] 14.5 pairs/s, ETA 83.1m, 9999 non-empty
+  [10500/82369] 14.4 pairs/s, ETA 83.2m, 10499 non-empty
+  [11000/82369] 14.6 pairs/s, ETA 81.7m, 10977 non-empty
+  [11500/82369] 10.0 pairs/s, ETA 118.3m, 11477 non-empty
+  [12000/82369] 10.2 pairs/s, ETA 114.7m, 11977 non-empty
+  [12500/82369] 10.4 pairs/s, ETA 111.7m, 12477 non-empty
+  [13000/82369] 9.1 pairs/s, ETA 127.4m, 12977 non-empty
+  [13500/82369] 9.3 pairs/s, ETA 123.6m, 13477 non-empty
+  [14000/82369] 9.5 pairs/s, ETA 120.0m, 13977 non-empty
+  [14500/82369] 9.7 pairs/s, ETA 116.7m, 14477 non-empty

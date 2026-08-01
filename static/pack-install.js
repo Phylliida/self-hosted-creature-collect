@@ -127,9 +127,10 @@
     const meta = readMeta(packId);
     // A gen-subset pack whose installed variant differs from the current
     // selection counts as "update available" even if the contentVersion
-    // matches — switching gens means downloading the other variant.
-    const selGens = (global.Packs && global.Packs.selectedGens)
-      ? global.Packs.selectedGens(packId || DEFAULT_PACK_ID).join(',') : '';
+    // matches — switching gens/families means downloading the other
+    // variant. Compared on the subdir ('gen-1-2-fam'), which encodes both.
+    const selGens = (global.Packs && global.Packs.subdirFor)
+      ? global.Packs.subdirFor(packId || DEFAULT_PACK_ID) : '';
     if (meta && meta.installedAt
         && meta.contentVersion === remote.contentVersion
         && meta.sha256 === remote.sha256
@@ -393,11 +394,11 @@
       entryCount: count,
       installedAt: Date.now(),
       source: src.source,
-      // Which gen subset was downloaded ('' for non-variant packs) — lets
-      // the picker show "installed (gens 1,2)" and checkForUpdate flag a
-      // variant switch.
-      gens: (global.Packs && global.Packs.selectedGens)
-        ? global.Packs.selectedGens(packId).join(',') : '',
+      // Which variant was downloaded ('' for non-variant packs) — the
+      // subdir ('gen-1-2-fam') encodes gens + families flag, letting the
+      // picker show it and checkForUpdate flag a variant switch.
+      gens: (global.Packs && global.Packs.subdirFor)
+        ? global.Packs.subdirFor(packId) : '',
     };
     writeMeta(packId, meta);
     // A fresh download of the ACTIVE pack re-points the native layer at

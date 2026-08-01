@@ -120,11 +120,16 @@ INFINITEFUSION = _env_path("CC_INFINITEFUSION", ROOT / "data" / "InfiniteFusion"
 # Sprite sheet sources live inside InfiniteFusion's Graphics tree —
 # Battlers/ is for the autogen sheets, CustomBattlers/ for custom.
 AUTOGEN_SHEETS_DIR = INFINITEFUSION / "Graphics" / "Battlers" / "spritesheets_autogen"
-CUSTOM_SHEETS_DIR = (INFINITEFUSION / "Graphics" / "CustomBattlers"
-                     / "spritesheets" / "spritesheets_custom")
+CUSTOM_SHEETS_DIR = _env_path(
+    "CC_CUSTOM_SHEETS_DIR",
+    INFINITEFUSION / "Graphics" / "CustomBattlers"
+    / "spritesheets" / "spritesheets_custom")
 EGGS_DIR = INFINITEFUSION / "Graphics" / "Battlers" / "Eggs"
 EVO_ITEMS_SRC = INFINITEFUSION / "Graphics" / "Items"
 SPECIES_DAT = _env_path("CC_SPECIES_DAT", INFINITEFUSION / "Data" / "species.dat")
+CREDITS_CSV = _env_path(
+    "CC_CREDITS_CSV",
+    INFINITEFUSION / "Data" / "sprites" / "Sprite_Credits.csv")
 SPLITNAMES_RB = _env_path(
     "CC_SPLITNAMES_RB",
     INFINITEFUSION / "Data" / "Scripts" / "052_InfiniteFusion" / "Fusion" / "SplitNames.rb",
@@ -280,7 +285,7 @@ def build_split_names() -> list:
 def build_credits() -> dict:
     """Parse Sprite_Credits.csv, filter to fusions where both species
     are in 1..MAX_SPECIES, and group as {"a-b": {variant: artist}}."""
-    path = INFINITEFUSION / "Data" / "sprites" / "Sprite_Credits.csv"
+    path = CREDITS_CSV
     out: dict[str, dict[str, str]] = {}
     with path.open(encoding="utf-8", errors="replace") as f:
         for raw in f:
@@ -450,19 +455,26 @@ def build_species_pool(evos: dict) -> dict:
     unchanged when the client reads this file.
 
     spawnable: curated SPAWNVABLE_SPECIES for the default pool; in gens
-    mode (CC_SPECIES_GENS) derived as pool minus in-pool evolution
-    targets minus legendaries minus babies — i.e. wild spawns are
-    non-baby family roots (babies are egg-only)."""
-    evo_targets = {
-        row[0] for rows in evos.values() for row in rows
-    }
+    mode (CC_SPECIES_GENS) derived: non-legendary, non-baby species that
+    aren't the evolution target of a NON-BABY in-pool species — i.e.
+    wild spawns are each family's first non-baby form (Snorlax spawns
+    even when Munchlax is in the pack; babies are egg-only, evolved
+    forms are candy-only)."""
+    non_baby_targets = set()
+    babies = set(CANDY_ROOT_BABIES)
+    for src, rows in evos.items():
+        if int(src) in babies:
+            continue
+        for row in rows:
+            non_baby_targets.add(row[0])
     legendaries = sorted(LEGENDARY_SPECIES)
     if SPAWNABLE_SPECIES is not None:
         spawnable = sorted(SPAWNABLE_SPECIES)
     else:
         spawnable = [
             s for s in ALLOWED_SPECIES
-            if s not in evo_targets and s not in LEGENDARY_SPECIES
+            if s not in non_baby_targets
+            and s not in LEGENDARY_SPECIES
             and s not in CANDY_ROOT_BABIES
         ]
     return {
