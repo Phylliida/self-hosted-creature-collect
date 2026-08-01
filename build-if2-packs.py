@@ -288,6 +288,27 @@ def gen_categories(names: list, evos: dict, ids: list, legendaries: set,
 
 
 # ── Slice phase ──────────────────────────────────────────────────────
+# Multiprocessing worker state (slice --jobs N): each worker process
+# gets its own gen_map + generic staging + build-content-pack import
+# via the pool initializer.
+_WORKER: dict = {}
+
+
+def _slice_worker_init(gen_map: dict, generic_dir: str, specials_defs: list) -> None:
+    _WORKER["gen_map"] = gen_map
+    _WORKER["generic"] = {
+        "dir": Path(generic_dir),
+        "bcp": _load_bcp(),
+        "specials_defs": specials_defs,
+    }
+
+
+def _slice_worker(combo: tuple[int, ...]) -> tuple[str, int]:
+    key = slice_subset(combo, _WORKER["gen_map"], _WORKER["generic"], PACKS_OUT)
+    size = (PACKS_OUT / key / "pack.bin").stat().st_size
+    return key, size
+
+
 def slice_subset(combo: tuple[int, ...], gen_map: dict[int, int],
                  generic: dict, out_root: Path) -> str:
     """Build packs/creature-if2/<subset-key>/ from the union tree.
@@ -466,11 +487,21 @@ def cmd_slice(args) -> None:
     }
 
     t0 = time.time()
-    for i, combo in enumerate(combos, 1):
-        key = slice_subset(combo, gen_map, generic, PACKS_OUT)
-        size = (PACKS_OUT / key / "pack.bin").stat().st_size
-        print(f"  [{i}/{len(combos)}] {key}: {size / (1024**2):.0f} MB "
-              f"({time.time() - t0:.0f}s elapsed)")
+    if args.jobs > 1 and len(combos) > 1:
+        import multiprocessing as mp
+        with mp.Pool(args.jobs, initializer=_slice_worker_init,
+                     initargs=(gen_map, str(generic_dir),
+                               generic["specials_defs"])) as pool:
+            for i, (key, size) in enumerate(
+                    pool.imap_unordered(_slice_worker, combos), 1):
+                print(f"  [{i}/{len(combos)}] {key}: {size / (1024**2):.0f} MB "
+                      f"({time.time() - t0:.0f}s elapsed)", flush=True)
+    else:
+        for i, combo in enumerate(combos, 1):
+            key = slice_subset(combo, gen_map, generic, PACKS_OUT)
+            size = (PACKS_OUT / key / "pack.bin").stat().st_size
+            print(f"  [{i}/{len(combos)}] {key}: {size / (1024**2):.0f} MB "
+                  f"({time.time() - t0:.0f}s elapsed)", flush=True)
     shutil.rmtree(generic_dir, ignore_errors=True)
     print(f"✓ {len(combos)} subset packs → {PACKS_OUT}")
 
@@ -494,7 +525,7 @@ def main() -> None:
     ap.add_argument("--with-shiny", action="store_true",
                     help="union: also bake shiny palettes (hours)")
     ap.add_argument("--jobs", type=int, default=1,
-                    help="parallel workers (shiny bake)")
+                    help="parallel workers (shiny bake, and slice across subsets)")
     args = ap.parse_args()
 
     if args.list_subsets:

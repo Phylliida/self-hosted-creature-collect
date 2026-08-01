@@ -1,0 +1,18 @@
+→ Slicing 16 subset packs from /home/bepis/prog/SimpleBot/repos/self-hosted-creature-collect/data/BundledData-if2
+  [1/16] gen-2-4-5: 402 MB (209s elapsed)
+  [2/16] gen-3-4-5: 518 MB (255s elapsed)
+  [3/16] gen-1-4-5: 670 MB (288s elapsed)
+  [4/16] gen-2-3-5: 614 MB (290s elapsed)
+  [5/16] gen-1-2-3-4-5: 2103 MB (301s elapsed)
+  [6/16] gen-2-3-4: 680 MB (302s elapsed)
+  [7/16] gen-1-2-5: 787 MB (322s elapsed)
+  [8/16] gen-1-2-4: 864 MB (336s elapsed)
+  [9/16] gen-1-3-5: 935 MB (368s elapsed)
+  [10/16] gen-1-3-4: 1017 MB (385s elapsed)
+  [11/16] gen-1-2-3: 1158 MB (424s elapsed)
+  [12/16] gen-1-2-3-5: 1508 MB (500s elapsed)
+  [13/16] gen-1-2-3-4: 1611 MB (518s elapsed)
+  [14/16] gen-1-2-4-5: 1171 MB (613s elapsed)
+  [15/16] gen-2-3-4-5: 957 MB (653s elapsed)
+  [16/16] gen-1-3-4-5: 1347 MB (707s elapsed)
+✓ 16 subset packs → /home/bepis/prog/SimpleBot/repos/self-hosted-creature-collect/packs/creature-if2
