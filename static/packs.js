@@ -73,7 +73,12 @@
   // ── generation-subset variants ──
   // Selected gens per pack live in localStorage `cc.packGens.<id>` as a
   // comma list ("1,2"); default is gen 1 only (smallest download).
+  // The "whole families" flag lives in `cc.packGensFam.<id>` ('1'/'0',
+  // default off) and appends '-fam' to the variant subdir — the pack
+  // then also contains every evolution/baby in the selected gens'
+  // families (build-if2-packs.py family_closure).
   function _gensKey(id) { return 'cc.packGens.' + id; }
+  function _famKey(id) { return 'cc.packGensFam.' + id; }
   function selectedGens(id) {
     const def = get(id);
     if (!def || !def.genRange) return [];
@@ -95,11 +100,30 @@
     if (!clean.length) return;  // never store an empty subset
     try { localStorage.setItem(_gensKey(id), clean.join(',')); } catch { /* ignore */ }
   }
+  function selectedFamilies(id) {
+    const def = get(id);
+    if (!def || !def.genRange) return false;
+    try { return localStorage.getItem(_famKey(id)) === '1'; }
+    catch { return false; }
+  }
+  function setSelectedFamilies(id, on) {
+    const def = get(id);
+    if (!def || !def.genRange) return;
+    try { localStorage.setItem(_famKey(id), on ? '1' : '0'); } catch { /* ignore */ }
+  }
   // URL subfolder for the selected variant ('' for packs without
   // genRange). Mirrors build-if2-packs.py's subset_key().
   function subdirFor(id) {
     const gens = selectedGens(id);
-    return gens.length ? 'gen-' + gens.join('-') : '';
+    if (!gens.length) return '';
+    return 'gen-' + gens.join('-') + (selectedFamilies(id) ? '-fam' : '');
+  }
+  // Compact label for status lines: 'gens 1,2' or 'gens 1,2 +fam'.
+  function variantLabel(id) {
+    const gens = selectedGens(id);
+    return gens.length
+      ? 'gens ' + gens.join(',') + (selectedFamilies(id) ? ' +fam' : '')
+      : '';
   }
 
   function list() { return CATALOG.slice(); }
@@ -271,7 +295,8 @@
   global.Packs = {
     list, get, active, setActive, activeDef, activeName, isSoloMode,
     packOfRecord, groupOf, activeGroup, packData, loadActivePackData,
-    selectedGens, setSelectedGens, subdirFor,
+    selectedGens, setSelectedGens, selectedFamilies, setSelectedFamilies,
+    subdirFor, variantLabel,
     ACTIVE_KEY, DEFAULT_PACK,
   };
 

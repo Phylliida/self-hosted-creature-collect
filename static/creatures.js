@@ -7582,6 +7582,7 @@
         padding: 9px 6px; font-size: 14.5px; cursor: pointer;
       }
       .pack-gens-range { font-size: 12px; opacity: 0.6; }
+      .pack-gens-fam { border-top: 1px solid var(--ui-border, rgba(0,0,0,0.15)); margin-top: 4px; padding-top: 12px; }
       .pack-gens-save { margin-top: 8px; padding: 8px 18px; cursor: pointer; }
       .pack-pick-msg { min-height: 18px; font-size: 12px; opacity: 0.75; margin: 8px 0 4px; }
       .pack-pick-close { margin-top: 8px; padding: 8px 18px; cursor: pointer; }
@@ -12507,6 +12508,10 @@
     overlay.innerHTML = '<div class="pack-picker-card pack-gens-card">'
       + '<h3>' + escapeHtml(packDef.name) + ' — generations</h3>'
       + rows
+      + '<label class="pack-gens-row pack-gens-fam"><input type="checkbox" data-fam="1"'
+      + (global.Packs.selectedFamilies(packDef.id) ? ' checked' : '')
+      + '> Whole evolution families'
+      + ' <span class="pack-gens-range">(evolutions + babies of selected gens)</span></label>'
       + '<div class="pack-pick-msg"></div>'
       + '<div style="text-align:center">'
       + '<button type="button" class="pack-gens-save">Save</button> '
@@ -12524,22 +12529,32 @@
         return;
       }
       global.Packs.setSelectedGens(packDef.id, gens);
+      global.Packs.setSelectedFamilies(packDef.id, !!overlay.querySelector('input[data-fam]:checked'));
       close();
       if (onDone) onDone();
     };
   }
 
+  // 'gen-1-2-fam' → 'gens 1,2 +fam'
+  function _subLabel(sub) {
+    return sub
+      ? sub.replace(/^gen-/, 'gens ').replace(/-/g, ',').replace(',fam', ' +fam')
+      : '';
+  }
+
   function _packRowStatus(p, isActive, installed) {
     let status = isActive ? 'active' : (installed ? 'installed' : 'not downloaded');
-    if (p.genRange && global.Packs.selectedGens) {
-      const sel = global.Packs.selectedGens(p.id).join(',');
+    if (p.genRange && global.Packs.subdirFor) {
+      const selSub = global.Packs.subdirFor(p.id);
+      const sel = _subLabel(selSub);
       const meta = installed ? global.PackInstall.readMeta(p.id) : null;
       const ig = (meta && meta.gens) || '';
-      if (isActive) status = 'active (gens ' + (ig || sel) + ')';
+      const igLabel = _subLabel(ig);
+      if (isActive) status = 'active (' + (igLabel || sel) + ')';
       else if (installed) {
-        status = 'installed (gens ' + (ig || '?') + ')'
-          + (ig && ig !== sel ? ' · selected ' + sel : '');
-      } else status = 'not downloaded (gens ' + sel + ')';
+        status = 'installed (' + (igLabel || '?') + ')'
+          + (ig && ig !== selSub ? ' · selected ' + sel : '');
+      } else status = 'not downloaded (' + sel + ')';
     }
     return status;
   }
@@ -12589,12 +12604,12 @@
         // The ↻ badge forces a re-download (repairs a damaged/partial
         // install, or pulls an update) instead of just switching.
         const force = !!(e.target && e.target.dataset && e.target.dataset.redl);
-        // A variant pack whose selected gens differ from the installed
-        // ones re-downloads the new subset (even when already active).
+        // A variant pack whose selected variant (gens/families) differs
+        // from the installed one re-downloads (even when already active).
         const def = global.Packs.get(id);
         const meta = global.PackInstall.readMeta(id);
         const gensChanged = !!(def && def.genRange && meta
-          && (meta.gens || '') !== global.Packs.selectedGens(id).join(','));
+          && (meta.gens || '') !== global.Packs.subdirFor(id));
         btn.disabled = true;
         try {
           // Download only happens from this tap (zero-network rule);

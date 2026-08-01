@@ -41,9 +41,12 @@ let
   # iLoader — Linux iOS sideloader (nab138/iloader on GitHub),
   # pulled in via flake. Requires flakes enabled in your nix config:
   #   nix.settings.experimental-features = [ "nix-command" "flakes" ];
-  # To pin a specific revision (recommended once it's working), use
-  #   "github:nab138/iloader/<commit-sha>"
-  iloader = (builtins.getFlake "github:nab138/iloader").packages.${pkgs.system}.default;
+  # Pinned: HEAD commit 9763382 ("Update isideload to apple-codesign-quick
+  # version", 2026-08-01) breaks evaluation — its flake's importCargoLock
+  # has no outputHash for the apple-codesign-0.1.0 git dependency. This
+  # pin is the last commit before that change. To unpin, drop the rev
+  # suffix and check upstream has fixed the cargo lock first.
+  iloader = (builtins.getFlake "github:nab138/iloader/5b3e750edff5826efaf6ff4bc85d75796ff6838f").packages.${pkgs.stdenv.hostPlatform.system}.default;
 
   # Pin to a recent, stable Android API level + build-tools. Bump
   # together with Capacitor major version updates.
