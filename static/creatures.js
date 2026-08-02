@@ -7585,6 +7585,15 @@
       .pack-gens-fam { border-top: 1px solid var(--ui-border, rgba(0,0,0,0.15)); margin-top: 4px; padding-top: 12px; }
       .pack-gens-save { margin-top: 8px; padding: 8px 18px; cursor: pointer; }
       .pack-pick-msg { min-height: 18px; font-size: 12px; opacity: 0.75; margin: 8px 0 4px; }
+      .pack-pick-bar {
+        height: 6px; border-radius: 3px; overflow: hidden;
+        background: var(--ui-border, rgba(0,0,0,0.15));
+        margin: 8px 0 0; display: none;
+      }
+      .pack-pick-bar-fill {
+        height: 100%; width: 0; border-radius: 3px;
+        background: #6d5ac0; transition: width 0.2s;
+      }
       .pack-pick-close { margin-top: 8px; padding: 8px 18px; cursor: pointer; }
       /* Action icon row — centered on its own line below the
          "Pokémon" title. Tags / Bag / Candy / Pokédex. */
@@ -12482,8 +12491,9 @@
 
   function _packPickStatusText(s) {
     const mb = (n) => ((n || 0) / (1024 * 1024)).toFixed(0) + ' MB';
-    if (s.phase === 'download') return `downloading… ${mb(s.downloaded)} / ${mb(s.total)}`;
-    if (s.phase === 'install') return `installing… ${s.entries} files`;
+    const pct = s.total ? ' ' + Math.min(100, Math.floor(100 * (s.downloaded || 0) / s.total)) + '%' : '';
+    if (s.phase === 'download') return `downloading…${pct} (${mb(s.downloaded)} / ${mb(s.total)})`;
+    if (s.phase === 'install') return `installing…${pct} (${s.entries} files)`;
     if (s.phase === 'done') return 'switching…';
     return '';
   }
@@ -12555,6 +12565,16 @@
         status = 'installed (' + (igLabel || '?') + ')'
           + (ig && ig !== selSub ? ' · selected ' + sel : '');
       } else status = 'not downloaded (' + sel + ')';
+      // An interrupted download leaves resume state — show it can be
+      // continued rather than restarted from zero.
+      if (!isActive && !installed && global.PackInstall.resumeState) {
+        const rs = global.PackInstall.resumeState(p.id);
+        if (rs && rs.entriesDone > 0) {
+          const pct = rs.totalBytes
+            ? Math.min(100, Math.floor(100 * (rs.downloaded || 0) / rs.totalBytes)) : 0;
+          status = 'paused at ' + pct + '% — tap to resume';
+        }
+      }
     }
     return status;
   }
@@ -12582,6 +12602,7 @@
                 : '')
             + '</button>';
         }).join('')
+      + '<div class="pack-pick-bar"><div class="pack-pick-bar-fill"></div></div>'
       + '<div class="pack-pick-msg"></div>'
       + '<button type="button" class="pack-pick-close">Close</button>'
       + '</div>';
@@ -12611,12 +12632,19 @@
         const gensChanged = !!(def && def.genRange && meta
           && (meta.gens || '') !== global.Packs.subdirFor(id));
         btn.disabled = true;
+        const bar = overlay.querySelector('.pack-pick-bar');
+        const barFill = overlay.querySelector('.pack-pick-bar-fill');
         try {
           // Download only happens from this tap (zero-network rule);
-          // switching packs reloads into a fully isolated world.
+          // switching packs reloads into a fully isolated world. An
+          // interrupted download resumes from its saved state.
           if (force || !global.PackInstall.isInstalled(id) || gensChanged) {
+            if (bar) bar.style.display = 'block';
             await global.PackInstall.download(id, (s) => {
               msg.textContent = _packPickStatusText(s);
+              if (barFill && s.total) {
+                barFill.style.width = Math.min(100, Math.floor(100 * (s.downloaded || 0) / s.total)) + '%';
+              }
             });
           }
           msg.textContent = 'switching…';
@@ -12626,7 +12654,14 @@
           await global.Packs.setActive(id);
           location.reload();
         } catch (e2) {
-          msg.textContent = 'failed: ' + (e2 && e2.message ? e2.message : e2);
+          const rs = global.PackInstall.resumeState ? global.PackInstall.resumeState(id) : null;
+          if (e2 && e2.resumable && rs && rs.entriesDone > 0) {
+            const pct = rs.totalBytes
+              ? Math.min(100, Math.floor(100 * (rs.downloaded || 0) / rs.totalBytes)) : 0;
+            msg.textContent = 'paused at ' + pct + '% — tap again to resume';
+          } else {
+            msg.textContent = 'failed: ' + (e2 && e2.message ? e2.message : e2);
+          }
           btn.disabled = false;
         }
       };

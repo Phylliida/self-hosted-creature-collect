@@ -754,6 +754,34 @@
       ^ Math.imul(ltick, 83492791) ^ LEG_SALT) >>> 0;
     return (h % LEG_MOD) === 0;
   }
+  // Legendary position snapping (opt-in, app-injected). The engine itself
+  // stays pure/deterministic; the host app registers a provider that maps a
+  // rolled (lat, lng) to a real-world anchor ({ lat, lng, kind }) or null
+  // when nothing suitable is nearby (the legendary is then hidden — keeps
+  // players from being sent somewhere they shouldn't go). Results are
+  // cached per spawn id; positions may differ between devices with
+  // different downloaded map data, but spawn ids are unaffected.
+  let _legSnapProvider = null;
+  const _legSnapCache = new Map();
+  const LEG_SNAP_CACHE_MAX = 256;
+  function setLegendarySnapProvider(fn) {
+    _legSnapProvider = fn || null;
+    _legSnapCache.clear();
+  }
+  function _applyLegendarySnap(p) {
+    if (!_legSnapProvider) return p;
+    if (_legSnapCache.has(p.id)) {
+      const c = _legSnapCache.get(p.id);
+      return c ? Object.assign({}, p, { lat: c.lat, lng: c.lng, snappedTo: c.kind }) : null;
+    }
+    let target = null;
+    try { target = _legSnapProvider(p.lat, p.lng); } catch (e) { target = null; }
+    if (_legSnapCache.size >= LEG_SNAP_CACHE_MAX) {
+      _legSnapCache.delete(_legSnapCache.keys().next().value);
+    }
+    _legSnapCache.set(p.id, target || null);
+    return target ? Object.assign({}, p, { lat: target.lat, lng: target.lng, snappedTo: target.kind }) : null;
+  }
   function generateLegendaryAtTick(cellX, cellY, ltick) {
     if (!_legCandidate(cellX, cellY, ltick)) return null;
     if (_pack) {
@@ -826,8 +854,10 @@
           const p = generateLegendaryAtTick(cx, cy, lt);
           if (!p) continue;
           if (now < p.startMs || now >= p.expireMs) continue;
-          if (p.lat < south || p.lat > north || p.lng < west || p.lng > east) continue;
-          out.push(p);
+          const sp = _applyLegendarySnap(p);
+          if (!sp) continue;
+          if (sp.lat < south || sp.lat > north || sp.lng < west || sp.lng > east) continue;
+          out.push(sp);
         }
       }
     }
@@ -1076,7 +1106,9 @@
           }
           for (let lt = firstLT; lt <= curLT; lt++) {
             const p = generateLegendaryAtTick(cx, cy, lt);
-            if (p && now >= p.startMs && now < p.expireMs && !found.has(p.id)) found.set(p.id, p);
+            if (!p || now < p.startMs || now >= p.expireMs || found.has(p.id)) continue;
+            const sp = _applyLegendarySnap(p);
+            if (sp) found.set(sp.id, sp);
           }
         }
       }
@@ -1418,6 +1450,9 @@
     // any future legendary-specific UI).
     legendariesInBbox, generateLegendaryAtTick, currentLegTick,
     LEG_TICK_MS, LEG_LIFETIME_MS,
+    // Optional app-injected legendary position snap (road/POI anchoring);
+    // null (default) keeps raw rolled positions.
+    setLegendarySnapProvider,
     // Evolved ("poké-radar") stream — folded into spawnsInBbox; exposed for
     // tests + the future poké-radar detection UI.
     evolvedInBbox, generateEvolvedAtTick, currentEvoTick, nearestEvolved, nearestRadar,

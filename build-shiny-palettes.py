@@ -442,6 +442,28 @@ def main():
         t_start = time.time()
         jobs = os.cpu_count() if args.jobs == 0 else args.jobs
 
+        # Crash-resume: results checkpoint to <output>.checkpoint every
+        # 500 pairs; on startup a completed pair is skipped. The full
+        # 82k-pair IF2 bake runs for hours and has survived ZERO machine
+        # crashes so far — without this each crash restarted from 0.
+        out_json = args.output_json or (
+            args.bundle_dir / 'shiny-palettes.json')
+        checkpoint = out_json.with_suffix(out_json.suffix + '.checkpoint')
+        if checkpoint.is_file():
+            try:
+                bake = json.loads(checkpoint.read_text())
+                done = {tuple(int(p) for p in k.split('-')) for k in bake}
+                pair_list = [p for p in pair_list if (p[0], p[1]) not in done]
+                total = len(pair_list)
+                print(f'  resuming from checkpoint: {len(bake)} pairs done, '
+                      f'{total} to go')
+            except (ValueError, OSError) as e:
+                print(f'  ⚠ checkpoint unreadable ({e}), starting fresh')
+                bake = {}
+
+        def _save_checkpoint():
+            checkpoint.write_text(json.dumps(bake, separators=(',', ':')))
+
         if jobs > 1:
             # Parallel path. Sample-sheet rendering is skipped here (it needs
             # raw params back on the main process and is only a dev spot-
@@ -457,11 +479,12 @@ def main():
                     if triples is not None:
                         bake[key] = triples
                     if (i + 1) % 500 == 0 or (i + 1) == total:
+                        _save_checkpoint()
                         elapsed = time.time() - t_start
                         rate = (i + 1) / elapsed
                         eta = (total - i - 1) / rate
                         print(f'  [{i+1}/{total}] {rate:.1f} pairs/s, '
-                              f'ETA {eta/60:.1f}m, {len(bake)} non-empty')
+                              f'ETA {eta/60:.1f}m, {len(bake)} non-empty', flush=True)
         else:
             for i, (rootA, rootB) in enumerate(pair_list):
                 family_a = family_of(rootA, evos, rev)
