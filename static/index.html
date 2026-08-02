@@ -3508,6 +3508,10 @@
       <label for="radarAutogenToggle">Show autogen labels on radar</label>
       <input type="checkbox" id="radarAutogenToggle">
     </div>
+    <div class="row" title="Legendaries appear at the nearest road (or POI, if no road) within 2 km of their rolled spot, and not at all where there's neither — so they never send you into backyards, water, or private property. Turn this off to get raw spawns anywhere, e.g. if you're riding a boat.">
+      <label for="legendarySnapToggle">Snap legendaries to roads/POIs</label>
+      <input type="checkbox" id="legendarySnapToggle">
+    </div>
     <div class="row" title="On the map, sprites render at their native pixel size. Everywhere else (encounter, Pokédex, silhouettes) they are zoomed to fill their box, so small creatures look chunky and inconsistent. Turn this on to render every sprite at native size everywhere — one sprite pixel is the same size in every view.">
       <label for="consistentIconWidthToggle">Consistent poké icon size (no zoom)</label>
       <input type="checkbox" id="consistentIconWidthToggle">
@@ -7850,6 +7854,9 @@ function fmtDate(ts) {
     { key: 'cc.memBadge',             values: _ONOFF },
     { key: 'cc.debugConsole',         values: _ONOFF },
     { key: 'cc.steadyCatch',          values: _ONOFF },
+    // Default-ON: unset means snapping is active; only an explicit '0'
+    // disables it (see the toggle wiring + _applyLegendarySnapSetting).
+    { key: 'cc.legendarySnap',        values: _ONOFF },
     { key: 'cc.consistentIconWidth',  values: _ONOFF },
     { key: 'cc.buildingPois',         values: _ONOFF },
     { key: 'cc.renderBuildings',      values: _ONOFF },
@@ -11610,9 +11617,17 @@ function fmtDate(ts) {
     }
     return null;
   }
-  if (window.Spawns && typeof Spawns.setLegendarySnapProvider === 'function') {
-    Spawns.setLegendarySnapProvider(legendarySnapTarget);
-  }
+  // The "Snap legendaries to roads/POIs" settings toggle (default ON)
+  // gates registration; setLegendarySnapProvider clears the engine's
+  // per-id snap cache, so flipping the toggle re-resolves positions on
+  // the next overlay refresh. Exposed so the toggle wiring and the
+  // post-import settings re-sync can re-apply it.
+  window._applyLegendarySnapSetting = function () {
+    if (!window.Spawns || typeof Spawns.setLegendarySnapProvider !== 'function') return;
+    const on = localStorage.getItem('cc.legendarySnap') !== '0';
+    Spawns.setLegendarySnapProvider(on ? legendarySnapTarget : null);
+  };
+  window._applyLegendarySnapSetting();
 
   // Hand creatures.js a locally-scoped POI query — the POI array lives
   // inside this IIFE and we don't want to scatter loadAllPois() calls.
@@ -17807,6 +17822,20 @@ function fmtDate(ts) {
     });
   }
 
+  // "Snap legendaries to roads/POIs" — default ON (unset key means on).
+  // The provider swap clears the engine's snap cache, so legendaries
+  // re-resolve to raw/snapped positions on the next overlay refresh.
+  const legendarySnapToggle = document.getElementById('legendarySnapToggle');
+  if (legendarySnapToggle) {
+    legendarySnapToggle.checked = localStorage.getItem('cc.legendarySnap') !== '0';
+    legendarySnapToggle.addEventListener('change', () => {
+      localStorage.setItem('cc.legendarySnap', legendarySnapToggle.checked ? '1' : '0');
+      if (typeof window._applyLegendarySnapSetting === 'function') {
+        window._applyLegendarySnapSetting();
+      }
+    });
+  }
+
   // "Consistent poké icon size" — pure CSS: add cc-consistent-icons to <html>
   // so sprites render at native size (the map idiom) instead of being zoomed
   // to fill their box. No re-render or cache clear needed, only a reflow.
@@ -18098,6 +18127,12 @@ function fmtDate(ts) {
 
     setChecked('wifiOnlyToggle', on('cc.wifiOnly'));
     setChecked('steadyCatchToggle', on('cc.steadyCatch'));
+
+    // Default-ON toggle: unset means snapping is active.
+    setChecked('legendarySnapToggle', get('cc.legendarySnap') !== '0');
+    if (typeof window._applyLegendarySnapSetting === 'function') {
+      try { window._applyLegendarySnapSetting(); } catch (e) { console.error(e); }
+    }
 
     setChecked('consistentIconWidthToggle', on('cc.consistentIconWidth'));
     try {
