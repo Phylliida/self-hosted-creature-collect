@@ -11529,6 +11529,91 @@ function fmtDate(ts) {
   // Expose for diagnostics / future consumers.
   window._searchPois = searchPois;
 
+  // ── Legendary spawn snapping (roads first, then POIs, else hidden) ──
+  // spawns.js rolls legendary positions uniformly inside ~11 m cells —
+  // which can land them in backyards, water, private property, etc. Here
+  // we hand the engine a snap provider: a rolled position is moved to the
+  // nearest walk-graph (road) node within 2 km, else the nearest POI
+  // within 2 km, else the legendary is hidden entirely. Snap targets come
+  // from downloaded region data only, so a legendary in an area with no
+  // downloaded map data is hidden too (safe default — we can't verify the
+  // spot is somewhere a player should go).
+  const LEG_SNAP_MAX_M = 2000;
+  // regionId -> { nodeLng, nodeLat, N } | null (region has no routing.bin).
+  // Lazy-warmed from IDB on first query near a region; routing views are
+  // zero-copy typed-array views over the IDB buffer.
+  const _legSnapRoadGraphs = new Map();
+  const _legSnapRoadLoading = new Set();
+  // Kick off async loads for any not-yet-cached regions intersecting the
+  // 2 km circle around (lat, lng). Returns true while any intersecting
+  // region's road data is still unresolved (caller hides the legendary
+  // this pass so roads keep priority over POIs once loaded).
+  function _legSnapWarmRoadGraphs(lat, lng) {
+    if (!window.RegionPicker || !window._regionsManifest) return true;
+    const padLat = LEG_SNAP_MAX_M / 111000;
+    const cosLat = Math.max(0.2, Math.cos(lat * Math.PI / 180));
+    const padLng = padLat / cosLat;
+    const regs = window.RegionPicker.findByBbox(
+      lng - padLng, lat - padLat, lng + padLng, lat + padLat);
+    let pending = false;
+    for (const r of regs) {
+      if (_legSnapRoadGraphs.has(r.id)) continue;
+      pending = true;
+      if (_legSnapRoadLoading.has(r.id)) continue;
+      _legSnapRoadLoading.add(r.id);
+      loadRoutingGraphs(new Set([r.id])).then((recs) => {
+        const rec = recs.find((x) => x.regionId === r.id);
+        if (rec) {
+          try {
+            const v = viewRoutingRegion(rec.buffer);
+            _legSnapRoadGraphs.set(r.id, { nodeLng: v.nodeLng, nodeLat: v.nodeLat, N: v.N });
+          } catch { _legSnapRoadGraphs.set(r.id, null); }
+        } else {
+          _legSnapRoadGraphs.set(r.id, null);
+        }
+      }).catch(() => { _legSnapRoadGraphs.set(r.id, null); })
+        .finally(() => { _legSnapRoadLoading.delete(r.id); });
+    }
+    return pending;
+  }
+  // Nearest cached road-graph node to (lat, lng). Cheap squared-degrees
+  // scan (same as findNearestWalkNodeMulti) — provider calls are rare
+  // (legendary candidates only) and results are cached by spawns.js.
+  function _legSnapNearestRoad(lat, lng) {
+    let best = null, bestD2 = Infinity;
+    for (const g of _legSnapRoadGraphs.values()) {
+      if (!g) continue;
+      const lngs = g.nodeLng, lats = g.nodeLat;
+      for (let i = 0; i < g.N; i++) {
+        const dLng = lngs[i] - lng, dLat = lats[i] - lat;
+        const d2 = dLng * dLng + dLat * dLat;
+        if (d2 < bestD2) { bestD2 = d2; best = { lat: lats[i], lng: lngs[i] }; }
+      }
+    }
+    if (!best) return null;
+    return { lat: best.lat, lng: best.lng, distanceM: haversineKm(lat, lng, best.lat, best.lng) * 1000 };
+  }
+  function legendarySnapTarget(lat, lng) {
+    if (_legSnapWarmRoadGraphs(lat, lng)) return null;  // road data in flight
+    const road = _legSnapNearestRoad(lat, lng);
+    if (road && road.distanceM <= LEG_SNAP_MAX_M) {
+      return { lat: road.lat, lng: road.lng, kind: 'road' };
+    }
+    let best = null, bestKm = Infinity;
+    for (const p of allPois) {
+      if (!p) continue;
+      const d = haversineKm(lat, lng, p.lat, p.lng);
+      if (d < bestKm) { bestKm = d; best = p; }
+    }
+    if (best && bestKm * 1000 <= LEG_SNAP_MAX_M) {
+      return { lat: best.lat, lng: best.lng, kind: 'poi' };
+    }
+    return null;
+  }
+  if (window.Spawns && typeof Spawns.setLegendarySnapProvider === 'function') {
+    Spawns.setLegendarySnapProvider(legendarySnapTarget);
+  }
+
   // Hand creatures.js a locally-scoped POI query — the POI array lives
   // inside this IIFE and we don't want to scatter loadAllPois() calls.
   // Returns the nearest POI with a name within `maxMeters`, or null.

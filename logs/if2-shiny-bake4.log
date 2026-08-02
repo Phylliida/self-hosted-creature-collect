@@ -1,0 +1,95 @@
+baking 82369 family pairs (287 roots × 287 roots)
+  resuming from checkpoint: 40921 pairs done, 41448 to go
+  baking in parallel across 3 workers…
+  [500/41448] 17.5 pairs/s, ETA 39.1m, 41334 non-empty
+  [1000/41448] 11.8 pairs/s, ETA 57.0m, 41833 non-empty
+  [1500/41448] 6.3 pairs/s, ETA 105.7m, 42333 non-empty
+  [2000/41448] 5.4 pairs/s, ETA 121.4m, 42833 non-empty
+  [2500/41448] 5.2 pairs/s, ETA 125.8m, 43333 non-empty
+  [3000/41448] 5.4 pairs/s, ETA 119.5m, 43833 non-empty
+  [3500/41448] 5.5 pairs/s, ETA 114.7m, 44333 non-empty
+  [4000/41448] 6.0 pairs/s, ETA 104.6m, 44828 non-empty
+  [4500/41448] 6.2 pairs/s, ETA 98.7m, 45321 non-empty
+  [5000/41448] 6.6 pairs/s, ETA 91.7m, 45821 non-empty
+  [5500/41448] 6.9 pairs/s, ETA 87.2m, 46299 non-empty
+  [6000/41448] 7.3 pairs/s, ETA 81.1m, 46787 non-empty
+  [6500/41448] 7.4 pairs/s, ETA 78.9m, 47284 non-empty
+  [7000/41448] 7.4 pairs/s, ETA 77.3m, 47784 non-empty
+  [7500/41448] 7.7 pairs/s, ETA 73.5m, 48284 non-empty
+  [8000/41448] 7.6 pairs/s, ETA 73.5m, 48784 non-empty
+  [8500/41448] 7.6 pairs/s, ETA 71.9m, 49283 non-empty
+  [9000/41448] 7.8 pairs/s, ETA 69.7m, 49781 non-empty
+  [9500/41448] 7.6 pairs/s, ETA 70.0m, 50281 non-empty
+  [10000/41448] 7.6 pairs/s, ETA 68.9m, 50781 non-empty
+  [10500/41448] 7.5 pairs/s, ETA 69.0m, 51281 non-empty
+  [11000/41448] 7.3 pairs/s, ETA 69.5m, 51781 non-empty
+  [11500/41448] 7.2 pairs/s, ETA 69.8m, 52281 non-empty
+  [12000/41448] 7.2 pairs/s, ETA 68.4m, 52781 non-empty
+  [12500/41448] 6.9 pairs/s, ETA 69.6m, 53281 non-empty
+  [13000/41448] 6.9 pairs/s, ETA 69.2m, 53781 non-empty
+  [13500/41448] 6.9 pairs/s, ETA 67.6m, 54281 non-empty
+  [14000/41448] 6.8 pairs/s, ETA 67.0m, 54781 non-empty
+  [14500/41448] 6.8 pairs/s, ETA 66.4m, 55281 non-empty
+  [15000/41448] 6.7 pairs/s, ETA 66.2m, 55781 non-empty
+  [15500/41448] 6.6 pairs/s, ETA 66.0m, 56280 non-empty
+  [16000/41448] 6.5 pairs/s, ETA 65.2m, 56780 non-empty
+  [16500/41448] 6.4 pairs/s, ETA 64.7m, 57280 non-empty
+  [17000/41448] 6.5 pairs/s, ETA 62.9m, 57780 non-empty
+  [17500/41448] 6.4 pairs/s, ETA 62.8m, 58280 non-empty
+  [18000/41448] 6.4 pairs/s, ETA 61.3m, 58779 non-empty
+  [18500/41448] 6.4 pairs/s, ETA 59.7m, 59279 non-empty
+  [19000/41448] 6.5 pairs/s, ETA 57.5m, 59779 non-empty
+  [19500/41448] 6.5 pairs/s, ETA 56.2m, 60279 non-empty
+  [20000/41448] 6.5 pairs/s, ETA 55.2m, 60779 non-empty
+  [20500/41448] 6.5 pairs/s, ETA 53.6m, 61278 non-empty
+  [21000/41448] 6.6 pairs/s, ETA 51.8m, 61778 non-empty
+  [21500/41448] 6.7 pairs/s, ETA 49.9m, 62278 non-empty
+  [22000/41448] 6.8 pairs/s, ETA 47.9m, 62754 non-empty
+  [22500/41448] 6.8 pairs/s, ETA 46.2m, 63254 non-empty
+  [23000/41448] 6.8 pairs/s, ETA 44.9m, 63754 non-empty
+  [23500/41448] 6.8 pairs/s, ETA 43.9m, 64254 non-empty
+  [24000/41448] 6.8 pairs/s, ETA 42.6m, 64754 non-empty
+  [24500/41448] 6.9 pairs/s, ETA 40.8m, 65252 non-empty
+  [25000/41448] 7.0 pairs/s, ETA 39.2m, 65751 non-empty
+  [25500/41448] 7.0 pairs/s, ETA 37.8m, 66251 non-empty
+  [26000/41448] 7.0 pairs/s, ETA 36.7m, 66751 non-empty
+  [26500/41448] 7.0 pairs/s, ETA 35.6m, 67251 non-empty
+  [27000/41448] 7.0 pairs/s, ETA 34.2m, 67750 non-empty
+  [27500/41448] 6.9 pairs/s, ETA 33.6m, 68250 non-empty
+  [28000/41448] 6.9 pairs/s, ETA 32.5m, 68749 non-empty
+  [28500/41448] 6.9 pairs/s, ETA 31.1m, 69249 non-empty
+  [29000/41448] 6.9 pairs/s, ETA 30.3m, 69749 non-empty
+  [29500/41448] 6.9 pairs/s, ETA 28.9m, 70248 non-empty
+  [30000/41448] 7.0 pairs/s, ETA 27.5m, 70748 non-empty
+  [30500/41448] 7.0 pairs/s, ETA 26.0m, 71246 non-empty
+  [31000/41448] 7.0 pairs/s, ETA 24.9m, 71743 non-empty
+  [31500/41448] 6.9 pairs/s, ETA 23.9m, 72243 non-empty
+  [32000/41448] 6.9 pairs/s, ETA 22.7m, 72743 non-empty
+  [32500/41448] 6.9 pairs/s, ETA 21.6m, 73243 non-empty
+  [33000/41448] 6.9 pairs/s, ETA 20.4m, 73743 non-empty
+  [33500/41448] 6.9 pairs/s, ETA 19.2m, 74243 non-empty
+  [34000/41448] 6.9 pairs/s, ETA 18.0m, 74742 non-empty
+  [34500/41448] 7.0 pairs/s, ETA 16.6m, 75242 non-empty
+  [35000/41448] 7.0 pairs/s, ETA 15.4m, 75742 non-empty
+  [35500/41448] 7.0 pairs/s, ETA 14.2m, 76242 non-empty
+  [36000/41448] 7.0 pairs/s, ETA 12.9m, 76742 non-empty
+  [36500/41448] 7.0 pairs/s, ETA 11.7m, 77242 non-empty
+  [37000/41448] 7.1 pairs/s, ETA 10.5m, 77741 non-empty
+  [37500/41448] 7.0 pairs/s, ETA 9.3m, 78241 non-empty
+  [38000/41448] 7.0 pairs/s, ETA 8.2m, 78740 non-empty
+  [38500/41448] 7.1 pairs/s, ETA 6.9m, 79180 non-empty
+  [39000/41448] 7.1 pairs/s, ETA 5.7m, 79680 non-empty
+  [39500/41448] 7.1 pairs/s, ETA 4.6m, 80178 non-empty
+  [40000/41448] 7.1 pairs/s, ETA 3.4m, 80678 non-empty
+  [40500/41448] 7.1 pairs/s, ETA 2.2m, 81178 non-empty
+  [41000/41448] 7.1 pairs/s, ETA 1.1m, 81678 non-empty
+  [41448/41448] 7.1 pairs/s, ETA 0.0m, 82126 non-empty
+
+bake complete in 97.8m
+  82126 family pairs
+  → data/BundledData-if2/shiny-palettes.json  (26837.3 KB)
+wrote data/BundledData-if2/shiny-palettes.bin
+  82,126 entries  (4,270,568 bytes / 4170.5 KB)
+  source JSON: 27,481,436 bytes / 26837.3 KB
+  shrink: 15.5%
+  bin gzipped: 4,229,688 bytes / 4130.6 KB
