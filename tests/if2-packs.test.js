@@ -127,6 +127,19 @@ assert ob[:4] == b'SHIN'
 ver, cnt, _ = struct.unpack_from('<III', ob, 4)
 assert cnt == 1 and ob[16:] == e, (cnt, len(ob))
 
+# SHIN v3: shared codebook (K=2) + 16B u8-index entries — the codebook
+# must be copied verbatim and only entries filtered
+cb = bytes(range(8))
+e3 = struct.pack('<HH', 1, 3) + bytes(range(12))
+f3 = struct.pack('<HH', 1, 9) + bytes(range(12, 24))
+(tmp / 'in3.bin').write_bytes(b'SHIN' + struct.pack('<III', 3, 2, 2) + cb + e3 + f3)
+drv.slice_shin(tmp / 'in3.bin', tmp / 'out3.bin', keep)
+ob3 = (tmp / 'out3.bin').read_bytes()
+assert ob3[:4] == b'SHIN'
+ver3, cnt3, k3 = struct.unpack_from('<III', ob3, 4)
+assert (ver3, cnt3, k3) == (3, 1, 2), (ver3, cnt3, k3)
+assert ob3[16:24] == cb and ob3[24:] == e3, (len(ob3),)
+
 # Sheet blanking: 10-col sheet, 2 rows; body 1 kept, body 2 blanked
 img = Image.new('RGBA', (960, 192), (0, 0, 0, 0))
 for b in (1, 2):

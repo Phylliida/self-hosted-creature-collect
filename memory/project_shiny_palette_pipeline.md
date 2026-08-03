@@ -1,17 +1,26 @@
 ---
 name: project_shiny_palette_pipeline
-description: How shiny palettes are baked; autogen-fallback fix; regen is a 2-step build (--all --jobs → to-bin)
+description: Shiny pipeline — master codebook (build-shiny-codebook.py, append-only, bin v3); legacy 2-step bake retained for reference; cell-reader bug history
 metadata:
   type: project
 ---
 
-Shiny variants are per-family-pair colour transforms (12 × (φ, ΔL, κ)) baked offline, NOT stored per sprite. Pipeline:
-1. `build-shiny-palettes.py --all --jobs N` → merges each family pair's sprite palette (OKLAB), farthest-point-samples 12 transforms, writes `data/BundledData/shiny-palettes.json`. Pairs with an empty palette are **skipped** (no entry).
-2. `shiny-palettes-to-bin.py` → packs JSON into `data/BundledData/shiny-palettes.bin` (format v2, 'SHIN' magic), which the app loads via `static/shiny-store.js` (`SHINY_RATE=0.001`).
-Runtime: a family pair with no `.bin` entry falls back to the identity transform → every "shiny" looks the SAME as the base = the bug below.
+Shiny variants are per-family-pair colour transforms (12 × (φ, ΔL, κ)) baked offline, NOT stored per sprite.
 
-**Bug fixed 2026-07-05 (entirely-autogen families had degenerate "same colour" shinies):** `merge_family_pair_palette` only loaded sprites listed in `cells.json`, but cells.json omits ~27% of fusions (many autogen-only) and 134 entries even lack the autogen slot 0. A family pair whose fusions are all absent → 0 sprites → empty palette → skipped → identity shiny. Fix: per fusion, if `iter_fusion_variants` yields no loadable sprite, fall back to the autogen cell (`open_fusion_cell(..., suffix='')`). Autogen sheets (`sprites/<A>/autogen/<A>.png`) exist for every fusion. Verified: e.g. roots 16×98 (Pidgey×Krabby) went 0 sprites → 6 sprites / 95 colours / 12 distinct transforms.
+**Current pipeline (since 2026-08-03): the master codebook.** `python3 build-shiny-codebook.py` is the ONLY regeneration entry point for both creature-fusion and creature-if2:
+- Master = `data/shiny-codebook.json`: one frozen 128-entry codebook of (φ, ΔL, κ) "types" + per-game sections (`games.creature-fusion`, `games.creature-if2`) mapping each family pair → 12 codebook indices. **Append-only**: existing entries + codebook are never recomputed — adding new art/species can no longer change shipped shiny colours (that was the point). `--init` (once, refused if master exists) derived the codebook via k-means over both legacy bakes and snapped them; re-runs only gap-fill NEW roster pairs (bake via build-shiny-palettes machinery against that game's bundle, snap; truly-grayscale pairs get a deterministic crc32-seeded default since hue transforms are no-ops on gray art). The two games share the PIF species id space (verified: all 199 overlapping names match) but keep separate sections because they were baked against different art.
+- Output: `shiny-palettes.bin` **format v3** (magic 'SHIN', header's 4th u32 = K, K×4B codebook, then 16B entries of u16 a/b + 12 u8 indices) written into each game's bundle dir — same filename as v2, so pack builds (`build-content-pack.py`) unchanged. `static/shiny-store.js` and `build-if2-packs.py slice_shin` accept both v2 and v3. Sizes: 154 KB (9,801 pairs) / 1.26 MB (82,369 pairs) vs 509 KB / 4.3 MB in v2.
+- k=128 rationale: `probe-shiny-codebook.py` — snapping costs mean OKLab ΔE ≈ 0.030 (~3 JND), no elbow (transforms uniformly spread by farthest-point design), pairs keep 12 distinct types down to k≈64; below ~48 within-pair diversity collapses.
+- Tests: `tests/shiny-codebook.test.js` (v3+v2 loader decode), v3 slice case in `tests/if2-packs.test.js`; `--verify` round-trips bins vs master.
 
-**Parallelism — READ THIS:** added `--jobs/-j` (default 1 serial; 0 = all CPUs) to `--all`. ~9,801 pairs are independent → `multiprocessing.Pool` with a `_worker_init` that loads the bundle once per worker. Serial ≈ 0.8 pairs/s (~3h). **⚠ On bepis's machine (runs under bwrap: tmpfs root, writes only allowed to /tmp + the working dir), the full-roster IF2 bake (82k pairs) OOM-crashed the computer at `--jobs 32` AND `--jobs 5` (2026-07/08). Use `--jobs 4` max. Keep the big build outputs on real disk: `packs/creature-if2` and `data/BundledData-if2` are symlinked to `/tmp/cc-build/` (/dev/sdb2, 3.5T) — do not move them back into tmpfs/RAM-backed paths. The bake now checkpoints every 500 pairs to `<output>.checkpoint` and resumes from it on restart — a crash no longer loses the run.** `--render-samples` is ignored when `--jobs>1`.
+**Legacy pipeline (superseded, kept for the old bakes):** `build-shiny-palettes.py --all --jobs 4` → `shiny-palettes-to-bin.py` (v2). Both games' master sections were initialized by snapping these bakes, NOT re-baking — so shipped colours are preserved. ⚠ The legacy bake read custom art WRONG (see bugs below): its palettes were autogen + wrong-cell custom art. Don't re-bake legacy pairs to "fix" this unless the user explicitly accepts colour changes.
 
-**To regenerate after any sprite/cells change:** `python build-shiny-palettes.py --all --jobs 4 && python shiny-palettes-to-bin.py` (safe worker count — see warning above). Related: [[reference_pokedex_architecture]].
+**Cell-reader bugs fixed 2026-08-03 (in `build-shiny-palettes.py`; affected every historical bake):**
+1. `iter_fusion_variants(a, b, ...)` looked up `cells[f'{a}-{b}']` + `manifest[str(b)]` — but cells.json is keyed `"<body>-<head>"` and manifest by head, so for fusion head=a/body=b it must be `cells[f'{b}-{a}']` + `manifest[str(a)]`. It also treated slot 0 (suffix '') as the autogen sheet — it's actually the no-letter CUSTOM sheet `custom/<a>.png` (autogen is not in cells.json at all).
+2. Custom sheets are **20 cols** (`CUSTOM_COLS` in build-bundled-data.py), not 10 — `open_fusion_cell` now takes `suffix=None`→autogen(10-col), `''/'a'/…`→custom(20-col).
+3. Zero-chroma variants (blank cell/grayscale art) no longer suppress the autogen fallback in `merge_family_pair_palette`.
+Effect: gap-fill recovery went from 23→140 real palettes (if2) and 4→13 (cf); remaining gaps (103 if2 + 4 cf) are genuinely grayscale fusions (hue transform = no-op → deterministic default entries).
+
+**Parallelism — READ THIS (legacy --all bake):** ~9,801 pairs independent → `--jobs` Pool. Serial ≈ 0.8 pairs/s (~3h). **⚠ On bepis's machine (bwrap: tmpfs root, writes only to /tmp + working dir), the full-roster IF2 bake (82k pairs) OOM-crashed at `--jobs 32` AND `--jobs 5`. Use `--jobs 4` max. Keep big build outputs on real disk: `packs/creature-if2` and `data/BundledData-if2` are symlinked to `/tmp/cc-build/` (/dev/sdb2) — do not move them into tmpfs/RAM-backed paths. The bake checkpoints every 500 pairs to `<output>.checkpoint` and resumes.**
+
+Related: [[reference_pokedex_architecture]].

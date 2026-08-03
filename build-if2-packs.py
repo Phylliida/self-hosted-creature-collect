@@ -61,11 +61,12 @@ CUSTOM_COLS = 20
 
 # Sprite-pack (.pack) format — see generate_sprite_packs.py.
 CRPP_MAGIC = b"CRPP"
-# Shiny palette bin format — see shiny-palettes-to-bin.py.
+# Shiny palette bin format — see shiny-palettes-to-bin.py (v2) and
+# build-shiny-codebook.py (v3, shared codebook + u8 index entries).
 SHIN_MAGIC = b"SHIN"
 SHIN_VERSION = 2
 SHIN_HEADER_BYTES = 16
-SHIN_ENTRY_BYTES = 52  # u16 a, u16 b + 12 x 4B quantized triples
+SHIN_ENTRY_BYTES = 52  # v2: u16 a, u16 b + 12 x 4B quantized triples
 
 
 # ── Subsets ──────────────────────────────────────────────────────────
@@ -138,17 +139,14 @@ def cmd_union(args) -> None:
     subprocess.run([sys.executable, "build-bundled-data.py"],
                    cwd=ROOT, env=env, check=True)
     if args.with_shiny:
-        print("→ Baking shiny palettes for the union pool (slow)...")
+        # Append-only master codebook: bakes only roster pairs missing
+        # from data/shiny-codebook.json and (re)emits the v3 bin into
+        # UNION_DIR. Existing pairs are never re-baked, so already-
+        # shipped shiny colours stay fixed. Fast unless many new
+        # species were added (those get a fresh bake, ~1 pair/s).
+        print("→ Updating shiny codebook + v3 bin for the union pool...")
         subprocess.run([
-            sys.executable, "build-shiny-palettes.py", "--all",
-            "--bundle-dir", str(UNION_DIR),
-            "--output-json", str(UNION_DIR / "shiny-palettes.json"),
-            "--jobs", str(args.jobs),
-        ], cwd=ROOT, env=env, check=True)
-        subprocess.run([
-            sys.executable, "shiny-palettes-to-bin.py",
-            "--input", str(UNION_DIR / "shiny-palettes.json"),
-            "--output", str(UNION_DIR / "shiny-palettes.bin"),
+            sys.executable, "build-shiny-codebook.py",
         ], cwd=ROOT, env=env, check=True)
     if not (UNION_DIR / "shiny-palettes.bin").is_file():
         print("→ No shiny-palettes.bin — writing empty header-only bin")
@@ -249,20 +247,35 @@ def slice_sprite_pack(src: Path, dst: Path, keep: frozenset) -> bool:
 
 def slice_shin(src: Path, dst: Path, keep: frozenset) -> None:
     """Filter a shiny-palettes.bin to entries whose (rootA, rootB) are
-    both in `keep`. Entries stay sorted — filtering preserves order."""
+    both in `keep`. Entries stay sorted — filtering preserves order.
+    Handles both v2 (52B entries, no codebook) and v3 (shared codebook +
+    16B entries of u8 indices — the codebook is copied verbatim)."""
     buf = src.read_bytes()
     if buf[:4] != SHIN_MAGIC:
         raise ValueError(f"bad magic in {src}")
-    version, count, _ = struct.unpack_from("<III", buf, 4)
+    version, count, third = struct.unpack_from("<III", buf, 4)
+    if version == 3:
+        k = third
+        codebook = buf[SHIN_HEADER_BYTES:SHIN_HEADER_BYTES + k * 4]
+        entry_bytes = 4 + 12  # u16 a, u16 b + 12 u8 indices
+        base = SHIN_HEADER_BYTES + k * 4
+    elif version == 2:
+        k = 0
+        codebook = b""
+        entry_bytes = SHIN_ENTRY_BYTES
+        base = SHIN_HEADER_BYTES
+    else:
+        raise ValueError(f"unsupported SHIN version {version} in {src}")
     entries = bytearray()
     kept = 0
     for i in range(count):
-        off = SHIN_HEADER_BYTES + i * SHIN_ENTRY_BYTES
+        off = base + i * entry_bytes
         a, b = struct.unpack_from("<HH", buf, off)
         if a in keep and b in keep:
-            entries += buf[off:off + SHIN_ENTRY_BYTES]
+            entries += buf[off:off + entry_bytes]
             kept += 1
-    dst.write_bytes(SHIN_MAGIC + struct.pack("<III", version, kept, 0) + entries)
+    dst.write_bytes(SHIN_MAGIC + struct.pack("<III", version, kept, k)
+                    + codebook + entries)
 
 
 def _load_bcp():
@@ -575,11 +588,11 @@ def main() -> None:
                     help="comma list of subsets to slice, e.g. '1,1-2,1-2-fam' "
                          "(default: all 62)")
     ap.add_argument("--with-shiny", action="store_true",
-                    help="union: also bake shiny palettes (hours)")
+                    help="union: also update the shiny codebook + v3 bin "
+                         "(append-only; slow only when new species need "
+                         "a first bake)")
     ap.add_argument("--jobs", type=int, default=1,
-                    help="parallel workers (shiny bake, and slice across subsets). "
-                         "WARNING: keep the shiny bake at 5 or below on this "
-                         "machine — 32 workers hard-crashed it (twice).")
+                    help="parallel workers for slicing across subsets.")
     args = ap.parse_args()
 
     if args.list_subsets:
