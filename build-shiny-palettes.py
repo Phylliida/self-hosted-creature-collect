@@ -123,15 +123,23 @@ def _open_sheet(path):
     return _SHEET_CACHE[key]
 
 
-def open_fusion_cell(sprites_dir, a, b, suffix='', cell_size=96, cols=10):
-    """Open one 96×96 cell out of a 10×16 fusion sheet.
-      suffix == ''  → sprites/<A>/autogen/<A>.png
-      suffix == 'a' → sprites/<A>/custom/<A>a.png  (and so on)
-    Cell B is at column B%10, row B//10."""
-    if suffix:
+def open_fusion_cell(sprites_dir, a, b, suffix=None, cell_size=96, cols=None):
+    """Open one 96×96 cell out of a fusion sheet (A = head, B = body).
+      suffix is None → sprites/<A>/autogen/<A>.png        (10 cols)
+      suffix == ''   → sprites/<A>/custom/<A>.png         (20 cols)
+      suffix == 'a'  → sprites/<A>/custom/<A>a.png        (20 cols)
+    Custom sheets are 20×29 (see CUSTOM_COLS in build-bundled-data.py);
+    reading them as 10-col crops the wrong cell. Note the no-letter
+    custom sheet is suffix '' — cells.json variant 0, NOT the autogen
+    sheet. Cell B is at column B%cols, row B//cols."""
+    if suffix is not None:
         sheet_path = sprites_dir / str(a) / 'custom' / f'{a}{suffix}.png'
+        default_cols = 20
     else:
         sheet_path = sprites_dir / str(a) / 'autogen' / f'{a}.png'
+        default_cols = 10
+    if cols is None:
+        cols = default_cols
     sheet = _open_sheet(sheet_path)
     if sheet is None:
         return None
@@ -143,13 +151,16 @@ def open_fusion_cell(sprites_dir, a, b, suffix='', cell_size=96, cols=10):
 
 
 def iter_fusion_variants(a, b, cells, manifest):
-    """Yield every (slot_idx, suffix) variant that exists for (a, b)
-    according to cells.json + manifest.json. Slot 0 is the autogen
-    (empty suffix); other slots are custom-artist suffixes."""
-    slots = cells.get(f'{a}-{b}')
+    """Yield every (slot_idx, suffix) custom-art variant that exists for
+    the fusion with HEAD a and BODY b, according to cells.json +
+    manifest.json. cells.json is keyed "<body>-<head>" and lists variant
+    indices into manifest[str(head)] (see build-bundled-data.py); the
+    autogen sheet is not listed there — variant 0 (suffix '') is the
+    no-letter CUSTOM sheet custom/<a>.png."""
+    slots = cells.get(f'{b}-{a}')
     if not slots:
         return
-    suffixes = manifest.get(str(b), [])
+    suffixes = manifest.get(str(a), [])
     for slot in slots:
         if slot < 0 or slot >= len(suffixes):
             continue
@@ -180,24 +191,35 @@ def merge_family_pair_palette(sprites_dir, family_a, family_b,
                 img = open_fusion_cell(sprites_dir, a, b, suffix=suffix)
                 if img is None:
                     continue
+                colors = probe.extract_sprite_test_colors(img, top_n=top_n)
+                # A variant that loads but yields zero chromatic colors
+                # (blank cell, or grayscale art) doesn't count as loaded —
+                # otherwise it suppresses the autogen fallback below and
+                # the whole fusion contributes nothing (seen on e.g.
+                # 131×125 where cells.json lists only a blank custom slot).
+                if not colors:
+                    continue
                 loaded_here += 1
-                for (rgb, w) in probe.extract_sprite_test_colors(
-                        img, top_n=top_n):
+                for (rgb, w) in colors:
                     combined[rgb] += w
             # Fallback to the autogen sprite when this fusion contributed
-            # nothing — either it's absent from cells.json (which omits many
-            # autogen-only fusions) or its listed custom art is missing on
-            # disk. Without this, a family pair whose fusions are ALL
-            # autogen-only merges zero sprites → empty palette → no shiny
-            # transforms → a degenerate "same colour" shiny. Autogen sheets
-            # exist for every fusion, so this guarantees a real palette.
+            # nothing — either it has no custom art in cells.json, the
+            # listed custom files are missing on disk, or everything that
+            # loaded was blank/grayscale. Without this, a family pair
+            # whose fusions are ALL autogen-only merges zero sprites →
+            # empty palette → no shiny transforms → a degenerate
+            # "same colour" shiny. Autogen sheets exist for every fusion,
+            # so this guarantees a real palette whenever the fusion has
+            # any chromatic pixels at all.
             if loaded_here == 0:
-                img = open_fusion_cell(sprites_dir, a, b, suffix='')
+                img = open_fusion_cell(sprites_dir, a, b)
                 if img is not None:
-                    loaded_here += 1
-                    for (rgb, w) in probe.extract_sprite_test_colors(
-                            img, top_n=top_n):
-                        combined[rgb] += w
+                    colors = probe.extract_sprite_test_colors(
+                        img, top_n=top_n)
+                    if colors:
+                        loaded_here += 1
+                        for (rgb, w) in colors:
+                            combined[rgb] += w
             n_sprites += loaded_here
     return list(combined.items()), n_sprites
 

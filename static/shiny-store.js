@@ -2,16 +2,21 @@
 // applies the per-family-pair (φ, ΔL, κ) OKLAB transform to source
 // sprite blobs to produce shiny variants.
 //
-// Bin layout (mirrored from shiny-palettes-to-bin.py, format v2):
+// Bin layout (mirrored from shiny-palettes-to-bin.py / build-shiny-codebook.py):
 //   0  4   magic 'SHIN'
-//   4  4   version (u32 = 2)
+//   4  4   version (u32): 2 or 3
 //   8  4   entry count (u32)
-//   12 4   reserved
-//   16 …   entries (52 bytes each), sorted by (rootA, rootB)
-//     Per entry:
-//       rootA u16   (covers PIF ids up to 503)
-//       rootB u16
-//       12 × { phi int16, deltaL int8, kappa u8 }
+//   12 4   v2: reserved (0) — v3: codebook size K (u32)
+//
+//   v2 (legacy; entries start at 16, 52 bytes each, sorted by (rootA, rootB)):
+//     rootA u16, rootB u16, 12 × { phi int16, deltaL int8, kappa u8 }
+//
+//   v3 (codebook — see build-shiny-codebook.py):
+//     16 …   K × 4B codebook triples (same phi/deltaL/kappa encoding)
+//     then entries (16 bytes each), sorted by (rootA, rootB):
+//       rootA u16, rootB u16, 12 × u8 codebook indices
+//     Each pair's 12 slots point into the shared frozen codebook, so
+//     adding new art/species never changes an existing pair's shinies.
 //
 // φ ∈ [-π, π], ΔL ∈ [-0.20, 0.20] in OKLAB L, κ ∈ [0.5, 1.5].
 // All round-trip errors well under perceptual JND — see HANDOFF.md.
@@ -37,9 +42,9 @@
     .replace(/\/$/, '');
 
   const MAGIC = 'SHIN';
-  const VERSION = 2;
   const HEADER_BYTES = 16;
-  const ENTRY_BYTES = 52;  // v2: rootA/rootB are uint16 (was uint8)
+  const ENTRY_BYTES_V2 = 52;  // v2: rootA/rootB uint16 + 12×4B triples
+  const ENTRY_BYTES_V3 = 16;  // v3: rootA/rootB uint16 + 12×u8 indices
   const TRIPLES_PER_ENTRY = 12;
   const DELTA_L_RANGE = 0.20;
   const KAPPA_MIN = 0.5;
@@ -91,31 +96,69 @@
         throw new Error(`shiny-palettes.bin: bad magic "${magic}"`);
       }
       const version = view.getUint32(4, true);
-      if (version !== VERSION) {
-        throw new Error(`shiny-palettes.bin: unsupported version ${version}`);
-      }
       const count = view.getUint32(8, true);
-      const expectedSize = HEADER_BYTES + count * ENTRY_BYTES;
-      if (buf.byteLength < expectedSize) {
-        throw new Error(
-          `shiny-palettes.bin: truncated (got ${buf.byteLength}, ` +
-          `expected ${expectedSize})`);
-      }
-      let off = HEADER_BYTES;
-      for (let i = 0; i < count; i++) {
-        const rootA = view.getUint16(off,     true);
-        const rootB = view.getUint16(off + 2, true);
-        const triples = new Float32Array(TRIPLES_PER_ENTRY * 3);
-        let tOff = off + 4;
-        for (let j = 0; j < TRIPLES_PER_ENTRY; j++) {
-          triples[j * 3 + 0] = view.getInt16(tOff,     true) / 32767 * Math.PI;
-          triples[j * 3 + 1] = view.getInt8 (tOff + 2)         / 127   * DELTA_L_RANGE;
-          triples[j * 3 + 2] = KAPPA_MIN
-                             + view.getUint8(tOff + 3) / 255 * KAPPA_SPAN;
-          tOff += 4;
+      if (version === 2) {
+        const expectedSize = HEADER_BYTES + count * ENTRY_BYTES_V2;
+        if (buf.byteLength < expectedSize) {
+          throw new Error(
+            `shiny-palettes.bin: truncated (got ${buf.byteLength}, ` +
+            `expected ${expectedSize})`);
         }
-        _palettes.set(_key(rootA, rootB), triples);
-        off += ENTRY_BYTES;
+        let off = HEADER_BYTES;
+        for (let i = 0; i < count; i++) {
+          const rootA = view.getUint16(off,     true);
+          const rootB = view.getUint16(off + 2, true);
+          const triples = new Float32Array(TRIPLES_PER_ENTRY * 3);
+          let tOff = off + 4;
+          for (let j = 0; j < TRIPLES_PER_ENTRY; j++) {
+            triples[j * 3 + 0] = view.getInt16(tOff,     true) / 32767 * Math.PI;
+            triples[j * 3 + 1] = view.getInt8 (tOff + 2)         / 127   * DELTA_L_RANGE;
+            triples[j * 3 + 2] = KAPPA_MIN
+                               + view.getUint8(tOff + 3) / 255 * KAPPA_SPAN;
+            tOff += 4;
+          }
+          _palettes.set(_key(rootA, rootB), triples);
+          off += ENTRY_BYTES_V2;
+        }
+      } else if (version === 3) {
+        const K = view.getUint32(12, true);
+        const expectedSize = HEADER_BYTES + K * 4 + count * ENTRY_BYTES_V3;
+        if (buf.byteLength < expectedSize) {
+          throw new Error(
+            `shiny-palettes.bin: truncated (got ${buf.byteLength}, ` +
+            `expected ${expectedSize})`);
+        }
+        // Decode the shared codebook once; entries are u8 indices into it.
+        const codebook = new Float32Array(K * 3);
+        let cOff = HEADER_BYTES;
+        for (let j = 0; j < K; j++) {
+          codebook[j * 3 + 0] = view.getInt16(cOff,     true) / 32767 * Math.PI;
+          codebook[j * 3 + 1] = view.getInt8 (cOff + 2)         / 127   * DELTA_L_RANGE;
+          codebook[j * 3 + 2] = KAPPA_MIN
+                              + view.getUint8(cOff + 3) / 255 * KAPPA_SPAN;
+          cOff += 4;
+        }
+        let off = HEADER_BYTES + K * 4;
+        for (let i = 0; i < count; i++) {
+          const rootA = view.getUint16(off,     true);
+          const rootB = view.getUint16(off + 2, true);
+          const triples = new Float32Array(TRIPLES_PER_ENTRY * 3);
+          for (let j = 0; j < TRIPLES_PER_ENTRY; j++) {
+            const idx = view.getUint8(off + 4 + j);
+            if (idx >= K) {
+              throw new Error(
+                `shiny-palettes.bin: codebook index ${idx} out of range ` +
+                `(K=${K}) for entry ${rootA}-${rootB}`);
+            }
+            triples[j * 3 + 0] = codebook[idx * 3 + 0];
+            triples[j * 3 + 1] = codebook[idx * 3 + 1];
+            triples[j * 3 + 2] = codebook[idx * 3 + 2];
+          }
+          _palettes.set(_key(rootA, rootB), triples);
+          off += ENTRY_BYTES_V3;
+        }
+      } else {
+        throw new Error(`shiny-palettes.bin: unsupported version ${version}`);
       }
       _ready = true;
       return true;

@@ -6159,6 +6159,25 @@ For storage of the cache itself: same IDB-backed pattern as existing
 sprite cache. Shiny blobs persist across sessions; the user only
 pays the transform cost once per shiny they encounter.
 
+## Addendum 2026-08-03 — superseded by the master codebook (bin v3)
+
+The per-pair bake + v2 bin described above has been replaced: adding
+new art changed a family pair's palette, and re-baking then shifted the
+shiny colours of already-shipped species. The pipeline is now
+`build-shiny-codebook.py`: a frozen 128-entry codebook of (φ, ΔL, κ)
+"types" with each family pair storing 12 indices into it, kept in the
+append-only master `data/shiny-codebook.json` (sections for both
+creature-fusion and creature-if2). It emits `shiny-palettes.bin`
+**format v3** (header's 4th u32 = codebook size K, K×4B codebook
+triples, then 16-byte entries of rootA/rootB u16 + 12 u8 indices);
+`static/shiny-store.js` and the IF2 slicer read both v2 and v3.
+Existing pairs were quantized from the bakes above, not re-baked —
+shipped colours are preserved (mean OKLab ΔE ≈ 0.030 at k=128; see
+`probe-shiny-codebook.py`). Also note the legacy bake read custom art
+at wrong cells (reversed cells.json body/head key, 10- vs 20-col custom
+sheets, slot 0 mistaken for autogen) — fixed in build-shiny-palettes.py
+for gap-fills, but the historical bakes were left as-is on purpose.
+
 ## Real next steps now that the bake is in hand
 
 The algorithm is settled and the data is baked. Remaining engineering
