@@ -16,7 +16,7 @@ mdb-725	https://www.arcgis.com/sharing/rest/content/items/d78a1c1ad6a940009de8b6
 mdb-726	https://maps.durham.ca/OpenDataGTFS/GTFS_Durham_TXT.zip	Durham Region Transit / Ajax / Ontario	https://files.mobilitydatabase.org/mdb-726/latest.zip
 mdb-728	https://www.yrt.ca/google/google_transit.zip	York Region Transit / Aurora / Ontario	https://files.mobilitydatabase.org/mdb-728/latest.zip
 mdb-730	https://www.miapp.ca/GTFS/google_transit.zip	MiWay / Brampton / Ontario	https://files.mobilitydatabase.org/mdb-730/latest.zip
-mdb-732	http://opendata.toronto.ca/toronto.transit.commission/ttc-routes-and-schedules/OpenData_TTC_Schedules.zip	Toronto Transit Commission (TTC) / North York / Ontario	
+mdb-732	http://opendata.toronto.ca/toronto.transit.commission/ttc-routes-and-schedules/OpenData_TTC_Schedules.zip	Toronto Transit Commission (TTC) / North York / Ontario	https://files.mobilitydatabase.org/mdb-732/latest.zip
 mdb-733	https://api.cityofkingston.ca/gtfs/gtfs.zip	Kingston Transit / Kingston / Ontario	https://files.mobilitydatabase.org/mdb-733/latest.zip
 mdb-734	http://gtfs.halifax.ca/static/google_transit.zip	Halifax Transit / Beaver Bank / Nova Scotia	https://files.mobilitydatabase.org/mdb-734/latest.zip
 mdb-735	https://www.viarail.ca/sites/all/files/gtfs/viarail.zip	VIA Rail Canada / Manitoba	https://files.mobilitydatabase.org/mdb-735/latest.zip
@@ -134,3 +134,4 @@ mdb-3150	https://webapps.regionofwaterloo.ca/api/grt-routes/api/staticfeeds/1	GR
 mdb-3190	https://www.stlaval.ca/datas/opendata/GTF_STL.zip	Société de transport de Laval / Laval / Quebec	https://files.mobilitydatabase.org/mdb-3190/latest.zip
 tld-821	https://addtransit.com/gtfsfile/42017/VictoriaClipper.zip	The Victoria Clipper / Victoria / British Columbia	https://files.mobilitydatabase.org/tld-821/latest.zip
 tld-6691	https://gtfs.gpmmom.ca/gtfs/gtfs.zip	Réseau express métropolitain / Montreal / Quebec	https://files.mobilitydatabase.org/tld-6691/latest.zip
+tld-6712	https://www.donneesquebec.ca/recherche/dataset/a2d3c9de-4045-41e3-b2ea-5bb64bd8c50f/resource/71d94f75-5a36-4789-b581-a21d49dcd5f5/download/gtfs-sttr-hiv24.zip	Société de transport de Trois-Rivières / Trois-Rivières / Quebec	https://files.mobilitydatabase.org/tld-6712/latest.zip
