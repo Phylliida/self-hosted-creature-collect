@@ -723,42 +723,57 @@
   // Accessibility toggle (Settings → "Guaranteed catch"). When on, one
   // physical throw always ends in a catch — but the normal odds still
   // run underneath: hidden re-rolls consume real extra balls until the
-  // catch lands, and the shake phase is slowed so the whole sequence
-  // takes ~10% LONGER than those individual throws' animations would
-  // have (plus a re-aim allowance per hidden throw). Strain relief for
-  // repeated tapping, deliberately NOT a time or resource advantage.
+  // catch lands. The visible sequence takes a FIXED time per ball type
+  // (see _guaranteedThrowPlan): 10% longer than the expected total
+  // time of manual throwing with that ball, re-aims and all — so it's
+  // strain relief for repeated tapping, deliberately NOT a time or
+  // resource advantage.
   function _guaranteedCatchOn() {
     try { return localStorage.getItem('cc.steadyCatch') === '1'; }
     catch { return false; }
   }
-  // Pure planner for guaranteed-catch mode. rollShakes() returns 0-3
-  // successful shakes (3 = caught) at the ball's normal odds;
-  // tryConsume() pays for one hidden re-throw and returns false when
-  // the bag is empty (the FIRST ball is paid by the caller before this
-  // runs, matching the manual path). Returns the visible throw's
-  // wobble count + pacing.
+  // Pure planner for guaranteed-catch mode. rate is the ball's
+  // per-shake stay-closed probability; rollShakes() returns 0-3
+  // successful shakes (3 = caught) at those odds; tryConsume() pays
+  // for one hidden re-throw and returns false when the bag is empty
+  // (the FIRST ball is paid by the caller before this runs, matching
+  // the manual path). Returns the visible throw's wobble count +
+  // pacing.
   //
-  // Pacing math: the durations below estimate the manual path's stage
-  // animations (arc, suck-in, per-shake wobble+pause, catch ding,
-  // break-out) plus a small re-aim allowance between manual throws.
-  // The single visible sequence keeps arc/suck-in/ding at normal speed
-  // and stretches only the shake phase so that
-  //     visible total ≥ MARGIN × (manual animation total)
-  // holds for every outcome — verified in tests/guaranteed-catch.test.js.
-  function _guaranteedThrowPlan(rollShakes, tryConsume) {
+  // Pacing: the visible time is CONSTANT for a given ball — it does
+  // NOT grow with how many hidden re-rolls were needed. Only the ball
+  // cost varies. The constant is MARGIN × the expected total time of
+  // manual throwing with this ball (arc, suck-in, per-shake
+  // wobble+pause, catch ding, plus a re-aim allowance per re-throw),
+  // so the mode stays slightly SLOWER than playing by hand on
+  // average — and Poké Balls (lower rate → more expected re-throws)
+  // get a longer fixed time than Great Balls.
+  //
+  // Expectation math (rate r, per-throw catch probability p = r³):
+  //   E[shakes/throw] = r + r² + r³      (consecutive successes, capped at 3)
+  //   E[throws]       = 1 / p            (geometric)
+  //   E[end anim]     = p·CATCH_END + (1−p)·BREAK   (per throw)
+  //   E[manual time]  = E[throws]·(ARC + SUCK + E[shakes]·SHAKE + E[end])
+  //                     + (E[throws] − 1)·REAIM
+  // Verified against Monte-Carlo simulation in
+  // tests/guaranteed-catch.test.js.
+  function _guaranteedThrowPlan(rate, rollShakes, tryConsume) {
     const ARC = 650, SUCK = 480, SHAKE = 700, CATCH_END = 540,
       BREAK = 700, REAIM = 400, MARGIN = 1.1;
+    const pCatch = rate * rate * rate;
+    const expShakes = rate + rate * rate + pCatch;
+    const expThrows = 1 / pCatch;
+    const expEnd = pCatch * CATCH_END + (1 - pCatch) * BREAK;
+    const expManualMs = expThrows * (ARC + SUCK + expShakes * SHAKE + expEnd)
+      + (expThrows - 1) * REAIM;
+    const fixedTotalMs = expManualMs * MARGIN;
     let shakes = rollShakes();
     let caught = shakes === 3;
     let ballsUsed = 1;
-    let totalShakes = shakes;
-    let normalMs = ARC + SUCK + shakes * SHAKE + (caught ? CATCH_END : BREAK);
     while (!caught && tryConsume()) {
       ballsUsed++;
       shakes = rollShakes();
       caught = shakes === 3;
-      totalShakes += shakes;
-      normalMs += REAIM + ARC + SUCK + shakes * SHAKE + (caught ? CATCH_END : BREAK);
     }
     if (!caught) {
       // Bag ran dry with no successful roll: the creature breaks out
@@ -766,13 +781,11 @@
       // same balls manual throwing would have burned.
       return { caught: false, wobbles: shakes, wobbleMs: 380, pauseMs: 320, ballsUsed };
     }
-    // One slowed sequence: every hidden shake is shown, and the pace
-    // stretches so the total runs past the manual-time margin. per is
-    // the full wobble+pause slot; split in the same 380/320 ratio the
-    // manual path uses. Never faster than a normal shake.
-    const wobbles = Math.max(3, totalShakes);
-    const target = normalMs * MARGIN - (ARC + SUCK + CATCH_END);
-    const per = Math.max(SHAKE, target / wobbles);
+    // One fixed-time sequence: always 3 wobbles, with the wobble+pause
+    // slot sized so the total lands on fixedTotalMs exactly. Split the
+    // slot in the same 380/320 ratio the manual path uses.
+    const wobbles = 3;
+    const per = (fixedTotalMs - ARC - SUCK - CATCH_END) / wobbles;
     return {
       caught: true, wobbles, ballsUsed,
       wobbleMs: per * (380 / 700), pauseMs: per * (320 / 700),
@@ -11224,8 +11237,9 @@
   // Creatures.showSteadyCatchInfo(). Copy mirrors the mechanic in
   // _guaranteedThrowPlan: one visible throw always lands the catch, but the
   // ball's normal odds still run underneath — every hidden re-roll spends a
-  // real ball, and the shake phase is stretched (MARGIN 1.1 → ~10% longer)
-  // so it costs the same balls and a touch more time than throwing by hand.
+  // real ball, and the sequence takes a FIXED time per ball type (MARGIN 1.1
+  // → 10% longer than the expected manual time at those odds) no matter how
+  // many re-rolls happened. Same expected cost, a touch slower, less tapping.
   // If the bag empties before a roll succeeds, the creature breaks free.
   function _steadyCatchInfoHtml() {
     let h = '';
@@ -11256,9 +11270,11 @@
       + '<span class="cc-info-v">The catch rate is unchanged. A Great Ball still '
       + 'catches at Great Ball odds; rarer creatures are no cheaper to land.</span></div>';
     h += '<div class="cc-info-row"><span class="cc-info-k">Same-ish time</span>'
-      + '<span class="cc-info-v">The shakes are slowed so the whole sequence runs '
-      + 'about <b>10% longer</b> than those throws would have by hand (plus a beat '
-      + 'to re-aim each hidden throw). There\'s no speed advantage.</span></div>';
+      + '<span class="cc-info-v">The catch always takes the <b>same fixed time</b> '
+      + 'for a given ball: about <b>10% longer</b> than throwing by hand takes '
+      + 'on average, re-aiming and all. A stubborn catch doesn\'t drag on — but '
+      + 'a lucky one isn\'t instant either. Poké Balls take longer than Great '
+      + 'Balls, since they miss more. There\'s no speed advantage.</span></div>';
     h += '<div class="cc-info-row"><span class="cc-info-k">Just less tapping</span>'
       + '<span class="cc-info-v">The only thing it removes is the repeated tapping — '
       + 'helpful if that\'s uncomfortable or difficult.</span></div>';
@@ -12861,7 +12877,9 @@
         seenAll += r.seen; totalAll += r.total;
         if (r.seen >= r.total) done++;
       }
-      const overall = totalAll ? Math.round(seenAll / totalAll * 100) : 0;
+      // Floor, not round: the headline must not claim 100% while even
+      // one counted fusion is still unseen.
+      const overall = totalAll ? Math.floor(seenAll / totalAll * 100) : 0;
       statsEl.innerHTML =
         `<b>${overall}%</b> ${nonEvoOnly ? 'non-evolved' : 'overall'}`
         + ` · <b>${done}</b>/${counted} species complete`;
@@ -12875,7 +12893,9 @@
       cols: 1, rowGap: 6, cardHeight: 60,
       initialScrollTop: sheet ? sheet.scrollTop : 0,
       makeCardEl(r) {
-        const pct = Math.round(r.pct * 100);
+        // Floor, not round: 99.6% must read 99%, not 100% — 100 is
+        // reserved for actually-complete species.
+        const pct = Math.floor(r.pct * 100);
         const bonus = _speciesShinyBonus(r.seen, r.total);
         const card = document.createElement('div');
         card.className = 'completion-row';
@@ -12956,7 +12976,8 @@
     const seenAll = seenHead + seenBody;
     const statsEl = panel.querySelector('.speciesdex-stats');
     if (statsEl) {
-      const pct = total ? Math.round(seenAll / total * 100) : 0;
+      // Floor, not round: 100% only when truly 100% complete.
+      const pct = total ? Math.floor(seenAll / total * 100) : 0;
       statsEl.innerHTML = `<b>${pct}%</b> · ${seenAll}/${total} seen`;
     }
 
@@ -15220,10 +15241,11 @@
     if (_guaranteedCatchOn()) {
       // Guaranteed-catch accessibility mode: same odds and same balls
       // (hidden re-rolls consume extras via consumeItem — persisted as
-      // they happen), slower shakes so total time stays above the
-      // manual expectation — just one physical throw. See
-      // _guaranteedThrowPlan.
-      const plan = _guaranteedThrowPlan(rollShakes, () => consumeItem(ballKey, 1));
+      // they happen), but the visible sequence takes a FIXED time per
+      // ball type (110% of the expected manual time at this ball's
+      // odds) regardless of how many hidden throws were needed — just
+      // one physical throw. See _guaranteedThrowPlan.
+      const plan = _guaranteedThrowPlan(rate, rollShakes, () => consumeItem(ballKey, 1));
       shakes = plan.wobbles;
       caught = plan.caught;
       wobbleMs = plan.wobbleMs;

@@ -415,6 +415,7 @@
   #extrasPanel button.close.cc-x-btn,
   #directionsPanel button.close.cc-x-btn,
   #routingPanel button.close.cc-x-btn,
+  #search button.close.cc-x-btn,
   #poiCard button.close.cc-x-btn {
     /* !important on the visual resets to defeat per-theme overrides
        like `html[data-theme="win95"] button.close { background: ...
@@ -460,6 +461,7 @@
   #extrasPanel button.close.cc-x-btn:hover,
   #directionsPanel button.close.cc-x-btn:hover,
   #routingPanel button.close.cc-x-btn:hover,
+  #search button.close.cc-x-btn:hover,
   #poiCard button.close.cc-x-btn:hover {
     color: var(--ui-muted, #888) !important;
     background: transparent !important;
@@ -2100,7 +2102,21 @@
   #searchInput {
     width: 100%; padding: 10px 12px; font-size: 14px;
     box-sizing: border-box;
+    /* Right room for the × close bubble so typed text never slides
+       under it. */
+    padding-right: 38px;
   }
+  /* Search × — only positioning + visibility; visual comes from the
+     shared .cc-x-btn rule above (same as every other panel close).
+     Hidden unless there's something to close (query text, dropdown
+     open, or pins on the map) — see updateSearchCloseBtn(). */
+  #search button.close.cc-x-btn {
+    position: absolute;
+    top: calc(8px + env(safe-area-inset-top) + 4px);
+    right: 4px;
+    display: none;
+  }
+  #search.show-close button.close.cc-x-btn { display: inline-flex; }
   #searchFilter {
     width: 100%; padding: 8px 10px; font-size: 13px; margin-top: 4px;
     box-sizing: border-box;
@@ -3238,6 +3254,7 @@
 <div id="search">
   <input id="searchInput" type="search" placeholder="search (downloaded regions)"
          autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+  <button class="close cc-x-btn" id="searchClose" aria-label="clear search">×</button>
   <select id="searchFilter"><option value="">all types</option></select>
   <div id="searchResults"></div>
 </div>
@@ -3503,7 +3520,7 @@
       <label for="debugConsoleToggle">Debug console (errors overlay)</label>
       <input type="checkbox" id="debugConsoleToggle">
     </div>
-    <div class="row" title="One throw always catches — but the normal odds still run underneath: hidden re-rolls use up extra balls and the shakes run slower, so it costs the same and takes slightly longer than throwing manually. Reduces repeated tapping.">
+    <div class="row" title="One throw always catches — but the normal odds still run underneath: hidden re-rolls use up extra balls, and the catch takes a fixed time per ball type — 10% longer than manual throwing takes on average (Poké Balls longer than Great Balls, since they miss more). Reduces repeated tapping.">
       <label for="steadyCatchToggle">Guaranteed catch (accessibility)</label>
       <button type="button" id="steadyCatchInfoBtn" class="settings-info-btn"
         aria-label="How guaranteed catch works" title="How guaranteed catch works">i</button>
@@ -11289,6 +11306,17 @@ function fmtDate(ts) {
     const poiBbox = [[e.point.x - poiPad, e.point.y - poiPad], [e.point.x + poiPad, e.point.y + poiPad]];
     const routeBbox = [[e.point.x - routePad, e.point.y - routePad], [e.point.x + routePad, e.point.y + routePad]];
 
+    // Search-result pins take top priority: the user explicitly asked
+    // to see these places, so a pin tap wins over whatever POI /
+    // transit feature happens to sit underneath it.
+    if (map.getLayer(SEARCH_PIN_LAYER_ID)) {
+      const pinHits = map.queryRenderedFeatures(poiBbox, { layers: [SEARCH_PIN_LAYER_ID] });
+      if (pinHits.length) {
+        const p = searchPinMatches[pinHits[0].properties.idx];
+        if (p) { selectSearchMatch(p); return; }
+      }
+    }
+
     const bubbleHits = map.getLayer('route-stop-bubbles')
       ? map.queryRenderedFeatures(poiBbox, { layers: ['route-stop-bubbles'] })
       : [];
@@ -11917,6 +11945,7 @@ function fmtDate(ts) {
       renderVisibleRows();
     }
     searchResults.classList.add('show');
+    updateSearchCloseBtn();
   }
 
   searchResults.addEventListener('scroll', () => {
@@ -11933,35 +11962,189 @@ function fmtDate(ts) {
     if (!row) return;
     const p = searchMatches[+row.dataset.idx];
     if (!p) return;
+    // Picking one row dismisses the result set — drop any pins.
+    clearSearchPins();
     // Address rows aren't real POIs — they don't have a category,
     // brand, hours, etc. — but setSelected just needs a {lng, lat,
     // name, category} shape to drop a marker + open the card. Treat
     // them as ad-hoc POIs with name="123 Main St" so the existing
     // poi-card flow (Directions button, save-as-favorite, etc.) Just
     // Works without separate UI.
+    selectSearchMatch(p, { flyTo: true });
+    searchInput.value = '';
+    searchResults.classList.remove('show');
+    searchInput.blur();
+    updateSearchCloseBtn();
+  });
+  searchInput.addEventListener('input', () => {
+    // Pins reflect the last Enter-committed search; any edit to the
+    // query means that committed set is stale, so drop the pins. The
+    // next Enter re-pins from the fresh results.
+    clearSearchPins();
+    updateSearchCloseBtn();
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(renderSearch, 120);
+  });
+  searchInput.addEventListener('focus', renderSearch);
+  searchFilter.addEventListener('change', () => { clearSearchPins(); updateSearchCloseBtn(); renderSearch(); });
+
+  // ── Search-result pins ─────────────────────────────────────────
+  // Pressing Enter in the search box drops a tappable pin for every
+  // match instead of forcing a pick from the dropdown list. Pins live
+  // in one GeoJSON source (geojson-vt tiles it internally), so even
+  // thousands of them render fine; taps route through the same
+  // setSelected flow as list rows. No cap: the user asked for ALL
+  // results, and the pool is bounded by downloaded regions anyway.
+  const SEARCH_PIN_SOURCE_ID = 'search-result-pins';
+  const SEARCH_PIN_LAYER_ID = 'search-result-pins';
+  const SEARCH_PIN_LABEL_LAYER_ID = 'search-result-pin-labels';
+  let searchPinMatches = [];
+
+  function ensureSearchPinLayers() {
+    if (map.getSource(SEARCH_PIN_SOURCE_ID)) return;
+    map.addSource(SEARCH_PIN_SOURCE_ID, {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] },
+    });
+    map.addLayer({
+      id: SEARCH_PIN_LAYER_ID,
+      type: 'circle',
+      source: SEARCH_PIN_SOURCE_ID,
+      paint: {
+        'circle-color': '#e53935',
+        'circle-opacity': 0.9,
+        'circle-radius': ['interpolate', ['exponential', 1.5], ['zoom'],
+          10, 5, 14, 8, 18, 12],
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 2,
+      },
+    });
+    map.addLayer({
+      id: SEARCH_PIN_LABEL_LAYER_ID,
+      type: 'symbol',
+      source: SEARCH_PIN_SOURCE_ID,
+      layout: {
+        // Name floats above the dot. text-optional keeps colliding
+        // labels from stacking into mush when pins are dense — the
+        // dot stays, the label drops out. text-font must be explicit:
+        // the maplibre default ("Noto Sans Regular") isn't in this
+        // style's glyph set, so labels silently never render without
+        // it.
+        'text-field': ['get', 'name'],
+        'text-font': ['KlokanTech Noto Sans Regular'],
+        'text-size': 11,
+        'text-offset': [0, -1.0],
+        'text-anchor': 'bottom',
+        'text-optional': true,
+      },
+      paint: {
+        'text-color': '#e53935',
+        'text-halo-color': '#ffffff',
+        'text-halo-width': 1.5,
+      },
+    });
+  }
+
+  function pushSearchPinData() {
+    const src = map.getSource(SEARCH_PIN_SOURCE_ID);
+    if (!src) return;
+    src.setData({
+      type: 'FeatureCollection',
+      features: searchPinMatches.map((p, i) => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [p.lng, p.lat] },
+        properties: {
+          idx: i,
+          name: p._kind === 'address' ? p.label : (p.name || ''),
+        },
+      })),
+    });
+  }
+
+  function showSearchPins() {
+    ensureSearchPinLayers();
+    searchPinMatches = searchMatches.slice();
+    pushSearchPinData();
+    // No auto-zoom/fit: results can span multiple downloaded regions
+    // (e.g. Oregon + Montreal) and zooming out to fit them all is
+    // disorienting. Leave the view where it is; pins outside the
+    // viewport simply wait off-screen.
+  }
+
+  function clearSearchPins() {
+    if (!searchPinMatches.length) return;
+    searchPinMatches = [];
+    pushSearchPinData();
+  }
+
+  // Shared selection for dropdown rows and map pins. Address matches
+  // are ad-hoc POIs (see the row-click comment above); everything else
+  // already has the {lng, lat, name, category} shape setSelected wants.
+  function selectSearchMatch(p, opts = {}) {
     if (p._kind === 'address') {
       setSelected({
         lng: p.lng, lat: p.lat,
         name: p.label,
         category: 'address',
         regionId: p.regionId,
-      }, { flyTo: true });
+      }, opts);
     } else {
-      setSelected(p, { flyTo: true });
+      setSelected(p, opts);
     }
-    searchInput.value = '';
+  }
+
+  searchInput.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    clearTimeout(searchTimer);
+    renderSearch();
+    if (!searchMatches.length) return;
+    showSearchPins();
     searchResults.classList.remove('show');
     searchInput.blur();
+    updateSearchCloseBtn();
   });
-  searchInput.addEventListener('input', () => {
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(renderSearch, 120);
+
+  // The × bubble next to the search field: full reset — clear the
+  // query, drop the pins, dismiss the dropdown and the keyboard.
+  const searchClose = document.getElementById('searchClose');
+  searchClose.addEventListener('click', () => {
+    searchInput.value = '';
+    clearSearchPins();
+    searchResults.classList.remove('show');
+    searchInput.blur();
+    updateSearchCloseBtn();
   });
-  searchInput.addEventListener('focus', renderSearch);
-  searchFilter.addEventListener('change', renderSearch);
+
+  // The × is only visible when there's something to close: query
+  // text, an open dropdown, or pins on the map. Called from every
+  // search-state transition above; cheap enough to call liberally.
+  function updateSearchCloseBtn() {
+    const hasSomething = !!searchInput.value.trim()
+      || searchPinMatches.length > 0
+      || searchResults.classList.contains('show');
+    document.getElementById('search').classList.toggle('show-close', hasSomething);
+  }
+
+  // Pointer cursor over pins on desktop. Layer-delegated listeners
+  // registered by id fire once the layer exists, even if it's added
+  // later (or re-added after a style reload).
+  map.on('mouseenter', SEARCH_PIN_LAYER_ID, () => { map.getCanvas().style.cursor = 'pointer'; });
+  map.on('mouseleave', SEARCH_PIN_LAYER_ID, () => { map.getCanvas().style.cursor = ''; });
+
+  // Style reloads (theme switch, app-data refresh) wipe custom layers.
+  // Re-add the pin layers and restore their data when a committed
+  // search is still active.
+  map.on('styledata', () => {
+    if (!searchPinMatches.length) return;
+    if (map.isStyleLoaded && !map.isStyleLoaded()) return;
+    ensureSearchPinLayers();
+    pushSearchPinData();
+  });
   document.addEventListener('click', (e) => {
     if (!document.getElementById('search').contains(e.target)) {
       searchResults.classList.remove('show');
+      updateSearchCloseBtn();
     }
   });
 
