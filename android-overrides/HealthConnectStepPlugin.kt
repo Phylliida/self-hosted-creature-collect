@@ -63,9 +63,12 @@
 //      launch the Health Connect permission grant intent.
 //   3. The user picks which data types to share.
 //   4. On every subsequent visibility=visible transition the page
-//      calls Ped.getDistanceMeters({fromMs, toMs}); we aggregate
-//      StepsRecord + DistanceRecord (or diff the sensor baseline) and
-//      resolve {meters, steps, ok, source}.
+//      calls Ped.getDistanceMeters({fromMs, toMs, strideMeters?}); we
+//      aggregate StepsRecord + DistanceRecord (or diff the sensor
+//      baseline) and resolve {meters, steps, ok, source}.
+//      strideMeters is an optional per-user stride (Settings height
+//      knob × 0.413) used only for steps→meters estimation when no
+//      real distance record exists.
 //
 // IMPORTANT: appId in capacitor.config.json is currently
 //   org.phylliidaassets.creaturecollect
@@ -125,9 +128,10 @@ class HealthConnectStepPlugin : Plugin() {
         // Fallback stride length used when DistanceRecord isn't
         // available for the window (some sources only emit steps) —
         // and for every step-sensor read, which has no distance notion
-        // at all. 0.74 m is the average adult walking stride; could be
-        // wired to a Settings knob later if users find their daycare
-        // distances feel off.
+        // at all. 0.74 m is the average adult walking stride
+        // (~0.413 × 179 cm). The page passes a per-user override as
+        // `strideMeters` (derived from the Settings height knob,
+        // height × 0.413); the call param wins when present.
         private const val STRIDE_METERS = 0.74
         // Step-sensor fallback state. The hardware counter is
         // cumulative since boot; we persist the value seen at the last
@@ -342,6 +346,12 @@ class HealthConnectStepPlugin : Plugin() {
             call.resolve(failRet("invalid_window"))
             return
         }
+        // Optional per-user stride for steps→meters estimation (the
+        // Settings height knob). Sanity-clamped so a corrupted value
+        // can't produce absurd credits; default is STRIDE_METERS.
+        val strideParam = call.getDouble("strideMeters")
+        val strideM = if (strideParam != null && strideParam > 0.3 && strideParam < 1.5)
+            strideParam else STRIDE_METERS
         val c = client
         val range = TimeRangeFilter.between(
             Instant.ofEpochMilli(fromMs),
@@ -377,13 +387,13 @@ class HealthConnectStepPlugin : Plugin() {
             when {
                 hcSteps > 0 || (hcDistanceM ?: 0.0) > 0.0 -> {
                     ret.put("ok", true)
-                    ret.put("meters", hcDistanceM ?: (hcSteps.toDouble() * STRIDE_METERS))
+                    ret.put("meters", hcDistanceM ?: (hcSteps.toDouble() * strideM))
                     ret.put("steps", hcSteps)
                     ret.put("source", "health_connect")
                 }
                 sensorSteps != null && sensorSteps > 0 -> {
                     ret.put("ok", true)
-                    ret.put("meters", sensorSteps.toDouble() * STRIDE_METERS)
+                    ret.put("meters", sensorSteps.toDouble() * strideM)
                     ret.put("steps", sensorSteps)
                     ret.put("source", "step_sensor")
                 }

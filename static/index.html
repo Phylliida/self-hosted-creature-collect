@@ -3486,6 +3486,11 @@
       <input type="checkbox" id="pedometerToggle">
     </div>
     <div id="pedometerStatus" style="display:none;padding:4px 12px 8px;font-size:11px;color:var(--ui-muted);line-height:1.4;"></div>
+    <div class="row" id="heightRow" style="display:none" title="Android only: when distance has to be estimated from raw steps (no Health Connect distance record), the stride is height × 0.413. Default is 179 cm (0.74 m stride). iOS distance comes from the coprocessor and uses the height set in the Apple Health app instead.">
+      <label for="heightCmInput">Your height, for step→km (cm)</label>
+      <input type="number" id="heightCmInput" min="100" max="213" step="1"
+             placeholder="179" inputmode="numeric" style="width:64px">
+    </div>
     <div class="row">
       <label for="regionsModeSelect">Region data source</label>
       <select id="regionsModeSelect">
@@ -4281,6 +4286,15 @@
       // distance counter while walking with the app open.
       const MIN_SYNC_WINDOW_MS = 20 * 1000;
       const PERIODIC_SYNC_MS = 60 * 1000;
+      // While a fitness-counter view (daycare / eggs) is open, the user
+      // is staring at the counters — drop to a 5 s cadence and a 3 s
+      // minimum window so the numbers visibly tick. creatures.js's
+      // applyTopView sets window._liveFitnessViewOpen on every view
+      // change. The tighter minimum window is safe here: the 20 s floor
+      // exists to stop sub-second foreground flicker from churning
+      // queries, and a fixed 5 s timer can't flicker.
+      const DAYCARE_SYNC_TICK_MS = 5 * 1000;
+      const DAYCARE_MIN_SYNC_WINDOW_MS = 3 * 1000;
       let syncInFlight = false;
 
       window._pedometerSync = async function () {
@@ -4294,15 +4308,32 @@
         const capturedNow = Date.now();
         const lastSync = window.Creatures.readLastFitnessSync() || capturedNow;
         const fromMs = Math.max(lastSync, capturedNow - PEDOMETER_RETENTION_MS);
-        if (capturedNow - fromMs < MIN_SYNC_WINDOW_MS) return;
+        const minWindowMs = window._liveFitnessViewOpen
+          ? DAYCARE_MIN_SYNC_WINDOW_MS : MIN_SYNC_WINDOW_MS;
+        if (capturedNow - fromMs < minWindowMs) return;
         syncInFlight = true;
         try {
-          const r = await Ped.getDistanceMeters({ fromMs, toMs: capturedNow });
+          const query = { fromMs, toMs: capturedNow };
+          // Android-only knob: when the plugin must estimate distance
+          // from raw steps (no Health Connect distance record), it
+          // multiplies by this stride instead of its 0.74 m default.
+          // 0.413 × height is the standard walking step-length
+          // coefficient; 179 cm ↔ the 0.74 m default. Ignored by the
+          // iOS plugin (coprocessor supplies real distance).
+          const heightCm = parseFloat(localStorage.getItem('cc.heightCm'));
+          if (Number.isFinite(heightCm) && heightCm >= 100) {
+            // Same ~7 ft cap as the Settings input, in case a backup or
+            // devtools write stored something taller.
+            query.strideMeters = Math.round(Math.min(heightCm, 213) * 0.413) / 100;
+          }
+          const r = await Ped.getDistanceMeters(query);
           if (!r || !r.ok) return;
           const meters = Number(r.meters) || 0;
           const steps  = Number(r.steps)  || 0;
-          if (meters > 0) {
-            try { window.Creatures.creditPedometerMeters(meters); }
+          if (meters > 0 || steps > 0) {
+            // Steps ride along for the daycare slot display toggle;
+            // meters remain the only distance source for all features.
+            try { window.Creatures.creditPedometerMeters(meters, steps); }
             catch (e) { console.warn('[pedometer] credit failed', e); }
           }
           window.Creatures.markFitnessSynced(capturedNow);
@@ -4346,10 +4377,21 @@
       });
       // Periodic in-app sync — keeps the daycare counters / status
       // line / loot pills live while the user is walking with the app
-      // open. setInterval is paused implicitly when iOS suspends the
-      // WebView in the background, so this only fires when the page
-      // is actually visible.
-      setInterval(tryInitialSync, PERIODIC_SYNC_MS);
+      // open. Ticks every 5 s wall-clock; the tick only turns into an
+      // actual query when a fitness view (daycare / eggs) is open (fast
+      // cadence) or 60 s have passed since the last attempt (normal
+      // cadence).
+      // setInterval is paused implicitly when iOS suspends the WebView
+      // in the background, so this only fires when the page is
+      // actually visible.
+      let lastSyncAttempt = 0;
+      setInterval(() => {
+        const now = Date.now();
+        if (!window._liveFitnessViewOpen
+            && now - lastSyncAttempt < PERIODIC_SYNC_MS) return;
+        lastSyncAttempt = now;
+        tryInitialSync();
+      }, DAYCARE_SYNC_TICK_MS);
     }
 
     // ── Region data source ────────────────────────────────────────
@@ -7871,6 +7913,13 @@ function fmtDate(ts) {
     { key: 'cc.transferMin',          validate: (v) => {
         const n = parseFloat(v);
         return Number.isFinite(n) && n >= 0 && n <= 120;
+      } },
+    // Android-only height knob (cm) feeding the pedometer's steps→km
+    // stride estimate. Unset = plugin default stride. Capped at ~7 ft
+    // (213 cm), matching the Settings input.
+    { key: 'cc.heightCm',             validate: (v) => {
+        const n = parseFloat(v);
+        return Number.isFinite(n) && n >= 100 && n <= 213;
       } },
   ];
 
@@ -17914,6 +17963,36 @@ function fmtDate(ts) {
     pedometerRow.style.display = '';
     pedometerToggle.checked = localStorage.getItem('cc.pedometerEnabled') === '1';
 
+    // Height → stride knob. Only meaningful on Android, where distance
+    // is sometimes estimated as steps × stride (Health Connect without
+    // distance records, or the step-sensor fallback). iOS distance
+    // comes from the coprocessor and ignores this entirely. The stride
+    // itself (height × 0.413, the standard walking step-length
+    // coefficient) is computed in _pedometerSync at query time so a
+    // change here takes effect on the next sync, no reload.
+    const heightRow = document.getElementById('heightRow');
+    const heightCmInput = document.getElementById('heightCmInput');
+    const _plat = (window.Capacitor && window.Capacitor.getPlatform
+      && window.Capacitor.getPlatform()) || 'web';
+    if (heightRow && heightCmInput && _plat === 'android') {
+      heightRow.style.display = '';
+      heightCmInput.value = localStorage.getItem('cc.heightCm') || '';
+      heightCmInput.addEventListener('change', () => {
+        const v = parseFloat(heightCmInput.value);
+        if (Number.isFinite(v) && v >= 100) {
+          // Cap at ~7 ft (213 cm): anything taller is set to 7 ft.
+          const clamped = Math.min(Math.round(v), 213);
+          localStorage.setItem('cc.heightCm', String(clamped));
+          heightCmInput.value = String(clamped);
+        } else {
+          // Empty/out-of-range clears the override — the plugin falls
+          // back to its 0.74 m default stride.
+          localStorage.removeItem('cc.heightCm');
+          heightCmInput.value = '';
+        }
+      });
+    }
+
     // Format ms-since-epoch as a short relative string ("12s ago",
     // "3m ago", "2h ago", "4d ago"). Matches the style used in the
     // diagnostic dump elsewhere in Settings.
@@ -18121,6 +18200,9 @@ function fmtDate(ts) {
 
     setValue('clockFormatSelect', get('cc.clockFormat') || '24h');
     setValue('timezoneSelect', get('cc.timezone'));
+    // Height knob: only touch the input when the save actually carried
+    // a value — an Android-less save shouldn't blank a local setting.
+    if (get('cc.heightCm') != null) setValue('heightCmInput', get('cc.heightCm'));
 
     // Offline-maps panel — checkbox is "show", key is "hide".
     try { applyPanelVisibility(); } catch (e) { console.error(e); }

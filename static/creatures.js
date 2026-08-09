@@ -1891,7 +1891,7 @@
   function _normalizeSlot(v) {
     if (typeof v === 'string' && v) {
       return {
-        id: v, addedAt: Date.now(), distM: 0, claimed: [],
+        id: v, addedAt: Date.now(), distM: 0, steps: 0, claimed: [],
         convertDir: null, convertedCountA: 0, convertedCountB: 0,
       };
     }
@@ -1916,6 +1916,12 @@
         id: v.id,
         addedAt: typeof v.addedAt === 'number' ? v.addedAt : Date.now(),
         distM: typeof v.distM === 'number' && v.distM >= 0 ? v.distM : 0,
+        // Raw pedometer steps walked during this occupancy. Display-only
+        // (tap the slot's distance label to flip between m/steps) — all
+        // feature logic (loot milestones, conversions, eggs) stays on
+        // distM. Only credited by the pedometer bridge, so slots filled
+        // while the GPS path owns distance stay at 0.
+        steps: Number.isFinite(v.steps) && v.steps >= 0 ? Math.round(v.steps) : 0,
         claimed,
         convertDir: dir,
         convertedCountA: Number.isInteger(v.convertedCountA) && v.convertedCountA >= 0
@@ -6316,6 +6322,24 @@
         font-variant-numeric: tabular-nums;
         margin-top: 1px;
       }
+      #creatureInventory .daycare-slot-dist.toggleable {
+        cursor: pointer;
+        text-decoration: underline dotted;
+        text-underline-offset: 2px;
+      }
+      #creatureInventory .daycare-slot-dist.toggleable:active {
+        opacity: 0.6;
+      }
+      #creatureInventory .daycare-today-value.toggleable,
+      #creatureInventory .daycare-detail-dist.toggleable {
+        cursor: pointer;
+        text-decoration: underline dotted;
+        text-underline-offset: 3px;
+      }
+      #creatureInventory .daycare-today-value.toggleable:active,
+      #creatureInventory .daycare-detail-dist.toggleable:active {
+        opacity: 0.6;
+      }
       /* Per-slot loot row: pills flow horizontally, anything past
          the slot's right edge is clipped by overflow:hidden. As
          pills get claimed (width-collapse to 0) the row's content
@@ -8939,6 +8963,15 @@
   function applyTopView() {
     const panel = ensurePanel();
     const top = _viewStack[_viewStack.length - 1] || { view: 'browse' };
+    // Signal for index.html's pedometer bridge: while a fitness-counter
+    // view (daycare, eggs) is top-of-stack the bridge syncs on a faster
+    // cadence (and with a shorter minimum window) so the counters
+    // visibly tick. Any view pushed on top (detail, odds popup, ...)
+    // drops the cadence back to normal.
+    try {
+      window._liveFitnessViewOpen =
+        (top.view === 'daycare' || top.view === 'eggs');
+    } catch {}
     // Notify view-aware UI (back-to-top button, etc.) that the active
     // view changed so they can re-evaluate their visibility.
     panel.dispatchEvent(new CustomEvent('cc-view-changed'));
@@ -9869,6 +9902,40 @@
       body._incubatorTickHandler = handler;
       window.addEventListener('cc-incubator-tick', handler);
     }
+    // Live progress: every credited distance batch (GPS fix or
+    // pedometer sync) fires cc-daycare-credit from _creditMeters.
+    // Update incubator fills + distance text and grid tile fills in
+    // place — a full re-render every few seconds would yank focus out
+    // of the search inputs mid-typing. Hatch-completion crossings still
+    // re-render via cc-incubator-tick above.
+    if (!body._creditTickHandler) {
+      const creditHandler = () => {
+        const view = panel.querySelector('.eggs-view');
+        if (!view || !view.classList.contains('show')) return;
+        const eggsById = new Map(readEggs().map((e) => [e.id, e]));
+        const pctOf = (egg) => Math.min(100,
+          Math.round((eggIncubatedM(egg) / eggHatchM(egg)) * 100));
+        body.querySelectorAll('.incubator-slot .slot-egg-tile[data-egg-id]')
+          .forEach((tile) => {
+            const egg = eggsById.get(tile.dataset.eggId);
+            if (!egg) return;
+            const slotEl = tile.closest('.incubator-slot');
+            const fill = slotEl && slotEl.querySelector('.slot-progress .fill');
+            if (fill) fill.style.width = pctOf(egg) + '%';
+            const dist = slotEl && slotEl.querySelector('.slot-distance');
+            if (dist) dist.textContent = _formatIncubationKm(egg);
+          });
+        body.querySelectorAll('.egg-tile:not(.slot-egg-tile)[data-egg-id]')
+          .forEach((tile) => {
+            const egg = eggsById.get(tile.dataset.eggId);
+            if (!egg) return;
+            const fill = tile.querySelector('.tile-progress .fill');
+            if (fill) fill.style.width = pctOf(egg) + '%';
+          });
+      };
+      body._creditTickHandler = creditHandler;
+      window.addEventListener('cc-daycare-credit', creditHandler);
+    }
     const allEggs = readEggs();
     // Multi-pack isolation: the eggs view shows only the active pack's
     // eggs — through share groups, so the two fusion packs share eggs
@@ -10635,6 +10702,23 @@
   // months survives transient re-renders. Click handlers are wired
   // imperatively after innerHTML so they survive layout passes.
   let _daycareCalState = null;  // { y, m, selDay } — y/m = displayed month
+  // Display-only flip for the per-slot distance label: tap it to switch
+  // between meters and the raw pedometer step count. Only meaningful
+  // (and only tappable) while the pedometer is the distance source —
+  // steps stay 0 on the GPS path. Feature logic always uses distM.
+  let _daycareShowSteps = false;
+  // The steps view only exists while the pedometer is the distance
+  // source — GPS-tracked days/slots have no step data (shown as 0).
+  function _daycareStepsMode() {
+    return _daycareShowSteps && _isPedometerActive();
+  }
+  function _formatSteps(n) {
+    return `${Math.round(n || 0).toLocaleString('en-US')} steps`;
+  }
+  function _daycareDistLabel(slot) {
+    if (_daycareStepsMode()) return _formatSteps(slot.steps);
+    return _formatMeters(slot.distM || 0);
+  }
   function _formatMeters(m) {
     if (!m || m <= 0) return '0';
     if (m < 1000) return `${Math.round(m)} m`;
@@ -10645,6 +10729,15 @@
     if (m < 1000) return `${Math.round(m)}m`;
     if (m < 10000) return `${(m / 1000).toFixed(1)}k`;
     return `${Math.round(m / 1000)}k`;
+  }
+  // Calendar-cell short form for steps mode: same shape as
+  // _formatMetersShort but no unit suffix on small counts (cells are
+  // tiny; the steps/meters mode is already implied by the toggle).
+  function _formatStepsShort(n) {
+    if (!n || n <= 0) return '';
+    if (n < 1000) return `${Math.round(n)}`;
+    if (n < 10000) return `${(n / 1000).toFixed(1)}k`;
+    return `${Math.round(n / 1000)}k`;
   }
   function _padDayKey(y, m, d) {
     return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
@@ -11272,6 +11365,8 @@
       };
     }
     const todayMeters = map[_localDayKey(today)] || 0;
+    const todaySteps = map[_stepsDayKey(_localDayKey(today))] || 0;
+    const stepsMode = _daycareStepsMode();
     const { y, m, selDay } = _daycareCalState;
     const monthName = new Date(y, m, 1).toLocaleString(undefined,
       { month: 'long', year: 'numeric' });
@@ -11306,7 +11401,14 @@
       // Future days stay non-clickable (nothing to display yet).
       if (!isFuture) cls.push('has-data');
       if (isSelected) cls.push('selected');
-      const distText = meters > 0 ? _formatMetersShort(meters) : '';
+      // Cells follow the display toggle: meters short form, or raw
+      // steps short form (blank when nothing recorded that day).
+      const cellVal = stepsMode
+        ? (map[_stepsDayKey(key)] || 0)
+        : meters;
+      const distText = cellVal > 0
+        ? (stepsMode ? _formatStepsShort(cellVal) : _formatMetersShort(cellVal))
+        : '';
       cells.push(
         `<div class="${cls.join(' ')}" data-day-key="${key}">`
         + `<span class="daycare-cal-day">${d}</span>`
@@ -11315,6 +11417,7 @@
       );
     }
     const selMeters = map[selDay] || 0;
+    const selSteps = map[_stepsDayKey(selDay)] || 0;
     // Is a route overlay currently on the map, and does it match this
     // button? `_activeDaycareOverlay` is tracked module-side (see the
     // "Daycare path overlay" section). When it matches, the button
@@ -11329,9 +11432,15 @@
       return d.toLocaleDateString(undefined,
         { weekday: 'short', month: 'short', day: 'numeric' });
     })();
-    const detailHtml = selMeters > 0
+    // Steps mode always shows a number line (0 steps for days with no
+    // pedometer data) rather than the "no travel recorded" empty state,
+    // since a GPS-tracked day legitimately has distance but zero steps.
+    const detailHtml = stepsMode
       ? `<div class="daycare-detail-title">${escapeHtml(selDate)}</div>`
-        + `<div>${_formatMeters(selMeters)}</div>`
+        + `<div class="daycare-detail-dist">${_formatSteps(selSteps)}</div>`
+      : selMeters > 0
+      ? `<div class="daycare-detail-title">${escapeHtml(selDate)}</div>`
+        + `<div class="daycare-detail-dist">${_formatMeters(selMeters)}</div>`
       : `<div class="daycare-detail-title">${escapeHtml(selDate)}</div>`
         + `<div class="daycare-detail-empty">no travel recorded</div>`;
     // Daycare slots: render two boxes at the top, each either holding
@@ -11369,9 +11478,10 @@
             || creatureName(c);
           // Distance walked while THIS occupancy lasted. Resets to 0
           // each time the creature is removed and re-added — see
-          // addToDaycare. Format with the same _formatMeters helper
-          // used by the calendar / today's-distance card.
-          const distLabel = _formatMeters(it.slot.distM || 0);
+          // addToDaycare. Label flips between meters (same _formatMeters
+          // helper the calendar / today's-distance card uses) and raw
+          // pedometer steps via _daycareDistLabel.
+          const distLabel = _daycareDistLabel(it.slot);
           // Convert toggles surface only when the two halves have
           // distinct candy roots — Pure fusions have nothing to swap
           // between. Roots resolve via candyRootFor so e.g.
@@ -11401,7 +11511,7 @@
       ${slotsHtml}
       <div class="daycare-today">
         <span class="daycare-today-label">Today</span>
-        <span class="daycare-today-value">${_formatMeters(todayMeters)}</span>
+        <span class="daycare-today-value">${stepsMode ? _formatSteps(todaySteps) : _formatMeters(todayMeters)}</span>
       </div>
       <div class="daycare-cal-header">
         <button class="daycare-cal-nav" type="button" data-nav="prev"
@@ -11416,6 +11526,24 @@
       <button class="daycare-show-on-map" type="button">${dayOverlayActive ? 'Hide on map' : 'Show on map'}</button>
       <button class="daycare-show-all-on-map" type="button">${allOverlayActive ? 'Hide all on map' : 'Show all on map'}</button>
     `;
+    // Distance readouts (slot labels, the Today value, the detail
+    // line): tap to flip the WHOLE view between meters and raw
+    // pedometer steps — slots, calendar cells, Today, and the detail
+    // block all follow `_daycareShowSteps`. Display-only; only offered
+    // while the pedometer is the distance source (steps aren't tracked
+    // on the GPS path).
+    const wireDistToggle = (el) => {
+      if (!el || !_isPedometerActive()) return;
+      el.classList.add('toggleable');
+      el.title = 'tap to show steps / distance';
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        _daycareShowSteps = !_daycareShowSteps;
+        renderDaycare(opts);
+      });
+    };
+    wireDistToggle(body.querySelector('.daycare-today-value'));
+    wireDistToggle(body.querySelector('.daycare-detail-dist'));
     // Slot click → open the creature's detail. Async sprite hydration
     // mirrors detail-view's pattern: drop a placeholder, then swap in
     // the cropped variant once the sprite blob URL resolves. Only
@@ -11433,6 +11561,9 @@
           if (id) showDetail(id);
         });
       }
+      // Distance label: tap flips the whole view meters ↔ steps (see
+      // wireDistToggle above).
+      wireDistToggle(slot.querySelector('.daycare-slot-dist'));
       // Conversion toggles — tap to enable that direction, tap again to
       // disable. Mutually exclusive: enabling one direction disables
       // the other. State persists per-slot in localStorage; the active
@@ -11531,6 +11662,34 @@
       };
       body._daycareLootTickHandler = handler;
       window.addEventListener('cc-daycare-loot-tick', handler);
+    }
+    // Live counters: every credited batch (accepted GPS fix or pedometer
+    // sync) fires cc-daycare-credit from _creditMeters. Refresh the slot
+    // distance labels, the Today value, and — when the selected day is
+    // today — the detail line in place, so shaking/walking visibly moves
+    // the numbers without a full re-render.
+    if (!body._daycareCreditHandler) {
+      const creditHandler = () => {
+        const stepsModeNow = _daycareStepsMode();
+        const todayKey = _localDayKey(new Date());
+        const tM = (_summaryCache && _summaryCache[todayKey]) || 0;
+        const tS = (_summaryCache && _summaryCache[_stepsDayKey(todayKey)]) || 0;
+        const todayLabel = stepsModeNow ? _formatSteps(tS) : _formatMeters(tM);
+        const tv = body.querySelector('.daycare-today-value');
+        if (tv) tv.textContent = todayLabel;
+        const slots = readDaycareSlots();
+        body.querySelectorAll('.daycare-slot[data-id]').forEach((el) => {
+          const s = slots.find((x) => x.id === el.dataset.id);
+          const lbl = el.querySelector('.daycare-slot-dist');
+          if (s && lbl) lbl.textContent = _daycareDistLabel(s);
+        });
+        if (_daycareCalState && _daycareCalState.selDay === todayKey) {
+          const dd = body.querySelector('.daycare-detail-dist');
+          if (dd) dd.textContent = todayLabel;
+        }
+      };
+      body._daycareCreditHandler = creditHandler;
+      window.addEventListener('cc-daycare-credit', creditHandler);
     }
     body.querySelectorAll('.daycare-cal-nav').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -13862,7 +14021,17 @@
   const TRACKER_DB = 'creature-tracker-v1';
   const TRACKER_DB_VERSION = 2;
   const TRACKER_STORE = 'paths';
+  // The summary store holds two kinds of entries keyed by day:
+  //   '<dayKey>'        -> meters walked that day (all sources)
+  //   '<dayKey>|steps'  -> raw pedometer steps that day (0/absent on
+  //                        GPS-only days; display-only, feature logic
+  //                        always reads the meters entries)
+  // Suffixed keys let steps ride the same store/export/import paths
+  // without a DB version bump; plain-key readers never collide since
+  // _localDayKey can't produce a '|'.
   const TRACKER_SUMMARY_STORE = 'summary';
+  const _STEPS_KEY_SUFFIX = '|steps';
+  function _stepsDayKey(dayKey) { return dayKey + _STEPS_KEY_SUFFIX; }
   // Hard cap so a misbehaving GPS (or a multi-day foreground session)
   // can't grow a single day's record without bound. ~20 k points at
   // 3 m granularity covers ~60 km of walking with healthy headroom.
@@ -14205,19 +14374,43 @@
   // incubator egg (firing cc-incubator-tick on hatch completion). The
   // shared write path for both GPS-driven (haversine between fixes)
   // and pedometer-driven (CMPedometer cumulative meters while the app
-  // was closed) accumulation.
-  function _creditMeters(d, ts) {
-    if (!Number.isFinite(d) || d <= 0) return;
+  // was closed) accumulation. `steps` is the raw pedometer step count
+  // for the same window (0/omitted on the GPS path) — accumulated on
+  // each slot purely for the tap-to-toggle steps display.
+  function _creditMeters(d, ts, steps) {
+    const stepN = (Number.isFinite(steps) && steps > 0) ? Math.round(steps) : 0;
+    if (!Number.isFinite(d) || d <= 0) {
+      if (stepN <= 0) return;
+      d = 0;
+    }
     const k = _localDayKey(ts);
     if (!_summaryCache) _summaryCache = {};
-    _summaryCache[k] = (_summaryCache[k] || 0) + d;
-    _idbPutSummary(k, _summaryCache[k]).catch(() => {});
+    if (d > 0) {
+      _summaryCache[k] = (_summaryCache[k] || 0) + d;
+      _idbPutSummary(k, _summaryCache[k]).catch(() => {});
+    }
+    if (stepN > 0) {
+      const sk = _stepsDayKey(k);
+      _summaryCache[sk] = (_summaryCache[sk] || 0) + stepN;
+      _idbPutSummary(sk, _summaryCache[sk]).catch(() => {});
+    }
+    // Live-update hook: lets an open daycare or eggs view refresh its
+    // counters (slot labels / Today value / detail line / incubator
+    // progress) without waiting for a milestone crossing or a re-render.
+    if (typeof window !== 'undefined') {
+      try {
+        window.dispatchEvent(new CustomEvent('cc-daycare-credit', {
+          detail: { dayKey: k },
+        }));
+      } catch { /* best-effort */ }
+    }
     const slots = readDaycareSlots();
     if (slots.length) {
       const ticks = [];
       for (const s of slots) {
         const before = Math.floor((s.distM || 0) / DAYCARE_LOOT_MILESTONE_M);
         s.distM += d;
+        if (stepN > 0) s.steps = (s.steps || 0) + stepN;
         const after = Math.floor(s.distM / DAYCARE_LOOT_MILESTONE_M);
         if (after > before) {
           const newNs = [];
@@ -14299,10 +14492,12 @@
   // Public entry point for the pedometer bridge (see index.html's
   // visibility handler). `meters` is the cumulative distance the
   // CMPedometer query reported for [lastFitnessSync, now]; we forward
-  // straight to the shared credit path. The caller is responsible for
-  // advancing lastFitnessSync only on a successful query (ok:true).
-  function creditPedometerMeters(meters) {
-    _creditMeters(meters, Date.now());
+  // straight to the shared credit path. `steps` is the same window's
+  // raw step count, kept per-slot for the display toggle only. The
+  // caller is responsible for advancing lastFitnessSync only on a
+  // successful query (ok:true).
+  function creditPedometerMeters(meters, steps) {
+    _creditMeters(meters, Date.now(), steps);
   }
 
   // When the pedometer toggle is on, the CMPedometer bridge is the
