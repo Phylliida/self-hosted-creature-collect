@@ -57,15 +57,22 @@ public class FocusMonitorPlugin: CAPPlugin, CAPBridgedPlugin {
     private let maxEvents = 500
     private var events: [[String: Any]] = []
     private var observing = false
+    // Observers append on the main thread while getEvents reads on the
+    // bridge's queue — guard the buffer.
+    private let eventsLock = NSLock()
 
     private func record(_ type: String) {
+        eventsLock.lock()
         if events.count >= maxEvents { events.removeFirst() }
         events.append(["t": Int64(Date().timeIntervalSince1970 * 1000), "type": type])
+        eventsLock.unlock()
     }
 
     @objc func startSession(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
+            self.eventsLock.lock()
             self.events.removeAll()
+            self.eventsLock.unlock()
             self.startObservingIfNeeded()
             call.resolve([
                 "screenOff": !UIApplication.shared.isProtectedDataAvailable,
@@ -77,6 +84,7 @@ public class FocusMonitorPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func getEvents(_ call: CAPPluginCall) {
         let sinceMs = Int64(call.getInt("sinceMs") ?? 0)
+        eventsLock.lock()
         var out: [[String: Any]] = []
         var kept: [[String: Any]] = []
         for e in events {
@@ -84,13 +92,16 @@ public class FocusMonitorPlugin: CAPPlugin, CAPBridgedPlugin {
             if t > sinceMs { out.append(e) } else { kept.append(e) }
         }
         events = kept
+        eventsLock.unlock()
         call.resolve(["events": out])
     }
 
     @objc func endSession(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
             self.stopObserving()
+            self.eventsLock.lock()
             self.events.removeAll()
+            self.eventsLock.unlock()
             call.resolve()
         }
     }

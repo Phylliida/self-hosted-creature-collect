@@ -60,13 +60,25 @@
   const _PACK_NS = (() => {
     try {
       const v = localStorage.getItem('cc.activePack');
-      if (!v || v === 'creature-fusion') return '';
+      if (!v || v === 'creature-fusion') return _cvNs('creature-fusion');
       const g = localStorage.getItem('cc.packGens.' + v);
       const f = localStorage.getItem('cc.packGensFam.' + v);
       return '.' + v
         + (g ? '.' + g.replace(/[^0-9,]/g, '') : '')
-        + (f === '1' ? 'f' : '');
+        + (f === '1' ? 'f' : '')
+        + _cvNs(v);
     } catch { return ''; }
+    // Content-version suffix: a same-pack update swaps the served
+    // manifest/cells/split-names/credits, so the IDB caches must
+    // version with the install or they keep serving the previous
+    // pack's tables.
+    function _cvNs(pid) {
+      try {
+        const raw = localStorage.getItem('cc.contentPack.' + pid + '.v1');
+        const cv = raw ? (JSON.parse(raw).contentVersion || '') : '';
+        return cv ? '.' + cv.replace(/[^0-9A-Za-z-]/g, '') : '';
+      } catch { return ''; }
+    }
   })();
   const SPRITE_SIZE = 96;
   // Autogen sheets are 10 cols × N rows (typically 10×51 upstream;

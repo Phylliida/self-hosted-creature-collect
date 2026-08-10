@@ -15,11 +15,17 @@ Sources, in priority order:
                                 sheets found nowhere else)
 
 Per head, variants are ordered by (source priority, source's own
-canonical suffix order), deduped by content hash, then re-lettered
-canonically ('', a, b, ..., z, aa, ...) — process_custom_head sorts by
-(len, lex), which is the same sequence, so IF1's variant indices are
-preserved BY CONSTRUCTION. Duplicates map to the kept sheet's index so
-credits still resolve. Output uses hardlinks (near-zero disk cost).
+canonical suffix order), deduped by content hash ACROSS sources (an
+IF2/BAT sheet identical to an already-kept sheet collapses onto its
+slot), then re-lettered canonically ('', a, b, ..., z, aa, ...) —
+process_custom_head sorts by (len, lex), which is the same sequence.
+IF1 sheets are NEVER deduped, not even against each other: eight IF1
+sheets are byte-identical copies of the previous sheet (71f=71e, …),
+and collapsing them used to slide BAT art into IF1's index, silently
+re-skinning creatures stored with that variant — the canonical pack's
+indices must not move (user ruling 2026-08-10). Duplicates map to the
+kept sheet's index so credits still resolve. Output uses hardlinks
+(near-zero disk cost).
 
 Credits: each source's Data/sprites/Sprite_Credits.csv rows are remapped
 from the source's suffix to the merged suffix for that head. BAT has no
@@ -129,25 +135,26 @@ def main() -> None:
     remap: dict[tuple[str, int, str], int] = {}
 
     for head in heads:
-        # Dedupe by content hash across ALL sheets (intra-source
-        # included). Byte-identical variants collapse to the first
+        # Dedupe by content hash, but NEVER within IF1: IF1 sheets are
+        # kept 1:1 in canonical order at indices 0..k-1 so stored variant
+        # indices keep their exact art (a handful of IF1 sheets are
+        # byte-identical to the previous one; collapsing them used to
+        # slide another source's art into IF1's slot). IF2/BAT sheets
+        # that duplicate anything already kept collapse to the first
         # slot; the suffix remap still points the collapsed slot's
-        # credits at the kept image. IF1's prefix order is preserved,
-        # so stored variant indices keep their art (indices pointing
-        # exactly at a collapsed dupe slot fall back to autogen —
-        # accepted trade for full dedup).
+        # credits at the kept image.
         seen: dict[str, int] = {}           # sha -> merged index
         merged: list[Path] = []
         for src_name, src_dir, _ in SOURCES:
             for suffix, path in head_variants(src_dir, head):
                 sha = hashlib.sha256(path.read_bytes()).hexdigest()
-                if sha in seen:
+                if sha in seen and src_name != "IF1":
                     remap[(src_name, head, suffix)] = seen[sha]
                     stats["dupes"] += 1
                     continue
                 idx = len(merged)
                 merged.append(path)
-                seen[sha] = idx
+                seen.setdefault(sha, idx)
                 remap[(src_name, head, suffix)] = idx
                 stats["per_source"][src_name] += 1
         if not merged:
