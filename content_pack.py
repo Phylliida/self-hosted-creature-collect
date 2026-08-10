@@ -49,12 +49,16 @@ def _sha256_file(path, hasher=None):
     return h
 
 
-def write_pack(entries, out_bin, manifest, pack_id="creature-fusion"):
+def write_pack(entries, out_bin, manifest, pack_id="creature-fusion",
+               content_version=None):
     """Write pack.bin + pack.json.
 
     entries: list of (logical_path, src_path) — logical paths use forward
     slashes and mirror the bundled-data tree exactly.
     out_bin: Path for the .bin; manifest: Path for the human manifest.
+    content_version: override the build timestamp stamped into the TOC —
+    used when deriving a variant pack (e.g. the native no-sprites build)
+    from an existing pack so both manifests describe the same content.
     Returns the TOC dict.
     """
     out_bin = Path(out_bin)
@@ -82,7 +86,8 @@ def write_pack(entries, out_bin, manifest, pack_id="creature-fusion"):
     toc = {
         "id": pack_id,
         "format": FORMAT_VERSION,
-        "contentVersion": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "contentVersion": (content_version
+                           or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())),
         "entries": toc_entries,
     }
     # Offsets are relative to the start of the FILE (absolute), computed
@@ -166,6 +171,62 @@ def read_toc(bin_path):
         (toc_len,) = struct.unpack("<Q", header[12:20])
         toc = json.loads(f.read(toc_len).decode("utf-8"))
     return toc
+
+
+def filter_pack(bin_in, out_bin, manifest, drop_prefixes=()):
+    """Derive a variant pack from an existing one by dropping entries.
+
+    Entries whose logical path starts with any of drop_prefixes are left
+    out; the rest are copied byte-for-byte (per-entry sha256 re-verified
+    on read). The derived pack keeps the source pack's id and
+    contentVersion — it is the same content in a smaller transport, so a
+    client holding the full pack is not 'out of date' against the
+    variant manifest.
+    """
+    import tempfile
+    toc = read_toc(bin_in)
+    with tempfile.TemporaryDirectory() as tmp:
+        tmpdir = Path(tmp)
+        entries = []
+        for logical in sorted(toc["entries"]):
+            if any(logical.startswith(p) for p in drop_prefixes):
+                continue
+            dst = tmpdir / logical
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(read_entry(bin_in, toc, logical))
+            entries.append((logical, dst))
+        return write_pack(entries, out_bin, manifest,
+                          pack_id=toc["id"],
+                          content_version=toc["contentVersion"])
+
+
+def replace_entries(bin_in, out_bin, manifest, overrides,
+                    content_version=None):
+    """Rewrite a pack with the given entries replaced by new bytes.
+
+    overrides: {logical_path: bytes}. All other entries are copied
+    byte-for-byte (per-entry sha256 re-verified on read). Pass an
+    explicit content_version when the change is a real content update
+    that installed clients should pick up; omitting it preserves the
+    source pack's version (transport-only change).
+    """
+    import tempfile
+    toc = read_toc(bin_in)
+    with tempfile.TemporaryDirectory() as tmp:
+        tmpdir = Path(tmp)
+        entries = []
+        for logical in sorted(toc["entries"]):
+            dst = tmpdir / logical
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if logical in overrides:
+                dst.write_bytes(overrides[logical])
+            else:
+                dst.write_bytes(read_entry(bin_in, toc, logical))
+            entries.append((logical, dst))
+        return write_pack(entries, out_bin, manifest,
+                          pack_id=toc["id"],
+                          content_version=content_version
+                          or toc["contentVersion"])
 
 
 def read_entry(bin_path, toc, logical):

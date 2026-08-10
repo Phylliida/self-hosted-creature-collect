@@ -30,12 +30,23 @@
   // species-*.json), so the localStorage caches are namespaced per
   // pack — otherwise switching packs would keep serving the previous
   // pack's names/types/evolutions/pool. '' for the default pack (keys
-  // stay exactly as before); '.<packId>' otherwise. Read straight from
-  // localStorage because packs.js loads after this file.
+  // stay exactly as before); '.<packId>' otherwise. Gen-variant packs
+  // (IF2 subsets) get a further per-variant suffix: each variant serves
+  // a different pool/evolutions set, so caching by pack id alone kept
+  // serving the PREVIOUS variant's pool after a gen switch (wrong
+  // spawn list, wrong completion counts). The raw selection values
+  // suffice — the namespace only has to distinguish variants, not
+  // match the pack's subdir string. Read straight from localStorage
+  // because packs.js loads after this file.
   const _PACK_NS = (() => {
     try {
       const v = localStorage.getItem('cc.activePack');
-      return (v && v !== 'creature-fusion') ? '.' + v : '';
+      if (!v || v === 'creature-fusion') return '';
+      const g = localStorage.getItem('cc.packGens.' + v);
+      const f = localStorage.getItem('cc.packGensFam.' + v);
+      return '.' + v
+        + (g ? '.' + g.replace(/[^0-9,]/g, '') : '')
+        + (f === '1' ? 'f' : '');
     } catch { return ''; }
   })();
 

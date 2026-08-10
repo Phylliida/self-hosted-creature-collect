@@ -8097,6 +8097,8 @@ function fmtDate(ts) {
       // imported captures instead.
       candyFamilyMigrated: localStorage.getItem('cc.candyMigrated.familyV2') === '1',
       bag: JSON.parse(localStorage.getItem('cc.bag.v1') || 'null'),
+      // Focus-mode state: active session (if any) + past-session history.
+      focus: JSON.parse(localStorage.getItem('cc.focus.v1') || 'null'),
       tags: JSON.parse(localStorage.getItem('cc.tags.v1') || '[]'),
       // Daycare slots (capture-id references). Only valid when paired
       // with the captures payload above — IDs that don't match any
@@ -8522,6 +8524,24 @@ function fmtDate(ts) {
         if (v > (current[item] || 0)) current[item] = v;
       }
       localStorage.setItem('cc.bag.v1', JSON.stringify(current));
+    }
+    // Focus mode: union-merge session history by start time (idempotent
+    // re-imports), and adopt the imported active session only when no
+    // session is live locally — an in-flight local session always wins.
+    if (data.focus && typeof data.focus === 'object') {
+      const cur = JSON.parse(localStorage.getItem('cc.focus.v1') || 'null')
+        || { active: null, history: [] };
+      if (!Array.isArray(cur.history)) cur.history = [];
+      const seen = new Set(cur.history.map((h) => h && h.startedAtMs));
+      for (const h of (Array.isArray(data.focus.history) ? data.focus.history : [])) {
+        if (!h || typeof h !== 'object' || h.startedAtMs == null) continue;
+        if (seen.has(h.startedAtMs)) continue;
+        seen.add(h.startedAtMs);
+        cur.history.push(h);
+      }
+      cur.history.sort((a, b) => a.startedAtMs - b.startedAtMs);
+      if (!cur.active && data.focus.active) cur.active = data.focus.active;
+      localStorage.setItem('cc.focus.v1', JSON.stringify(cur));
     }
     // Tags: union merge that keeps existing order and appends any new
     // tags from the import. Per-creature tag membership rides along
@@ -9238,6 +9258,14 @@ function fmtDate(ts) {
     try { scheduleTappablePoiHalosRefresh(); } catch {}
   }
 
+  // Focus mode start/end (creatures.js dispatches this): immediately
+  // refresh the POI visuals — halos vanish/return and an open card's
+  // collect button re-labels — instead of waiting for the next poll.
+  window.addEventListener('cc-focus-changed', () => {
+    try { refreshCooldownOverlays(); } catch {}
+    try { syncPoiCollectButton(); } catch {}
+  });
+
   // Halo ("you can tap this!") around POIs in creature mode that are
   // (a) within range of the user's current GPS fix and (b) not on
   // active cooldown. The icon's color already encodes ready-vs-active
@@ -9252,8 +9280,13 @@ function fmtDate(ts) {
     if (!map.getSource(TAPPABLE_HALO_SOURCE_ID)) return;
     const inCreatureMode = !!(window.Creatures && window.Creatures.isEnabled
       && window.Creatures.isEnabled());
+    // Focus mode hides the halos entirely — no "tap me" cues on the map
+    // while the session is running (the collect button is gated
+    // separately in syncPoiCollectButton).
+    const focusOn = !!(window.Creatures && window.Creatures.isFocusActive
+      && window.Creatures.isFocusActive());
     let features = [];
-    if (inCreatureMode && lastKnownPos) {
+    if (inCreatureMode && !focusOn && lastKnownPos) {
       // Bbox-bound the query around the user's GPS — full-viewport
       // queries get expensive at z16+ with building-pokestops on
       // (thousands of building features in two layers). The bbox
@@ -9441,6 +9474,14 @@ function fmtDate(ts) {
     if (!card.classList.contains('show')) return false;
     const stored = JSON.parse(localStorage.getItem(SELECTED_KEY) || 'null');
     if (!stored) return false;
+    // Focus mode: no item pickups — the button stays visible but inert
+    // so the card layout doesn't jump when a session starts/ends.
+    if (window.Creatures && window.Creatures.isFocusActive
+        && window.Creatures.isFocusActive()) {
+      collectBtn.disabled = true;
+      collectBtn.textContent = 'Focus mode';
+      return true;
+    }
     // Re-paint the map marker on every tick so it transitions from
     // gray (active) to pink (ready) the moment the countdown ends.
     applyCooldownStyleToSelectedMarker();
@@ -11078,6 +11119,8 @@ function fmtDate(ts) {
   // for the new cooldown).
   document.getElementById('poiCardCollect').onclick = () => {
     if (!(window.Creatures && window.Creatures.grantItem)) return;
+    // Focus mode suppresses item pickups (mirrors syncPoiCollectButton).
+    if (window.Creatures.isFocusActive && window.Creatures.isFocusActive()) return;
     const stored = JSON.parse(localStorage.getItem(SELECTED_KEY) || 'null');
     if (!stored) return;
     if (poiCooldownRemainingMs(stored.lng, stored.lat) > 0) return;
@@ -17711,16 +17754,27 @@ function fmtDate(ts) {
     if (s.phase === 'done') return 'creature data ready — reloading…';
     return '';
   }
+  // One-shot override: when the remote matches the install, the first
+  // tap just reports "up to date" and arms this flag; a second tap
+  // within the window skips the check and forces a full re-download
+  // (repairs a damaged/partial install, or pulls bytes re-shipped
+  // under an unchanged version stamp).
+  let _creaturePackForceAt = 0;
   creaturePackBtn.onclick = async () => {
     if (!checkWifiGate() || !window.PackInstall) return;
     creaturePackBtn.disabled = true;
     try {
-      creaturePackStatus.textContent = 'checking for updates…';
-      const check = await window.PackInstall.checkForUpdate(_rowPackId());
-      if (check.state === 'up-to-date') {
-        creaturePackStatus.textContent = 'already up to date';
-        creaturePackBtn.disabled = false;
-        return;
+      const force = Date.now() - _creaturePackForceAt < 15000;
+      _creaturePackForceAt = 0;
+      if (!force) {
+        creaturePackStatus.textContent = 'checking for updates…';
+        const check = await window.PackInstall.checkForUpdate(_rowPackId());
+        if (check.state === 'up-to-date') {
+          _creaturePackForceAt = Date.now();
+          creaturePackStatus.textContent = 'already up to date — tap again to re-download anyway';
+          creaturePackBtn.disabled = false;
+          return;
+        }
       }
       await window.PackInstall.download(
         _rowPackId(),

@@ -54,5 +54,6 @@ class AppBridgeViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(HapticPatternPlugin())
         bridge?.registerPluginInstance(SensorProbePlugin())
         bridge?.registerPluginInstance(SaveImagePlugin())
+        bridge?.registerPluginInstance(FocusMonitorPlugin())
     }
 }

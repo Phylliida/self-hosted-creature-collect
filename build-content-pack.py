@@ -12,7 +12,16 @@ first if pieces are missing — this script only PACKS, never rebuilds).
 
 Usage:
     python3 build-content-pack.py                     # full pack
+    python3 build-content-pack.py --native            # full + native variant
+    python3 build-content-pack.py --derive-native     # native from existing pack.bin
     python3 build-content-pack.py --max-entries 200   # truncated, for iteration
+
+The native variant (pack-native.bin / pack-native.json) excludes the full
+sprite sheets (sprites/), which are only used by the web fusion-crop
+flow. On iOS/Android the runtime loads pre-cropped cells from
+sprite-packs/ instead, so the native pack is ~70% smaller for the
+default creature-fusion pack, and the native client requests it
+preferentially (see static/pack-install.js).
 """
 
 import argparse
@@ -202,16 +211,48 @@ def gather_entries(staging_files):
     return entries
 
 
+def _report(toc, bin_path, out, suffix, t0):
+    total = sum(e["length"] for e in toc["entries"].values())
+    print(f"✓{suffix} {len(toc['entries'])} entries, "
+          f"{total / (1024**2):.1f} MB of content "
+          f"({bin_path.stat().st_size / (1024**2):.1f} MB file) "
+          f"in {time.time() - t0:.1f}s → {out}")
+    for k in list(toc["entries"])[:3]:
+        e = toc["entries"][k]
+        print(f"    {k}: {e['length']} bytes @ {e['offset']}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT,
                     help="output directory (default packs/creature-fusion)")
     ap.add_argument("--pack-id", default="creature-fusion")
+    ap.add_argument("--native", action="store_true",
+                    help="also write pack-native.bin/.json (no sprites/) "
+                         "alongside the full pack, same contentVersion")
+    ap.add_argument("--derive-native", action="store_true",
+                    help="skip the full build; derive pack-native.* from the "
+                         "existing pack.bin in --out (keeps its contentVersion)")
     ap.add_argument("--max-entries", type=int, default=0,
                     help="truncate to N entries (iteration/testing)")
     args = ap.parse_args()
 
     t0 = time.time()
+
+    if args.derive_native:
+        # Native variant = the full pack minus the web-only sprites/ sheets.
+        # Deriving (rather than rebuilding) keeps contentVersion identical,
+        # so clients holding the full pack are not flagged out-of-date.
+        content_pack.filter_pack(args.out / "pack.bin",
+                                 args.out / "pack-native.bin",
+                                 args.out / "pack-native.json",
+                                 drop_prefixes=("sprites/",))
+        nat = args.out / "pack-native.bin"
+        print(f"✓ (native) {(args.out / 'pack.bin').stat().st_size / (1024**2):.1f} → "
+              f"{nat.stat().st_size / (1024**2):.1f} MB "
+              f"in {time.time() - t0:.1f}s → {args.out}")
+        return
+
     print("→ Generating types.json / specials.json / categories.json …")
     with tempfile.TemporaryDirectory() as tmp:
         staging = Path(tmp)
@@ -232,19 +273,26 @@ def main():
             entries = entries[: args.max_entries]
             have = {logical for logical, _ in entries}
             entries += [e for e in extra if e[0] not in have]
+        # One contentVersion for both transports — same content, the
+        # native variant just drops the web-only sprites/ sheets.
+        cv = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         print(f"→ Packing {len(entries)} entries …")
         toc = content_pack.write_pack(
             entries, args.out / "pack.bin", args.out / "pack.json",
-            pack_id=args.pack_id)
+            pack_id=args.pack_id, content_version=cv)
+        native_toc = None
+        if args.native:
+            native_entries = [(p, f) for p, f in entries
+                              if not p.startswith("sprites/")]
+            print(f"→ Packing {len(native_entries)} entries (native) …")
+            native_toc = content_pack.write_pack(
+                native_entries, args.out / "pack-native.bin",
+                args.out / "pack-native.json",
+                pack_id=args.pack_id, content_version=cv)
 
-    total = sum(e["length"] for e in toc["entries"].values())
-    print(f"✓ {len(toc['entries'])} entries, "
-          f"{total / (1024**2):.1f} MB of content "
-          f"({(args.out / 'pack.bin').stat().st_size / (1024**2):.1f} MB file) "
-          f"in {time.time() - t0:.1f}s → {args.out}")
-    for k in list(toc["entries"])[:3]:
-        e = toc["entries"][k]
-        print(f"    {k}: {e['length']} bytes @ {e['offset']}")
+    _report(toc, args.out / "pack.bin", args.out, "", t0)
+    if native_toc is not None:
+        _report(native_toc, args.out / "pack-native.bin", args.out, " (native)", t0)
 
 
 if __name__ == "__main__":

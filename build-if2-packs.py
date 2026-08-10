@@ -245,11 +245,80 @@ def slice_sprite_pack(src: Path, dst: Path, keep: frozenset) -> bool:
     return True
 
 
-def slice_shin(src: Path, dst: Path, keep: frozenset) -> None:
-    """Filter a shiny-palettes.bin to entries whose (rootA, rootB) are
-    both in `keep`. Entries stay sorted — filtering preserves order.
-    Handles both v2 (52B entries, no codebook) and v3 (shared codebook +
-    16B entries of u8 indices — the codebook is copied verbatim)."""
+def _family_order(sp, fwd, rev):
+    """Reverse-walk to the earliest ancestor, then BFS forward —
+    mirrors Species.familyOf (root-first order)."""
+    cur, seen = sp, {sp}
+    while True:
+        pre = rev.get(cur)
+        if not pre:
+            break
+        prev = pre[0]
+        if prev in seen:
+            break
+        seen.add(prev)
+        cur = prev
+    family, visited, queue = [], set(), [cur]
+    while queue:
+        node = queue.pop(0)
+        if node in visited:
+            continue
+        visited.add(node)
+        family.append(node)
+        for t in fwd.get(node, []):
+            queue.append(t)
+    return family
+
+
+def _candy_root_of(sp, fwd, rev, babies):
+    """First non-baby in root-first family order — mirrors
+    candyRootFor in static/creatures.js (falls back to the last member
+    when every in-pack family member is a baby, e.g. a gen-4-only pack
+    where Happiny stands alone)."""
+    fam = _family_order(sp, fwd, rev)
+    i = 0
+    while i < len(fam) - 1 and fam[i] in babies:
+        i += 1
+    return fam[i]
+
+
+def shin_rekey_map(keep, pack_evos, pack_babies, union_fwd, union_babies):
+    """Map each union shiny-palette family root → the pack-local root
+    id(s) the client will actually resolve under this subset.
+
+    The union bin is keyed by candy roots computed against the UNION
+    evolution tree. A subset's sliced evolutions change resolution:
+    dropping a non-baby ancestor (gen-1 pack keeps Chansey but not
+    Happiny's link …) or keeping only the baby (gen-4 pack: Happiny
+    alone resolves to itself) both shift the root. One union family can
+    also split into several disconnected components, hence a list.
+    """
+    union_rev = {}
+    for s, tgts in union_fwd.items():
+        for t in tgts:
+            union_rev.setdefault(t, []).append(s)
+    pack_fwd = {int(k): [int(r[0]) for r in v] for k, v in pack_evos.items()}
+    pack_rev = {}
+    for s, tgts in pack_fwd.items():
+        for t in tgts:
+            pack_rev.setdefault(t, []).append(s)
+    rekey = {}
+    for s in keep:
+        urep = _candy_root_of(s, union_fwd, union_rev, union_babies)
+        proot = _candy_root_of(s, pack_fwd, pack_rev, pack_babies)
+        rekey.setdefault(urep, set()).add(proot)
+    return {k: sorted(v) for k, v in rekey.items()}
+
+
+def slice_shin(src: Path, dst: Path, rekey: dict) -> None:
+    """Filter + re-key a shiny-palettes.bin for one subset pack.
+
+    rekey: union family root → pack-local root ids (from
+    shin_rekey_map). Entries whose family is absent from the pack are
+    dropped; surviving entries are emitted under the pack-local keys and
+    re-sorted by (rootA, rootB). Handles both v2 (52B entries, no
+    codebook) and v3 (shared codebook + 16B entries of u8 indices — the
+    codebook is copied verbatim)."""
     buf = src.read_bytes()
     if buf[:4] != SHIN_MAGIC:
         raise ValueError(f"bad magic in {src}")
@@ -266,16 +335,19 @@ def slice_shin(src: Path, dst: Path, keep: frozenset) -> None:
         base = SHIN_HEADER_BYTES
     else:
         raise ValueError(f"unsupported SHIN version {version} in {src}")
-    entries = bytearray()
-    kept = 0
+    out = {}
     for i in range(count):
         off = base + i * entry_bytes
         a, b = struct.unpack_from("<HH", buf, off)
-        if a in keep and b in keep:
-            entries += buf[off:off + entry_bytes]
-            kept += 1
-    dst.write_bytes(SHIN_MAGIC + struct.pack("<III", version, kept, k)
-                    + codebook + entries)
+        raw = buf[off + 4:off + entry_bytes]
+        for ra in rekey.get(a, ()):
+            for rb in rekey.get(b, ()):
+                out[(ra, rb)] = raw
+    body = bytearray()
+    for (ra, rb) in sorted(out):
+        body += struct.pack("<HH", ra, rb) + out[(ra, rb)]
+    dst.write_bytes(SHIN_MAGIC + struct.pack("<III", version, len(out), k)
+                    + codebook + body)
 
 
 def _load_bcp():
@@ -347,19 +419,24 @@ def gen_categories(names: list, evos: dict, ids: list, legendaries: set,
 _WORKER: dict = {}
 
 
-def _slice_worker_init(gen_map: dict, generic_dir: str, specials_defs: list) -> None:
+def _slice_worker_init(gen_map: dict, generic_dir: str, specials_defs: list,
+                       native: bool = False) -> None:
     _WORKER["gen_map"] = gen_map
     _WORKER["generic"] = {
         "dir": Path(generic_dir),
         "bcp": _load_bcp(),
         "specials_defs": specials_defs,
+        "native": native,
     }
 
 
-def _slice_worker(variant: tuple[tuple[int, ...], bool]) -> tuple[str, int]:
+def _slice_worker(variant: tuple[tuple[int, ...], bool]) -> tuple[str, int, int]:
     key = slice_subset(variant, _WORKER["gen_map"], _WORKER["generic"], PACKS_OUT)
     size = (PACKS_OUT / key / "pack.bin").stat().st_size
-    return key, size
+    native_size = 0
+    if _WORKER["generic"].get("native"):
+        native_size = (PACKS_OUT / key / "pack-native.bin").stat().st_size
+    return key, size, native_size
 
 
 def slice_subset(variant: tuple[tuple[int, ...], bool], gen_map: dict[int, int],
@@ -497,10 +574,16 @@ def slice_subset(variant: tuple[tuple[int, ...], bool], gen_map: dict[int, int],
                     slice_sprite_pack(src, staging / "sprite-packs" / f"{b}.pack",
                                       keep)
 
-        # ── Shiny palettes: filter root pairs ───────────────────
+        # ── Shiny palettes: filter + re-key root pairs ──────────
         shin = UNION_DIR / "shiny-palettes.bin"
         if shin.is_file():
-            slice_shin(shin, staging / "shiny-palettes.bin", keep)
+            union_evos_full = json.loads(
+                (UNION_DIR / "species-evolutions.json").read_text())
+            union_fwd = {int(k): [int(r[0]) for r in v]
+                         for k, v in union_evos_full.items()}
+            rekey = shin_rekey_map(keep, evos, babies, union_fwd,
+                                   set(union_pool["babies"]))
+            slice_shin(shin, staging / "shiny-palettes.bin", rekey)
         else:
             write_empty_shin(staging / "shiny-palettes.bin")
 
@@ -523,8 +606,19 @@ def slice_subset(variant: tuple[tuple[int, ...], bool], gen_map: dict[int, int],
             for f in sorted(staging.rglob("*")) if f.is_file()
         ]
         out_dir = out_root / key
+        # One contentVersion for both transports — same content, the
+        # native variant just drops the web-only sprites/ sheets.
+        cv = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         content_pack.write_pack(entries, out_dir / "pack.bin",
-                                out_dir / "pack.json", pack_id=PACK_ID)
+                                out_dir / "pack.json", pack_id=PACK_ID,
+                                content_version=cv)
+        if generic.get("native"):
+            native_entries = [(p, f) for p, f in entries
+                              if not p.startswith("sprites/")]
+            content_pack.write_pack(native_entries,
+                                    out_dir / "pack-native.bin",
+                                    out_dir / "pack-native.json",
+                                    pack_id=PACK_ID, content_version=cv)
     return key
 
 
@@ -534,7 +628,8 @@ def cmd_slice(args) -> None:
     combos = (parse_subsets_arg(args.subsets) if args.subsets
               else all_subsets())
     gen_map = load_gen_map()
-    print(f"→ Slicing {len(combos)} subset packs from {UNION_DIR}")
+    native_label = " + native variants" if args.native else ""
+    print(f"→ Slicing {len(combos)} subset packs{native_label} from {UNION_DIR}")
 
     # Generic staged files shared by every subset (node dumps are slow
     # enough to only do once).
@@ -549,6 +644,7 @@ def cmd_slice(args) -> None:
         "dir": generic_dir,
         "bcp": bcp,
         "specials_defs": json.loads((generic_dir / "specials.json").read_text()),
+        "native": args.native,
     }
 
     t0 = time.time()
@@ -556,19 +652,34 @@ def cmd_slice(args) -> None:
         import multiprocessing as mp
         with mp.Pool(args.jobs, initializer=_slice_worker_init,
                      initargs=(gen_map, str(generic_dir),
-                               generic["specials_defs"])) as pool:
-            for i, (key, size) in enumerate(
+                               generic["specials_defs"], args.native)) as pool:
+            for i, (key, size, native_size) in enumerate(
                     pool.imap_unordered(_slice_worker, combos), 1):
-                print(f"  [{i}/{len(combos)}] {key}: {size / (1024**2):.0f} MB "
-                      f"({time.time() - t0:.0f}s elapsed)", flush=True)
+                if args.native:
+                    print(f"  [{i}/{len(combos)}] {key}: "
+                          f"{size / (1024**2):.0f} MB "
+                          f"(native {native_size / (1024**2):.0f} MB) "
+                          f"({time.time() - t0:.0f}s elapsed)", flush=True)
+                else:
+                    print(f"  [{i}/{len(combos)}] {key}: "
+                          f"{size / (1024**2):.0f} MB "
+                          f"({time.time() - t0:.0f}s elapsed)", flush=True)
     else:
         for i, combo in enumerate(combos, 1):
             key = slice_subset(combo, gen_map, generic, PACKS_OUT)
             size = (PACKS_OUT / key / "pack.bin").stat().st_size
-            print(f"  [{i}/{len(combos)}] {key}: {size / (1024**2):.0f} MB "
-                  f"({time.time() - t0:.0f}s elapsed)", flush=True)
+            if args.native:
+                native_size = (PACKS_OUT / key / "pack-native.bin").stat().st_size
+                print(f"  [{i}/{len(combos)}] {key}: "
+                      f"{size / (1024**2):.0f} MB "
+                      f"(native {native_size / (1024**2):.0f} MB) "
+                      f"({time.time() - t0:.0f}s elapsed)", flush=True)
+            else:
+                print(f"  [{i}/{len(combos)}] {key}: "
+                      f"{size / (1024**2):.0f} MB "
+                      f"({time.time() - t0:.0f}s elapsed)", flush=True)
     shutil.rmtree(generic_dir, ignore_errors=True)
-    print(f"✓ {len(combos)} subset packs → {PACKS_OUT}")
+    print(f"✓ {len(combos)} subset packs{native_label} → {PACKS_OUT}")
 
 
 def cmd_upload(_args) -> None:
@@ -593,6 +704,9 @@ def main() -> None:
                          "a first bake)")
     ap.add_argument("--jobs", type=int, default=1,
                     help="parallel workers for slicing across subsets.")
+    ap.add_argument("--native", action="store_true",
+                    help="also build pack-native.bin / pack-native.json variants "
+                         "without sprites/ (native Capacitor builds use sprite-packs/)")
     args = ap.parse_args()
 
     if args.list_subsets:

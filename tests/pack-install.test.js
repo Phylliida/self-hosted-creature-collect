@@ -44,6 +44,15 @@ ok(!!PI, 'PackInstall exported under Node');
   }
   const web = PI.sourceForMode('bbox-flask', '');
   ok(web.packBinUrl === '/pack-files/creature-fusion/pack.bin', '1: empty apiBase → same-origin relative');
+
+  // Native variant URLs append `-native` to pack filenames.
+  const hfNative = PI.sourceForMode('static-hf', 'https://poke.example.org', null, null, true);
+  ok(hfNative.packBinUrl.endsWith('/pack-native.bin')
+    && hfNative.packJsonUrl.endsWith('/pack-native.json'),
+    '1: static-hf native → pack-native.* URLs');
+  const localNative = PI.sourceForMode('bbox-flask', 'https://poke.example.org', null, null, true);
+  ok(localNative.packBinUrl === 'https://poke.example.org/pack-files/creature-fusion/pack-native.bin',
+    '1: local native → /pack-files/creature-fusion/pack-native.bin');
 }
 
 // --- 2) streaming entry cutter ------------------------------------------------------
@@ -145,6 +154,68 @@ async function main() {
     delete globalThis.localStorage;
     delete globalThis.fetch;
     delete globalThis.CC_API_BASE;
+  }
+
+  // --- 3b) checkForUpdate: native-variant rollout fallback -------------------------
+  // A client holding the FULL pack (installed before pack-native.* existed)
+  // must report up-to-date when the native manifest differs but the full
+  // manifest still matches the install — same content, bigger transport.
+  {
+    const lsStore = {};
+    globalThis.localStorage = {
+      getItem: (k) => (k in lsStore ? lsStore[k] : null),
+      setItem: (k, v) => { lsStore[k] = String(v); },
+      removeItem: (k) => { delete lsStore[k]; },
+    };
+    globalThis.CC_API_BASE = 'https://poke.example.org';
+    globalThis.Capacitor = { getPlatform: () => 'ios' };
+    lsStore['cc.regionsMode'] = 'static-hf';
+    const nativeManifest = { contentVersion: 'v1', sha256: 'nativesha' };
+    const fullManifest = { contentVersion: 'v1', sha256: 'fullsha' };
+    globalThis.fetch = async (url) => {
+      if (url.endsWith('pack-native.json')) {
+        return { ok: true, json: async () => nativeManifest };
+      }
+      if (url.endsWith('pack.json')) {
+        return { ok: true, json: async () => fullManifest };
+      }
+      return { ok: false, status: 404 };
+    };
+    lsStore[PI.metaKey('creature-fusion')] = JSON.stringify(
+      { contentVersion: 'v1', sha256: 'fullsha', installedAt: 2 });
+
+    let r = await PI.checkForUpdate();
+    ok(r.state === 'up-to-date',
+      '3b: native manifest differs, full matches install → up-to-date (got ' + r.state + ')');
+
+    // Installed the NATIVE variant → matches the native manifest directly.
+    lsStore[PI.metaKey('creature-fusion')] = JSON.stringify(
+      { contentVersion: 'v1', sha256: 'nativesha', installedAt: 3 });
+    r = await PI.checkForUpdate();
+    ok(r.state === 'up-to-date', '3b: native install matches native manifest → up-to-date');
+
+    // Content actually changed (both manifests bumped) → update flagged.
+    nativeManifest.contentVersion = 'v2'; nativeManifest.sha256 = 'nativesha2';
+    fullManifest.contentVersion = 'v2'; fullManifest.sha256 = 'fullsha2';
+    r = await PI.checkForUpdate();
+    ok(r.state === 'available', '3b: real content change → update available');
+
+    // Server has no native variant (404) → falls back to full manifest.
+    lsStore[PI.metaKey('creature-fusion')] = JSON.stringify(
+      { contentVersion: 'v2', sha256: 'fullsha2', installedAt: 4 });
+    globalThis.fetch = async (url) => {
+      if (url.endsWith('pack-native.json')) return { ok: false, status: 404 };
+      if (url.endsWith('pack.json')) {
+        return { ok: true, json: async () => ({ contentVersion: 'v2', sha256: 'fullsha2' }) };
+      }
+      return { ok: false, status: 404 };
+    };
+    r = await PI.checkForUpdate();
+    ok(r.state === 'up-to-date', '3b: no native variant on server → full manifest decides');
+    delete globalThis.localStorage;
+    delete globalThis.fetch;
+    delete globalThis.CC_API_BASE;
+    delete globalThis.Capacitor;
   }
 
   // --- 4) native overlay + no-SW-machinery -----------------------------------------

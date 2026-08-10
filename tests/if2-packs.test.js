@@ -117,15 +117,24 @@ assert (a0, v0, payload[o0:o0+l0]) == (1, -1, payloads[0])
 assert (a1, v1, payload[o1:o1+l1]) == (3, 2, payloads[2])
 assert not drv.slice_sprite_pack(tmp / 'in.pack', tmp / 'none.pack', frozenset({9}))
 
-# SHIN: 2 entries (1,2) and (3,4) -> only (1,3)... both must be in keep
+# SHIN: 2 entries (1,3) and (1,9) -> rekey maps union roots to pack-local
+# roots; unmapped families are dropped
 e = struct.pack('<HH', 1, 3) + b'\\x00' * 48
 f = struct.pack('<HH', 1, 9) + b'\\x11' * 48
 (tmp / 'in.bin').write_bytes(b'SHIN' + struct.pack('<III', 2, 2, 0) + e + f)
-drv.slice_shin(tmp / 'in.bin', tmp / 'out.bin', keep)
+drv.slice_shin(tmp / 'in.bin', tmp / 'out.bin', {1: [1], 3: [3]})
 ob = (tmp / 'out.bin').read_bytes()
 assert ob[:4] == b'SHIN'
 ver, cnt, _ = struct.unpack_from('<III', ob, 4)
 assert cnt == 1 and ob[16:] == e, (cnt, len(ob))
+
+# SHIN re-key: union root 9 resolves to pack-local 113 (baby-family case)
+drv.slice_shin(tmp / 'in.bin', tmp / 'out-rk.bin', {1: [1], 3: [3], 9: [113]})
+obrk = (tmp / 'out-rk.bin').read_bytes()
+ver, cnt, _ = struct.unpack_from('<III', obrk, 4)
+ra, rb = struct.unpack_from('<HH', obrk, 16 + 52)  # second entry
+assert cnt == 2 and (ra, rb) == (1, 113), (cnt, ra, rb)
+assert obrk[16 + 52 + 4:16 + 104] == b'\\x11' * 48  # payload carried over
 
 # SHIN v3: shared codebook (K=2) + 16B u8-index entries — the codebook
 # must be copied verbatim and only entries filtered
@@ -133,12 +142,21 @@ cb = bytes(range(8))
 e3 = struct.pack('<HH', 1, 3) + bytes(range(12))
 f3 = struct.pack('<HH', 1, 9) + bytes(range(12, 24))
 (tmp / 'in3.bin').write_bytes(b'SHIN' + struct.pack('<III', 3, 2, 2) + cb + e3 + f3)
-drv.slice_shin(tmp / 'in3.bin', tmp / 'out3.bin', keep)
+drv.slice_shin(tmp / 'in3.bin', tmp / 'out3.bin', {1: [1], 3: [3]})
 ob3 = (tmp / 'out3.bin').read_bytes()
 assert ob3[:4] == b'SHIN'
 ver3, cnt3, k3 = struct.unpack_from('<III', ob3, 4)
 assert (ver3, cnt3, k3) == (3, 1, 2), (ver3, cnt3, k3)
 assert ob3[16:24] == cb and ob3[24:] == e3, (len(ob3),)
+
+# shin_rekey_map: pack-local resolution — union root for Pichu's family is
+# 25 (Pikachu); a pack holding only the baby resolves it to 172 instead
+pevos = {}                            # pack-local: Pichu's evo link was sliced away
+ufwd = {172: [25], 25: [26]}          # union: Pichu -> Pikachu -> Raichu
+rk = drv.shin_rekey_map(frozenset({172}), pevos, {172}, ufwd, {172})
+assert rk == {25: [172]}, rk
+rk2 = drv.shin_rekey_map(frozenset({25, 26}), {'25': [[26, 'Level', 1]]}, set(), ufwd, {172})
+assert rk2 == {25: [25]}, rk2
 
 # Sheet blanking: 10-col sheet, 2 rows; body 1 kept, body 2 blanked
 img = Image.new('RGBA', (960, 192), (0, 0, 0, 0))
@@ -223,6 +241,14 @@ function section5() {
   const localPlain = PI.sourceForMode('bbox-flask', '', null, 'creature-fusion');
   ok(localPlain.packBinUrl === '/pack-files/creature-fusion/pack.bin', '5: default local URL unchanged');
 
+  // Native variant URLs include both the gen subdir and the -native suffix.
+  const hfNative = PI.sourceForMode('static-hf', '', 'TessaCoil/creature-pack-if2', 'creature-if2', true);
+  ok(hfNative.packBinUrl === 'https://huggingface.co/datasets/TessaCoil/creature-pack-if2/resolve/main/gen-1-2/pack-native.bin',
+    '5: HF native URL includes subdir + -native: ' + hfNative.packBinUrl);
+  const localNative = PI.sourceForMode('bbox-flask', 'http://x', null, 'creature-if2', true);
+  ok(localNative.packBinUrl === 'http://x/pack-files/creature-if2/gen-1-2/pack-native.bin',
+    '5: local native URL includes subdir + -native: ' + localNative.packBinUrl);
+
   // checkForUpdate: same contentVersion/sha but different variant subdir
   // → 'available'. meta.gens stores the installed variant's subdir.
   ls['cc.contentPack.creature-if2.v1'] = JSON.stringify({
@@ -261,6 +287,16 @@ function section6() {
   ok(src.includes('data-fam') && src.includes('Whole evolution families'),
     '6: families toggle present in gen dialog');
   ok(src.includes('gensChanged'), '6: variant switch re-downloads on gens change');
+  // Re-download badge must be available for the ACTIVE pack too (it was
+  // gated on installed && !isActive, leaving no way to force a
+  // re-download of the pack in use).
+  ok(!/installed && !isActive[\s\S]{0,120}data-redl/.test(src),
+    '6: ↻ re-download badge not gated on !isActive');
+  ok(src.includes("'already active'"),
+    '6: plain tap on the active row is a no-op guard');
+  const indexHtml = fs.readFileSync(path.join(root, 'static', 'index.html'), 'utf8');
+  ok(indexHtml.includes('tap again to re-download anyway'),
+    '6: settings row offers a force re-download second tap');
   const packsSrc = fs.readFileSync(path.join(root, 'static', 'packs.js'), 'utf8');
   ok(packsSrc.includes('genRange') && packsSrc.includes('cc.packGens.')
     && packsSrc.includes('cc.packGensFam.'),
@@ -318,6 +354,65 @@ function section8() {
   }
 }
 
+// --- 7b) Species cache namespace is per gen-variant -------------------------------
+// Regression: species.js/sprites.js used to namespace their caches by
+// pack id only, so switching IF2 gen subsets kept serving the previous
+// variant's species-pool (wrong spawn list / completion counts).
+function section7b() {
+  const speciesJs = path.join(root, 'static', 'species.js');
+  function loadSpeciesWith(ls) {
+    delete require.cache[require.resolve(speciesJs)];
+    delete globalThis.Species;
+    globalThis.localStorage = {
+      getItem: (k) => (k in ls ? ls[k] : null),
+      setItem: (k, v) => { ls[k] = String(v); },
+      removeItem: (k) => { delete ls[k]; },
+    };
+    require(speciesJs);
+    return globalThis.Species;
+  }
+  const poolJson = JSON.stringify({
+    species: [1, 2, 3], legendaries: [], babies: [], spawnable: [1], maxSpecies: 151,
+  });
+  // Variant key populated → pool loads from the variant slot.
+  let S = loadSpeciesWith({
+    'cc.activePack': 'creature-if2',
+    'cc.packGens.creature-if2': '1',
+    'cc.speciesPool.creature-if2.1': poolJson,
+  });
+  ok(S.pool() && S.pool().max === 151, '7b: pool read from per-variant cache slot');
+  // Only the OLD pack-level slot populated (the stale-cache scenario) →
+  // must NOT be picked up under a variant selection.
+  S = loadSpeciesWith({
+    'cc.activePack': 'creature-if2',
+    'cc.packGens.creature-if2': '1',
+    'cc.speciesPool.creature-if2': poolJson,
+  });
+  ok(S.pool() === null, '7b: stale pack-level cache ignored after variant switch');
+  // Different gens selection → different slot.
+  S = loadSpeciesWith({
+    'cc.activePack': 'creature-if2',
+    'cc.packGens.creature-if2': '1,2',
+    'cc.speciesPool.creature-if2.1,2': poolJson,
+  });
+  ok(S.pool() && S.pool().max === 151, '7b: gens list participates in the namespace');
+  // -fam flag participates too.
+  S = loadSpeciesWith({
+    'cc.activePack': 'creature-if2',
+    'cc.packGens.creature-if2': '1',
+    'cc.packGensFam.creature-if2': '1',
+    'cc.speciesPool.creature-if2.1f': poolJson,
+  });
+  ok(S.pool() && S.pool().max === 151, '7b: -fam flag participates in the namespace');
+  // sprites.js applies the same namespacing to its IDB keys.
+  const spritesSrc = fs.readFileSync(path.join(root, 'static', 'sprites.js'), 'utf8');
+  ok(spritesSrc.includes("cc.packGens.' + v") && spritesSrc.includes("cc.packGensFam.' + v"),
+    '7b: sprites.js namespaces its IDB caches per variant too');
+  delete globalThis.localStorage;
+  delete globalThis.Species;
+  delete require.cache[require.resolve(speciesJs)];
+}
+
 function finish() {
   console.log(`${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
@@ -329,5 +424,6 @@ function finish() {
   await section5();
   section6();
   section7();
+  section7b();
   section8();
 })().then(finish, (e) => { ok(false, 'unexpected: ' + (e && e.message)); finish(); });
