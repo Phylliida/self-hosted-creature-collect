@@ -72,9 +72,12 @@ const TILES_CACHE = 'tiles-v1';
 // up-to-date against the native manifest; (c) species.js/sprites.js
 // caches are namespaced per gen-VARIANT (were per pack id — switching
 // IF2 subsets kept serving the previous subset's pool/evolutions, so
-// spawns + completion counted the wrong species set); (d) the pack
-// picker ↻ re-download badge now shows for the ACTIVE pack and the
-// Settings creature-pack row arms a second-tap force re-download.
+// spawns + completion counted the wrong species set) AND per pack
+// contentVersion (a same-pack update kept serving the previous pack's
+// names/types/pool — '#151' instead of Mew after the pool expansion);
+// (d) the pack picker ↻ re-download badge now shows for the ACTIVE
+// pack and the Settings creature-pack row arms a second-tap force
+// re-download.
 // All in cache-first files (/static/creatures.js, /static/species.js,
 // /static/sprites.js, /static/pack-install.js, index.html).
 

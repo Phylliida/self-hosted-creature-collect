@@ -335,20 +335,27 @@ function section7() {
   delete require.cache[require.resolve(path.join(root, 'static', 'species.js'))];
 }
 
-// --- 8) default pack pool file == hardcoded client constants ----------------------
+// --- 8) default pack pool file = gen 1–3 + families ------------------------------
+// Since 2026-08-10 the default creature-fusion pool is every gen 1–3
+// species (national 1–386), the curated type-coverage extras, and the
+// later-gen members of those families (423 species total). The client's
+// hardcoded constants are now strictly a fallback for pool-file-less
+// bundles and intentionally do NOT match this file.
 function section8() {
   const poolPath = path.join(root, 'data', 'BundledData', 'species-pool.json');
   if (fs.existsSync(poolPath)) {
     const pool = JSON.parse(fs.readFileSync(poolPath, 'utf8'));
-    ok(pool.maxSpecies === 429, '8: default pool maxSpecies = 429');
-    ok(pool.legendaries.join(',') === '144,145,146,150,151',
-      '8: default legendaries match LEGENDARY_SPECIES_SET');
-    ok(pool.babies.join(',') === '172,173,174,175,236,238,239,240',
-      '8: default babies match CANDY_ROOT_BABIES');
-    ok(pool.species.length === 199 && pool.spawnable.length === 95,
-      '8: default pool 199 species / 95 spawnable');
-    ok(pool.spawnable[0] === 1 && pool.spawnable.includes(325),
-      '8: spawnable mirrors SPAWNVABLE_SPECIES_A');
+    ok(pool.maxSpecies === 565, '8: default pool maxSpecies = 565');
+    ok(pool.species.length === 423, '8: default pool 423 species (gen 1–3 + extras + families)');
+    ok(pool.legendaries.join(',') === '144,145,146,150,151,243,244,245,249,250,251,340,341,342,378,379,380,381,447,448,449',
+      '8: legendaries = gens 1–3 sets');
+    ok(pool.babies.join(',') === '172,173,174,175,236,238,239,240,252,253,257,258,259,260,261,400,557',
+      '8: babies = gen-2 + family-closure babies');
+    ok(pool.spawnable.length === 188, '8: 188 spawnable (derived first-forms)');
+    const ids = new Set(pool.species);
+    ok(ids.has(151) && ids.has(259) && ids.has(267) && ids.has(557),
+      '8: Mew, Happiny, Electivire, Chingling now in the pool');
+    ok(!ids.has(384), '8: Riolu family (gen 4) stays out');
   } else {
     ok(false, '8: data/BundledData/species-pool.json missing — run build-bundled-data.py');
   }
@@ -408,6 +415,31 @@ function section7b() {
   const spritesSrc = fs.readFileSync(path.join(root, 'static', 'sprites.js'), 'utf8');
   ok(spritesSrc.includes("cc.packGens.' + v") && spritesSrc.includes("cc.packGensFam.' + v"),
     '7b: sprites.js namespaces its IDB caches per variant too');
+
+  // Content-version participates in the namespace: a same-pack update
+  // swaps the served JSONs, so the old install's cache must not load.
+  S = loadSpeciesWith({
+    'cc.activePack': 'creature-if2',
+    'cc.packGens.creature-if2': '1',
+    'cc.contentPack.creature-if2.v1': JSON.stringify({ contentVersion: 'v2' }),
+    'cc.speciesPool.creature-if2.1.v2': poolJson,
+  });
+  ok(S.pool() && S.pool().max === 151, '7b: pool read from content-versioned cache slot');
+  S = loadSpeciesWith({
+    'cc.activePack': 'creature-if2',
+    'cc.packGens.creature-if2': '1',
+    'cc.contentPack.creature-if2.v1': JSON.stringify({ contentVersion: 'v2' }),
+    'cc.speciesPool.creature-if2.1.v1': poolJson,
+  });
+  ok(S.pool() === null, '7b: previous pack version cache ignored after update');
+  // Default pack namespaces by contentVersion too ('' pack id segment).
+  S = loadSpeciesWith({
+    'cc.contentPack.creature-fusion.v1': JSON.stringify({ contentVersion: '2026-08-10T17:54:07Z' }),
+    'cc.speciesPool.2026-08-10T175407Z': poolJson,
+  });
+  ok(S.pool() && S.pool().max === 151, '7b: default pack uses contentVersion namespace');
+  ok(spritesSrc.includes("cc.contentPack.' + pid"),
+    '7b: sprites.js namespaces IDB caches by contentVersion too');
   delete globalThis.localStorage;
   delete globalThis.Species;
   delete require.cache[require.resolve(speciesJs)];

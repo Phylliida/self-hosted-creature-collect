@@ -198,6 +198,34 @@ def default_pair(key, C):
     return np.array(sorted(chosen), dtype=np.int64)
 
 
+def gap_fill_from(target_game, source_game, C4, games):
+    """Fill target_game's missing roster pairs by COPYING source_game's
+    assignments for the same family-pair keys — no baking. The frozen
+    shared codebook makes source assignments meaningful for the target
+    (same 128 types), which is the intended growth path: new roster
+    pairs reuse the already-shipped assignments so adding species never
+    shifts anyone's colours. Pairs the source section lacks get the
+    deterministic default. Existing target entries are never touched."""
+    roots, _ = load_roster(GAMES[target_game]['bundle'])
+    target = games[target_game]
+    source = games[source_game]
+    missing = [(a, b) for a in roots for b in roots
+               if f'{a}-{b}' not in target]
+    n_copied = n_default = 0
+    for a, b in missing:
+        key = f'{a}-{b}'
+        if key in source:
+            target[key] = np.array(source[key], dtype=np.int64)
+            n_copied += 1
+        else:
+            target[key] = default_pair(key, C4)
+            n_default += 1
+    print(f'  {target_game}: mirrored {n_copied:,} pairs from {source_game}, '
+          f'{n_default:,} crc32 defaults (roster {len(roots)} roots, '
+          f'{len(roots) ** 2:,} pairs)')
+    return n_copied, n_default
+
+
 # ── Game-local roster (no species_pool import — each bundle ships its
 #    own species-pool.json + species-evolutions.json) ────────────────
 
@@ -448,11 +476,35 @@ def main():
     ap.add_argument('--verify', action='store_true',
                     help='Round-trip the emitted bins against the master '
                          'and print stats. No baking.')
+    ap.add_argument('--mirror', nargs=2, metavar=('SOURCE', 'TARGET'),
+                    help='Gap-fill TARGET\'s section by copying SOURCE\'s '
+                         'assignments for the same pair keys (no baking — '
+                         'the shared frozen codebook makes them portable). '
+                         'Pairs SOURCE lacks get the crc32 default.')
     ap.add_argument('--master', type=Path, default=MASTER_PATH)
     args = ap.parse_args()
 
     if args.verify:
         verify(load_master(args.master))
+        return
+
+    if args.mirror:
+        src_g, tgt_g = args.mirror
+        if src_g not in GAMES or tgt_g not in GAMES:
+            ap.error(f'--mirror games must be among {sorted(GAMES)}')
+        master = load_master(args.master)
+        codebook = [tuple(t) for t in master['codebook']]
+        C4 = normalize(codebook)
+        games = {g: {k: np.array(v, dtype=np.int64)
+                     for k, v in master['games'][g]['pairs'].items()}
+                 for g in GAMES}
+        print(f'mirror {src_g} → {tgt_g}:')
+        gap_fill_from(tgt_g, src_g, C4, games)
+        save_master(args.master, codebook, games)
+        total = sum(len(games[g]) for g in games)
+        print(f'wrote {args.master} ({total:,} pairs total)')
+        print('emitting bins:')
+        emit_bins(codebook, games)
         return
 
     if args.init:

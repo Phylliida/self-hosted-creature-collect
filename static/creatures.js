@@ -16970,6 +16970,19 @@
   let _focusSettleInFlight = false;
   let _focusViewTick = null;
 
+  // Plugin calls cross the native bridge; on iOS the WebView can
+  // suspend mid-call (lock arrives between the JS request and the
+  // native reply), leaving the promise pending forever — which would
+  // wedge _focusSettleInFlight and kill every future settle. Race
+  // every plugin call against a timeout so a lost reply degrades to
+  // "no new events" instead of a dead session.
+  function _focusPluginCall(promise) {
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('focus plugin timeout')), 5000)),
+    ]);
+  }
+
   function _focusOnVisibility() {
     const now = Date.now();
     if (!_focusPlugin()) {
@@ -16981,7 +16994,16 @@
     // Settle on BOTH transitions: on hide it promptly records the app_bg
     // (so a process kill mid-background can't misattribute the span);
     // on show it catches up whatever accrued while suspended (sleep).
-    _focusSettle(now).catch(() => {});
+    _focusSettle(now).catch(() => {}).finally(() => {
+      // iOS can kill WebView timers across a long suspend — re-render
+      // the focus view (which re-arms its 1s clock) if it's on screen
+      // when we come back.
+      if (document.visibilityState !== 'visible') return;
+      const panel = document.getElementById('creatureInventory');
+      if (panel && panel.querySelector('.focus-view.show')) {
+        try { renderFocus(); } catch (e) { /* ignore */ }
+      }
+    });
   }
 
   // Settle accrual up to nowMs: replay events since the last settle,
@@ -16998,7 +17020,7 @@
       const p = _focusPlugin();
       if (p) {
         try {
-          const r = await p.getEvents({ sinceMs: a.lastSettleMs });
+          const r = await _focusPluginCall(p.getEvents({ sinceMs: a.lastSettleMs }));
           events = (r && Array.isArray(r.events)) ? r.events : [];
         } catch (e) { /* plugin hiccup — replay with no events (state holds) */ }
       } else {
@@ -17009,6 +17031,11 @@
       const r = _focusReplay(events, a.lastSettleMs, nowMs, a.lastState);
       a.qualifyingMs += r.qualifyingMs;
       a.lastState = r.state;
+      // Ground truth beats the event log: if this JS is running and the
+      // page is visible, the app IS foreground — an app_fg event lost in
+      // a suspend race (or a plugin that never registered) must not
+      // leave the session reading "backgrounded" forever.
+      a.lastState.appFg = (document.visibilityState === 'visible');
       a.lastSettleMs = nowMs;
       // Distance bonus: fold in whatever the pedometer recorded since
       // the last sync. Reads are independent of the daycare's own
@@ -17020,7 +17047,7 @@
           // Skip trivially-short windows (same rationale as the
           // daycare sync's MIN_SYNC_WINDOW_MS).
           if (nowMs - fromMs >= 20000) {
-            const dr = await Ped.getDistanceMeters({ fromMs, toMs: nowMs });
+            const dr = await _focusPluginCall(Ped.getDistanceMeters({ fromMs, toMs: nowMs }));
             if (dr && dr.ok) {
               a.distanceM = (a.distanceM || 0) + (Number(dr.meters) || 0);
               a.lastDistanceSyncMs = nowMs;
@@ -17096,7 +17123,7 @@
     const p = _focusPlugin();
     if (p) {
       try {
-        const r = await p.startSession();
+        const r = await _focusPluginCall(p.startSession());
         if (r) {
           init = { screenOff: !!r.screenOff, appFg: r.appForeground !== false };
         }
@@ -17129,7 +17156,7 @@
     const a = s.active;
     if (!a) return null;
     const p = _focusPlugin();
-    if (p) { try { await p.endSession(); } catch (e) { /* ignore */ } }
+    if (p) { try { await _focusPluginCall(p.endSession()); } catch (e) { /* ignore */ } }
     s.active = null;
     const rec = {
       startedAtMs: a.startedAtMs,

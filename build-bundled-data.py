@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """Build data/BundledData/ — a self-contained snapshot of all the
-data the client needs for the first MAX_SPECIES (=150) Pokémon.
+data the client needs for the pool (species_pool.py) Pokémon.
 
 Bundled into the iOS / Android wrapper IPA/APK so users can play
 without the post-install bulk-download step.
 
-All inputs live under data/InfiniteFusion/ — no dependency on a
-pre-extracted data/Battlers/ folder. The Ruby Marshal `.dat` files
-(species.dat, evolutions.dat) are decoded via `extract-pif-dat.rb`
+Inputs live under data/InfiniteFusion/, except the custom variant
+sheets + credits, which prefer the merged multi-source tree
+data/MergedCustom/ (IF1+IF2+Battlers — run merge-custom-art.py first;
+IF1 variant indices are preserved there by construction, so existing
+creatures keep their images) and fall back to pure IF1 when the merge
+hasn't been built. The Ruby Marshal `.dat` files (species.dat,
+evolutions.dat) are decoded via `extract-pif-dat.rb`
 (subprocess; needs `ruby` on PATH). Note: types.dat is NOT decoded —
 the canonical type list + effectiveness chart lives in the app code at
 static/types.js (global.Types), not in the bundled data.
@@ -15,13 +19,14 @@ static/types.js (global.Types), not in the bundled data.
 Inputs:
   data/InfiniteFusion/Graphics/Battlers/spritesheets_autogen/<head>.png
       autogen sheets, 960×4896 (10×51 cells of 96px)
-  data/InfiniteFusion/Graphics/CustomBattlers/spritesheets/spritesheets_custom/<head>/<head>[v].png
-      custom variant sheets, 1920×2784 (20×29 cells of 96px)
+  data/MergedCustom/spritesheets_custom/<head>/<head>[v].png
+      custom variant sheets (merged multi-source), 1920×… (20 cols of
+      96px); fallback: the IF1-only tree under CustomBattlers/
   data/InfiniteFusion/Graphics/Battlers/Eggs/<id>.png
       per-species egg images (160×160), packed into one sprite sheet
   data/InfiniteFusion/Data/species.dat       Marshal: id_number → Species
   data/InfiniteFusion/Data/Scripts/052_InfiniteFusion/Fusion/SplitNames.rb
-  data/InfiniteFusion/Data/sprites/Sprite_Credits.csv
+  data/MergedCustom/credits.csv (fallback: IF1 Data/sprites/Sprite_Credits.csv)
 
   icons/                 POI marker SVGs (the same files /icons serves)
   fonts/<stack>/*.pbf    map label glyphs (the same files /fonts serves)
@@ -33,8 +38,8 @@ Outputs (under data/BundledData/):
   split-names.json         array of [prefix, suffix] indexed by national dex
   credits.json             {"<a>-<b>": {variant_suffix: artist}}
   species-names.json       array (1-indexed: array[0] == "bulbasaur")
-  species-types.json       {"<id>": [type1, type2|null]}, ids 1..150
-  species-evolutions.json  {"<id>": [[target, method, param], ...]}, sources 1..150
+  species-types.json       {"<id>": [type1, type2|null]}, pool ids
+  species-evolutions.json  {"<id>": [[target, method, param], ...]}, pool sources
   manifest.json            {"<head>": [variant_suffix, ...]}
   cells.json               {"<body>-<head>": [variant_index, ...]}
                            — which (body, head) fusions have non-blank
@@ -120,16 +125,27 @@ INFINITEFUSION = _env_path("CC_INFINITEFUSION", ROOT / "data" / "InfiniteFusion"
 # Sprite sheet sources live inside InfiniteFusion's Graphics tree —
 # Battlers/ is for the autogen sheets, CustomBattlers/ for custom.
 AUTOGEN_SHEETS_DIR = INFINITEFUSION / "Graphics" / "Battlers" / "spritesheets_autogen"
+# Custom art: prefer the merged multi-source tree (IF1 + IF2 + legacy
+# Battlers — see merge-custom-art.py) once it has been built. IF1
+# variant indices are preserved there BY CONSTRUCTION, so existing
+# creatures' stored variants render the identical images while
+# new-source art appends variants and covers heads IF1 never had.
+# Pure IF1 is the fallback when the merge hasn't been run.
+_MERGED = ROOT / "data" / "MergedCustom"
 CUSTOM_SHEETS_DIR = _env_path(
     "CC_CUSTOM_SHEETS_DIR",
-    INFINITEFUSION / "Graphics" / "CustomBattlers"
-    / "spritesheets" / "spritesheets_custom")
+    (_MERGED / "spritesheets_custom")
+    if (_MERGED / "spritesheets_custom").is_dir()
+    else (INFINITEFUSION / "Graphics" / "CustomBattlers"
+          / "spritesheets" / "spritesheets_custom"))
 EGGS_DIR = INFINITEFUSION / "Graphics" / "Battlers" / "Eggs"
 EVO_ITEMS_SRC = INFINITEFUSION / "Graphics" / "Items"
 SPECIES_DAT = _env_path("CC_SPECIES_DAT", INFINITEFUSION / "Data" / "species.dat")
 CREDITS_CSV = _env_path(
     "CC_CREDITS_CSV",
-    INFINITEFUSION / "Data" / "sprites" / "Sprite_Credits.csv")
+    (_MERGED / "credits.csv")
+    if (_MERGED / "credits.csv").is_file()
+    else (INFINITEFUSION / "Data" / "sprites" / "Sprite_Credits.csv"))
 SPLITNAMES_RB = _env_path(
     "CC_SPLITNAMES_RB",
     INFINITEFUSION / "Data" / "Scripts" / "052_InfiniteFusion" / "Fusion" / "SplitNames.rb",

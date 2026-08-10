@@ -41,13 +41,26 @@
   const _PACK_NS = (() => {
     try {
       const v = localStorage.getItem('cc.activePack');
-      if (!v || v === 'creature-fusion') return '';
+      if (!v || v === 'creature-fusion') return _cvNs('creature-fusion');
       const g = localStorage.getItem('cc.packGens.' + v);
       const f = localStorage.getItem('cc.packGensFam.' + v);
       return '.' + v
         + (g ? '.' + g.replace(/[^0-9,]/g, '') : '')
-        + (f === '1' ? 'f' : '');
+        + (f === '1' ? 'f' : '')
+        + _cvNs(v);
     } catch { return ''; }
+    // Pack content updates (same pack, new contentVersion) replace the
+    // served species-*.json, so the cache must version with the install
+    // or it keeps serving the previous pack's names/types/evos/pool
+    // (e.g. the 2026-08-10 pool expansion showed '#151' instead of Mew
+    // from the stale cached names).
+    function _cvNs(pid) {
+      try {
+        const raw = localStorage.getItem('cc.contentPack.' + pid + '.v1');
+        const cv = raw ? (JSON.parse(raw).contentVersion || '') : '';
+        return cv ? '.' + cv.replace(/[^0-9A-Za-z-]/g, '') : '';
+      } catch { return ''; }
+    }
   })();
 
   const NAMES_KEY = 'cc.speciesNames' + _PACK_NS;

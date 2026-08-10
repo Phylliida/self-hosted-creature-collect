@@ -6,9 +6,12 @@ generate_candy_images.py, generate_egg_images.py) imports from here so
 the same allowed-id set drives sheet sizes, alpha scans, filtering, and
 manifest emission.
 
-Currently: gen 1 (PIF/national 1..150) plus the gen-2/3/4 type-coverage
-additions chosen to bring every type to >=5 base-form non-legendary
-representatives. See HANDOFF.md type-coverage notes for the rationale.
+Currently (default / creature-fusion): every species whose *national*
+dex id falls in gens 1–3 (1–386 via the mapping), the curated
+type-coverage additions (EXTRA_SPECIES), and the later-gen members of
+those families (FAMILY_CLOSURE_EXTRA — gen-4 evolutions/babies pulled
+in by the family closure over the full species.dat graph). Before
+2026-08-10 the default pool was gen 1 (PIF 1..150) + EXTRA_SPECIES.
 
 IMPORTANT: IDs are **PIF internal IDs** (from species.dat), not national
 dex numbers. Gen 1 happens to match (PIF 1 = national 1 = Bulbasaur),
@@ -134,13 +137,36 @@ EXTRA_SPECIES: list[int] = [
     325, 326,         # Nosepass, Probopass                (national 299, 476)
 ]
 
+# Later-gen members of gen 1–3 families, pulled in by the family
+# closure over the full IF1 evolution graph (species.dat). The default
+# pool is gen 1–3 (national 1–386 via the mapping) + EXTRA_SPECIES +
+# these — "every pokémon from gen 1–3 and all of their families".
+FAMILY_CLOSURE_EXTRA: list[int] = [
+    254,              # Ambipom     (national 424 — Aipom line)
+    257,              # Bonsly      (national 438 — Sudowoodo baby)
+    258,              # Mime Jr.    (national 439 — Mr. Mime baby)
+    259,              # Happiny     (national 440 — Chansey baby)
+    260,              # Munchlax    (national 446 — Snorlax baby)
+    261,              # Mantyke     (national 458 — Mantine baby)
+    263, 264, 265,    # Magnezone, Lickilicky, Rhyperior (462, 463, 464)
+    266, 267, 268,    # Tangrowth, Electivire, Magmortar (465, 466, 467)
+    269, 270,         # Togekiss, Yanmega (468, 469)
+    273,              # Gliscor     (national 472)
+    275,              # Porygon-Z   (national 474)
+    288,              # Gallade     (national 475 — Kirlia branch)
+    352,              # Roserade    (national 407 — Roselia line)
+    400,              # Budew       (national 406 — Roselia baby)
+    557,              # Chingling   (national 433 — Chimecho baby)
+]
+
 GEN1_RANGE = range(1, 151)
 
-# Spawnable species for the default pool: base forms (non-legendary,
-# non-baby) that appear in the wild. Mirrors SPAWNVABLE_SPECIES_A in
-# static/spawns.js — keep the two in sync. In gens mode this is None and
-# the spawnable list is derived instead (pool minus in-pool evolution
-# targets minus legendaries, computed by build-bundled-data.py).
+# Spawnable species for the pool. Legacy curated gen-1 list below —
+# kept for reference against SPAWNVABLE_SPECIES_A in static/spawns.js
+# (the client fallback for pool-file-less bundles). The default pool
+# and gens mode both set this to None and derive instead (pool minus
+# in-pool evolution targets minus legendaries, computed by
+# build-bundled-data.py).
 SPAWNABLE_SPECIES: list[int] | None = [
     1, 4, 7, 10, 13, 16, 19, 21, 23, 25, 27, 29, 32, 35, 37, 39, 41,
     43, 46, 48, 50, 52, 54, 56, 58, 60, 63, 66, 69, 72, 74, 77, 79,
@@ -151,14 +177,15 @@ SPAWNABLE_SPECIES: list[int] | None = [
     310, 311, 390, 395, 405, 421, 427, 325,
 ]
 
-# Legendary PIF ids (Articuno/Zapdos/Moltres/Mewtwo/Mew). Mirrors
-# LEGENDARY_SPECIES_SET in static/creatures.js — 151 (Mew) is listed
-# even though it isn't in the default pool, to keep client behavior
-# identical when the pool file is present.
+# Legendary PIF ids for the legacy gen-1 pool (Articuno/Zapdos/Moltres/
+# Mewtwo/Mew). Mirrors LEGENDARY_SPECIES_SET in static/creatures.js
+# (its hardcoded fallback). Both the default pool and gens mode now
+# override this via _gens_legendaries.
 LEGENDARY_SPECIES: set[int] = {144, 145, 146, 150, 151}
 
 # Baby pre-evolutions skipped as candy roots (mirrors CANDY_ROOT_BABIES
-# in static/creatures.js).
+# in static/creatures.js — its gen-2-only hardcoded fallback). Both the
+# default pool and gens mode now override this via _gens_pif_ids.
 CANDY_ROOT_BABIES: set[int] = {172, 173, 174, 175, 236, 238, 239, 240}
 
 
@@ -205,7 +232,17 @@ if _gens_env:
     CANDY_ROOT_BABIES = _gens_pif_ids(BABY_NATIONAL) & frozenset(ALLOWED_SPECIES)
     SPAWNABLE_SPECIES = None  # derive: pool - in-pool evo targets - legendaries
 else:
-    ALLOWED_SPECIES = sorted(set(GEN1_RANGE) | set(EXTRA_SPECIES))
+    # Default creature-fusion pool: every gen 1–3 species (national
+    # 1–386 via the mapping), the curated type-coverage extras, and the
+    # later-gen members of those families. Spawnable/legendaries/babies
+    # derive the same way gens mode does.
+    ALLOWED_SPECIES = sorted(
+        set(_gens_pool([1, 2, 3]))
+        | set(EXTRA_SPECIES)
+        | set(FAMILY_CLOSURE_EXTRA))
+    LEGENDARY_SPECIES = _gens_legendaries([1, 2, 3]) & frozenset(ALLOWED_SPECIES)
+    CANDY_ROOT_BABIES = _gens_pif_ids(BABY_NATIONAL) & frozenset(ALLOWED_SPECIES)
+    SPAWNABLE_SPECIES = None  # derive: pool - in-pool evo targets - legendaries
 
 ALLOWED_SET: frozenset[int] = frozenset(ALLOWED_SPECIES)
 MAX_SPECIES: int = ALLOWED_SPECIES[-1]  # 429 with current EXTRA_SPECIES (Froslass)
