@@ -1158,6 +1158,123 @@
     return record;
   }
 
+  // ── Completion-egg rewards ───────────────────────────────────────
+  // One-time reward for reaching 100% on a non-legendary species'
+  // completion row (legendary partners are already excluded from the %
+  // itself): a fusion egg of that species × a legendary. `claimed` lists
+  // the species whose egg was taken; `counts` tracks how many times each
+  // legendary has been granted BY THIS FEATURE ONLY — wild/radar
+  // legendaries and daycare-bred legendary eggs don't touch it, so the
+  // deck-without-replacement below stays balanced no matter how many
+  // legendaries the player obtains elsewhere.
+  const COMPLETION_REWARDS_KEY = 'cc.completionRewards.v1';
+
+  function readCompletionRewards() {
+    try {
+      const raw = localStorage.getItem(COMPLETION_REWARDS_KEY);
+      const obj = raw ? JSON.parse(raw) : null;
+      if (!obj || typeof obj !== 'object') return { claimed: [], counts: {} };
+      const claimed = Array.isArray(obj.claimed)
+        ? obj.claimed.filter((id) => Number.isInteger(id)) : [];
+      const counts = {};
+      if (obj.counts && typeof obj.counts === 'object') {
+        for (const k of Object.keys(obj.counts)) {
+          const id = parseInt(k, 10);
+          const v = obj.counts[k];
+          if (Number.isInteger(id) && Number.isInteger(v) && v > 0) counts[id] = v;
+        }
+      }
+      return { claimed, counts };
+    } catch { return { claimed: [], counts: {} }; }
+  }
+  function writeCompletionRewards(state) {
+    try { localStorage.setItem(COMPLETION_REWARDS_KEY, JSON.stringify(state)); }
+    catch {}
+  }
+
+  // The legendary deck: the active pack's legendary list, or the gen-1
+  // fallback (same sources as isLegendarySpecies).
+  function _completionEggLegendaryIds() {
+    const p = _pool();
+    const set = p ? p.legendaries : LEGENDARY_SPECIES_SET;
+    return [...set].sort((a, b) => a - b);
+  }
+
+  // Deck without replacement: candidates are the legendaries tied for
+  // the lowest grant count, so everyone reaches n before anyone reaches
+  // n+1. Within that deck, legendaries whose fusion with the completed
+  // species has custom (non-autogen) art — in at least one orientation —
+  // are preferred; deck exclusion always wins over the art preference.
+  // hasCustomArt(legendaryId) -> bool; rng() -> [0,1). Pure on purpose:
+  // extracted and unit-tested by tests/completion-egg.test.js.
+  function _pickCompletionEggLegendary(counts, legendaryIds, hasCustomArt, rng) {
+    if (!legendaryIds.length) return null;
+    let min = Infinity;
+    for (const id of legendaryIds) {
+      const c = counts[id] || 0;
+      if (c < min) min = c;
+    }
+    const deck = legendaryIds.filter((id) => (counts[id] || 0) === min);
+    const favored = deck.filter((id) => hasCustomArt(id));
+    const pool = favored.length ? favored : deck;
+    return pool[Math.floor(rng() * pool.length)];
+  }
+
+  // Orientation of the reward fusion (speciesA = head, speciesB = body).
+  // If exactly one orientation has custom art, always use it; if both or
+  // neither do, coin-flip. Returns 'ab' (pokemon × legendary) or 'ba'
+  // (legendary × pokemon).
+  function _pickCompletionEggOrientation(customAB, customBA, rng) {
+    if (customAB && !customBA) return 'ab';
+    if (customBA && !customAB) return 'ba';
+    return rng() < 0.5 ? 'ab' : 'ba';
+  }
+
+  // Claim the one-time 100%-completion egg for a species: pick a
+  // legendary from the deck, pick an orientation, and drop a fusion egg
+  // into the egg inventory (legendary half → 10 km hatch via
+  // _isLegendaryEgg). Async because custom-art detection reads the
+  // sprite variant summary.
+  const _completionEggInflight = new Set();
+  async function _claimCompletionEgg(speciesId) {
+    const X = parseInt(speciesId, 10);
+    if (!Number.isInteger(X) || _completionEggInflight.has(X)) return;
+    if (isLegendarySpecies(X)) return;
+    const state = readCompletionRewards();
+    if (state.claimed.indexOf(X) >= 0) return;
+    const row = computeSpeciesCompletion().find((r) => r.id === X);
+    if (!row || !row.total || row.seen < row.total) return;
+    _completionEggInflight.add(X);
+    try {
+      const ids = _completionEggLegendaryIds();
+      // Custom-art lookup for both orientations of every candidate.
+      const cells = [];
+      for (const L of ids) { cells.push([X, L]); cells.push([L, X]); }
+      const variantCounts = (global.Sprites && global.Sprites.getCellVariantCountsBatch)
+        ? await global.Sprites.getCellVariantCountsBatch(cells)
+        : new Map();
+      const custom = (a, b) => (variantCounts.get(`${a}-${b}`) || 0) > 0;
+      const L = _pickCompletionEggLegendary(
+        state.counts, ids, (id) => custom(X, id) || custom(id, X), Math.random);
+      if (!L) return;
+      const orient = _pickCompletionEggOrientation(custom(X, L), custom(L, X), Math.random);
+      const a = orient === 'ab' ? X : L;
+      const b = orient === 'ab' ? L : X;
+      // Same 0.5–2.0 m roll the daycare eggs use.
+      const sizeM = Math.round((0.5 + Math.random() * 1.5) * 100) / 100;
+      const egg = addEgg({ speciesA: a, speciesB: b, sizeM });
+      if (!egg) return;
+      state.claimed.push(X);
+      state.counts[L] = (state.counts[L] || 0) + 1;
+      writeCompletionRewards(state);
+      _saveImageNotice(
+        `Completion reward: ${speciesNameFor(X)} × ${speciesNameFor(L)} egg!`);
+      renderCompletion();
+    } finally {
+      _completionEggInflight.delete(X);
+    }
+  }
+
   // Incubator: two slots a player can place eggs into. While
   // occupied, an egg accumulates walked distance toward its hatch
   // target (eggHatchM); the count lives on the egg itself
@@ -7530,6 +7647,17 @@
         margin-top: 4px; font-size: 10.5px; font-weight: 700; line-height: 1;
         color: var(--ui-accent, #5b8cff);
       }
+      #creatureInventory .completion-egg-btn {
+        flex: none; align-self: center; margin-left: 6px;
+        width: 34px; height: 34px; padding: 0; cursor: pointer;
+        font-size: 19px; line-height: 1;
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.14));
+        border-radius: var(--ui-radius, 8px);
+        background: transparent;
+      }
+      #creatureInventory .completion-egg-btn:hover {
+        background: var(--ui-hover, rgba(0,0,0,0.06));
+      }
       #creatureInventory .speciesdex-head-row {
         display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: end;
         padding: 0 2px 6px; font-size: 11px; opacity: 0.65;
@@ -8936,6 +9064,14 @@
     // Delegated row taps. Listeners live on the (persistent) grid element;
     // virtualizeGrid swaps the rows underneath them as the user scrolls.
     panel.querySelector('.completion-grid').addEventListener('click', (e) => {
+      // A tap on a 100%-row's egg claims the one-time completion reward
+      // instead of navigating to the species dex.
+      const eggBtn = e.target.closest && e.target.closest('.completion-egg-btn');
+      if (eggBtn) {
+        const eggId = +eggBtn.dataset.species;
+        if (eggId) _claimCompletionEgg(eggId);
+        return;
+      }
       const row = e.target.closest && e.target.closest('.completion-row');
       if (!row) return;
       const id = +row.dataset.species;
@@ -13062,6 +13198,10 @@
     const grid = panel.querySelector('.completion-grid');
     if (!grid) return;
     const sheet = panel.querySelector('.sheet');
+    // Species at 100% with their one-time reward egg still unclaimed get
+    // a tappable egg at the row's right end (legendary rows never do —
+    // the reward is for non-legendary completion).
+    const eggClaimed = new Set(readCompletionRewards().claimed);
     virtualizeGrid({
       scrollEl: sheet, gridEl: grid, items: rows,
       cols: 1, rowGap: 6, cardHeight: 60,
@@ -13071,6 +13211,8 @@
         // reserved for actually-complete species.
         const pct = Math.floor(r.pct * 100);
         const bonus = _speciesShinyBonus(r.seen, r.total);
+        const eggReady = !r.legendary && r.total > 0 && r.seen >= r.total
+          && !eggClaimed.has(r.id);
         const card = document.createElement('div');
         card.className = 'completion-row';
         card.dataset.species = r.id;
@@ -13086,7 +13228,11 @@
           +   `<div class="completion-bar"><div class="completion-bar-fill" style="width:${pct}%"></div></div>`
           +   (bonus ? `<div class="completion-bonus">${bonus}× shiny</div>` : ``)
           + `</div>`
-          + `<div class="completion-pct">${pct}%<span class="completion-frac">${r.seen}/${r.total}</span></div>`;
+          + `<div class="completion-pct">${pct}%<span class="completion-frac">${r.seen}/${r.total}</span></div>`
+          + (eggReady
+            ? `<button class="completion-egg-btn" data-species="${r.id}"`
+              + ` title="Claim completion egg" aria-label="Claim completion egg">🥚</button>`
+            : ``);
         return card;
       },
       loadSpriteFor(card, r) {
@@ -15910,14 +16056,10 @@
 
   function refreshSpawnOverlay() {
     if (!_overlayMap || !global.Spawns) return;
-    // Focus mode: the map stays usable but shows no creatures — clear
-    // any markers already up and suppress wild + radar spawns until the
-    // session ends.
-    if (_focusIsActive()) {
-      if (_markers.size) clearMarkers();
-      if (_radarMarkers.size) _radarClearMarkers();
-      return;
-    }
+    // Focus mode suppresses ordinary wild/incense spawns, but legendary
+    // and radar (evolved) spawns still appear and stay catchable — the
+    // filter below keeps only those, and the radar ghosts keep running.
+    const focusOn = _focusIsActive();
     // Radar ghosts live at fixed spawn locations (no GPS needed) — refresh
     // their countdowns / pruning every tick, before the GPS-gated spawn logic.
     refreshRadarMarkers();
@@ -15950,6 +16092,7 @@
     const spawns = global.Spawns.spawnsInBbox(bbox);
     const within = spawns.filter((s) =>
       !caught.has(s.id)
+      && (!focusOn || s.legendary || s.evolved)
       && metersBetween(_userLat, _userLng, s.lat, s.lng) <= VISIBILITY_RADIUS_M
     );
 
@@ -17149,7 +17292,9 @@
   function _focusInfoHtml() {
     let h = '';
     h += '<p class="cc-info-p">Focus mode rewards you for <b>not</b> playing. While it\'s on, '
-      + 'the map keeps working but shows no pokémon and no item pickups — and time only '
+      + 'the map keeps working but ordinary wild spawns and item pickups are hidden '
+      + '(<b>legendary and poké-radar pokémon still appear</b> — rare finds stay catchable) — '
+      + 'and time only '
       + 'counts while this app is open or your phone is asleep. Switching to another app '
       + '<b>pauses</b> the session (never ends it); coming back resumes it.</p>';
     h += '<div class="cc-info-section">';
