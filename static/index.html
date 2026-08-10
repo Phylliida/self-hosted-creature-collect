@@ -8113,6 +8113,11 @@ function fmtDate(ts) {
       // another device preserves exact progress.
       eggs: JSON.parse(localStorage.getItem('cc.eggs.v1') || '[]'),
       incubator: JSON.parse(localStorage.getItem('cc.incubator.v1') || '[]'),
+      // 100%-completion egg rewards: which species already claimed their
+      // one-time egg + per-legendary grant counts for the
+      // deck-without-replacement picker (see cc.completionRewards.v1 in
+      // creatures.js). Plain JSON blob, travels with the save.
+      completionRewards: JSON.parse(localStorage.getItem('cc.completionRewards.v1') || 'null'),
       // TOFU write token for this trainer name (see _writeTokenFor). It
       // deliberately rides in the save: /load only answers on the home
       // network, so loading at home is what re-grants a device the right
@@ -8705,6 +8710,32 @@ function fmtDate(ts) {
       for (let i = 0; i < 2; i++) tryFill(current[i]);
       for (let i = 0; i < 2; i++) tryFill(data.incubator[i]);
       localStorage.setItem('cc.incubator.v1', JSON.stringify(slots));
+    }
+    // Completion-egg rewards: lossless merge — union the claimed-species
+    // lists and take the per-legendary max grant count, so neither
+    // device's deck progress is clobbered by the other's snapshot.
+    if (data.completionRewards && typeof data.completionRewards === 'object') {
+      let cur = null;
+      try { cur = JSON.parse(localStorage.getItem('cc.completionRewards.v1') || 'null'); }
+      catch (_) { cur = null; }
+      if (!cur || typeof cur !== 'object') cur = { claimed: [], counts: {} };
+      const inc = data.completionRewards;
+      const claimed = new Set(
+        (Array.isArray(cur.claimed) ? cur.claimed : [])
+          .concat(Array.isArray(inc.claimed) ? inc.claimed : [])
+          .filter((id) => Number.isInteger(id)));
+      const counts = {};
+      for (const src of [cur.counts, inc.counts]) {
+        if (!src || typeof src !== 'object') continue;
+        for (const k of Object.keys(src)) {
+          const id = parseInt(k, 10);
+          const v = src[k];
+          if (!Number.isInteger(id) || !Number.isInteger(v) || v <= 0) continue;
+          counts[id] = Math.max(counts[id] || 0, v);
+        }
+      }
+      localStorage.setItem('cc.completionRewards.v1',
+        JSON.stringify({ claimed: [...claimed], counts }));
     }
     // Daycare: per-day-max merge for the summary; incoming wins for
     // path days the local device doesn't already have. See
