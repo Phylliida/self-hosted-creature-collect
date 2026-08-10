@@ -1,6 +1,6 @@
 ---
 name: project_shiny_palette_pipeline
-description: Shiny pipeline — master codebook (build-shiny-codebook.py, append-only, bin v3); legacy 2-step bake retained for reference; cell-reader bug history
+description: Shiny pipeline — master codebook (build-shiny-codebook.py, append-only, bin v3), pairs keyed by CANDY roots (baby-exclusive, mirrors candyRootFor); legacy 2-step bake retained for reference; cell-reader + root-keying bug history
 metadata:
   type: project
 ---
@@ -14,6 +14,8 @@ Shiny variants are per-family-pair colour transforms (12 × (φ, ΔL, κ)) baked
 - Tests: `tests/shiny-codebook.test.js` (v3+v2 loader decode), v3 slice case in `tests/if2-packs.test.js`; `--verify` round-trips bins vs master.
 
 **Legacy pipeline (superseded, kept for the old bakes):** `build-shiny-palettes.py --all --jobs 4` → `shiny-palettes-to-bin.py` (v2). Both games' master sections were initialized by snapping these bakes, NOT re-baking — so shipped colours are preserved. ⚠ The legacy bake read custom art WRONG (see bugs below): its palettes were autogen + wrong-cell custom art. Don't re-bake legacy pairs to "fix" this unless the user explicitly accepts colour changes.
+
+**Root-keying bug fixed 2026-08-10 (baby families invisible in IF2):** the IF2 master section was keyed by *earliest ancestor including babies* (e.g. Chansey pairs under Happiny `259`), but the client (`shiny-store.js` via `candyRootFor`) looks up *candy roots* (first non-baby, e.g. `113`). Every family with a baby (18 of them: Pichu, Happiny, Tyrogue, Munchlax, …) silently missed → shinies rendered with original colors. creature-fusion was unaffected (its bundle's evolutions have no baby links). Fix: `data/shiny-codebook.json` IF2 section re-keyed in place (bijection, verified zero collisions; transforms untouched so shipped colors are preserved for all previously-working pairs), `build-shiny-codebook.py load_roster` now mirrors candyRootFor, and `build-if2-packs.py slice_shin` re-keys entries to *pack-local* roots via `shin_rekey_map` (subset slicing changes resolution: gen-1 pack drops the Happiny→Chansey link so Chansey resolves to 113; a gen-4-only pack resolves Happiny to itself, 259). ⚠ Any future roster regeneration must keep this convention or shinies break again.
 
 **Cell-reader bugs fixed 2026-08-03 (in `build-shiny-palettes.py`; affected every historical bake):**
 1. `iter_fusion_variants(a, b, ...)` looked up `cells[f'{a}-{b}']` + `manifest[str(b)]` — but cells.json is keyed `"<body>-<head>"` and manifest by head, so for fusion head=a/body=b it must be `cells[f'{b}-{a}']` + `manifest[str(a)]`. It also treated slot 0 (suffix '') as the autogen sheet — it's actually the no-letter CUSTOM sheet `custom/<a>.png` (autogen is not in cells.json at all).

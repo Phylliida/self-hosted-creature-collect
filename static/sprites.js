@@ -50,12 +50,22 @@
   // manifest/cells/split-names): content packs carry their own copies
   // of those files, so caches built from /bundled-data must not bleed
   // across packs. '' for the default pack (existing caches stay valid),
-  // '.<packId>' otherwise. Read straight from localStorage because
-  // packs.js loads after this file.
+  // '.<packId>' otherwise. Gen-variant packs (IF2 subsets) get a
+  // further per-variant suffix: each variant serves a different
+  // manifest/cells/pool set, so caching by pack id alone would keep
+  // serving the PREVIOUS variant's data after a gen switch. The raw
+  // selection values suffice — the namespace only has to distinguish
+  // variants, not match the pack's subdir string. Read straight from
+  // localStorage because packs.js loads after this file.
   const _PACK_NS = (() => {
     try {
       const v = localStorage.getItem('cc.activePack');
-      return (v && v !== 'creature-fusion') ? '.' + v : '';
+      if (!v || v === 'creature-fusion') return '';
+      const g = localStorage.getItem('cc.packGens.' + v);
+      const f = localStorage.getItem('cc.packGensFam.' + v);
+      return '.' + v
+        + (g ? '.' + g.replace(/[^0-9,]/g, '') : '')
+        + (f === '1' ? 'f' : '');
     } catch { return ''; }
   })();
   const SPRITE_SIZE = 96;

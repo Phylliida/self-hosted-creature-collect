@@ -135,7 +135,7 @@ async function section2() {
   const CUT_AFTER = JSON.parse(buildPack(true).tocText).entries[entries[2][0]].offset + 10;
   let fullFetches = 0;
   globalThis.fetch = async (url, opts) => {
-    if (url.endsWith('pack.json')) {
+    if (url.endsWith('pack.json') || url.endsWith('pack-native.json')) {
       return { ok: true, status: 200, json: async () => manifest };
     }
     const range = opts && opts.headers && opts.headers.Range;

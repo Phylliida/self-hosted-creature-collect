@@ -205,7 +205,7 @@ mdb-400	http://connect.ridetherapid.org/InfoPoint/gtfs-zip.ashx	The Rapid / East
 mdb-402	http://developers.cata.org/gtfsdownload.ashx?key=5b4690ed-0a69-4320-897b-7d92def4b96f&data=base	Capital Area Transportation Authority (CATA) / Clinton County / Michigan	https://files.mobilitydatabase.org/mdb-402/latest.zip
 mdb-403	http://proc.greaterdaytonrta.org/gtfs/google_transit.zip	Greater Dayton Regional Transit Authority (Greater Dayton RTA) / Montgomery County / Ohio	https://files.mobilitydatabase.org/mdb-403/latest.zip
 mdb-404	http://www.cota.com/data/cota.gtfs.zip	Central Ohio Transit Authority (COTA) / Columbus / Ohio	https://files.mobilitydatabase.org/mdb-404/latest.zip
-mdb-406	http://www.riderta.com/sites/default/files/gtfs/latest/google_transit.zip	Greater Cleveland Regional Transit Authority / Brook Park / Ohio	https://files.mobilitydatabase.org/mdb-406/latest.zip
+mdb-406	https://www.riderta.com/sites/default/files/gtfs/latest/google_transit.zip	Greater Cleveland Regional Transit Authority / Brook Park / Ohio	https://files.mobilitydatabase.org/mdb-406/latest.zip
 mdb-407	http://site.busride.org/google/google_transit.zip	Mountain Line Transit Authority / Morgantown / West Virginia	https://files.mobilitydatabase.org/mdb-407/latest.zip
 mdb-409	https://www.portauthority.org/developerresources/GTFS.zip	Port Authority of Allegheny County / Allegheny County / Pennsylvania	https://files.mobilitydatabase.org/mdb-409/latest.zip
 mdb-410	http://data.trilliumtransit.com/gtfs/lakecounty-oh-us/lakecounty-oh-us.zip	Laketran / Lake County / Ohio	https://files.mobilitydatabase.org/mdb-410/latest.zip
@@ -257,7 +257,7 @@ mdb-507	http://web.mta.info/developers/data/lirr/google_transit.zip	Metropolitan
 mdb-508	https://www.njtransit.com/bus_data.zip	New Jersey Transit (NJ Transit) / Essex County / New Jersey	https://files.mobilitydatabase.org/mdb-508/latest.zip
 mdb-509	https://www.njtransit.com/rail_data.zip	New Jersey Transit (NJ Transit) / Essex County / New Jersey	https://files.mobilitydatabase.org/mdb-509/latest.zip
 mdb-510	http://web.mta.info/developers/data/busco/google_transit.zip	Metropolitan Transit Authority (MTA) / Bronx County / New York	https://files.mobilitydatabase.org/mdb-510/latest.zip
-mdb-511	http://web.mta.info/developers/files/google_transit_supplemented.zip	Metropolitan Transit Authority (MTA) / Bronx County / New York	https://files.mobilitydatabase.org/mdb-511/latest.zip
+mdb-511	http://web.mta.info/developers/files/google_transit_supplemented.zip	Metropolitan Transit Authority (MTA) / Kings County / New York	https://files.mobilitydatabase.org/mdb-511/latest.zip
 mdb-512	http://web.mta.info/developers/data/nyct/bus/google_transit_brooklyn.zip	Metropolitan Transit Authority (MTA) / Kings County / New York	https://files.mobilitydatabase.org/mdb-512/latest.zip
 mdb-513	http://web.mta.info/developers/data/nyct/bus/google_transit_manhattan.zip	Metropolitan Transit Authority (MTA) / New York County / New York	https://files.mobilitydatabase.org/mdb-513/latest.zip
 mdb-514	http://web.mta.info/developers/data/nyct/bus/google_transit_staten_island.zip	Metropolitan Transit Authority (MTA) / Richmond County / New York	https://files.mobilitydatabase.org/mdb-514/latest.zip
@@ -581,7 +581,7 @@ mdb-2634	https://nebula.wsimg.com/40f314b8788fcc32949e0fe528a3c625?AccessKeyId=9
 mdb-2642	https://gtfs.gptd.cadavl.com/GPTD/GTFS/GTFS_GPTD.zip	Greater Portland Metro Bus / Brunswick / Maine	https://files.mobilitydatabase.org/mdb-2642/latest.zip
 mdb-2648	https://www.hpca.gov/DocumentCenter/View/11702	Huntington Park Express / Huntington Park / California	
 mdb-2649	https://gtfs.wata.cadavl.com/WATA/GTFS/GTFS_WATA.zip	Williamsburg Area Transit Authority / James City County / Virginia	https://files.mobilitydatabase.org/mdb-2649/latest.zip
-mdb-2650	https://s3.amazonaws.com/datatools-511ny/public/Gloversville_Transit_System.zip	Gloversville Transit System / Gloversville / New York	https://files.mobilitydatabase.org/mdb-2650/latest.zip
+mdb-2650	https://s3.amazonaws.com/datatools-511ny/public/Gloversville_Transit_System.zip	Gloversville Transit System / Fulton County / New York	https://files.mobilitydatabase.org/mdb-2650/latest.zip
 mdb-2652	https://passio3.com/jtran/passioTransit/gtfs/google_transit.zip	City of Jackson (JTRAN) / Hinds County / Mississippi	https://files.mobilitydatabase.org/mdb-2652/latest.zip
 mdb-2706	https://mysmartbus.com/gtfs	South Metro Area Regional Transit (SMART) / Canby / Oregon	https://files.mobilitydatabase.org/mdb-2706/latest.zip
 mdb-2709	https://gtfs.remix.com/trinity_county_ca.zip	Trinity Transit / Trinity County / California	https://files.mobilitydatabase.org/mdb-2709/latest.zip
@@ -914,7 +914,6 @@ mdb-3178	https://www.cecilcountymd.gov/DocumentCenter/View/5246/Cecil-County-MD-
 mdb-3187	https://ride.smtd.org/gtfs/smtd_gtfs_feed.zip	Springfield Mass Transit District (SMTD) / Springfield / Illinois	https://files.mobilitydatabase.org/mdb-3187/latest.zip
 mdb-3192	https://nywaterway.connexionz.net/rtt/public/resource/gtfs.zip	NY Waterway / Jersey City / New Jersey	https://files.mobilitydatabase.org/mdb-3192/latest.zip
 mdb-3193	https://cobb.rideralerts.com/InfoPoint/GTFS-Zip.ashx	CobbLinc / Atlanta / Georgia	https://files.mobilitydatabase.org/mdb-3193/latest.zip
-mdb-3202	https://data.peaktransit.com/staticgtfs/193/gtfs.zip	El Paso Transportation Authority / Anthony / Texas	https://files.mobilitydatabase.org/mdb-3202/latest.zip
 mdb-3205	https://www.nps.gov/external-resources/gtfs/calo/calo-ferry-service.zip	Cape Lookout National Seashore / Carteret County / North Carolina	https://files.mobilitydatabase.org/mdb-3205/latest.zip
 mdb-3206	https://www.nps.gov/external-resources/gtfs/depo/reds-meadow-shuttle.zip	Devils Postpile National Monument / Bishop / California	https://files.mobilitydatabase.org/mdb-3206/latest.zip
 mdb-3207	https://www.nps.gov/external-resources/gtfs/drto/drto-ferry-service.zip	Dry Tortugas National Park / Monroe County / Florida	https://files.mobilitydatabase.org/mdb-3207/latest.zip
@@ -936,3 +935,11 @@ tld-6908	https://www.nps.gov/external-resources/gtfs/glac/going-to-the-sun-road-
 tld-7036	https://gtfs.remix.com/dpts_decatur_il_us.zip	Decatur Public Transit System / Decatur / Illinois	https://files.mobilitydatabase.org/tld-7036/latest.zip
 tld-7039	https://gtfs.remix.com/Lorain_County_Transit_US.zip	Lorain County Transit / Lorain County / Ohio	https://files.mobilitydatabase.org/tld-7039/latest.zip
 mdb-3392	https://feeds.gtfsfoundry.com/feeds/JCPT-NY-045/static.zip	Jefferson County Public Transit (JCPT) / Watertown / New York	https://files.mobilitydatabase.org/mdb-3392/latest.zip
+mdb-306	https://data.trilliumtransit.com/gtfs/chicagowatertaxi-il-us/chicagowatertaxi-il-us.zip	Chicago Water Taxi / Cook County / Illinois	https://files.mobilitydatabase.org/mdb-306/latest.zip
+mdb-3408	https://passio3.com/JCMTD/passioTransit/gtfs/google_transit.zip	JAX Mass Transit District / Carbondale / Illinois	https://files.mobilitydatabase.org/mdb-3408/latest.zip
+mdb-3416	https://www.nps.gov/external-resources/gtfs/boha/cathleen-stone-island-ferry.zip	Boston Harbor Island National Recreation Area / Boston / Massachusetts	https://files.mobilitydatabase.org/mdb-3416/latest.zip
+mdb-3419	https://rapid.nationalrtap.org/GTFSFileManagement/UserUploadFiles/11511/GTFS_EPCT.zip	El Paso Transportation Authority / El Paso / Texas	https://files.mobilitydatabase.org/mdb-3419/latest.zip
+mdb-3432	https://rapid.nationalrtap.org/GTFSFileManagement/UserUploadFiles/7841/NHMTAGTFS.zip	Manchester Transit Authority / Manchester / New Hampshire	https://files.mobilitydatabase.org/mdb-3432/latest.zip
+mdb-3433	https://www.fredericksburgva.gov/DocumentCenter/View/31122/FXBGO-GTFS---CY2026	Fredericksburg Regional Transit / Fredericksburg / Virginia	
+mdb-3434	https://maxtransit.org/GTFS/2026/google_transit_Working.zip	Birmingham Jefferson County Transit Authority (MAX) / Birmingham / Alabama	https://files.mobilitydatabase.org/mdb-3434/latest.zip
+ntd-30010	https://realtimelanta.availtec.com/InfoPoint/gtfs-zip.ashx	Lehigh and Northampton Transportation Authority (LANTA) / Lehigh County / Pennsylvania	https://files.mobilitydatabase.org/ntd-30010/latest.zip

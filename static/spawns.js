@@ -662,6 +662,30 @@
     };
   }
 
+  // Non-deterministic wild encounter roll for focus mode (creatures.js).
+  // Same species/level/size/variant distribution as generateCellAtTick's
+  // base stream (type-weather pair → uniform species within each slot),
+  // but drawn from Math.random with no cell/tick attached and no
+  // community-day / legendary / evolved streams — focus rewards always
+  // come from the plain base pool. Returns null while species data isn't
+  // loaded (same bail as generateCellAtTick's null-sampler path).
+  function rollWildEncounter() {
+    const sampler = getTypePairSampler();
+    if (!sampler) return null;
+    const pair = _sampleTypePair(sampler, Math.random());
+    const poolA = sampler.byPrimary[pair.a];
+    const poolB = sampler.bySecondary[pair.b];
+    const speciesA = poolA[Math.floor(Math.random() * poolA.length)];
+    const speciesB = poolB[Math.floor(Math.random() * poolB.length)];
+    const level = expDistr(5, 50, Math.random()) + 1;
+    const sizeM = 0.15 + Math.random() * 2.0;
+    const variantSeed = Math.random();
+    // Pack mode mirrors generateCellAtTick: the A draw's monster is the
+    // encounter (a solo); the B draw is unused.
+    if (_pack) return { solo: speciesA.key, level, sizeM, variantSeed };
+    return { speciesA, speciesB, level, sizeM, variantSeed };
+  }
+
   // bbox is [west, south, east, north] (lng/lat MapLibre order).
   // ── generateCellAtTick memo ─────────────────────────────────
   // generateCellAtTick is a pure function of (cellX, cellY, tick) for
@@ -1461,6 +1485,8 @@
     // file); spawnsInBbox folds it in while active.
     setActiveIncense, getActiveIncense, incenseSpawnsInBbox,
     generateIncenseCellAtTick, INCENSE_DURATION_MS,
+    // Focus mode — random base-pool encounter roll (see above).
+    rollWildEncounter,
     // Community day — weekly featured-species schedule (deterministic)
     // plus the per-player active session pushed from creatures.js.
     communityDayInfo, communityWeekKey, setCommunityDay, getCommunityDay,

@@ -35,10 +35,32 @@
   const CANDY_SHEET_COLS = 10;
   // Row count must match (MAX_SPECIES // 10) + 1 in species_pool.py.
   // With MAX_SPECIES=429 the sheet is 43 rows × 40px = 1720px tall.
-  // Bump this whenever the species set extends to a higher PIF id —
-  // otherwise CSS background-size scales the sheet wrong and cells
+  // This constant is now only a fallback: the runtime detector below
+  // reads the actual candies.png / eggs.png height and sets CSS custom
+  // properties so IF2 packs (58 rows) render correctly without manual
+  // bumps. Hardcoding the wrong count scales the sheet and makes cells
   // land on the wrong rows.
   const CANDY_SHEET_ROWS = 43;
+
+  // Probe the active pack's positional sheets and expose their actual
+  // row counts as CSS custom properties. IF2 subset packs copy the full
+  // union candies.png / eggs.png (58 rows), while the base pack keeps
+  // 43 rows, so a single hardcoded value is insufficient. The fallback
+  // in each var() is the base-pack constant. Eggs are probed once
+  // EGGS_SHEET_ROWS is declared further down.
+  function _probeSheetRows(url, cellPx, propName, fallbackRows) {
+    if (typeof window === 'undefined') return;
+    const img = new Image();
+    img.onload = () => {
+      const rows = Math.round(img.naturalHeight / cellPx);
+      if (rows > 0) {
+        document.documentElement.style.setProperty(propName, String(rows));
+      }
+    };
+    img.onerror = () => {};
+    img.src = url;
+  }
+  _probeSheetRows(`${BUNDLED_BASE}/candies.png`, CANDY_CELL_PX, '--cc-candy-sheet-rows', CANDY_SHEET_ROWS);
 
   const STORAGE_KEY = 'cc.creatureMode';
   // The captured collection and the seen-fusions pokédex used to live in
@@ -1590,6 +1612,7 @@
   // species set extends to a higher PIF id.
   const EGGS_SHEET_COLS = 10;
   const EGGS_SHEET_ROWS = 43;
+  _probeSheetRows(`${BUNDLED_BASE}/eggs.png`, CANDY_CELL_PX * 4, '--cc-egg-sheet-rows', EGGS_SHEET_ROWS);
 
   function _lootIconStyle(loot) {
     if (!loot) return '';
@@ -1613,7 +1636,7 @@
       const row = Math.floor(id / CANDY_SHEET_COLS);
       return (
         `background-image: url('${BUNDLED_BASE}/candies.png');`
-        + `background-size: ${PILL_CELL_PX * CANDY_SHEET_COLS}px ${PILL_CELL_PX * CANDY_SHEET_ROWS}px;`
+        + `background-size: ${PILL_CELL_PX * CANDY_SHEET_COLS}px calc(var(--cc-candy-sheet-rows, ${CANDY_SHEET_ROWS}) * ${PILL_CELL_PX}px);`
         + `background-position: -${col * PILL_CELL_PX}px -${row * PILL_CELL_PX}px;`
         + noRepeat
       );
@@ -1639,7 +1662,7 @@
       const insetY = insetX - 1;
       return (
         `background-image: url('${BUNDLED_BASE}/eggs.png');`
-        + `background-size: ${cellPx * EGGS_SHEET_COLS}px ${cellPx * EGGS_SHEET_ROWS}px;`
+        + `background-size: ${cellPx * EGGS_SHEET_COLS}px calc(var(--cc-egg-sheet-rows, ${EGGS_SHEET_ROWS}) * ${cellPx}px);`
         + `background-position: -${col * cellPx + insetX}px -${row * cellPx + insetY}px;`
         + noRepeat
       );
@@ -1767,7 +1790,7 @@
     const col = (rootId || 0) % CANDY_SHEET_COLS;
     const row = Math.floor((rootId || 0) / CANDY_SHEET_COLS);
     return `background-image: url('${BUNDLED_BASE}/candies.png');`
-      + `background-size: ${px * CANDY_SHEET_COLS}px ${px * CANDY_SHEET_ROWS}px;`
+      + `background-size: ${px * CANDY_SHEET_COLS}px calc(var(--cc-candy-sheet-rows, ${CANDY_SHEET_ROWS}) * ${px}px);`
       + `background-position: -${col * px}px -${row * px}px;`
       + `background-repeat: no-repeat;`
       + `image-rendering: pixelated;`
@@ -5327,6 +5350,7 @@
       #creatureInventory .eggs-back,
       #creatureInventory .bag-back,
       #creatureInventory .craft-back,
+      #creatureInventory .focus-back,
       #creatureInventory .tags-back,
       #creatureInventory .completion-back,
       #creatureInventory .speciesdex-back {
@@ -5380,6 +5404,7 @@
       #creatureInventory .eggs-back:hover,
       #creatureInventory .bag-back:hover,
       #creatureInventory .craft-back:hover,
+      #creatureInventory .focus-back:hover,
       #creatureInventory .tags-back:hover,
       #creatureInventory .completion-back:hover,
       #creatureInventory .speciesdex-back:hover {
@@ -5944,7 +5969,7 @@
         width: ${CANDY_CELL_PX}px;
         height: ${CANDY_CELL_PX}px;
         background-image: url('${BUNDLED_BASE}/candies.png');
-        background-size: ${CANDY_CELL_PX * CANDY_SHEET_COLS}px ${CANDY_CELL_PX * CANDY_SHEET_ROWS}px;
+        background-size: ${CANDY_CELL_PX * CANDY_SHEET_COLS}px calc(var(--cc-candy-sheet-rows, ${CANDY_SHEET_ROWS}) * ${CANDY_CELL_PX}px);
         background-repeat: no-repeat;
         image-rendering: pixelated;
         image-rendering: crisp-edges;
@@ -6943,6 +6968,119 @@
       #creatureInventory .bag-craft:hover { background: var(--ui-hover, rgba(0,0,0,0.04)); }
       #creatureInventory .craft-view { display: none; }
       #creatureInventory .craft-view.show { display: flex; flex-direction: column; }
+      /* ── Focus mode ── */
+      #creatureInventory .focus-view { display: none; }
+      #creatureInventory .focus-view.show { display: flex; flex-direction: column; }
+      /* Launcher row at the top of the bag: Craft incense + Focus mode
+         side by side (both reuse .bag-craft styling). */
+      #creatureInventory .bag-launchers {
+        display: flex; justify-content: center; gap: 8px;
+        margin: 0 auto 12px;
+      }
+      #creatureInventory .bag-launchers .bag-craft { margin: 0; }
+      #creatureInventory .focus-status {
+        text-align: center; margin: 18px 0 6px;
+      }
+      #creatureInventory .focus-status-title {
+        font-size: 18px; font-weight: 700; color: var(--ui-text, #111);
+        white-space: pre-line;   /* "Currently in focus mode\n<time>" */
+      }
+      #creatureInventory .focus-status-time {
+        font-size: 30px; font-weight: 700; margin-top: 6px;
+        color: var(--ui-text, #111); font-variant-numeric: tabular-nums;
+      }
+      #creatureInventory .focus-status-sub {
+        font-size: 12px; color: var(--ui-muted, #666); margin-top: 6px;
+      }
+      /* Hold-to-confirm ring button — same semantics as the evolve
+         confirm (.evolve-yes): press-and-hold fills the SVG ring over
+         FOCUS_HOLD_MS; releasing early cancels. Keep the transition
+         duration in sync with FOCUS_HOLD_MS. */
+      #creatureInventory .focus-hold-wrap {
+        display: flex; flex-direction: column; align-items: center;
+        margin: 18px 0 4px;
+      }
+      #creatureInventory .focus-hold {
+        position: relative;
+        width: 108px; height: 108px;
+        background: var(--ui-accent, #3b7fdf);
+        color: var(--ui-accent-text, #fff);
+        border: 1px solid var(--ui-accent-border, transparent);
+        border-radius: 50%;
+        font-size: 14px; font-weight: 600; line-height: 1.25;
+        font-family: inherit;
+        cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+        text-align: center; padding: 12px;
+        touch-action: none;     /* prevent scroll-while-hold on iOS */
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      #creatureInventory .focus-hold.end {
+        background: var(--ui-danger, #c0392b);
+      }
+      #creatureInventory .focus-hold svg {
+        position: absolute; inset: -9px;
+        width: calc(100% + 18px); height: calc(100% + 18px);
+        transform: rotate(-90deg);  /* progress starts at 12 o'clock */
+        pointer-events: none;
+      }
+      #creatureInventory .focus-hold .ring-track {
+        fill: none;
+        stroke: var(--ui-border, rgba(0,0,0,0.15));
+        stroke-width: 3;
+      }
+      #creatureInventory .focus-hold .ring-progress {
+        fill: none;
+        stroke: var(--ui-accent, #3b7fdf);
+        stroke-width: 4;
+        stroke-linecap: round;
+        /* circumference of r=40 → 2πr ≈ 251.33; full = no progress */
+        stroke-dasharray: 251.33;
+        stroke-dashoffset: 251.33;
+        transition: stroke-dashoffset 0ms linear;
+      }
+      #creatureInventory .focus-hold.holding .ring-progress {
+        stroke-dashoffset: 0;
+        /* Keep in sync with FOCUS_HOLD_MS. */
+        transition: stroke-dashoffset 1800ms linear;
+      }
+      #creatureInventory .focus-hold-hint {
+        font-size: 11px; color: var(--ui-muted, #666); margin-top: 12px;
+      }
+      #creatureInventory .focus-history-title {
+        font-size: 13px; font-weight: 600; color: var(--ui-text, #111);
+        margin: 20px 0 8px;
+      }
+      #creatureInventory .focus-history-list {
+        display: flex; flex-direction: column; gap: 6px;
+      }
+      #creatureInventory .focus-session-row {
+        display: flex; align-items: center; gap: 10px;
+        padding: 10px; text-align: left; font: inherit; cursor: pointer;
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+        border: 1px solid var(--ui-hairline, rgba(0,0,0,0.08));
+        border-radius: var(--ui-radius, 8px);
+      }
+      #creatureInventory .focus-session-row:hover {
+        background: var(--ui-border, rgba(0,0,0,0.08));
+      }
+      #creatureInventory .focus-session-info { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+      #creatureInventory .focus-session-when {
+        font-size: 13px; font-weight: 600; color: var(--ui-text, #111);
+      }
+      #creatureInventory .focus-session-len {
+        font-size: 12px; color: var(--ui-muted, #666);
+      }
+      #creatureInventory .focus-session-loot {
+        font-size: 12px; color: var(--ui-muted, #666);
+        align-self: center; white-space: nowrap;
+      }
+      #creatureInventory .focus-empty {
+        padding: 20px 8px; text-align: center;
+        color: var(--ui-muted, #666); font-size: 13px;
+      }
       .radar-marker { display: flex; flex-direction: column; align-items: center; pointer-events: none; }
       .radar-marker-label {
         font-size: 11px; font-weight: 700; color: #fff; background: rgba(20,24,36,0.82);
@@ -8044,7 +8182,7 @@
         width: 24px;
         height: 24px;
         background-image: url('${BUNDLED_BASE}/candies.png');
-        background-size: ${24 * CANDY_SHEET_COLS}px ${24 * CANDY_SHEET_ROWS}px;
+        background-size: ${24 * CANDY_SHEET_COLS}px calc(var(--cc-candy-sheet-rows, ${CANDY_SHEET_ROWS}) * 24px);
         background-repeat: no-repeat;
         image-rendering: pixelated;
         image-rendering: crisp-edges;
@@ -8402,6 +8540,11 @@
           <h3 class="subview-title craft-title"><span class="craft-title-text">Craft</span><button class="cc-info-btn craft-info" type="button" aria-label="How incense works" title="How incense works">i</button></h3>
           <div class="craft-body"></div>
         </div>
+        <div class="focus-view">
+          <button class="focus-back" type="button" aria-label="back">←</button>
+          <h3 class="subview-title craft-title"><span class="craft-title-text">Focus mode</span><button class="cc-info-btn focus-info" type="button" aria-label="How focus mode works" title="How focus mode works">i</button></h3>
+          <div class="focus-body"></div>
+        </div>
         <div class="tags-view">
           <button class="tags-back" type="button" aria-label="back">←</button>
           <h3 class="subview-title">Tags</h3>
@@ -8750,6 +8893,13 @@
     panel.querySelector('.eggs-back').addEventListener('click', popView);
     panel.querySelector('.bag-back').addEventListener('click', popView);
     panel.querySelector('.craft-back').addEventListener('click', _craftBack);
+    panel.querySelector('.focus-back').addEventListener('click', popView);
+    const focusInfo = panel.querySelector('.focus-info');
+    if (focusInfo) {
+      focusInfo.addEventListener('click', () => {
+        _openInfoModal({ title: 'Focus mode', html: _focusInfoHtml });
+      });
+    }
     {
       const craftInfo = panel.querySelector('.craft-info');
       if (craftInfo) craftInfo.addEventListener('click', (e) => { e.stopPropagation(); _showIncenseInfo(); });
@@ -8997,6 +9147,8 @@
     panel.querySelector('.eggs-view').classList.remove('show');
     panel.querySelector('.bag-view').classList.remove('show');
     panel.querySelector('.craft-view').classList.remove('show');
+    panel.querySelector('.focus-view').classList.remove('show');
+    _focusClearViewTick();
     panel.querySelector('.tags-view').classList.remove('show');
     panel.querySelector('.completion-view').classList.remove('show');
     panel.querySelector('.speciesdex-view').classList.remove('show');
@@ -9099,6 +9251,10 @@
       case 'craft':
         renderCraft();
         panel.querySelector('.craft-view').classList.add('show');
+        return;
+      case 'focus':
+        renderFocus();
+        panel.querySelector('.focus-view').classList.add('show');
         return;
       case 'tags':
         renderTags();
@@ -9677,7 +9833,7 @@
     const inset = Math.round((sheetCellPx - cellPx) / 2);
     return (
       `background-image: url('${BUNDLED_BASE}/eggs.png');`
-      + `background-size: ${sheetCellPx * EGGS_SHEET_COLS}px ${sheetCellPx * EGGS_SHEET_ROWS}px;`
+      + `background-size: ${sheetCellPx * EGGS_SHEET_COLS}px calc(var(--cc-egg-sheet-rows, ${EGGS_SHEET_ROWS}) * ${sheetCellPx}px);`
       + `background-position: -${col * sheetCellPx + inset}px -${row * sheetCellPx + inset - 1}px;`
       + `background-repeat: no-repeat;`
       + `image-rendering: pixelated;`
@@ -10335,8 +10491,12 @@
     const body = panel.querySelector('.bag-body');
     if (!body) return;
     // Craft launcher — always available (you craft from eggs, not from
-    // bag contents), so it shows even when the bag is empty.
-    const craftBtnHtml = `<button class="bag-craft" type="button">Craft incense</button>`;
+    // bag contents), so it shows even when the bag is empty. Focus mode
+    // sits beside it (same button style); both open sub-views.
+    const craftBtnHtml = `<div class="bag-launchers">`
+      + `<button class="bag-craft" type="button">Craft incense</button>`
+      + `<button class="bag-craft bag-focus" type="button">Focus mode</button>`
+      + `</div>`;
     // Active-incense banner (if one is burning).
     const active = readActiveIncense();
     let bannerHtml = '';
@@ -10361,8 +10521,12 @@
         + `</div>`;
     }
     const wire = () => {
-      const cb = body.querySelector('.bag-craft');
+      const cb = body.querySelector('.bag-craft:not(.bag-focus)');
       if (cb) cb.addEventListener('click', showCraft);
+      const fb = body.querySelector('.bag-focus');
+      // Push onto the current stack (bag → focus) so Back returns to
+      // the bag; the map entry points use showFocus's fresh stack.
+      if (fb) fb.addEventListener('click', () => pushView({ view: 'focus' }));
       body.querySelectorAll('.bag-use').forEach((btn) => {
         btn.addEventListener('click', () => _confirmUseIncense(btn.dataset.incense));
       });
@@ -12766,13 +12930,16 @@
           const isActive = p.id === active;
           const status = _packRowStatus(p, isActive, installed);
           return '<button type="button" class="pack-pick-row' + (isActive ? ' active' : '')
-            + '" data-pack="' + p.id + '"' + (isActive && !p.genRange ? ' disabled' : '') + '>'
+            + '" data-pack="' + p.id + '">'
             + '<span class="pack-pick-name">' + escapeHtml(p.name) + '</span>'
             + '<span class="pack-pick-status">' + status + '</span>'
             + (p.genRange
                 ? '<span class="pack-pick-gear" data-gear="' + p.id + '" title="choose generations">⚙</span>'
                 : '')
-            + (installed && !isActive
+            // ↻ re-download is offered for every installed pack — the
+            // ACTIVE one included (repairs a damaged/partial install or
+            // pulls fresh bytes when the version stamp didn't change).
+            + (installed
                 ? '<span class="pack-pick-redl" data-redl="' + p.id + '" title="re-download">↻</span>'
                 : '')
             + '</button>';
@@ -12806,6 +12973,13 @@
         const meta = global.PackInstall.readMeta(id);
         const gensChanged = !!(def && def.genRange && meta
           && (meta.gens || '') !== global.Packs.subdirFor(id));
+        // Plain tap on the already-active row with nothing to do —
+        // the row used to be `disabled` in this case; keep the no-op
+        // (the ↻/⚙ badges above remain clickable).
+        if (id === active && !force && !gensChanged) {
+          msg.textContent = 'already active';
+          return;
+        }
         btn.disabled = true;
         const bar = overlay.querySelector('.pack-pick-bar');
         const barFill = overlay.querySelector('.pack-pick-bar-fill');
@@ -14980,12 +15154,15 @@
     // can't build on (and then persist) an empty list. No-op once loaded.
     await _whenReady();
     const poiApi = global.CreatureCollectAPI;
-    const poi = (poiApi && poiApi.findNearestNamedPoi)
+    // Focus-mode grants have no real location — skip the POI/place
+    // lookups when the synthetic spawn carries no coordinates.
+    const hasLoc = spawn.lat != null && spawn.lng != null;
+    const poi = (hasLoc && poiApi && poiApi.findNearestNamedPoi)
       ? poiApi.findNearestNamedPoi(spawn.lat, spawn.lng)
       : null;
     // City + country at capture time, same source as the encounter
     // info (POI address tags first, vector-tile place layer second).
-    const place = (poiApi && poiApi.findNearestPlace)
+    const place = (hasLoc && poiApi && poiApi.findNearestPlace)
       ? poiApi.findNearestPlace(spawn.lat, spawn.lng)
       : null;
     // Capture the variant the player saw at the moment of catching,
@@ -15032,6 +15209,9 @@
       entry.fromIncense = true;
       if (typeof spawn.incenseType === 'string') entry.incenseType = spawn.incenseType;
     }
+    // Tag focus-mode grants so the detail view / future tooling can
+    // tell them apart from wild catches.
+    if (spawn.focus) entry.fromFocus = true;
     const list = readCapturedCreatures();
     list.push(entry);
     writeCapturedCreatures(list);  // persists to IDB — no quota wall
@@ -15730,6 +15910,14 @@
 
   function refreshSpawnOverlay() {
     if (!_overlayMap || !global.Spawns) return;
+    // Focus mode: the map stays usable but shows no creatures — clear
+    // any markers already up and suppress wild + radar spawns until the
+    // session ends.
+    if (_focusIsActive()) {
+      if (_markers.size) clearMarkers();
+      if (_radarMarkers.size) _radarClearMarkers();
+      return;
+    }
     // Radar ghosts live at fixed spawn locations (no GPS needed) — refresh
     // their countdowns / pruning every tick, before the GPS-gated spawn logic.
     refreshRadarMarkers();
@@ -16053,6 +16241,12 @@
   function _updateEggBubble() {
     const ctrl = _ensureEggBubble();
     if (!ctrl || !ctrl._container) return;
+    // Focus mode: the bubble would leak incubation progress (and offer
+    // a hatch) mid-session — suppress it until the session ends.
+    if (_focusIsActive()) {
+      ctrl._container.style.display = 'none';
+      return;
+    }
     let ready = false;
     try {
       const activeGroup = global.Packs ? global.Packs.activeGroup() : 'creature-fusion';
@@ -16268,7 +16462,9 @@
         <path d="M3 12h18" stroke="currentColor" stroke-width="1.8" fill="none"/>
         <circle cx="12" cy="12" r="2.5" fill="var(--ui-bg, #fff)" stroke="currentColor" stroke-width="1.8"/>
       </svg>`;
-      b.onclick = () => show();
+      // During focus mode the ball opens the focus view instead of the
+      // inventory — the session clock is the only creature UI allowed.
+      b.onclick = () => { if (_focusIsActive()) showFocus(); else show(); };
       c.appendChild(b);
       c.style.display = readEnabled() ? '' : 'none';
       return c;
@@ -16511,6 +16707,566 @@
     _setDaycareBubbleVisible(false);
   }
 
+  // ══ Focus mode ═══════════════════════════════════════════════════
+  // Put the phone down (or just leave this app open) and earn creatures
+  // + items at a deliberately slow rate. Semantics:
+  //   - A session accrues "qualifying time" while the app is foreground
+  //     OR the device is asleep/locked. Backgrounding the app while the
+  //     screen is on PAUSES accrual; re-foregrounding resumes it — the
+  //     session never breaks, it just stops counting.
+  //   - Rates (deliberately slow so sleep play is marginal and active
+  //     play always wins): 1 creature per hour, 1 item per 30 min of
+  //     qualifying time, plus flat distance bounties (1 creature per
+  //     0.5 km, 1 item per 1 km walked). No cap.
+  //   - Earnings are granted silently as they accrue but only REVEALED
+  //     when the session ends (checking your loot would defeat the
+  //     point). Ended sessions land in a history list (most recent
+  //     first); tapping one shows what it earned.
+  //   - While a session is active the map shows no creature markers and
+  //     the POI "Collect items" button is disabled (index.html checks
+  //     Creatures.isFocusActive()).
+  //
+  // Qualifying-time bookkeeping: the native FocusMonitor plugin
+  // (android-overrides/ ios-overrides/) records a timestamped event
+  // timeline (screen on/off, app foreground/background, lock/unlock)
+  // that survives WebView suspension; we pull events since the last
+  // settle and replay them through _focusReplay. On plain web (no
+  // plugin) we synthesize app_fg/app_bg from visibilitychange and treat
+  // the screen as always on — so any tab switch pauses accrual there.
+  const FOCUS_KEY = 'cc.focus.v1';
+  const FOCUS_CREATURE_MS = 60 * 60 * 1000;
+  const FOCUS_ITEM_MS = 30 * 60 * 1000;
+  // Distance bounties (flat per-km grants, independent of the base
+  // rate): 1 creature per 0.5 km, 1 item per 1 km walked during the
+  // session. Uncapped — even a 15 km walk (30 creatures + 15 items)
+  // is far below what actively playing that walk would sweep.
+  const FOCUS_M_PER_CREATURE = 500;
+  const FOCUS_M_PER_ITEM = 1000;
+  const FOCUS_HISTORY_MAX = 50;
+  const FOCUS_SETTLE_TICK_MS = 60 * 1000;
+  // Keep in sync with the .focus-hold.holding CSS transition duration.
+  const FOCUS_HOLD_MS = 1800;
+
+  function _focusRead() {
+    try {
+      const s = JSON.parse(localStorage.getItem(FOCUS_KEY) || 'null');
+      if (s && typeof s === 'object') {
+        if (!Array.isArray(s.history)) s.history = [];
+        return s;
+      }
+    } catch (e) { /* fall through to fresh state */ }
+    return { active: null, history: [] };
+  }
+  function _focusWrite(s) {
+    try { localStorage.setItem(FOCUS_KEY, JSON.stringify(s)); } catch (e) { /* quota — session survives in memory */ }
+  }
+  function _focusIsActive() {
+    return !!_focusRead().active;
+  }
+
+  // Pure qualifying-time replay. Walks the event timeline over
+  // [fromMs, toMs) and measures how much of it was qualifying
+  // (screen off/locked OR app foreground). `state` is the known
+  // {screenOff, appFg} at fromMs; returns the qualifying milliseconds
+  // and the state at toMs so the next replay can chain. Extracted
+  // untouched by tests/focus-mode.test.js — keep it dependency-free.
+  function _focusReplay(events, fromMs, toMs, state) {
+    const st = { screenOff: !!(state && state.screenOff), appFg: !!(state && state.appFg) };
+    let qual = 0;
+    let cur = fromMs;
+    const evs = (events || [])
+      .filter((e) => e && Number.isFinite(e.t) && e.t > fromMs && e.t < toMs)
+      .sort((a, b) => a.t - b.t);
+    for (const e of evs) {
+      if (st.screenOff || st.appFg) qual += e.t - cur;
+      cur = e.t;
+      switch (e.type) {
+        case 'screen_off': case 'locked': st.screenOff = true; break;
+        case 'screen_on': case 'unlocked': st.screenOff = false; break;
+        case 'app_fg': st.appFg = true; break;
+        case 'app_bg': st.appFg = false; break;
+      }
+    }
+    if (st.screenOff || st.appFg) qual += toMs - cur;
+    return { qualifyingMs: qual, state: st };
+  }
+
+  // Pure grant schedule: base rate from qualifying time plus flat
+  // distance bounties. Also extracted by the test.
+  function _focusGrantsDue(qualifyingMs, distanceM) {
+    const q = Math.max(0, Number(qualifyingMs) || 0);
+    const d = Math.max(0, Number(distanceM) || 0);
+    return {
+      creatures: Math.floor(q / FOCUS_CREATURE_MS) + Math.floor(d / FOCUS_M_PER_CREATURE),
+      items: Math.floor(q / FOCUS_ITEM_MS) + Math.floor(d / FOCUS_M_PER_ITEM),
+    };
+  }
+
+  // Pedometer bridge for the distance bonus — same plugin + opt-in
+  // toggle the daycare sync uses (iOS CMPedometer / Android Health
+  // Connect share the "MotionPedometer" jsName). Null when unavailable
+  // or not enabled → sessions accrue at the base rate.
+  function _focusPedometer() {
+    try {
+      if (localStorage.getItem('cc.pedometerEnabled') !== '1') return null;
+      return (window.Capacitor && window.Capacitor.Plugins
+        && window.Capacitor.Plugins.MotionPedometer) || null;
+    } catch (e) { return null; }
+  }
+
+  function _focusPlugin() {
+    try {
+      return (window.Capacitor && window.Capacitor.Plugins
+        && window.Capacitor.Plugins.FocusMonitor) || null;
+    } catch (e) { return null; }
+  }
+
+  // Web-fallback event log (only consulted when no native plugin).
+  let _focusWebEvents = [];
+  let _focusSettleTimer = null;
+  let _focusSettleInFlight = false;
+  let _focusViewTick = null;
+
+  function _focusOnVisibility() {
+    const now = Date.now();
+    if (!_focusPlugin()) {
+      _focusWebEvents.push({
+        t: now,
+        type: document.visibilityState === 'visible' ? 'app_fg' : 'app_bg',
+      });
+    }
+    // Settle on BOTH transitions: on hide it promptly records the app_bg
+    // (so a process kill mid-background can't misattribute the span);
+    // on show it catches up whatever accrued while suspended (sleep).
+    _focusSettle(now).catch(() => {});
+  }
+
+  // Settle accrual up to nowMs: replay events since the last settle,
+  // advance qualifyingMs, grant whatever thresholds were crossed, and
+  // persist. Idempotent and safe to call spuriously.
+  async function _focusSettle(nowMs) {
+    if (_focusSettleInFlight) return;
+    const s = _focusRead();
+    const a = s.active;
+    if (!a) return;
+    _focusSettleInFlight = true;
+    try {
+      let events = [];
+      const p = _focusPlugin();
+      if (p) {
+        try {
+          const r = await p.getEvents({ sinceMs: a.lastSettleMs });
+          events = (r && Array.isArray(r.events)) ? r.events : [];
+        } catch (e) { /* plugin hiccup — replay with no events (state holds) */ }
+      } else {
+        events = _focusWebEvents
+          .filter((e) => e.t > a.lastSettleMs && e.t <= nowMs);
+        _focusWebEvents = _focusWebEvents.filter((e) => e.t > nowMs);
+      }
+      const r = _focusReplay(events, a.lastSettleMs, nowMs, a.lastState);
+      a.qualifyingMs += r.qualifyingMs;
+      a.lastState = r.state;
+      a.lastSettleMs = nowMs;
+      // Distance bonus: fold in whatever the pedometer recorded since
+      // the last sync. Reads are independent of the daycare's own
+      // pedometer marker — both query the same native history.
+      const Ped = _focusPedometer();
+      if (Ped) {
+        try {
+          const fromMs = a.lastDistanceSyncMs || a.startedAtMs;
+          // Skip trivially-short windows (same rationale as the
+          // daycare sync's MIN_SYNC_WINDOW_MS).
+          if (nowMs - fromMs >= 20000) {
+            const dr = await Ped.getDistanceMeters({ fromMs, toMs: nowMs });
+            if (dr && dr.ok) {
+              a.distanceM = (a.distanceM || 0) + (Number(dr.meters) || 0);
+              a.lastDistanceSyncMs = nowMs;
+            }
+            // Not ok (auth lost, transient error) → leave the marker so
+            // the window is retried on the next settle.
+          }
+        } catch (e) { /* pedometer hiccup — base rate stands */ }
+      }
+      const due = _focusGrantsDue(a.qualifyingMs, a.distanceM || 0);
+      while (a.earned.creatures.length < due.creatures) {
+        // Species data not loaded yet → leave the grant pending; the
+        // count check retries on the next settle.
+        if (!(await _focusGrantCreature(a))) break;
+      }
+      let itemCount = 0;
+      for (const k in a.earned.items) itemCount += a.earned.items[k];
+      while (itemCount < due.items) { _focusGrantItem(a); itemCount++; }
+      _focusWrite(s);
+    } finally {
+      _focusSettleInFlight = false;
+    }
+  }
+
+  // Roll a base-pool encounter and record it as a capture through the
+  // normal path (candy, dex, backup all flow). Returns false when the
+  // species data isn't loaded so the grant stays pending.
+  async function _focusGrantCreature(a) {
+    const enc = (global.Spawns && global.Spawns.rollWildEncounter)
+      ? global.Spawns.rollWildEncounter() : null;
+    if (!enc) return false;
+    const spawn = {
+      // Synthetic id in its own namespace; isSpawnIdStale treats the
+      // unparseable tick as stale so pruneCaughtSpawnIds cleans it up.
+      id: `focus:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+      lat: _userLat, lng: _userLng,
+      solo: enc.solo,
+      speciesA: enc.solo ? null : enc.speciesA,
+      speciesB: enc.solo ? null : enc.speciesB,
+      level: enc.level,
+      sizeM: enc.sizeM,
+      variantSeed: enc.variantSeed,
+      focus: true,
+    };
+    try {
+      const entry = await recordCaptureFromSpawn(spawn);
+      a.earned.creatures.push({
+        id: entry.id,
+        solo: enc.solo || undefined,
+        speciesA: enc.solo ? null : enc.speciesA,
+        speciesB: enc.solo ? null : enc.speciesB,
+        level: enc.level,
+        shiny: entry.shinyVariant != null,
+      });
+      return true;
+    } catch (e) {
+      _logCreatureError('focus/grantCreature', e);
+      return false;
+    }
+  }
+  function _focusGrantItem(a) {
+    const key = rollCollectibleItem();
+    if (!key) return;
+    grantItem(key, 1);
+    a.earned.items[key] = (a.earned.items[key] || 0) + 1;
+  }
+
+  async function _focusStart() {
+    const s = _focusRead();
+    if (s.active) return;
+    const now = Date.now();
+    let init = { screenOff: false, appFg: true };
+    const p = _focusPlugin();
+    if (p) {
+      try {
+        const r = await p.startSession();
+        if (r) {
+          init = { screenOff: !!r.screenOff, appFg: r.appForeground !== false };
+        }
+      } catch (e) { /* fall back to the optimistic default */ }
+    } else {
+      _focusWebEvents = [];
+      init = { screenOff: false, appFg: document.visibilityState === 'visible' };
+    }
+    s.active = {
+      startedAtMs: now,
+      lastSettleMs: now,
+      lastState: init,
+      qualifyingMs: 0,
+      distanceM: 0,
+      lastDistanceSyncMs: now,
+      earned: { creatures: [], items: {} },
+    };
+    _focusWrite(s);
+    _focusArm();
+    _focusNotifyMap();
+    _updateEggBubble();      // suppress the hatch bubble mid-session
+    refreshSpawnOverlay();   // gated while active → clears the map
+  }
+
+  // End the session: settle up to now, move the earnings into history,
+  // and return the finished record (null when no session was active).
+  async function _focusEnd() {
+    await _focusSettle(Date.now());
+    const s = _focusRead();
+    const a = s.active;
+    if (!a) return null;
+    const p = _focusPlugin();
+    if (p) { try { await p.endSession(); } catch (e) { /* ignore */ } }
+    s.active = null;
+    const rec = {
+      startedAtMs: a.startedAtMs,
+      endedAtMs: Date.now(),
+      qualifyingMs: a.qualifyingMs,
+      distanceM: a.distanceM || 0,
+      creatures: a.earned.creatures,
+      items: a.earned.items,
+    };
+    s.history.push(rec);
+    if (s.history.length > FOCUS_HISTORY_MAX) {
+      s.history.splice(0, s.history.length - FOCUS_HISTORY_MAX);
+    }
+    _focusWrite(s);
+    _focusDisarm();
+    _focusNotifyMap();
+    _updateEggBubble();      // restore the hatch bubble if an egg is ready
+    refreshSpawnOverlay();   // ungated again → markers repopulate
+    return rec;
+  }
+
+  // Tell index.html the focus state flipped so it can refresh POI
+  // visuals (tappable halos + the collect button) immediately.
+  function _focusNotifyMap() {
+    try { window.dispatchEvent(new Event('cc-focus-changed')); } catch (e) { /* ignore */ }
+  }
+
+  function _focusArm() {
+    _focusDisarm();
+    _focusSettleTimer = setInterval(() => {
+      _focusSettle(Date.now()).catch(() => {});
+    }, FOCUS_SETTLE_TICK_MS);
+    document.addEventListener('visibilitychange', _focusOnVisibility);
+  }
+  function _focusDisarm() {
+    if (_focusSettleTimer) { clearInterval(_focusSettleTimer); _focusSettleTimer = null; }
+    document.removeEventListener('visibilitychange', _focusOnVisibility);
+    _focusWebEvents = [];
+  }
+
+  // 1s ticker that keeps the active-session clock fresh while the focus
+  // view is open. Cleared from applyTopView on every view change.
+  function _focusClearViewTick() {
+    if (_focusViewTick) { clearInterval(_focusViewTick); _focusViewTick = null; }
+  }
+  // Projected qualifying time for the live display: between settles the
+  // clock keeps running whenever the last settled state was qualifying
+  // (which it always is while this view is on screen — the app is
+  // foreground by definition).
+  function _focusProjectedQualifyingMs(a, nowMs) {
+    let q = a.qualifyingMs;
+    if (a.lastState && (a.lastState.screenOff || a.lastState.appFg)) {
+      q += Math.max(0, nowMs - a.lastSettleMs);
+    }
+    return q;
+  }
+
+  function _focusFmtDur(ms) {
+    const mins = Math.floor(Math.max(0, ms) / 60000);
+    const h = Math.floor(mins / 60), m = mins % 60;
+    if (h > 0) return h + 'h ' + m + 'm';
+    if (m > 0) return m + 'm';
+    return Math.floor(Math.max(0, ms) / 1000) + 's';
+  }
+  function _focusItemCount(items) {
+    let n = 0;
+    for (const k in (items || {})) n += items[k];
+    return n;
+  }
+  function _focusCreatureName(c) {
+    if (c.solo) return String(c.solo);
+    return speciesNameFor(c.speciesA) + ' × ' + speciesNameFor(c.speciesB);
+  }
+  function _focusLootSummary(sess) {
+    const c = (sess.creatures || []).length;
+    const i = _focusItemCount(sess.items);
+    const parts = [];
+    if (c) parts.push(c + ' pokémon');
+    if (i) parts.push(i + ' item' + (i === 1 ? '' : 's'));
+    return parts.length ? parts.join(' · ') : 'nothing yet';
+  }
+
+  // Hold-to-confirm wiring for the Enter/End buttons — same semantics
+  // as the evolve confirm: press-and-hold fills the ring over
+  // FOCUS_HOLD_MS, releasing early cancels.
+  function _focusWireHold(btn, onConfirm) {
+    let timer = null;
+    const cancel = () => {
+      if (timer) { clearTimeout(timer); timer = null; }
+      btn.classList.remove('holding');
+    };
+    const start = (e) => {
+      if (timer) return;
+      e.preventDefault();
+      btn.classList.add('holding');
+      timer = setTimeout(() => { timer = null; cancel(); onConfirm(); }, FOCUS_HOLD_MS);
+    };
+    btn.addEventListener('pointerdown', start);
+    btn.addEventListener('pointerup', cancel);
+    btn.addEventListener('pointercancel', cancel);
+    btn.addEventListener('pointerleave', cancel);
+    btn.addEventListener('lostpointercapture', cancel);
+  }
+  function _focusHoldHtml(label, extraClass) {
+    return `<button type="button" class="focus-hold${extraClass ? ' ' + extraClass : ''}">
+      <svg viewBox="0 0 100 100" aria-hidden="true">
+        <circle class="ring-track" cx="50" cy="50" r="40"></circle>
+        <circle class="ring-progress" cx="50" cy="50" r="40"></circle>
+      </svg>
+      <span>${escapeHtml(label)}</span>
+    </button>`;
+  }
+
+  // Session detail — opened via the generic info modal when a history
+  // row is tapped (and right after a session ends).
+  function _focusSessionHtml(sess) {
+    const when = new Date(sess.startedAtMs);
+    let h = '<p class="cc-info-p">'
+      + escapeHtml(when.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }))
+      + ' · focused for <b>' + escapeHtml(_focusFmtDur(sess.qualifyingMs)) + '</b>';
+    const distM = Number(sess.distanceM) || 0;
+    if (distM >= 50) {
+      const km = distM / 1000;
+      h += '<br>Walked <b>' + escapeHtml(km.toFixed(1)) + ' km</b> during the session'
+        + ' (+' + Math.floor(distM / FOCUS_M_PER_CREATURE) + ' pokémon, +'
+        + Math.floor(distM / FOCUS_M_PER_ITEM) + ' items from distance)';
+    }
+    h += '</p>';
+    const creatures = sess.creatures || [];
+    h += '<div class="cc-info-section">';
+    h += '<div class="cc-info-section-title">' + creatures.length + ' pokémon</div>';
+    if (creatures.length) {
+      h += creatures.map((c) =>
+        '<div class="cc-info-row"><span class="cc-info-v">'
+        + escapeHtml(_focusCreatureName(c))
+        + (c.shiny ? ' ★' : '')
+        + ' · lvl ' + escapeHtml(String(c.level))
+        + '</span></div>').join('');
+    } else {
+      h += '<p class="cc-info-p">None — the first pokémon arrives after 1 hour of focus.</p>';
+    }
+    h += '</div>';
+    const items = sess.items || {};
+    const keys = Object.keys(items);
+    h += '<div class="cc-info-section">';
+    h += '<div class="cc-info-section-title">' + _focusItemCount(items) + ' items</div>';
+    if (keys.length) {
+      h += keys.map((k) => {
+        const meta = getItemMeta(k) || { name: k };
+        return '<div class="cc-info-row"><span class="cc-info-v">'
+          + escapeHtml(meta.name) + ' ×' + items[k] + '</span></div>';
+      }).join('');
+    } else {
+      h += '<p class="cc-info-p">None — the first item arrives after 30 min of focus.</p>';
+    }
+    h += '</div>';
+    return h;
+  }
+
+  function _focusInfoHtml() {
+    let h = '';
+    h += '<p class="cc-info-p">Focus mode rewards you for <b>not</b> playing. While it\'s on, '
+      + 'the map keeps working but shows no pokémon and no item pickups — and time only '
+      + 'counts while this app is open or your phone is asleep. Switching to another app '
+      + '<b>pauses</b> the session (never ends it); coming back resumes it.</p>';
+    h += '<div class="cc-info-section">';
+    h += '<div class="cc-info-section-title">What you earn</div>';
+    h += '<div class="cc-info-row"><span class="cc-info-k">Pokémon</span>'
+      + '<span class="cc-info-v">One per <b>hour</b> of focus — a trickle, so exploring '
+      + 'is always better.</span></div>';
+    h += '<div class="cc-info-row"><span class="cc-info-k">Items</span>'
+      + '<span class="cc-info-v">One poké ball per <b>30 min</b> of focus.</span></div>';
+    h += '<div class="cc-info-row"><span class="cc-info-k">Walking</span>'
+      + '<span class="cc-info-v">Distance walked during a session earns flat bonuses on top: '
+      + '<b>+1 pokémon per 0.5 km</b> and <b>+1 ball per 1 km</b>. (Needs the pedometer '
+      + 'enabled in Settings; daycare and eggs still track distance as usual.)</span></div>';
+    h += '<div class="cc-info-row"><span class="cc-info-k">The catch</span>'
+      + '<span class="cc-info-v">You don\'t see what you\'ve earned until you end the '
+      + 'session. No peeking.</span></div>';
+    h += '</div>';
+    h += '<div class="cc-info-section">';
+    h += '<div class="cc-info-section-title">Fine print</div>';
+    h += '<p class="cc-info-p">Sleep counts fully — overnight sessions are legit. '
+      + 'Focus pokémon come from the ordinary wild pool (no legendaries or radar '
+      + 'targets) and still earn candy. Past sessions are listed below; tap one to '
+      + 'see what it earned.</p>';
+    h += '</div>';
+    return h;
+  }
+
+  function showFocus() {
+    const panel = ensurePanel();
+    showBrowse();
+    pushView({ view: 'focus' });
+    panel.classList.add('show');
+  }
+
+  function renderFocus() {
+    const panel = document.getElementById('creatureInventory');
+    if (!panel) return;
+    const body = panel.querySelector('.focus-body');
+    if (!body) return;
+    _focusClearViewTick();
+    const s = _focusRead();
+
+    if (s.active) {
+      // Active session: big clock only — earnings stay hidden until the
+      // session ends (that's the whole point).
+      body.innerHTML = `
+        <div class="focus-status">
+          <div class="focus-status-title">Currently in focus mode</div>
+          <div class="focus-status-time"></div>
+          <div class="focus-status-sub">Map is distraction-free · switching apps pauses the clock</div>
+        </div>
+        <div class="focus-hold-wrap">
+          ${_focusHoldHtml('End Focus Mode', 'end')}
+          <div class="focus-hold-hint">Hold to end — you'll see what you earned</div>
+        </div>
+      `;
+      const timeEl = body.querySelector('.focus-status-time');
+      const paint = () => {
+        const cur = _focusRead().active;
+        if (!cur) { _focusClearViewTick(); renderFocus(); return; }
+        timeEl.textContent = _fmtCountdownHMS(_focusProjectedQualifyingMs(cur, Date.now()));
+      };
+      paint();
+      _focusViewTick = setInterval(paint, 1000);
+      // Catch up accrual in the background so the clock display starts
+      // from settled state (e.g. view opened right after a long sleep).
+      _focusSettle(Date.now()).catch(() => {});
+      _focusWireHold(body.querySelector('.focus-hold'), async () => {
+        const rec = await _focusEnd();
+        renderFocus();
+        if (rec) {
+          _openInfoModal({ title: 'Focus session', html: () => _focusSessionHtml(rec) });
+        }
+      });
+      return;
+    }
+
+    // Inactive: enter button + past sessions (most recent first).
+    const history = s.history.slice().reverse();
+    const rows = history.map((sess, i) => {
+      const when = new Date(sess.startedAtMs);
+      const dateStr = when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      const idx = history.length - 1 - i;   // index into s.history
+      return `<button class="focus-session-row" type="button" data-idx="${idx}">
+        <div class="focus-session-info">
+          <div class="focus-session-when">${escapeHtml(dateStr)} · ${escapeHtml(_focusFmtDur(sess.qualifyingMs))}</div>
+          <div class="focus-session-len">${escapeHtml(_focusLootSummary(sess))}</div>
+        </div>
+      </button>`;
+    }).join('');
+    body.innerHTML = `
+      <div class="focus-hold-wrap">
+        ${_focusHoldHtml('Enter Focus Mode', '')}
+        <div class="focus-hold-hint">Hold to start</div>
+      </div>
+      <div class="focus-history-title">Past sessions</div>
+      ${history.length
+        ? `<div class="focus-history-list">${rows}</div>`
+        : `<div class="focus-empty">No sessions yet. Hold the button above to start your first.</div>`}
+    `;
+    _focusWireHold(body.querySelector('.focus-hold'), async () => {
+      await _focusStart();
+      renderFocus();
+    });
+    body.querySelectorAll('.focus-session-row').forEach((row) => {
+      row.addEventListener('click', () => {
+        const sess = _focusRead().history[Number(row.dataset.idx)];
+        if (!sess) return;
+        _openInfoModal({ title: 'Focus session', html: () => _focusSessionHtml(sess) });
+      });
+    });
+  }
+
+  // (Deliberately no on-map focus button: during a session the creature
+  // ball opens the focus view, and outside one the Bag launcher is the
+  // entry point — an always-visible map label was judged clutter.)
+
   function install(map) {
     injectStyles();
     // Resume any incense still within its 30-min window from a previous
@@ -16612,6 +17368,11 @@
     }
     const ctrl = new CreatureBallControl();
     map.addControl(ctrl, 'bottom-right');
+    // Resume any focus session that was live when the app last closed.
+    if (_focusIsActive()) {
+      _focusArm();
+      _focusSettle(Date.now()).catch(() => {});
+    }
     if (readEnabled()) attachSpawnOverlay(map);
     return {
       setEnabled(on) {
@@ -16678,6 +17439,11 @@
     // session, carried in the save file the same way.
     getCommunityDay: readCommunityDay,
     setCommunityDayState,
+    // Focus mode — index.html gates the POI "Collect items" button and
+    // the tappable halos on isFocusActive; showFocus is the creature
+    // ball's entry point while a session is active.
+    isFocusActive: _focusIsActive,
+    showFocus,
     getCandy: readCandy, getBag: readBag, getTags: readTags,
     grantItem, consumeItem, rollCollectibleItem, getItemMeta,
     // Solo-pack items (paintbrushes etc.) registered by packs.js at boot.

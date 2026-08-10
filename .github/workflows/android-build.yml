@@ -474,6 +474,7 @@ jobs:
                   registerPlugin(HapticPatternPlugin.class);
                   registerPlugin(SensorProbePlugin.class);
                   registerPlugin(SaveImagePlugin.class);
+                  registerPlugin(FocusMonitorPlugin.class);
                   super.onCreate(savedInstanceState);
                   // Capacitor wires WebViewAssetLoader for page-originated
                   // requests via WebViewClient. SW-originated requests

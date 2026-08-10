@@ -202,11 +202,18 @@ def default_pair(key, C):
 #    own species-pool.json + species-evolutions.json) ────────────────
 
 def load_roster(bundle_dir):
-    """Return sorted family-root ids for one game's bundle, mirroring
-    build-shiny-palettes.family_of/enumerate_family_roots but driven by
-    the bundle's own species-pool.json instead of the species_pool env."""
-    pool = set(json.loads(
-        (bundle_dir / 'species-pool.json').read_text())['species'])
+    """Return sorted family-root ids for one game's bundle, driven by the
+    bundle's own species-pool.json + species-evolutions.json.
+
+    Roots are CANDY roots, mirroring static/creatures.js candyRootFor:
+    walk to the earliest ancestor, then skip past baby ids (the bundle's
+    species-pool.json 'babies' list). An earlier version anchored roots
+    at the baby itself, which silently mismatched every client lookup
+    for the 18 baby families (e.g. IF2 keyed Chansey pairs under
+    Happiny 259 while the client asks for 113)."""
+    pool_doc = json.loads((bundle_dir / 'species-pool.json').read_text())
+    pool = set(pool_doc['species'])
+    babies = set(pool_doc.get('babies', []))
     evos, rev = bsp.load_evolutions(bundle_dir)
 
     def family_of(sp):
@@ -233,7 +240,14 @@ def load_roster(bundle_dir):
                 queue.append(t[0])
         return family
 
-    roots = sorted(sp for sp in pool if family_of(sp)[:1] == [sp])
+    def candy_root(sp):
+        family = family_of(sp)
+        i = 0
+        while i < len(family) - 1 and family[i] in babies:
+            i += 1
+        return family[i]
+
+    roots = sorted(sp for sp in pool if candy_root(sp) == sp)
     return roots, family_of
 
 

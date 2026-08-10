@@ -56,7 +56,7 @@
   }
 
   // ── source resolution (mirrors _regionBaseUrl semantics) ──
-  function sourceForMode(mode, apiBase, hfRepo, packId) {
+  function sourceForMode(mode, apiBase, hfRepo, packId, native) {
     const repo = hfRepo || 'TessaCoil/creature-pack';
     const pid = packId || DEFAULT_PACK_ID;
     // Generation-subset variants live in a subfolder of the same repo /
@@ -64,18 +64,19 @@
     const gens = (global.Packs && global.Packs.subdirFor)
       ? global.Packs.subdirFor(pid) : '';
     const prefix = gens ? gens + '/' : '';
+    const suffix = native ? '-native' : '';
     if (mode === 'static-hf') {
       return {
         source: 'hf',
-        packBinUrl: `${HF_BASE}${repo}/resolve/main/${prefix}pack.bin`,
-        packJsonUrl: `${HF_BASE}${repo}/resolve/main/${prefix}pack.json`,
+        packBinUrl: `${HF_BASE}${repo}/resolve/main/${prefix}pack${suffix}.bin`,
+        packJsonUrl: `${HF_BASE}${repo}/resolve/main/${prefix}pack${suffix}.json`,
       };
     }
     const base = String(apiBase || '').replace(/\/$/, '');
     return {
       source: 'local',
-      packBinUrl: `${base}/pack-files/${pid}/${prefix}pack.bin`,
-      packJsonUrl: `${base}/pack-files/${pid}/${prefix}pack.json`,
+      packBinUrl: `${base}/pack-files/${pid}/${prefix}pack${suffix}.bin`,
+      packJsonUrl: `${base}/pack-files/${pid}/${prefix}pack${suffix}.json`,
     };
   }
   function _mode() {
@@ -87,8 +88,36 @@
       ? global.Packs.get(packId || DEFAULT_PACK_ID) : null;
     return (def && def.hfRepo) || 'TessaCoil/creature-pack';
   }
-  function currentSource(packId) {
-    return sourceForMode(_mode(), global.CC_API_BASE || '', _hfRepoFor(packId), packId);
+  function _isNativePlatform() {
+    if (typeof global.Capacitor === 'undefined' || !global.Capacitor.getPlatform) {
+      return false;
+    }
+    const p = global.Capacitor.getPlatform();
+    return p === 'ios' || p === 'android';
+  }
+  function currentSource(packId, native) {
+    return sourceForMode(_mode(), global.CC_API_BASE || '', _hfRepoFor(packId), packId, native);
+  }
+  async function _fetchManifest(src) {
+    try {
+      const resp = await fetch(src.packJsonUrl, { cache: 'no-store' });
+      if (resp.ok) return await resp.json();
+    } catch { /* offline */ }
+    return null;
+  }
+  // Effective download source: native builds request pack-native.* when
+  // the server has it, falling back to the full pack for older servers /
+  // solo packs. Returns { src, manifest } with manifest already parsed —
+  // callers reuse it instead of re-fetching.
+  async function _resolveDownload(packId) {
+    const fullSrc = currentSource(packId);
+    if (!_isNativePlatform()) {
+      return { src: fullSrc, manifest: await _fetchManifest(fullSrc) };
+    }
+    const nativeSrc = currentSource(packId, true);
+    const nativeManifest = await _fetchManifest(nativeSrc);
+    if (nativeManifest) return { src: nativeSrc, manifest: nativeManifest };
+    return { src: fullSrc, manifest: await _fetchManifest(fullSrc) };
   }
 
   // ── meta (what's installed), per pack ──
@@ -116,26 +145,38 @@
     return !!(m && m.installedAt);
   }
 
+  // A gen-subset pack whose installed variant differs from the current
+  // selection counts as "update available" even when the contentVersion
+  // matches — switching gens/families means downloading the other
+  // variant. Compared on the subdir ('gen-1-2-fam'), which encodes both.
+  function _metaMatches(meta, remote, selGens) {
+    return !!(meta && meta.installedAt
+      && meta.contentVersion === remote.contentVersion
+      && meta.sha256 === remote.sha256
+      && (!selGens || (meta.gens || '') === selGens));
+  }
+
   async function checkForUpdate(packId) {
-    const src = currentSource(packId);
-    let remote = null;
-    try {
-      const resp = await fetch(src.packJsonUrl, { cache: 'no-store' });
-      if (resp.ok) remote = await resp.json();
-    } catch { /* offline */ }
+    const { src, manifest: remote } = await _resolveDownload(packId);
     if (!remote) return { state: 'unknown', source: src, remote: null };
     const meta = readMeta(packId);
-    // A gen-subset pack whose installed variant differs from the current
-    // selection counts as "update available" even if the contentVersion
-    // matches — switching gens/families means downloading the other
-    // variant. Compared on the subdir ('gen-1-2-fam'), which encodes both.
     const selGens = (global.Packs && global.Packs.subdirFor)
       ? global.Packs.subdirFor(packId || DEFAULT_PACK_ID) : '';
-    if (meta && meta.installedAt
-        && meta.contentVersion === remote.contentVersion
-        && meta.sha256 === remote.sha256
-        && (!selGens || (meta.gens || '') === selGens)) {
+    if (_metaMatches(meta, remote, selGens)) {
       return { state: 'up-to-date', source: src, remote };
+    }
+    // Native-variant rollout: a client still holding the FULL pack from
+    // before pack-native.* existed has the same content in a bigger
+    // transport. If the full manifest matches the install, report
+    // up-to-date instead of flagging a pointless re-download.
+    if (_isNativePlatform() && meta && meta.installedAt) {
+      const fullSrc = currentSource(packId);
+      if (fullSrc.packJsonUrl !== src.packJsonUrl) {
+        const fullRemote = await _fetchManifest(fullSrc);
+        if (fullRemote && _metaMatches(meta, fullRemote, selGens)) {
+          return { state: 'up-to-date', source: fullSrc, remote: fullRemote };
+        }
+      }
     }
     return { state: isInstalled(packId) ? 'available' : 'none', source: src, remote };
   }
@@ -453,10 +494,12 @@
     if (platform !== 'ios' && platform !== 'android') {
       throw new Error('the creature pack is a mobile (Capacitor) flow');
     }
-    const src = currentSource(packId);
-    const manResp = await fetch(src.packJsonUrl, { cache: 'no-store' });
-    if (!manResp.ok) throw new Error('pack.json: HTTP ' + manResp.status);
-    const manifest = await manResp.json();
+    const resolved = await _resolveDownload(packId);
+    if (!resolved.manifest) {
+      throw new Error('pack manifest unreachable: ' + resolved.src.packJsonUrl);
+    }
+    const src = resolved.src;
+    const manifest = resolved.manifest;
     const total = manifest.totalBytes || 0;
     const gens = (global.Packs && global.Packs.subdirFor)
       ? global.Packs.subdirFor(packId) : '';

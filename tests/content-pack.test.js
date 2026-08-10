@@ -130,6 +130,58 @@ async function main() {
     && small.has('eggs.png') && small.has('candies.png'),
     '3: root bundled files present (species types, shiny, eggs, candy)');
 
+  // --- 3b) --native build: full + native variant in one run, shared version --------
+  const nativeDir = path.join(tmp, 'native-out');
+  execFileSync('python3', ['build-content-pack.py', '--out', nativeDir, '--native', '--max-entries', '40'],
+    { cwd: root, encoding: 'utf8' });
+  const nativeSmall = await PackReader.open(new Blob([fs.readFileSync(path.join(nativeDir, 'pack-native.bin'))]));
+  ok(!nativeSmall.list('sprites/').length,
+    '3b: native variant drops sprites/');
+  ok(nativeSmall.has('candies.png') && nativeSmall.has('eggs.png'),
+    '3b: native variant keeps the root bundled files');
+  ok(fs.existsSync(path.join(nativeDir, 'pack-native.json')), '3b: pack-native.json manifest written');
+  // The same run also wrote the full pack, with sprites/ intact.
+  ok(fs.existsSync(path.join(nativeDir, 'pack.bin')), '3b: full pack.bin written in the same run');
+  const fullSmall = await PackReader.open(new Blob([fs.readFileSync(path.join(nativeDir, 'pack.bin'))]));
+  ok(fullSmall.list('sprites/').length > 0, '3b: full pack keeps sprites/');
+  const fullMan = JSON.parse(fs.readFileSync(path.join(nativeDir, 'pack.json'), 'utf8'));
+  const natMan = JSON.parse(fs.readFileSync(path.join(nativeDir, 'pack-native.json'), 'utf8'));
+  ok(fullMan.contentVersion === natMan.contentVersion,
+    '3b: full + native manifests share contentVersion');
+
+  // --- 3c) filter_pack derivation (native variant from an existing pack) -----------
+  // Same content as the source pack minus dropped prefixes, byte-identical
+  // entries, source contentVersion preserved (so installed full packs do
+  // not read as out-of-date against the variant manifest).
+  const derivedDir = path.join(tmp, 'derived-out');
+  fs.mkdirSync(derivedDir, { recursive: true });
+  execFileSync('python3', ['-c',
+    'import content_pack\n'
+    + 'content_pack.filter_pack(' + JSON.stringify(path.join(outDir, 'pack.bin')) + ', '
+    + JSON.stringify(path.join(derivedDir, 'pack-native.bin')) + ', '
+    + JSON.stringify(path.join(derivedDir, 'pack-native.json')) + ',\n'
+    + '  drop_prefixes=("sprites/",))\n',
+  ], { cwd: root, encoding: 'utf8' });
+  const srcManifest = JSON.parse(fs.readFileSync(path.join(outDir, 'pack.json'), 'utf8'));
+  const derivedManifest = JSON.parse(fs.readFileSync(path.join(derivedDir, 'pack-native.json'), 'utf8'));
+  ok(derivedManifest.contentVersion === srcManifest.contentVersion,
+    '3c: derived pack keeps the source contentVersion');
+  ok(derivedManifest.file === 'pack-native.bin', '3c: manifest file field names the native bin');
+  const derived = await PackReader.open(new Blob([fs.readFileSync(path.join(derivedDir, 'pack-native.bin'))]));
+  const srcNames = srcManifest.toc.entries ? Object.keys(srcManifest.toc.entries) : [];
+  const dropped = srcNames.filter((n) => n.startsWith('sprites/'));
+  const kept = srcNames.filter((n) => !n.startsWith('sprites/'));
+  ok(dropped.length > 0 && dropped.every((n) => !derived.has(n)),
+    '3c: every sprites/ entry dropped');
+  ok(kept.every((n) => derived.has(n)), '3c: every non-sprites entry kept');
+  for (const n of kept) {
+    const want = srcManifest.toc.entries[n].sha256;
+    const gotBuf = Buffer.from(await (await derived.get(n)).arrayBuffer());
+    const gotSha = require('crypto').createHash('sha256').update(gotBuf).digest('hex');
+    if (gotSha !== want) { ok(false, '3c: entry bytes differ: ' + n); break; }
+  }
+  ok(true, '3c: kept entries byte-identical (sha256 spot-check)');
+
   // --- 4) wiring ------------------------------------------------------------------
   const indexSrc = fs.readFileSync(path.join(root, 'static', 'index.html'), 'utf8');
   ok(indexSrc.includes('<script src="/static/pack-reader.js"></script>'),

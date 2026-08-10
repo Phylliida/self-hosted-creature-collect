@@ -64,6 +64,19 @@ const TILES_CACHE = 'tiles-v1';
 // the downloaded pack IS the active one — downloading a non-active
 // pack no longer clobbers the live overlay. All in cache-first files
 // (/static/packs.js, /static/creatures.js, /static/pack-install.js).
+// Shell bump 2026-08-10 (#11): IF2 pack fixes — (a) candy/egg sprite
+// sheets probe their real row counts at runtime (was hardcoded 43 →
+// every cell sampled across two rows on 58-row IF2 sheets);
+// (b) pack-install prefers pack-native.bin on iOS/Android (no sprites/
+// — halves the download) and treats an installed full pack as
+// up-to-date against the native manifest; (c) species.js/sprites.js
+// caches are namespaced per gen-VARIANT (were per pack id — switching
+// IF2 subsets kept serving the previous subset's pool/evolutions, so
+// spawns + completion counted the wrong species set); (d) the pack
+// picker ↻ re-download badge now shows for the ACTIVE pack and the
+// Settings creature-pack row arms a second-tap force re-download.
+// All in cache-first files (/static/creatures.js, /static/species.js,
+// /static/sprites.js, /static/pack-install.js, index.html).
 
 const APP_SHELL = [
   '/',
