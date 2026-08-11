@@ -125,10 +125,11 @@ INFINITEFUSION = _env_path("CC_INFINITEFUSION", ROOT / "data" / "InfiniteFusion"
 # Sprite sheet sources live inside InfiniteFusion's Graphics tree —
 # Battlers/ is for the autogen sheets, CustomBattlers/ for custom.
 AUTOGEN_SHEETS_DIR = INFINITEFUSION / "Graphics" / "Battlers" / "spritesheets_autogen"
-# IF1's autogen tree stops at head 501 — the high PIF gen-3 ids (502+)
-# were never auto-generated there. Fall back to the IF2 tree for exactly
-# those missing sheets (gap-fill only; never replaces an IF1 sheet).
-# When CC_INFINITEFUSION already points at the IF2 tree this is a no-op.
+# IF1's autogen tree stops at head 501, and its sheets only cover
+# bodies 0..509 — the high PIF gen-3 ids (502+) have autogen art only
+# in the IF2 tree. build_autogen_sheet composites: IF1 rows stay
+# canonical, missing rows/heads come from this tree. When
+# CC_INFINITEFUSION already points at the IF2 tree this is a no-op.
 AUTOGEN_FALLBACK_DIR = _env_path(
     "CC_AUTOGEN_FALLBACK_DIR",
     ROOT / "data" / "InfiniteFusion2" / "Graphics" / "Battlers"
@@ -211,6 +212,41 @@ def crop_sheet(src: Path, dst: Path, max_height: int) -> None:
         return
     cropped = img.crop((0, 0, img.width, max_height))
     cropped.save(dst, optimize=True)
+
+
+def build_autogen_sheet(head: int, dst: Path) -> bool:
+    """Write the bundled autogen sheet for one head. The canonical IF1
+    sheet is the base; body rows IF1 never generated (its sheets stop
+    at body 509 — the gen-3 high PIF ids) are filled from the IF2
+    tree's sheet for the same head. Only rows IF1 lacks come from IF2,
+    so no existing cell's art changes. Heads IF1 doesn't cover at all
+    use the IF2 sheet wholesale. Returns False when neither tree has
+    the head's sheet."""
+    primary = AUTOGEN_SHEETS_DIR / f"{head}.png"
+    fallback = AUTOGEN_FALLBACK_DIR / f"{head}.png"
+    if primary.is_file():
+        base_path = primary
+    elif fallback.is_file():
+        base_path = fallback
+    else:
+        return False
+    need_w = AUTOGEN_COLS * CELL_PX
+    need_h = AUTOGEN_HEIGHT_NEEDED
+    base = Image.open(base_path).convert("RGBA")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if base.height >= need_h:
+        base.crop((0, 0, need_w, need_h)).save(dst, optimize=True)
+        return True
+    out = Image.new("RGBA", (need_w, need_h), (0, 0, 0, 0))
+    out.paste(base, (0, 0))
+    if base_path == primary and fallback.is_file():
+        fb = Image.open(fallback).convert("RGBA")
+        fb_h = min(fb.height, need_h)
+        if fb_h > base.height:
+            out.paste(fb.crop((0, base.height, need_w, fb_h)),
+                      (0, base.height))
+    out.save(dst, optimize=True)
+    return True
 
 
 # Alpha threshold matches sprites.js ALPHA_MIN — pixels with
@@ -584,19 +620,11 @@ def build_sprites_and_manifest() -> tuple[dict, dict]:
                 f"(head={head}, {done * 100 // total}%)",
                 end="", flush=True,
             )
-        # Autogen: just crop the source sheet down to the first
-        # MAX_SPECIES rows. No per-cell decomposition. Heads missing
-        # from the primary tree fall back to the IF2 sheet (IF1 has no
-        # autogen art for the high gen-3 PIF ids).
-        autogen_src = AUTOGEN_SHEETS_DIR / f"{head}.png"
-        if not autogen_src.is_file():
-            fallback_src = AUTOGEN_FALLBACK_DIR / f"{head}.png"
-            if fallback_src.is_file():
-                autogen_src = fallback_src
-        if autogen_src.is_file():
-            dst_dir = OUT_DIR / "sprites" / str(head) / "autogen"
-            dst_dir.mkdir(parents=True, exist_ok=True)
-            crop_sheet(autogen_src, dst_dir / f"{head}.png", AUTOGEN_HEIGHT_NEEDED)
+        # Autogen: composite the canonical sheet with fallback rows
+        # (IF1's sheets stop at body 509; the gen-3 high PIF ids only
+        # have autogen art in the IF2 tree). No per-cell decomposition.
+        build_autogen_sheet(
+            head, OUT_DIR / "sprites" / str(head) / "autogen" / f"{head}.png")
 
         # Custom variants: crop sheets, alpha-scan for cells.json.
         suffixes, cells_for_head = process_custom_head(head)
