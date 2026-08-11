@@ -125,6 +125,14 @@ INFINITEFUSION = _env_path("CC_INFINITEFUSION", ROOT / "data" / "InfiniteFusion"
 # Sprite sheet sources live inside InfiniteFusion's Graphics tree —
 # Battlers/ is for the autogen sheets, CustomBattlers/ for custom.
 AUTOGEN_SHEETS_DIR = INFINITEFUSION / "Graphics" / "Battlers" / "spritesheets_autogen"
+# IF1's autogen tree stops at head 501 — the high PIF gen-3 ids (502+)
+# were never auto-generated there. Fall back to the IF2 tree for exactly
+# those missing sheets (gap-fill only; never replaces an IF1 sheet).
+# When CC_INFINITEFUSION already points at the IF2 tree this is a no-op.
+AUTOGEN_FALLBACK_DIR = _env_path(
+    "CC_AUTOGEN_FALLBACK_DIR",
+    ROOT / "data" / "InfiniteFusion2" / "Graphics" / "Battlers"
+    / "spritesheets_autogen")
 # Custom art: prefer the merged multi-source tree (IF1 + IF2 + legacy
 # Battlers — see merge-custom-art.py) once it has been built. IF1
 # variant indices are preserved there BY CONSTRUCTION, so existing
@@ -577,8 +585,14 @@ def build_sprites_and_manifest() -> tuple[dict, dict]:
                 end="", flush=True,
             )
         # Autogen: just crop the source sheet down to the first
-        # MAX_SPECIES rows. No per-cell decomposition.
+        # MAX_SPECIES rows. No per-cell decomposition. Heads missing
+        # from the primary tree fall back to the IF2 sheet (IF1 has no
+        # autogen art for the high gen-3 PIF ids).
         autogen_src = AUTOGEN_SHEETS_DIR / f"{head}.png"
+        if not autogen_src.is_file():
+            fallback_src = AUTOGEN_FALLBACK_DIR / f"{head}.png"
+            if fallback_src.is_file():
+                autogen_src = fallback_src
         if autogen_src.is_file():
             dst_dir = OUT_DIR / "sprites" / str(head) / "autogen"
             dst_dir.mkdir(parents=True, exist_ok=True)
