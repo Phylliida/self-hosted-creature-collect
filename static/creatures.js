@@ -3142,6 +3142,46 @@
     return false;
   }
 
+  // Content-identity for dupe sheets: a few upstream heads ship
+  // byte-identical variant sheets (e.g. IF1's 133p == 133k), so the
+  // slot a creature would evolve INTO can be a duplicate of a slot the
+  // trainer already saw. Silhouetting that preview would claim the art
+  // is unknown when it isn't. Hashes are cached per (a, b, slot).
+  const _cellHashCache = new Map();
+  async function _cellContentHash(a, b, slot) {
+    const key = `${a}-${b}:${slot}`;
+    if (_cellHashCache.has(key)) return _cellHashCache.get(key);
+    let h = null;
+    try {
+      if (global.Sprites && global.Sprites.getSpriteBlobAttempt) {
+        const r = await global.Sprites.getSpriteBlobAttempt(a, b, slot);
+        if (r && r.status === 'ok' && r.blob) {
+          const digest = await crypto.subtle.digest(
+            'SHA-256', await r.blob.arrayBuffer());
+          h = Array.from(new Uint8Array(digest))
+            .map((x) => x.toString(16).padStart(2, '0')).join('');
+        }
+      }
+    } catch { /* unknown content — treated as not-a-dupe */ }
+    _cellHashCache.set(key, h);
+    return h;
+  }
+  // Like hasSeenVariant, but also true when the variant's cell bytes
+  // match any already-seen custom slot of the same fusion. Async —
+  // the byte comparison needs the sprite blobs.
+  async function hasSeenVariantOrDupe(a, b, variant) {
+    if (hasSeenVariant(a, b, variant)) return true;
+    if (typeof variant !== 'number' || variant < 0) return false;
+    const mine = await _cellContentHash(a, b, variant);
+    if (!mine) return false;
+    for (const k of readSeenVariants(a, b)) {
+      const n = parseInt(k, 10);
+      if (!Number.isFinite(n) || n < 0 || n === variant) continue;
+      if (await _cellContentHash(a, b, n) === mine) return true;
+    }
+    return false;
+  }
+
   // Lowest-indexed variant slot the trainer has actually seen for this
   // fusion. Returns: a number (numeric slot), null (only autogen seen),
   // or undefined (nothing seen — caller should fall back to defaults).
@@ -12064,6 +12104,33 @@
   // is a silhouette unless that variant appears in the trainer's
   // seenVariants set. Autogen is one card; custom variants are
   // one card per slot index from sprites.js's variant store.
+  // Display-only dedupe for variant cards. A handful of upstream heads
+  // contain byte-identical sheets (IF1 ships e.g. 133p.png == 133k.png);
+  // the pack keeps both slots so stored variant indices keep rendering
+  // the same art, but the grid shouldn't show two identical cards with
+  // identical credits. Among identical cards we keep the first SEEN one
+  // (an unseen silhouette never hides the art the trainer actually
+  // discovered); failing that, the first slot. hashForSlot(slot) ->
+  // content hash string, or null when unreadable (card kept as-is).
+  async function _dedupeVariantCards(cards, hashForSlot) {
+    const firstByHash = new Map();  // hash -> index in out
+    const out = [];
+    for (const c of cards) {
+      if (c.variant === null) { out.push(c); continue; }
+      const h = await hashForSlot(c.variant);
+      if (h == null) { out.push(c); continue; }
+      const at = firstByHash.get(h);
+      if (at === undefined) {
+        firstByHash.set(h, out.length);
+        out.push(c);
+        continue;
+      }
+      if (!out[at].selectable && c.selectable) out[at] = c;
+      // else: identical duplicate — drop the card.
+    }
+    return out;
+  }
+
   async function _populateFusionVariantGrid(gridEl, a, b) {
     if (!gridEl) return;
     const seen = readSeenVariants(a, b);
@@ -12111,18 +12178,29 @@
         selectable: isSeen,       // only a discovered variant can be favorited
       });
     }
-    if (!cards.length) {
+    // Collapse content-identical cards (see _dedupeVariantCards).
+    const displayCards = await _dedupeVariantCards(cards, async (slot) => {
+      try {
+        const r = await global.Sprites.getSpriteBlobAttempt(a, b, slot);
+        if (!r || r.status !== 'ok' || !r.blob) return null;
+        const digest = await crypto.subtle.digest(
+          'SHA-256', await r.blob.arrayBuffer());
+        return Array.from(new Uint8Array(digest))
+          .map((x) => x.toString(16).padStart(2, '0')).join('');
+      } catch { return null; }
+    });
+    if (!displayCards.length) {
       gridEl.innerHTML = '<div class="variant-empty">No variants found.</div>';
       return;
     }
-    gridEl.innerHTML = cards.map((c) => `
+    gridEl.innerHTML = displayCards.map((c) => `
       <div class="${c.cls}"${c.selectable ? ' data-fav-selectable' : ''} data-variant="${c.variant === null ? 'auto' : c.variant}" data-shiny="">
         <img alt="">
         <div class="label">${escapeHtml(c.label)}</div>
       </div>
     `).join('');
     const cellEls = gridEl.querySelectorAll('.variant-cell');
-    cards.forEach((c, i) => {
+    displayCards.forEach((c, i) => {
       const img = cellEls[i] && cellEls[i].querySelector('img');
       if (!img) return;
       // No onReady — cards whose blob isn't loadable (rare; cells.json
@@ -13669,13 +13747,14 @@
         };
         _scheduleIdle(() => {
         _pickEvolvedVariant(c, c.speciesA, c.speciesB, c.variant, e.newA, e.newB)
-          .then(({ variant, autogenOnly }) => {
+          .then(async ({ variant, autogenOnly }) => {
             // Silhouette the preview when the SPECIFIC variant the user
             // will evolve into hasn't been seen — even if other variants
             // of the same fusion are known. The initial-render
             // `silhouette` class (added when isFusionSeen was false) is
-            // re-derived here against the resolved variant.
-            if (hasSeenVariant(e.newA, e.newB, variant)) {
+            // re-derived here against the resolved variant. Duplicate
+            // sheets count as seen (same art — hasSeenVariantOrDupe).
+            if (await hasSeenVariantOrDupe(e.newA, e.newB, variant)) {
               row.classList.remove('silhouette');
             } else {
               row.classList.add('silhouette');
