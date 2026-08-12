@@ -80,6 +80,12 @@ const TILES_CACHE = 'tiles-v1';
 // re-download.
 // All in cache-first files (/static/creatures.js, /static/species.js,
 // /static/sprites.js, /static/pack-install.js, index.html).
+// Shell bump 2026-08-11 (#12): dupe-sheet handling — the fusion detail
+// grid collapses content-identical variant cards (IF1 ships a few
+// byte-identical sheets per head), and the "Evolves to" preview no
+// longer silhouettes when the resolved slot's art is byte-identical to
+// an already-seen slot (hasSeenVariantOrDupe). Both live in
+// cache-first /static/creatures.js.
 
 const APP_SHELL = [
   '/',

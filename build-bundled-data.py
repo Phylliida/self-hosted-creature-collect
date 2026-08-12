@@ -148,6 +148,12 @@ CUSTOM_SHEETS_DIR = _env_path(
     else (INFINITEFUSION / "Graphics" / "CustomBattlers"
           / "spritesheets" / "spritesheets_custom"))
 EGGS_DIR = INFINITEFUSION / "Graphics" / "Battlers" / "Eggs"
+# IF1 only ships egg art for a subset of species — gen-3 PIF ids in
+# particular have egg art only in the IF2 tree. Gap-fill from there;
+# IF1's files always win.
+EGGS_FALLBACK_DIR = _env_path(
+    "CC_EGGS_FALLBACK_DIR",
+    ROOT / "data" / "InfiniteFusion2" / "Graphics" / "Battlers" / "Eggs")
 EVO_ITEMS_SRC = INFINITEFUSION / "Graphics" / "Items"
 SPECIES_DAT = _env_path("CC_SPECIES_DAT", INFINITEFUSION / "Data" / "species.dat")
 CREDITS_CSV = _env_path(
@@ -661,7 +667,13 @@ def build_eggs_sheet() -> tuple[int, int]:
     for species in ALLOWED_SPECIES:
         path = EGGS_DIR / f"{species}.png"
         if not path.is_file():
-            continue
+            # IF1 has no egg art for the high gen-3 PIF ids — the IF2
+            # tree does.
+            alt = EGGS_FALLBACK_DIR / f"{species}.png"
+            if alt.is_file():
+                path = alt
+            else:
+                continue
         with Image.open(path) as img:
             img = img.convert("RGBA")
             # 0-indexed cell layout: species N → cell N (cell 0 is

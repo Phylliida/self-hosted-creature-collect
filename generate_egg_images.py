@@ -43,6 +43,7 @@ except ImportError:
 from generate_candy_images import (
     BABY_EGG_FALLBACK,
     PIF_EGGS_DIR,
+    IF2_EGGS_DIR,
     AUTOGEN_CELL_PX,
     _autogen_solo_sprite,
     _load_family_roots,
@@ -72,10 +73,14 @@ def _own_cell(eggs_sheet: "Image.Image", species: int) -> "Image.Image | None":
 
 def _baby_egg_cell(baby_id: int) -> "Image.Image | None":
     """Load PIF's <baby>.png as a 160×160 cell. PIF baby eggs are
-    already that size, so this is just a load + alpha-check."""
+    already that size, so this is just a load + alpha-check. Falls
+    back to the IF2 tree when IF1 never shipped the egg (high gen-3
+    PIF ids)."""
     baby_path = PIF_EGGS_DIR / f"{baby_id}.png"
     if not baby_path.is_file():
-        return None
+        baby_path = IF2_EGGS_DIR / f"{baby_id}.png"
+        if not baby_path.is_file():
+            return None
     img = Image.open(baby_path).convert("RGBA")
     if img.getbbox() is None:
         return None
@@ -107,9 +112,9 @@ def _baby_autogen_cell(baby_id: int) -> "Image.Image | None":
 
 
 def _fetch_egg(species: int, eggs_sheet: "Image.Image") -> "Image.Image | None":
-    """Walk the three-tier waterfall for one species. Returns a
-    160×160 cell suitable for pasting into the output sheet, or
-    None if every tier fails."""
+    """Walk the waterfall for one species. Returns a 160×160 cell
+    suitable for pasting into the output sheet, or None if every tier
+    fails."""
     own = _own_cell(eggs_sheet, species)
     if own is not None:
         return own
@@ -121,7 +126,10 @@ def _fetch_egg(species: int, eggs_sheet: "Image.Image") -> "Image.Image | None":
         cell = _baby_autogen_cell(baby)
         if cell is not None:
             return cell
-    return None
+    # Final tier: the species' own autogen solo sprite. Covers species
+    # with no egg art in either tree (most high gen-3 PIF ids) — the
+    # IF2 autogen sheets carry their solo art.
+    return _baby_autogen_cell(species)
 
 
 def fill_egg_fallbacks() -> tuple[int, int]:

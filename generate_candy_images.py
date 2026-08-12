@@ -106,6 +106,13 @@ PIF_EGGS_DIR = PIF_ROOT / "Graphics" / "Battlers" / "Eggs"
 # fusing with itself, which is just the canonical solo art).
 PIF_AUTOGEN_SHEETS_DIR = (PIF_ROOT / "Graphics"
                           / "Battlers" / "spritesheets_autogen")
+# IF2 tree — gap-fill for eggs/autogen art IF1 never shipped (the
+# high gen-3 PIF ids). IF1 content always wins; these are consulted
+# only when the IF1 file is missing.
+IF2_ROOT = env_path("CC_IF2_ROOT", ROOT / "data" / "InfiniteFusion2")
+IF2_EGGS_DIR = IF2_ROOT / "Graphics" / "Battlers" / "Eggs"
+IF2_AUTOGEN_SHEETS_DIR = (IF2_ROOT / "Graphics"
+                          / "Battlers" / "spritesheets_autogen")
 AUTOGEN_CELL_PX = 96
 AUTOGEN_COLS = 10
 
@@ -145,7 +152,11 @@ def _autogen_solo_sprite(species_id: int) -> "Image.Image | None":
     diagonal cell is empty."""
     sheet_path = PIF_AUTOGEN_SHEETS_DIR / f"{species_id}.png"
     if not sheet_path.is_file():
-        return None
+        # IF1's autogen tree stops at head 501 — the high gen-3 PIF
+        # ids only exist in the IF2 tree.
+        sheet_path = IF2_AUTOGEN_SHEETS_DIR / f"{species_id}.png"
+        if not sheet_path.is_file():
+            return None
     sheet = Image.open(sheet_path).convert("RGBA")
     col = species_id % AUTOGEN_COLS
     row = species_id // AUTOGEN_COLS
@@ -395,6 +406,10 @@ def _generate_root_candy(species: int,
         baby = BABY_EGG_FALLBACK.get(species)
         if baby is not None:
             baby_path = PIF_EGGS_DIR / f"{baby}.png"
+            if not baby_path.is_file():
+                # IF1 ships no egg art for the high gen-3 PIF ids —
+                # the IF2 tree does.
+                baby_path = IF2_EGGS_DIR / f"{baby}.png"
             if baby_path.is_file():
                 egg_cell = Image.open(baby_path).convert("RGBA")
                 bbox = egg_cell.getbbox()
@@ -404,6 +419,14 @@ def _generate_root_candy(species: int,
         # rather than falling back to the parent.
         if not bbox and baby is not None:
             solo = _autogen_solo_sprite(baby)
+            if solo is not None:
+                egg_cell = solo
+                bbox = egg_cell.getbbox()
+        # Tier 3: the species' own autogen solo sprite — covers the
+        # gen-3 high PIF ids, which have no egg art in either tree
+        # (their solo art lives in IF2's autogen sheets).
+        if not bbox:
+            solo = _autogen_solo_sprite(species)
             if solo is not None:
                 egg_cell = solo
                 bbox = egg_cell.getbbox()
