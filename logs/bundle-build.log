@@ -1,0 +1,78 @@
+→ Wiping existing /home/bepis/prog/SimpleBot/repos/self-hosted-creature-collect/data/BundledData
+→ Parsing SplitNames.rb...
+  566 entries
+→ Filtering credits to 423 allowed species' fusions...
+  98709 fusion cells with at least one credit
+→ Extracting names from species.dat...
+  → ruby extract-pif-dat.rb species.dat
+  565 names
+→ Extracting types from species.dat...
+  423 type entries
+→ Extracting evolutions from species.dat...
+  199 evolution entries
+→ Writing species pool manifest...
+  423 species, 21 legendaries, 188 spawnable
+→ Pre-cropping sprite cells (this is the slow part)...
+  423 species have custom variants
+  98712 (head, body) fusions have ≥1 custom variant
+→ Composing eggs sprite sheet...
+  198 egg cells filled, 225 blank (species without dedicated egg art)
+→ Filling egg sprite-sheet fallbacks...
+  423 egg cells filled, 0 blank
+→ Composing candy sprite sheet from eggs.png...
+  423 candy cells filled, 0 blank
+→ Pre-cropping sprite cells into per-partner pack files...
+  pack  10: 1231 cells,  2414 KB
+  pack  20: 1114 cells,  2729 KB
+  pack  30:  784 cells,  1683 KB
+  pack  40: 1210 cells,  2553 KB
+  pack  50: 1556 cells,  2719 KB
+  pack  60: 1069 cells,  2311 KB
+  pack  70:  969 cells,  1957 KB
+  pack  80: 1059 cells,  2868 KB
+  pack  90:  948 cells,  1799 KB
+  pack 100: 1566 cells,  2778 KB
+  pack 110: 1024 cells,  2761 KB
+  pack 120:  893 cells,  1940 KB
+  pack 130: 1204 cells,  4256 KB
+  pack 140: 1050 cells,  1699 KB
+  pack 150: 1114 cells,  2781 KB
+  pack 160:  957 cells,  2550 KB
+  pack 170: 1259 cells,  2803 KB
+  pack 180: 1011 cells,  2001 KB
+  pack 190:  919 cells,  2102 KB
+  pack 200: 1054 cells,  2041 KB
+  pack 210:  906 cells,  2067 KB
+  pack 220: 1144 cells,  1878 KB
+  pack 230:  853 cells,  2416 KB
+  pack 240:  777 cells,  1519 KB
+  pack 250: 1600 cells,  5503 KB
+  pack 260:  975 cells,  1825 KB
+  pack 270:  944 cells,  2574 KB
+  pack 280:  791 cells,  1737 KB
+  pack 290: 1381 cells,  3225 KB
+  pack 300: 1566 cells,  3674 KB
+  pack 310: 1449 cells,  3340 KB
+  pack 340: 1221 cells,  3647 KB
+  pack 380: 1138 cells,  3063 KB
+  pack 390: 1044 cells,  1714 KB
+  pack 400: 1006 cells,  1889 KB
+  pack 510:  598 cells,  1579 KB
+  pack 520:  574 cells,   904 KB
+  pack 530:  568 cells,  1262 KB
+  pack 540:  548 cells,  1303 KB
+  pack 550:  708 cells,  1504 KB
+  pack 560:  524 cells,  1187 KB
+  423 packs, 427881 cells total
+→ Copying evolution-item art...
+  22 evolution items
+→ Normalizing special (solo-creature) sprites...
+  1 special sprites
+→ Copying app data (icons + fonts)...
+  215 POI icons, 256 font glyph PBFs
+→ Bundling regions manifest...
+  1 manifest file
+→ Extracting base-map tiles (z0..z5)...
+  683 tiles
+
+✓ Wrote 5928 files, 2380.2 MB total → /home/bepis/prog/SimpleBot/repos/self-hosted-creature-collect/data/BundledData

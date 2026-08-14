@@ -165,6 +165,7 @@
   }
   const idbGet  = (key)        => _idbReq(STORE_ICONS,    'readonly',  (s) => s.get(key));
   const idbPut  = (key, value) => _idbReq(STORE_ICONS,    'readwrite', (s) => s.put(value, key));
+  const idbDel  = (key)        => _idbReq(STORE_ICONS,    'readwrite', (s) => s.delete(key));
   const varGet  = (key)        => _idbReq(STORE_VARIANTS, 'readonly',  (s) => s.get(key));
   const varPut  = (key, value) => _idbReq(STORE_VARIANTS, 'readwrite', (s) => s.put(value, key));
 
@@ -411,6 +412,24 @@
 
   function customKey(a, b, variantIdx) {
     return `${a}-${b}:c${variantIdx}`;
+  }
+  // Slots of one head's cells that aren't in IDB yet, grouped by variant
+  // index so bulkDownload decodes each custom sheet at most once per
+  // head. `headCells` is [[body, variantIndices], ...]; `have` is the
+  // live STORE_ICONS key set. Checking per SLOT (not per head via the
+  // customDone flag) is what lets a content update's newly added cells
+  // under an already-done head get picked up on the next download run.
+  function _missingSlotsByVariant(headCells, have, b) {
+    const byVariant = new Map();  // variant_index -> [body, slot]
+    for (const [a, variantIndices] of headCells) {
+      for (let slot = 0; slot < variantIndices.length; slot++) {
+        if (have.has(customKey(a, b, slot))) continue;
+        const vi = variantIndices[slot];
+        if (!byVariant.has(vi)) byVariant.set(vi, []);
+        byVariant.get(vi).push([a, slot]);
+      }
+    }
+    return byVariant;
   }
   function autogenKey(a, b) {
     return `${a}-${b}`;
@@ -1513,6 +1532,30 @@
 
     // --- PASS 1: autogen sheets (resume-aware via per-cell IDB scan).
     const have = new Set(keys);
+
+    // One-time repair (autogenRefill.v1): IF1's autogen sheets ship the
+    // rows for the gen-3 high PIF body ids (502–509) but leave those
+    // cells BLANK — that art only exists in the IF2 tree, and bundles
+    // built before the cell-level gap-fill cropped those blanks into
+    // IDB as transparent PNGs. `have` counts a stored blank as present,
+    // so re-downloads never picked the art up (fusions like
+    // Mightyena×Nosepass rendered no icon at all). Drop the stored
+    // cells for those bodies once so the pass below re-crops them from
+    // the gap-filled sheets. The flag is set only after pass 1
+    // completes, so a cancelled run retries next time.
+    const AUTOGEN_REFILL_KEY = 'cc.autogenRefill.v1';
+    const autogenRefillNeeded = localStorage.getItem(AUTOGEN_REFILL_KEY) !== '1';
+    if (autogenRefillNeeded) {
+      const REFILL_BODIES = [502, 503, 504, 505, 506, 507, 508, 509];
+      for (let b = sheetFrom; b <= sheetTo; b++) {
+        for (const a of REFILL_BODIES) {
+          const key = autogenKey(a, b);
+          if (!have.has(key)) continue;
+          try { await idbDel(key); have.delete(key); } catch { /* retry next run */ }
+        }
+      }
+    }
+
     const neededPerSheet = indexTo - indexFrom + 1;
     const sheetComplete = new Set();
     for (let b = sheetFrom; b <= sheetTo; b++) {
@@ -1575,6 +1618,11 @@
         customSpeciesDone: customDone.size, customSpeciesTotal: totalCustom,
       });
     }
+    // Pass 1 finished — the refilled cells have been re-cropped, so the
+    // repair above never needs to run again.
+    if (autogenRefillNeeded) {
+      try { localStorage.setItem(AUTOGEN_REFILL_KEY, '1'); } catch {}
+    }
 
     // --- PASS 2: custom (hand-drawn) sprites — pre-cropped at build
     // time. cells.json tells us exactly which (body, head) fusions
@@ -1619,7 +1667,6 @@
 
     for (let b = sheetFrom; b <= Math.min(sheetTo, _speciesMax()); b++) {
       if (signal && signal.aborted) return { cancelled: true };
-      if (customDone.has(b)) continue;
       const variants = manifest[String(b)];
       const headCells = cellsByHead.get(b);
       if (!variants || !variants.length || !headCells || !headCells.length) {
@@ -1627,16 +1674,18 @@
         continue;
       }
 
-      // Group by variant_index so we decode each sheet exactly once
-      // per head, not once per (cell × variant_index).
-      const byVariant = new Map();  // variant_index -> [body, slot]
-      for (const [a, variantIndices] of headCells) {
-        for (let slot = 0; slot < variantIndices.length; slot++) {
-          const vi = variantIndices[slot];
-          if (!byVariant.has(vi)) byVariant.set(vi, []);
-          byVariant.get(vi).push([a, slot]);
-        }
-      }
+      // The skip must be per-slot against the live IDB key set, not
+      // per-head via customDone: that flag only means "complete as of
+      // the bundle it was downloaded under" — a later content update
+      // can add cells/variants under an already-done head, and skipping
+      // the head then leaves the new slot blobs AND their per-cell
+      // variant-table rows missing forever, so the variant count stays
+      // 0 and the dex/encounter show autogen-only even though the
+      // bundle has the art (e.g. goldeen×porygon, added 2026-08-10).
+      const byVariant = _missingSlotsByVariant(headCells, have, b);
+      // Truly complete: every slot blob present and the done flag means
+      // this head's per-cell table was already written under this scheme.
+      if (!byVariant.size && customDone.has(b)) continue;
 
       let processedVariants = 0;
       for (const [vi, cellList] of byVariant) {
@@ -1664,6 +1713,9 @@
       }
 
       // Write the per-cell variant table — runtime varGet expects this.
+      // Runs for every head we didn't skip outright, so cells a content
+      // update added under a previously-done head get their counts even
+      // when some of the head's slots were already in IDB.
       for (const [a, variantIndices] of headCells) {
         await varPut(`${a}-${b}`, variantIndices);
         _bumpVariantCacheEntry(`${a}-${b}`, variantIndices.length);
