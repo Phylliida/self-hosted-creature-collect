@@ -220,14 +220,30 @@ def crop_sheet(src: Path, dst: Path, max_height: int) -> None:
     cropped.save(dst, optimize=True)
 
 
+def _has_ink(cell: "Image.Image") -> bool:
+    """True when a 96×96 RGBA cell has any pixel above ALPHA_MIN.
+    Same LUT trick as trim_alpha — C-fast, no Python pixel loop."""
+    alpha = cell.split()[3]
+    lut = [0 if a <= ALPHA_MIN else 255 for a in range(256)]
+    return alpha.point(lut, mode="L").getbbox() is not None
+
+
 def build_autogen_sheet(head: int, dst: Path) -> bool:
     """Write the bundled autogen sheet for one head. The canonical IF1
     sheet is the base; body rows IF1 never generated (its sheets stop
     at body 509 — the gen-3 high PIF ids) are filled from the IF2
-    tree's sheet for the same head. Only rows IF1 lacks come from IF2,
-    so no existing cell's art changes. Heads IF1 doesn't cover at all
-    use the IF2 sheet wholesale. Returns False when neither tree has
-    the head's sheet."""
+    tree's sheet for the same head. Two compositing passes:
+      1. row-level: rows past the IF1 sheet's bottom come from IF2;
+      2. cell-level: IF1's sheets are full height but leave the gen-3
+         high PIF body ids (502–509) BLANK — the rows exist, the cells
+         are empty, and only the IF2 tree has that art. Any pool body
+         cell that is blank in the composite but drawn in the fallback
+         sheet is copied over (e.g. Mightyena=503 in every IF1-headed
+         sheet — without this pass those fusions render nothing at
+         all, not even autogen).
+    No existing non-blank cell's art ever changes. Heads IF1 doesn't
+    cover at all use the IF2 sheet wholesale. Returns False when
+    neither tree has the head's sheet."""
     primary = AUTOGEN_SHEETS_DIR / f"{head}.png"
     fallback = AUTOGEN_FALLBACK_DIR / f"{head}.png"
     if primary.is_file():
@@ -240,17 +256,36 @@ def build_autogen_sheet(head: int, dst: Path) -> bool:
     need_h = AUTOGEN_HEIGHT_NEEDED
     base = Image.open(base_path).convert("RGBA")
     dst.parent.mkdir(parents=True, exist_ok=True)
+    fb = None
     if base.height >= need_h:
-        base.crop((0, 0, need_w, need_h)).save(dst, optimize=True)
-        return True
-    out = Image.new("RGBA", (need_w, need_h), (0, 0, 0, 0))
-    out.paste(base, (0, 0))
+        out = base.crop((0, 0, need_w, need_h))
+    else:
+        out = Image.new("RGBA", (need_w, need_h), (0, 0, 0, 0))
+        out.paste(base, (0, 0))
+        if base_path == primary and fallback.is_file():
+            fb = Image.open(fallback).convert("RGBA")
+            fb_h = min(fb.height, need_h)
+            if fb_h > base.height:
+                out.paste(fb.crop((0, base.height, need_w, fb_h)),
+                          (0, base.height))
+    # Cell-level gap-fill (pass 2 — see docstring). Only rows inside
+    # the primary sheet's height are candidates; rows below it were
+    # already pasted from the fallback (or are out of range).
     if base_path == primary and fallback.is_file():
-        fb = Image.open(fallback).convert("RGBA")
-        fb_h = min(fb.height, need_h)
-        if fb_h > base.height:
-            out.paste(fb.crop((0, base.height, need_w, fb_h)),
-                      (0, base.height))
+        if fb is None:
+            fb = Image.open(fallback).convert("RGBA")
+        limit = min(base.height, need_h)
+        for body in ALLOWED_SET:
+            y0 = (body // AUTOGEN_COLS) * CELL_PX
+            if y0 + CELL_PX > limit or y0 + CELL_PX > fb.height:
+                continue
+            x0 = (body % AUTOGEN_COLS) * CELL_PX
+            box = (x0, y0, x0 + CELL_PX, y0 + CELL_PX)
+            if _has_ink(out.crop(box)):
+                continue
+            fb_cell = fb.crop(box)
+            if _has_ink(fb_cell):
+                out.paste(fb_cell, (x0, y0))
     out.save(dst, optimize=True)
     return True
 

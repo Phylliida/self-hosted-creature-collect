@@ -63,6 +63,7 @@ ctx.crypto = require('crypto').webcrypto;
 ctx._cellHashCache = new Map();
 for (const m of ['function readSeenVariants', 'function hasSeenVariant',
                  'async function _cellContentHash',
+                 'async function _variantDupeOfAny',
                  'async function hasSeenVariantOrDupe']) {
   vm.runInContext(extract(m), ctx);
 }

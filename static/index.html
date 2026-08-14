@@ -5618,6 +5618,8 @@ function fmtDate(ts) {
     sourceEvents: {
       loaded: 0, errored: 0, abort: 0,
       loading: 0,   // 'dataloading' — request initiated (vs completed)
+      lastInitAt: 0,   // Date.now() of the most recent dataloading
+      lastDoneAt: 0,   // Date.now() of the most recent load/error
       byZoom: {},   // { [z]: { loaded, errored, loading } } — tile events
       loadedByStatusOk: 0,
       errorByStatus: {}, // { [status]: count }
@@ -7225,6 +7227,7 @@ function fmtDate(ts) {
       if (!isContent) return;
       fd.sourceEvents.loaded++;
       fd.sourceEvents.loadedByStatusOk++;
+      fd.sourceEvents.lastDoneAt = Date.now();
       const zKey = c.z;
       fd.sourceEvents.byZoom[zKey] = fd.sourceEvents.byZoom[zKey]
         || { loaded: 0, errored: 0, loading: 0 };
@@ -7243,6 +7246,7 @@ function fmtDate(ts) {
       const c = e.tile.tileID && e.tile.tileID.canonical;
       if (!c) return;
       fd.sourceEvents.loading++;
+      fd.sourceEvents.lastInitAt = Date.now();
       const zKey = c.z;
       fd.sourceEvents.byZoom[zKey] = fd.sourceEvents.byZoom[zKey]
         || { loaded: 0, errored: 0, loading: 0 };
@@ -7260,6 +7264,7 @@ function fmtDate(ts) {
       const status = e.error && (e.error.status ?? e.error.code) || null;
       const msg = e.error && e.error.message ? e.error.message.slice(0, 80) : '';
       fd.sourceEvents.errored++;
+      fd.sourceEvents.lastDoneAt = Date.now();
       const zKey = c.z;
       fd.sourceEvents.byZoom[zKey] = fd.sourceEvents.byZoom[zKey]
         || { loaded: 0, errored: 0 };
@@ -7297,6 +7302,130 @@ function fmtDate(ts) {
       fd.lifecycle.lastZoomendAt = Date.now();
       pushLc('zoomend');
     });
+
+    // Tile-pipeline watchdog (iOS). Grak hit a state (2026-08-14,
+    // twice) where MapLibre kept INITIATING tile loads — dataloading
+    // events and transformRequest rewrites both kept flowing — but no
+    // tile ever completed or errored again: the worker-side pipeline
+    // was silently wedged and every request (custom-protocol AND plain
+    // HTTP base tiles) vanished into it. The map still pans and the
+    // app still works, but streets/labels never render until a reload.
+    // Detect sustained starvation: fresh inits within the last minute
+    // but no tile completion (load OR error) for 30s, app visible.
+    // First offense: clearTiles + update() (same nudge as
+    // _dbgTrigger('clear')) — enough when tiles are merely stuck in a
+    // cached-failure state. If starvation outlasts the nudge, reload —
+    // the only reliable recovery when the tile workers are truly gone.
+    // Capacitor-only: on web a stall usually just means "offline",
+    // where auto-reloading would loop pointlessly.
+    if (window.Capacitor) {
+      const wd = { clears: 0, reloadAt: 0, lastClearAt: 0, probes: [], probing: false };
+      fd.tileWatchdog = wd;   // surfaced in the [tile flow] dump section
+      const raceMs = (p, ms) => Promise.race([
+        p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms)),
+      ]);
+      // Probe the three layers a tile request traverses, run when
+      // starvation is first detected (BEFORE the clearTiles nudge), so
+      // the next Copy Logs dump shows WHERE the pipeline broke:
+      //   newWorker — a fresh blob-URL worker echo. Times out → iOS
+      //     tore down the worker substrate itself (background/memory
+      //     pressure); MapLibre's startup-created workers go with it.
+      //   serve — direct main-thread call of _serveStaticTile for the
+      //     most recently rewritten tile. Times out → our serving layer
+      //     is the hang (e.g. dead IDB blob reads), not the workers.
+      //   fetch — plain main-thread fetch of a base tile URL. Times
+      //     out → local HTTP layer (LocalServer) is the problem.
+      // All three fast + the map still starving → MapLibre's EXISTING
+      // workers are wedged (poison-tile parse loop / actor desync)
+      // while the substrate lives — very different fix.
+      const runProbes = async () => {
+        const probe = { t: Date.now() };
+        const pWorker = (async () => {
+          const t0 = performance.now();
+          const w = new Worker(URL.createObjectURL(new Blob(
+            ['onmessage=(e)=>postMessage(e.data)'], { type: 'application/javascript' })));
+          try {
+            const echo = new Promise((res, rej) => {
+              w.onmessage = () => res(true);
+              w.onerror = (e) => rej(new Error('onerror: ' + (e.message || '?')));
+            });
+            w.postMessage('ping');
+            await raceMs(echo, 3000);
+            return Math.round(performance.now() - t0) + 'ms';
+          } finally { w.terminate(); }
+        })().catch((e) => String(e.message || e));
+        const pServe = (async () => {
+          const lastRw = [...fd.transform.recent].reverse().find((r) => r.rw);
+          if (!lastRw || !window._serveStaticTile) return 'no-tile-to-try';
+          const t0 = performance.now();
+          const data = await raceMs(
+            Promise.resolve(window._serveStaticTile(lastRw.z, lastRw.x, lastRw.y)), 3000);
+          return Math.round(performance.now() - t0) + 'ms '
+            + (data ? data.length + 'B' : 'null');
+        })().catch((e) => String(e.message || e));
+        const pFetch = (async () => {
+          const t0 = performance.now();
+          const ctl = new AbortController();
+          const timer = setTimeout(() => ctl.abort(), 3000);
+          try {
+            const resp = await fetch(`${location.origin}/tiles/0/0/0.pbf`,
+              { signal: ctl.signal });
+            const buf = await resp.arrayBuffer();
+            return Math.round(performance.now() - t0) + 'ms HTTP '
+              + resp.status + ' ' + buf.byteLength + 'B';
+          } finally { clearTimeout(timer); }
+        })().catch((e) => String(e.message || e));
+        [probe.worker, probe.serve, probe.fetch] =
+          await Promise.all([pWorker, pServe, pFetch]);
+        wd.probes.push(probe);
+        if (wd.probes.length > 5) wd.probes.shift();
+      };
+      setInterval(() => {
+        if (document.visibilityState !== 'visible') return;
+        if (!fd.lifecycle.load) return;   // map not up yet
+        const now = Date.now();
+        const se = fd.sourceEvents;
+        const starving = se.lastInitAt > 0
+          && now - se.lastInitAt < 60000          // map still asking for tiles
+          && se.lastDoneAt < se.lastInitAt        // none completed since
+          && now - se.lastDoneAt > 30000;         // ...for 30+s
+        if (!starving) { wd.reloadAt = 0; return; }
+        if (now - wd.lastClearAt < 45000) {
+          // Nudge already issued and starvation persists — reload.
+          // Persist the probe evidence first: the reload wipes the live
+          // diag, so the next Copy Logs dump reads it from localStorage.
+          if (!wd.reloadAt) {
+            wd.reloadAt = now;
+            try {
+              localStorage.setItem('cc.tileWatchdog.last', JSON.stringify({
+                at: now, probes: wd.probes,
+                loading: se.loading, loaded: se.loaded, errored: se.errored,
+              }));
+            } catch {}
+            try { location.reload(); } catch (e) {}
+          }
+          return;
+        }
+        wd.lastClearAt = now;
+        wd.clears++;
+        if (!wd.probing) {
+          wd.probing = true;
+          Promise.resolve(runProbes()).catch(() => {})
+            .finally(() => { wd.probing = false; });
+        }
+        try {
+          for (const id of Object.keys(map.style.sourceCaches)) {
+            const sc = map.style.sourceCaches[id];
+            if (typeof sc.clearTiles === 'function') sc.clearTiles();
+          }
+          const tr = map.transform;
+          for (const id of Object.keys(map.style.sourceCaches)) {
+            map.style.sourceCaches[id].update(tr);
+          }
+          map.triggerRepaint();
+        } catch (e) {}
+      }, 15000);
+    }
   }
 
   // Tile-cache probe. Fires 3s after the page loads in Capacitor
@@ -14388,6 +14517,36 @@ function fmtDate(ts) {
             `  source events: ${fd.sourceEvents.loading} loading / ` +
             `${fd.sourceEvents.loaded} loaded / ${fd.sourceEvents.errored} errored`
           );
+          if (fd.tileWatchdog) {
+            const wd = fd.tileWatchdog;
+            lines.push(
+              `  tile watchdog: clears=${wd.clears}` +
+              `${wd.reloadAt ? ' reload=TRIGGERED' : ''}` +
+              `${wd.lastClearAt ? ` lastClear=${Math.round((Date.now() - wd.lastClearAt) / 1000)}s ago` : ''}`
+            );
+            for (const p of (wd.probes || [])) {
+              lines.push(
+                `    -${Math.round((Date.now() - p.t) / 1000)}s` +
+                `  worker=${p.worker}  serve=${p.serve}  fetch=${p.fetch}`
+              );
+            }
+          }
+          // Probe evidence persisted across a watchdog-triggered reload
+          // (the reload wipes the live diag). Printed once, then cleared.
+          try {
+            const last = JSON.parse(
+              localStorage.getItem('cc.tileWatchdog.last') || 'null');
+            if (last) {
+              lines.push(
+                `  tile watchdog pre-reload @${new Date(last.at).toISOString()}:` +
+                ` loading=${last.loading} loaded=${last.loaded} errored=${last.errored}`
+              );
+              for (const p of (last.probes || [])) {
+                lines.push(`    worker=${p.worker}  serve=${p.serve}  fetch=${p.fetch}`);
+              }
+              localStorage.removeItem('cc.tileWatchdog.last');
+            }
+          } catch {}
           // Lifecycle / movement counters. If the user pans and the
           // map starts rendering, we want to see what fired:
           //   loads increased? → MapLibre walked parents on pan

@@ -3166,20 +3166,27 @@
     _cellHashCache.set(key, h);
     return h;
   }
-  // Like hasSeenVariant, but also true when the variant's cell bytes
-  // match any already-seen custom slot of the same fusion. Async —
-  // the byte comparison needs the sprite blobs.
-  async function hasSeenVariantOrDupe(a, b, variant) {
-    if (hasSeenVariant(a, b, variant)) return true;
+  // True when `variant`'s cell bytes match any OTHER numeric slot in
+  // `keys` (a Set of variant-key strings, e.g. from readSeenVariants or
+  // _capStore.variantKeysForFusion). Byte-identical dupe sheets count as
+  // the same art; 'auto'/null variants and unreadable cells never match.
+  // Async — the byte comparison needs the sprite blobs.
+  async function _variantDupeOfAny(a, b, variant, keys) {
     if (typeof variant !== 'number' || variant < 0) return false;
     const mine = await _cellContentHash(a, b, variant);
     if (!mine) return false;
-    for (const k of readSeenVariants(a, b)) {
+    for (const k of keys) {
       const n = parseInt(k, 10);
       if (!Number.isFinite(n) || n < 0 || n === variant) continue;
       if (await _cellContentHash(a, b, n) === mine) return true;
     }
     return false;
+  }
+  // Like hasSeenVariant, but also true when the variant's cell bytes
+  // match any already-seen custom slot of the same fusion.
+  async function hasSeenVariantOrDupe(a, b, variant) {
+    if (hasSeenVariant(a, b, variant)) return true;
+    return _variantDupeOfAny(a, b, variant, readSeenVariants(a, b));
   }
 
   // Lowest-indexed variant slot the trainer has actually seen for this
@@ -15114,7 +15121,8 @@
     // "New" badge on the info bubble's top-left corner:
     //   • "New"     — we've never caught this fusion
     //   • "Fresh"   — we caught it before but evolved our copy away (re-catch)
-    //   • "New Art" — we own the fusion but not this variant (art)
+    //   • "New Art" — we own the fusion but not this variant (art); a
+    //     byte-identical dupe of an owned/seen slot does NOT count as new
     // The variant can resolve asynchronously, so the badge is finalised once
     // it's known (defaults to hidden for an owned fusion until then).
     const isSoloSpawn = typeof spawn.solo === 'string' && spawn.solo;
@@ -15144,11 +15152,17 @@
       newBadge.style.animation = '';
     };
     showNewBadge(ownsFusion ? '' : (caughtAway ? 'Fresh' : 'New'));
-    const decideArtBadge = (variant) => {
+    const decideArtBadge = async (variant) => {
       if (!ownsFusion) return;
-      if (ownsVariant(spawn.speciesA, spawn.speciesB, variant)) {
+      const a = spawn.speciesA, b = spawn.speciesB;
+      // Byte-identical dupe slots count as the same art (a few upstream
+      // heads ship duplicate sheets — see _variantDupeOfAny): a dupe of an
+      // OWNED slot is nothing new, a dupe of a merely-SEEN slot is Fresh.
+      if (ownsVariant(a, b, variant)
+          || await _variantDupeOfAny(a, b, variant, _capStore.variantKeysForFusion(a, b))) {
         showNewBadge('');            // own this exact art — nothing new
-      } else if (hadSeenVariant(variant)) {
+      } else if (hadSeenVariant(variant)
+          || await _variantDupeOfAny(a, b, variant, seenVariantsBefore)) {
         showNewBadge('Fresh Art');   // seen this art before but don't own it (e.g. evolved it away)
       } else {
         showNewBadge('New Art');     // never seen this art of a fusion we own
@@ -15167,12 +15181,12 @@
       markSoloSeen(spawn.solo, 'auto');
     } else if (_seenRec && 'variant' in _seenRec) {
       markFusionSeen(spawn.speciesA, spawn.speciesB, spawn, _seenRec.variant);
-      decideArtBadge(_seenRec.variant);
+      decideArtBadge(_seenRec.variant).catch(() => {});
     } else {
       markFusionSeen(spawn.speciesA, spawn.speciesB, spawn);
       resolveSpawnVariant(spawn).then((v) => {
         markFusionSeen(spawn.speciesA, spawn.speciesB, null, v);
-        decideArtBadge(v);
+        return decideArtBadge(v);
       }).catch(() => {});
     }
     const nameEl = el.querySelector('.battle-name');
