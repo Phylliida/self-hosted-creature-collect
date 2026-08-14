@@ -1,0 +1,11 @@
+→ Generating types.json / specials.json / categories.json …
+→ Packing 4776 entries …
+→ Packing 465 entries (native) …
+✓ 4776 entries, 2371.0 MB of content (2371.6 MB file) in 25.4s → /home/bepis/prog/SimpleBot/repos/self-hosted-creature-collect/packs/creature-fusion
+    candies.png: 106062 bytes @ 679968
+    categories.json: 41350 bytes @ 786032
+    cells.json: 1646659 bytes @ 827384
+✓ (native) 465 entries, 946.5 MB of content (946.5 MB file) in 25.4s → /home/bepis/prog/SimpleBot/repos/self-hosted-creature-collect/packs/creature-fusion
+    candies.png: 106062 bytes @ 63840
+    categories.json: 41350 bytes @ 169904
+    cells.json: 1646659 bytes @ 211256
