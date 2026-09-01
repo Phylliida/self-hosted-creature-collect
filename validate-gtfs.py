@@ -425,6 +425,44 @@ def check_feed_freshness(z, cache):
     return r
 
 
+def check_service_coverage(z, cache):
+    """Trips whose service_id is known but structurally dead: no calendar row
+    with any weekday flag set, and no exception_type=1 dates. Such trips can
+    NEVER appear as departures — the feed carries them but they never run.
+    (A feed can also carry only exception_type=2 removals, or an empty
+    calendar_dates, and pass referential-integrity while being all-dead.)"""
+    r = Report("service-coverage")
+    trips = read_csv(z, "trips.txt", cache) or []
+    if not trips:
+        return r
+    cal = read_csv(z, "calendar.txt", cache) or []
+    cald = read_csv(z, "calendar_dates.txt", cache) or []
+    live = {c.get("service_id", "") for c in cal
+            if any(c.get(d, "0") == "1" for d in
+                   ("monday", "tuesday", "wednesday", "thursday",
+                    "friday", "saturday", "sunday"))}
+    for cd in cald:
+        if cd.get("exception_type", "") == "1":
+            live.add(cd.get("service_id", ""))
+    known = {c.get("service_id", "") for c in cal} | \
+            {c.get("service_id", "") for c in cald}
+    dead = defaultdict(int)
+    for t in trips:
+        sid = t.get("service_id", "")
+        if sid and sid in known and sid not in live:
+            dead[sid] += 1
+    if dead:
+        total = sum(dead.values())
+        sample = sorted(dead, key=dead.get, reverse=True)[:MAX_SAMPLES]
+        r.warn(f"{total:,} trips use services with zero active days "
+               f"(no weekday flags, no added-date exceptions) — they can "
+               f"never run (sample service_ids: {sample})")
+    else:
+        r.note(f"every trip's service has at least one active day "
+               f"({len(live):,} live services)")
+    return r
+
+
 CHECKS = [
     check_required_files,
     check_stop_coords,
@@ -433,6 +471,7 @@ CHECKS = [
     check_stop_time_fields,
     check_referential_integrity,
     check_calendar,
+    check_service_coverage,
     check_direction_ids,
     check_feed_freshness,
 ]

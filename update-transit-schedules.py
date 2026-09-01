@@ -259,6 +259,37 @@ def refresh_feeds_tsvs(feeds, catalog_url, catalog_cache):
             log(f"  {tsv.name}: already up to date ({len(existing)} feeds)")
 
 
+        # Report-only: kept feeds the catalog marks non-active whose provider
+        # also has an ACTIVE gtfs feed under a different id that we don't
+        # serve. Name matching is too fuzzy to auto-adopt (flex variants,
+        # regional sub-services), but a human can eyeball the suggestion —
+        # this is how an mdb-131-style freeze looks before the mirror's
+        # snapshot visibly expires.
+        providers = {}
+        for row in catalog_rows.values():
+            if (row.get("data_type") != "gtfs" or row.get("redirect.id")
+                    or (row.get("status") or "") != "active"):
+                continue
+            prov = (row.get("provider") or "").strip().lower()
+            if prov:
+                providers.setdefault(prov, []).append(row)
+        merged_urls = {u for _, u, _, _ in merged}
+        for slug, url, name, _fb in merged:
+            row = catalog_rows.get(slug)
+            if not row or (row.get("status") or "active") == "active":
+                continue
+            if slug in rescues and rescues[slug][1] == url:
+                continue  # handled by the rescue pass above
+            prov = (row.get("provider") or "").strip().lower()
+            for alt in providers.get(prov, []):
+                alt_url = (alt.get("urls.direct_download") or "").strip()
+                if alt["id"] != slug and alt_url and alt_url not in merged_urls:
+                    log(f"  NOTE: {slug} ({name}) is {row.get('status')} but "
+                        f"provider has active feed {alt['id']} at {alt_url} "
+                        f"- consider switching if {slug} goes stale")
+                    break
+
+
 def csv_reader(text):
     import csv as _csv
     return _csv.DictReader(text.splitlines())
@@ -444,10 +475,18 @@ def export_regions(db, index_path, out_dir, dry_run, only_transit, update_index)
     }
 
 
+EXPIRING_SOON_DAYS = 14
+STALE_STATE_PATH = HERE / "data" / "expired-feeds-state.json"
+
+
 def print_summary(res, dry_run, only_transit):
     today = time.strftime("%Y%m%d")
+    horizon = time.strftime(
+        "%Y%m%d", time.localtime(time.time() + EXPIRING_SOON_DAYS * 86400))
     exp_old = [p for p, e in res["feeds_old"].items() if e < today]
     exp_new = sorted((e, p) for p, e in res["feeds_new"].items() if e < today)
+    soon_new = sorted((e, p) for p, e in res["feeds_new"].items()
+                      if today <= e <= horizon)
     log("=" * 58)
     log(f"regions          : {res['total']}")
     log(f"changed          : {res['changed']}"
@@ -456,6 +495,31 @@ def print_summary(res, dry_run, only_transit):
     if only_transit:
         log(f"skipped (empty)  : {res['skipped_empty']}")
     log(f"feeds seen       : {len(res['feeds_new'])}")
+
+    # Track consecutive-run staleness so a chronically-expired feed (dead
+    # URL, frozen mirror) is distinguishable from a transient one (agency
+    # just late republishing — those self-heal in a run or two). State is
+    # informational only; it never changes what's exported.
+    runs = {}
+    if not dry_run:
+        try:
+            state = json.loads(STALE_STATE_PATH.read_text())
+        except Exception:
+            state = {}
+        now_iso = time.strftime("%Y-%m-%dT%H:%M:%S")
+        for end, pfx in exp_new:
+            prev = state.get(pfx, {})
+            streak = prev.get("runs", 0) + 1
+            state[pfx] = {"end": end, "runs": streak, "last_seen": now_iso}
+            runs[pfx] = streak
+        for pfx in [p for p in state if p not in res["feeds_new"]
+                    or res["feeds_new"][p] >= today]:
+            del state[pfx]  # recovered or no longer exported — reset
+        try:
+            STALE_STATE_PATH.write_text(json.dumps(state, indent=1, sort_keys=True))
+        except OSError as e:
+            log(f"  (could not write stale-feed state: {e})")
+
     log(f"expired feeds    : {len(exp_old)} (before) -> {len(exp_new)} (after)")
     if not exp_new:
         log("                   OK - every feed's calendar now reaches today or later")
@@ -463,9 +527,18 @@ def print_summary(res, dry_run, only_transit):
         log(f"                   WARNING - {len(exp_new)} feed(s) still expired "
             f"(agency may not have published a newer GTFS yet):")
         for end, pfx in exp_new[:15]:
-            log(f"                     {end}  {pfx}")
+            streak = runs.get(pfx, 0)
+            chronic = f"  <- STALE {streak} RUNS IN A ROW" if streak >= 2 else ""
+            log(f"                     {end}  {pfx}{chronic}")
         if len(exp_new) > 15:
             log(f"                     ... and {len(exp_new) - 15} more")
+    if soon_new:
+        log(f"expiring <= {EXPIRING_SOON_DAYS} days : {len(soon_new)} feed(s) — "
+            f"expected to drop out soon if the agency doesn't republish:")
+        for end, pfx in soon_new[:15]:
+            log(f"                     {end}  {pfx}")
+        if len(soon_new) > 15:
+            log(f"                     ... and {len(soon_new) - 15} more")
     log("=" * 58)
 
 
