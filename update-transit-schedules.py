@@ -98,22 +98,37 @@ def feed_ends(plain_bytes):
 
     Per-FEED so a single long-calendar agency can't mask an expired sibling
     in the same region (e.g. STM expired while a commuter-rail feed runs to
-    2032). Skips the far-future sentinels some feeds use.
+    2032). Skips the far-future sentinels some feeds use. For exception-based
+    feeds (no usable service end_date, e.g. LTD), the latest exception_type=1
+    date stands in as the feed's end.
     """
     try:
         doc = json.loads(plain_bytes.decode("utf-8"))
     except Exception:
         return {}
     out = {}
-    for svc in doc.get("services") or []:
+    services = doc.get("services") or []
+
+    def bump(pfx, end):
+        if end and end < "20990101" and (pfx not in out or end > out[pfx]):
+            out[pfx] = end
+
+    for svc in services:
         if not isinstance(svc, dict):
             continue
-        end = svc.get("end")
-        if not end or end >= "20990101":
+        bump(str(svc.get("id", "")).split(":", 1)[0] or "?", svc.get("end"))
+    # Exception-based feeds (no weekday flags, empty start/end — e.g. LTD)
+    # would otherwise never report an end date and silently expire.
+    for exc in doc.get("service_exceptions") or []:
+        try:
+            idx, date, et = exc
+        except (TypeError, ValueError):
             continue
-        pfx = str(svc.get("id", "")).split(":", 1)[0] or "?"
-        if pfx not in out or end > out[pfx]:
-            out[pfx] = end
+        if et != 1 or not isinstance(idx, int) or not (0 <= idx < len(services)):
+            continue
+        svc = services[idx]
+        if isinstance(svc, dict):
+            bump(str(svc.get("id", "")).split(":", 1)[0] or "?", date)
     return out
 
 
@@ -197,10 +212,49 @@ def refresh_feeds_tsvs(feeds, catalog_url, catalog_cache):
             seen_urls.add(e[1])
             merged.append(e)
             n_added += 1
+        # Rescue pass: some agencies move their static GTFS to a new URL that
+        # the catalog files under a DIFFERENT id — often misclassified as
+        # gtfs_rt — with static_reference pointing back at the dead static
+        # feed (e.g. Lane Transit District: static feed mdb-131 is marked
+        # inactive and its MD mirror keeps serving an expired snapshot, while
+        # the live static zip sits on "gtfs_rt" entry mdb-3148 whose
+        # static_reference is mdb-131). entries_from_catalog() only looks at
+        # data_type == "gtfs", so without this pass the TSV keeps the dead
+        # URL forever and the agency's schedule silently freezes in the past.
+        # If the catalog row for a kept slug is not active, and an active
+        # catalog entry references it via static_reference with a direct
+        # download that looks like a static zip, adopt that URL (keeping the
+        # old one as fallback so ingest still has something to try).
+        rescues = {}
+        for row in catalog_rows.values():
+            ref = (row.get("static_reference") or "").strip()
+            if not ref or (row.get("status") or "") != "active":
+                continue
+            direct = (row.get("urls.direct_download") or "").strip()
+            if not direct.lower().endswith(".zip"):
+                continue
+            rescues.setdefault(ref, (row.get("id", "").strip(), direct))
+        n_rescued = 0
+        for i, (slug, url, name, fallback) in enumerate(merged):
+            row = catalog_rows.get(slug)
+            if not row or (row.get("status") or "active") == "active":
+                continue
+            cand = rescues.get(slug)
+            if not cand:
+                continue
+            new_id, new_url = cand
+            if not new_url or new_url == url:
+                continue
+            merged[i] = (slug, new_url, name, fallback or url)
+            n_rescued += 1
+            log(f"  rescued {slug} ({name}): catalog status={row.get('status')} "
+                f"but {new_id} lists it as static_reference with a live "
+                f"static zip -> {new_url} (old URL kept as fallback)")
         if merged != existing:
             gtfs_catalog.write_feeds_tsv(tsv, merged)
             log(f"  refreshed {tsv.name}: {len(existing)} -> {len(merged)} feeds "
-                f"({n_updated} URLs updated, {n_added} new, {n_dropped} deprecated dropped)")
+                f"({n_updated} URLs updated, {n_added} new, "
+                f"{n_dropped} deprecated dropped, {n_rescued} rescued)")
         else:
             log(f"  {tsv.name}: already up to date ({len(existing)} feeds)")
 

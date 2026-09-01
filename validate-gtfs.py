@@ -401,7 +401,21 @@ def check_feed_freshness(z, cache):
     today = datetime.date.today().strftime("%Y%m%d")
     cal = read_csv(z, "calendar.txt", cache) or []
     if not cal:
-        r.note("no calendar.txt — cannot determine freshness from calendar")
+        # Exception-based feeds (calendar_dates only) still go stale — the
+        # mirror keeps serving the last snapshot long after it expires
+        # (this is exactly how LTD/EmX froze 7 months in the past).
+        cald = read_csv(z, "calendar_dates.txt", cache) or []
+        max_date = max((c.get("date", "") for c in cald
+                        if c.get("exception_type", "") != "2"), default="")
+        if not max_date:
+            r.note("no calendar.txt and no usable calendar_dates.txt — "
+                   "cannot determine freshness")
+            return r
+        min_date = min((c.get("date", "") for c in cald if c.get("date", "")),
+                       default="")
+        r.note(f"no calendar.txt — calendar_dates cover {min_date}..{max_date}")
+        if max_date < today:
+            r.warn(f"all calendar_dates expired before today ({today}) — feed is stale")
         return r
     max_end = max((c.get("end_date", "") for c in cal), default="")
     min_start = min((c.get("start_date", "") for c in cal if c.get("start_date", "")), default="")
