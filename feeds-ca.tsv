@@ -30,7 +30,7 @@ mdb-743	https://exo.quebec/xdata/citpi/google_transit.zip	Exo La Presqu'île / H
 mdb-744	https://exo.quebec/xdata/citla/google_transit.zip	Exo Laurentides / Blainville / Quebec	https://files.mobilitydatabase.org/mdb-744/latest.zip
 mdb-748	https://exo.quebec/xdata/trains/google_transit.zip	Exo / Baie-D'Urfé / Quebec	https://files.mobilitydatabase.org/mdb-748/latest.zip
 mdb-750	https://exo.quebec/xdata/citcrc/google_transit.zip	Exo Chambly-Richelieu-Carignan / Brossard / Quebec	https://files.mobilitydatabase.org/mdb-750/latest.zip
-mdb-751	https://www.rtl-longueuil.qc.ca/transit/latestfeed/RTL.zip	Réseau de transport de Longueuil / Longueuil / Quebec	
+mdb-751	https://www.rtl-longueuil.qc.ca/transit/latestfeed/RTL.zip	Réseau de transport de Longueuil / Longueuil / Quebec	https://files.mobilitydatabase.org/mdb-751/latest.zip
 mdb-752	https://exo.quebec/xdata/citvr/google_transit.zip	Exo Vallée du Richelieu / Beloeil / Quebec	https://files.mobilitydatabase.org/mdb-752/latest.zip
 mdb-753	https://exo.quebec/xdata/omitsju/google_transit.zip	Exo Ville de Sainte-Julie / Beloeil / Quebec	https://files.mobilitydatabase.org/mdb-753/latest.zip
 mdb-754	https://exo.quebec/xdata/mrclm/google_transit.zip	Terrebonne-Mascouche / Blainville / Quebec	https://files.mobilitydatabase.org/mdb-754/latest.zip
@@ -40,7 +40,7 @@ mdb-758	http://www.metrobustransit.ca/google/google_transit.zip	Metrobus Transit
 mdb-759	http://metrolinx.tmix.se/gtfs/gtfs-milton.zip	Milton Transit / Milton / Ontario	https://files.mobilitydatabase.org/mdb-759/latest.zip
 mdb-761	https://bct.tmix.se/Tmix.Cap.TdExport.WebApi/gtfs/?operatorIds=11	Port Alberni / Alberni-Clayoquot Regional District / British Columbia	https://files.mobilitydatabase.org/mdb-761/latest.zip
 mdb-763	https://www.stlevis.ca/sites/default/files/public/assets/gtfs/transit/gtfs_stlevis.zip	Société de transport de Lévis / Lévis / Quebec	https://files.mobilitydatabase.org/mdb-763/latest.zip
-mdb-1111	https://www7.moncton.ca/opendata/google_transit.zip	Codiac Transport / Dieppe / New Brunswick	https://files.mobilitydatabase.org/mdb-1111/latest.zip
+mdb-1111	https://www7.moncton.ca/opendata/google_transit.zip	Codiac Transport / Moncton / New Brunswick	https://files.mobilitydatabase.org/mdb-1111/latest.zip
 mdb-1806	http://miramichitransit.ca/GTFS/MT_GTFS_2019.01.29.b.zip	Miramichi Transit / Miramichi / New Brunswick	https://files.mobilitydatabase.org/mdb-1806/latest.zip
 mdb-1858	https://metrolinx.tmix.se/gtfs/gtfs-belleville.zip	Belleville Transit / Belleville / Ontario	https://files.mobilitydatabase.org/mdb-1858/latest.zip
 mdb-1991	https://bct.tmix.se/Tmix.Cap.TdExport.WebApi/gtfs/?operatorIds=13	BC Transit (Central Fraser Valley | Chilliwack | Agassiz-Harrison | Hope) / Abbotsford / British Columbia	https://files.mobilitydatabase.org/mdb-1991/latest.zip
@@ -135,3 +135,4 @@ mdb-3190	https://www.stlaval.ca/datas/opendata/GTF_STL.zip	Société de transpor
 tld-821	https://addtransit.com/gtfsfile/42017/VictoriaClipper.zip	The Victoria Clipper / Victoria / British Columbia	https://files.mobilitydatabase.org/tld-821/latest.zip
 tld-6691	https://gtfs.gpmmom.ca/gtfs/gtfs.zip	Réseau express métropolitain / Montreal / Quebec	https://files.mobilitydatabase.org/tld-6691/latest.zip
 tld-6712	https://www.donneesquebec.ca/recherche/dataset/a2d3c9de-4045-41e3-b2ea-5bb64bd8c50f/resource/71d94f75-5a36-4789-b581-a21d49dcd5f5/download/gtfs-sttr-hiv24.zip	Société de transport de Trois-Rivières / Trois-Rivières / Quebec	https://files.mobilitydatabase.org/tld-6712/latest.zip
+mdb-3503	https://apps5.saskatoon.ca/data/gtfs/google_transit.zip	Saskatoon Transit / Saskatoon / Saskatchewan	https://files.mobilitydatabase.org/mdb-3503/latest.zip

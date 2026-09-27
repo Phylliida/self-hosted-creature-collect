@@ -273,7 +273,9 @@
   // ── Community day (weekly featured species) ─────────────────
   // Every OTHER week features one species; while a player's community-day
   // session is active, every wild/radar/incense spawn is a fusion with
-  // that species in one slot (the legendary stream is exempt). Weeks
+  // that species in one slot (the legendary stream is exempt) — radar
+  // blips fuse with an EVOLVED form of it instead, since the radar is
+  // the evolved stream. Weeks
   // run Monday 00:00 → Sunday 24:00 in GMT-12 — i.e. the boundary is
   // Monday 12:00 UTC for every player worldwide, so the "anywhere on
   // earth" week has fully ended before the next featured species starts.
@@ -969,6 +971,44 @@
     return true;
   }
 
+  // Forward-evolution forms of a community day's featured species, for the
+  // radar override: the whole loaded descendant set (chain A→B→C ⇒ {B, C}),
+  // matching the normal evolved-half draw convention. Cached per species
+  // (generateEvolvedAtTick runs per cell-tick during radar scans); the cache
+  // is rebuilt if the loaded species count changes. Falls back to the base
+  // species itself when it has no loaded evolutions, so single-stage
+  // featured species still appear on the radar as themselves.
+  let _cdFormsCache = new Map();     // speciesId -> forward-evolution id array
+  let _cdFormsCacheLen = -1;         // allSpecies length the cache was built against
+  function _communityFeaturedForms(speciesId) {
+    const Species = global.Species;
+    if (!Species || !Species.evolutionsFor || !Species.allSpecies) return [speciesId];
+    const all = Species.allSpecies();
+    if (all.length !== _cdFormsCacheLen) {
+      _cdFormsCache = new Map();
+      _cdFormsCacheLen = all.length;
+    }
+    let forms = _cdFormsCache.get(speciesId);
+    if (!forms) {
+      const loaded = new Set(all.map((s) => s.id));
+      forms = [];
+      const seen = new Set([speciesId]);
+      const stack = [speciesId];
+      while (stack.length) {
+        const cur = stack.pop();
+        for (const e of Species.evolutionsFor(cur)) {
+          const t = e.target;
+          if (seen.has(t)) continue;
+          seen.add(t);
+          if (loaded.has(t)) forms.push(t);
+          stack.push(t);
+        }
+      }
+      _cdFormsCache.set(speciesId, forms);
+    }
+    return forms.length ? forms : [speciesId];
+  }
+
   // Cheap deterministic pre-filter (same value for every player), skipping the
   // xor4096 seed init for the vast majority of cell-ticks with no evolved spawn.
   function _evoCandidate(cellX, cellY, etick) {
@@ -1016,13 +1056,20 @@
     let outA = speciesA, outB = speciesB;
     const cd = _communityActiveAt(nowMs);
     if (cd && _evoFlat.length) {
-      // Community day: one slot is the featured species, the other a
-      // uniform draw across ALL evolved forms (no weather bias). Same
-      // append-only draw convention as generateCellAtTick.
+      // Community day: one slot is a form from the featured species' OWN
+      // evolution line (uniform over its forward-evolution set, so e.g.
+      // Oddish ⇒ Gloom/Vileplume/Bellossom — the radar is the evolved
+      // stream; single-stage species fall back to the base form), the
+      // other a uniform draw across ALL evolved forms (no weather bias).
+      // Same append-only draw convention as generateCellAtTick: draws are
+      // consumed only in this branch, so an inactive session leaves the
+      // stream bit-identical.
       const slotCoin = arng();
       const other = _evoFlat[Math.floor(arng() * _evoFlat.length)];
-      outA = slotCoin < 0.5 ? cd.speciesId : other;
-      outB = slotCoin < 0.5 ? other : cd.speciesId;
+      const forms = _communityFeaturedForms(cd.speciesId);
+      const featured = forms[Math.floor(arng() * forms.length)];
+      outA = slotCoin < 0.5 ? featured : other;
+      outB = slotCoin < 0.5 ? other : featured;
     }
     return {
       // 'E:' namespace keeps evolved caught-IDs distinct and is recognized by

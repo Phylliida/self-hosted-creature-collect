@@ -6,8 +6,9 @@
 //   - Generation override: wild/evolved/incense spawns become fusions with
 //     the featured species while a session is active at the QUERY MOMENT
 //     (activation transforms all living spawns in place; expiry reverts
-//     them); legendary stream exempt; inactive sessions leave every stream
-//     bit-identical.
+//     them) — radar morphs fuse with an EVOLVED form of the featured
+//     species' line, not the base form; legendary stream exempt; inactive
+//     sessions leave every stream bit-identical.
 //   - Multi-player co-location: two players with active sessions (same week,
 //     different windows) see identical spawns; same incense ⇒ identical
 //     incense+community spawns, different incense ⇒ different ones.
@@ -125,6 +126,29 @@ const X = S.communityDayInfo(NOW).speciesId;
 const shape = (s) => [s.id, s.speciesA, s.speciesB, s.lat, s.lng, s.level, s.sizeM];
 const wildOnly = (arr) => arr.filter((s) => !s.legendary && !s.evolved && !s.incense);
 
+// Mirror of the engine's _communityFeaturedForms: the featured species'
+// loaded forward-evolution set (chain A→B→C ⇒ {B, C}), falling back to the
+// base species itself when the line is single-stage. Radar community
+// morphs draw their featured half from this set (uniformly).
+const loadedIds = new Set();
+for (let i = 0; i < namesArr.length; i++) if (namesArr[i]) loadedIds.add(i + 1);
+function forwardEvos(base) {
+  const out = [];
+  const seen = new Set([base]);
+  const stack = [base];
+  while (stack.length) {
+    for (const e of global.Species.evolutionsFor(stack.pop())) {
+      if (seen.has(e.target)) continue;
+      seen.add(e.target);
+      if (loadedIds.has(e.target)) out.push(e.target);
+      stack.push(e.target);
+    }
+  }
+  return out;
+}
+const EVOS_X = forwardEvos(X);
+const FORMS_X = new Set(EVOS_X.length ? EVOS_X : [X]);
+
 // ── 3) Inactive ⇒ streams bit-identical; active ⇒ wild override ──
 {
   const baseline = S.spawnsInBbox(BBOX, NOW).map(shape);
@@ -225,10 +249,16 @@ const wildOnly = (arr) => arr.filter((s) => !s.legendary && !s.evolved && !s.inc
   }
   S.setCommunityDay(null);
   ok(spawns.length >= 3, '5: evolved sweep found spawns (' + spawns.length + ')');
-  ok(spawns.every((s) => s.speciesA === X || s.speciesB === X),
-    '5: every evolved spawn has the featured species in a slot');
-  ok(spawns.every((s) => (s.speciesA === X ? evoSet.has(s.speciesB) : evoSet.has(s.speciesA))),
-    '5: the other evolved half is an evolved-form species');
+  ok(spawns.every((s) => FORMS_X.has(s.speciesA) || FORMS_X.has(s.speciesB)),
+    '5: every evolved spawn has a featured-LINE form in a slot');
+  ok(spawns.every((s) => evoSet.has(s.speciesA) || evoSet.has(s.speciesB)),
+    '5: the partner half is always an evolved-form species');
+  if (EVOS_X.length) {
+    ok(spawns.every((s) => s.speciesA !== X && s.speciesB !== X),
+      '5: the featured half is an evolved form, never the base species itself');
+    ok(spawns.every((s) => evoSet.has(s.speciesA) && evoSet.has(s.speciesB)),
+      '5: with evolutions available, BOTH halves are evolved forms');
+  }
 
   // nearestRadar (the blip source) uses the REAL clock for aliveness +
   // query-time activity, so drive it with a real-time session.
@@ -239,8 +269,8 @@ const wildOnly = (arr) => arr.filter((s) => !s.legendary && !s.evolved && !s.inc
   S.setCommunityDay(null);
   const radarEvo = radarOn.filter((s) => !s.legendary);
   ok(radarEvo.length > 0, '5: nearestRadar found evolved targets (' + radarEvo.length + ')');
-  ok(radarEvo.every((s) => s.speciesA === X || s.speciesB === X),
-    '5: radar blips transform while the session is live');
+  ok(radarEvo.every((s) => FORMS_X.has(s.speciesA) || FORMS_X.has(s.speciesB)),
+    '5: radar blips transform into featured-line forms while the session is live');
   const endedSess = { speciesId: X, startMs: realNow - 90 * MIN, endMs: realNow - 30 * MIN };
   S.setCommunityDay(endedSess);
   const radarOff = S.nearestRadar(45.5, -73.6, 10, 20000);
@@ -299,8 +329,11 @@ const wildOnly = (arr) => arr.filter((s) => !s.legendary && !s.evolved && !s.inc
   ok(JSON.stringify(viewA) === JSON.stringify(viewB),
     '7: two active players see identical wild+radar spawns');
   ok(rawA.length > 0 && rawA.every((s) => s.legendary
-      || s.speciesA === X || s.speciesB === X),
-    '7: the shared view is fully community-morphs (legendaries excepted)');
+      || (s.evolved
+        ? (FORMS_X.has(s.speciesA) || FORMS_X.has(s.speciesB))
+        : (s.speciesA === X || s.speciesB === X))),
+    '7: the shared view is fully community-morphs (legendaries excepted; '
+    + 'radar morphs carry featured-line forms, wild morphs the base species)');
 
   // Same incense ⇒ identical incense spawns; different incense ⇒ different.
   const tick = S.currentTick(NOW);

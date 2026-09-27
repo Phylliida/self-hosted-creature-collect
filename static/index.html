@@ -3212,6 +3212,13 @@
            directly with a meta-refresh that bounces to /. -->
   <a id="emergencyRefresh" href="/__refresh__.html" role="button"
      onclick="try{(function(){
+       // One-time refresh bonus: 300 Poké Balls + 300 Great Balls, the
+       // first time this button is ever pressed (grantRefreshBonus is
+       // idempotent — it no-ops and returns false once claimed). Runs
+       // FIRST so it still lands if a later step throws and we fall
+       // through to plain navigation; it's a synchronous localStorage
+       // write, so it's done long before the 150ms reload below.
+       try{if(window.Creatures&&window.Creatures.grantRefreshBonus){window.Creatures.grantRefreshBonus();}}catch(_){}
        // Stale-shell cache-clear, same as before.
        // Web/iOS: clear stale app-shell so the SW re-fetches fresh (origin /
        // LocalServer-livedir). SKIP on Android — there the live-update flow
@@ -8226,6 +8233,11 @@ function fmtDate(ts) {
       // imported captures instead.
       candyFamilyMigrated: localStorage.getItem('cc.candyMigrated.familyV2') === '1',
       bag: JSON.parse(localStorage.getItem('cc.bag.v1') || 'null'),
+      // One-time refresh-button bonus (300 Poké/Great Balls on the first
+      // press). The claim flag travels so exporting a save, claiming on
+      // the new device, then re-importing the old save can't pay twice.
+      refreshBonusClaimed: !!(window.Creatures && window.Creatures.isRefreshBonusClaimed
+        && window.Creatures.isRefreshBonusClaimed()),
       // Focus-mode state: active session (if any) + past-session history.
       focus: JSON.parse(localStorage.getItem('cc.focus.v1') || 'null'),
       tags: JSON.parse(localStorage.getItem('cc.tags.v1') || '[]'),
@@ -8658,6 +8670,11 @@ function fmtDate(ts) {
         if (v > (current[item] || 0)) current[item] = v;
       }
       localStorage.setItem('cc.bag.v1', JSON.stringify(current));
+    }
+    // One-time refresh bonus: adopt the imported claim flag, never clear
+    // it — a save made before the claim doesn't hand the bonus back.
+    if (data.refreshBonusClaimed === true) {
+      localStorage.setItem('cc.refreshBonus.v1', '1');
     }
     // Focus mode: union-merge session history by start time (idempotent
     // re-imports), and adopt the imported active session only when no

@@ -347,6 +347,11 @@
     240, // Magby       → Magmar
   ]);
   const BAG_KEY = 'cc.bag.v1';
+  // One-time "press refresh" bonus. Granted by the refresh button's
+  // inline onclick in index.html; the flag is what makes it once-ever
+  // (and it rides in the save payload, so exporting and re-importing a
+  // save on another device can't hand out a second helping).
+  const REFRESH_BONUS_KEY = 'cc.refreshBonus.v1';
   const TAGS_KEY = 'cc.tags.v1';
   const TAG_MAX_LEN = 8;
   const LAST_SAVE_KEY = 'cc.lastSaveAt';
@@ -462,6 +467,9 @@
   // Starter items granted on first-ever bag read (anyone who's played
   // before gets these too on next load).
   const STARTER_BAG = { poke_ball: 2 };
+  // What one press of the refresh button is worth — once ever, per
+  // player. Tune the numbers here; nothing else hardcodes them.
+  const REFRESH_BONUS = { poke_ball: 300, great_ball: 300 };
 
   // ── Captures store ──
   // The single source of truth for the captured-creatures array AND
@@ -1053,6 +1061,34 @@
     const bag = readBag();
     bag[itemKey] = (bag[itemKey] || 0) + n;
     writeBag(bag);
+  }
+  // One-time refresh bonus (REFRESH_BONUS). Called from the refresh
+  // button's inline onclick in index.html BEFORE the reload, so the
+  // bag write lands while this page is still alive. Returns true only
+  // on the grant that actually paid out — false means "already
+  // claimed". The flag is written AFTER the bag write so a storage
+  // failure (quota, private mode) leaves the bonus claimable instead
+  // of silently burning it.
+  function grantRefreshBonus() {
+    try {
+      if (localStorage.getItem(REFRESH_BONUS_KEY) === '1') return false;
+      const bag = readBag();
+      for (const k of Object.keys(REFRESH_BONUS)) {
+        bag[k] = (bag[k] || 0) + REFRESH_BONUS[k];
+      }
+      writeBag(bag);
+      localStorage.setItem(REFRESH_BONUS_KEY, '1');
+      return true;
+    } catch (e) {
+      console.error('[creatures] refresh bonus failed', e);
+      return false;
+    }
+  }
+  // Has the one-time refresh bonus already been paid on this device?
+  // Read by the save export so the claim travels with the save.
+  function isRefreshBonusClaimed() {
+    try { return localStorage.getItem(REFRESH_BONUS_KEY) === '1'; }
+    catch { return false; }
   }
   // Decrement an item's count. Returns true on success, false if the
   // bag didn't have enough. Removes the key entirely when its count
@@ -3459,8 +3495,9 @@
   // the engine owns the schedule: Spawns.communityDayInfo, Monday 00:00
   // GMT-12 → Sunday 24:00 GMT-12). Off weeks grant nothing and the item
   // simply doesn't appear. Using one starts (or extends) a 1-hour session
-  // during which every wild, radar and incense spawn is a fusion of the
-  // week's featured species. Passes left over at week's end vanish; an
+  // during which every wild and incense spawn is a fusion of the week's
+  // featured species, and every radar spawn a fusion with an EVOLVED form
+  // of it (single-stage species appear as themselves on radar too). Passes left over at week's end vanish; an
   // in-progress session runs to its natural end even across the boundary,
   // keeping its original species.
   // The count does NOT live in the bag map — it lives in cc.communityDay.v1
@@ -3477,7 +3514,7 @@
   }
   ITEMS.community_pass = {
     name: 'Community Day Pass',
-    desc: '1 hour where every wild, radar and incense pokémon is a fusion of this week\'s featured species — with 3× shiny chance, added to other shiny bonuses.',
+    desc: '1 hour where every wild and incense pokémon is a fusion of this week\'s featured species, and radar targets are fusions of its evolved forms — with 3× shiny chance, added to other shiny bonuses.',
     icon: _communityPassIcon(),
     communityDay: true,
   };
@@ -10777,7 +10814,7 @@
     }
     const info = global.Spawns.communityDayInfo(Date.now());
     const name = _communitySpeciesName(info.speciesId);
-    let msg = `Use a Community Day Pass?\n\nFor 1 hour, every wild, radar and incense pokémon will be a ${name} fusion.`;
+    let msg = `Use a Community Day Pass?\n\nFor 1 hour, every wild and incense pokémon will be a ${name} fusion, and radar targets will be fusions of ${name}'s evolved forms.`;
     if (s.active) {
       msg += `\n\nYour current session will be extended by 1 hour.`;
     }
@@ -16950,10 +16987,12 @@
   //     OR the device is asleep/locked. Backgrounding the app while the
   //     screen is on PAUSES accrual; re-foregrounding resumes it — the
   //     session never breaks, it just stops counting.
-  //   - Rates (deliberately slow so sleep play is marginal and active
-  //     play always wins): 1 creature per hour, 1 item per 30 min of
+  //   - Rates: 1 creature per hour, 1 item per MINUTE of
   //     qualifying time, plus flat distance bounties (1 creature per
-  //     0.5 km, 1 item per 1 km walked). No cap.
+  //     0.5 km, 1 item per 1 km walked). No cap. (The item rate was
+  //     30 min originally — deliberately slow — but a ball a
+  //     half-hour read as "focus mode is pointless", so it's 1/min
+  //     now; bump FOCUS_ITEM_MS if that turns out too generous.)
   //   - Earnings are granted silently as they accrue but only REVEALED
   //     when the session ends (checking your loot would defeat the
   //     point). Ended sessions land in a history list (most recent
@@ -16971,7 +17010,7 @@
   // the screen as always on — so any tab switch pauses accrual there.
   const FOCUS_KEY = 'cc.focus.v1';
   const FOCUS_CREATURE_MS = 60 * 60 * 1000;
-  const FOCUS_ITEM_MS = 30 * 60 * 1000;
+  const FOCUS_ITEM_MS = 60 * 1000;
   // Distance bounties (flat per-km grants, independent of the base
   // rate): 1 creature per 0.5 km, 1 item per 1 km walked during the
   // session. Uncapped — even a 15 km walk (30 creatures + 15 items)
@@ -17403,7 +17442,7 @@
           + escapeHtml(meta.name) + ' ×' + items[k] + '</span></div>';
       }).join('');
     } else {
-      h += '<p class="cc-info-p">None — the first item arrives after 30 min of focus.</p>';
+      h += '<p class="cc-info-p">None — the first item arrives after a minute of focus.</p>';
     }
     h += '</div>';
     return h;
@@ -17423,7 +17462,7 @@
       + '<span class="cc-info-v">One per <b>hour</b> of focus — a trickle, so exploring '
       + 'is always better.</span></div>';
     h += '<div class="cc-info-row"><span class="cc-info-k">Items</span>'
-      + '<span class="cc-info-v">One poké ball per <b>30 min</b> of focus.</span></div>';
+      + '<span class="cc-info-v">One poké ball per <b>minute</b> of focus.</span></div>';
     h += '<div class="cc-info-row"><span class="cc-info-k">Walking</span>'
       + '<span class="cc-info-v">Distance walked during a session earns flat bonuses on top: '
       + '<b>+1 pokémon per 0.5 km</b> and <b>+1 ball per 1 km</b>. (Needs the pedometer '
@@ -17711,6 +17750,11 @@
     showFocus,
     getCandy: readCandy, getBag: readBag, getTags: readTags,
     grantItem, consumeItem, rollCollectibleItem, getItemMeta,
+    // One-time refresh-button bonus; also mirrors the claim flag into
+    // the save (index.html exports it) so a save round-trip can't
+    // re-grant. See grantRefreshBonus.
+    grantRefreshBonus,
+    isRefreshBonusClaimed,
     // Solo-pack items (paintbrushes etc.) registered by packs.js at boot.
     registerPackItems,
     timeSinceLastSave,

@@ -1,7 +1,7 @@
 // Tests focus-mode accrual logic (_focusReplay / _focusGrantsDue in
 // static/creatures.js): the event-timeline replay that measures
 // qualifying time (screen off OR app foreground), and the grant
-// schedule (base: 1 creature per hour, 1 item per 30 min; distance
+// schedule (base: 1 creature per hour, 1 item per minute; distance
 // bounties: +1 creature per 0.5 km, +1 item per 1 km).
 //
 // Run: node tests/focus-mode.test.js
@@ -38,7 +38,7 @@ const MIN = 60 * 1000;
 const ctx = {
   Object, Array, Math, Number, JSON,
   FOCUS_CREATURE_MS: 60 * MIN,
-  FOCUS_ITEM_MS: 30 * MIN,
+  FOCUS_ITEM_MS: 1 * MIN,
   FOCUS_M_PER_CREATURE: 500,
   FOCUS_M_PER_ITEM: 1000,
 };
@@ -142,18 +142,25 @@ const BG_AWAKE = { screenOff: false, appFg: false };
   ok(r.qualifyingMs === 0, '8: hidden tab accrues nothing on web');
 }
 
-// ── 9. Base schedule: 1 creature / hour, 1 item / 30 min ──
+// ── 9. Base schedule: 1 creature / hour, 1 item / minute ──
 {
+  // The sandbox constants above mirror creatures.js — assert the mirror
+  // still matches the real source, so a rate change there can't leave
+  // this test validating a schedule the game no longer runs.
+  const m = /const FOCUS_ITEM_MS\s*=\s*([^;]+);/.exec(src);
+  ok(!!m && vm.runInNewContext(m[1]) === ctx.FOCUS_ITEM_MS,
+     '9: sandbox FOCUS_ITEM_MS mirrors creatures.js');
+
   const a = due(0, 0);
   ok(a.creatures === 0 && a.items === 0, '9: nothing at 0');
-  const b = due(29 * MIN + 59000, 0);
-  ok(b.creatures === 0 && b.items === 0, '9: nothing just before 30 min');
-  const c = due(30 * MIN, 0);
-  ok(c.creatures === 0 && c.items === 1, '9: first item at 30 min');
+  const b = due(59000, 0);
+  ok(b.creatures === 0 && b.items === 0, '9: nothing just before 1 min');
+  const c = due(1 * MIN, 0);
+  ok(c.creatures === 0 && c.items === 1, '9: first item at 1 min');
   const d = due(60 * MIN, 0);
-  ok(d.creatures === 1 && d.items === 2, '9: first creature at 1 hour, 2 items');
+  ok(d.creatures === 1 && d.items === 60, '9: first creature at 1 hour, 60 items');
   const e = due(8 * 60 * MIN, 0);
-  ok(e.creatures === 8 && e.items === 16, '9: overnight sleep = 8 creatures + 16 items');
+  ok(e.creatures === 8 && e.items === 480, '9: overnight sleep = 8 creatures + 480 items');
 }
 
 // ── 10. Distance bounties: +1 creature / 0.5 km, +1 item / 1 km ──
@@ -168,10 +175,10 @@ const BG_AWAKE = { screenOff: false, appFg: false };
   ok(d.creatures === 30 && d.items === 15, '10: 15 km = 30 creatures + 15 items');
   // Garbage distance → base rate only.
   const e = due(60 * MIN, NaN);
-  ok(e.creatures === 1 && e.items === 2, '10: NaN distance falls back to base rate');
+  ok(e.creatures === 1 && e.items === 60, '10: NaN distance falls back to base rate');
   // Combined: 2 hours + 5 km.
   const f = due(2 * 60 * MIN, 5000);
-  ok(f.creatures === 2 + 10 && f.items === 4 + 5, '10: time + distance stack');
+  ok(f.creatures === 2 + 10 && f.items === 120 + 5, '10: time + distance stack');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
