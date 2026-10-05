@@ -2,7 +2,7 @@
 //   computeSpeciesCompletion()   (static/creatures.js)
 //
 // The completion model scores a species by how many fusions with it (head +
-// body) you've seen, out of 2·N partners. Legendaries (~1/16000 spawns) are
+// body) you've seen, out of 2·N partners. Legendaries (~1/48000 spawns) are
 // far too rare to fairly gate a "seen every fusion" goal, so:
 //   - a fusion only advances a species when its PARTNER is non-legendary,
 //   - the per-species denominator is 2·(non-legendary supported count),

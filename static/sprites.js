@@ -912,8 +912,8 @@
   // generate_sprite_packs.py at CI time). Each pack is a small binary
   // container holding every (a, variant) cell for one partner species
   // as tight-bbox PNG bytes plus a small index — runtime work is one
-  // fetch + DataView parse per partner, then sub-ms ArrayBuffer slices
-  // for every cell access after that.
+  // ranged index fetch per partner, then one small ranged fetch (or
+  // sub-ms ArrayBuffer slice in whole-pack fallback mode) per cell.
   //
   // Why no IDB layer: writing 22 500 Blobs to IDB takes ~50 minutes on
   // iOS WKWebView (each `put(blob)` structured-clones individually,
@@ -929,20 +929,84 @@
   //   N × 16 B (u32 a, i32 variant, u32 offset, u32 length)  index
   //   PNG payload bytes
   //
-  // _packCache holds parsed packs keyed by partner-id b. Entries are a
-  // Map<"a:variant", [absolute_offset, length]> + the underlying
-  // ArrayBuffer. LRU-evicted at PACK_CACHE_MAX so memory stays bounded
-  // even for users who roam across many regions in one session.
+  // _packCache holds parsed packs keyed by partner-id b. Every entry
+  // has a Map<"a:variant", [absolute_offset, length]> index. Entries
+  // come in two modes:
+  //
+  //   ranged: true  — index only (~tens of KB). Cell bytes are pulled
+  //                   on demand with HTTP Range requests, so a cold
+  //                   start with ~50 visible markers (each a distinct
+  //                   random partner) transfers ~3 MB total instead of
+  //                   fetching 50 whole packs (~100 MB+) — the old
+  //                   behaviour that left markers as red dots for
+  //                   5-10 s on older devices.
+  //   ranged: false — index + the full ArrayBuffer, for servers that
+  //                   ignore Range (answered the probe with 200). Cell
+  //                   reads are then sub-ms ArrayBuffer slices.
+  //
+  // LRU-evicted at PACK_CACHE_MAX so memory stays bounded even for
+  // users who roam across many regions in one session.
   const _packCache = new Map();
   const _packLoadPromises = new Map();
   const PACK_CACHE_MAX = 16;
   const PACK_MAGIC_BE = 0x43525050;  // 'CRPP' read big-endian
+  // Ranged-mode probe window. 64 KiB covers any realistic index
+  // (8 B header + 16 B × cellCount; ~1 350 cells ≈ 22 KB today). A
+  // pack whose index outgrows this gets one exact-remainder fetch.
+  const PACK_INDEX_PROBE = 65536;
 
   function _packEntryKey(a, variant) {
     // variant: -1 means autogen, 0+ means custom slot. Normalize null
     // → -1 so callers can pass either shape.
     const v = (typeof variant === 'number' && variant >= 0) ? variant : -1;
     return `${a}:${v}`;
+  }
+
+  // Parse a pack index out of a DataView covering at least the file's
+  // first `8 + cellCount*16` bytes. Returns null on bad magic.
+  function _packParseIndex(view) {
+    if (view.getUint32(0, false) !== PACK_MAGIC_BE) return null;
+    const cellCount = view.getUint32(4, true);
+    const indexStart = 8;
+    const payloadStart = indexStart + cellCount * 16;
+    const entries = new Map();
+    for (let i = 0; i < cellCount; i++) {
+      const off = indexStart + i * 16;
+      const a = view.getUint32(off, true);
+      const variant = view.getInt32(off + 4, true);
+      const dataOffset = view.getUint32(off + 8, true);
+      const dataLength = view.getUint32(off + 12, true);
+      entries.set(_packEntryKey(a, variant),
+        [payloadStart + dataOffset, dataLength]);
+    }
+    return entries;
+  }
+
+  function _packCacheSet(b, pack) {
+    _packCache.set(b, pack);
+    if (typeof window !== 'undefined') {
+      window._spriteDiag = window._spriteDiag || {};
+      window._spriteDiag.packModes = window._spriteDiag.packModes || {};
+      window._spriteDiag.packModes[b] = pack.ranged ? 'ranged' : 'whole';
+    }
+    while (_packCache.size > PACK_CACHE_MAX) {
+      const oldestKey = _packCache.keys().next().value;
+      _packCache.delete(oldestKey);
+    }
+    return pack;
+  }
+
+  // Whole-pack mode: the full file is already in memory (the server
+  // ignored our Range probe, or a ranged cell fetch came back 200).
+  function _packFromWholeBuffer(b, buf) {
+    if (buf.byteLength < 8) return null;
+    const entries = _packParseIndex(new DataView(buf));
+    if (!entries) {
+      _logSpriteError(`loadPack/badMagic/${b}`,
+        new Error(`pack ${b} bad magic`));
+      return null;
+    }
+    return _packCacheSet(b, { entries, buf, ranged: false });
   }
 
   async function _loadPack(b) {
@@ -957,46 +1021,59 @@
 
     const p = (async () => {
       const url = `${BUNDLED_BASE}/sprite-packs/${b}.pack`;
-      let buf;
+      // Probe the head of the file with a Range request. A server that
+      // honours Range answers 206 with just the index bytes — the
+      // multi-MB payload never crosses the wire until a marker
+      // actually needs one specific cell. A server that ignores Range
+      // answers 200 with the full file, which is exactly what
+      // whole-pack mode needs, so nothing is wasted either way.
+      let resp;
       try {
-        const resp = await fetch(url);
-        if (!resp.ok) return null;
-        buf = await resp.arrayBuffer();
+        resp = await fetch(url, {
+          headers: { Range: `bytes=0-${PACK_INDEX_PROBE - 1}` },
+        });
       } catch (e) {
         _logSpriteError(`loadPack/fetch/${b}`, e);
         return null;
       }
-      const view = new DataView(buf);
-      if (buf.byteLength < 8 || view.getUint32(0, false) !== PACK_MAGIC_BE) {
+      if (!resp.ok) return null;   // 404 = no pack for this partner
+      let head = await resp.arrayBuffer();
+      if (resp.status !== 206 || head.byteLength < 8) {
+        return _packFromWholeBuffer(b, head);
+      }
+      const header = new DataView(head, 0, 8);
+      if (header.getUint32(0, false) !== PACK_MAGIC_BE) {
         _logSpriteError(`loadPack/badMagic/${b}`,
           new Error(`pack ${b} bad magic`));
         return null;
       }
-      const cellCount = view.getUint32(4, true);
-      const indexStart = 8;
-      const payloadStart = indexStart + cellCount * 16;
-      if (buf.byteLength < payloadStart) {
-        _logSpriteError(`loadPack/truncated/${b}`,
-          new Error(`pack ${b} index truncated`));
-        return null;
+      const cellCount = header.getUint32(4, true);
+      const payloadStart = 8 + cellCount * 16;
+      if (payloadStart > head.byteLength) {
+        // Index larger than the probe window (no current pack is near
+        // this; defensive for future format growth): fetch the exact
+        // remainder once and concatenate.
+        let rest;
+        try {
+          rest = await fetch(url, {
+            headers: { Range: `bytes=${head.byteLength}-${payloadStart - 1}` },
+          });
+        } catch (e) {
+          _logSpriteError(`loadPack/indexRest/${b}`, e);
+          return null;
+        }
+        if (rest.status !== 206) {
+          return _packFromWholeBuffer(b, await rest.arrayBuffer());
+        }
+        const restBytes = await rest.arrayBuffer();
+        const joined = new Uint8Array(head.byteLength + restBytes.byteLength);
+        joined.set(new Uint8Array(head), 0);
+        joined.set(new Uint8Array(restBytes), head.byteLength);
+        head = joined.buffer;
       }
-      const entries = new Map();
-      for (let i = 0; i < cellCount; i++) {
-        const off = indexStart + i * 16;
-        const a = view.getUint32(off, true);
-        const variant = view.getInt32(off + 4, true);
-        const dataOffset = view.getUint32(off + 8, true);
-        const dataLength = view.getUint32(off + 12, true);
-        entries.set(_packEntryKey(a, variant),
-          [payloadStart + dataOffset, dataLength]);
-      }
-      const pack = { entries, buf };
-      _packCache.set(b, pack);
-      while (_packCache.size > PACK_CACHE_MAX) {
-        const oldestKey = _packCache.keys().next().value;
-        _packCache.delete(oldestKey);
-      }
-      return pack;
+      const entries = _packParseIndex(new DataView(head, 0, payloadStart));
+      if (!entries) return null;  // magic checked above; unreachable
+      return _packCacheSet(b, { entries, ranged: true });
     })();
     _packLoadPromises.set(b, p);
     try { return await p; }
@@ -1006,23 +1083,56 @@
   async function _packGetBlob(a, b, variant) {
     const pack = await _loadPack(b);
     if (!pack) return null;
-    const entry = pack.entries.get(_packEntryKey(a, variant));
+    const key = _packEntryKey(a, variant);
+    const entry = pack.entries.get(key);
     if (!entry) return null;
     const [offset, length] = entry;
-    // Uint8Array view (no copy); Blob ctor takes one snapshot of those
-    // bytes into the blob's internal store. The underlying ArrayBuffer
-    // stays alive in _packCache so subsequent slices for the same
-    // partner are sub-ms.
-    const slice = new Uint8Array(pack.buf, offset, length);
-    return new Blob([slice], { type: 'image/png' });
+    if (!pack.ranged) {
+      // Uint8Array view (no copy); Blob ctor takes one snapshot of
+      // those bytes into the blob's internal store.
+      const slice = new Uint8Array(pack.buf, offset, length);
+      return new Blob([slice], { type: 'image/png' });
+    }
+    // Ranged mode: pull just this cell's PNG bytes (~tens of KB)
+    // instead of holding the whole multi-MB pack in memory.
+    const url = `${BUNDLED_BASE}/sprite-packs/${b}.pack`;
+    let resp;
+    try {
+      resp = await fetch(url, {
+        headers: { Range: `bytes=${offset}-${offset + length - 1}` },
+      });
+    } catch (e) {
+      _logSpriteError(`packGetBlob/range/${b}/${key}`, e);
+      return null;
+    }
+    if (resp.status === 200) {
+      // Server stopped honouring Range mid-session (the index probe
+      // established support, so this shouldn't happen). Switch this
+      // pack to whole-pack mode and answer from the buffer just
+      // received.
+      const whole = _packFromWholeBuffer(b, await resp.arrayBuffer());
+      if (!whole) return null;
+      const e2 = whole.entries.get(key);
+      if (!e2) return null;
+      return new Blob([new Uint8Array(whole.buf, e2[0], e2[1])],
+        { type: 'image/png' });
+    }
+    if (resp.status !== 206) return null;
+    const bytes = await resp.arrayBuffer();
+    if (bytes.byteLength !== length) {
+      _logSpriteError(`packGetBlob/shortRead/${b}/${key}`,
+        new Error(`expected ${length} B, got ${bytes.byteLength}`));
+      return null;
+    }
+    return new Blob([bytes], { type: 'image/png' });
   }
 
   async function getSpriteBlob(a, b, variant) {
     // Capacitor: serve from the bundled pack file via the in-memory
-    // _packCache. No IDB, no canvas, no decode — just fetch (cached
-    // by the OS file layer + LocalServer/asset loader) + DataView
-    // parse + ArrayBuffer slice. First sprite per partner: ~50-100 ms;
-    // subsequent sprites for that partner: sub-ms.
+    // _packCache. No IDB, no canvas, no decode — ranged fetch of the
+    // small pack index, then a ranged fetch of just the one cell's
+    // PNG bytes (~tens of KB). Falls back to holding whole packs when
+    // the server ignores Range requests.
     if (typeof window !== 'undefined' && window.Capacitor) {
       try {
         const blob = await _packGetBlob(a, b, variant);

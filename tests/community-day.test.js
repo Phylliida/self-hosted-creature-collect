@@ -189,7 +189,7 @@ const FORMS_X = new Set(EVOS_X.length ? EVOS_X : [X]);
 }
 
 // ── 4) Legendary stream exempt ──────────────────────────────────
-// Sweep cell-ticks until a few legendaries surface (they're ~1 in 4M
+// Sweep cell-ticks until a few legendaries surface (they're ~1 in 12M
 // cell-ticks, so scan adaptively); output must be identical with and
 // without a session.
 {

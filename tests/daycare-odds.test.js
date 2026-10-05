@@ -33,14 +33,16 @@ function extract(marker) {
   return src.slice(start, i + 1);
 }
 
-const NAMES = { 1: 'Bulbasaur', 4: 'Charmander', 7: 'Squirtle', 25: 'Pikachu', 26: 'Raichu' };
-function build(slots, creatures) {
+const NAMES = { 1: 'Bulbasaur', 4: 'Charmander', 7: 'Squirtle', 25: 'Pikachu', 26: 'Raichu', 150: 'Mewtwo', 151: 'Mew' };
+function build(slots, creatures, legSet) {
+  const legendary = legSet || new Set();
   const ctx = {
     Number, Set, Map, Array, Object, Math, String,
     DAYCARE_PROB_CANDY: 0.70, DAYCARE_PROB_EGG: 0.15, DAYCARE_LOOT_MILESTONE_M: 500,
     readDaycareSlots: () => slots,
     readNicknames: () => ({}),
     findCreature: (id) => creatures[id] || null,
+    isLegendarySpecies: (id) => legendary.has(id),
     candyRootFor: (id) => (id === 26 ? 25 : id),   // Raichu → Pikachu root
     _eggRootFor: (id) => (id === 26 ? 25 : id),    // same here (no babies in this stub)
     speciesNameFor: (id) => NAMES[id] || ('#' + id),
@@ -54,7 +56,8 @@ function build(slots, creatures) {
     isFusionOwned: () => false,
   };
   vm.createContext(ctx);
-  for (const fn of ['_fmtPct(', '_daycareOddsModel()', '_daycareOddsHtml()']) {
+  for (const fn of ['_daycareEggProb(', '_daycareHasBadEggMismatch(',
+                    '_fmtPct(', '_daycareOddsModel()', '_daycareOddsHtml()']) {
     vm.runInContext(extract('function ' + fn), ctx);
   }
   return {
@@ -150,6 +153,78 @@ function build(slots, creatures) {
   ok(rootOf(143) === 446, '5: Snorlax egg → Munchlax (baby in dataset)');
   ok(rootOf(26) === 172 && rootOf(25) === 172, '5: Raichu/Pikachu egg → Pichu');
   ok(rootOf(1) === 1, '5: baby-less family root is itself');
+}
+
+// ── 6. Legendary present (legendary × legendary): egg rate halves, no Bad Eggs ──
+{
+  const { model, html } = build(
+    [{ id: 'A', addedAt: 1 }, { id: 'B', addedAt: 2 }],
+    {
+      A: { id: 'A', name: 'L', speciesA: 150, speciesB: 151 },   // Mewtwo × Mew — both legendary
+      B: { id: 'B', name: 'N', speciesA: 4, speciesB: 1 },       // Charmander × Bulbasaur
+    },
+    new Set([150, 151]));
+  ok(model.badEggs === false, '6: legendary × legendary pair does NOT trigger Bad Eggs');
+  // The halved egg band's slack folds into candy (mirrors _daycareLootAt:
+  // the evo band stays pinned at the top 15%, candy absorbs the rest).
+  const sA = model.slots[0], sB = model.slots[1];
+  ok(close(sA.eggPct, 0.075) && close(sB.eggPct, 0.075),
+     '6: any legendary in the daycare halves the egg rate for EVERY slot');
+  ok(close(sA.candyPct, 0.925) && sA.evoPct === 0,
+     '6: no-item legendary pair folds the slack into candy (92.5%)');
+  ok(close(sB.candyPct, 0.925), '6: the normal pair shares the same halved model');
+  ok(html.indexOf('Egg 7.5%') >= 0 && html.indexOf('Bad Egg') < 0,
+     '6: chip shows the halved rate, still a normal egg');
+  ok(html.indexOf('what hatches') >= 0, '6: egg-contents section still shown');
+}
+
+// ── 7. Legendary with an item evo: evo band stays pinned, candy absorbs ──
+{
+  const { model } = build(
+    [{ id: 'A', addedAt: 1 }],
+    { A: { id: 'A', name: 'M', speciesA: 150, speciesB: 26 } },   // Mewtwo × Raichu — but make both "legendary"
+    new Set([150, 26]));
+  const s = model.slots[0];
+  ok(close(s.eggPct, 0.075), '7: halved egg rate');
+  ok(close(s.evoPct, 0.15), '7: item-evo band stays pinned at 15%');
+  ok(close(s.candyPct, 0.775), '7: the freed egg band folds into candy (77.5%)');
+  ok(close(s.candyPct + s.eggPct + s.evoPct, 1.0), '7: split still sums to 100%');
+  ok(model.badEggs === false, '7: both halves legendary → no Bad Eggs');
+}
+
+// ── 8. Legendary × non-legendary: Bad Egg replaces the egg contents ──
+{
+  const { model, html } = build(
+    [{ id: 'A', addedAt: 1 }, { id: 'B', addedAt: 2 }],
+    {
+      A: { id: 'A', name: 'M', speciesA: 150, speciesB: 7 },   // Mewtwo × Squirtle — mismatched
+      B: { id: 'B', name: 'N', speciesA: 4, speciesB: 1 },     // normal pair, still poisoned
+    },
+    new Set([150]));
+  ok(model.badEggs === true, '8: mismatched pair flips the model to Bad Eggs');
+  // The NUMBER is the point: the chip probability is exactly the halved
+  // egg rate, identical for both slots (rule is daycare-wide).
+  ok(model.slots[0].eggPct === 0.15 / 2 && model.slots[1].eggPct === 0.15 / 2,
+     '8: chip probability is exactly DAYCARE_PROB_EGG / 2 (0.075) for EVERY slot');
+  ok(html.indexOf('Bad Egg 7.5%') >= 0, '8: chip reads "Bad Egg 7.5%" (number formatted like Egg 15%)');
+  ok(html.indexOf('dc-odds-egglist') < 0, '8: normal egg-contents list suppressed');
+  ok(html.indexOf('only produces') >= 0 && html.indexOf('never hatch') >= 0,
+     '8: copy states the daycare only produces Bad Eggs that never hatch');
+  ok(html.indexOf('2×') >= 0, '8: copy mentions the 2× incense craft value');
+  ok(html.indexOf('500 m') >= 0 && html.indexOf('7.5%') >= 0,
+     '8: copy ties the 7.5% to the per-milestone (500 m) drop basis');
+}
+
+// ── 9. Halving is conditional: no legendary → full 0.15 reported ──
+{
+  const { model, html } = build(
+    [{ id: 'A', addedAt: 1 }],
+    { A: { id: 'A', name: 'N', speciesA: 4, speciesB: 1 } },
+    new Set([150]));
+  ok(model.slots[0].eggPct === 0.15 && model.badEggs === false,
+     '9: non-legendary daycare still reports the full 0.15');
+  ok(html.indexOf('Egg 15%') >= 0 && html.indexOf('Bad Egg') < 0,
+     '9: chip is the normal "Egg 15%", no bad-egg copy');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

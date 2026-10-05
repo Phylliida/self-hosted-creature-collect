@@ -130,12 +130,12 @@ mdb-238	http://data.trilliumtransit.com/gtfs/bristol-va-us/bristol-va-us.zip	Bri
 mdb-243	http://data.trilliumtransit.com/gtfs/interisland-ak-us/interisland-ak-us.zip	Inter-Island Ferry / Ketchikan / Alaska	https://files.mobilitydatabase.org/mdb-243/latest.zip
 mdb-244	http://data.trilliumtransit.com/gtfs/kgb-ak-us/kgb-ak-us.zip	Ketchikan Gateway Borough / Ketchikan Gateway / Alaska	https://files.mobilitydatabase.org/mdb-244/latest.zip
 mdb-245	https://business.wsdot.wa.gov/Transit/csv_files/InterCityBus/WSDOT_GTFS_Intercity.zip	Washington State Department of Transportation (WSDOT Apple Line) / King County / Washington	https://files.mobilitydatabase.org/mdb-245/latest.zip
-mdb-246	https://oregon-gtfs.trilliumtransit.com/gtfs_data/tillamookcounty-or-us/tillamookcounty-or-us.zip	Sunset Empire Transportation District (SETD), Tillamook County Transportation District, Columbia County Rider / Clatsop County / Oregon	https://files.mobilitydatabase.org/mdb-246/latest.zip
+mdb-246	https://oregon-gtfs.trilliumtransit.com/gtfs_data/tillamookcounty-or-us/tillamookcounty-or-us.zip	Sunset Empire Transportation District (SETD), Tillamook County Transportation District, Columbia County Rider / Cannon Beach / Oregon	https://files.mobilitydatabase.org/mdb-246/latest.zip
 mdb-247	http://developer.trimet.org/schedule/gtfs.zip	TriMet, Portland Streetcar / Beaverton / Oregon	https://files.mobilitydatabase.org/mdb-247/latest.zip
 mdb-249	http://data.trilliumtransit.com/gtfs/wotm-wa-us/wotm-wa-us.zip	Wahkiakum on the Move / Longview / Washington	https://files.mobilitydatabase.org/mdb-249/latest.zip
 mdb-250	http://ycta.connexionz.net/rtt/public/resource/gtfs.zip	Yamhill County Transit Area / Forest Grove / Oregon	https://files.mobilitydatabase.org/mdb-250/latest.zip
 mdb-251	https://oregon-gtfs.trilliumtransit.com/gtfs_data/woodburn-or-us/woodburn-or-us.zip	Woodburn Transit Service (WTS) / Marion County / Oregon	https://files.mobilitydatabase.org/mdb-251/latest.zip
-mdb-252	https://oregon-gtfs.trilliumtransit.com/gtfs_data/canbytransit-or-us/canbytransit-or-us.zip	Canby Area Transit (CAT) / Canby / Oregon	https://files.mobilitydatabase.org/mdb-252/latest.zip
+mdb-252	https://oregon-gtfs.trilliumtransit.com/gtfs_data/canbytransit-or-us/canbytransit-or-us.zip	Canby Area Transit (CAT) / Clackamas County / Oregon	https://files.mobilitydatabase.org/mdb-252/latest.zip
 mdb-253	https://oregon-gtfs.trilliumtransit.com/gtfs_data/rideconnection-or-us/rideconnection-or-us.zip	Ride Connection / Forest Grove / Oregon	https://files.mobilitydatabase.org/mdb-253/latest.zip
 mdb-254	https://oregon-gtfs.trilliumtransit.com/gtfs_data/washingtonparkshuttle-or-us/washingtonparkshuttle-or-us.zip	Washington Park Shuttle / Multnomah County / Oregon	https://files.mobilitydatabase.org/mdb-254/latest.zip
 mdb-255	https://oregon-gtfs.trilliumtransit.com/gtfs_data/swanisland-or-us/swanisland-or-us.zip	Swan Island Evening Shuttle / Multnomah County / Oregon	https://files.mobilitydatabase.org/mdb-255/latest.zip
@@ -271,7 +271,7 @@ mdb-521	https://www.nicebus.com/NICE/media/nicebus-gtfs/NICE_GTFS.zip	Nassau Int
 mdb-524	http://web.mta.info/developers/data/mnr/google_transit.zip	Metro-North Railroad / Ansonia / Connecticut	https://files.mobilitydatabase.org/mdb-524/latest.zip
 mdb-526	https://s3.amazonaws.com/datatools-511ny/public/UCAT_Ulster_County_Area_Transit.zip	Ulster County Area Transit / Ulster County / New York	https://files.mobilitydatabase.org/mdb-526/latest.zip
 mdb-528	http://web.mta.info/developers/data/nyct/bus/google_transit_bronx.zip	Metropolitan Transit Authority (MTA) / Bronx County / New York	https://files.mobilitydatabase.org/mdb-528/latest.zip
-mdb-530	http://data.trilliumtransit.com/gtfs/gbt-ct-us/gbt-ct-us.zip	Greater Bridgeport Transit / Bridgeport / Connecticut	https://files.mobilitydatabase.org/mdb-530/latest.zip
+mdb-530	http://data.trilliumtransit.com/gtfs/gbt-ct-us/gbt-ct-us.zip	Greater Bridgeport Transit / Fairfield County / Connecticut	https://files.mobilitydatabase.org/mdb-530/latest.zip
 mdb-531	https://s3.amazonaws.com/datatools-511ny/public/Access_Allegany.zip	Access Allegany / Allegany County / New York	https://files.mobilitydatabase.org/mdb-531/latest.zip
 mdb-532	https://s3.amazonaws.com/datatools-511ny/public/Hornell_Area_Transit.zip	Hornell Area Transit / Steuben County / New York	https://files.mobilitydatabase.org/mdb-532/latest.zip
 mdb-533	http://scheduledata.rgrta.com/google_transit.zip	Rochester-Genesee Regional Transportation Authority (RGRTA) / Monroe County / New York	https://files.mobilitydatabase.org/mdb-533/latest.zip
@@ -316,7 +316,7 @@ mdb-613	https://s3.amazonaws.com/datatools-511ny/public/Greene_County_Transit.zi
 mdb-617	http://data.trilliumtransit.com/gtfs/guadalupeflyer-ca-us/guadalupeflyer-ca-us.zip	Guadalupe Flyer / Guadalupe / California	https://files.mobilitydatabase.org/mdb-617/latest.zip
 mdb-618	http://data.trilliumtransit.com/gtfs/harborconnector-md-us/harborconnector-md-us.zip	Harbor Connector / Baltimore / Maryland	https://files.mobilitydatabase.org/mdb-618/latest.zip
 mdb-619	http://data.trilliumtransit.com/gtfs/turlock-ca-us/turlock-ca-us.zip	Turlock Transit / Stanislaus County / California	https://files.mobilitydatabase.org/mdb-619/latest.zip
-mdb-620	http://data.trilliumtransit.com/gtfs/valpotransit-chi-us/valpotransit-chi-us.zip	Valparaiso Transit / Valparaiso / Indiana	https://files.mobilitydatabase.org/mdb-620/latest.zip
+mdb-620	http://data.trilliumtransit.com/gtfs/valpotransit-chi-us/valpotransit-chi-us.zip	Valparaiso Transit / Porter County / Indiana	https://files.mobilitydatabase.org/mdb-620/latest.zip
 mdb-621	http://data.trilliumtransit.com/gtfs/vatransit-va-us/vatransit-va-us.zip	Virginia Regional Transit / Culpeper County / Virginia	https://files.mobilitydatabase.org/mdb-621/latest.zip
 mdb-624	https://ripta.com/RIPTA-GTFS.zip	Rhode Island Public Transit Authority / Bristol County / Massachusetts	https://files.mobilitydatabase.org/mdb-624/latest.zip
 mdb-626	https://corporate.sunrail.com/gtfs/google_transit.zip	Florida Department of Transportation (SunRail) / Orlando / Florida	https://files.mobilitydatabase.org/mdb-626/latest.zip
@@ -370,15 +370,14 @@ mdb-1067	https://iportal.sacrt.com/gtfs/Roseville/google_transit.zip	Roseville T
 mdb-1080	https://gtfs.sound.obaweb.org/prod/gtfs_puget_sound_consolidated.zip	Metro Transit, Intercity Transit, City of Seattle, Community Transit, Pierce Transit, Sound Transit, Washington State Ferries, SeattleCenterMonorail, Everett Transit, Seattle Children's Hospital / Arlington / Washington	https://files.mobilitydatabase.org/mdb-1080/latest.zip
 mdb-1087	https://data.trilliumtransit.com/gtfs/bacacounty-co-us/bacacounty-co-us--flex-v2.zip	Baca Area Transportation / Baca County / Colorado	https://files.mobilitydatabase.org/mdb-1087/latest.zip
 mdb-1110	https://www.wavetransit.com/gtransit/google_transit.zip	Wave Transit / Wilmington / North Carolina	https://files.mobilitydatabase.org/mdb-1110/latest.zip
-mdb-1121	http://www.knoxvilletn.gov/UserFiles/Servers/Server_109478/File/KAT/gtfs-kat.zip	Knoxville Area Transit (KAT) / Knoxville / Tennessee	https://files.mobilitydatabase.org/mdb-1121/latest.zip
 mdb-1126	http://feed.gobrightline.com/bl_gtfs.zip	Brightline Trains LLC / Fort Lauderdale / Florida	https://files.mobilitydatabase.org/mdb-1126/latest.zip
 mdb-1141	https://data.trilliumtransit.com/gtfs/dolorescounty-co-us/dolorescounty-co-us--flex-v2.zip	Dolores County / Dolores County / Colorado	https://files.mobilitydatabase.org/mdb-1141/latest.zip
 mdb-1143	https://buswhere.com/iridetrolley/gtfs/schedule	I-RIDE Trolley (I-RIDE) / Orange County / Florida	https://files.mobilitydatabase.org/mdb-1143/latest.zip
-mdb-1156	http://omniride.com/omniride/assets/File/google_transit.zip	Potomac and Rappahannock Transportation Commission (PRTC) Omniride / Prince William County / Virginia	https://files.mobilitydatabase.org/mdb-1156/latest.zip
+mdb-1156	http://omniride.com/omniride/assets/File/google_transit.zip	OmniRide / Prince William County / Virginia	https://files.mobilitydatabase.org/mdb-1156/latest.zip
 mdb-1189	http://www.bt4uclassic.org/gtfs/google_transit.zip	Blacksburg Transit / Montgomery County / Virginia	https://files.mobilitydatabase.org/mdb-1189/latest.zip
 mdb-1195	https://data.trilliumtransit.com/gtfs/broomfield-co-us/broomfield-co-us--flex-v2.zip	Easy Ride Transportation / City and County of Broomfield / Colorado	https://files.mobilitydatabase.org/mdb-1195/latest.zip
 mdb-1198	https://drive.google.com/uc?export=download&id=1869EVa1z6m_iD6QmvRXyTHtYiaSUBROl	Long Beach Transit (LBT) / Los Angeles County / California	https://files.mobilitydatabase.org/mdb-1198/latest.zip
-mdb-1210	https://ladotbus.com/gtfs	Los Angeles Department of Transportation (LADOT, DASH, Commuter Express) / Los Angeles County / California	https://files.mobilitydatabase.org/mdb-1210/latest.zip
+mdb-1210	https://ladotbus.com/gtfs	Los Angeles Department of Transportation (LADOT - DASH - Commuter Express) / Los Angeles County / California	https://files.mobilitydatabase.org/mdb-1210/latest.zip
 mdb-1232	https://data.trilliumtransit.com/gtfs/pueblo-co-us/pueblo-co-us--flex-v2.zip	Pueblo Transit / Pueblo County / Colorado	https://files.mobilitydatabase.org/mdb-1232/latest.zip
 mdb-1235	http://dartfirststate.com/RiderInfo/Routes/gtfs_data/dartfirststate_de_us.zip	Delaware Transit Corporation (DART First State) / New Castle County / Delaware	https://files.mobilitydatabase.org/mdb-1235/latest.zip
 mdb-1240	https://gtfs.remix.com/act_los_alamos_nm_us.zip	Atomic City Transit / Los Alamos County / New Mexico	https://files.mobilitydatabase.org/mdb-1240/latest.zip
@@ -482,7 +481,7 @@ mdb-2245	https://passio3.com/ncstateuni/passioTransit/gtfs/google_transit.zip	No
 mdb-2246	https://racine.connexionz.net/rtt/public/utility/gtfs.aspx	Ryde Racine / Racine / Wisconsin	https://files.mobilitydatabase.org/mdb-2246/latest.zip
 mdb-2247	https://baldwinpark.tectransit.com/api/public/fixedRoute/gtfs	Baldwin Park Transit / Irwindale / California	https://files.mobilitydatabase.org/mdb-2247/latest.zip
 mdb-2254	https://batabustracker.com/gtfs	Bay Area Transportation Authority / Grand Traverse County / Michigan	https://files.mobilitydatabase.org/mdb-2254/latest.zip
-mdb-2255	https://www.ridelakexpress.com/gtfs/gtfs.zip	Lake County Connection / Leesburg / Florida	https://files.mobilitydatabase.org/mdb-2255/latest.zip
+mdb-2255	https://www.ridelakexpress.com/gtfs/gtfs.zip	Lake County Connection / Lake County / Florida	https://files.mobilitydatabase.org/mdb-2255/latest.zip
 mdb-2256	https://passio3.com/parta/passioTransit/gtfs/google_transit.zip	Portage Area Regional Transportation Authority (PARTA) / Portage County / Ohio	https://files.mobilitydatabase.org/mdb-2256/latest.zip
 mdb-2258	https://realtimemcat.availtec.com/InfoPoint/GTFS-Zip.ashx	Manatee County Area Transit / Bradenton / Florida	https://files.mobilitydatabase.org/mdb-2258/latest.zip
 mdb-2259	https://cat.cadavl.com:4431/CAT/GTFS/GTFS_CAT.zip	Collier Area Transit (CAT) / Collier County / Florida	https://files.mobilitydatabase.org/mdb-2259/latest.zip
@@ -529,7 +528,7 @@ mdb-2312	https://data.trilliumtransit.com/gtfs/hudsonlink-ny-us/hudsonlink-ny-us
 mdb-2313	https://data.trilliumtransit.com/gtfs/jackson-tn-us/jackson-tn-us.zip	Jackson Transit Authority / Jackson / Tennessee	https://files.mobilitydatabase.org/mdb-2313/latest.zip
 mdb-2318	https://data.trilliumtransit.com/gtfs/lakechelan-wa-us/lakechelan-wa-us.zip	Lady of the Lake / Chelan County / Washington	https://files.mobilitydatabase.org/mdb-2318/latest.zip
 mdb-2319	https://data.trilliumtransit.com/gtfs/lummiislandferry-wa-us/lummiislandferry-wa-us.zip	Lummi Island Ferry / Whatcom County / Washington	https://files.mobilitydatabase.org/mdb-2319/latest.zip
-mdb-2320	https://data.trilliumtransit.com/gtfs/lummitransit-wa-us/lummitransit-wa-us.zip	Lummi Transit / Ferndale / Washington	
+mdb-2320	https://data.trilliumtransit.com/gtfs/lummitransit-wa-us/lummitransit-wa-us.zip	Lummi Transit / Whatcom County / Washington	https://files.mobilitydatabase.org/mdb-2320/latest.zip
 mdb-2321	https://data.trilliumtransit.com/gtfs/megabus-us/megabus-us.zip	Megabus / Bergen County / New Jersey	https://files.mobilitydatabase.org/mdb-2321/latest.zip
 mdb-2322	https://data.trilliumtransit.com/gtfs/miamibeach-fl-us/miamibeach-fl-us.zip	City of Miami Beach / Miami-Dade County / Florida	https://files.mobilitydatabase.org/mdb-2322/latest.zip
 mdb-2323	https://data.trilliumtransit.com/gtfs/miamigardens-fl-us/miamigardens-fl-us.zip	City of Miami Gardens / Miami Gardens / Florida	https://files.mobilitydatabase.org/mdb-2323/latest.zip
@@ -537,7 +536,7 @@ mdb-2325	https://data.trilliumtransit.com/gtfs/moccasinexpress-wa-us/moccasinexp
 mdb-2326	https://data.trilliumtransit.com/gtfs/muckleshoot-wa-us/muckleshoot-wa-us.zip	Muckleshoot Tribal Transit / King County / Washington	https://files.mobilitydatabase.org/mdb-2326/latest.zip
 mdb-2328	https://data.trilliumtransit.com/gtfs/nlte-nv-us/nlte-nv-us.zip	North Lake Tahoe Express / Placer County / California	https://files.mobilitydatabase.org/mdb-2328/latest.zip
 mdb-2330	https://data.trilliumtransit.com/gtfs/outrider-co-us/outrider-co-us.zip	Bustang Outrider / Grand County / Colorado	https://files.mobilitydatabase.org/mdb-2330/latest.zip
-mdb-2331	https://data.trilliumtransit.com/gtfs/pahtopublicpassage-wa-us/pahtopublicpassage-wa-us.zip	Pahto Public Passage / Toppenish / Washington	https://files.mobilitydatabase.org/mdb-2331/latest.zip
+mdb-2331	https://data.trilliumtransit.com/gtfs/pahtopublicpassage-wa-us/pahtopublicpassage-wa-us.zip	Pahto Public Passage / Yakima County / Washington	https://files.mobilitydatabase.org/mdb-2331/latest.zip
 mdb-2332	https://rapid.nationalrtap.org/GTFSFileManagement/UserUploadFiles/11557/S1.zip	Shawnee Mass Transit District / Pulaski County / Illinois	https://files.mobilitydatabase.org/mdb-2332/latest.zip
 mdb-2346	https://rapid.nationalrtap.org/GTFSFileManagement/UserUploadFiles/5372/Navajo_Transit_GTFS.zip	Navajo Transit System / Gallup / New Mexico	https://files.mobilitydatabase.org/mdb-2346/latest.zip
 mdb-2347	https://www.pacebus.com/gtfsdownload	Pace Bus / Cook County / Illinois	https://files.mobilitydatabase.org/mdb-2347/latest.zip
@@ -844,8 +843,7 @@ tld-6708	https://irp.cdn-website.com/442ea718/files/uploaded/opt_gtfs.zip	Open P
 tld-6713	https://passio3.com/beckley/passioTransit/gtfs/google_transit.zip	New River Transit Authority / Beckley / West Virginia	https://files.mobilitydatabase.org/tld-6713/latest.zip
 tld-6724	https://passio3.com/irvine/passioTransit/gtfs/google_transit.zip	City of Irvine / Irvine / California	https://files.mobilitydatabase.org/tld-6724/latest.zip
 tld-6735	https://passio3.com/jacksonville/passioTransit/gtfs/google_transit.zip	City of Jacksonville / Jacksonville / North Carolina	https://files.mobilitydatabase.org/tld-6735/latest.zip
-tld-6741	https://rapid.nationalrtap.org/GTFSFileManagement/UserUploadFiles/11718/myriderockhill-sc-us.zip	My Ride Rock Hill / York County / South Carolina	https://files.mobilitydatabase.org/tld-6741/latest.zip
-tld-6743	https://rapid.nationalrtap.org/GTFSFileManagement/UserUploadFiles/11713/met_gtfs.zip	Maricopa Express Transit / Maricopa / Arizona	https://files.mobilitydatabase.org/tld-6743/latest.zip
+tld-6743	https://rapid.nationalrtap.org/GTFSFileManagement/UserUploadFiles/11713/met_gtfs.zip	Maricopa Express Transit / Pinal County / Arizona	https://files.mobilitydatabase.org/tld-6743/latest.zip
 tld-6745	https://s3.amazonaws.com/datatools-511ny/public/Columbia_County_Public_Transit.zip	Propark Mobility, Columbia County Public Transportation / Hudson / New York	https://files.mobilitydatabase.org/tld-6745/latest.zip
 tld-6748	https://metro.nfta.com/__googletransit/rail/google_transit.zip	Niagara Frontier Transportation Authority / Buffalo / New York	https://files.mobilitydatabase.org/tld-6748/latest.zip
 tld-6772	https://www.lovgov.org/home/showpublisheddocument/60816/638518185148200000	City of Loveland Transit (COLT) / Fort Collins / Colorado	
@@ -951,3 +949,4 @@ mdb-3492	https://gtfs.remix.com/jaunt_charlottesville_va_us.zip	Jaunt / Albemarl
 mdb-3493	https://apps.charlottesville.gov/publicfiles/GTFS.zip	Charlottesville Area Transit (CAT) / Albemarle County / Virginia	https://files.mobilitydatabase.org/mdb-3493/latest.zip
 mdb-3506	https://maps.tds.ai/download-feed/virginia-breeze-gtfs	Virginia Breeze / Washington / District of Columbia	https://files.mobilitydatabase.org/mdb-3506/latest.zip
 tld-6902	https://www.nps.gov/external-resources/gtfs/band/bandalier-national-monument.zip	Bandalier National Monument / Los Alamos County / New Mexico	https://files.mobilitydatabase.org/tld-6902/latest.zip
+mdb-3512	https://knoxville.syncromatics.com/gtfs	Knoxville Area Transit (KAT) / Knox County / Tennessee	https://files.mobilitydatabase.org/mdb-3512/latest.zip

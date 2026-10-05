@@ -1633,13 +1633,23 @@ is moved to the top of the cluster via one DOM `insertBefore` after
 ### Daycare-as-a-place (slot system)
 
 The user can park up to 2 captured creatures in the daycare. Each slot
-stores `{ id, addedAt, distM }`:
+stores `{ id, addedAt, distM, steps, claimed, convertDir,
+convertedCountA, convertedCountB }`:
 
 - `id`: capture id reference.
 - `addedAt`: timestamp set when the creature is placed; reset on each
-  re-entry.
-- `distM`: meters accumulated DURING the current stay. Reset to 0 each
-  time the creature is re-added.
+  re-entry. Only the loot stream seed depends on it.
+- `distM` / `steps`: meters (or pedometer steps) accumulated in the
+  daycare, LIFETIME — seeded from the per-capture record in
+  `cc.daycareLifetime.v1` when the creature is parked and banked back
+  into it on removal, so taking a creature out and putting it back
+  resumes the counter instead of resetting it to 0.
+- `claimed` / `convertDir` / `convertedCountA` / `convertedCountB`:
+  carried through the same lifetime record, so a re-entry can't replay
+  already-collected milestones (including the ones the removal
+  auto-claim loop just granted) or re-fire conversions. `distM`,
+  `steps` and the counters merge as `max` on the way in, so a stale
+  record can never rewind progress.
 
 `_accumulateDaycareDistance` adds the same `d` meters it credits to
 today's bucket onto each occupied slot's `distM`. Same accept filters
@@ -1654,9 +1664,13 @@ full and this creature isn't already in it, the chip disappears from
 the picker. `_liveDaycareCount()` filters slot IDs against existing
 captures so a stale ID (creature deleted) doesn't lock out new entries.
 
-Export/import payload carries the slots; importer normalizes both v1
-(string-id-only) and v2 (object) shapes, filters against valid capture
-IDs in the imported + existing data, caps at 2.
+Export/import payload carries the slots and the `cc.daycareLifetime.v1`
+map; importer normalizes both v1 (string-id-only) and v2 (object)
+shapes, filters against valid capture IDs in the imported + existing
+data, caps at 2. The lifetime map max-merges (distance, steps,
+conversion counters) and unions claimed milestones, and it also banks
+the progress of any incoming slot that merge drops, so an import can't
+rewind a counter.
 
 ## Spawn-rate tuning
 
@@ -2064,7 +2078,7 @@ Final state: every refresh button across iOS / web / Android works
 the same way. Address search has gaps (interpolation; no-street
 housenumbers) but works well for the cases it covers. Documentation
 is comprehensive. Architecture is stable. The walk to Sage Days
-continues, and the daycare-tagged buddies tally meters per stay.
+continues, and the daycare-tagged buddies keep tallying meters.
 :3
 ```
 

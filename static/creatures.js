@@ -1114,18 +1114,32 @@
   //   id     : capture id (string)
   //   addedAt: ms-since-epoch when this creature was placed in the
   //            slot. Resets each time a creature is removed and
-  //            re-added — that's how distance accumulation restarts
-  //            from zero on re-entry, matching the user's mental
-  //            model ("the daycare counter is the distance walked
-  //            *during this stay*, not lifetime in the daycare").
-  //   distM  : meters travelled while this slot was occupied,
-  //            updated by _accumulateDaycareDistance on every
-  //            accepted GPS fix.
+  //            re-added — together with id it seeds the deterministic
+  //            loot stream (_daycareLootAt), so each stay rolls its
+  //            own item sequence for newly-earned milestones.
+  //   distM  : meters travelled with this creature in the daycare,
+  //            updated by _creditMeters on every accepted GPS fix.
+  //            Seeded from (and banked back into) the lifetime store
+  //            below, so the counter survives removal + re-entry
+  //            instead of restarting from zero.
   // Legacy shape was a flat array of capture-id strings. The reader
   // migrates strings → objects on first read after upgrade so old
   // saves keep working without a separate migration step.
   const DAYCARE_SLOTS_KEY = 'cc.daycareSlots.v1';
   const DAYCARE_SLOT_COUNT = 2;
+  // Lifetime daycare progress per capture id: a flat map
+  // { [captureId]: { distM, steps, claimed, convertDir,
+  // convertedCountA, convertedCountB } }. Written when a slot is
+  // removed (and by the dev repopulate hook), read when a slot is
+  // added — a creature's distance counter, already-claimed milestones,
+  // and candy-conversion state travel with it across daycare stays.
+  const DAYCARE_LIFETIME_KEY = 'cc.daycareLifetime.v1';
+  // Legendary daycare cutoff: legendaries hatched from eggs BEFORE the
+  // 2026-10-05 bad-egg rule shipped may be legendary × non-legendary
+  // fusions (that pairing was possible while any legendary sat in the
+  // daycare). Those can't go back in — legendaries only breed with
+  // each other now. 2026-10-05T00:00:00-07:00 (Pacific, game time).
+  const LEGENDARY_DAYCARE_CUTOFF_MS = 1791183600000;
 
   // Egg inventory. Each entry is an unhatched fusion egg dropped
   // from the daycare loot rolls (or, in the future, traded /
@@ -1188,6 +1202,9 @@
       if (Number.isInteger(egg.displaySpecies)) {
         record.displaySpecies = egg.displaySpecies;
       }
+      // Bad Eggs (legendary × non-legendary daycare mismatch) never
+      // hatch; they only craft into 2× incense.
+      if (egg.bad === true) record.bad = true;
     }
     arr.push(record);
     writeEggs(arr);
@@ -1416,6 +1433,7 @@
     return (typeof v === 'number' && v >= 0) ? v : 0;
   }
   function eggReadyToHatch(egg) {
+    if (_isBadEgg(egg)) return false;  // Bad Eggs never hatch
     return eggIncubatedM(egg) >= eggHatchM(egg);
   }
 
@@ -1567,12 +1585,43 @@
   //   0.00–0.70  candy   — 1 candy in the daycare pokémon's family
   //                        bucket (50/50 between A and B's roots)
   //   0.70–0.85  egg     — same fusion as the parent, level 1, with
-  //                        a randomized size baked in at drop time
+  //                        a randomized size baked in at drop time.
+  //                        While any legendary sits in the daycare the
+  //                        egg window SHRINKS to half (0.70–0.775);
+  //                        the freed band folds back into candy, so
+  //                        the evo band below stays fixed.
   //   0.85–1.00  evo_item — uniform pick from items that can evolve
   //                        either side's family. Falls back to candy
   //                        if neither family has an Item evolution.
   const DAYCARE_PROB_CANDY = 0.70;
-  const DAYCARE_PROB_EGG = 0.15;  // implicit upper bound = 0.85
+  const DAYCARE_PROB_EGG = 0.15;  // upper bound 0.85 is also the fixed evo threshold
+
+  // Egg probability for the current daycare population. Legendaries
+  // only breed with each other, so while ANY legendary sits in the
+  // daycare the egg chance halves (the freed band folds into candy —
+  // the evo band stays pinned at the top 0.15).
+  function _daycareEggProb() {
+    for (const s of readDaycareSlots()) {
+      const c = findCreature(s.id);
+      if (c && (isLegendarySpecies(c.speciesA) || isLegendarySpecies(c.speciesB))) {
+        return DAYCARE_PROB_EGG / 2;
+      }
+    }
+    return DAYCARE_PROB_EGG;
+  }
+
+  // Bad-egg rule: a slot holding a legendary fused with a non-legendary
+  // can't breed — and its presence poisons every egg roll in EVERY slot,
+  // turning them into Bad Eggs (never hatch; craft 2× incense of any
+  // type). Legendary × legendary pairs still produce normal eggs.
+  function _daycareHasBadEggMismatch() {
+    for (const s of readDaycareSlots()) {
+      const c = findCreature(s.id);
+      if (!c) continue;
+      if (isLegendarySpecies(c.speciesA) !== isLegendarySpecies(c.speciesB)) return true;
+    }
+    return false;
+  }
 
   function _evoItemsForFamily(speciesId) {
     if (speciesId == null) return [];
@@ -1627,6 +1676,9 @@
     if (Number.isInteger(a)) firstPool.add(a);
     if (Number.isInteger(b)) secondPool.add(b);
     const allSpeciesSet = new Set([...firstPool, ...secondPool]);
+    // Egg chance for this loot call — halves while any legendary is in
+    // the daycare (they only breed with each other).
+    const eggProb = _daycareEggProb();
 
     // Six independent uniform draws from the per-milestone seed.
     // Append-only — never reorder or insert in the middle, since
@@ -1666,6 +1718,12 @@
         }
         return { kind: 'candy', solo: creature.solo, label: `${soloName} candy` };
       }
+      // A halved egg window (legendary in the daycare) leaves a gap
+      // between the egg band and the fixed evo band — it folds into
+      // candy.
+      if (u1 >= DAYCARE_PROB_CANDY + eggProb) {
+        return { kind: 'candy', solo: creature.solo, label: `${soloName} candy` };
+      }
       if (u1 >= DAYCARE_PROB_CANDY) {
         const sizeM = Math.round((0.5 + u3 * 1.5) * 100) / 100;
         return { kind: 'egg', solo: creature.solo, sizeM, label: `${soloName} egg` };
@@ -1689,7 +1747,23 @@
     if (u1 < DAYCARE_PROB_CANDY) {
       return candyLoot();
     }
-    if (u1 < DAYCARE_PROB_CANDY + DAYCARE_PROB_EGG) {
+    if (u1 < DAYCARE_PROB_CANDY + eggProb) {
+      // Bad Egg: a legendary × non-legendary creature anywhere in the
+      // daycare poisons every egg roll (legendaries only breed with
+      // each other). The egg keeps the slot's own species for art /
+      // record purposes but can never hatch — it crafts 2× incense.
+      if (_daycareHasBadEggMismatch()) {
+        const sizeM = Math.round((0.5 + u3 * 1.5) * 100) / 100;
+        return {
+          kind: 'egg',
+          bad: true,
+          a,
+          b,
+          displaySpecies: allSpeciesSet.values().next().value,
+          sizeM,
+          label: 'Bad Egg',
+        };
+      }
       // Cross-breed egg. 70% uniformly across naturals, 30%
       // uniformly across others. Display species is rolled
       // separately from the combined pool — the egg might depict
@@ -1734,6 +1808,12 @@
         sizeM,
         label: `${fusionName(eggA, eggB)} egg`,
       };
+    }
+    // A halved egg window (legendary in the daycare) leaves a gap
+    // between the egg band and the fixed evo threshold — it folds
+    // back into candy, so the evo band stays the top 15%.
+    if (u1 < DAYCARE_PROB_CANDY + DAYCARE_PROB_EGG) {
+      return candyLoot();
     }
     // Evo item branch — gather all items either family could
     // graduate via, uniformly pick one. Fallback to candy if there's
@@ -1803,8 +1883,10 @@
       // Egg art is the displaySpecies (sampled separately from
       // the contents, then normalised to baby form). Older eggs
       // pre-cross-breed didn't carry displaySpecies — fall back
-      // to loot.a so existing pills keep rendering.
-      const id = Number.isInteger(loot.displaySpecies) ? loot.displaySpecies : loot.a;
+      // to loot.a so existing pills keep rendering. Bad Eggs use
+      // the sheet's plain base-egg cell (species id 0).
+      const id = loot.bad ? 0
+        : (Number.isInteger(loot.displaySpecies) ? loot.displaySpecies : loot.a);
       const col = id % EGGS_SHEET_COLS;
       const row = Math.floor(id / EGGS_SHEET_COLS);
       const cellPx = 60;
@@ -1854,6 +1936,7 @@
         speciesB: loot.b,
         displaySpecies: loot.displaySpecies,
         sizeM: loot.sizeM,
+        bad: loot.bad === true,
       });
     }
     if (loot.kind === 'evo_item') {
@@ -2038,7 +2121,7 @@
     }
     const pills = visible.map(({ n, loot }) => {
       const style = _lootIconStyle(loot);
-      const cls = `daycare-loot-pill loot-kind-${loot.kind}`;
+      const cls = `daycare-loot-pill loot-kind-${loot.kind}${loot.bad ? ' loot-bad' : ''}`;
       return `<button class="${cls}" type="button" data-n="${n}" `
         + `style="${style}" `
         + `title="${escapeHtml(loot.label)}" `
@@ -2105,11 +2188,13 @@
         id: v.id,
         addedAt: typeof v.addedAt === 'number' ? v.addedAt : Date.now(),
         distM: typeof v.distM === 'number' && v.distM >= 0 ? v.distM : 0,
-        // Raw pedometer steps walked during this occupancy. Display-only
-        // (tap the slot's distance label to flip between m/steps) — all
-        // feature logic (loot milestones, conversions, eggs) stays on
-        // distM. Only credited by the pedometer bridge, so slots filled
-        // while the GPS path owns distance stay at 0.
+        // Raw pedometer steps walked with this creature in the daycare
+        // (lifetime, like distM — seeded from / banked into
+        // cc.daycareLifetime.v1). Display-only (tap the slot's
+        // distance label to flip between m/steps) — all feature logic
+        // (loot milestones, conversions, eggs) stays on distM. Only
+        // credited by the pedometer bridge, so slots filled while the
+        // GPS path owns distance stay at 0.
         steps: Number.isFinite(v.steps) && v.steps >= 0 ? Math.round(v.steps) : 0,
         claimed,
         convertDir: dir,
@@ -2149,6 +2234,74 @@
         JSON.stringify(arr.slice(0, DAYCARE_SLOT_COUNT)));
     } catch {}
   }
+  // Lifetime store (cc.daycareLifetime.v1). Read/normalize is defensive
+  // like readDaycareSlots — garbage fields fall back to per-field
+  // defaults so one corrupted entry can't break the add/remove flow.
+  function _normalizeLifetimeRecord(v) {
+    if (!v || typeof v !== 'object') return null;
+    const rawClaimed = Array.isArray(v.claimed) ? v.claimed : [];
+    const claimed = Array.from(new Set(
+      rawClaimed.filter((n) => Number.isInteger(n) && n >= 1)
+    )).sort((a, b) => a - b);
+    return {
+      distM: typeof v.distM === 'number' && v.distM >= 0 ? v.distM : 0,
+      steps: Number.isFinite(v.steps) && v.steps >= 0 ? Math.round(v.steps) : 0,
+      claimed,
+      convertDir: (v.convertDir === 'A' || v.convertDir === 'B') ? v.convertDir : null,
+      convertedCountA: Number.isInteger(v.convertedCountA) && v.convertedCountA >= 0
+        ? v.convertedCountA : 0,
+      convertedCountB: Number.isInteger(v.convertedCountB) && v.convertedCountB >= 0
+        ? v.convertedCountB : 0,
+    };
+  }
+  function readDaycareLifetime() {
+    try {
+      const raw = localStorage.getItem(DAYCARE_LIFETIME_KEY);
+      const obj = raw ? JSON.parse(raw) : {};
+      if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return {};
+      const out = {};
+      for (const k of Object.keys(obj)) {
+        const rec = _normalizeLifetimeRecord(obj[k]);
+        if (rec) out[k] = rec;
+      }
+      return out;
+    } catch { return {}; }
+  }
+  function writeDaycareLifetime(map) {
+    // Prune ids whose capture no longer exists so the map can't grow
+    // unboundedly. Only this (rare) write path prunes — the per-tick
+    // GPS credit path never touches this store.
+    //
+    // Both guards are about not deleting progress that isn't really
+    // gone: captures live in IndexedDB and hydrate asynchronously, and
+    // before that lands readCapturedCreatures() bootstraps from the
+    // legacy localStorage mirror (empty on a migrated device). So an
+    // empty read there means "not loaded yet", not "no captures" —
+    // skip pruning entirely rather than wipe the whole map. Same for a
+    // read that throws.
+    try {
+      if (_cstoreHydrated) {
+        const captures = readCapturedCreatures();
+        if (Array.isArray(captures)) {
+          const live = new Set(captures.map((c) => c && c.id).filter(Boolean));
+          for (const k of Object.keys(map)) if (!live.has(k)) delete map[k];
+        }
+      }
+    } catch { /* keep the map as-is */ }
+    try {
+      localStorage.setItem(DAYCARE_LIFETIME_KEY, JSON.stringify(map));
+    } catch {}
+  }
+  // Normalized lifetime record for one capture id — all-default fields
+  // when there's no record yet (fresh creature, or a legacy save
+  // predating this store).
+  function _daycareLifetimeFor(id) {
+    const rec = readDaycareLifetime()[id];
+    return rec || {
+      distM: 0, steps: 0, claimed: [],
+      convertDir: null, convertedCountA: 0, convertedCountB: 0,
+    };
+  }
   // Microtask-scoped Set of currently-occupied slot ids. Built once per
   // filter pass instead of paying the full readDaycareSlots cost (JSON
   // parse + normalize + dedup) on every isInDaycare check. Profile pre-
@@ -2172,7 +2325,22 @@
     const arr = readDaycareSlots();
     if (arr.some((s) => s.id === id)) return false;
     if (arr.length >= DAYCARE_SLOT_COUNT) return false;
-    arr.push({ id, addedAt: Date.now(), distM: 0, claimed: [] });
+    // Seed from the lifetime record: distance, claimed milestones, and
+    // candy-conversion state all resume where the last stay left off.
+    // Only addedAt is fresh — it re-seeds the loot stream for the
+    // milestones this stay will earn (already-claimed ones stay
+    // claimed, so nothing replays).
+    const lt = _daycareLifetimeFor(id);
+    arr.push({
+      id,
+      addedAt: Date.now(),
+      distM: lt.distM,
+      steps: lt.steps,
+      claimed: lt.claimed.slice(),
+      convertDir: lt.convertDir,
+      convertedCountA: lt.convertedCountA,
+      convertedCountB: lt.convertedCountB,
+    });
     writeDaycareSlots(arr);
     return true;
   }
@@ -2181,18 +2349,40 @@
     const arr = readDaycareSlots();
     const idx = arr.findIndex((s) => s.id === id);
     if (idx < 0) return false;
-    // Auto-claim any unclaimed loot before deletion — the slot's
-    // loot stream is keyed by (id, addedAt, n), so removing wipes
-    // both the seed and the user's progress. Harvesting the
-    // remaining items first matches the "you earned this by
-    // walking" mental model.
+    // Auto-claim any unclaimed loot before removal — the slot's loot
+    // stream is keyed by (id, addedAt, n) and addedAt re-rolls on the
+    // next stay, so harvesting the remaining items first matches the
+    // "you earned this by walking" mental model.
     const slot = arr[idx];
+    const lt = readDaycareLifetime();
+    const prev = lt[id];
     const total = _daycareEarnedCount(slot);
     const claimed = new Set(slot.claimed || []);
+    // Milestones claimed on a previous stay (banked in the lifetime
+    // record) must not re-grant under this stay's seed either.
+    if (prev) for (const n of prev.claimed) claimed.add(n);
     for (let n = 1; n <= total; n++) {
       if (claimed.has(n)) continue;
       _grantLoot(_daycareLootAt(slot, n));
+      claimed.add(n);
     }
+    // Bank the stay into the lifetime record so the counter resumes
+    // (instead of restarting at 0) if the creature re-enters later.
+    // `claimed` MUST include every milestone the auto-claim loop just
+    // granted — otherwise those indices would come back claimable on
+    // re-entry (fresh addedAt seed → different loot) and pay out a
+    // second time. distM/steps/counters merge as max so a stale record
+    // can never rewind progress; convertDir is the slot's own (null =
+    // the user turned it off during this stay).
+    lt[id] = {
+      distM: Math.max(prev ? prev.distM : 0, slot.distM || 0),
+      steps: Math.max(prev ? prev.steps : 0, slot.steps || 0),
+      claimed: Array.from(claimed).sort((a, b) => a - b),
+      convertDir: slot.convertDir || null,
+      convertedCountA: Math.max(prev ? prev.convertedCountA : 0, slot.convertedCountA || 0),
+      convertedCountB: Math.max(prev ? prev.convertedCountB : 0, slot.convertedCountB || 0),
+    };
+    writeDaycareLifetime(lt);
     arr.splice(idx, 1);
     writeDaycareSlots(arr);
     return true;
@@ -2200,6 +2390,20 @@
   function toggleDaycare(id) {
     if (isInDaycare(id)) { removeFromDaycare(id); return false; }
     return addToDaycare(id);
+  }
+
+  // A hatched-from-egg legendary caught before LEGENDARY_DAYCARE_CUTOFF_MS
+  // may be a legendary × non-legendary fusion, which the bad-egg rule now
+  // forbids in the daycare — refuse to place it. Wild-caught legendaries
+  // (fromEgg unset) are unaffected. A fromEgg record without a usable
+  // timestamp can't prove it post-dates the rule, so it counts as blocked.
+  function _legendaryTooOldForDaycare(c) {
+    if (!c || c.fromEgg !== true) return false;
+    if (!isLegendarySpecies(c.speciesA) && !isLegendarySpecies(c.speciesB)) {
+      return false;
+    }
+    const ts = c.caughtAt && c.caughtAt.timestamp;
+    return !Number.isFinite(ts) || ts < LEGENDARY_DAYCARE_CUTOFF_MS;
   }
 
   // Claim milestone N's loot from the slot's stream. Idempotent
@@ -2226,11 +2430,13 @@
   }
 
   // Settings → "Repopulate daycare test loot": wipe `claimed` on
-  // every slot. Same `addedAt` → same loot stream → the user sees
-  // the items reappear and can tap them again. Granted items stay
-  // in the bag (this regenerates AVAILABLE drops, not deletes
-  // already-collected ones — symmetry with how a "reset" UI is
-  // typically expected to work).
+  // every slot AND on every lifetime record. Same `addedAt` → same
+  // loot stream → the user sees the items reappear and can tap them
+  // again. Granted items stay in the bag (this regenerates AVAILABLE
+  // drops, not deletes already-collected ones — symmetry with how a
+  // "reset" UI is typically expected to work). The lifetime wipe is
+  // required because slots re-seed from it: without it, removing and
+  // re-adding a creature would silently restore the wiped claims.
   function repopulateDaycareTestLoot() {
     const arr = readDaycareSlots();
     let touched = 0;
@@ -2241,6 +2447,11 @@
       }
     }
     writeDaycareSlots(arr);
+    const lt = readDaycareLifetime();
+    for (const k of Object.keys(lt)) {
+      if (lt[k].claimed.length) lt[k].claimed = [];
+    }
+    writeDaycareLifetime(lt);
     return touched;
   }
   // Count of slots currently occupied by captures that STILL EXIST.
@@ -2378,6 +2589,10 @@
       predicate: (c) => c && c.id != null && isInDaycare(c.id),
       visible: (c) => {
         if (!c || c.id == null) return false;
+        // Pre-cutoff hatched legendaries can't be placed (bad-egg
+        // rule) — hide the chip unless they're somehow already in,
+        // so they can still be removed.
+        if (!isInDaycare(c.id) && _legendaryTooOldForDaycare(c)) return false;
         // Show the chip when the creature is already in the daycare
         // (so it can be tapped to remove) OR when there's space for
         // it (so it can be tapped to add). Hides itself once the
@@ -2389,6 +2604,10 @@
       },
       onToggle: (c) => {
         if (!c || c.id == null) return;
+        if (!isInDaycare(c.id) && _legendaryTooOldForDaycare(c)) {
+          _saveImageNotice('Legendaries hatched before Oct 5 2026 can\'t be placed in the daycare — legendaries can only breed with each other.', 3200);
+          return;
+        }
         toggleDaycare(c.id);
       },
     },
@@ -3454,6 +3673,12 @@
     }
     return mult;
   }
+  // Egg-aware yield: Bad Eggs are typeless duds that always craft 2×
+  // regardless of the incense type (their only use).
+  function _craftMultForEgg(egg, incenseType) {
+    if (_isBadEgg(egg)) return 2;
+    return craftMultiplier(_eggTypes(egg), incenseType);
+  }
 
   // ── Incense items (one per type) ──
   // Crafted from eggs (Bag → Craft). The capture/use mechanic lands
@@ -3906,7 +4131,7 @@
 
   // Gen-1 legendaries (Articuno/Zapdos/Moltres/Mewtwo/Mew). Kept in lockstep
   // with GEN1_LEGENDARY_IDS in spawns.js. Completion is scored against
-  // NON-legendary partners only: legendary spawns are ~1/16000, so requiring
+  // NON-legendary partners only: legendary spawns are ~1/48000, so requiring
   // their fusions would make 100% (and its shiny bonus) unreachable. Legendary
   // species still get their own — uncounted — row in the completion dex.
   const LEGENDARY_SPECIES_SET = new Set([144, 145, 146, 150, 151]);
@@ -6370,6 +6595,15 @@
         border-color: #e8a13a;
         box-shadow: 0 0 0 1px #e8a13a inset;
       }
+      /* Bad Eggs (legendary × non-legendary daycare mismatch): sickly
+         green border + poison-tinted art; they never hatch. */
+      #creatureInventory .egg-tile.egg-bad {
+        border-color: #7aa53a;
+        box-shadow: 0 0 0 1px #7aa53a inset;
+      }
+      #creatureInventory .egg-tile.egg-bad .tile-art {
+        filter: hue-rotate(70deg) saturate(1.6) brightness(0.92);
+      }
       #creatureInventory .egg-tile.dragging {
         opacity: 0.35;
       }
@@ -6650,6 +6884,10 @@
       #creatureInventory .daycare-loot-pill.appearing {
         animation: daycare-loot-slide-in 320ms ease forwards;
       }
+      /* Bad Egg pills: same sickly green as the egg-grid treatment. */
+      #creatureInventory .daycare-loot-pill.loot-bad {
+        filter: hue-rotate(70deg) saturate(1.6) brightness(0.92);
+      }
       @keyframes daycare-loot-slide-in {
         0%   { width: 0; opacity: 0; transform: scale(0.4); }
         60%  { width: 28px; opacity: 1; transform: scale(1.12); }
@@ -6850,6 +7088,7 @@
       #ccDaycareOdds .dc-tag.candy { background: rgba(255,193,7,0.22); }
       #ccDaycareOdds .dc-tag.egg   { background: rgba(91,140,255,0.24); }
       #ccDaycareOdds .dc-tag.evo   { background: rgba(0,200,120,0.22); }
+      #ccDaycareOdds .dc-tag.bad   { background: rgba(122,165,58,0.30); }
       #ccDaycareOdds .dc-odds-line { font-size: 12.5px; display: flex; gap: 8px; margin-top: 3px; }
       #ccDaycareOdds .dc-odds-k { color: var(--ui-muted, #666); flex: 0 0 64px; }
       #ccDaycareOdds .dc-odds-v { flex: 1 1 auto; }
@@ -10064,17 +10303,25 @@
   // ── Solo-egg aware helpers (eggs from daycare duplication of a
   // special creature). Pair eggs flow through unchanged.
   function _isSoloEgg(egg) { return !!(egg && typeof egg.solo === 'string' && egg.solo); }
+  // Bad Eggs: daycare eggs rolled while a legendary × non-legendary
+  // creature was in the daycare. They never hatch and never incubate;
+  // their only use is crafting (2× incense of any type).
+  function _isBadEgg(egg) { return !!(egg && egg.bad === true); }
   function _eggName(egg) {
+    if (_isBadEgg(egg)) return 'Bad Egg';
     if (_isSoloEgg(egg)) return creatureName(egg);
     return fusionName(egg.speciesA, egg.speciesB);
   }
   function _eggTypes(egg) {
+    if (_isBadEgg(egg)) return [];  // typeless — matches every incense
     if (_isSoloEgg(egg)) return creatureTypes(egg);
     return global.Species ? global.Species.fusionTypesFor(egg.speciesA, egg.speciesB) : [];
   }
   // Art for ANY egg: solo eggs render the special's full-PNG sprite;
-  // pair eggs render their eggs.png sheet cell as before.
+  // pair eggs render their eggs.png sheet cell as before; Bad Eggs use
+  // the plain base-egg cell (species id 0) plus the .egg-bad styling.
   function _eggArtCss(egg, cellPx) {
+    if (_isBadEgg(egg)) return _eggArtBackgroundCss(0, cellPx);
     if (_isSoloEgg(egg)) {
       const url = (global.Specials && global.Specials.spriteUrl(egg.solo)) || '';
       return (
@@ -10090,6 +10337,7 @@
   }
 
   function _formatIncubationKm(egg) {
+    if (_isBadEgg(egg)) return "Can't hatch";
     const km = eggIncubatedM(egg) / 1000;
     return `${km.toFixed(2)} / ${(eggHatchM(egg) / 1000).toFixed(0)} km`;
   }
@@ -10100,6 +10348,7 @@
   // specials) don't participate in fusion New/Fresh tracking — no badge.
   // `seenF`: per-render hoisted seen-fusions map (see _filterSortEggs).
   function _eggNewBadgeHtml(egg, seenF) {
+    if (_isBadEgg(egg)) return '';   // Bad Eggs never get a New/Fresh pill
     if (_isSoloEgg(egg)) return '';
     const label = newFreshLabelFor(egg.speciesA, egg.speciesB, seenF);
     return label ? `<div class="egg-new-badge">${label}</div>` : '';
@@ -10139,7 +10388,9 @@
     const labelOf = (e) => {
       let l = labelCache.get(e);
       if (l === undefined) {
-        l = newFreshLabelFor(e.speciesA, e.speciesB, seenF);
+        // Bad Eggs are excluded from New/Fresh tracking (they never
+        // hatch, so the fusion inside never becomes "seen").
+        l = _isBadEgg(e) ? null : newFreshLabelFor(e.speciesA, e.speciesB, seenF);
         labelCache.set(e, l);
       }
       return l;
@@ -10233,12 +10484,13 @@
     const name = _eggName(egg);
     const cls = `incubator-slot${ready ? ' ready' : ''}`;
     const legendary = _isLegendaryEgg(egg) ? ' egg-legendary' : '';
+    const bad = _isBadEgg(egg) ? ' egg-bad' : '';
     const hatchBtn = ready
       ? `<button class="slot-hatch" type="button" data-hatch-id="${escapeHtml(egg.id)}">Tap to hatch</button>`
       : '';
     return (
       `<div class="${cls}" data-slot="${idx}" data-zone="slot">`
-      + `<div class="egg-tile slot-egg-tile${legendary}" data-egg-id="${escapeHtml(egg.id)}" data-from-slot="${idx}" aria-label="${escapeHtml(name)} egg">`
+      + `<div class="egg-tile slot-egg-tile${legendary}${bad}" data-egg-id="${escapeHtml(egg.id)}" data-from-slot="${idx}" aria-label="${escapeHtml(name)} egg">`
       +   _eggNewBadgeHtml(egg, seenF)
       +   `<div class="tile-art" style="${artStyle}"></div>`
       +   `<div class="tile-name">${escapeHtml(name)}</div>`
@@ -10260,8 +10512,9 @@
       ? `<div class="tile-progress" aria-hidden="true"><div class="fill" style="width:${pct}%"></div></div>`
       : '';
     const legendary = _isLegendaryEgg(egg) ? ' egg-legendary' : '';
+    const bad = _isBadEgg(egg) ? ' egg-bad' : '';
     return (
-      `<div class="egg-tile${legendary}" data-egg-id="${escapeHtml(egg.id)}" aria-label="${escapeHtml(name)} egg">`
+      `<div class="egg-tile${legendary}${bad}" data-egg-id="${escapeHtml(egg.id)}" aria-label="${escapeHtml(name)} egg">`
       + _eggNewBadgeHtml(egg, seenF)
       + `<div class="tile-art" style="${artStyle}"></div>`
       + `<div class="tile-name">${escapeHtml(name)}</div>`
@@ -10560,9 +10813,15 @@
           if (fromSlot === targetSlot) return;
           swapIncubatorSlots(fromSlot, targetSlot);
         } else {
-          // Grid → slot: drop in. If the slot was occupied, that
-          // egg automatically returns to the grid because
-          // setIncubatorSlot replaces the binding.
+          // Grid → slot: drop in. Bad Eggs refuse the incubator —
+          // explain instead of binding the slot.
+          const eggRec = readEggs().find((x) => x.id === eggId);
+          if (_isBadEgg(eggRec)) {
+            _openInfoModal({ title: 'Bad Egg', html: _badEggInfoHtml });
+            return;
+          }
+          // If the slot was occupied, that egg automatically returns
+          // to the grid because setIncubatorSlot replaces the binding.
           setIncubatorSlot(targetSlot, eggId);
         }
         renderEggs();
@@ -10866,11 +11125,13 @@
   }
   // Eggs eligible to be crafted into incense of `type`: not currently in
   // an incubator slot, and at least one of the egg's fusion types is
-  // neutral-or-effective against `type`.
+  // neutral-or-effective against `type`. Bad Eggs are always eligible —
+  // they're typeless and craft 2× of any type.
   function _craftableEggsFor(type) {
     const slotted = new Set((readIncubator() || []).filter(Boolean));
     return readEggs().filter((e) => {
       if (slotted.has(e.id)) return false;
+      if (_isBadEgg(e)) return true;
       return eggTypesNeutralOrEffectiveVs(_eggTypes(e), type);
     });
   }
@@ -10930,7 +11191,7 @@
         const artStyle = _eggArtCss(e, 56);
         const name = _eggName(e);
         const types = _eggTypes(e);
-        const mult = craftMultiplier(types, st.type);
+        const mult = _craftMultForEgg(e, st.type);
         const badge = mult > 1
           ? `<span class="craft-egg-mult">${mult}&times;</span>` : '';
         return `
@@ -10965,7 +11226,7 @@
     const name = _eggName(egg);
     const artStyle = _eggArtCss(egg, 72);
     const eggTypes = _eggTypes(egg);
-    const mult = craftMultiplier(eggTypes, st.type);
+    const mult = _craftMultForEgg(egg, st.type);
     const yieldLabel = mult + '× ' + global.Types.displayName(st.type) + ' Incense';
     const orbMult = mult > 1 ? `<span class="craft-egg-mult on-orb">${mult}&times;</span>` : '';
     body.innerHTML = `
@@ -11145,9 +11406,14 @@
   // ones, computed against whatever is currently in the daycare:
   //   • each occupied slot rolls one drop per DAYCARE_LOOT_MILESTONE_M walked;
   //   • candy 70% (this slot's roots, 50/50 or 100% if the same root);
-  //   • egg 15% (cross-breed pool shared across slots, 70% natural / 30% cross);
+  //   • egg 15% — halved to 7.5% while any legendary is in the daycare
+  //     (cross-breed pool shared across slots, 70% natural / 30% cross);
+  //     while a legendary × non-legendary creature is inside, every egg is
+  //     a Bad Egg instead;
   //   • evo item 15% (this slot's item-evolutions, uniform) — but if the pair
   //     has no item evolution, that branch becomes candy (so candy → 85%).
+  //   The evo band is pinned at 0.15: when the egg rate halves, the freed
+  //   band folds into candy, same as the loot rolls.
   function _daycareOddsModel() {
     const rawSlots = readDaycareSlots();
     const nickMap = readNicknames();
@@ -11162,6 +11428,9 @@
     }
     if (!occ.length) return { empty: true, milestoneM: DAYCARE_LOOT_MILESTONE_M };
 
+    const eggProb = _daycareEggProb();
+    const badEggs = _daycareHasBadEggMismatch();
+
     // Per-slot candy + evo-item odds (these read only that slot's own pair).
     const slots = occ.map(({ c }) => {
       const name = nickMap[c.id] || c.name || fusionName(c.speciesA, c.speciesB);
@@ -11172,9 +11441,9 @@
       const items = Array.from(new Set(
         _evoItemsForFamily(c.speciesA).concat(_evoItemsForFamily(c.speciesB))));
       const evoPct = items.length ? (1 - DAYCARE_PROB_CANDY - DAYCARE_PROB_EGG) : 0;
-      const candyPct = 1 - DAYCARE_PROB_EGG - evoPct;   // 0.70 with items, 0.85 without
+      const candyPct = 1 - eggProb - evoPct;   // candy absorbs whatever the egg band gives up
       return {
-        name, candyPct, eggPct: DAYCARE_PROB_EGG, evoPct,
+        name, candyPct, eggPct: eggProb, evoPct,
         candy: candyShares.map((cd) => ({ name: speciesNameFor(cd.species), pct: cd.share * candyPct })),
         evo: items.map((k) => ({ name: (ITEMS[k] && ITEMS[k].name) || _formatItemName(k), pct: evoPct / items.length })),
       };
@@ -11207,7 +11476,7 @@
       .sort((p, q) => q.pct - p.pct);
 
     return {
-      empty: false, milestoneM: DAYCARE_LOOT_MILESTONE_M, slots, eggContents,
+      empty: false, milestoneM: DAYCARE_LOOT_MILESTONE_M, slots, eggContents, badEggs,
       naturalPairs: new Set(eggContents.filter((e) => e.natural).map((e) => e.name)).size,
       crossPairs: new Set(eggContents.filter((e) => !e.natural).map((e) => e.name)).size,
     };
@@ -11230,7 +11499,9 @@
       h += '<div class="dc-odds-slot"><div class="dc-odds-slot-name">' + escapeHtml(s.name) + '</div>';
       h += '<div class="dc-odds-split">'
         + '<span class="dc-tag candy">Candy ' + _fmtPct(s.candyPct) + '</span>'
-        + '<span class="dc-tag egg">Egg ' + _fmtPct(s.eggPct) + '</span>'
+        + (m.badEggs
+            ? '<span class="dc-tag bad">Bad Egg ' + _fmtPct(s.eggPct) + '</span>'
+            : '<span class="dc-tag egg">Egg ' + _fmtPct(s.eggPct) + '</span>')
         + (s.evoPct > 0 ? '<span class="dc-tag evo">Evo item ' + _fmtPct(s.evoPct) + '</span>' : '')
         + '</div>';
       h += '<div class="dc-odds-line"><span class="dc-odds-k">Candy</span><span class="dc-odds-v">'
@@ -11242,6 +11513,15 @@
         h += '<div class="dc-odds-line dc-odds-note">No item evolutions for this pair — those rolls become extra candy.</div>';
       }
       h += '</div>';
+    }
+    if (m.badEggs) {
+      h += '<div class="dc-odds-eggs"><div class="dc-odds-eggs-title">If an egg drops, it\'s a Bad Egg</div>';
+      h += '<div class="dc-odds-note">A legendary is sharing the daycare with a non-legendary, and '
+        + 'legendaries only breed with each other — so this daycare only produces <b>Bad Eggs</b>: '
+        + 'a <b>' + _fmtPct(m.slots[0].eggPct) + '</b> chance on each ' + dist + ' drop, from either '
+        + 'slot. They never hatch, no matter how far you walk; they craft into <b>2×</b> incense '
+        + 'of any type.</div></div>';
+      return h;
     }
     h += '<div class="dc-odds-eggs"><div class="dc-odds-eggs-title">If an egg drops, what hatches</div>';
     h += '<div class="dc-odds-note">'
@@ -11467,6 +11747,27 @@
           (_craftState && _craftState.type) || null));
       },
     });
+  }
+
+  // Bad Egg explainer — shown when the player tries to incubate one.
+  function _badEggInfoHtml() {
+    let h = '';
+    h += '<p class="cc-info-p">A Bad Egg comes from the daycare while a <b>legendary</b> '
+      + 'was sharing it with a <b>non-legendary</b> pokémon.</p>';
+    h += '<div class="cc-info-section">';
+    h += '<div class="cc-info-section-title">Why it never hatches</div>';
+    h += '<div class="cc-info-row"><span class="cc-info-k">Mixed pair</span>'
+      + '<span class="cc-info-v">Legendaries only breed with other legendaries, so an egg '
+      + 'laid next to a mismatched pair is a dud — it can\'t go in the incubator and will '
+      + 'never hatch.</span></div>';
+    h += '</div>';
+    h += '<div class="cc-info-section">';
+    h += '<div class="cc-info-section-title">What it\'s good for</div>';
+    h += '<div class="cc-info-row"><span class="cc-info-k">Crafting</span>'
+      + '<span class="cc-info-v">A Bad Egg crafts into <span class="cc-info-mult">2×</span> '
+      + 'incense of <b>any</b> type — no type-matching needed.</span></div>';
+    h += '</div>';
+    return h;
   }
 
   // ── Daily/weekly type-weather odds explainer ────────────────────────
@@ -11876,9 +12177,10 @@
           // canonical fused name when present.
           const name = nickMap[c.id] || c.name
             || creatureName(c);
-          // Distance walked while THIS occupancy lasted. Resets to 0
-          // each time the creature is removed and re-added — see
-          // addToDaycare. Label flips between meters (same _formatMeters
+          // Distance walked with this creature in the daycare,
+          // accumulated across stays — banked to the lifetime store on
+          // removal and re-seeded from it on re-add (see addToDaycare).
+          // Label flips between meters (same _formatMeters
           // helper the calendar / today's-distance card uses) and raw
           // pedometer steps via _daycareDistLabel.
           const distLabel = _daycareDistLabel(it.slot);
@@ -12046,7 +12348,7 @@
           if (row.querySelector(`.daycare-loot-pill[data-n="${n}"]`)) continue;
           const pill = document.createElement('button');
           pill.type = 'button';
-          pill.className = `daycare-loot-pill loot-kind-${loot.kind} appearing`;
+          pill.className = `daycare-loot-pill loot-kind-${loot.kind}${loot.bad ? ' loot-bad' : ''} appearing`;
           pill.dataset.n = String(n);
           pill.title = loot.label;
           pill.setAttribute('aria-label', `claim ${loot.label}`);
@@ -14905,6 +15207,7 @@
         if (!slotEggId) continue;
         const i = eggs.findIndex((e) => e.id === slotEggId);
         if (i < 0) continue;
+        if (_isBadEgg(eggs[i])) continue;  // Bad Eggs never incubate
         const before = eggIncubatedM(eggs[i]);
         const need = eggHatchM(eggs[i]);   // 10 km for legendary eggs
         if (before >= need) continue;

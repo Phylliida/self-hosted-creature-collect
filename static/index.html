@@ -8245,6 +8245,11 @@ function fmtDate(ts) {
       // with the captures payload above — IDs that don't match any
       // imported capture will be silently dropped at apply time.
       daycareSlots: JSON.parse(localStorage.getItem('cc.daycareSlots.v1') || '[]'),
+      // Lifetime daycare progress per capture id (see
+      // cc.daycareLifetime.v1 in creatures.js): distance counters and
+      // claimed milestones survive daycare removal/re-entry, so they
+      // must travel with the save like the slots do.
+      daycareLifetime: JSON.parse(localStorage.getItem('cc.daycareLifetime.v1') || '{}'),
       // Unhatched eggs (full record per egg) + incubator slot
       // bindings (egg-id references into the eggs array). Eggs travel
       // independently of captures since they don't become a creature
@@ -8761,9 +8766,11 @@ function fmtDate(ts) {
     // Schema-aware: each slot may be a plain id-string (legacy v1
     // shape) or an object { id, addedAt, distM } (current shape).
     // We normalize both into objects on the way in so the merged
-    // store always carries the per-stay timestamp + distance fields,
-    // and a string-only legacy save imported into a fresh device
-    // still gets sensible defaults (Date.now() / 0).
+    // store always carries the timestamp + distance fields, and a
+    // string-only legacy save imported into a fresh device still
+    // gets sensible defaults (Date.now() / 0). The distance itself
+    // is lifetime-scoped (banked per capture id, see the
+    // daycareLifetime merge below), not per-stay.
     if (Array.isArray(data.daycareSlots)) {
       const captures = (window.Creatures && window.Creatures.getAllCaptured)
         ? window.Creatures.getAllCaptured()
@@ -8810,6 +8817,71 @@ function fmtDate(ts) {
         merged.push(slot);
       }
       localStorage.setItem('cc.daycareSlots.v1', JSON.stringify(merged));
+    }
+    // Lifetime daycare progress (per capture id): max-merge the
+    // incoming map with the local one so an import can't rewind a
+    // counter — max distM, max steps, union claimed, max conversion
+    // counters; incoming convertDir only fills in where the local one
+    // is null. Slots the merge above silently dropped (unknown capture
+    // id, or past the 2-slot cap) still bank their distM/steps here so
+    // the counter isn't lost.
+    {
+      const _normLt = (v) => {
+        if (!v || typeof v !== 'object') return null;
+        const rawClaimed = Array.isArray(v.claimed) ? v.claimed : [];
+        const claimed = Array.from(new Set(
+          rawClaimed.filter((n) => Number.isInteger(n) && n >= 1)
+        )).sort((a, b) => a - b);
+        return {
+          distM: typeof v.distM === 'number' && v.distM >= 0 ? v.distM : 0,
+          steps: Number.isFinite(v.steps) && v.steps >= 0 ? Math.round(v.steps) : 0,
+          claimed,
+          convertDir: (v.convertDir === 'A' || v.convertDir === 'B') ? v.convertDir : null,
+          convertedCountA: Number.isInteger(v.convertedCountA) && v.convertedCountA >= 0
+            ? v.convertedCountA : 0,
+          convertedCountB: Number.isInteger(v.convertedCountB) && v.convertedCountB >= 0
+            ? v.convertedCountB : 0,
+        };
+      };
+      const _mergeLt = (base, inc) => ({
+        distM: Math.max(base.distM, inc.distM),
+        steps: Math.max(base.steps, inc.steps),
+        claimed: Array.from(new Set([...base.claimed, ...inc.claimed]))
+          .sort((a, b) => a - b),
+        convertDir: base.convertDir === null ? inc.convertDir : base.convertDir,
+        convertedCountA: Math.max(base.convertedCountA, inc.convertedCountA),
+        convertedCountB: Math.max(base.convertedCountB, inc.convertedCountB),
+      });
+      const ltMerged = {};
+      try {
+        const localLt = JSON.parse(localStorage.getItem('cc.daycareLifetime.v1') || '{}');
+        if (localLt && typeof localLt === 'object' && !Array.isArray(localLt)) {
+          for (const k of Object.keys(localLt)) {
+            const rec = _normLt(localLt[k]);
+            if (rec) ltMerged[k] = rec;
+          }
+        }
+      } catch { /* unparseable local map: rebuild from the import alone */ }
+      if (data.daycareLifetime && typeof data.daycareLifetime === 'object'
+          && !Array.isArray(data.daycareLifetime)) {
+        for (const k of Object.keys(data.daycareLifetime)) {
+          const inc = _normLt(data.daycareLifetime[k]);
+          if (!inc) continue;
+          ltMerged[k] = ltMerged[k] ? _mergeLt(ltMerged[k], inc) : inc;
+        }
+      }
+      if (Array.isArray(data.daycareSlots)) {
+        for (const v of data.daycareSlots) {
+          if (!v || typeof v !== 'object' || typeof v.id !== 'string' || !v.id) continue;
+          const d = typeof v.distM === 'number' && v.distM >= 0 ? v.distM : 0;
+          const st = Number.isFinite(v.steps) && v.steps >= 0 ? Math.round(v.steps) : 0;
+          if (d <= 0 && st <= 0) continue;
+          const inc = { distM: d, steps: st, claimed: [], convertDir: null,
+                        convertedCountA: 0, convertedCountB: 0 };
+          ltMerged[v.id] = ltMerged[v.id] ? _mergeLt(ltMerged[v.id], inc) : inc;
+        }
+      }
+      localStorage.setItem('cc.daycareLifetime.v1', JSON.stringify(ltMerged));
     }
     // Eggs: merge by egg id (skip duplicates), keeping the local
     // copy on conflict so incubatedM that has advanced on this

@@ -56,6 +56,7 @@ const ctx = {
 };
 vm.createContext(ctx);
 vm.runInContext(extract('function _isSoloEgg'), ctx);
+vm.runInContext(extract('function _isBadEgg'), ctx);
 vm.runInContext(extract('function _isLegendaryEgg'), ctx);
 vm.runInContext(extract('function eggHatchM'), ctx);
 vm.runInContext(extract('function eggIncubatedM'), ctx);
@@ -88,6 +89,12 @@ ok(anyReady([]) === false, 'B: no eggs → bubble hidden');
 ok(anyReady([egg(0), egg(HATCH_M - 100)]) === false, 'B: only in-progress eggs → hidden');
 ok(anyReady([egg(0), egg(HATCH_M)]) === true, 'B: one ready among several → shown');
 ok(anyReady([egg(HATCH_M), egg(HATCH_M + 500)]) === true, 'B: all ready → shown');
+
+// ── B2. Bad Eggs never hatch: fully "incubated" or not, never ready ──
+const badEgg = (m) => ({ id: 'e9', speciesA: 1, speciesB: 2, incubatedM: m, bad: true });
+ok(eggReadyToHatch(badEgg(HATCH_M)) === false, 'B2: Bad Egg at threshold → not ready');
+ok(eggReadyToHatch(badEgg(HATCH_M * 100)) === false, 'B2: Bad Egg massively past → not ready');
+ok(anyReady([badEgg(HATCH_M * 100)]) === false, 'B2: Bad Egg alone never shows the bubble');
 
 // ── C. defensive: non-array input never shows the bubble (readEggs failure) ──
 ok(anyReady(null) === false, 'C: null → hidden');

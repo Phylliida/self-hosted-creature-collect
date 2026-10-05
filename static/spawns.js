@@ -725,15 +725,14 @@
   // Rarity is density-matched to the normal pool: a legendary is ~1/
   // LEG_RARITY as likely to be standing in a given cell as a normal spawn,
   // so of the creatures you actually encounter ~1/LEG_RARITY are legendary
-  // (a ~1/16000 chance of a legendary) — regardless of how the longer lifetime
+  // (a ~1/48000 chance of a legendary) — regardless of how the longer lifetime
   // inflates the raw standing count.
   const LEG_TICK_MS = 6 * 60 * 60 * 1000;        // legendary birth granularity: 6 h
   const LEG_LIFETIME_MS = 24 * 60 * 60 * 1000;   // legendaries linger ~1 day
   const LEG_LIFETIME_TICKS = Math.ceil(LEG_LIFETIME_MS / LEG_TICK_MS);  // 4
-  const LEG_RARITY = 16000;                       // ~1 legendary per 16000 normal spawns (4× rarer, 2026-07-04)
+  const LEG_RARITY = 48000;                       // ~1 legendary per 48000 normal spawns (3× rarer, 2026-10-05)
   const LEG_CHANCE_PER_CELLTICK =
     (SPAWN_CHANCE_PER_TICK * LIFETIME_TICKS) / (LEG_RARITY * LEG_LIFETIME_TICKS);
-  const LEG_MOD = Math.max(1, Math.round(1 / LEG_CHANCE_PER_CELLTICK));
   const LEG_SALT = 0x4C45470A;                    // distinct seed namespace
   // Gen 1 legendaries (PIF id == national dex in gen 1); all <= 429 so
   // they're inside the downloaded sprite range. Filtered against the loaded
@@ -778,7 +777,10 @@
   function _legCandidate(cellX, cellY, ltick) {
     const h = (Math.imul(cellX, 73856093) ^ Math.imul(cellY, 19349663)
       ^ Math.imul(ltick, 83492791) ^ LEG_SALT) >>> 0;
-    return (h % LEG_MOD) === 0;
+    // Exact hash-ratio test: keeps the density right at any LEG_RARITY —
+    // a modulo pre-filter silently reverts to the old rate whenever
+    // 1/LEG_CHANCE_PER_CELLTICK isn't an integer power-of-ten-ish match.
+    return (h / 4294967296) < LEG_CHANCE_PER_CELLTICK;
   }
   // Legendary position snapping (opt-in, app-injected). The engine itself
   // stays pure/deterministic; the host app registers a provider that maps a

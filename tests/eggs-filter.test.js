@@ -55,6 +55,7 @@ const ctx = {
 vm.createContext(ctx);
 for (const m of ['function caughtFusionsSet', 'function isFusionOwned',
                  'function newFreshLabelFor', 'function _isSoloEgg',
+                 'function _isBadEgg',
                  'function _eggName', 'function _eggTypes',
                  'function _filterSortEggs']) {
   vm.runInContext(extract(m), ctx);

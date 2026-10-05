@@ -43,7 +43,7 @@ const S = global.Spawns;
 
 // ── Fixture: one legendary alive right now ──────────────────────
 // nearestRadar reads Date.now() internally, so everything uses real time.
-// Legendaries are ~1 in 4M cell-ticks — sweep adaptively like
+// Legendaries are ~1 in 12M cell-ticks — sweep adaptively like
 // community-day.test.js §4.
 const NOW = Date.now();
 function findLiveLegendary() {

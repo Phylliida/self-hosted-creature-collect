@@ -46,7 +46,7 @@ const ctx = {
 vm.createContext(ctx);
 for (const m of ['function caughtFusionsSet', 'function isFusionOwned',
                  'function newFreshLabelFor', 'function _isSoloEgg',
-                 'function _eggNewBadgeHtml']) {
+                 'function _isBadEgg', 'function _eggNewBadgeHtml']) {
   vm.runInContext(extract(m), ctx);
 }
 const call = (name, ...args) => { ctx.__a = args; return vm.runInContext(`${name}(...__a)`, ctx); };
@@ -87,6 +87,11 @@ const call = (name, ...args) => { ctx.__a = args; return vm.runInContext(`${name
   captures = []; seen = {};
   ok(call('_eggNewBadgeHtml', { solo: 'neo:a' }) === '',
     'B: solo (pack special) egg renders no pill');
+
+  // A Bad Egg's parent pair may itself be New — the pill is still
+  // suppressed (it never hatches, so the fusion never becomes seen).
+  ok(call('_eggNewBadgeHtml', { speciesA: 1, speciesB: 4, bad: true }) === '',
+    'B: Bad Egg renders no pill even when the pair would be New');
 
   ok(!/Art/.test(call('_eggNewBadgeHtml', { speciesA: 2, speciesB: 5 })),
     'B: never an Art-variant badge on eggs');

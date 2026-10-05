@@ -153,8 +153,11 @@ Flask process behind a Cloudflare tunnel.
   phantom long lines. "Show all on map" overlays every day's route.
 - **Daycare slots** — tap the **Daycare** built-in tag on any
   captured creature to park it (max 2 at a time). Each slot shows
-  the creature's sprite, name, and meters walked **during this
-  stay** below. Removing and re-adding resets the counter to 0. Tag
+  the creature's sprite, name, and the meters it has walked below
+  (tap the label to flip to steps, pedometer builds only). The
+  counter is **lifetime**: taking the creature out and putting it
+  back later resumes from the banked total and keeps growing, and
+  the loot milestones it already collected stay collected. Tag
   hides automatically when the daycare is full.
 
 ### Backup & sync

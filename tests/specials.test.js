@@ -186,9 +186,14 @@ function makeCtx(extra) {
     '5: addEgg accepts solo eggs');
   ok(vm.runInContext('addEgg({ sizeM: 1 })', ctx) === null,
     '5: addEgg still rejects shapeless eggs');
+  const badRec = vm.runInContext('addEgg({ speciesA: 144, speciesB: 25, bad: true, sizeM: 1.3 })', ctx);
+  ok(!!badRec && badRec.bad === true && badRec.speciesA === 144,
+    '5: addEgg persists the bad flag on pair-shaped Bad Eggs');
   const eggs = vm.runInContext('readEggs()', ctx);
-  ok(eggs.length === 2 && eggs[1].solo === 'missingno',
+  ok(eggs.length === 3 && eggs[1].solo === 'missingno',
     '5: readEggs keeps solo eggs (and pair eggs)');
+  ok(eggs[2] && eggs[2].bad === true,
+    '5: readEggs validator round-trips Bad Eggs');
 }
 {
   // egg render helpers
@@ -199,13 +204,15 @@ function makeCtx(extra) {
     creatureName: (e) => S.get(e.solo).name,
     creatureTypes: (e) => S.get(e.solo).types.slice(),
     _eggArtSpecies: (e) => e.speciesA,
-    _eggArtBackgroundCss: () => 'SHEET',
+    _eggArtBackgroundCss: (id) => 'SHEET:' + id,
   });
-  for (const m of ['function _isSoloEgg(', 'function _eggName(', 'function _eggTypes(', 'function _eggArtCss(']) {
+  for (const m of ['function _isSoloEgg(', 'function _isBadEgg(',
+                   'function _eggName(', 'function _eggTypes(', 'function _eggArtCss(']) {
     vm.runInContext(extract(m), ctx);
   }
   const soloEgg = { solo: 'missingno' };
   const pairEgg = { speciesA: 4, speciesB: 7 };
+  const badEgg = { speciesA: 144, speciesB: 7, bad: true };
   ok(vm.runInContext('_eggName(__e)', Object.assign(ctx, { __e: soloEgg })) === 'Missingno',
     '5: _eggName solo');
   ok(JSON.stringify(vm.runInContext('_eggTypes(__e)', Object.assign(ctx, { __e: soloEgg }))) === '["NORMAL"]',
@@ -213,8 +220,18 @@ function makeCtx(extra) {
   ok(vm.runInContext('_eggArtCss(__e, 48)', Object.assign(ctx, { __e: soloEgg }))
       .includes('/specials/missingno.png'),
     '5: _eggArtCss solo uses the full-PNG sprite');
-  ok(vm.runInContext('_eggArtCss(__e, 48)', Object.assign(ctx, { __e: pairEgg })) === 'SHEET',
+  ok(vm.runInContext('_eggArtCss(__e, 48)', Object.assign(ctx, { __e: pairEgg })) === 'SHEET:4',
     '5: _eggArtCss pair path unchanged');
+  ok(vm.runInContext('_isBadEgg(__e)', Object.assign(ctx, { __e: badEgg })) === true
+    && vm.runInContext('_isBadEgg(__e)', Object.assign(ctx, { __e: pairEgg })) === false
+    && vm.runInContext('_isBadEgg(__e)', Object.assign(ctx, { __e: soloEgg })) === false,
+    '5: _isBadEgg flags only bad:true records');
+  ok(vm.runInContext('_eggName(__e)', Object.assign(ctx, { __e: badEgg })) === 'Bad Egg',
+    '5: _eggName bad → Bad Egg');
+  ok(JSON.stringify(vm.runInContext('_eggTypes(__e)', Object.assign(ctx, { __e: badEgg }))) === '[]',
+    '5: _eggTypes bad → typeless');
+  ok(vm.runInContext('_eggArtCss(__e, 48)', Object.assign(ctx, { __e: badEgg })) === 'SHEET:0',
+    '5: _eggArtCss bad → plain base-egg cell (species id 0)');
 }
 {
   // hatchEgg: solo egg -> solo creature + dex seen + candy
@@ -267,10 +284,14 @@ function makeCtx(extra) {
       ITEMS: {},
       _formatItemName: () => 'X',
       isSoloCreature: (c) => !!(c && typeof c.solo === 'string' && c.solo),
+      isLegendarySpecies: () => false,
       DAYCARE_PROB_CANDY: 0.70,
       DAYCARE_PROB_EGG: 0.15,
     });
-    vm.runInContext(extract('function _daycareLootAt('), dcCtx);
+    for (const m of ['function _daycareEggProb(', 'function _daycareHasBadEggMismatch(',
+                     'function _daycareLootAt(']) {
+      vm.runInContext(extract(m), dcCtx);
+    }
     let sawCandy = 0, sawEgg = 0;
     for (let n = 1; n <= 60; n++) {
       const loot = vm.runInContext(`_daycareLootAt(${JSON.stringify(slot)}, ${n})`, dcCtx);
@@ -292,6 +313,125 @@ function makeCtx(extra) {
     }
     ok(sawCandy > 0 && sawEgg > 0 && sawCandy + sawEgg === 60,
       `6: solo daycare yields only solo candy + duplication eggs (${sawCandy} candy, ${sawEgg} eggs)`);
+
+    // --- 6b) pair daycare, legendary × non-legendary present ----------------
+    // Every egg roll in EVERY slot comes out a Bad Egg; candy/evo untouched.
+    const LEG = new Set([150]);
+    const mkPairCtx = (slots, creatures) => {
+      const c2 = makeCtx({
+        global: { Specials: S, Spawns: globalThis.Spawns },
+        findCreature: (id) => creatures[id] || null,
+        readDaycareSlots: () => slots,
+        candyRootFor: (x) => x,
+        speciesNameFor: () => 'X',
+        fusionName: () => 'X',
+        _eggRootFor: (x) => x,
+        _evoItemsForFamily: () => [],
+        ITEMS: {},
+        _formatItemName: () => 'X',
+        isSoloCreature: (c) => !!(c && typeof c.solo === 'string' && c.solo),
+        isLegendarySpecies: (id) => LEG.has(id),
+        DAYCARE_PROB_CANDY: 0.70,
+        DAYCARE_PROB_EGG: 0.15,
+      });
+      for (const m of ['function _daycareEggProb(', 'function _daycareHasBadEggMismatch(',
+                       'function _daycareLootAt(']) {
+        vm.runInContext(extract(m), c2);
+      }
+      return c2;
+    };
+    const slotL = { id: 'c-leg', addedAt: 5, distM: 1e6, claimed: [] };
+    const slotN = { id: 'c-norm', addedAt: 6, distM: 1e6, claimed: [] };
+    const mixCtx = mkPairCtx([slotL, slotN], {
+      'c-leg': { id: 'c-leg', speciesA: 150, speciesB: 25 },   // Mewtwo × Pikachu — mismatch
+      'c-norm': { id: 'c-norm', speciesA: 4, speciesB: 1 },
+    });
+    ok(vm.runInContext('_daycareHasBadEggMismatch()', mixCtx) === true,
+      '6b: legendary × non-legendary in any slot trips the mismatch rule');
+    ok(vm.runInContext('_daycareEggProb()', mixCtx) === 0.075,
+      '6b: a legendary in the daycare halves the egg probability');
+    let mixCandy = 0, mixBad = 0, mixNormalEgg = 0;
+    for (const s2 of [slotL, slotN]) {
+      for (let n = 1; n <= 120; n++) {
+        const loot = vm.runInContext(`_daycareLootAt(${JSON.stringify(s2)}, ${n})`, mixCtx);
+        if (!loot) { failed++; console.error('FAIL: 6b: null loot at n=' + n); continue; }
+        if (loot.kind === 'candy') mixCandy++;
+        else if (loot.kind === 'egg') {
+          if (loot.bad === true && loot.label === 'Bad Egg') mixBad++;
+          else { mixNormalEgg++; console.error('FAIL: 6b: non-bad egg under mismatch: ' + JSON.stringify(loot)); }
+          if (!Number.isInteger(loot.a) || !Number.isInteger(loot.b)) {
+            failed++; console.error('FAIL: 6b: bad egg missing parent species: ' + JSON.stringify(loot));
+          }
+        }
+      }
+    }
+    ok(mixBad > 0 && mixNormalEgg === 0,
+      `6b: every egg roll in every slot is a Bad Egg (${mixBad} bad, ${mixNormalEgg} normal)`);
+    ok(mixCandy > mixBad, '6b: candy drops keep flowing (untouched by the rule)');
+
+    // --- 6c) legendary × legendary: halved rate, but NORMAL eggs ------------
+    const slotP = { id: 'c-pure', addedAt: 7, distM: 1e6, claimed: [] };
+    const pureCtx = mkPairCtx([slotP], {
+      'c-pure': { id: 'c-pure', speciesA: 150, speciesB: 150 },
+    });
+    ok(vm.runInContext('_daycareHasBadEggMismatch()', pureCtx) === false,
+      '6c: legendary × legendary does NOT trip the mismatch rule');
+    ok(vm.runInContext('_daycareEggProb()', pureCtx) === 0.075,
+      '6c: egg probability still halves');
+    const cleanCtx = mkPairCtx([slotP], {
+      'c-pure': { id: 'c-pure', speciesA: 4, speciesB: 1 },
+    });
+    ok(vm.runInContext('_daycareEggProb()', cleanCtx) === 0.15,
+      '6c: no legendary → full egg probability');
+    const countEggs = (ctx, s2, nMax) => {
+      let n2 = 0;
+      for (let n = 1; n <= nMax; n++) {
+        const loot = vm.runInContext(`_daycareLootAt(${JSON.stringify(s2)}, ${n})`, ctx);
+        if (loot && loot.kind === 'egg') n2++;
+      }
+      return n2;
+    };
+    // Same slot id/addedAt → same PRNG stream; only the probability differs.
+    // Expected 15% vs 7.5% of 800 milestones = 120 vs 60, so a 2× gap is
+    // far outside any plausible spread of the deterministic draws.
+    const eggsPure = countEggs(pureCtx, slotP, 800);
+    const eggsClean = countEggs(cleanCtx, slotP, 800);
+    ok(eggsPure > 0 && eggsPure * 1.4 < eggsClean,
+      `6c: halved rate visible in the loot stream (${eggsPure} vs ${eggsClean} of 800)`);
+    let pureBad = 0, pureOk = 0;
+    for (let n = 1; n <= 800; n++) {
+      const loot = vm.runInContext(`_daycareLootAt(${JSON.stringify(slotP)}, ${n})`, pureCtx);
+      if (loot && loot.kind === 'egg') {
+        if (loot.bad) pureBad++;
+        else if (Number.isInteger(loot.displaySpecies)) pureOk++;
+      }
+    }
+    ok(pureBad === 0 && pureOk > 0,
+      '6c: legendary × legendary eggs stay normal (hatchable), never Bad Eggs');
+
+    // --- 6d) halved rate with an item evo: slack folds into CANDY ---------
+    // The evo band stays pinned at the top 15% — the odds popup's pinned
+    // evoPct must mirror these real thresholds.
+    const slotE = { id: 'c-evo', addedAt: 9, distM: 1e6, claimed: [] };
+    const evoCtx = mkPairCtx([slotE], {
+      'c-evo': { id: 'c-evo', speciesA: 150, speciesB: 151 },   // both legendary → halved, not bad
+    });
+    evoCtx._evoItemsForFamily = () => ['thunder_stone'];
+    evoCtx.ITEMS = { thunder_stone: { name: 'Thunder Stone' } };
+    let eCandy = 0, eEgg = 0, eEvo = 0;
+    for (let n = 1; n <= 800; n++) {
+      const loot = vm.runInContext(`_daycareLootAt(${JSON.stringify(slotE)}, ${n})`, evoCtx);
+      if (!loot) { failed++; console.error('FAIL: 6d: null loot at n=' + n); continue; }
+      if (loot.kind === 'candy') eCandy++;
+      else if (loot.kind === 'egg') eEgg++;
+      else if (loot.kind === 'evo_item') eEvo++;
+    }
+    // Expected: candy 620 / egg 60 / evo 120 of 800 (77.5% / 7.5% / 15%).
+    ok(eCandy > 0 && eEgg > 0 && eEvo > 0, '6d: all three kinds drop');
+    ok(eEvo > eEgg && eEvo < eEgg * 3,
+      `6d: evo band stays ~15% (2× the halved egg band), not widened (${eEvo} evo vs ${eEgg} eggs)`);
+    ok(eCandy > eEvo * 3,
+      `6d: the freed egg band folds into candy (${eCandy} candy of 800)`);
 
     // --- 7) shiny solo triples -------------------------------------------------
     require(path.join(root, 'static', 'shiny-store.js'));
