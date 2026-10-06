@@ -1200,10 +1200,10 @@
     } else {
       record.speciesA = egg.speciesA;
       record.speciesB = egg.speciesB;
-      // displaySpecies is the egg's depicted-art species — independent
-      // of the hatching content but still normalised to baby form.
-      // Older pre-cross-breed eggs don't have it; the eggs view falls
-      // back to speciesA when missing.
+      // displaySpecies: legacy depicted-art species, sampled
+      // independently of content back when egg art varied. Retained
+      // for save compat; no longer used — egg art is always the
+      // content's first species (see _eggArtSpecies).
       if (Number.isInteger(egg.displaySpecies)) {
         record.displaySpecies = egg.displaySpecies;
       }
@@ -1773,12 +1773,8 @@
         };
       }
       // Cross-breed egg. 70% uniformly across naturals, 30%
-      // uniformly across others. Display species is rolled
-      // separately from the combined pool — the egg might depict
-      // any species regardless of what's inside, matching the
-      // "you don't know what'll hatch" feel. Size in 0.5–2.0 m,
-      // rounded to 0.01 m — placeholder until a real distribution
-      // is wired in.
+      // uniformly across others. Size in 0.5–2.0 m, rounded to
+      // 0.01 m — placeholder until a real distribution is wired in.
       const naturals = [];
       for (const x of firstPool) {
         for (const y of secondPool) {
@@ -1801,9 +1797,12 @@
       // picked — the baby when it's in the pack's dataset (Raichu and
       // Pikachu both hatch as Pichu under IF2, as Pikachu under the
       // baby-less IF1 tree; Snorlax hatches as Munchlax under IF2).
-      // Same applies to the display art so the egg's appearance matches
-      // its eventual contents. _eggRootFor walks the evolution family
-      // to its root — unlike candyRootFor it does NOT skip babies.
+      // _eggRootFor walks the evolution family to its root — unlike
+      // candyRootFor it does NOT skip babies. displaySpecies is
+      // vestigial (egg art is always the first content species now —
+      // see _eggArtSpecies) but must keep being SAMPLED: removing the
+      // draw would shift the deterministic PRNG stream and re-roll
+      // every subsequent daycare loot outcome.
       const eggA = _eggRootFor(rawA);
       const eggB = _eggRootFor(rawB);
       const displaySpecies = _eggRootFor(rawDisplay);
@@ -1888,13 +1887,10 @@
       // padding) shows at roughly the same on-pill footprint as
       // a candy. Centering the cell's bbox on the pill needs an
       // inset of (60 − 28) / 2 = 16 px on each axis.
-      // Egg art is the displaySpecies (sampled separately from
-      // the contents, then normalised to baby form). Older eggs
-      // pre-cross-breed didn't carry displaySpecies — fall back
-      // to loot.a so existing pills keep rendering. Bad Eggs use
-      // the sheet's plain base-egg cell (species id 0).
-      const id = loot.bad ? 0
-        : (Number.isInteger(loot.displaySpecies) ? loot.displaySpecies : loot.a);
+      // Egg art is the content's first species, matching what the
+      // eggs view will show for it (see _eggArtSpecies). Bad Eggs
+      // use the sheet's plain base-egg cell (species id 0).
+      const id = loot.bad ? 0 : loot.a;
       const col = id % EGGS_SHEET_COLS;
       const row = Math.floor(id / EGGS_SHEET_COLS);
       const cellPx = 60;
@@ -6597,6 +6593,24 @@
         white-space: nowrap;
         z-index: 1;
       }
+      /* Stack-count pill for duplicate-egg stacks (see _stackEggs).
+         Grid tiles anchor it to the tile's top-right corner (the
+         New/Fresh pill owns top-left); the craft view anchors it to
+         the art's bottom-right (the 2×/3× yield badge owns the art's
+         top-right). */
+      #creatureInventory .egg-stack-count {
+        position: absolute;
+        min-width: 18px; height: 18px; padding: 0 4px; box-sizing: border-box;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 11px; font-weight: 700; line-height: 1; color: #fff;
+        background: var(--ui-accent, #888);
+        border: 1.5px solid #fff; border-radius: 9px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.35);
+        pointer-events: none;
+        z-index: 1;
+      }
+      #creatureInventory .egg-tile .egg-stack-count { top: -6px; right: -6px; }
+      #creatureInventory .craft-egg-art .egg-stack-count { bottom: -4px; right: -4px; }
       /* Legendary eggs (10 km hatch): gold border so they read as
          special at a glance, in the grid and in incubator slots. */
       #creatureInventory .egg-tile.egg-legendary {
@@ -10274,14 +10288,13 @@
   // threshold, the slot card surfaces a "Tap to hatch" CTA which
   // creates a level-1 capture record from the egg's content +
   // size, removes the egg, and frees the slot.
-  // Resolve which species' egg cell to render for a given egg.
-  // Cross-breed eggs sample displaySpecies separately and store it;
-  // pre-cross-breed records don't have it and fall back to speciesA
-  // (which was the parent's first species, identical to content).
+  // Resolve which species' egg cell to render for a given egg: always
+  // the content's first species, so identical pairs always look
+  // identical and stack cleanly in the eggs / craft views. Records may
+  // carry a displaySpecies (sampled separately back when art varied
+  // independently of content) — retained for save compat, ignored here.
   function _eggArtSpecies(egg) {
-    return Number.isInteger(egg && egg.displaySpecies)
-      ? egg.displaySpecies
-      : (egg && egg.speciesA);
+    return egg && egg.speciesA;
   }
 
   // CSS background-* string for a single eggs.png cell sized to
@@ -10454,6 +10467,41 @@
     }
     return out;
   }
+  // The display-level "same egg" relation: the key duplicate eggs
+  // stack under in the grid and craft views. Pair eggs stack by
+  // content pair (Bad Eggs separately — they craft, never hatch);
+  // solo eggs by special id. Per-egg properties (incubation
+  // progress, size) don't affect sameness — stacks are a pure view
+  // concern (see _stackEggs); the model stays one record per egg.
+  function _eggStackKey(egg) {
+    if (_isSoloEgg(egg)) return `solo:${egg.solo}`;
+    return `${egg.speciesA}-${egg.speciesB}${ _isBadEgg(egg) ? '-bad' : ''}`;
+  }
+
+  // Group a filtered+sorted egg list into display stacks for the
+  // grid / craft views. Each stack is its member eggs ordered
+  // most-incubated-first (ties: oldest first), so stack[0] is the
+  // representative to render and hand to drag / craft interactions
+  // and stack.length is the count badge. Group order follows first
+  // occurrence in the input, preserving the caller's sort.
+  function _stackEggs(eggs) {
+    const groups = new Map();
+    for (const egg of eggs) {
+      if (!egg) continue;
+      const key = _eggStackKey(egg);
+      const group = groups.get(key);
+      if (group) group.push(egg);
+      else groups.set(key, [egg]);
+    }
+    for (const group of groups.values()) {
+      if (group.length > 1) {
+        group.sort((a, b) =>
+          (eggIncubatedM(b) - eggIncubatedM(a))
+          || ((a.createdAt || 0) - (b.createdAt || 0)));
+      }
+    }
+    return Array.from(groups.values());
+  }
   // The New/Fresh toggle chips. Re-rendered (and re-bound) by renderEggs.
   function _renderEggsTagFilterRow(panel) {
     const row = panel.querySelector('.eggs-tag-filter-row');
@@ -10510,7 +10558,10 @@
     );
   }
 
-  function _eggTileHtml(egg, seenF) {
+  // `count`: stack size when the tile represents a duplicate stack
+  // (see _stackEggs) — renders a "×N" badge on the tile's top-right
+  // corner for N > 1.
+  function _eggTileHtml(egg, seenF, count) {
     const artStyle = _eggArtCss(egg, 48);
     const name = _eggName(egg);
     const incubatedM = eggIncubatedM(egg);
@@ -10521,9 +10572,14 @@
       : '';
     const legendary = _isLegendaryEgg(egg) ? ' egg-legendary' : '';
     const bad = _isBadEgg(egg) ? ' egg-bad' : '';
+    const stackBadge = count > 1
+      ? `<div class="egg-stack-count" aria-hidden="true">&times;${count}</div>`
+      : '';
+    const aria = count > 1 ? `${name} eggs, stack of ${count}` : `${name} egg`;
     return (
-      `<div class="egg-tile${legendary}${bad}" data-egg-id="${escapeHtml(egg.id)}" aria-label="${escapeHtml(name)} egg">`
+      `<div class="egg-tile${legendary}${bad}" data-egg-id="${escapeHtml(egg.id)}" aria-label="${escapeHtml(aria)}">`
       + _eggNewBadgeHtml(egg, seenF)
+      + stackBadge
       + `<div class="tile-art" style="${artStyle}"></div>`
       + `<div class="tile-name">${escapeHtml(name)}</div>`
       + progress
@@ -10653,7 +10709,12 @@
         ? `<b>${visibleEggs.length}</b> of <b>${eggs.length}</b> egg${eggs.length === 1 ? '' : 's'}`
         : `<b>${eggs.length}</b> egg${eggs.length === 1 ? '' : 's'}`;
     }
-    const tiles = visibleEggs.map((e) => _eggTileHtml(e, seenF)).join('');
+    // Stack duplicates (see _stackEggs): one tile per pair / solo id
+    // with a count badge for 2+. The stack's most-incubated member is
+    // the representative — it's the egg a drag out of the stack moves.
+    const tiles = _stackEggs(visibleEggs)
+      .map((stack) => _eggTileHtml(stack[0], seenF, stack.length))
+      .join('');
     const gridHtml = (
       `<div class="eggs-grid-zone" data-zone="grid">`
       + (visibleEggs.length
@@ -10874,6 +10935,15 @@
     // so that's harmless.
     const onLostCapture = (e) => {
       if (e.pointerId !== dragPointerId) return;
+      // ...but ignore losses on the tile's CHILDREN: touch pointers
+      // start implicitly captured to the press target (.tile-art when
+      // the egg art is grabbed, the tile itself when a corner is), and
+      // our setPointerCapture(tile) at drag start releases that child
+      // capture — a lostpointercapture that BUBBLES up from the child.
+      // Cancelling on it would kill every center-grabbed drag the
+      // instant it starts. Only the TILE losing capture mid-gesture
+      // is the genuine dropped-stream case.
+      if (e.target !== tile) return;
       cleanup();
     };
 
@@ -11241,16 +11311,23 @@
         `;
         return;
       }
-      const tiles = eggs.map((e) => {
+      // Stack duplicates like the eggs grid does (see _stackEggs):
+      // one button per pair with a count badge for 2+; crafting
+      // consumes the stack's most-incubated member first.
+      const seenF = readSeenFusions();  // hoisted — see _filterSortEggs
+      const tiles = _stackEggs(eggs).map((stack) => {
+        const e = stack[0];
         const artStyle = _eggArtCss(e, 56);
         const name = _eggName(e);
         const types = _eggTypes(e);
         const mult = _craftMultForEgg(e, st.type);
         const badge = mult > 1
           ? `<span class="craft-egg-mult">${mult}&times;</span>` : '';
+        const stackBadge = stack.length > 1
+          ? `<span class="egg-stack-count">&times;${stack.length}</span>` : '';
         return `
           <button class="craft-egg" type="button" data-egg="${escapeHtml(e.id)}">
-            <div class="craft-egg-art" style="${artStyle}">${badge}</div>
+            <div class="craft-egg-art" style="${artStyle}">${_eggNewBadgeHtml(e, seenF)}${badge}${stackBadge}</div>
             <div class="craft-egg-info">
               <div class="craft-egg-name">${escapeHtml(name)}</div>
               ${typeChipsHtml(types)}
