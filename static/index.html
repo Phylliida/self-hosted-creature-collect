@@ -8433,6 +8433,21 @@ function fmtDate(ts) {
     return token;
   }
 
+  // Gzip the save body when the webview supports CompressionStream
+  // (Chrome 80+, Safari 16.4+) — cuts a large save's upload ~5x. The
+  // server sniffs the gzip magic bytes, so older clients posting plain
+  // JSON keep working unchanged.
+  async function _saveRequestBody(data) {
+    const text = JSON.stringify(data);
+    if (typeof CompressionStream === 'undefined') return { body: text, gzipped: false };
+    try {
+      const stream = new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'));
+      return { body: await new Response(stream).blob(), gzipped: true };
+    } catch (_) {
+      return { body: text, gzipped: false };
+    }
+  }
+
   // opts.silent → no alerts (used by the WiFi auto-backup). Returns whether
   // the save succeeded so callers can react without a popup.
   async function saveToServer(opts) {
@@ -8444,10 +8459,13 @@ function fmtDate(ts) {
     }
     const data = await buildBackupPayload();
     try {
+      const req = await _saveRequestBody(data);
+      const headers = { 'Content-Type': 'application/json' };
+      if (req.gzipped) headers['Content-Encoding'] = 'gzip';
       const resp = await fetch(_serverUrl('save', '/save'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
+        headers: headers,
+        body: req.body,
       });
       const body = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);

@@ -505,7 +505,7 @@ _SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\- ]{0,63}$")
 # Tokenless saves are only allowed for unclaimed names (pre-update clients)
 # and never claim. The .claims.json filename can't collide with a save:
 # _SAFE_NAME_RE names can't start with a dot, and its dot-separated name
-# never matches the `<name>_<millis>.json` globs.
+# never matches the `<name>_<millis>.json[.gz]` globs.
 _PUBLIC_INSTANCE = os.environ.get("CC_LAN") != "1"
 # Overridable so tests (and alternate deployments) can point saves at a
 # scratch directory instead of the real one.
@@ -555,9 +555,24 @@ def _check_write_claim(name, payload, millis):
     return None
 
 
+def _gunzip_limited(raw, limit):
+    """Decompress a gzip request body, refusing output past `limit` bytes.
+
+    gzip.decompress() would happily expand a zip bomb in memory, so read
+    through GzipFile with a cap instead. When the content fits under the
+    cap the read runs to EOF, which also validates the CRC trailer and
+    so catches truncated/corrupt uploads.
+    """
+    with gzip.GzipFile(fileobj=BytesIO(raw)) as f:
+        data = f.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError("decompressed body too large")
+    return data
+
+
 @app.route("/save", methods=["POST"])
 def save_backup():
-    """Save the client's exported backup JSON to saves/<name>_<ms>.json.
+    """Save the client's exported backup JSON to saves/<name>_<ms>.json.gz.
 
     The trainer name comes from the body's `backupName` field (a mirror
     of the Settings text field, also stored client-side). Names are
@@ -566,8 +581,26 @@ def save_backup():
     `_<millis>` (milliseconds since epoch, taken from the request time)
     means every save creates a new file rather than overwriting, so the
     user has a full history they can roll back through.
+
+    Newer clients gzip the JSON body (CompressionStream); we detect that
+    by the 1f 8b magic bytes, decompress for validation, and store the
+    received bytes verbatim. Older clients still post plain JSON, which
+    we compress here — either way every new save lands as .json.gz.
     """
-    payload = request.get_json(silent=True)
+    raw = request.get_data()
+    if raw[:2] == b"\x1f\x8b":
+        try:
+            data = _gunzip_limited(raw, app.config["MAX_CONTENT_LENGTH"])
+        except (OSError, EOFError, ValueError):
+            return jsonify({"error": "invalid or too-large gzip body"}), 400
+        gz_bytes = raw
+    else:
+        data = raw
+        gz_bytes = None
+    try:
+        payload = json.loads(data)
+    except (UnicodeDecodeError, ValueError):
+        return jsonify({"error": "expected JSON object"}), 400
     if not isinstance(payload, dict):
         return jsonify({"error": "expected JSON object"}), 400
     name = (payload.get("backupName") or "").strip()
@@ -581,11 +614,13 @@ def save_backup():
     bounce = _check_write_claim(name, payload, millis)
     if bounce:
         return bounce
-    path = saves_dir / f"{name}_{millis}.json"
+    path = saves_dir / f"{name}_{millis}.json.gz"
+    if gz_bytes is None:
+        # Legacy plain-JSON client — compress on its behalf.
+        gz_bytes = gzip.compress(data, compresslevel=5)
     # Atomic-ish write so a crash mid-save doesn't corrupt the file.
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
-                   encoding="utf-8")
+    tmp.write_bytes(gz_bytes)
     tmp.replace(path)
     return jsonify({"ok": True, "saved": path.name})
 
@@ -804,8 +839,8 @@ def save_names():
     if not saves_dir.is_dir():
         return jsonify([])
     names = set()
-    for p in saves_dir.glob("*_*.json"):
-        m = re.match(r"^(.+)_\d+\.json$", p.name)
+    for p in saves_dir.glob("*_*.json*"):
+        m = re.match(r"^(.+)_\d+\.json(\.gz)?$", p.name)
         if m and _SAFE_NAME_RE.fullmatch(m.group(1)):
             names.add(m.group(1))
     return jsonify(sorted(names))
@@ -815,10 +850,12 @@ def save_names():
 def load_backup():
     """Return the most-recent saved backup for `?name=X`.
 
-    Save files are named `<name>_<millis>.json` (see /save above), so the
-    most recent is the one with the highest numeric suffix. Falls back
-    to mtime ordering if any file's name doesn't match the pattern (e.g.
-    a manual upload). 404 when no save exists for that name.
+    Save files are named `<name>_<millis>.json.gz` (see /save above; older
+    saves are plain `<name>_<millis>.json`), so the most recent is the one
+    with the highest numeric suffix. Falls back to mtime ordering if any
+    file's name doesn't match the pattern (e.g. a manual upload). 404 when
+    no save exists for that name. Gzipped saves are decompressed before
+    serving, so clients always receive plain JSON.
 
     LAN-only: saves carry long-term GPS traces (and the name's write
     token), so the public (tunnel-facing) instance refuses — loading
@@ -834,18 +871,22 @@ def load_backup():
     if not saves_dir.is_dir():
         abort(404)
     candidates = []
-    for p in saves_dir.glob(f"{name}_*.json"):
-        m = re.match(rf"^{re.escape(name)}_(\d+)\.json$", p.name)
+    for p in saves_dir.glob(f"{name}_*.json*"):
+        m = re.match(rf"^{re.escape(name)}_(\d+)\.json(\.gz)?$", p.name)
         if m:
             candidates.append((int(m.group(1)), p))
-        else:
+        elif p.name.endswith((".json", ".json.gz")):
             candidates.append((int(p.stat().st_mtime * 1000), p))
     if not candidates:
         abort(404)
     candidates.sort(key=lambda t: t[0], reverse=True)
     latest = candidates[0][1]
-    resp = send_from_directory(saves_dir, latest.name,
-                                mimetype="application/json")
+    if latest.name.endswith(".gz"):
+        with gzip.open(latest, "rb") as f:
+            resp = Response(f.read(), mimetype="application/json")
+    else:
+        resp = send_from_directory(saves_dir, latest.name,
+                                   mimetype="application/json")
     # No HTTP cache — saves are the user's data and can change at any time.
     resp.headers["Cache-Control"] = "no-store"
     return resp

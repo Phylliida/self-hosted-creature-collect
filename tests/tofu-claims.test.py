@@ -15,6 +15,10 @@ Covers, against a real Flask test client and a scratch saves dir:
   (5) /load on the home instance returns the newest save INCLUDING the
       writeToken (that's how a fresh device re-learns it at home)
   (6) the request body size cap is configured
+  (7) gzip saves — a gzipped body is stored verbatim as .json.gz, plain
+      JSON is also stored as .json.gz, /load and /save-names see both
+      extensions across a mixed directory, corrupt gzip is rejected,
+      and over-limit decompressed bodies are rejected
 
 The scratch dir comes from CC_SAVES_DIR (must be exported before run.py
 is imported), so the real saves/ is never touched.
@@ -22,6 +26,7 @@ is imported), so the real saves/ is never touched.
 Run: python3 tests/tofu-claims.test.py
 (no env needed — it re-execs itself with a scratch CC_SAVES_DIR)
 """
+import gzip
 import hashlib
 import json
 import os
@@ -81,7 +86,8 @@ ok(TOKEN not in (SAVES / ".claims.json").read_text(), "raw token never written t
 ok(save("TofuA", TOKEN).status_code == 200, "matching token keeps saving")
 ok(save("TofuA", "tok_wrong_wrong_wrong").status_code == 403, "wrong token -> 403")
 ok(save("TofuA").status_code == 403, "missing token on claimed name -> 403")
-ok(len(list(SAVES.glob("TofuA_*.json"))) == 2, "rejected saves wrote no files")
+ok(len(list(SAVES.glob("TofuA_*.json.gz"))) == 2, "rejected saves wrote no files")
+ok(not list(SAVES.glob("TofuA_*.json")), "plain posts are stored as .json.gz")
 
 # ── (2) legacy tokenless clients ──
 ok(save("TofuLegacy").status_code == 200, "tokenless save allowed for unclaimed name")
@@ -121,6 +127,49 @@ finally:
 # ── (6) size cap configured ──
 ok(run.app.config.get("MAX_CONTENT_LENGTH") == 64 * 1024 * 1024,
    "MAX_CONTENT_LENGTH capped at 64MB")
+
+# ── (7) gzip request bodies ──
+def save_gz(name, token, marker):
+    payload = {"backupName": name, "writeToken": token, "marker": marker}
+    raw = gzip.compress(json.dumps(payload).encode())
+    return raw, client.post("/save", data=raw, headers={
+        "Content-Type": "application/json", "Content-Encoding": "gzip"})
+
+raw, r = save_gz("TofuGz", TOKEN, "gz1")
+ok(r.status_code == 200, f"gzipped save accepted (got {r.status_code})")
+ok(r.get_json().get("saved", "").endswith(".json.gz"), "response names the .json.gz file")
+stored = SAVES / r.get_json()["saved"]
+ok(stored.read_bytes() == raw, "gzipped body stored verbatim (no recompression)")
+ok(json.loads(gzip.decompress(stored.read_bytes()))["marker"] == "gz1",
+   "stored .json.gz round-trips the payload")
+r = client.get("/load?name=TofuGz")
+ok(r.status_code == 200 and r.get_json().get("marker") == "gz1",
+   "/load decompresses a .json.gz save")
+r = client.get("/save-names")
+ok(r.status_code == 200 and "TofuGz" in r.get_json(),
+   "/save-names lists a .json.gz-only name")
+
+# A legacy plain-.json file sitting next to newer .json.gz saves: /load
+# must pick by the millis suffix across both extensions.
+legacy = SAVES / "TofuGz_9999999999999.json"
+legacy.write_text(json.dumps({"backupName": "TofuGz", "marker": "legacy-plain"}))
+r = client.get("/load?name=TofuGz")
+ok(r.get_json().get("marker") == "legacy-plain",
+   "/load picks a newer plain .json over older .json.gz")
+legacy.unlink()
+ok(client.get("/load?name=TofuGz").get_json().get("marker") == "gz1",
+   "/load falls back to the .json.gz once the plain one is gone")
+
+r = client.post("/save", data=b"\x1f\x8b" + b"not-really-gzip",
+                headers={"Content-Type": "application/json"})
+ok(r.status_code == 400, "corrupt gzip body -> 400")
+
+huge = gzip.compress(b'{"backupName": "TofuGz", "pad": "' + b"x" * (65 * 1024 * 1024) + b'"}')
+r = client.post("/save", data=huge, headers={"Content-Type": "application/json"})
+ok(r.status_code == 400, "decompressed body past the size cap -> 400")
+ok(len(list(SAVES.glob("TofuGz_*.json.gz"))) == 1,
+   "rejected gzip saves wrote no files")
+
 
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

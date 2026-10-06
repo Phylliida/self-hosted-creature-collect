@@ -190,6 +190,19 @@
     }
   }
 
+  // Gzip the save body when supported (see index.html's _saveRequestBody);
+  // the server sniffs the gzip magic bytes, plain JSON still works too.
+  async function saveRequestBody(payload) {
+    const text = JSON.stringify(payload);
+    if (typeof CompressionStream === 'undefined') return { body: text, gzipped: false };
+    try {
+      const stream = new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'));
+      return { body: await new Response(stream).blob(), gzipped: true };
+    } catch (_) {
+      return { body: text, gzipped: false };
+    }
+  }
+
   async function doSave() {
     if (!pristine) { status('Load a save first — Save round-trips it.', true); return; }
     status('Saving…');
@@ -199,10 +212,13 @@
       const payload = mergePayload(pristine, extras, new Date().toISOString());
       payload.backupName = loadedName;
       payload.writeToken = pickWriteToken(pristine, tokenMap(), loadedName, genToken);
+      const req = await saveRequestBody(payload);
+      const headers = { 'Content-Type': 'application/json' };
+      if (req.gzipped) headers['Content-Encoding'] = 'gzip';
       const resp = await fetch('/save', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        headers: headers,
+        body: req.body,
       });
       const body = await resp.json().catch(() => ({}));
       if (resp.status === 403) {

@@ -15,6 +15,7 @@ between builds even for identical art).
 Usage: python3 verify-art-preservation.py [n_saves] [save1.json save2.json ...]
 """
 
+import gzip
 import json
 import re
 import struct
@@ -53,11 +54,18 @@ def pixels(png: bytes):
 
 def recent_saves(n: int) -> list[Path]:
     saves = []
-    for f in (ROOT / "saves").glob("*.json"):
-        m = re.search(r"_(\d+)\.json$", f.name)
+    for f in (ROOT / "saves").glob("*.json*"):
+        m = re.search(r"_(\d+)\.json(\.gz)?$", f.name)
         if m:
             saves.append((int(m.group(1)), f))
     return [f for _, f in sorted(saves)[-n:]]
+
+
+def read_save(p: Path):
+    if p.name.endswith(".gz"):
+        with gzip.open(p, "rt", encoding="utf-8") as f:
+            return json.load(f)
+    return json.loads(p.read_text())
 
 
 def main() -> None:
@@ -70,7 +78,7 @@ def main() -> None:
 
     triples = set()
     for p in save_paths:
-        data = json.loads(p.read_text())
+        data = read_save(p)
         for c in data.get("captured", []):
             a, b, v = c.get("speciesA"), c.get("speciesB"), c.get("variant")
             if isinstance(a, int) and isinstance(b, int) and isinstance(v, int):
