@@ -2280,8 +2280,9 @@ debug populators / gifting flows.
 
 ### Evolution items in the bag
 
-Bundle pipeline now copies the 17 PIF item PNGs that the
-species-evolutions data references into `data/BundledData/evo-items/`
+Bundle pipeline now copies the 25 PIF item PNGs that the
+species-evolutions data references (the item-gated methods: `Item`,
+`TradeItem`, `DayHoldItem`) into `data/BundledData/evo-items/`
 + writes `evo-items-list.json`. `creatures.js` registers an entry
 in the `ITEMS` catalog for each at module load time
 (`name: _formatItemName(key)`, `icon:
@@ -2376,7 +2377,7 @@ build-bundled-data.py main():
   build_eggs_sheet()              # 67 cells from PIF source
   fill_egg_fallbacks()             # 150 cells via waterfall
   build_candies_sheet()            # candies.png from completed eggs.png
-  copy_evo_items(evos)             # 17 PNGs + manifest
+  copy_evo_items(evos)             # 25 PNGs + manifest
   copy_app_data()                  # icons + fonts (existing)
   bundle_base_map_tiles()          # z0..z5 (existing)
 ```

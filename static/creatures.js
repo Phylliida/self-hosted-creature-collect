@@ -437,16 +437,21 @@
   // Register evolution-item bag entries derived from the bundled
   // evo-items/ directory. The set is intentionally hardcoded so the
   // module loads quickly without needing the bundle JSON in memory.
-  // MUST stay in sync with data/BundledData/evo-items-list.json — i.e.
-  // the PNGs that build-bundled-data.py actually ships under evo-items/.
-  // (An out-of-sync list is why DUSKSTONE/DAWNSTONE/REAPERCLOTH had no
-  // bag icons while phantom keys with no PNG were listed instead.) Each
-  // gets a name, an icon URL pointing at the bundled PNG, and a desc —
-  // slotting into the bag UI the same way poke_ball / great_ball do.
+  // Every key here MUST have a PNG shipped under
+  // data/BundledData/evo-items/ (an out-of-sync list is why
+  // DUSKSTONE/DAWNSTONE/REAPERCLOTH had no bag icons while phantom
+  // keys with no PNG were listed instead) — but this is a SUBSET of
+  // evo-items-list.json, not a mirror: DRAGONSCALE, DUBIOUSDISC,
+  // ELECTIRIZER, KINGSROCK, MAGMARIZER, METALCOAT, PRISMSCALE,
+  // PROTECTOR and UPGRADE still ship art without a bag entry (known
+  // gap, tracked separately). Each entry gets a name, an icon URL
+  // pointing at the bundled PNG, and a desc — slotting into the bag
+  // UI the same way poke_ball / great_ball do.
   const EVO_ITEM_KEYS = [
-    'DAWNSTONE', 'DUSKSTONE', 'FIRESTONE', 'ICESTONE', 'LEAFSTONE',
-    'LINKINGCORD', 'MAGNETSTONE', 'MOONSTONE', 'REAPERCLOTH', 'SHINYSTONE',
-    'SUNSTONE', 'THUNDERSTONE', 'WATERSTONE',
+    'DAWNSTONE', 'DEEPSEASCALE', 'DEEPSEATOOTH', 'DUSKSTONE', 'FIRESTONE',
+    'ICESTONE', 'LEAFSTONE', 'LINKINGCORD', 'MAGNETSTONE', 'MOONSTONE',
+    'OVALSTONE', 'REAPERCLOTH', 'SHINYSTONE', 'SUNSTONE', 'THUNDERSTONE',
+    'WATERSTONE',
   ];
   for (const key of EVO_ITEM_KEYS) {
     if (ITEMS[key]) continue;
@@ -1631,7 +1636,10 @@
     for (const id of family) {
       const evos = (global.Species.evolutionsFor && global.Species.evolutionsFor(id)) || [];
       for (const evo of evos) {
-        if (evo.method === 'Item' && typeof evo.param === 'string') {
+        // Same method set the evolve path gates on (_EVO_ITEM_METHODS,
+        // declared below — module-init order makes it safe): the loot
+        // pool must offer exactly the items evolutions can require.
+        if (_EVO_ITEM_METHODS.has(evo.method) && typeof evo.param === 'string') {
           items.add(evo.param);
         }
       }
@@ -10523,60 +10531,70 @@
     );
   }
 
+  // In-place progress refresh for the eggs view (see the
+  // cc-incubator-tick handler in renderEggs): slot fills + distance
+  // text, plus fills on any partially-incubated grid tiles. Runs on
+  // the tick that follows the incubatedM write, so it always reads
+  // fresh state.
+  function _patchEggProgressInPlace(body) {
+    const eggsById = new Map(readEggs().map((e) => [e.id, e]));
+    const pctOf = (egg) => Math.min(100,
+      Math.round((eggIncubatedM(egg) / eggHatchM(egg)) * 100));
+    body.querySelectorAll('.incubator-slot .slot-egg-tile[data-egg-id]')
+      .forEach((tile) => {
+        const egg = eggsById.get(tile.dataset.eggId);
+        if (!egg) return;
+        const slotEl = tile.closest('.incubator-slot');
+        const fill = slotEl && slotEl.querySelector('.slot-progress .fill');
+        if (fill) fill.style.width = pctOf(egg) + '%';
+        const dist = slotEl && slotEl.querySelector('.slot-distance');
+        if (dist) dist.textContent = _formatIncubationKm(egg);
+      });
+    body.querySelectorAll('.egg-tile:not(.slot-egg-tile)[data-egg-id]')
+      .forEach((tile) => {
+        const egg = eggsById.get(tile.dataset.eggId);
+        if (!egg) return;
+        const fill = tile.querySelector('.tile-progress .fill');
+        if (fill) fill.style.width = pctOf(egg) + '%';
+      });
+  }
+
   function renderEggs() {
     const panel = document.getElementById('creatureInventory');
     if (!panel) return;
     const body = panel.querySelector('.eggs-body');
     if (!body) return;
-    // Once-per-body listener: walking ticks up incubatedM on
-    // occupied eggs, which dispatches cc-incubator-tick. Re-render
-    // the whole eggs view on each tick — the view's small (two
-    // slots + a grid) so a full rebuild is cheap and keeps the
-    // progress bars + "ready to hatch" CTAs in lockstep.
+    // Abort any in-progress egg drag BEFORE the innerHTML below
+    // replaces the tiles: the tile under the finger holds pointer
+    // capture, and iOS drops the touch's whole event stream when the
+    // capture target is removed mid-gesture — pointerup/pointercancel
+    // never arrive, so without this out-of-band teardown the drag's
+    // ghost would be orphaned on document.body (the "floating egg"
+    // bug). Re-renders can still land mid-gesture — the cc-incubator-
+    // tick below re-renders on hatch-ready crossings, and the user can
+    // always filter/sort while walking — so the abort stays necessary.
+    if (_eggDragState) _eggDragState.abort();
+    // Once-per-body listener: walking credits dispatch cc-incubator-
+    // tick from _creditMeters on EVERY batch that advances a slotted
+    // egg — not just hatch crossings. A full re-render per tick would
+    // rebuild the whole grid every few seconds while walking (yanking
+    // focus out of the search inputs mid-typing and swapping the DOM
+    // out from under any in-progress egg drag), so plain advances only
+    // patch the progress fills + distance text in place. Only a
+    // hatch-ready crossing changes the structure (the "Tap to hatch"
+    // CTA) and pays for a re-render.
     if (!body._incubatorTickHandler) {
-      const handler = () => {
-        // Only re-render if the eggs-view is currently visible —
-        // otherwise the next showEggs() naturally picks up the
-        // updated state.
+      const handler = (e) => {
+        // Ignore ticks while the eggs view isn't visible — the next
+        // showEggs() naturally picks up the updated state.
         const view = panel.querySelector('.eggs-view');
-        if (view && view.classList.contains('show')) renderEggs();
+        if (!view || !view.classList.contains('show')) return;
+        const ready = (e && e.detail && e.detail.ready) || [];
+        if (ready.length) renderEggs();
+        else _patchEggProgressInPlace(body);
       };
       body._incubatorTickHandler = handler;
       window.addEventListener('cc-incubator-tick', handler);
-    }
-    // Live progress: every credited distance batch (GPS fix or
-    // pedometer sync) fires cc-daycare-credit from _creditMeters.
-    // Update incubator fills + distance text and grid tile fills in
-    // place — a full re-render every few seconds would yank focus out
-    // of the search inputs mid-typing. Hatch-completion crossings still
-    // re-render via cc-incubator-tick above.
-    if (!body._creditTickHandler) {
-      const creditHandler = () => {
-        const view = panel.querySelector('.eggs-view');
-        if (!view || !view.classList.contains('show')) return;
-        const eggsById = new Map(readEggs().map((e) => [e.id, e]));
-        const pctOf = (egg) => Math.min(100,
-          Math.round((eggIncubatedM(egg) / eggHatchM(egg)) * 100));
-        body.querySelectorAll('.incubator-slot .slot-egg-tile[data-egg-id]')
-          .forEach((tile) => {
-            const egg = eggsById.get(tile.dataset.eggId);
-            if (!egg) return;
-            const slotEl = tile.closest('.incubator-slot');
-            const fill = slotEl && slotEl.querySelector('.slot-progress .fill');
-            if (fill) fill.style.width = pctOf(egg) + '%';
-            const dist = slotEl && slotEl.querySelector('.slot-distance');
-            if (dist) dist.textContent = _formatIncubationKm(egg);
-          });
-        body.querySelectorAll('.egg-tile:not(.slot-egg-tile)[data-egg-id]')
-          .forEach((tile) => {
-            const egg = eggsById.get(tile.dataset.eggId);
-            if (!egg) return;
-            const fill = tile.querySelector('.tile-progress .fill');
-            if (fill) fill.style.width = pctOf(egg) + '%';
-          });
-      };
-      body._creditTickHandler = creditHandler;
-      window.addEventListener('cc-daycare-credit', creditHandler);
     }
     const allEggs = readEggs();
     // Multi-pack isolation: the eggs view shows only the active pack's
@@ -10690,7 +10708,21 @@
   // the user never tapped outside the sheet.
   let _lastEggDragEndAt = 0;
   const EGG_DRAG_CLICK_GUARD_MS = 400;
+  // Handle ({ abort }) for the drag currently in progress, or null.
+  // Lets a mid-drag re-render (renderEggs), a panel close (hide), or
+  // an app backgrounding (the hook below) tear the drag down out-of-band
+  // when the gesture's pointer stream dies before pointerup/
+  // pointercancel — otherwise the ghost floats on document.body forever.
   let _eggDragState = null;
+  if (typeof document !== 'undefined') {
+    // iOS suspends JS on backgrounding; a pointerup that would have
+    // ended an in-flight drag is lost across the suspension.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden' && _eggDragState) {
+        _eggDragState.abort();
+      }
+    });
+  }
   function _setupEggDragDrop(rootEl) {
     if (!rootEl) return;
     const tiles = rootEl.querySelectorAll('.egg-tile');
@@ -10794,13 +10826,8 @@
 
     const onUp = (e) => {
       if (e.pointerId !== dragPointerId) return;
-      cleanup();
+      cleanup();  // also stamps _lastEggDragEndAt for the click guard
       if (!started) return;
-      // Stamp the drag end even when the drop is a no-op: iOS may still
-      // deliver this gesture's trailing synthesized click, mis-targeted
-      // after a mid-drag re-render. The panel's backdrop-close handler
-      // ignores clicks inside this window (see EGG_DRAG_CLICK_GUARD_MS).
-      _lastEggDragEndAt = Date.now();
       const drop = findDropZone(e.clientX, e.clientY);
       if (!drop) return;  // Snap back: no state change, re-render not needed.
       const zone = drop.dataset.zone;
@@ -10840,8 +10867,25 @@
       cleanup();
     };
 
+    // The browser released our pointer capture mid-gesture (Safari can
+    // do this when it drops a touch's event stream). Treat it as a
+    // cancel so the ghost can't strand. This also fires right after a
+    // normal pointerup's implicit release — cleanup() is idempotent,
+    // so that's harmless.
+    const onLostCapture = (e) => {
+      if (e.pointerId !== dragPointerId) return;
+      cleanup();
+    };
+
     const cleanup = () => {
       if (scrollRAF) { cancelAnimationFrame(scrollRAF); scrollRAF = 0; }
+      // Stamp the drag end on EVERY exit path (drop, cancel, lost
+      // capture, out-of-band abort) — even when it's a no-op: iOS may
+      // still deliver this gesture's trailing synthesized click,
+      // mis-targeted after a mid-drag re-render. The panel's
+      // backdrop-close handler ignores clicks inside this window (see
+      // EGG_DRAG_CLICK_GUARD_MS).
+      if (started) _lastEggDragEndAt = Date.now();
       tile.classList.remove('dragging');
       if (lastDropZone) lastDropZone.classList.remove('drop-active');
       if (ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost);
@@ -10849,11 +10893,21 @@
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onCancel);
+      tile.removeEventListener('lostpointercapture', onLostCapture);
+      if (_eggDragState === dragHandle) _eggDragState = null;
     };
+
+    // Out-of-band teardown handle (see _eggDragState): lets renderEggs,
+    // hide(), or the backgrounding hook end this drag when its pointer
+    // stream died. Registered even before the drag passes its threshold
+    // so a re-render mid-TAP also removes this gesture's listeners.
+    const dragHandle = { abort: () => cleanup() };
 
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onCancel);
+    tile.addEventListener('lostpointercapture', onLostCapture);
+    _eggDragState = dragHandle;
   }
 
   function showBag() {
@@ -14676,6 +14730,9 @@
   }
 
   function hide() {
+    // A panel close mid-drag would orphan the drag's ghost (it lives on
+    // document.body, above the panel) — end the drag first.
+    if (_eggDragState) _eggDragState.abort();
     const panel = document.getElementById('creatureInventory');
     if (panel) {
       panel.classList.remove('show');
@@ -15160,9 +15217,12 @@
       _summaryCache[sk] = (_summaryCache[sk] || 0) + stepN;
       _idbPutSummary(sk, _summaryCache[sk]).catch(() => {});
     }
-    // Live-update hook: lets an open daycare or eggs view refresh its
-    // counters (slot labels / Today value / detail line / incubator
-    // progress) without waiting for a milestone crossing or a re-render.
+    // Live-update hook: lets an open daycare view refresh its
+    // counters (slot labels / Today value / detail line) without
+    // waiting for a milestone crossing or a re-render. The eggs
+    // view's incubator progress is driven by cc-incubator-tick
+    // below instead (it fires after the incubatedM write, so the
+    // in-place patch there always reads fresh state).
     if (typeof window !== 'undefined') {
       try {
         window.dispatchEvent(new CustomEvent('cc-daycare-credit', {

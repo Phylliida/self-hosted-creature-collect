@@ -501,6 +501,16 @@ def _id_symbol_to_number_map(species: dict) -> dict[str, int]:
     return out
 
 
+# Evolution methods that genuinely require an item. The client evolves
+# with candy and only enforces *item* conditions, so when a target offers
+# both an item method (e.g. Linking Cord, Reaper Cloth) and a level/move
+# fallback, the fallback would let the player skip the required item —
+# build_species_evolutions keeps only the item method for such targets
+# (see the dedup there). copy_evo_items derives the shipped art set from
+# this same constant so the two lists can never drift.
+ITEM_METHODS = {"Item", "TradeItem", "DayHoldItem"}
+
+
 def build_species_evolutions() -> dict:
     """Map source id_number → [[target_id_number, method, param], ...]
     for sources in ALLOWED_SET. Targets are also filtered to
@@ -511,12 +521,6 @@ def build_species_evolutions() -> dict:
     target symbols → numbers."""
     species = load_species_dat()
     sym_to_num = _id_symbol_to_number_map(species)
-    # Methods that genuinely require an item. The client evolves with candy and
-    # only enforces *item* conditions, so when a target offers both an item
-    # method (e.g. Linking Cord, Reaper Cloth) and a level/move fallback, the
-    # fallback would let the player skip the required item. Keep only the item
-    # method for such targets — see the dedup below.
-    ITEM_METHODS = {"Item", "TradeItem", "DayHoldItem"}
     out: dict[str, list] = {}
     for entry in species.values():
         idn = entry.get("id_number")
@@ -770,7 +774,8 @@ def copy_evo_items(evos: dict) -> int:
     Cord, etc.) from PIF's Graphics/Items/ into BundledData/evo-items/.
 
     The set of items copied is derived from the evolutions data:
-    every distinct `param` of an `Item` evolution method becomes a
+    every distinct `param` of an item-gated evolution method
+    (`Item`, `TradeItem`, `DayHoldItem` — see ITEM_METHODS) becomes a
     file name (PARAM.png). Plus a manifest (evo-items-list.json) so
     static hosts and the runtime "Download App Data" flow can
     enumerate without needing directory listings.
@@ -780,7 +785,7 @@ def copy_evo_items(evos: dict) -> int:
     items = set()
     for evo_list in evos.values():
         for evo in evo_list:
-            if len(evo) >= 3 and evo[1] == "Item":
+            if len(evo) >= 3 and evo[1] in ITEM_METHODS:
                 items.add(evo[2])
     items_sorted = sorted(items)
 

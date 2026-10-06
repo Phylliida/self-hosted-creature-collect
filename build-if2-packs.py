@@ -531,10 +531,12 @@ def slice_subset(variant: tuple[tuple[int, ...], bool], gen_map: dict[int, int],
             set(union_pool["babies"]) & keep,
             generic["specials_defs"], generic["bcp"]))
 
-        # Evo items used by the sliced evolutions only.
+        # Evo items used by the sliced evolutions only. The method set
+        # mirrors ITEM_METHODS in build-bundled-data.py (standalone
+        # script — kept local, must not drift).
         item_params = sorted({
             row[2] for rows in evos.values() for row in rows
-            if len(row) >= 3 and row[1] == "Item"
+            if len(row) >= 3 and row[1] in {"Item", "TradeItem", "DayHoldItem"}
         })
         wjson("evo-items-list.json", {"items": item_params})
         for param in item_params:
