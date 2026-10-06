@@ -2,9 +2,10 @@
 // when a legendary × non-legendary creature is in the daycare, every egg
 // roll everywhere comes out a Bad Egg. Bad Eggs:
 //   - round-trip through readEggs/addEgg (pair-shaped + bad flag);
-//   - are named "Bad Egg", typeless, and use the plain base-egg art cell;
+//   - are named "Bad Egg", typeless, and render the Togepi egg cell
+//     (175) restyled monochrome (sheet cell 0 is empty art);
 //   - never incubate and never hatch (eggReadyToHatch stays false);
-//   - craft into exactly 2× incense of ANY type (no type-matching);
+//   - craft into exactly 3× incense of ANY type (no type-matching);
 //   - are excluded from the New/Fresh badge (covered in egg-new-badge).
 // The loot-side generation is covered in specials.test.js §6b/6c; the
 // odds-popup copy in daycare-odds.test.js §8.
@@ -74,7 +75,7 @@ function makeCtx(extra) {
     '1: readEggs validator round-trips Bad Eggs (pair-shaped)');
 }
 
-// ── 2. crafting: any type, always 2× ─────────────────────────────
+// ── 2. crafting: any type, always 3× ─────────────────────────────
 {
   const BAD = { id: 'eb', speciesA: 150, speciesB: 25, bad: true };
   const FIRE_EGG = { id: 'ef', speciesA: 4, speciesB: 5 };  // stubbed FIRE below
@@ -101,10 +102,10 @@ function makeCtx(extra) {
     '2: control — a pure-FIRE egg can\'t craft WATER incense');
   ok(vm.runInContext('craftMultiplier(["FIRE"], "FIRE")', ctx) === 1,
     '2: control — craftMultiplier unchanged for normal eggs');
-  ok(vm.runInContext('_craftMultForEgg(__b, "WATER")', Object.assign(ctx, { __b: BAD })) === 2
-    && vm.runInContext('_craftMultForEgg(__b, "FIRE")', Object.assign(ctx, { __b: BAD })) === 2
-    && vm.runInContext('_craftMultForEgg(__b, "DRAGON")', Object.assign(ctx, { __b: BAD })) === 2,
-    '2: Bad Egg crafts 2× of ANY incense type');
+  ok(vm.runInContext('_craftMultForEgg(__b, "WATER")', Object.assign(ctx, { __b: BAD })) === 3
+    && vm.runInContext('_craftMultForEgg(__b, "FIRE")', Object.assign(ctx, { __b: BAD })) === 3
+    && vm.runInContext('_craftMultForEgg(__b, "DRAGON")', Object.assign(ctx, { __b: BAD })) === 3,
+    '2: Bad Egg crafts 3× of ANY incense type');
   const waterCraftable = vm.runInContext('_craftableEggsFor("WATER")', ctx);
   ok(waterCraftable.length === 1 && waterCraftable[0].id === 'eb',
     '2: Bad Egg is craftable into a type it can\'t match (FIRE egg excluded)');
@@ -175,12 +176,42 @@ function makeCtx(extra) {
     '5: explainer names the cause (legendary sharing with a non-legendary)');
   ok(/only breed with other legendaries/.test(html) && /never hatch/.test(html),
     '5: explainer says why it never hatches');
-  ok(/2×/.test(html) && /any/.test(html) && /incense/.test(html),
-    '5: explainer mentions the 2×-of-any-type craft yield');
+  ok(/3×/.test(html) && /any/.test(html) && /incense/.test(html),
+    '5: explainer mentions the 3×-of-any-type craft yield');
   // Wiring: the drag-drop handler refuses Bad Eggs with this modal
   // instead of binding an incubator slot.
   ok(/_isBadEgg\(eggRec\)\)[\s\S]{0,200}_openInfoModal\(\{ title: 'Bad Egg'/.test(src),
     '5: incubator drop intercepts Bad Eggs with the info modal');
+}
+
+// ── 6. art: Togepi cell, monochrome ─────────────────────────────
+{
+  const ctx = makeCtx({
+    BUNDLED_BASE: '/bundled',
+    EGGS_SHEET_COLS: 10,
+    EGGS_SHEET_ROWS: 43,
+    BAD_EGG_ART_SPECIES: 175,
+  });
+  for (const m of ['function _isSoloEgg(', 'function _isBadEgg(',
+                   'function _eggArtSpecies(', 'function _eggArtBackgroundCss(',
+                   'function _eggArtCss(']) {
+    vm.runInContext(extract(m), ctx);
+  }
+  const css = vm.runInContext(
+    '_eggArtCss({ id: "eb", speciesA: 150, speciesB: 25, bad: true }, 48)', ctx);
+  // Cell 175 → col 5, row 17; sheetCellPx = 128, inset = 40 →
+  // position -(5*128+40)px -(17*128+40-1)px.
+  ok(/eggs\.png/.test(css) && css.includes('-680px') && css.includes('-2215px'),
+    '6: Bad Egg art renders the Togepi cell (175)');
+  ok(!css.includes('-40px -39px'),
+    '6: ...not the empty base cell 0');
+  ok(/\.egg-tile\.egg-bad \.tile-art,\s*#creatureInventory \.craft-egg-art\.egg-bad\s*\{[^}]*grayscale\(1\)/
+      .test(src),
+    '6: grid + craft art are monochrome');
+  ok(/\.daycare-loot-pill\.loot-bad \{[^}]*grayscale\(1\)/.test(src),
+    '6: daycare loot pill is monochrome');
+  ok(/BAD_EGG_ART_SPECIES\s*=\s*175/.test(src),
+    '6: BAD_EGG_ART_SPECIES is the Togepi cell');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

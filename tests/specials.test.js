@@ -205,6 +205,7 @@ function makeCtx(extra) {
     creatureTypes: (e) => S.get(e.solo).types.slice(),
     _eggArtSpecies: (e) => e.speciesA,
     _eggArtBackgroundCss: (id) => 'SHEET:' + id,
+    BAD_EGG_ART_SPECIES: 175,
   });
   for (const m of ['function _isSoloEgg(', 'function _isBadEgg(',
                    'function _eggName(', 'function _eggTypes(', 'function _eggArtCss(']) {
@@ -230,8 +231,8 @@ function makeCtx(extra) {
     '5: _eggName bad → Bad Egg');
   ok(JSON.stringify(vm.runInContext('_eggTypes(__e)', Object.assign(ctx, { __e: badEgg }))) === '[]',
     '5: _eggTypes bad → typeless');
-  ok(vm.runInContext('_eggArtCss(__e, 48)', Object.assign(ctx, { __e: badEgg })) === 'SHEET:0',
-    '5: _eggArtCss bad → plain base-egg cell (species id 0)');
+  ok(vm.runInContext('_eggArtCss(__e, 48)', Object.assign(ctx, { __e: badEgg })) === 'SHEET:175',
+    '5: _eggArtCss bad → Togepi cell (BAD_EGG_ART_SPECIES)');
 }
 {
   // hatchEgg: solo egg -> solo creature + dex seen + candy

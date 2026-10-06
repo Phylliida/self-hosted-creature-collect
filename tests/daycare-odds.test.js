@@ -210,7 +210,7 @@ function build(slots, creatures, legSet) {
   ok(html.indexOf('dc-odds-egglist') < 0, '8: normal egg-contents list suppressed');
   ok(html.indexOf('only produces') >= 0 && html.indexOf('never hatch') >= 0,
      '8: copy states the daycare only produces Bad Eggs that never hatch');
-  ok(html.indexOf('2×') >= 0, '8: copy mentions the 2× incense craft value');
+  ok(html.indexOf('3×') >= 0, '8: copy mentions the 3× incense craft value');
   ok(html.indexOf('500 m') >= 0 && html.indexOf('7.5%') >= 0,
      '8: copy ties the 7.5% to the per-milestone (500 m) drop basis');
 }

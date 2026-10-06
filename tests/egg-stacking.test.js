@@ -49,8 +49,10 @@ const egg = (id, a, b, extra) => Object.assign(
 // --- _eggStackKey -----------------------------------------------------------
 ok(run(`_eggStackKey(${JSON.stringify(egg('e1', 25, 7))})`) === '25-7',
   'pair egg keys on content pair');
-ok(run(`_eggStackKey(${JSON.stringify(egg('e2', 25, 7, { bad: true }))})`) === '25-7-bad',
-  'bad flag joins the key');
+ok(run(`_eggStackKey(${JSON.stringify(egg('e2', 25, 7, { bad: true }))})`) === 'bad',
+  'Bad Eggs share one key regardless of pair');
+ok(run(`_eggStackKey(${JSON.stringify(egg('e2b', 150, 3, { bad: true }))})`) === 'bad',
+  '...including a different pair');
 ok(run(`_eggStackKey(${JSON.stringify(egg('e3', 25, 7, { displaySpecies: 7 }))})`) === '25-7',
   'displaySpecies does not affect sameness');
 ok(run(`_eggStackKey(${JSON.stringify({ id: 'e4', solo: 'mew', incubatedM: 0 })})`) === 'solo:mew',
@@ -65,11 +67,11 @@ ok(stacks[0].length === 2 && stacks[1].length === 1, 'stack sizes 2 and 1');
 
 stacks = run(`_stackEggs(${JSON.stringify([
   egg('ok1', 150, 25), egg('bad1', 150, 25, { bad: true }),
-  egg('bad2', 150, 25, { bad: true }),
+  egg('bad2', 4, 6, { bad: true }),
 ])})`);
 ok(stacks.length === 2, 'bad eggs never mix with hatchable duplicates');
 ok((stacks.find((s) => s.length === 2) || [])[0].bad === true,
-  'bad eggs stack among themselves');
+  'ALL bad eggs stack together, across pairs');
 
 stacks = run(`_stackEggs(${JSON.stringify([
   { id: 's1', solo: 'mew', incubatedM: 0 },

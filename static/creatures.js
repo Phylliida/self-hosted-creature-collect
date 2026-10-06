@@ -1208,7 +1208,7 @@
         record.displaySpecies = egg.displaySpecies;
       }
       // Bad Eggs (legendary × non-legendary daycare mismatch) never
-      // hatch; they only craft into 2× incense.
+      // hatch; they only craft into 3× incense.
       if (egg.bad === true) record.bad = true;
     }
     arr.push(record);
@@ -1434,6 +1434,54 @@
     if (changed) writeIncubator(slots);
   }
 
+  // ── One-time migration: illegitimate legendary eggs ───────────
+  // Before the Bad Egg rule shipped (legendaries only breed with each
+  // other, 2026-10-05), the daycare could produce legendary ×
+  // non-legendary eggs that the game now treats as invalid. Convert
+  // any survivors to Bad Eggs — but only while the date is before
+  // 2026-10-06, and sparing completion-egg rewards: those
+  // legitimately pair a legendary with the completed non-legendary
+  // species, are created WITHOUT displaySpecies (daycare eggs always
+  // carry one since cross-breed, 2026-05-09), and can't predate the
+  // completion feature itself (2026-08-10). Idempotent — converted
+  // eggs are skipped on later boots — and self-scheduling: it waits
+  // for species data so isLegendarySpecies uses the active pack's
+  // legendary set rather than the gen-1 fallback.
+  // Local-time cutoff: "before October 6th 2026" reads naturally per
+  // device — a UTC-midnight gate would close the window a day early
+  // for the Americas.
+  const BAD_EGG_MIGRATION_CUTOFF_MS = new Date(2026, 9, 6).getTime();
+  const COMPLETION_EGG_EARLIEST_MS = Date.UTC(2026, 7, 10);
+  function _migrateIllegitimateLegendaryEggs() {
+    if (Date.now() >= BAD_EGG_MIGRATION_CUTOFF_MS) return;
+    const run = () => {
+      const eggs = readEggs();
+      let converted = 0;
+      for (const egg of eggs) {
+        if (!egg || _isSoloEgg(egg) || _isBadEgg(egg)) continue;
+        // Both legendary or neither: a valid pairing, leave it.
+        if (isLegendarySpecies(egg.speciesA) === isLegendarySpecies(egg.speciesB)) continue;
+        // Legendary × non-legendary. Spare anything that could be a
+        // completion-egg reward (see the header comment) — what's
+        // left is provably an illegitimate daycare egg.
+        if (!Number.isInteger(egg.displaySpecies)
+            && Number.isFinite(egg.createdAt)
+            && egg.createdAt >= COMPLETION_EGG_EARLIEST_MS) continue;
+        egg.bad = true;
+        // Bad Eggs can't incubate — free any slot it occupied.
+        try { removeFromIncubator(egg.id); } catch {}
+        converted++;
+      }
+      if (converted > 0) {
+        writeEggs(eggs);
+        console.info(`[migrate] ${converted} pre-feature legendary × non-legendary egg(s) became Bad Eggs`);
+      }
+    };
+    if (global.Species && global.Species.ensureLoaded) {
+      global.Species.ensureLoaded().then(run, () => {});
+    } else run();
+  }
+
   function eggIncubatedM(egg) {
     if (!egg) return 0;
     const v = egg.incubatedM;
@@ -1619,7 +1667,7 @@
 
   // Bad-egg rule: a slot holding a legendary fused with a non-legendary
   // can't breed — and its presence poisons every egg roll in EVERY slot,
-  // turning them into Bad Eggs (never hatch; craft 2× incense of any
+  // turning them into Bad Eggs (never hatch; craft 3× incense of any
   // type). Legendary × legendary pairs still produce normal eggs.
   function _daycareHasBadEggMismatch() {
     for (const s of readDaycareSlots()) {
@@ -1761,7 +1809,7 @@
       // Bad Egg: a legendary × non-legendary creature anywhere in the
       // daycare poisons every egg roll (legendaries only breed with
       // each other). The egg keeps the slot's own species for art /
-      // record purposes but can never hatch — it crafts 2× incense.
+      // record purposes but can never hatch — it crafts 3× incense.
       if (_daycareHasBadEggMismatch()) {
         const sizeM = Math.round((0.5 + u3 * 1.5) * 100) / 100;
         return {
@@ -1854,6 +1902,10 @@
   // species set extends to a higher PIF id.
   const EGGS_SHEET_COLS = 10;
   const EGGS_SHEET_ROWS = 43;
+  // Bad Egg art: the Togepi egg cell (175), restyled monochrome by
+  // the .egg-bad / .loot-bad CSS. (Sheet cell 0 — the old "plain
+  // base egg" id — is empty and rendered nothing.)
+  const BAD_EGG_ART_SPECIES = 175;
   _probeSheetRows(`${BUNDLED_BASE}/eggs.png`, CANDY_CELL_PX * 4, '--cc-egg-sheet-rows', EGGS_SHEET_ROWS);
 
   function _lootIconStyle(loot) {
@@ -1891,8 +1943,8 @@
       // inset of (60 − 28) / 2 = 16 px on each axis.
       // Egg art is the content's head (slot B), matching what the
       // eggs view will show for it (see _eggArtSpecies). Bad Eggs
-      // use the sheet's plain base-egg cell (species id 0).
-      const id = loot.bad ? 0 : loot.b;
+      // use the Togepi cell (BAD_EGG_ART_SPECIES) — cell 0 is empty.
+      const id = loot.bad ? BAD_EGG_ART_SPECIES : loot.b;
       const col = id % EGGS_SHEET_COLS;
       const row = Math.floor(id / EGGS_SHEET_COLS);
       const cellPx = 60;
@@ -3680,10 +3732,10 @@
     }
     return mult;
   }
-  // Egg-aware yield: Bad Eggs are typeless duds that always craft 2×
+  // Egg-aware yield: Bad Eggs are typeless duds that always craft 3×
   // regardless of the incense type (their only use).
   function _craftMultForEgg(egg, incenseType) {
-    if (_isBadEgg(egg)) return 2;
+    if (_isBadEgg(egg)) return 3;
     return craftMultiplier(_eggTypes(egg), incenseType);
   }
 
@@ -6620,14 +6672,15 @@
         border-color: #e8a13a;
         box-shadow: 0 0 0 1px #e8a13a inset;
       }
-      /* Bad Eggs (legendary × non-legendary daycare mismatch): sickly
-         green border + poison-tinted art; they never hatch. */
+      /* Bad Eggs (legendary × non-legendary daycare mismatch): green
+         border + monochrome Togepi-egg art; they never hatch. */
       #creatureInventory .egg-tile.egg-bad {
         border-color: #7aa53a;
         box-shadow: 0 0 0 1px #7aa53a inset;
       }
-      #creatureInventory .egg-tile.egg-bad .tile-art {
-        filter: hue-rotate(70deg) saturate(1.6) brightness(0.92);
+      #creatureInventory .egg-tile.egg-bad .tile-art,
+      #creatureInventory .craft-egg-art.egg-bad {
+        filter: grayscale(1) brightness(0.92);
       }
       #creatureInventory .egg-tile.dragging {
         opacity: 0.35;
@@ -6909,9 +6962,9 @@
       #creatureInventory .daycare-loot-pill.appearing {
         animation: daycare-loot-slide-in 320ms ease forwards;
       }
-      /* Bad Egg pills: same sickly green as the egg-grid treatment. */
+      /* Bad Egg pills: same monochrome treatment as the egg grid. */
       #creatureInventory .daycare-loot-pill.loot-bad {
-        filter: hue-rotate(70deg) saturate(1.6) brightness(0.92);
+        filter: grayscale(1) brightness(0.92);
       }
       @keyframes daycare-loot-slide-in {
         0%   { width: 0; opacity: 0; transform: scale(0.4); }
@@ -10330,7 +10383,7 @@
   function _isSoloEgg(egg) { return !!(egg && typeof egg.solo === 'string' && egg.solo); }
   // Bad Eggs: daycare eggs rolled while a legendary × non-legendary
   // creature was in the daycare. They never hatch and never incubate;
-  // their only use is crafting (2× incense of any type).
+  // their only use is crafting (3× incense of any type).
   function _isBadEgg(egg) { return !!(egg && egg.bad === true); }
   function _eggName(egg) {
     if (_isBadEgg(egg)) return 'Bad Egg';
@@ -10344,9 +10397,9 @@
   }
   // Art for ANY egg: solo eggs render the special's full-PNG sprite;
   // pair eggs render their eggs.png sheet cell as before; Bad Eggs use
-  // the plain base-egg cell (species id 0) plus the .egg-bad styling.
+  // the Togepi cell (BAD_EGG_ART_SPECIES) plus the .egg-bad styling.
   function _eggArtCss(egg, cellPx) {
-    if (_isBadEgg(egg)) return _eggArtBackgroundCss(0, cellPx);
+    if (_isBadEgg(egg)) return _eggArtBackgroundCss(BAD_EGG_ART_SPECIES, cellPx);
     if (_isSoloEgg(egg)) {
       const url = (global.Specials && global.Specials.spriteUrl(egg.solo)) || '';
       return (
@@ -10473,14 +10526,17 @@
     return out;
   }
   // The display-level "same egg" relation: the key duplicate eggs
-  // stack under in the grid and craft views. Pair eggs stack by
-  // content pair (Bad Eggs separately — they craft, never hatch);
-  // solo eggs by special id. Per-egg properties (incubation
-  // progress, size) don't affect sameness — stacks are a pure view
-  // concern (see _stackEggs); the model stays one record per egg.
+  // stack under in the grid and craft views. Bad Eggs are all
+  // interchangeable (typeless, never hatch, craft 3× of any
+  // incense) — one shared stack regardless of pair. Pair eggs stack
+  // by content pair; solo eggs by special id. Per-egg properties
+  // (incubation progress, size) don't affect sameness — stacks are
+  // a pure view concern (see _stackEggs); the model stays one
+  // record per egg.
   function _eggStackKey(egg) {
+    if (_isBadEgg(egg)) return 'bad';
     if (_isSoloEgg(egg)) return `solo:${egg.solo}`;
-    return `${egg.speciesA}-${egg.speciesB}${ _isBadEgg(egg) ? '-bad' : ''}`;
+    return `${egg.speciesA}-${egg.speciesB}`;
   }
 
   // Group a filtered+sorted egg list into display stacks for the
@@ -11255,7 +11311,7 @@
   // Eggs eligible to be crafted into incense of `type`: not currently in
   // an incubator slot, and at least one of the egg's fusion types is
   // neutral-or-effective against `type`. Bad Eggs are always eligible —
-  // they're typeless and craft 2× of any type.
+  // they're typeless and craft 3× of any type.
   function _craftableEggsFor(type) {
     const slotted = new Set((readIncubator() || []).filter(Boolean));
     return readEggs().filter((e) => {
@@ -11332,7 +11388,7 @@
           ? `<span class="egg-stack-count">&times;${stack.length}</span>` : '';
         return `
           <button class="craft-egg" type="button" data-egg="${escapeHtml(e.id)}">
-            <div class="craft-egg-art" style="${artStyle}">${_eggNewBadgeHtml(e, seenF)}${badge}${stackBadge}</div>
+            <div class="craft-egg-art${_isBadEgg(e) ? ' egg-bad' : ''}" style="${artStyle}">${_eggNewBadgeHtml(e, seenF)}${badge}${stackBadge}</div>
             <div class="craft-egg-info">
               <div class="craft-egg-name">${escapeHtml(name)}</div>
               ${typeChipsHtml(types)}
@@ -11368,7 +11424,7 @@
     body.innerHTML = `
       <div class="craft-confirm">
         <div class="craft-confirm-row">
-          <div class="craft-egg-art big" style="${artStyle}"></div>
+          <div class="craft-egg-art big${_isBadEgg(egg) ? ' egg-bad' : ''}" style="${artStyle}"></div>
           <span class="craft-arrow">&rarr;</span>
           <span class="craft-orb-wrap">
             <img class="craft-confirm-orb" src="${escapeHtml(_incenseOrbIcon(global.Types.color(st.type)))}" alt="">
@@ -11655,7 +11711,7 @@
       h += '<div class="dc-odds-note">A legendary is sharing the daycare with a non-legendary, and '
         + 'legendaries only breed with each other — so this daycare only produces <b>Bad Eggs</b>: '
         + 'a <b>' + _fmtPct(m.slots[0].eggPct) + '</b> chance on each ' + dist + ' drop, from either '
-        + 'slot. They never hatch, no matter how far you walk; they craft into <b>2×</b> incense '
+        + 'slot. They never hatch, no matter how far you walk; they craft into <b>3×</b> incense '
         + 'of any type.</div></div>';
       return h;
     }
@@ -11900,7 +11956,7 @@
     h += '<div class="cc-info-section">';
     h += '<div class="cc-info-section-title">What it\'s good for</div>';
     h += '<div class="cc-info-row"><span class="cc-info-k">Crafting</span>'
-      + '<span class="cc-info-v">A Bad Egg crafts into <span class="cc-info-mult">2×</span> '
+      + '<span class="cc-info-v">A Bad Egg crafts into <span class="cc-info-mult">3×</span> '
       + 'incense of <b>any</b> type — no type-matching needed.</span></div>';
     h += '</div>';
     return h;
@@ -18044,6 +18100,10 @@
       global.Spawns.setCommunityDay(_cdBoot && _cdBoot.active ? _cdBoot.active : null);
     }
     _scheduleCommunityExpiry();
+    // One-time (pre Oct 6 2026): pre-feature legendary × non-legendary
+    // daycare eggs become Bad Eggs. Self-schedules off Species data —
+    // see _migrateIllegitimateLegendaryEggs.
+    _migrateIllegitimateLegendaryEggs();
     // These read the captured + seenFusions stores, which now load
     // asynchronously from IndexedDB. Defer them until hydration resolves
     // so they operate on the real collection, not the empty pre-load
