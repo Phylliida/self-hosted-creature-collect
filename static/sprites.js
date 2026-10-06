@@ -716,14 +716,21 @@
 
   // Sync access — returns null if SPLIT_NAMES isn't loaded yet. Pair
   // with `ensureSplitNamesLoaded()` (or the welcome-flow download) so
-  // the table is in memory before render. `a` is head, `b` is body
-  // (matches the cell convention used everywhere else in the app).
+  // the table is in memory before render. The stored pair follows the
+  // bundled sprite-cell order — `a` is the body, `b` is the head — so
+  // the canonical name goes through Species.fusionHead/fusionBody.
   function getFusedName(a, b) {
-    return _applyFusionName(_splitNamesCache, a, b);
+    const S = global.Species;
+    return _applyFusionName(_splitNamesCache,
+      S && S.fusionHead ? S.fusionHead(a, b) : b,
+      S && S.fusionBody ? S.fusionBody(a, b) : a);
   }
   async function getFusedNameAsync(a, b) {
     const tbl = await _ensureSplitNames();
-    return _applyFusionName(tbl, a, b);
+    const S = global.Species;
+    return _applyFusionName(tbl,
+      S && S.fusionHead ? S.fusionHead(a, b) : b,
+      S && S.fusionBody ? S.fusionBody(a, b) : a);
   }
   async function ensureSplitNamesLoaded() {
     return _ensureSplitNames();

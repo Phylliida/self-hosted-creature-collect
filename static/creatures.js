@@ -1203,7 +1203,7 @@
       // displaySpecies: legacy depicted-art species, sampled
       // independently of content back when egg art varied. Retained
       // for save compat; no longer used — egg art is always the
-      // content's first species (see _eggArtSpecies).
+      // content's head, slot B (see _eggArtSpecies).
       if (Number.isInteger(egg.displaySpecies)) {
         record.displaySpecies = egg.displaySpecies;
       }
@@ -1278,7 +1278,8 @@
     return pool[Math.floor(rng() * pool.length)];
   }
 
-  // Orientation of the reward fusion (speciesA = head, speciesB = body).
+  // Orientation of the reward fusion (speciesB = head, speciesA = body —
+  // the bundled sprite-cell order, see Species.fusionHead).
   // If exactly one orientation has custom art, always use it; if both or
   // neither do, coin-flip. Returns 'ab' (pokemon × legendary) or 'ba'
   // (legendary × pokemon).
@@ -1326,7 +1327,8 @@
       state.counts[L] = (state.counts[L] || 0) + 1;
       writeCompletionRewards(state);
       _saveImageNotice(
-        `Completion reward: ${speciesNameFor(X)} × ${speciesNameFor(L)} egg!`);
+        // Head-first display: the egg's head slot is b.
+        `Completion reward: ${speciesNameFor(b)} × ${speciesNameFor(a)} egg!`);
       renderCompletion();
     } finally {
       _completionEggInflight.delete(X);
@@ -1799,7 +1801,7 @@
       // baby-less IF1 tree; Snorlax hatches as Munchlax under IF2).
       // _eggRootFor walks the evolution family to its root — unlike
       // candyRootFor it does NOT skip babies. displaySpecies is
-      // vestigial (egg art is always the first content species now —
+      // vestigial (egg art is always the content's head, slot B —
       // see _eggArtSpecies) but must keep being SAMPLED: removing the
       // draw would shift the deterministic PRNG stream and re-roll
       // every subsequent daycare loot outcome.
@@ -1887,10 +1889,10 @@
       // padding) shows at roughly the same on-pill footprint as
       // a candy. Centering the cell's bbox on the pill needs an
       // inset of (60 − 28) / 2 = 16 px on each axis.
-      // Egg art is the content's first species, matching what the
+      // Egg art is the content's head (slot B), matching what the
       // eggs view will show for it (see _eggArtSpecies). Bad Eggs
       // use the sheet's plain base-egg cell (species id 0).
-      const id = loot.bad ? 0 : loot.a;
+      const id = loot.bad ? 0 : loot.b;
       const col = id % EGGS_SHEET_COLS;
       const row = Math.floor(id / EGGS_SHEET_COLS);
       const cellPx = 60;
@@ -3542,19 +3544,20 @@
 
   // Default display name for a fusion. Prefers the canonical fused
   // name from SPLIT_NAMES (e.g. "Jigglyish") when the table is loaded,
-  // falling back to "A × B" while names are still downloading or for
-  // species outside the table's range. Nicknames take priority over
+  // falling back to "head × body" while names are still downloading or
+  // for species outside the table's range. Nicknames take priority over
   // this everywhere they're checked, so user-authored renames are
-  // preserved.
+  // preserved. The stored pair is (body, head) — Species.fusionHead —
+  // so the head (b) renders first.
   function fusionName(a, b) {
     if (global.Sprites && global.Sprites.getFusedName) {
       const fused = global.Sprites.getFusedName(a, b);
       if (fused) return fused;
     }
     if (global.Species) {
-      return `${global.Species.nameFor(a)} × ${global.Species.nameFor(b)}`;
+      return `${global.Species.nameFor(b)} × ${global.Species.nameFor(a)}`;
     }
-    return `#${a} × #${b}`;
+    return `#${b} × #${a}`;
   }
 
   // ── Solo (special) creatures ──────────────────────────────────────
@@ -4383,7 +4386,7 @@
         // matching the black silhouette shown at the top of the entry.
         const seen = isFusionSeen(a, b);
         const title = (global.Species && seen)
-          ? `${global.Species.nameFor(a)} × ${global.Species.nameFor(b)}`
+          ? `${global.Species.nameFor(b)} × ${global.Species.nameFor(a)}`
           : '???';
         const cls = `family-cell`
           + (isCurrent ? ' current' : '')
@@ -10289,12 +10292,13 @@
   // creates a level-1 capture record from the egg's content +
   // size, removes the egg, and frees the slot.
   // Resolve which species' egg cell to render for a given egg: always
-  // the content's first species, so identical pairs always look
-  // identical and stack cleanly in the eggs / craft views. Records may
-  // carry a displaySpecies (sampled separately back when art varied
+  // the content's head (the displayed first species = slot B, see
+  // Species.fusionHead), so identical pairs always look identical and
+  // stack cleanly in the eggs / craft views. Records may carry a
+  // displaySpecies (sampled separately back when art varied
   // independently of content) — retained for save compat, ignored here.
   function _eggArtSpecies(egg) {
-    return egg && egg.speciesA;
+    return egg && egg.speciesB;
   }
 
   // CSS background-* string for a single eggs.png cell sized to
@@ -10430,8 +10434,9 @@
     const qA = (opts.qA || '').trim().toLowerCase();
     const qB = (opts.qB || '').trim().toLowerCase();
     // Solo eggs have no fusion slots — they can't satisfy species filters.
-    if (qA) out = out.filter((e) => !_isSoloEgg(e) && nameOfLower(e.speciesA).includes(qA));
-    if (qB) out = out.filter((e) => !_isSoloEgg(e) && nameOfLower(e.speciesB).includes(qB));
+    // qA ("First Species") is the displayed head = slot b; qB = body (a).
+    if (qA) out = out.filter((e) => !_isSoloEgg(e) && nameOfLower(e.speciesB).includes(qA));
+    if (qB) out = out.filter((e) => !_isSoloEgg(e) && nameOfLower(e.speciesA).includes(qB));
     if (opts.type || opts.typeA || opts.typeB) {
       out = out.filter((e) => {
         const types = _eggTypes(e);
@@ -12797,9 +12802,10 @@
 
     const nameA = global.Species ? global.Species.nameFor(a) : `#${a}`;
     const nameB = global.Species ? global.Species.nameFor(b) : `#${b}`;
-    const display = `${nameA} × ${nameB}`;
+    // Displayed head-first: the stored pair is (body, head).
+    const display = `${nameB} × ${nameA}`;
     // Canonical fused name (e.g. "Jigglyish") — null when SPLIT_NAMES
-    // isn't loaded yet; header falls back to "A × B" alone.
+    // isn't loaded yet; header falls back to "head × body" alone.
     const fusedName = (global.Sprites && global.Sprites.getFusedName)
       ? global.Sprites.getFusedName(a, b) : null;
     const typesHtml = typeChipsHtml(fusionTypesFor(a, b));
@@ -12889,12 +12895,12 @@
     // the species pair stands in as the primary title above the
     // image instead. The species links are rendered with the same
     // markup either way so the click handler below picks them up
-    // regardless of their position.
+    // regardless of their position. Displayed head-first (head = b).
     const speciesPairHtml = `
       <div class="detail-name${fusedName ? ' detail-name-sub' : ''}">
-        <span class="species-link" data-side="A">${escapeHtml(nameA)}</span>
-        <span> × </span>
         <span class="species-link" data-side="B">${escapeHtml(nameB)}</span>
+        <span> × </span>
+        <span class="species-link" data-side="A">${escapeHtml(nameA)}</span>
       </div>
     `;
     // Family tree: shown only when there's at least one row/column
@@ -12977,8 +12983,10 @@
     }
     body.querySelectorAll('.species-link').forEach((link) => {
       link.addEventListener('click', () => {
-        if (link.dataset.side === 'A') showPokedex({ searchA: nameA });
-        else showPokedex({ searchB: nameB });
+        // searchA is the "First Species" field = head slot (b);
+        // searchB the "Second Species" field = body slot (a).
+        if (link.dataset.side === 'B') showPokedex({ searchA: nameB });
+        else showPokedex({ searchB: nameA });
       });
     });
 
@@ -13246,8 +13254,10 @@
     const qB = sb.trim().toLowerCase();
     if (qAny) entries = entries.filter((e) =>
       nameOfLower(e.a).includes(qAny) || nameOfLower(e.b).includes(qAny));
-    if (qA) entries = entries.filter((e) => nameOfLower(e.a).includes(qA));
-    if (qB) entries = entries.filter((e) => nameOfLower(e.b).includes(qB));
+    // "First Species" (qA) is the displayed head = slot b;
+    // "Second Species" (qB) the body = slot a.
+    if (qA) entries = entries.filter((e) => nameOfLower(e.b).includes(qA));
+    if (qB) entries = entries.filter((e) => nameOfLower(e.a).includes(qB));
     const _filterMs = performance.now() - _tFilter;
     const _tSort = performance.now();
 
@@ -13256,10 +13266,12 @@
     const sign = sortDir === 'asc' ? 1 : -1;
     const nameOf = (idx) => global.Species ? global.Species.nameFor(idx) : `#${idx}`;
     entries.sort((x, y) => {
-      if (sortKey === 'a')   return sign * nameOf(x.a).localeCompare(nameOf(y.a));
-      if (sortKey === 'b')   return sign * nameOf(x.b).localeCompare(nameOf(y.b));
-      if (sortKey === 'aId') return sign * (x.a - y.a);
-      if (sortKey === 'bId') return sign * (x.b - y.b);
+      // 'a'/'aId' are the "First …" options = displayed head = slot b;
+      // 'b'/'bId' the "Second …" options = body = slot a.
+      if (sortKey === 'a')   return sign * nameOf(x.b).localeCompare(nameOf(y.b));
+      if (sortKey === 'b')   return sign * nameOf(x.a).localeCompare(nameOf(y.a));
+      if (sortKey === 'aId') return sign * (x.b - y.b);
+      if (sortKey === 'bId') return sign * (x.a - y.a);
       // 'recent': firstSeen
       return sign * (x.firstSeen - y.firstSeen);
     });
@@ -13315,10 +13327,12 @@
         // Bases rendered as 3 inline-flex spans so .bn-a (first
         // species) can ellipsize while .bn-x (×) and .bn-b (second
         // species) stay fully visible — see .pokedex-bases CSS.
+        // Displayed head-first: the stored pair is (body, head), so
+        // the head (b) name goes in the first span.
         const basesHtml =
-          `<span class="bn-a">${escapeHtml(baseAName)}</span>`
+          `<span class="bn-a">${escapeHtml(baseBName)}</span>`
           + `<span class="bn-x"> × </span>`
-          + `<span class="bn-b">${escapeHtml(baseBName)}</span>`;
+          + `<span class="bn-b">${escapeHtml(baseAName)}</span>`;
         // Canonical fused name (e.g. "Jigglyish") falls back to the
         // bases pair when SPLIT_NAMES isn't loaded yet.
         const fused = (global.Sprites && global.Sprites.getFusedName)
@@ -13832,10 +13846,15 @@
 
     const titleEl = panel.querySelector('.speciesdex-title');
     if (titleEl) titleEl.textContent = `${name} dex`;
+    // Column labels (head-first display). Left column holds pairs
+    // (X, p) where X is the body, so it reads "… × X"; right column
+    // holds (p, X) with X as the head → "X × …". The col-head/col-body
+    // class names predate the head/body convention and are styling
+    // hooks only.
     const headLbl = panel.querySelector('.speciesdex-col-head');
     const bodyLbl = panel.querySelector('.speciesdex-col-body');
-    if (headLbl) headLbl.textContent = `${name} × …`;
-    if (bodyLbl) bodyLbl.textContent = `… × ${name}`;
+    if (headLbl) headLbl.textContent = `… × ${name}`;
+    if (bodyLbl) bodyLbl.textContent = `${name} × …`;
 
     // Legendary partners still render in the grid below (as uncounted bonus
     // cells), but they don't count toward this page's % — matching the
@@ -13867,7 +13886,7 @@
         const cell = (a, b, seenIt) =>
           `<div class="speciesdex-cell${seenIt ? '' : ' silhouette'}" `
           + `data-a="${a}" data-b="${b}" role="button" tabindex="0" `
-          + `title="${escapeHtml(seenIt ? speciesNameFor(a) + ' × ' + speciesNameFor(b) : '???')}">`
+          + `title="${escapeHtml(seenIt ? speciesNameFor(b) + ' × ' + speciesNameFor(a) : '???')}">`
           + `<span class="speciesdex-cell-ph" aria-hidden="true">·</span><img alt="">`
           // "auto" tag — hidden until loadSpriteFor resolves the ACTUAL
           // rendered variant (shown via .is-auto), so it works for silhouettes
@@ -14675,8 +14694,9 @@
       if (qAny) items = items.filter((c) =>
         (c.speciesA != null && nameOfLower(c.speciesA).includes(qAny))
         || (c.speciesB != null && nameOfLower(c.speciesB).includes(qAny)));
-      if (qA) items = items.filter((c) => c.speciesA != null && nameOfLower(c.speciesA).includes(qA));
-      if (qB) items = items.filter((c) => c.speciesB != null && nameOfLower(c.speciesB).includes(qB));
+      // qA ("First Species") is the displayed head = slot b; qB = body (a).
+      if (qA) items = items.filter((c) => c.speciesB != null && nameOfLower(c.speciesB).includes(qA));
+      if (qB) items = items.filter((c) => c.speciesA != null && nameOfLower(c.speciesA).includes(qB));
     }
     // Tag filter: AND semantics — a creature passes only when its
     // effective tag set (user-applied + matching built-ins like

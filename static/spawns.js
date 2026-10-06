@@ -353,11 +353,12 @@
   //      defined below). Most buckets pin one or both slots to the
   //      daily or weekly type; one bucket is fully uniform.
   //
-  //   2) Once typeA + typeB are chosen, uniformly sample slot A from
-  //      species with primary == typeA, and slot B from species with
+  //   2) Once typeA + typeB are chosen, uniformly sample slot B from
+  //      species with primary == typeA, and slot A from species with
   //      secondary == typeB (or primary if single-typed). Matches the
   //      fusion's actual type-inheritance rule: fusion.primary =
-  //      slotA.primary, fusion.secondary = slotB.secondary || primary.
+  //      slotB.primary, fusion.secondary = slotA.secondary || primary
+  //      (slot B is the head, slot A the body — Species.fusionHead).
   //
   // The empty-pair drop step (a pair where either pool is empty) makes
   // types like FLYING (no FLYING-primary species in gen 1) cleanly
@@ -603,8 +604,10 @@
     const sampler = getTypePairSampler();
     if (!sampler) return null;
     const pair = _sampleTypePair(sampler, arng());
-    const poolA = sampler.byPrimary[pair.a];
-    const poolB = sampler.bySecondary[pair.b];
+    // Slot B is the fusion's head (contributes the primary type), slot A
+    // the body (contributes the secondary) — Species.fusionHead/fusionBody.
+    const poolA = sampler.bySecondary[pair.b];
+    const poolB = sampler.byPrimary[pair.a];
     const speciesA = poolA[Math.floor(arng() * poolA.length)];
     const speciesB = poolB[Math.floor(arng() * poolB.length)];
     const level = expDistr(5, 50, arng()) + 1;
@@ -629,14 +632,15 @@
     // cell with 5 variants is no more likely to spawn than one with 1).
     const variantSeed = arng();
     if (_pack) {
-      // Pack mode: the A draw's monster IS the spawn (a solo). The B
+      // Pack mode: the head-slot draw's monster IS the spawn (a solo) —
+      // its primary type is the one the weather pair targeted. The body
       // draw is consumed (keeping the RNG stream aligned with pair
       // mode — positions/level/size/birth all identical to what pair
       // mode produces here) but unused for identity; the solo's form
       // resolves downstream from variantSeed + its gender weights.
       return {
         id: `${cellX}:${cellY}:${tick}:0`,
-        lat, lng, solo: speciesA.key, level, sizeM, variantSeed,
+        lat, lng, solo: speciesB.key, level, sizeM, variantSeed,
         startMs, expireMs: startMs + LIFETIME_MS,
       };
     }
@@ -675,16 +679,18 @@
     const sampler = getTypePairSampler();
     if (!sampler) return null;
     const pair = _sampleTypePair(sampler, Math.random());
-    const poolA = sampler.byPrimary[pair.a];
-    const poolB = sampler.bySecondary[pair.b];
+    // Same head/body slot convention as generateCellAtTick: slot B is the
+    // head (primary type), slot A the body (secondary type).
+    const poolA = sampler.bySecondary[pair.b];
+    const poolB = sampler.byPrimary[pair.a];
     const speciesA = poolA[Math.floor(Math.random() * poolA.length)];
     const speciesB = poolB[Math.floor(Math.random() * poolB.length)];
     const level = expDistr(5, 50, Math.random()) + 1;
     const sizeM = 0.15 + Math.random() * 2.0;
     const variantSeed = Math.random();
-    // Pack mode mirrors generateCellAtTick: the A draw's monster is the
-    // encounter (a solo); the B draw is unused.
-    if (_pack) return { solo: speciesA.key, level, sizeM, variantSeed };
+    // Pack mode mirrors generateCellAtTick: the head-slot draw's monster
+    // is the encounter (a solo); the body draw is unused.
+    if (_pack) return { solo: speciesB.key, level, sizeM, variantSeed };
     return { speciesA, speciesB, level, sizeM, variantSeed };
   }
 
@@ -1037,8 +1043,10 @@
     const bothEvolved = arng() < EVO_BOTH_CHANCE;
     const aEvolved = bothEvolved || arng() < 0.5;
     const bEvolved = bothEvolved || !aEvolved;
-    const poolA = aEvolved ? _evoByPrimary : _byPrimary;
-    const poolB = bEvolved ? _evoBySecondary : _bySecondary;
+    // Slot A is the body (secondary-type index), slot B the head
+    // (primary-type index) — same convention as generateCellAtTick.
+    const poolA = aEvolved ? _evoBySecondary : _bySecondary;
+    const poolB = bEvolved ? _evoByPrimary : _byPrimary;
     // Weather-weighted type pair, seeded from THIS tick's weather so a spawn's
     // species stay fixed across its whole 12 h life (not shifting when the
     // daily/weekly type rolls over mid-window).
@@ -1272,7 +1280,9 @@
     else if (v1) { typeA = incenseType; typeB = otherType; }
     else if (v2) { typeA = otherType; typeB = incenseType; }
     else return null;
-    const poolA = byP[typeA], poolB = byS[typeB];
+    // Slot A is the body (secondary-type index), slot B the head
+    // (primary-type index) — same convention as generateCellAtTick.
+    const poolA = byS[typeB], poolB = byP[typeA];
     const speciesA = poolA[Math.floor(arng() * poolA.length)];
     const speciesB = poolB[Math.floor(arng() * poolB.length)];
     const level = expDistr(5, 50, arng()) + 1;
@@ -1283,7 +1293,7 @@
     if (_pack) {
       return {
         id: 'I:' + cellX + ':' + cellY + ':' + tick + ':' + typeIdx,
-        lat, lng, solo: speciesA.key, level, sizeM, variantSeed,
+        lat, lng, solo: speciesB.key, level, sizeM, variantSeed,
         startMs, expireMs: startMs + LIFETIME_MS,
         incense: true, incenseType: incenseType,
       };
@@ -1298,13 +1308,16 @@
       // follows the same non-empty-pool rule as the normal path.
       const slotCoin = arng();
       const otherDraw = arng();
-      const v1 = byS[incenseType].length > 0;   // featured in A, incense-typed partner in B
-      const v2 = byP[incenseType].length > 0;   // partner in A, featured in B
+      // Head/body convention: the incense type must land where it
+      // contributes to the fusion's types — a partner in slot B (head)
+      // via its primary, a partner in slot A (body) via its secondary.
+      const v1 = byP[incenseType].length > 0;   // featured in A, incense-typed partner in B
+      const v2 = byS[incenseType].length > 0;   // incense-typed partner in A, featured in B
       if (v1 && (slotCoin < 0.5 || !v2)) {
         outA = cd.speciesId;
-        outB = byS[incenseType][Math.floor(otherDraw * byS[incenseType].length)];
+        outB = byP[incenseType][Math.floor(otherDraw * byP[incenseType].length)];
       } else if (v2) {
-        outA = byP[incenseType][Math.floor(otherDraw * byP[incenseType].length)];
+        outA = byS[incenseType][Math.floor(otherDraw * byS[incenseType].length)];
         outB = cd.speciesId;
       } else {
         return null;   // no species carry the incense type at all

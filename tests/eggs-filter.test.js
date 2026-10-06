@@ -82,9 +82,9 @@ const withOpts = (o) => Object.assign({}, NONE, o);
 // ── A. name + species search ────────────────────────────────────
 reset();
 ok(ids(run(withOpts({ name: 'f1x' }))) === 'e1', 'A: name search matches fused name (case-insensitive)');
-ok(ids(run(withOpts({ qA: 'alph' }))) === 'e1', 'A: first-species search matches slot A');
-ok(ids(run(withOpts({ qB: 'eps' }))) === 'e2', 'A: second-species search matches slot B');
-ok(ids(run(withOpts({ qA: 'a', qB: 'delt' }))) === 'e1', 'A: first+second combine (AND)');
+ok(ids(run(withOpts({ qA: 'delt' }))) === 'e1', 'A: first-species (head) search matches slot B');
+ok(ids(run(withOpts({ qB: 'alph' }))) === 'e1', 'A: second-species (body) search matches slot A');
+ok(ids(run(withOpts({ qA: 'delt', qB: 'alph' }))) === 'e1', 'A: first+second combine (AND)');
 ok(ids(run(withOpts({ qA: 'zz' }))) === '', 'A: no match → empty');
 ok(!ids(run(withOpts({ qA: 'o' }))).includes('e4'), 'A: solo eggs never satisfy species filters');
 

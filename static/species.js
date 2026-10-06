@@ -6,8 +6,12 @@
 //   Species.ensureLoaded()        -> Promise (kicks off both fetches)
 //   Species.nameFor(idx)          -> "Bulbasaur" or "#1" if not loaded
 //   Species.typesFor(idx)         -> ["GRASS", "POISON"] or [] if not loaded
-//   Species.fusionTypesFor(a, b)  -> primary from A, secondary from B
-//                                   (Pokémon Infinite Fusion's rule); the
+//   Species.fusionHead(a, b)      -> b (the pair's head; bundled sprite
+//                                   cells are (body, head), a = body)
+//   Species.fusionBody(a, b)      -> a
+//   Species.fusionTypesFor(a, b)  -> primary from the head (b), secondary
+//                                   from the body (a) — Pokémon Infinite
+//                                   Fusion's rule; the
 //                                   secondary collapses if it would equal
 //                                   the primary, so a fusion of two
 //                                   single-type same-type pokes shows as
@@ -173,18 +177,27 @@
     return t.filter((x) => x);
   }
 
-  // Infinite Fusion: primary type from A, secondary type from B.
+  // Canonical fusion orientation. Bundled sprite cells are (body, head) —
+  // autogen sheets are per-head with body-indexed cells (cells.json keys
+  // "<body>-<head>") — and the app's stored (a, b) pair follows that
+  // order: a = body, b = head. Every name/type interpretation of a pair
+  // must go through these two functions.
+  function fusionHead(a, b) { return b; }
+  function fusionBody(a, b) { return a; }
+
+  // Infinite Fusion: primary type from the head, secondary from the body.
   // A few quirks:
-  //   - if A has only one type, that's the primary (no fallback to A.type2).
-  //   - the secondary uses B's secondary if present, else B's primary.
+  //   - if the head has only one type, that's the primary (no fallback to
+  //     head.type2).
+  //   - the secondary uses the body's secondary if present, else its primary.
   //   - if the resulting secondary equals the primary, drop it.
   function fusionTypesFor(a, b) {
-    const ta = typesFor(a);
-    const tb = typesFor(b);
-    if (!ta.length) return tb;  // missing data — show what we have
-    if (!tb.length) return ta;
-    const primary = ta[0];
-    const secondary = tb[1] || tb[0];
+    const thead = typesFor(fusionHead(a, b));
+    const tbody = typesFor(fusionBody(a, b));
+    if (!thead.length) return tbody;  // missing data — show what we have
+    if (!tbody.length) return thead;
+    const primary = thead[0];
+    const secondary = tbody[1] || tbody[0];
     if (!secondary || secondary === primary) return [primary];
     return [primary, secondary];
   }
@@ -307,7 +320,7 @@
   }
 
   global.Species = {
-    nameFor, typesFor, fusionTypesFor,
+    nameFor, typesFor, fusionTypesFor, fusionHead, fusionBody,
     evolutionsFor, fusionEvolutionsFor, familyOf,
     allSpecies, pool,
     ensureLoaded,
