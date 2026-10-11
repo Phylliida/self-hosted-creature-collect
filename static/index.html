@@ -4607,6 +4607,11 @@
   }
 </script>
 <script src="/static/vendor/maplibre-gl.js"></script>
+<!-- Storage helpers first: everything below that touches IndexedDB
+     uses CCIdb (self-healing connections) — creatures.js also uses
+     CollectionStore (journal + checkpoints). -->
+<script src="/static/idb-util.js"></script>
+<script src="/static/collection-store.js"></script>
 <script src="/static/trip-planner.js"></script>
 <script src="/static/types.js"></script>
 <script src="/static/spawns.js"></script>
@@ -5850,6 +5855,7 @@ function fmtDate(ts) {
         const m = url.match(/\/tiles\/(\d+)\/(\d+)\/(\d+)/);
         const z = m ? +m[1] : -1;
         fd.transform.total++;
+        fd.transform.lastAt = Date.now();
         if (rewritten) fd.transform.rewritten++;
         else fd.transform.passthrough++;
         fd.transform.byZoom[z] = fd.transform.byZoom[z] || { rw: 0, pt: 0 };
@@ -7403,9 +7409,15 @@ function fmtDate(ts) {
         if (!fd.lifecycle.load) return;   // map not up yet
         const now = Date.now();
         const se = fd.sourceEvents;
-        const starving = se.lastInitAt > 0
-          && now - se.lastInitAt < 60000          // map still asking for tiles
-          && se.lastDoneAt < se.lastInitAt        // none completed since
+        // "Asking" = a dataloading event OR a transformRequest call.
+        // Grak's Oct-2026 wedge after an iOS resume kept calling
+        // transformRequest for the visible tiles but emitted NO
+        // dataloading events, so a lastInitAt-only check never fired
+        // and the map stayed blank until a manual restart.
+        const lastAsk = Math.max(se.lastInitAt || 0, fd.transform.lastAt || 0);
+        const starving = lastAsk > 0
+          && now - lastAsk < 60000                // map still asking for tiles
+          && se.lastDoneAt < lastAsk              // none completed since
           && now - se.lastDoneAt > 30000;         // ...for 30+s
         if (!starving) { wd.reloadAt = 0; return; }
         if (now - wd.lastClearAt < 45000) {
@@ -9092,6 +9104,12 @@ function fmtDate(ts) {
     if (data.communityDay && window.Creatures && window.Creatures.setCommunityDayState) {
       try { window.Creatures.setCommunityDayState(data.communityDay); }
       catch (e) { console.error('importCommunityDay failed', e); }
+    }
+    // The collection checkpoints lazily; make the import durable before
+    // reporting success (a failed write is retried in the background —
+    // this only waits for the first attempt).
+    if (window.Creatures && window.Creatures.flushPersistence) {
+      try { await window.Creatures.flushPersistence(); } catch (_) {}
     }
     alert(
       `Imported: ${favAdded} favorite(s) (${favSkipped} skipped), ` +
@@ -11504,6 +11522,11 @@ function fmtDate(ts) {
       if (statusEl) statusEl.textContent = 'wipe: ' + msg;
     };
     const report = [];
+    // Stop collection persistence first: a pending checkpoint firing
+    // between the database delete and the reload below would re-create
+    // the collection DB from memory and undo the wipe.
+    try { if (window.Creatures && window.Creatures.stopPersistence) window.Creatures.stopPersistence(); }
+    catch (_) {}
     try {
       // Unregister SW first so it can't re-populate caches mid-wipe.
       log('unregistering service workers…');
@@ -14825,6 +14848,12 @@ function fmtDate(ts) {
             `  in-flight: ${std.inFlight}  peak: ${std.peakInFlight}  ` +
             `inits-pending: ${std.initsPending}`
           );
+          lines.push(
+            `  reader resets: ${std.readerResets || 0}` +
+            (std.lastResetWhy ? ` (last: ${std.lastResetWhy})` : '') +
+            `  read errors: ${std.readErrors || 0}` +
+            (std.lastReadError ? ` (last: ${std.lastReadError})` : '')
+          );
           // Per-region table, ordered to match `downloaded` iteration
           // order (which is the order `_serveStaticTile` checks them
           // in — so the first row is the one most likely to "win" a
@@ -17051,21 +17080,23 @@ function fmtDate(ts) {
   // during cold-start render). The IDB-side helpers below assume
   // those are already in scope.
 
-  let _staticDbPromise = null;
-  function _openStaticRegionsDb() {
-    if (_staticDbPromise) return _staticDbPromise;
-    _staticDbPromise = new Promise((resolve, reject) => {
-      const req = indexedDB.open(STATIC_REGIONS_DB, STATIC_REGIONS_DB_VERSION);
-      req.onupgradeneeded = () => {
-        const db = req.result;
+  // Shared CCIdb connection (idb-util.js): re-opens itself after iOS
+  // drops it during a background suspension; the old cached handle made
+  // every region-file read fail until restart.
+  let _staticDbOpenerFn = null;
+  function _staticDbOpener() {
+    if (!_staticDbOpenerFn) {
+      _staticDbOpenerFn = window.CCIdb.opener(STATIC_REGIONS_DB, STATIC_REGIONS_DB_VERSION, (db) => {
         if (!db.objectStoreNames.contains(STATIC_REGIONS_STORE)) {
           db.createObjectStore(STATIC_REGIONS_STORE);
         }
-      };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
-    return _staticDbPromise;
+      });
+    }
+    return _staticDbOpenerFn;
+  }
+  function _openStaticRegionsDb() {
+    try { return _staticDbOpener()(); }
+    catch (e) { return Promise.reject(e); }
   }
   async function _staticFilePut(key, blob) {
     const db = await _openStaticRegionsDb();
@@ -17092,13 +17123,12 @@ function fmtDate(ts) {
   // Window-exposed for the future consumer-side reader.
   window._loadStaticRegions = loadStaticRegions;
   window._getStaticRegionFile = async function (regionId, filename) {
-    const db = await _openStaticRegionsDb();
-    return new Promise((resolve, reject) => {
+    return window.CCIdb.run(_staticDbOpener(), (db) => new Promise((resolve, reject) => {
       const tx = db.transaction(STATIC_REGIONS_STORE, 'readonly');
       const req = tx.objectStore(STATIC_REGIONS_STORE).get(`${regionId}/${filename}`);
       req.onsuccess = () => resolve(req.result || null);
       req.onerror = () => reject(req.error);
-    });
+    }));
   };
 
   // Fetch all 4 files for one region, store in IDB. Returns total
@@ -17712,7 +17742,39 @@ function fmtDate(ts) {
     if (d.recent.length > d._maxRecent) d.recent.shift();
   }
 
+  // regionId → Promise<PMTilesReader|null>. A reader holds the region's
+  // tiles.pmtiles Blob as read from IndexedDB; those Blob handles can go
+  // stale when iOS suspends the app (reads then fail or never settle),
+  // so readers are dropped on resume, on any read failure, and when a
+  // read times out — the next tile request re-reads the Blob.
   const _readers = new Map();
+  const STATIC_TILE_READ_TIMEOUT_MS = 8000;
+  function _dropReader(regionId, why) {
+    if (!_readers.has(regionId)) return;
+    _readers.delete(regionId);
+    const diag = window._staticTilesDiag;
+    diag.readerResets = (diag.readerResets || 0) + 1;
+    diag.lastResetWhy = why;
+  }
+  if (typeof document !== 'undefined') {
+    let hiddenAt = 0;
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+      if (hiddenAt && Date.now() - hiddenAt >= 10000 && _readers.size) {
+        for (const id of Array.from(_readers.keys())) _dropReader(id, 'resume');
+      }
+      hiddenAt = 0;
+    });
+  }
+  function _withTimeout(p, ms, what) {
+    let t;
+    return Promise.race([
+      p,
+      new Promise((_, rej) => {
+        t = setTimeout(() => rej(new Error(what + ' timed out after ' + ms + 'ms')), ms);
+      }),
+    ]).finally(() => clearTimeout(t));
+  }
   function _getReader(regionId) {
     if (_readers.has(regionId)) return _readers.get(regionId);
     const diag = window._staticTilesDiag;
@@ -17721,7 +17783,18 @@ function fmtDate(ts) {
       || { served: 0, notHere: 0 };
     r.initStartedAt = performance.now();
     const p = (async () => {
-      const blob = await window._getStaticRegionFile(regionId, 'tiles.pmtiles');
+      let blob;
+      try {
+        blob = await window._getStaticRegionFile(regionId, 'tiles.pmtiles');
+      } catch (e) {
+        // Storage hiccup, not "no tiles": don't cache this failure —
+        // the next tile request tries again.
+        r.error = 'idb read failed: ' + (e && e.message || e);
+        r.initMs = Math.round(performance.now() - r.initStartedAt);
+        diag.initsPending--;
+        if (_readers.get(regionId) === p) _readers.delete(regionId);
+        throw e;
+      }
       if (!blob) {
         r.error = 'no blob in IDB';
         r.initMs = Math.round(performance.now() - r.initStartedAt);
@@ -17729,12 +17802,15 @@ function fmtDate(ts) {
         return null;
       }
       const reader = new PMTilesReader(blob);
-      try { await reader.init(); }
+      try { await _withTimeout(reader.init(), STATIC_TILE_READ_TIMEOUT_MS, 'pmtiles init'); }
       catch (e) {
         console.warn('[pmtiles reader] init failed', regionId, e);
         r.error = e.message || String(e);
         r.initMs = Math.round(performance.now() - r.initStartedAt);
         diag.initsPending--;
+        // Could be a stale Blob handle rather than a bad file — let a
+        // later request retry instead of caching the failure forever.
+        if (_readers.get(regionId) === p) _readers.delete(regionId);
         return null;
       }
       r.initMs = Math.round(performance.now() - r.initStartedAt);
@@ -17758,12 +17834,34 @@ function fmtDate(ts) {
     if (diag.inFlight > diag.peakInFlight) diag.peakInFlight = diag.inFlight;
     const startedAt = performance.now();
     const tried = [];
+    // One region's tile bytes. A read that fails or hangs (stale Blob
+    // after an iOS resume) drops the cached reader and retries ONCE with
+    // a fresh one; a second failure throws, so MapLibre records an error
+    // and asks again later — returning null would be served as an EMPTY
+    // tile (204), which MapLibre caches.
+    const readTile = async (regionId) => {
+      for (let attempt = 0; ; attempt++) {
+        let reader;
+        try {
+          reader = await _getReader(regionId);
+        } catch (e) {
+          if (attempt) throw e;
+          continue;  // _getReader didn't cache the failure — retry once
+        }
+        if (!reader) return null;
+        try {
+          return await _withTimeout(reader.getTile(z, x, y),
+            STATIC_TILE_READ_TIMEOUT_MS, 'tile read');
+        } catch (e) {
+          _dropReader(regionId, (e && e.message) || String(e));
+          if (attempt) throw e;
+        }
+      }
+    };
     try {
       for (const r of downloaded) {
         tried.push(r.id);
-        const reader = await _getReader(r.id);
-        if (!reader) continue;
-        const tile = await reader.getTile(z, x, y);
+        const tile = await readTile(r.id);
         if (!tile || tile.length === 0) continue;
         const result = (tile.length >= 2 && tile[0] === 0x1f && tile[1] === 0x8b)
           ? await PMTilesReader._gunzip(tile)
@@ -17773,6 +17871,10 @@ function fmtDate(ts) {
       }
       _dbgRecordDecision(z, x, y, null, tried, startedAt);
       return null;
+    } catch (e) {
+      diag.readErrors = (diag.readErrors || 0) + 1;
+      diag.lastReadError = String((e && e.message) || e).slice(0, 120);
+      throw e;
     } finally {
       diag.inFlight--;
     }

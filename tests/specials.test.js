@@ -249,6 +249,19 @@ function makeCtx(extra) {
     writeEggs: () => {},
     readCapturedCreatures: () => captured,
     writeCapturedCreatures: (arr) => { captured = arr; },
+    // Granular capture store (catch/hatch/evolve now journal one record).
+    _capStore: {
+      add: (c) => { captured.push(c); },
+      replaceById: (id, next) => {
+        const i = captured.findIndex((x) => x && x.id === id);
+        if (i < 0) return false;
+        captured[i] = next; return true;
+      },
+      update: (id, fn) => {
+        const c = captured.find((x) => x && x.id === id);
+        if (c) fn(c); return c || null;
+      },
+    },
     readSeenFusions: () => seenMap,
     writeSeenFusions: (m) => { seenMap = m; },
     readCandyRaw: () => candyMap,

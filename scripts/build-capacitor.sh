@@ -146,6 +146,7 @@ TRACKED_JS = {
     "species.js", "spawns.js", "trip-planner.js",
     "live-update.js", "sw.js", "extras.js", "types.js", "specials.js", "pack-reader.js",
     "pack-install.js", "packs.js", "shiny-store.js",
+    "idb-util.js", "collection-store.js",
     "extras-apps.js", "extras-almanac.js", "extras-vibration.js",
     "extras-skymap.js", "extras-sudoku.js", "extras-sensors.js",
     "extras-tuner.js", "extras-scapes.js", "extras-todos.js", "extras-anki.js",

@@ -74,151 +74,243 @@
   const CAUGHT_SPAWNS_KEY = 'cc.caughtSpawnIds';
   const SEEN_FUSIONS_KEY = 'cc.seenFusions';
 
-  // ── Collection store: IndexedDB ──────────────────────────────
-  // A single key-value object store holding the two big blobs that no
-  // longer fit in localStorage: the captured array and the seenFusions
-  // map. IDB's quota is hundreds of MB–GB, so the collection can grow
-  // without hitting the wall. Values are stored as live structured
-  // objects (IDB structured-clone), not JSON strings — no parse/stringify
-  // round-trip. Mirrors the tracker-DB helper pattern further down.
+  // ── Collection store: IndexedDB + write-ahead journal ────────
+  // Two big blobs live in one IndexedDB key-value store: the captured
+  // array and the seenFusions map (they outgrew localStorage's ~5 MB).
+  // Persistence goes through CollectionStore (collection-store.js):
+  // every single-record change — a catch, an evolution, a seen-mark — is
+  // journaled to localStorage immediately (tiny, synchronous, durable),
+  // and the big blobs are checkpointed lazily. The connection comes from
+  // CCIdb (idb-util.js), which re-opens it when iOS drops it during a
+  // background suspension. Before this, a dropped connection made every
+  // write throw "The database connection is closing" for the rest of the
+  // session and those catches were lost on the next restart (Oct 2026).
+  // Storage format is unchanged: same DB, same keys, same blob shapes.
   const CSTORE_DB = 'creature-collection-v1';
   const CSTORE_DB_VERSION = 1;
   const CSTORE_STORE = 'kv';
   const CSTORE_CAPTURED = 'captured';
   const CSTORE_SEEN = 'seenFusions';
+  const CSTORE_JOURNAL_PREFIX = 'cc.cjournal.v1.';
 
-  let _cstoreDbPromise = null;
-  function _openCStoreDb() {
-    if (_cstoreDbPromise) return _cstoreDbPromise;
-    _cstoreDbPromise = new Promise((resolve, reject) => {
-      let req;
-      try { req = indexedDB.open(CSTORE_DB, CSTORE_DB_VERSION); }
-      catch (e) { reject(e); return; }
-      req.onupgradeneeded = () => {
-        const db = req.result;
-        if (!db.objectStoreNames.contains(CSTORE_STORE)) {
-          db.createObjectStore(CSTORE_STORE);
-        }
-      };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
-    return _cstoreDbPromise;
-  }
-  function _cstoreGet(key) {
-    return _openCStoreDb().then((db) => new Promise((resolve, reject) => {
-      const tx = db.transaction(CSTORE_STORE, 'readonly');
-      const r = tx.objectStore(CSTORE_STORE).get(key);
-      r.onsuccess = () => resolve(r.result);
-      r.onerror = () => reject(r.error);
-    }));
-  }
-  function _cstorePut(key, value) {
-    return _openCStoreDb().then((db) => new Promise((resolve, reject) => {
-      const tx = db.transaction(CSTORE_STORE, 'readwrite');
-      tx.objectStore(CSTORE_STORE).put(value, key);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error);
-    }));
-  }
-
-  // Coalesced, last-write-wins async writer for one IDB key. Mutations
-  // call schedule(); a single transaction is ever in flight, and if more
-  // mutations land while a write is running the next flush picks up the
-  // latest snapshot. No lost updates, no overlapping transactions, and a
-  // failed write is logged (not thrown) so a catch can never abort on it.
-  function _makeIdbWriter(key, getSnapshot) {
-    let writing = false;
-    let dirty = false;
-    async function flush() {
-      writing = true;
-      try {
-        while (dirty) {
-          dirty = false;
-          // getSnapshot() returns the live in-memory object; put() clones
-          // it synchronously at call time, so this captures the latest
-          // committed state.
-          await _cstorePut(key, getSnapshot());
-        }
-      } catch (e) {
-        _logCreatureError('cstore/write/' + key, e);
-      } finally {
-        writing = false;
-      }
+  // index.html loads idb-util.js + collection-store.js before this file.
+  // If either failed to load (e.g. a LocalServer hiccup at boot on iOS),
+  // re-inject it rather than silently persisting nothing: try a few
+  // times, and the caller shows the storage warning if it never appears.
+  function _ensureStorageHelpers() {
+    const need = [];
+    if (!global.CCIdb) need.push('idb-util.js');
+    if (!global.CollectionStore) need.push('collection-store.js');
+    if (!need.length || typeof document === 'undefined' || !document.head) {
+      return Promise.resolve();
     }
-    return function schedule() {
-      dirty = true;
-      if (!writing) flush();
-    };
+    const loadOnce = (name) => new Promise((resolve) => {
+      const el = document.createElement('script');
+      el.src = '/static/' + name + '?retry=' + Date.now();
+      el.onload = el.onerror = () => resolve();
+      document.head.appendChild(el);
+    });
+    return (async () => {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        if (global.CCIdb && global.CollectionStore) return;
+        _logCreatureError('cstore/helpers-missing',
+          new Error('re-loading ' + need.join(', ') + ' (attempt ' + (attempt + 1) + ')'));
+        if (attempt) await new Promise((r) => setTimeout(r, 1500 * attempt));
+        if (!global.CCIdb) await loadOnce('idb-util.js');
+        if (!global.CollectionStore) await loadOnce('collection-store.js');
+      }
+    })();
+  }
+
+  let _cstorePersistInst = null;
+  function _cstorePersist() {
+    if (_cstorePersistInst) return _cstorePersistInst;
+    const CCIdb = global.CCIdb;
+    if (!CCIdb || !global.CollectionStore) {
+      throw new Error('idb-util.js / collection-store.js not loaded');
+    }
+    const getDb = CCIdb.opener(CSTORE_DB, CSTORE_DB_VERSION, (db) => {
+      if (!db.objectStoreNames.contains(CSTORE_STORE)) {
+        db.createObjectStore(CSTORE_STORE);
+      }
+    });
+    _cstorePersistInst = global.CollectionStore.create({
+      getDb, run: CCIdb.run, txDone: CCIdb.txDone,
+      storeName: CSTORE_STORE,
+      localStorage: global.localStorage,
+      journalPrefix: CSTORE_JOURNAL_PREFIX,
+      stores: {
+        // Captures may be journaled even when the collection couldn't be
+        // loaded (degraded): a new catch is an independent record, so
+        // replaying it later is always safe. Seen-marks merge into
+        // existing entries, so they're refused then.
+        [CSTORE_CAPTURED]: { key: CSTORE_CAPTURED, kind: 'list', idField: 'id',
+          snapshot: () => _capStore.list(), journalWhenDegraded: true },
+        [CSTORE_SEEN]: { key: CSTORE_SEEN, kind: 'map',
+          snapshot: () => _seenStore.get() },
+      },
+      log: (where, e) => _logCreatureError('cstore/' + where, e),
+    });
+    if (typeof document !== 'undefined' && typeof window !== 'undefined') {
+      _cstorePersistInst.attachLifecycle(document, window);
+    }
+    return _cstorePersistInst;
   }
 
   // Hydration gate. Reads stay synchronous (the stores cache everything
-  // in memory); this preloads that cache from IDB once at boot, runs the
-  // one-time localStorage→IDB migration, and only then lets writes touch
-  // IDB (so an early write can't clobber not-yet-loaded data).
+  // in memory); this loads that cache once at boot — blob + journal
+  // replay — runs the one-time localStorage→IDB migration, and only then
+  // lets mutations persist (so an early write can't clobber not-yet-
+  // loaded data).
+  //
+  // If the blobs can't be READ (after retries) we're degraded: the
+  // in-memory collection is only what the journal holds, so nothing may
+  // be checkpointed over the real one (CollectionStore enforces it) —
+  // new catches are still journaled and come back on the next launch.
+  // The old code fell back to an empty list here and opened the write
+  // gate, so the next catch would have overwritten the whole collection.
   let _cstoreHydrated = false;
+  let _cstoreDegraded = false;
   let _cstoreHydratePromise = null;
   function _safeLsGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
   function _safeLsRemove(k) { try { localStorage.removeItem(k); } catch (_) {} }
   function _hydrateCStore() {
     if (_cstoreHydratePromise) return _cstoreHydratePromise;
     _cstoreHydratePromise = (async () => {
-      let capIdb, seenIdb;
-      try { capIdb = await _cstoreGet(CSTORE_CAPTURED); }
-      catch (e) { _logCreatureError('cstore/hydrate/captured', e); }
-      try { seenIdb = await _cstoreGet(CSTORE_SEEN); }
-      catch (e) { _logCreatureError('cstore/hydrate/seen', e); }
+      await _ensureStorageHelpers();
+      let persist;
+      try { persist = _cstorePersist(); }
+      catch (e) {
+        // The helper scripts never loaded. Stay un-hydrated (nothing can
+        // be overwritten) and say so — catches can't be saved like this.
+        _logCreatureError('cstore/init', e);
+        _showStorageWarning();
+        return;
+      }
+      const r = await persist.load();
+      if (!r.ok) _logCreatureError('cstore/hydrate', r.error);
+      const capIdb = r.blobs[CSTORE_CAPTURED];
+      const seenIdb = r.blobs[CSTORE_SEEN];
 
-      // Pick the source: IDB if present, else migrate from localStorage.
+      // Pick the base: the IDB blob if present; else (only when the read
+      // itself SUCCEEDED and the key is absent) migrate from the legacy
+      // localStorage copy; else empty.
       let cap, capFromLs = false;
       if (Array.isArray(capIdb)) {
         cap = capIdb;
-      } else {
+      } else if (r.ok) {
         const raw = _safeLsGet(CAPTURED_KEY);
         let parsed = null;
         if (raw) { try { parsed = JSON.parse(raw); } catch { parsed = null; } }
         if (Array.isArray(parsed)) { cap = parsed; capFromLs = true; }
         else cap = [];
+      } else {
+        cap = [];
       }
       let seen, seenFromLs = false;
       if (seenIdb && typeof seenIdb === 'object') {
         seen = seenIdb;
-      } else {
+      } else if (r.ok) {
         const raw = _safeLsGet(SEEN_FUSIONS_KEY);
         let parsed = null;
         if (raw) { try { parsed = JSON.parse(raw); } catch { parsed = null; } }
         if (parsed && typeof parsed === 'object') { seen = parsed; seenFromLs = true; }
         else seen = {};
+      } else {
+        seen = {};
       }
+      // Replay journaled changes that the blobs don't include yet.
+      cap = persist.applyJournal(CSTORE_CAPTURED, cap);
+      seen = persist.applyJournal(CSTORE_SEEN, seen);
 
-      // Open the write gate now that we know what to load: from here on
-      // user mutations may persist to IDB. loadFromArray itself doesn't
-      // write — it returns whether legacy-variant normalization changed
-      // anything, so we fold that into the single migration write below.
+      // loadFromArray doesn't write — it reports whether legacy-variant
+      // normalization changed anything, folded into the checkpoint below.
       _cstoreHydrated = true;
+      _cstoreDegraded = !r.ok;
       const capDirty = _capStore.loadFromArray(cap);
       _seenStore.loadFromMap(seen);
+      persist.ready();
+      if (_cstoreDegraded) { _showStorageWarning(); return; }
 
-      // Persist + free localStorage. We write IDB and only delete the LS
-      // key after the write resolves, so a failed migration leaves the
-      // original data intact in localStorage as a fallback.
-      if (capFromLs || capDirty) {
-        try {
-          await _cstorePut(CSTORE_CAPTURED, _capStore.list());
-          if (capFromLs) _safeLsRemove(CAPTURED_KEY);
-        } catch (e) { _logCreatureError('cstore/migrate/captured', e); }
-      }
-      if (seenFromLs) {
-        try {
-          await _cstorePut(CSTORE_SEEN, _seenStore.get());
-          _safeLsRemove(SEEN_FUSIONS_KEY);
-        } catch (e) { _logCreatureError('cstore/migrate/seen', e); }
+      // Migration writes: persist, and only drop the localStorage copy
+      // once the checkpoint covering it has landed.
+      if (capFromLs || capDirty) persist.markBulk(CSTORE_CAPTURED);
+      if (seenFromLs) persist.markBulk(CSTORE_SEEN);
+      if (capFromLs || seenFromLs) {
+        const okFlush = await persist.flush();
+        if (okFlush && capFromLs && persist.isClean(CSTORE_CAPTURED)) _safeLsRemove(CAPTURED_KEY);
+        if (okFlush && seenFromLs && persist.isClean(CSTORE_SEEN)) _safeLsRemove(SEEN_FUSIONS_KEY);
       }
     })();
     return _cstoreHydratePromise;
   }
   function _whenReady() { return _cstoreHydratePromise || _hydrateCStore(); }
+
+  // Persistence hooks used by the two stores below. All no-ops before
+  // hydration (same contract as before: pre-hydrate mutations never
+  // touch storage).
+  function _persistCapPut(c) {
+    if (!_cstoreHydrated || !c || c.id == null) return;
+    _cstorePersist().journalPut(CSTORE_CAPTURED, c.id, c);
+  }
+  function _persistCapDel(id) {
+    if (!_cstoreHydrated) return;
+    _cstorePersist().journalDel(CSTORE_CAPTURED, id);
+  }
+  function _persistBulk(storeId) {
+    if (!_cstoreHydrated) return;
+    _cstorePersist().markBulk(storeId);
+  }
+  function _persistSeenKey(key) {
+    if (!_cstoreHydrated) return;
+    const map = _seenStore.get();
+    if (Object.prototype.hasOwnProperty.call(map, key)) {
+      _cstorePersist().journalPut(CSTORE_SEEN, key, map[key]);
+    } else {
+      _cstorePersist().journalDel(CSTORE_SEEN, key);
+    }
+  }
+
+  // Visible warning when the collection couldn't be loaded (degraded) —
+  // the inventory would otherwise just look empty, which reads as "my
+  // pokémon are gone". Page-level (not inside the inventory sheet) so it
+  // shows on the map too. Inline styles: this must work even if the
+  // panel CSS hasn't been injected.
+  function _showStorageWarning() {
+    if (typeof document === 'undefined' || !document.body) return;
+    if (document.getElementById('ccStorageWarning')) return;
+    const el = document.createElement('div');
+    el.id = 'ccStorageWarning';
+    el.setAttribute('role', 'alert');
+    el.style.cssText = [
+      'position:fixed', 'left:12px', 'right:12px',
+      'top:calc(env(safe-area-inset-top, 0px) + 12px)', 'z-index:3000',
+      'background:var(--ui-bg,#fff)', 'color:var(--ui-text,#111)',
+      'border:2px solid var(--ui-danger,#c0392b)', 'border-radius:var(--ui-radius,8px)',
+      'padding:10px 36px 10px 12px', 'font-size:13px', 'line-height:1.4',
+      'box-shadow:var(--ui-shadow,0 4px 16px rgba(0,0,0,.2))',
+    ].join(';');
+    el.innerHTML = '<b>Couldn\u2019t load your collection.</b> Your pok\u00e9mon are '
+      + 'safe in storage, and new catches are being kept safe too \u2014 close and '
+      + 'reopen the app to see everything again.';
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.setAttribute('aria-label', 'Dismiss');
+    x.textContent = '\u00d7';
+    x.style.cssText = 'position:absolute;top:4px;right:6px;border:0;background:none;'
+      + 'font-size:20px;line-height:1;color:inherit;cursor:pointer;padding:4px 8px';
+    x.addEventListener('click', () => el.remove());
+    el.appendChild(x);
+    document.body.appendChild(el);
+  }
+
+  // Diagnostic snapshot for the Settings dump ([storage] block).
+  function persistenceStatus() {
+    const out = { hydrated: _cstoreHydrated, degraded: _cstoreDegraded };
+    try { if (_cstorePersistInst) Object.assign(out, _cstorePersistInst.status()); }
+    catch (_) {}
+    return out;
+  }
 
   // ── Inventory + pokédex performance metrics ──
   // Counters + per-call timing for the hot functions that fire on
@@ -557,15 +649,12 @@
       else bucket.set(vk, count - 1);
       if (bucket.size === 0) _variantsByFusion.delete(k);
     }
-    const _writeIdb = _makeIdbWriter(CSTORE_CAPTURED, () => _list);
-    function _persist() {
-      // Never write before hydration completes — an early write would
-      // clobber the not-yet-loaded collection in IDB. Mutations happen on
-      // user gestures well after boot, so this only guards the
-      // theoretical race; the catch path also awaits _whenReady().
-      if (!_cstoreHydrated) return;
-      _writeIdb();
-    }
+    // Persistence: the granular mutations below journal just the one
+    // record they touched (_persistCapPut/_persistCapDel); replaceAll is a
+    // bulk change and checkpoints the whole list (_persistBulk). All are
+    // no-ops before hydration completes, so an early write can't clobber
+    // the not-yet-loaded collection; the catch path also awaits
+    // _whenReady().
     // Authoritative load from a structured array (IDB hydrate, or the
     // legacy localStorage bootstrap below). Rebuilds indices, normalizes
     // legacy variants, and returns whether normalization changed anything
@@ -621,17 +710,18 @@
         _perfMark(_invPerf.fn.variantIndex, t0);
         return out;
       },
-      // Granular mutations — O(1) index maintenance. Use these in
-      // hot paths (capture from spawn, evolve, daycare claim, etc.)
-      // for the perf win. The existing read-mutate-replaceAll pattern
-      // also works and goes through this same store, just with O(N)
-      // index rebuild via replaceAll.
+      // Granular mutations — O(1) index maintenance and a one-record
+      // journal write (a few hundred bytes) instead of re-serialising
+      // the whole collection. Use these in hot paths (catch, hatch,
+      // evolve, tag toggles). The read-mutate-replaceAll pattern still
+      // works for rare bulk flows, at O(N) index rebuild + a full
+      // checkpoint.
       add(capture) {
         _ensureLoaded();
         _normalizeVariant(capture);
         _list.push(capture);
         _addToIndices(capture);
-        _persist();
+        _persistCapPut(capture);
       },
       removeById(id) {
         _ensureLoaded();
@@ -639,7 +729,7 @@
         if (idx < 0) return null;
         const removed = _list.splice(idx, 1)[0];
         _removeFromIndices(removed);
-        _persist();
+        _persistCapDel(id);
         return removed;
       },
       update(id, mutator) {
@@ -652,12 +742,28 @@
         mutator(c);
         _normalizeVariant(c);
         _addToIndices(c);
-        _persist();
+        _persistCapPut(c);
         return c;
+      },
+      // Swap in a NEW object for an existing record (keeps its list
+      // position) — for flows that build an updated copy ({ ...c, ... })
+      // rather than mutating in place. Returns false if the id is gone.
+      replaceById(id, next) {
+        _ensureLoaded();
+        const old = _byId.get(id);
+        if (!old || !next || next.id !== id) return false;
+        const idx = _list.indexOf(old);
+        if (idx < 0) return false;
+        _removeFromIndices(old);
+        _normalizeVariant(next);
+        _list[idx] = next;
+        _addToIndices(next);
+        _persistCapPut(next);
+        return true;
       },
       // Bulk replace — for import / wipe flows AND for the legacy
       // "read mutate write" pattern via writeCapturedCreatures(arr).
-      // O(N) index rebuild; runs ~1-3ms at 2K captures.
+      // O(N) index rebuild + a full checkpoint.
       replaceAll(arr) {
         _list = Array.isArray(arr) ? arr.slice() : [];
         _byId = new Map();
@@ -666,7 +772,7 @@
           _normalizeVariant(c);
           _addToIndices(c);
         }
-        _persist();
+        _persistBulk(CSTORE_CAPTURED);
       },
     };
   })();
@@ -1582,9 +1688,7 @@
     if (egg.pack) entry.pack = egg.pack;
     else if (!isSoloEgg) entry.pack = 'creature-fusion';
     else if (global.Packs) entry.pack = global.Packs.active();
-    const list = readCapturedCreatures();
-    list.push(entry);
-    writeCapturedCreatures(list);
+    _capStore.add(entry);  // journals just this record
     // Register the hatched fusion (+ its variant) in the Pokédex NOW.
     // Wild catches get marked seen at the encounter (openBattleScreen);
     // a hatch has no encounter, so without this the fusion only reaches
@@ -2816,8 +2920,7 @@
     const tags = Array.isArray(c.tags) ? c.tags.slice() : [];
     const i = tags.indexOf(tagName);
     if (i >= 0) tags.splice(i, 1); else tags.push(tagName);
-    c.tags = tags;
-    writeCapturedCreatures(list);
+    _capStore.update(id, (x) => { x.tags = tags; });
     return true;
   }
 
@@ -2931,7 +3034,6 @@
   // existing players don't lose history.
   const _seenStore = (() => {
     let _map = null;
-    const _writeIdb = _makeIdbWriter(CSTORE_SEEN, () => _map);
     // Authoritative load from a structured object (IDB hydrate, or the
     // legacy localStorage bootstrap in _ensureLoaded).
     function loadFromMap(map) {
@@ -2950,10 +3052,6 @@
       } catch { parsed = {}; }
       loadFromMap(parsed);
     }
-    function _persist() {
-      if (!_cstoreHydrated) return;  // never clobber before hydrate
-      _writeIdb();
-    }
     return {
       loadFromMap,
       get() { _ensureLoaded(); return _map; },
@@ -2961,11 +3059,14 @@
         // Used by callers that build a fresh object (rare). The live-
         // reference + mutate-then-commit pattern uses commit() instead.
         _map = (map && typeof map === 'object') ? map : {};
-        _persist();
+        _persistBulk(CSTORE_SEEN);  // no-op before hydrate
       },
-      // Persist the current cache. Callers that mutated the live ref
-      // returned by get() call this to commit.
-      commit() { _ensureLoaded(); _persist(); },
+      // Persist the current cache after the caller mutated the live ref
+      // returned by get(). Unknown scope → full checkpoint; prefer
+      // commitKey when only one entry changed.
+      commit() { _ensureLoaded(); _persistBulk(CSTORE_SEEN); },
+      // One entry changed (or was deleted): journal just that entry.
+      commitKey(key) { _ensureLoaded(); _persistSeenKey(key); },
     };
   })();
   if (typeof window !== 'undefined') window._seenStore = _seenStore;
@@ -2983,12 +3084,18 @@
               { lastSize: Object.keys(out).length });
     return out;
   }
-  function writeSeenFusions(map) {
+  // `key` (optional): the ONE entry the caller changed. With it, only
+  // that entry is journaled; without it the whole map is checkpointed.
+  function writeSeenFusions(map, key) {
     // If the caller passed back the live reference (the read-mutate-
     // write pattern), this is just commit + persist. If they passed a
     // fresh object, replace the cache.
-    if (map === _seenStore.get()) _seenStore.commit();
-    else _seenStore.set(map);
+    if (map === _seenStore.get()) {
+      if (typeof key === 'string') _seenStore.commitKey(key);
+      else _seenStore.commit();
+    } else {
+      _seenStore.set(map);
+    }
   }
   // Resolve + persist a first-sighting's POI/place during idle time, off
   // the encounter critical path (see markFusionSeen). Re-reads the store
@@ -3003,7 +3110,7 @@
       if (!rec || rec.poi !== undefined) return; // gone, or already enriched
       rec.poi = poiApi.findNearestNamedPoi ? (poiApi.findNearestNamedPoi(lat, lng) || null) : null;
       rec.place = poiApi.findNearestPlace ? (poiApi.findNearestPlace(lat, lng) || null) : null;
-      writeSeenFusions(seen);
+      writeSeenFusions(seen, key);
     };
     const ric = global.requestIdleCallback;
     if (typeof ric === 'function') ric(run, { timeout: 2000 });
@@ -3042,7 +3149,7 @@
       const vKey = (typeof variant === 'number' && variant >= 0) ? String(variant) : 'auto';
       if (!seen[key].variants[vKey]) seen[key].variants[vKey] = now;
     }
-    writeSeenFusions(seen);
+    writeSeenFusions(seen, key);
     // First sighting of a fusion: cached body-slots rendered before
     // this moment may silhouette / "???" it ("Evolves to" rows, family
     // cells) — e.g. evolve Vulon, then swipe to a second Vulon whose
@@ -3135,7 +3242,7 @@
     const seen = readSeenFusions();
     const entry = seen[`${a}-${b}`];
     if (!entry) return;
-    if (_addShinyToEntry(entry, variant, shinyVariant)) writeSeenFusions(seen);
+    if (_addShinyToEntry(entry, variant, shinyVariant)) writeSeenFusions(seen, `${a}-${b}`);
   }
   // Mark a fusion as one the trainer HAS caught but no longer owns — because
   // they evolved their only copy away (performEvolution transforms the capture
@@ -3150,7 +3257,7 @@
     const entry = seen[`${a}-${b}`];
     if (!entry || entry.caught) return;
     entry.caught = true;
-    writeSeenFusions(seen);
+    writeSeenFusions(seen, `${a}-${b}`);
   }
   // Losslessly merge an imported seenFusions map into the current one (backup
   // restore). New fusions are copied whole; for a fusion already known we keep
@@ -3546,7 +3653,7 @@
       variant: (typeof variant === 'number') ? variant : null,
       shinyVariant: (typeof shinyVariant === 'number') ? shinyVariant : null,
     };
-    writeSeenFusions(seen);
+    writeSeenFusions(seen, `${a}-${b}`);
     // Other cached fusion body-slots can display (a,b)'s art — family-tree
     // cells pick their sprite from favoriteArtFor at render time — so a
     // cached slot built before this change shows the OLD art when the user
@@ -3702,7 +3809,7 @@
       const vKey = (typeof variant === 'number' && variant >= 0) ? String(variant) : 'auto';
       if (!seen[key].variants[vKey]) seen[key].variants[vKey] = now;
     }
-    writeSeenFusions(seen);
+    writeSeenFusions(seen, key);
   }
 
   // Pokémon types, colors and the effectiveness chart live in ONE place:
@@ -4880,8 +4987,13 @@
       variant: newVariant,
       name: fusionName(newA, newB),
     };
-    list[idx] = updated;
-    writeCapturedCreatures(list);
+    // By id, not by the idx read before the await above — the list may
+    // have shifted meanwhile. Journals just this record.
+    if (!_capStore.replaceById(creatureId, updated)) {
+      _logCreatureError('performEvolution/replace',
+        new Error('capture ' + creatureId + ' vanished mid-evolution'));
+      return null;
+    }
 
     // Pokédex gets the new fusion (+ its variant) on first evolution.
     try { markFusionSeen(newA, newB, null, newVariant); } catch {}
@@ -4924,15 +5036,14 @@
     if (itemKey && !consumeItem(itemKey, 1)) return null;
     const oldSolo = c.solo;
     const updated = { ...c, solo: target };
-    list[idx] = updated;
-    writeCapturedCreatures(list);
+    if (!_capStore.replaceById(creatureId, updated)) return null;
     // Dex: the new form is seen; the old form's row gets the evolved-away
     // flag (same "Fresh" semantics as fusion caught-away).
     try { markSoloSeen(target, 'auto'); } catch {}
     try {
       const seen = readSeenFusions();
       const key = 'solo:' + oldSolo;
-      if (seen[key]) { seen[key].caught = true; writeSeenFusions(seen); }
+      if (seen[key]) { seen[key].caught = true; writeSeenFusions(seen, key); }
     } catch {}
     return updated;
   }
@@ -15013,45 +15124,44 @@
   // 3 m granularity covers ~60 km of walking with healthy headroom.
   const PATH_MAX_POINTS_PER_DAY = 20000;
 
-  let _trackerDbPromise = null;
-  function _openTrackerDb() {
-    if (_trackerDbPromise) return _trackerDbPromise;
-    _trackerDbPromise = new Promise((resolve, reject) => {
-      const req = indexedDB.open(TRACKER_DB, TRACKER_DB_VERSION);
-      req.onupgradeneeded = () => {
-        const db = req.result;
+  // Every tracker read/write goes through _trackerRun: a CCIdb
+  // connection that re-opens when iOS drops it during a background
+  // suspension (the old cached handle made every write after such a
+  // resume fail silently — distance + GPS path lost for the session),
+  // with one retry on a stale connection. Callers catch and fall back,
+  // so storage trouble never breaks GPS handling.
+  let _trackerOpener = null;
+  function _trackerRun(fn) {
+    if (!_trackerOpener) {
+      _trackerOpener = global.CCIdb.opener(TRACKER_DB, TRACKER_DB_VERSION, (db) => {
         if (!db.objectStoreNames.contains(TRACKER_STORE)) {
           db.createObjectStore(TRACKER_STORE);
         }
         if (!db.objectStoreNames.contains(TRACKER_SUMMARY_STORE)) {
           db.createObjectStore(TRACKER_SUMMARY_STORE);
         }
-      };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
-    return _trackerDbPromise;
+      });
+    }
+    return global.CCIdb.run(_trackerOpener, fn);
   }
   async function _idbGetPath(dayKey) {
     try {
-      const db = await _openTrackerDb();
-      return await new Promise((resolve) => {
+      return await _trackerRun((db) => new Promise((resolve) => {
         const tx = db.transaction(TRACKER_STORE, 'readonly');
         const r = tx.objectStore(TRACKER_STORE).get(dayKey);
         r.onsuccess = () => resolve(Array.isArray(r.result) ? r.result : []);
         r.onerror = () => resolve([]);
-      });
+      }));
     } catch { return []; }
   }
   async function _idbPutPath(dayKey, points) {
     try {
-      const db = await _openTrackerDb();
-      return await new Promise((resolve) => {
+      return await _trackerRun((db) => new Promise((resolve) => {
         const tx = db.transaction(TRACKER_STORE, 'readwrite');
         tx.objectStore(TRACKER_STORE).put(points, dayKey);
         tx.oncomplete = () => resolve();
         tx.onerror = () => resolve();
-      });
+      }));
     } catch { /* swallow — best-effort persistence */ }
   }
 
@@ -15060,8 +15170,7 @@
   // export flow (to bundle the user's full daycare history).
   async function _idbGetAllSummary() {
     try {
-      const db = await _openTrackerDb();
-      return await new Promise((resolve) => {
+      return await _trackerRun((db) => new Promise((resolve) => {
         const tx = db.transaction(TRACKER_SUMMARY_STORE, 'readonly');
         const out = {};
         const cur = tx.objectStore(TRACKER_SUMMARY_STORE).openCursor();
@@ -15074,24 +15183,22 @@
           c.continue();
         };
         cur.onerror = () => resolve(out);
-      });
+      }));
     } catch { return {}; }
   }
   async function _idbPutSummary(dayKey, meters) {
     try {
-      const db = await _openTrackerDb();
-      return await new Promise((resolve) => {
+      return await _trackerRun((db) => new Promise((resolve) => {
         const tx = db.transaction(TRACKER_SUMMARY_STORE, 'readwrite');
         tx.objectStore(TRACKER_SUMMARY_STORE).put(meters, dayKey);
         tx.oncomplete = () => resolve();
         tx.onerror = () => resolve();
-      });
+      }));
     } catch { /* best-effort */ }
   }
   async function _idbBulkPutSummary(map) {
     try {
-      const db = await _openTrackerDb();
-      return await new Promise((resolve) => {
+      return await _trackerRun((db) => new Promise((resolve) => {
         const tx = db.transaction(TRACKER_SUMMARY_STORE, 'readwrite');
         const store = tx.objectStore(TRACKER_SUMMARY_STORE);
         for (const k of Object.keys(map)) {
@@ -15100,13 +15207,12 @@
         }
         tx.oncomplete = () => resolve();
         tx.onerror = () => resolve();
-      });
+      }));
     } catch { /* best-effort */ }
   }
   async function _idbBulkPutPaths(map) {
     try {
-      const db = await _openTrackerDb();
-      return await new Promise((resolve) => {
+      return await _trackerRun((db) => new Promise((resolve) => {
         const tx = db.transaction(TRACKER_STORE, 'readwrite');
         const store = tx.objectStore(TRACKER_STORE);
         for (const k of Object.keys(map)) {
@@ -15115,13 +15221,12 @@
         }
         tx.oncomplete = () => resolve();
         tx.onerror = () => resolve();
-      });
+      }));
     } catch { /* best-effort */ }
   }
   async function _idbGetAllPaths() {
     try {
-      const db = await _openTrackerDb();
-      return await new Promise((resolve) => {
+      return await _trackerRun((db) => new Promise((resolve) => {
         const tx = db.transaction(TRACKER_STORE, 'readonly');
         const out = {};
         const cur = tx.objectStore(TRACKER_STORE).openCursor();
@@ -15134,7 +15239,7 @@
           c.continue();
         };
         cur.onerror = () => resolve(out);
-      });
+      }));
     } catch { return {}; }
   }
 
@@ -16004,9 +16109,10 @@
     // Tag focus-mode grants so the detail view / future tooling can
     // tell them apart from wild catches.
     if (spawn.focus) entry.fromFocus = true;
-    const list = readCapturedCreatures();
-    list.push(entry);
-    writeCapturedCreatures(list);  // persists to IDB — no quota wall
+    // Journals just this record (localStorage, synchronous) — durable
+    // even if IndexedDB is unavailable right now; the collection blob is
+    // checkpointed lazily. See CollectionStore.
+    _capStore.add(entry);
     // Candy + caught-spawn bookkeeping write small keys to localStorage.
     // Guard each independently: a failure here (e.g. a transient quota
     // error from some other oversized key) must NOT abort the catch and
@@ -16023,7 +16129,7 @@
     try { markSpawnCaught(spawn.id); }
     catch (e) { _logCreatureError('recordCapture/markSpawnCaught', e); }
     removeMarker(spawn.id);
-    if (list.length === 1 && navigator.storage && navigator.storage.persist) {
+    if (readCapturedCreatures().length === 1 && navigator.storage && navigator.storage.persist) {
       navigator.storage.persist().catch(() => {});
     }
     return entry;
@@ -16051,9 +16157,7 @@
       caughtAt: { timestamp: Date.now() },
     };
     if (global.Packs) entry.pack = global.Packs.active();
-    const list = readCapturedCreatures();
-    list.push(entry);
-    writeCapturedCreatures(list);
+    _capStore.add(entry);
     try { markSoloSeen(soloId, 'auto'); }
     catch (e) { _logCreatureError('grantSolo/markSoloSeen', e); }
     try { awardCandyForSolo(soloId, 2); }
@@ -18255,6 +18359,14 @@
     getSeenFusions: () => readSeenFusions(),
     setSeenFusions: (map) => { _seenStore.set(map); },
     mergeSeenFusions: (current, incoming) => mergeSeenFusions(current, incoming),
+    // Collection persistence (journal + checkpoints, see CollectionStore):
+    // status for the Settings [storage] dump block; flush() forces a
+    // checkpoint; stopPersistence() is called by "Delete all data" BEFORE
+    // it deletes the databases, so a pending checkpoint can't re-create
+    // the collection DB between the delete and the reload.
+    persistenceStatus,
+    flushPersistence: () => (_cstorePersistInst ? _cstorePersistInst.flush() : Promise.resolve(false)),
+    stopPersistence: () => { if (_cstorePersistInst) _cstorePersistInst.stop(); },
     // Active incense (carried in the save file so the 30-min window
     // survives device hops + app restarts).
     getActiveIncense: readActiveIncense,

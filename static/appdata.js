@@ -50,27 +50,31 @@
   const ICON_MAGIC = 0xC1;
   const ICON_HEADER_BYTES = 6;
 
-  let _dbPromise = null;
-  function openDb() {
-    if (_dbPromise) return _dbPromise;
-    _dbPromise = new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB_NAME, DB_VERSION);
-      req.onupgradeneeded = (e) => {
-        const db = req.result;
+  // Shared CCIdb connection (idb-util.js) — re-opens itself after iOS
+  // drops it during a background suspension (see that file).
+  let _dbOpener = null;
+  function _appDbOpener() {
+    if (!_dbOpener) {
+      _dbOpener = global.CCIdb.opener(DB_NAME, DB_VERSION, (db, e) => {
         if (db.objectStoreNames.contains(STORE_ICONS) && (e.oldVersion || 0) < 2) {
           db.deleteObjectStore(STORE_ICONS);
         }
         if (!db.objectStoreNames.contains(STORE_ICONS)) db.createObjectStore(STORE_ICONS);
         if (!db.objectStoreNames.contains(STORE_FONTS)) db.createObjectStore(STORE_FONTS);
-      };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
-    return _dbPromise;
+      });
+    }
+    return _dbOpener;
+  }
+  function openDb() {
+    try { return _appDbOpener()(); }
+    catch (e) { return Promise.reject(e); }
   }
 
   function _req(store, mode, fn) {
-    return openDb().then((db) => new Promise((resolve, reject) => {
+    let run;
+    try { run = global.CCIdb.run.bind(null, _appDbOpener()); }
+    catch (e) { return Promise.reject(e); }
+    return run((db) => new Promise((resolve, reject) => {
       const tx = db.transaction(store, mode);
       const r = fn(tx.objectStore(store));
       r.onsuccess = () => resolve(r.result);

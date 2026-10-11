@@ -730,28 +730,44 @@
   // users upgrade cleanly — 'fractals' already exists and is preserved;
   // only 'fractals2' is created.
   const FRAC_STORES = ['fractals', 'fractals2'];
-  let _fracDbP = null;
-  function _fracDb() {
-    if (_fracDbP) return _fracDbP;
-    _fracDbP = new Promise((resolve, reject) => {
-      let req;
-      try { req = indexedDB.open(FRAC_DB, 2); }
-      catch (e) { reject(e); return; }
-      req.onupgradeneeded = () => {
-        const db = req.result;
-        for (const store of FRAC_STORES) {
-          if (!db.objectStoreNames.contains(store)) {
-            db.createObjectStore(store, { keyPath: 'id' });
-          }
+  // Cached connection via CCIdb (idb-util.js) when available — it
+  // re-opens after iOS drops the connection during a suspension (the old
+  // forever-cached handle failed every fractal save after a resume). The
+  // plain fallback keeps extras.js usable on a host page without
+  // idb-util.js.
+  let _fracOpener = null;
+  function _fracOpenerFn() {
+    if (_fracOpener) return _fracOpener;
+    const upgrade = (db) => {
+      for (const store of FRAC_STORES) {
+        if (!db.objectStoreNames.contains(store)) {
+          db.createObjectStore(store, { keyPath: 'id' });
         }
-      };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
-    return _fracDbP;
+      }
+    };
+    if (global.CCIdb) {
+      _fracOpener = global.CCIdb.opener(FRAC_DB, 2, upgrade);
+    } else {
+      let p = null;
+      _fracOpener = () => p || (p = new Promise((resolve, reject) => {
+        let req;
+        try { req = indexedDB.open(FRAC_DB, 2); }
+        catch (e) { reject(e); return; }
+        req.onupgradeneeded = () => upgrade(req.result);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      }));
+    }
+    return _fracOpener;
+  }
+  // Run fn(db), retrying once on a stale connection (CCIdb.run).
+  function _fracRun(fn) {
+    const getDb = _fracOpenerFn();
+    if (global.CCIdb) return global.CCIdb.run(getDb, fn);
+    return getDb().then(fn);
   }
   function _fracAll(store) {
-    return _fracDb().then((db) => new Promise((resolve) => {
+    return _fracRun((db) => new Promise((resolve) => {
       const out = [];
       const tx = db.transaction(store, 'readonly');
       const cur = tx.objectStore(store).openCursor();
@@ -764,7 +780,7 @@
     })).catch(() => []);
   }
   function _fracPut(store, rec) {
-    return _fracDb().then((db) => new Promise((resolve, reject) => {
+    return _fracRun((db) => new Promise((resolve, reject) => {
       const tx = db.transaction(store, 'readwrite');
       tx.objectStore(store).put(rec);
       tx.oncomplete = () => resolve();
@@ -772,7 +788,7 @@
     }));
   }
   function _fracDelete(store, id) {
-    return _fracDb().then((db) => new Promise((resolve) => {
+    return _fracRun((db) => new Promise((resolve) => {
       const tx = db.transaction(store, 'readwrite');
       tx.objectStore(store).delete(id);
       tx.oncomplete = () => resolve();

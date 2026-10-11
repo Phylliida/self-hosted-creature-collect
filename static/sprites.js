@@ -106,7 +106,6 @@
     return (p && p.max) || SPECIES_MAX;
   }
 
-  let _dbPromise = null;
   let _customManifest = null;     // species id (string) -> [variant suffixes]
   let _customManifestPromise = null;
   // In-memory cache of the per-cell variant index map: `${a}-${b}` ->
@@ -136,27 +135,39 @@
     }
   }
 
-  function openDb() {
-    if (_dbPromise) return _dbPromise;
-    _dbPromise = new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB_NAME, DB_VERSION);
-      req.onupgradeneeded = () => {
-        const db = req.result;
+  // Shared CCIdb connection (idb-util.js): re-opens itself when iOS
+  // drops it during a background suspension — the old cached handle
+  // failed every sprite read after such a resume (web build: red dots
+  // until restart). openDb() keeps its old contract for the call sites
+  // that manage their own transactions; _idbReq/_idbBulkPut also retry
+  // once on a stale connection via CCIdb.run.
+  let _dbOpener = null;
+  function _spriteDbOpener() {
+    if (!_dbOpener) {
+      _dbOpener = global.CCIdb.opener(DB_NAME, DB_VERSION, (db) => {
         if (!db.objectStoreNames.contains(STORE_ICONS)) {
           db.createObjectStore(STORE_ICONS);
         }
         if (!db.objectStoreNames.contains(STORE_VARIANTS)) {
           db.createObjectStore(STORE_VARIANTS);
         }
-      };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
-    return _dbPromise;
+      });
+    }
+    return _dbOpener;
+  }
+  function openDb() {
+    try { return _spriteDbOpener()(); }
+    catch (e) { return Promise.reject(e); }
   }
 
+  // CCIdb.run that always returns a Promise (rejects, never throws, if
+  // idb-util.js isn't loaded) — callers use .catch() chains.
+  function _spriteDbRun(fn) {
+    try { return global.CCIdb.run(_spriteDbOpener(), fn); }
+    catch (e) { return Promise.reject(e); }
+  }
   function _idbReq(store, mode, fn) {
-    return openDb().then((db) => new Promise((resolve, reject) => {
+    return _spriteDbRun((db) => new Promise((resolve, reject) => {
       const tx = db.transaction(store, mode);
       const req = fn(tx.objectStore(store));
       req.onsuccess = () => resolve(req.result);
@@ -176,7 +187,7 @@
   // cells per transaction collapses that to ~150 transactions and
   // makes the first-launch import seconds instead of minutes.
   function _idbBulkPut(store, items) {
-    return openDb().then((db) => new Promise((resolve, reject) => {
+    return _spriteDbRun((db) => new Promise((resolve, reject) => {
       const tx = db.transaction(store, 'readwrite');
       const objStore = tx.objectStore(store);
       for (const it of items) objStore.put(it.value, it.key);
