@@ -177,6 +177,26 @@ function sliceFn(src, head) {
   ok(/startGeolocate\(\);/.test(loadHandler.slice(0, 800)), "map 'load' keeps startGeolocate as a fallback");
 }
 
+// ── 4b. Off the first screen: extras scripts, schedule index ──────────
+{
+  ok(!/<script src="\/static\/extras[^"]*\.js"><\/script>/.test(indexSrc),
+    'no extras script is a parser-blocking tag');
+  const backup = sliceFn(indexSrc, 'async function buildBackupPayload(');
+  ok(/await _loadDeferredScripts\(\)/.test(backup.slice(0, 400)),
+    'buildBackupPayload loads the extras before reading their stores');
+  const imp = sliceFn(indexSrc, 'async function importData(');
+  ok(/await _loadDeferredScripts\(\)/.test(imp.slice(0, 600)),
+    'importData loads the extras before merging into them');
+  const loadHandler = indexSrc.slice(indexSrc.indexOf("map.on('load', async () => {"));
+  ok(!/rebuildScheduleIndex\(\)/.test(loadHandler.slice(0, loadHandler.indexOf("map.on('styledata'"))),
+    "the schedule index no longer runs inside map 'load'");
+  const queue = indexSrc.slice(indexSrc.indexOf("_bootMark('iife:end');"));
+  const order = ['_loadDeferredScripts()', 'ensurePoisLoaded()', 'rebuildScheduleIndex()']
+    .map((n) => queue.indexOf(n));
+  ok(order.every((i) => i > 0) && order[0] < order[1] && order[1] < order[2],
+    'post-boot queue: extras, then POIs, then the schedule index (it snaps stops to POIs)');
+}
+
 // ── 5. Capacitor variant counts: compact cells table persisted ────────
 // The first sprite batch used to rebuild per-cell variant counts from
 // the full cells.json object (~99 k keys) on every boot — ~0.9 s on a

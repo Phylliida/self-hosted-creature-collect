@@ -4796,17 +4796,26 @@
 <script src="/static/creatures.js"></script>
 <script>window._ccBootMark && _ccBootMark('scripts:creatures')</script>
 <script src="/static/live-update.js"></script>
-<script src="/static/extras.js"></script>
-<script src="/static/extras-vibration.js"></script>
-<script src="/static/extras-apps.js"></script>
-<script src="/static/extras-almanac.js"></script>
-<script src="/static/extras-skymap.js"></script>
-<script src="/static/extras-sudoku.js"></script>
-<script src="/static/extras-sensors.js"></script>
-<script src="/static/extras-tuner.js"></script>
-<script src="/static/extras-scapes.js"></script>
-<script src="/static/extras-todos.js"></script>
-<script src="/static/extras-anki.js"></script>
+<!-- Extras: ~470 KB of tool code that builds its panels eagerly (~0.45 s
+     on a Pixel 4a), none of it needed for the first screen. Loaded in
+     this order once boot settles, or sooner when Extras / Save / Import
+     needs them — see _loadDeferredScripts in the boot block. extras.js
+     goes first: it defines ExtrasRegisterTool for the rest. -->
+<script>
+window._CC_DEFERRED_SCRIPTS = [
+  '/static/extras.js',
+  '/static/extras-vibration.js',
+  '/static/extras-apps.js',
+  '/static/extras-almanac.js',
+  '/static/extras-skymap.js',
+  '/static/extras-sudoku.js',
+  '/static/extras-sensors.js',
+  '/static/extras-tuner.js',
+  '/static/extras-scapes.js',
+  '/static/extras-todos.js',
+  '/static/extras-anki.js',
+];
+</script>
 <script>window._ccBootMark && _ccBootMark('scripts:end')</script>
 <script>
 // Single source of truth for the app version. Bumped manually when shipping
@@ -5738,6 +5747,42 @@ function fmtDate(ts) {
     }
     setTimeout(() => settle('20s cap'), 20000);
   });
+
+  // The extras scripts (window._CC_DEFERRED_SCRIPTS) — after boot
+  // settles, or on demand: the Extras button, and Save/Import, which
+  // read the extras' stores (a save built without them would drop that
+  // data from the backup). Inserted with async=false so they download in
+  // parallel but run in list order; a broken one doesn't block the rest.
+  let _deferredScriptsPromise = null;
+  let _deferredScriptsDone = false;
+  function _loadDeferredScripts() {
+    if (_deferredScriptsPromise) return _deferredScriptsPromise;
+    const list = window._CC_DEFERRED_SCRIPTS || [];
+    const t0 = performance.now();
+    _deferredScriptsPromise = Promise.all(list.map((src) => new Promise((resolve) => {
+      const el = document.createElement('script');
+      el.src = src;
+      el.async = false;
+      el.onload = () => resolve();
+      el.onerror = () => { console.error('[extras] failed to load', src); resolve(); };
+      document.body.appendChild(el);
+    }))).then(() => {
+      _deferredScriptsDone = true;
+      _bootMark('extras:loaded', `${list.length} scripts in ${Math.round(performance.now() - t0)}ms`);
+    });
+    return _deferredScriptsPromise;
+  }
+  // extras.js wires the Extras button itself (onclick); a tap before it
+  // has loaded loads it, then replays the tap once.
+  {
+    const btn = document.getElementById('extrasBtn');
+    let replayPending = false;
+    if (btn) btn.addEventListener('click', () => {
+      if (_deferredScriptsDone || replayPending) return;
+      replayPending = true;
+      _loadDeferredScripts().then(() => { replayPending = false; btn.click(); });
+    });
+  }
 
   // Service Worker is required by the web/PWA build for offline tile
   // caching, but in the Capacitor IPA the bundled webDir already
@@ -8159,9 +8204,9 @@ function fmtDate(ts) {
     applyBuildingsLayerVisibility();
     applyTransitLinesVisibility();
     applyHousenumbersVisibility();
-    // rebuildScheduleIndex populates transit data and kicks off refreshRoutesSource.
-    await rebuildScheduleIndex();
-    _bootMark('schedule:done');
+    // rebuildScheduleIndex (transit data + refreshRoutesSource) runs in
+    // the post-boot queue: it froze the main thread for up to 4 s right
+    // here, while GPS and the first sprites were still on their way.
     // The walk graph is chunky (80-120 MB live for a country-sized region);
     // defer it until the user actually asks to plan a route (see ensureWalkGraph).
     applyTheme(localStorage.getItem('cc.theme') || 'medieval');
@@ -8498,6 +8543,9 @@ function fmtDate(ts) {
   }
 
   async function buildBackupPayload() {
+    // The extras' stores (fractals, songs, drawings, anki, …) are read
+    // below through window.Extras* — load those scripts first.
+    try { await _loadDeferredScripts(); } catch (_) {}
     // The captured collection + seenFusions pokédex live in IndexedDB
     // now (not localStorage). Make sure the store has hydrated, then read
     // it through the Creatures API rather than localStorage, or the
@@ -8883,6 +8931,8 @@ function fmtDate(ts) {
     // parsed JSON object (from the Load-from-server button). Keeps the
     // merge logic single-sourced regardless of where the payload came
     // from.
+    // Extras data merges through window.Extras* importMerge hooks.
+    try { await _loadDeferredScripts(); } catch (_) {}
     let data;
     if (fileOrData && typeof fileOrData.text === 'function') {
       data = JSON.parse(await fileOrData.text());
@@ -19639,7 +19689,8 @@ function fmtDate(ts) {
       spritesStatus.textContent = `status error: ${e && e.message ? e.message : e}`;
     }
   }
-  updateSpritesStatus();
+  // First fill waits for the post-boot queue: on a pack-sized species
+  // range getDownloadStatus walks ~250 k keys just for this label.
   // Refresh the sprite-cache summary whenever the appDataBtn flow
   // declares it's done — keeps the line in sync without polling.
   window.addEventListener('cc:app-data-ready', () => updateSpritesStatus());
@@ -19766,8 +19817,14 @@ function fmtDate(ts) {
   // runs once boot settles, one step at a time.
   _bootMark('iife:end');
   _bootSettled.then(async () => {
+    try { await _loadDeferredScripts(); }
+    catch (e) { console.error('post-boot extras load failed', e); }
     try { await ensurePoisLoaded(); }
     catch (e) { console.error('post-boot POI load failed', e); }
+    // After POIs: transit stop snapping reads them.
+    try { await rebuildScheduleIndex(); _bootMark('schedule:done'); }
+    catch (e) { console.error('post-boot schedule index failed', e); }
+    try { updateSpritesStatus(); } catch (_) {}
   });
 })();
 </script>

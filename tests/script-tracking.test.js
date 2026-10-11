@@ -38,7 +38,14 @@ const buildTracked = quotedIn(buildCap, /^TRACKED_JS = \{/m, '\n}');
 
 const scripts = (src) => [...src.matchAll(/<script src="\/static\/([^"?]+\.js)"/g)]
   .map((m) => m[1]).filter((n) => !n.startsWith('vendor/'));
-const indexScripts = scripts(indexSrc);
+// Scripts index.html loads after boot (window._CC_DEFERRED_SCRIPTS) are
+// app scripts too: same tracking rules, and they run after the tags.
+const deferredBlock = indexSrc.match(/window\._CC_DEFERRED_SCRIPTS = \[([\s\S]*?)\];/);
+ok(!!deferredBlock, "found index.html's deferred script list");
+const deferredScripts = deferredBlock
+  ? [...deferredBlock[1].matchAll(/'\/static\/([^'?]+\.js)'/g)].map((m) => m[1]) : [];
+ok(deferredScripts[0] === 'extras.js', 'extras.js is the first deferred script (defines ExtrasRegisterTool)');
+const indexScripts = scripts(indexSrc).concat(deferredScripts);
 ok(indexScripts.length >= 20, `found index.html's script list (${indexScripts.length})`);
 
 for (const n of indexScripts) {
