@@ -160,6 +160,7 @@
     marks: [],                            // [label, ms, info]
     seen: {},
     info: {},                             // free-form facts (native lead, counts)
+    listeners: {},                        // label -> [fn] (see B.on)
   };
   // Safari's default (250) fills up with tile + sprite fetches before
   // the boot snapshot reads it.
@@ -170,7 +171,17 @@
       B.seen[label] = 1;
       B.marks.push([String(label), Math.round(performance.now()),
         info == null ? '' : String(info).slice(0, 80)]);
+      var ls = B.listeners[label];
+      if (ls) {
+        delete B.listeners[label];
+        for (var i = 0; i < ls.length; i++) setTimeout(ls[i], 0);
+      }
     } catch (_) { /* never let timing throw */ }
+  };
+  // Run fn once `label` has been marked (next tick if it already was).
+  B.on = function (label, fn) {
+    if (B.seen[label]) { setTimeout(fn, 0); return; }
+    (B.listeners[label] = B.listeners[label] || []).push(fn);
   };
   window._ccBootMark('head');
 
@@ -4927,7 +4938,10 @@ async function deletePoiTrigramByRegion(regionId) {
 // every props value is backed by the per-region string pool, so duplicate
 // strings (street names, brands, categories) share one JS string instance —
 // which is the whole point of doing this rather than JSON.parse.
-function hydratePoiRegion(regionId, buffer) {
+// Decodes a poi.bin region's header + string pool and returns a cursor
+// that builds records [from, to) — so a caller can hydrate in slices
+// (see _hydrateSliced) instead of one multi-hundred-ms task.
+function _poiRegionCursor(regionId, buffer) {
   const view = new DataView(buffer);
   const magic = String.fromCharCode(
     view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
@@ -4957,36 +4971,45 @@ function hydratePoiRegion(regionId, buffer) {
   }
 
   const propsStart = stringsStart + stringsByteLen;
-  const out = new Array(N);
-  for (let i = 0; i < N; i++) {
-    const ni = nameIdx[i];
-    const ci = categoryIdx[i];
-    const po = propsOff[i];
-    let props = null;
-    if (po !== 0xFFFFFFFF) {
-      props = {};
-      let q = propsStart + po;
-      const count = view.getUint8(q); q += 1;
-      for (let k = 0; k < count; k++) {
-        const code = view.getUint8(q); q += 1;
-        const sidx = view.getUint32(q, true); q += 4;
-        props[POI_FIELDS[code]] = stringPool[sidx];
+  return {
+    N,
+    fill(out, from, to) {
+      for (let i = from; i < to; i++) {
+        const ni = nameIdx[i];
+        const ci = categoryIdx[i];
+        const po = propsOff[i];
+        let props = null;
+        if (po !== 0xFFFFFFFF) {
+          props = {};
+          let q = propsStart + po;
+          const count = view.getUint8(q); q += 1;
+          for (let k = 0; k < count; k++) {
+            const code = view.getUint8(q); q += 1;
+            const sidx = view.getUint32(q, true); q += 4;
+            props[POI_FIELDS[code]] = stringPool[sidx];
+          }
+        }
+        out[i] = {
+          lng: lng[i],
+          lat: lat[i],
+          name: ni >= 0 ? stringPool[ni] : '',
+          category: ci >= 0 ? stringPool[ci] : '',
+          regionId,
+          // poi-trigram.bin's posting lists reference POIs by this index
+          // into poi.bin's columnar arrays. Carrying it on the hydrated
+          // object lets the search engine resolve a (regionId, internalIdx)
+          // hit back to a full POI without scanning allPois.
+          _internalIdx: i,
+          props,
+        };
       }
-    }
-    out[i] = {
-      lng: lng[i],
-      lat: lat[i],
-      name: ni >= 0 ? stringPool[ni] : '',
-      category: ci >= 0 ? stringPool[ci] : '',
-      regionId,
-      // poi-trigram.bin's posting lists reference POIs by this index
-      // into poi.bin's columnar arrays. Carrying it on the hydrated
-      // object lets the search engine resolve a (regionId, internalIdx)
-      // hit back to a full POI without scanning allPois.
-      _internalIdx: i,
-      props,
-    };
-  }
+    },
+  };
+}
+function hydratePoiRegion(regionId, buffer) {
+  const cursor = _poiRegionCursor(regionId, buffer);
+  const out = new Array(cursor.N);
+  cursor.fill(out, 0, cursor.N);
   return out;
 }
 
@@ -5065,16 +5088,6 @@ function viewPoiTrigramRegion(buffer) {
       return null;
     },
   };
-}
-
-async function loadAllPois() {
-  const records = await loadAllPoiBuffers();
-  const all = [];
-  for (const rec of records) {
-    if (!rec.buffer) continue;
-    for (const poi of hydratePoiRegion(rec.regionId, rec.buffer)) all.push(poi);
-  }
-  return all;
 }
 
 const ROUTES_DB_NAME = 'cc.routes.v2';
@@ -5444,8 +5457,7 @@ async function deleteHousenumbersByRegion(regionId) {
 // bundle still drives the on-map labels — only as input to the
 // search box, so the user can type "123 Main" and find the matching
 // point. Format mirrors POI/HSNB: one binary blob per region in IDB,
-// hydrated into a flat array of { lng, lat, num, street, label,
-// regionId } records on load.
+// searched in place via _addressRegionIndex (no per-address objects).
 const ADDR_DB_NAME = 'cc.addresses.v1';
 function openAddressDB() {
   return new Promise((resolve, reject) => {
@@ -5467,14 +5479,6 @@ async function saveAddressRegion(regionId, buffer) {
   await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
   db.close();
 }
-async function loadAllAddressBuffers() {
-  const db = await openAddressDB();
-  return new Promise((resolve, reject) => {
-    const req = db.transaction('regions', 'readonly').objectStore('regions').getAll();
-    req.onsuccess = () => { resolve(req.result); db.close(); };
-    req.onerror = () => reject(req.error);
-  });
-}
 async function deleteAddressesByRegion(regionId) {
   const db = await openAddressDB();
   const tx = db.transaction('regions', 'readwrite');
@@ -5483,10 +5487,15 @@ async function deleteAddressesByRegion(regionId) {
   db.close();
 }
 
-// Mirror of /addresses ADDR header. Two interned string pools
-// (numbers + streets) keep dupe strings to one JS instance per
-// region — same trick POI hydration uses.
-function hydrateAddressRegion(regionId, buffer) {
+// Searchable view of one region's addresses.bin (layout: run.py's
+// /addresses). Only the two string pools are decoded — unique house
+// numbers and streets, each at most 65 535 (u16 indices), interned so
+// duplicates share one JS string. Per-address columns stay typed-array
+// views over the buffer; an address object is built only for a search
+// hit (record(i)). Building one object + two label strings per address
+// up front — 2.7 M of them on a Pixel 4a — was a 2.5 s boot freeze plus
+// GC pauses and hundreds of MB, all for the search box.
+function _addressRegionIndex(regionId, buffer) {
   const view = new DataView(buffer);
   const magic = String.fromCharCode(
     view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
@@ -5495,11 +5504,9 @@ function hydrateAddressRegion(regionId, buffer) {
   if (version !== 1) throw new Error('addresses: bad version ' + version);
   const N = view.getUint32(8, true);
   const Mn = view.getUint32(12, true);
-  const numStringsByteLen = view.getUint32(16, true);
   const Ms = view.getUint32(20, true);
-  // streetStringsByteLen at offset 24 — implied by remainder, not
-  // re-read here. Bbox at 32–48 isn't needed at hydrate time (each
-  // record carries its own quantised lng/lat).
+  // num/street string byte lengths (16, 24) are implied by walking the
+  // pools. Bbox at 32–48 dequantises each record's lng/lat.
   const bw = view.getFloat32(32, true);
   const bs = view.getFloat32(36, true);
   const be = view.getFloat32(40, true);
@@ -5513,53 +5520,121 @@ function hydrateAddressRegion(regionId, buffer) {
 
   const dec = new TextDecoder();
   let off = colStart + 8 * N;
-  const numPool = new Array(Mn);
-  for (let i = 0; i < Mn; i++) {
-    const len = view.getUint16(off, true);
-    off += 2;
-    numPool[i] = dec.decode(new Uint8Array(buffer, off, len));
-    off += len;
-  }
-  const streetPool = new Array(Ms);
-  for (let i = 0; i < Ms; i++) {
-    const len = view.getUint16(off, true);
-    off += 2;
-    streetPool[i] = dec.decode(new Uint8Array(buffer, off, len));
-    off += len;
-  }
+  const readPool = (count) => {
+    const pool = new Array(count);
+    for (let i = 0; i < count; i++) {
+      const len = view.getUint16(off, true);
+      off += 2;
+      pool[i] = dec.decode(new Uint8Array(buffer, off, len));
+      off += len;
+    }
+    return pool;
+  };
+  const numPool = readPool(Mn);
+  const streetPool = readPool(Ms);
 
   const lngStep = (be - bw) / 65535;
   const latStep = (bn - bs) / 65535;
-  const out = new Array(N);
-  for (let i = 0; i < N; i++) {
-    const num = numPool[numIdx[i]];
-    const street = streetPool[streetIdx[i]];
-    out[i] = {
-      lng: bw + lngQ[i] * lngStep,
-      lat: bs + latQ[i] * latStep,
-      num, street,
-      // Pre-compute the lowercased label once at hydration; the
-      // search box does substring tests against this hot path.
-      label: `${num} ${street}`,
-      _labelLower: `${num} ${street}`.toLowerCase(),
-      regionId,
-    };
+  return {
+    regionId, N, numIdx, streetIdx,
+    numLower: numPool.map((x) => x.toLowerCase()),
+    streetLower: streetPool.map((x) => x.toLowerCase()),
+    record(i) {
+      const num = numPool[numIdx[i]];
+      const street = streetPool[streetIdx[i]];
+      return {
+        lng: bw + lngQ[i] * lngStep,
+        lat: bs + latQ[i] * latStep,
+        num, street,
+        label: `${num} ${street}`,
+        regionId,
+      };
+    },
+  };
+}
+
+// Address search over _addressRegionIndex views: calls onHit(address)
+// for each record whose "<num> <street>" (lowercased) contains every
+// token — the rule the old per-record `_labelLower.includes` scan used.
+// Tokens come from splitting on whitespace, so none can span the space
+// between number and street: each token matches inside one or the
+// other. That lets each pool string be tested once per query, leaving
+// two mask lookups per address. Stops when onHit returns false.
+function searchAddressIndexes(indexes, tokens, onHit) {
+  const T = Math.min(tokens.length, 30);
+  if (!T) return;
+  const full = 2 ** T - 1;
+  const maskPool = (pool) => {
+    const masks = new Uint32Array(pool.length);
+    for (let k = 0; k < pool.length; k++) {
+      const str = pool[k];
+      let bits = 0;
+      for (let t = 0; t < T; t++) if (str.includes(tokens[t])) bits |= 1 << t;
+      masks[k] = bits;
+    }
+    return masks;
+  };
+  for (const ix of indexes) {
+    const numMask = maskPool(ix.numLower);
+    const streetMask = maskPool(ix.streetLower);
+    const { N, numIdx, streetIdx } = ix;
+    for (let i = 0; i < N; i++) {
+      if ((numMask[numIdx[i]] | streetMask[streetIdx[i]]) === full
+          && onHit(ix.record(i)) === false) return;
+    }
   }
+}
+
+// One region per IDB read + task: a single getAll deserialised every
+// region's multi-MB buffer in one go.
+async function loadAllAddressIndexes() {
+  const db = await openAddressDB();
+  const req = (r) => new Promise((resolve, reject) => {
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  });
+  const store = () => db.transaction('regions', 'readonly').objectStore('regions');
+  const out = [];
+  try {
+    for (const key of await req(store().getAllKeys())) {
+      const rec = await req(store().get(key));
+      if (rec && rec.buffer) {
+        try { out.push(_addressRegionIndex(rec.regionId, rec.buffer)); }
+        catch (e) { console.error('addresses index failed:', e); }
+      }
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  } finally { db.close(); }
   return out;
 }
 
-async function loadAllAddresses() {
-  const records = await loadAllAddressBuffers();
-  const all = [];
+// Hydrate every stored region through `makeCursor`, yielding to the
+// event loop every ~12 ms so a few hundred thousand POIs never become
+// one long task (293 k took 0.75 s in one go on a Pixel 4a). Bad
+// regions are logged and skipped.
+async function _hydrateSliced(records, makeCursor, label) {
+  let all = [];
+  const STEP = 2048;
+  let sliceStart = performance.now();
   for (const rec of records) {
-    if (!rec.buffer) continue;
-    try {
-      for (const a of hydrateAddressRegion(rec.regionId, rec.buffer)) all.push(a);
-    } catch (e) {
-      console.error('addresses hydrate failed:', e);
+    if (!rec || !rec.buffer) continue;
+    let cursor;
+    try { cursor = makeCursor(rec.regionId, rec.buffer); }
+    catch (e) { console.error(label + ' hydrate failed:', e); continue; }
+    const out = new Array(cursor.N);
+    for (let i = 0; i < cursor.N; i += STEP) {
+      cursor.fill(out, i, Math.min(cursor.N, i + STEP));
+      if (performance.now() - sliceStart > 12) {
+        await new Promise((r) => setTimeout(r, 0));
+        sliceStart = performance.now();
+      }
     }
+    all = all.length ? all.concat(out) : out;
   }
   return all;
+}
+async function loadAllPoisSliced() {
+  return _hydrateSliced(await loadAllPoiBuffers(), _poiRegionCursor, 'POI');
 }
 
 const FAV_DB_NAME = 'cc.favorites.v1';
@@ -5642,6 +5717,27 @@ function fmtDate(ts) {
   // [boot timeline] step marker (see the Boot timeline script in <head>).
   const _bootMark = window._ccBootMark || function () {};
   _bootMark('iife:start');
+  // Boot has "settled" once the first creature sprite is on screen — or
+  // the map has sat idle for 6 s (creature mode off, nothing in range,
+  // no GPS), with a hard cap. Work the first screen doesn't need (POIs,
+  // the transit schedule index, …) waits for this so it can't compete
+  // with the map, GPS and sprites for the main thread: see the post-boot
+  // queue at the end of this block.
+  const _bootSettled = new Promise((resolve) => {
+    let done = false;
+    const settle = (why) => {
+      if (done) return;
+      done = true;
+      _bootMark('boot:settled', why);
+      resolve();
+    };
+    const B = window._ccBoot;
+    if (B && B.on) {
+      B.on('sprites:firstVisible', () => setTimeout(() => settle('first sprite'), 250));
+      B.on('map:idle', () => setTimeout(() => settle('map idle + 6s'), 6000));
+    }
+    setTimeout(() => settle('20s cap'), 20000);
+  });
 
   // Service Worker is required by the web/PWA build for offline tile
   // caching, but in the Capacitor IPA the bundled webDir already
@@ -11176,14 +11272,9 @@ function fmtDate(ts) {
       const qTokens = ql.split(/\s+/).filter(Boolean);
       if (qTokens.length) {
         const addrHits = [];
-        for (const a of allAddresses) {
-          let ok = true;
-          for (let i = 0; i < qTokens.length; i++) {
-            if (!a._labelLower.includes(qTokens[i])) { ok = false; break; }
-          }
-          if (!ok) continue;
+        searchAddressIndexes(_addrIndexes, qTokens, (a) => {
           addrHits.push({ a, d: haversineKm(ref.lat, ref.lng, a.lat, a.lng) });
-        }
+        });
         addrHits.sort((x, y) => x.d - y.d);
         // 20 is a reasonable typeahead cap — wide enough to surface
         // multiple matches when the query is short, narrow enough
@@ -11201,7 +11292,7 @@ function fmtDate(ts) {
     let dropdown = null;
     let suppressOpen = false;
     // Each render fans out to searchPois + favorites + a full token
-    // scan over allAddresses (which can be 100k+ rows in a populated
+    // scan over every address (which can be millions in a populated
     // metro). On every keystroke that's enough to lag noticeably; the
     // main search box already debounces 120ms so directions should too.
     let renderTimer = null;
@@ -11209,7 +11300,15 @@ function fmtDate(ts) {
       clearTimeout(renderTimer);
       renderTimer = setTimeout(() => { renderTimer = null; render(); }, 120);
     };
+    const rerenderIfFocused = () => { if (document.activeElement === input) render(); };
     const render = () => {
+      // Same lazy-data contract as the main search box.
+      const hasQuery = !!input.value.trim();
+      if (!_poisReady || (hasQuery && _addrState !== 'ready')) {
+        ensurePoisLoaded();
+        if (hasQuery) ensureAddressesLoaded();
+        _searchDataHooks.add(rerenderIfFocused);
+      }
       const items = searchEndpoints(input.value);
       if (!items.length) { closeDropdown(); return; }
       if (!dropdown) {
@@ -11244,7 +11343,11 @@ function fmtDate(ts) {
     const closeDropdown = () => {
       if (dropdown) { dropdown.remove(); dropdown = null; }
     };
-    input.addEventListener('focus', () => { if (!suppressOpen) render(); suppressOpen = false; });
+    input.addEventListener('focus', () => {
+      ensureAddressesLoaded();
+      if (!suppressOpen) render();
+      suppressOpen = false;
+    });
     input.addEventListener('input', () => {
       // Clear the stored endpoint as soon as the user types: they are picking a new one.
       if (which === 'from') routingFrom = null; else routingTo = null;
@@ -11693,10 +11796,14 @@ function fmtDate(ts) {
     setTimeout(() => { setSelected(null); }, closeDelay);
   };
 
-  _bootMark('favorites:load');
-  favorites = await loadAllFavorites();
-  _bootMark('favorites:loaded', `${favorites.length}`);
-  renderAllFavorites();
+  // Not awaited: everything below (static tiles included) used to wait
+  // on this IDB read. Merge by id so a pin saved before it lands stays.
+  loadAllFavorites().then((stored) => {
+    const ids = new Set(stored.map((f) => f.id));
+    favorites = stored.concat(favorites.filter((f) => !ids.has(f.id)));
+    _bootMark('favorites:loaded', `${favorites.length}`);
+    renderAllFavorites();
+  }).catch((e) => console.error('favorites load failed', e));
 
   document.getElementById('wipeBtn').onclick = async () => {
     if (!confirm('Delete ALL local data? (saved regions, POIs, routes, tiles, fonts, icons, app shell, service worker) This cannot be undone.')) return;
@@ -12004,13 +12111,109 @@ function fmtDate(ts) {
   map.on('mouseenter', 'route-stop-bubbles', () => { map.getCanvas().style.cursor = 'pointer'; });
   map.on('mouseleave', 'route-stop-bubbles', () => { map.getCanvas().style.cursor = ''; });
 
-  let allPois = await loadAllPois();
-  _bootMark('pois:loaded', `${allPois.length} POIs`);
-  // Address records hydrated from each saved region's /addresses
-  // bundle. Used only by the search box, not map rendering — see
-  // hydrateAddressRegion for the record shape.
-  let allAddresses = await loadAllAddresses();
-  _bootMark('addresses:loaded', `${allAddresses.length} addresses`);
+  // ── POIs + addresses: off the startup path ──
+  // Both used to be awaited right here, and everything below — including
+  // _markStaticReady, which releases the street-level tiles — waited on
+  // them: on a Pixel 4a, 293 k POIs (0.75 s) then 2.7 M addresses (2.7 s,
+  // one 2.5 s freeze) before the map could draw. Nothing on the first
+  // screen reads them; the map's POI icons come from the vector tiles.
+  //
+  // POIs load once boot settles (the post-boot queue at the end of this
+  // block) or sooner on demand — a search, or a catch's place lookup via
+  // CreatureCollectAPI.whenPoisReady. Addresses are search-only and
+  // large, so they load the first time a search box is used. Both
+  // hydrate in slices (_hydrateSliced) so loading never freezes the UI.
+  //
+  // Region downloads/deletes still edit these arrays. Until a list has
+  // loaded they only bump its generation: IDB is the source of truth,
+  // and a load that sees the generation move re-reads it.
+  let allPois = [];
+  let _poisReady = false;
+  let _poiGen = 0;
+  let _poiLoadPromise = null;
+  // One searchable view per saved region's /addresses bundle (see
+  // _addressRegionIndex / searchAddressIndexes). Used only by search.
+  let _addrIndexes = [];
+  let _addrState = 'idle';   // 'idle' | 'loading' | 'ready'
+  let _addrGen = 0;
+  let _addrLoadPromise = null;
+  // Searches started before their data landed re-render when it does.
+  const _searchDataHooks = new Set();
+  function _notifySearchData() {
+    for (const fn of _searchDataHooks) {
+      try { fn(); } catch (e) { console.error('search re-render failed', e); }
+    }
+  }
+  function _noteDataLoad(kind, n, t0) {
+    window._ccDataLoads = window._ccDataLoads || {};
+    window._ccDataLoads[kind] = { n, ms: Math.round(performance.now() - t0), at: Date.now() };
+  }
+  function ensurePoisLoaded() {
+    if (_poisReady) return Promise.resolve();
+    if (_poiLoadPromise) return _poiLoadPromise;
+    _poiLoadPromise = (async () => {
+      const t0 = performance.now();
+      for (;;) {
+        const gen = _poiGen;
+        let pois = [];
+        try { pois = await loadAllPoisSliced(); }
+        catch (e) { console.error('POI load failed', e); }
+        await _loadAllPoiTrigrams();
+        if (gen !== _poiGen) continue;  // a region changed mid-load: re-read
+        allPois = pois;
+        break;
+      }
+      _poisReady = true;
+      try {
+        _rebuildPoisByRegion();
+        renderPoiStat();
+        populateFilter();
+      } catch (e) { console.error('POI index rebuild failed', e); }
+      _noteDataLoad('pois', allPois.length, t0);
+      _bootMark('pois:loaded', `${allPois.length} POIs in ${Math.round(performance.now() - t0)}ms`);
+      _notifySearchData();
+    })();
+    return _poiLoadPromise;
+  }
+  function ensureAddressesLoaded() {
+    if (_addrState === 'ready') return Promise.resolve();
+    if (_addrLoadPromise) return _addrLoadPromise;
+    _addrState = 'loading';
+    _addrLoadPromise = (async () => {
+      const t0 = performance.now();
+      for (;;) {
+        const gen = _addrGen;
+        let indexes = [];
+        try { indexes = await loadAllAddressIndexes(); }
+        catch (e) { console.error('addresses load failed', e); }
+        if (gen !== _addrGen) continue;
+        _addrIndexes = indexes;
+        break;
+      }
+      _addrState = 'ready';
+      _noteDataLoad('addresses', _addrIndexes.reduce((n, ix) => n + ix.N, 0), t0);
+      _notifySearchData();
+    })();
+    return _addrLoadPromise;
+  }
+  // In-memory side of a region download (hydrate() returns its POI
+  // records / makeIndex() its address index) or delete (neither).
+  // Returns whether memory was touched.
+  function _poiRegionChanged(regionId, hydrate) {
+    _poiGen++;
+    if (!_poisReady) return false;
+    allPois = allPois.filter((p) => p.regionId !== regionId);
+    if (hydrate) for (const p of hydrate()) allPois.push(p);
+    _rebuildPoisByRegion();
+    return true;
+  }
+  function _addrRegionChanged(regionId, makeIndex) {
+    _addrGen++;
+    if (_addrState !== 'ready') return false;
+    _addrIndexes = _addrIndexes.filter((ix) => ix.regionId !== regionId);
+    if (makeIndex) _addrIndexes.push(makeIndex());
+    return true;
+  }
 
   // ── Trigram POI search index ──
   // Per-region inverted index over POI names/categories. Loaded once
@@ -12052,8 +12255,6 @@ function fmtDate(ts) {
       console.warn('poi-trigram load failed', e);
     }
   }
-  await _loadAllPoiTrigrams();
-  _bootMark('trigrams:loaded', `${_trigramByRegion.size} regions`);
 
   // NFD-decompose + strip combining marks + lowercase. Mirrors
   // build-poi-trigram-index.py's normalize(); the ß→ss substitution
@@ -12274,9 +12475,13 @@ function fmtDate(ts) {
   window._applyLegendarySnapSetting();
 
   // Hand creatures.js a locally-scoped POI query — the POI array lives
-  // inside this IIFE and we don't want to scatter loadAllPois() calls.
+  // inside this IIFE and we don't want to scatter POI loads around.
   // Returns the nearest POI with a name within `maxMeters`, or null.
   window.CreatureCollectAPI = {
+    // POIs load after boot settles (see ensurePoisLoaded); callers that
+    // stamp a place onto a catch/sighting await this first so an early
+    // catch doesn't record "no place" just because the list was empty.
+    whenPoisReady() { return ensurePoisLoaded(); },
     findNearestNamedPoi(lat, lng, maxMeters = 500) {
       let best = null, bestKm = Infinity;
       for (const p of allPois) {
@@ -12423,10 +12628,24 @@ function fmtDate(ts) {
     spacerEl.innerHTML = parts.join('');
   }
 
+  // Re-render the open result list once POIs/addresses finish loading.
+  function _rerenderOpenSearch() {
+    if (searchResults.classList.contains('show')
+        && (searchInput.value.trim() || searchFilter.value)) renderSearch();
+  }
   function renderSearch() {
     const q = searchInput.value.trim();
     const filter = searchFilter.value;
     const qLower = q.toLowerCase();
+    // POIs and addresses load lazily (see ensurePoisLoaded); results
+    // computed before they land are partial, and refresh when they do.
+    const needAddrs = !!(qLower && !filter);
+    const dataLoading = !_poisReady || (needAddrs && _addrState !== 'ready');
+    if (dataLoading) {
+      ensurePoisLoaded();
+      if (needAddrs) ensureAddressesLoaded();
+      _searchDataHooks.add(_rerenderOpenSearch);
+    }
     const ref = lastKnownPos || (() => { const c = map.getCenter(); return { lng: c.lng, lat: c.lat }; })();
     const matches = [];
     // POI search: trigram-indexed when query is non-empty; falls back
@@ -12467,7 +12686,7 @@ function fmtDate(ts) {
     // (no query → don't flood the list with every address in the
     // region) and only when the type filter is "all" (addresses
     // don't carry a POI category, so any non-empty filter implicitly
-    // excludes them). _labelLower was pre-computed at hydrate time.
+    // excludes them).
     //
     // Match strategy is token-based, not raw substring: split the
     // query on whitespace and require every token to appear as a
@@ -12476,18 +12695,13 @@ function fmtDate(ts) {
     // order forgiving — typing "1996 Allison Way" matches the
     // OSM-canonical "1996 South Allison Way", and "Allison 1996"
     // works too. Each token check is `String.prototype.includes`
-    // — native and fast — so even ~50 k addresses × 3 tokens each
-    // is a couple of ms per keystroke.
+    // — tested once per unique number/street string, then two mask
+    // lookups per address (searchAddressIndexes).
     if (qLower && !filter) {
       const ADDR_LIMIT = 200;
       const qTokens = qLower.split(/\s+/).filter(Boolean);
       let added = 0;
-      for (const a of allAddresses) {
-        let ok = true;
-        for (let i = 0; i < qTokens.length; i++) {
-          if (!a._labelLower.includes(qTokens[i])) { ok = false; break; }
-        }
-        if (!ok) continue;
+      searchAddressIndexes(_addrIndexes, qTokens, (a) => {
         matches.push({
           _kind: 'address',
           lng: a.lng, lat: a.lat,
@@ -12495,18 +12709,20 @@ function fmtDate(ts) {
           regionId: a.regionId,
           dist: haversineKm(ref.lat, ref.lng, a.lat, a.lng),
         });
-        if (++added >= ADDR_LIMIT) break;
-      }
+        return ++added < ADDR_LIMIT;
+      });
     }
     matches.sort((a, b) => a.dist - b.dist);
     searchMatches = matches;
 
     if (!matches.length) {
-      searchResults.innerHTML = '<div class="poi-result"><div class="info"><div class="name" style="color:var(--ui-muted)">no matches in downloaded regions</div></div></div>';
+      const msg = dataLoading ? 'loading downloaded places…' : 'no matches in downloaded regions';
+      searchResults.innerHTML = `<div class="poi-result"><div class="info"><div class="name" style="color:var(--ui-muted)">${msg}</div></div></div>`;
       spacerEl = null; countEl = null;
     } else {
       buildSearchFrame();
-      countEl.textContent = `${matches.length.toLocaleString()} match${matches.length === 1 ? '' : 'es'}`;
+      countEl.textContent = `${matches.length.toLocaleString()} match${matches.length === 1 ? '' : 'es'}`
+        + (dataLoading ? ' · still loading…' : '');
       spacerEl.style.height = (matches.length * ROW_HEIGHT) + 'px';
       searchResults.scrollTop = 0;
       renderVisibleRows();
@@ -12552,7 +12768,12 @@ function fmtDate(ts) {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(renderSearch, 120);
   });
-  searchInput.addEventListener('focus', renderSearch);
+  searchInput.addEventListener('focus', () => {
+    // Addresses only matter once there's a query; start reading them
+    // while the user types the first characters.
+    ensureAddressesLoaded();
+    renderSearch();
+  });
   searchFilter.addEventListener('change', () => { clearSearchPins(); updateSearchCloseBtn(); renderSearch(); });
 
   // ── Search-result pins ─────────────────────────────────────────
@@ -13041,9 +13262,8 @@ function fmtDate(ts) {
       // via ensureWalkGraph().
       unloadWalkGraph();
       hnRegions = [];  // force re-parse of remaining regions on next zoom-in
-      allPois = allPois.filter(p => p.regionId !== id);
-      allAddresses = allAddresses.filter(a => a.regionId !== id);
-      _rebuildPoisByRegion();
+      _poiRegionChanged(id);
+      _addrRegionChanged(id);
       _trigramByRegion.delete(id);
       saveRegions(list.filter(x => x.id !== id));
       invalidateRegionSizes(id);
@@ -13072,9 +13292,7 @@ function fmtDate(ts) {
       const N = view.getUint32(8, true);
       if (!N) return 0;
       await savePoiRegion(regionId, buffer);
-      const hydrated = hydratePoiRegion(regionId, buffer);
-      for (const poi of hydrated) allPois.push(poi);
-      _rebuildPoisByRegion();
+      _poiRegionChanged(regionId, () => hydratePoiRegion(regionId, buffer));
       renderPoiStat();
       populateFilter();
       return N;
@@ -13098,8 +13316,7 @@ function fmtDate(ts) {
       const N = view.getUint32(8, true);
       if (!N) return 0;
       await saveAddressRegion(regionId, buffer);
-      const hydrated = hydrateAddressRegion(regionId, buffer);
-      for (const a of hydrated) allAddresses.push(a);
+      _addrRegionChanged(regionId, () => _addressRegionIndex(regionId, buffer));
       return N;
     } catch (err) {
       console.error('addresses fetch failed:', err);
@@ -14552,6 +14769,12 @@ function fmtDate(ts) {
     out.push(slow.length
       ? `  slowest: ` + slow.map(([u, at, ms]) => `${ms}ms ${u} @${at}`).join(' · ')
       : `  slowest: none ≥5ms`);
+    // Loaded after boot (POIs) or on first search (addresses) — see
+    // ensurePoisLoaded / ensureAddressesLoaded.
+    const dl = window._ccDataLoads || {};
+    const fmtLoad = (k) => dl[k]
+      ? `${k} ${dl[k].n.toLocaleString()} in ${dl[k].ms}ms` : `${k} not loaded yet`;
+    out.push(`  background data: ${fmtLoad('pois')} · ${fmtLoad('addresses')}`);
     const hist = B.history();
     const rows = [cur].concat(hist.filter((r) => r && r.at !== cur.at));
     out.push(`[boot history]  newest first · ms after page start · — = didn't happen`);
@@ -17509,13 +17732,11 @@ function fmtDate(ts) {
             // Drop any prior entries for this regionId before re-pushing,
             // so re-downloading the same region doesn't double up POIs
             // in the in-memory array. savePoiRegion overwrites in IDB.
-            allPois = allPois.filter((p) => p.regionId !== regionId);
             const hydrated = hydratePoiRegion(regionId, buffer);
-            for (const poi of hydrated) allPois.push(poi);
+            // Also keeps the per-region poi lookup (for trigram search)
+            // in sync with allPois.
+            _poiRegionChanged(regionId, () => hydrated);
             poisHydrated = hydrated.length;
-            // Keep the per-region poi lookup (for trigram search) in
-            // sync with allPois.
-            _rebuildPoisByRegion();
           } else if (fname === 'poi-trigram.bin') {
             // Inverted substring-search index, sibling to poi.bin.
             // Store raw — viewPoiTrigramRegion is zero-copy at query
@@ -17565,9 +17786,7 @@ function fmtDate(ts) {
                 dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3));
               if (magic === 'ADDR' && dv.getUint32(8, true) > 0) {
                 await saveAddressRegion(regionId, buffer);
-                allAddresses = allAddresses.filter((a) => a.regionId !== regionId);
-                const hydrated = hydrateAddressRegion(regionId, buffer);
-                for (const a of hydrated) allAddresses.push(a);
+                _addrRegionChanged(regionId, () => _addressRegionIndex(regionId, buffer));
               }
             }
           } else if (fname === 'schedule.json') {
@@ -17733,8 +17952,7 @@ function fmtDate(ts) {
     // the region immediately. Mirror what the bbox-region delete
     // handler does.
     try { await deletePoisByRegion(regionId); } catch {}
-    try { allPois = allPois.filter((p) => p.regionId !== regionId); } catch {}
-    try { _rebuildPoisByRegion(); } catch {}
+    try { _poiRegionChanged(regionId); } catch {}
     try { await deletePoiTrigramByRegion(regionId); } catch {}
     try { _trigramByRegion.delete(regionId); } catch {}
     try { await deleteWalkGraphByRegion(regionId); } catch {}
@@ -17744,7 +17962,7 @@ function fmtDate(ts) {
     try { await deleteHousenumbersByRegion(regionId); } catch {}
     try { hnRegions = []; } catch {}
     try { await deleteAddressesByRegion(regionId); } catch {}
-    try { allAddresses = allAddresses.filter((a) => a.regionId !== regionId); } catch {}
+    try { _addrRegionChanged(regionId); } catch {}
     try { await deleteScheduleByRegion(regionId); } catch {}
     try { await rebuildScheduleIndex(); } catch {}
     try { renderPoiStat(); } catch {}
@@ -18242,9 +18460,8 @@ function fmtDate(ts) {
     if (isRefresh) {
       // Clean in-memory copies for this region before we re-fetch, so the
       // POI/walk/hn arrays don't end up double-counting the region.
-      allPois = allPois.filter(p => p.regionId !== id);
-      allAddresses = allAddresses.filter(a => a.regionId !== id);
-      _rebuildPoisByRegion();
+      _poiRegionChanged(id);
+      _addrRegionChanged(id);
       unloadWalkGraph();
       hnRegions = [];
     }
@@ -19520,6 +19737,16 @@ function fmtDate(ts) {
       }
     });
   }
+
+  // ── Post-boot queue ──────────────────────────────────────────────
+  // Everything above ran synchronously from map creation to here (no
+  // awaits), so street-level tiles are already unblocked. Deferred work
+  // runs once boot settles, one step at a time.
+  _bootMark('iife:end');
+  _bootSettled.then(async () => {
+    try { await ensurePoisLoaded(); }
+    catch (e) { console.error('post-boot POI load failed', e); }
+  });
 })();
 </script>
 </body>

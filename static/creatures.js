@@ -3111,6 +3111,18 @@
   // the encounter critical path (see markFusionSeen). Re-reads the store
   // so it writes onto the latest state; bails if the entry vanished or was
   // already enriched.
+  // POIs load after boot settles (index.html's ensurePoisLoaded); a place
+  // lookup made before then would find nothing and store "no place" for
+  // good. Wait for them — bounded, so nothing can hang on it.
+  function _whenPoisReady(maxMs) {
+    const api = global.CreatureCollectAPI;
+    if (!api || typeof api.whenPoisReady !== 'function') return Promise.resolve();
+    return Promise.race([
+      Promise.resolve().then(() => api.whenPoisReady()).catch(() => {}),
+      new Promise((r) => setTimeout(r, maxMs)),
+    ]);
+  }
+
   function _deferSeenPlaceEnrich(key, lat, lng) {
     const run = () => {
       const poiApi = global.CreatureCollectAPI;
@@ -3122,9 +3134,11 @@
       rec.place = poiApi.findNearestPlace ? (poiApi.findNearestPlace(lat, lng) || null) : null;
       writeSeenFusions(seen, key);
     };
-    const ric = global.requestIdleCallback;
-    if (typeof ric === 'function') ric(run, { timeout: 2000 });
-    else setTimeout(run, 0);
+    _whenPoisReady(15000).then(() => {
+      const ric = global.requestIdleCallback;
+      if (typeof ric === 'function') ric(run, { timeout: 2000 });
+      else setTimeout(run, 0);
+    });
   }
 
   function markFusionSeen(a, b, spawn, variant) {
@@ -16064,6 +16078,7 @@
     // Focus-mode grants have no real location — skip the POI/place
     // lookups when the synthetic spawn carries no coordinates.
     const hasLoc = spawn.lat != null && spawn.lng != null;
+    if (hasLoc) await _whenPoisReady(5000);
     const poi = (hasLoc && poiApi && poiApi.findNearestNamedPoi)
       ? poiApi.findNearestNamedPoi(spawn.lat, spawn.lng)
       : null;

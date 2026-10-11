@@ -56,5 +56,112 @@ function sliceFn(src, head) {
     'a region just outside the tile moves behind the overlapping ones');
 }
 
+// ── 2. Addresses: searchable index instead of one object per address ──
+// 2.7 M address objects (+ two label strings each) were built at boot
+// for the search box: a 2.5 s freeze and hundreds of MB. The index
+// keeps the columns as typed arrays and must match exactly what the
+// old per-record scan matched: every whitespace-split token is a
+// substring of "<num> <street>".toLowerCase().
+{
+  const ctx = { TextDecoder, Uint8Array, Uint16Array, Uint32Array, DataView };
+  vm.createContext(ctx);
+  vm.runInContext(sliceFn(indexSrc, 'function _addressRegionIndex(') + '\n' +
+    sliceFn(indexSrc, 'function searchAddressIndexes(') +
+    '\nthis._addressRegionIndex = _addressRegionIndex;' +
+    '\nthis.searchAddressIndexes = searchAddressIndexes;', ctx);
+
+  // Build an ADDR v1 buffer (layout: run.py /addresses).
+  function buildAddr(rows, bbox) {
+    const nums = [], streets = [], ni = new Map(), si = new Map();
+    const intern = (pool, idx, v) => {
+      if (!idx.has(v)) { idx.set(v, pool.length); pool.push(v); }
+      return idx.get(v);
+    };
+    const enc = new TextEncoder();
+    const N = rows.length;
+    const numIdx = rows.map((r) => intern(nums, ni, r.num));
+    const streetIdx = rows.map((r) => intern(streets, si, r.street));
+    const poolBytes = (pool) => pool.map((x) => enc.encode(x));
+    const nb = poolBytes(nums), sb = poolBytes(streets);
+    const len = (bs) => bs.reduce((n, b) => n + 2 + b.length, 0);
+    const buf = new ArrayBuffer(48 + 8 * N + len(nb) + len(sb));
+    const dv = new DataView(buf);
+    'ADDR'.split('').forEach((c, i) => dv.setUint8(i, c.charCodeAt(0)));
+    dv.setUint32(4, 1, true); dv.setUint32(8, N, true);
+    dv.setUint32(12, nums.length, true); dv.setUint32(16, len(nb), true);
+    dv.setUint32(20, streets.length, true); dv.setUint32(24, len(sb), true);
+    bbox.forEach((v, i) => dv.setFloat32(32 + 4 * i, v, true));
+    const [w, s, e, n] = bbox;
+    rows.forEach((r, i) => {
+      dv.setUint16(48 + 2 * i, Math.round((r.lng - w) / (e - w) * 65535), true);
+      dv.setUint16(48 + 2 * N + 2 * i, Math.round((r.lat - s) / (n - s) * 65535), true);
+      dv.setUint16(48 + 4 * N + 2 * i, numIdx[i], true);
+      dv.setUint16(48 + 6 * N + 2 * i, streetIdx[i], true);
+    });
+    let off = 48 + 8 * N;
+    for (const b of nb.concat(sb)) {
+      dv.setUint16(off, b.length, true); off += 2;
+      new Uint8Array(buf, off, b.length).set(b); off += b.length;
+    }
+    return buf;
+  }
+  const rows = [
+    { num: '1996', street: 'South Allison Way', lng: -123.1, lat: 44.05 },
+    { num: '533', street: 'Northwest 19th Street', lng: -123.09, lat: 44.06 },
+    { num: '19', street: 'Main Street', lng: -123.08, lat: 44.04 },
+    { num: '1900A', street: 'Main Street', lng: -123.07, lat: 44.03 },
+    { num: '12', street: 'Café Lane', lng: -123.06, lat: 44.02 },
+    { num: '7', street: 'Allison Court', lng: -123.05, lat: 44.01 },
+  ];
+  const bbox = [-123.2, 43.9, -122.9, 44.2];
+  const ix = ctx._addressRegionIndex('r1', buildAddr(rows, bbox));
+  ok(ix.N === rows.length && ix.regionId === 'r1', 'index reads the header');
+  const r0 = ix.record(0);
+  ok(r0.label === '1996 South Allison Way' && r0.num === '1996'
+     && Math.abs(r0.lng - -123.1) < 1e-3 && Math.abs(r0.lat - 44.05) < 1e-3,
+     'record(i) rebuilds the old address shape (label, num, lng/lat)');
+
+  const oldScan = (q) => {
+    const tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
+    return rows.map((r) => `${r.num} ${r.street}`)
+      .filter((label) => tokens.every((t) => label.toLowerCase().includes(t)));
+  };
+  const newScan = (q, limit) => {
+    const tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
+    const out = [];
+    ctx.searchAddressIndexes([ix], tokens, (a) => { out.push(a.label); return !limit || out.length < limit; });
+    return out;
+  };
+  for (const q of ['allison', 'Allison 1996', '1996 allison way', '19', '19th', 'main 19',
+                   'MAIN street 1900', 'café', 'cafe', 'way south', 'nope', '7 court', '9 st']) {
+    ok(JSON.stringify(newScan(q)) === JSON.stringify(oldScan(q)),
+      `address query "${q}" matches the old scan (${JSON.stringify(oldScan(q))})`);
+  }
+  ok(newScan('main', 1).length === 1, 'onHit returning false stops the scan');
+  ok(newScan('').length === 0, 'no tokens → no hits');
+}
+
+// ── 3. Nothing awaited between map creation and releasing static tiles ─
+// Street-level tiles queue on _staticReadyPromise until the static block
+// (near the end of the boot IIFE) calls _markStaticReady(); MapLibre's
+// 'load' — and with it GPS, icons, spawns — waits on those tiles. A
+// top-level `await` anywhere in between (favorites, POIs, addresses,
+// trigrams all used to sit there) holds the whole first screen hostage.
+{
+  const lines = indexSrc.split('\n');
+  const from = lines.findIndex((l) => l.includes("_bootMark('map:ctor')"));
+  const to = lines.findIndex((l) => /^\s*window\._markStaticReady\(\);/.test(l));
+  ok(from > 0 && to > from, 'found map construction and the _markStaticReady() call');
+  const blocking = [];
+  for (let i = from; i < to; i++) {
+    // Two-space indent = top level of the boot IIFE.
+    if (/^  (?![ /]).*\bawait\b/.test(lines[i])) blocking.push(`${i + 1}: ${lines[i].trim()}`);
+  }
+  ok(blocking.length === 0,
+    `no top-level await between map construction and _markStaticReady (found: ${blocking.join(' | ')})`);
+  ok(/_bootSettled\.then\(async \(\) => \{[\s\S]*ensurePoisLoaded\(\)/.test(indexSrc),
+    'POIs load from the post-boot queue');
+}
+
 console.log(`startup-path: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
