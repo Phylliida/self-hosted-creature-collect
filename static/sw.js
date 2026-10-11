@@ -92,6 +92,11 @@ const TILES_CACHE = 'tiles-v1';
 // auto-backups, re-opens IndexedDB connections iOS closes during
 // suspension, and adds a [storage] block to the diagnostic dump. This
 // file: non-GET requests bypass the SW; synthetic 504s are tagged.
+// Shell bump 2026-10-11 (#13): startup diagnostics. index.html (cache-
+// first '/') records a boot timeline — a mark at every step from page
+// start to "map idle + first creature sprite decoded" — keeps the last
+// 8 cold starts in localStorage, and renders [boot timeline] / [boot
+// history] at the top of the Settings dump.
 
 const APP_SHELL = [
   '/',

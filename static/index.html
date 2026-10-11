@@ -138,6 +138,136 @@
 })();
 </script>
 <script>
+// ── Boot timeline ─────────────────────────────────────────────
+// Where cold-start time goes, as a waterfall in the Settings dump
+// ([boot timeline] / [boot history] blocks). Every step on the way to
+// "map + creature sprites on screen" calls window._ccBootMark(label,
+// info); times are performance.now() — ms since the page started
+// loading — so they line up with Navigation/Resource Timing entries.
+// First mark per label wins, so a step that repeats (map idle, spawn
+// refresh) records its first occurrence only.
+//
+// A dump is usually taken hours after the boot it describes, and iOS
+// resumes don't re-boot, so each cold start also persists a compact
+// snapshot to localStorage (last HMAX boots) — every dump then carries
+// several boots, not just the current one. In-page only: no network.
+(function () {
+  var HKEY = 'cc.bootHistory.v1';
+  var HMAX = 8;
+  var B = window._ccBoot = {
+    at: Date.now(),                       // epoch ms, identifies this boot
+    origin: Date.now() - performance.now(), // epoch ms of navigation start
+    marks: [],                            // [label, ms, info]
+    seen: {},
+    info: {},                             // free-form facts (native lead, counts)
+  };
+  // Safari's default (250) fills up with tile + sprite fetches before
+  // the boot snapshot reads it.
+  try { performance.setResourceTimingBufferSize(600); } catch (_) {}
+  window._ccBootMark = function (label, info) {
+    try {
+      if (B.seen[label] || B.marks.length >= 150) return;
+      B.seen[label] = 1;
+      B.marks.push([String(label), Math.round(performance.now()),
+        info == null ? '' : String(info).slice(0, 80)]);
+    } catch (_) { /* never let timing throw */ }
+  };
+  window._ccBootMark('head');
+
+  function shortPath(u) {
+    var p = String(u).replace(location.origin, '');
+    return p.length > 52 ? '…' + p.slice(-51) : p;
+  }
+  // Marks + navigation timing, sorted; plus the boot-window stalls and
+  // slowest fetches. "ready" = map idle AND first sprite visible —
+  // the moment the user sees a usable map with creatures on it.
+  B.snapshot = function () {
+    var marks = B.marks.slice();
+    var nav = null;
+    try { nav = performance.getEntriesByType('navigation')[0] || null; } catch (_) {}
+    if (nav) {
+      var add = function (l, v) { if (v > 0) marks.push([l, Math.round(v), '']); };
+      add('nav:response', nav.responseEnd);
+      add('dom:interactive', nav.domInteractive);
+      add('dom:loaded', nav.domContentLoadedEventEnd);
+      add('win:load', nav.loadEventEnd);
+    }
+    marks.sort(function (a, b) { return a[1] - b[1]; });
+    var m = {};
+    for (var i = 0; i < marks.length; i++) if (!(marks[i][0] in m)) m[marks[i][0]] = marks[i][1];
+    var ready = null;
+    if (m['map:idle'] != null || m['sprites:firstVisible'] != null) {
+      ready = Math.max(m['map:idle'] || 0, m['sprites:firstVisible'] || 0);
+    }
+    var end = ready || (marks.length ? marks[marks.length - 1][1] : 0);
+    var stalls = { n: 0, ms: 0, worst: 0, worstWhat: '' };
+    try {
+      var ring = (window._ccStalls && window._ccStalls.ring) || [];
+      for (var j = 0; j < ring.length; j++) {
+        var s = ring[j];
+        var at = s.t - B.origin;
+        if (at < 0 || at > end + 1000) continue;
+        if (s.kind === 'mark') continue;  // ~wall marks double-count lag
+        stalls.n++; stalls.ms += s.dur;
+        if (s.dur > stalls.worst) { stalls.worst = s.dur; stalls.worstWhat = s.kind + '@' + Math.round(at); }
+      }
+      var named = [];
+      for (var k = 0; k < ring.length; k++) {
+        var r0 = ring[k], at0 = r0.t - B.origin;
+        if (r0.kind === 'mark' && at0 >= 0 && at0 <= end + 1000) named.push(r0.info + ' ' + r0.dur + 'ms');
+      }
+      stalls.named = named.slice(0, 5);
+    } catch (_) {}
+    var fetch = { scripts: 0, scriptsEnd: 0, n: 0, slow: [] };
+    try {
+      var rs = performance.getEntriesByType('resource');
+      for (var q = 0; q < rs.length; q++) {
+        var e = rs[q];
+        if (e.startTime > end) continue;
+        fetch.n++;
+        if (/\/static\/[^?#]*\.js(\?|#|$)/.test(e.name)) {
+          fetch.scripts++;
+          if (e.responseEnd > fetch.scriptsEnd) fetch.scriptsEnd = Math.round(e.responseEnd);
+        }
+        fetch.slow.push([shortPath(e.name), Math.round(e.startTime), Math.round(e.responseEnd - e.startTime)]);
+      }
+      fetch.slow.sort(function (a, b) { return b[2] - a[2]; });
+      fetch.slow = fetch.slow.slice(0, 6);
+    } catch (_) {}
+    var info = {};
+    for (var key in B.info) info[key] = B.info[key];
+    return {
+      at: B.at, nav: nav ? nav.type : '', ready: ready,
+      marks: marks.slice(0, 90), stalls: stalls, fetch: fetch, info: info,
+    };
+  };
+  B.history = function () {
+    try {
+      var list = JSON.parse(localStorage.getItem(HKEY) || '[]');
+      return Array.isArray(list) ? list : [];
+    } catch (_) { return []; }
+  };
+  B.persist = function () {
+    try {
+      var snap = B.snapshot();
+      var list = B.history().filter(function (r) { return r && r.at !== snap.at; });
+      list.unshift(snap);
+      if (list.length > HMAX) list.length = HMAX;
+      localStorage.setItem(HKEY, JSON.stringify(list));
+    } catch (_) { /* quota / private mode — the in-memory timeline still works */ }
+  };
+  // Re-persist as late steps land (GPS and sprites can take a while);
+  // each write replaces this boot's entry.
+  setTimeout(B.persist, 10000);
+  setTimeout(B.persist, 30000);
+  setTimeout(B.persist, 90000);
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) B.persist();
+  });
+  window.addEventListener('pagehide', B.persist);
+})();
+</script>
+<script>
 // ── Main-thread stall tracer ──────────────────────────────────
 // Records UI-thread freezes into window._ccStalls so "the app
 // hiccupped a minute ago" is answerable from the Settings
@@ -4601,7 +4731,26 @@
     if (LSDiag) {
       window._localServerDiag = null;
       setInterval(async () => {
-        try { window._localServerDiag = await LSDiag.getDiagnostics(); }
+        try {
+          const d = window._localServerDiag = await LSDiag.getDiagnostics();
+          // [boot timeline] native lead: LocalServer starts in
+          // AppBridgeViewController.instanceDescriptor, just before the
+          // WKWebView exists, so (navigation start − server start) is the
+          // WebView + WebContent-process spin-up we can't see from JS.
+          // Process launch → server start stays invisible without a
+          // native change (needs an IPA rebuild).
+          const B = window._ccBoot;
+          if (B && B.info.nativeLeadMs == null && d && d.serverStartedAt > 0) {
+            const lead = Math.round(B.origin - d.serverStartedAt * 1000);
+            B.info.nativeLeadMs = (lead >= 0 && lead < 60000) ? lead : null;
+            // The ring also holds older resumes; only a didBecomeActive
+            // near this navigation belongs to this launch.
+            const launch = (d.lifecycle || []).find((ev) => ev.type === 'didBecomeActive'
+              && Math.abs(ev.t * 1000 - B.origin) < 30000);
+            if (launch) B.info.didBecomeActiveMs = Math.round(launch.t * 1000 - B.origin);
+            B.info.serverReqsAtFirstPoll = d.totalRequests;
+          }
+        }
         catch (e) {
           window._localServerDiag = {
             error: (e && e.message) ? e.message : String(e),
@@ -4611,7 +4760,11 @@
     }
   }
 </script>
+<!-- Boot-timeline marks around the synchronous script block: parse +
+     run time for each group shows up as a gap in [boot timeline]. -->
+<script>window._ccBootMark && _ccBootMark('scripts:begin')</script>
 <script src="/static/vendor/maplibre-gl.js"></script>
+<script>window._ccBootMark && _ccBootMark('scripts:maplibre')</script>
 <!-- Storage helpers first: everything below that touches IndexedDB
      uses CCIdb (self-healing connections) — creatures.js also uses
      CollectionStore (journal + checkpoints). -->
@@ -4630,6 +4783,7 @@
 <script src="/static/pack-install.js"></script>
 <script src="/static/specials.js"></script>
 <script src="/static/creatures.js"></script>
+<script>window._ccBootMark && _ccBootMark('scripts:creatures')</script>
 <script src="/static/live-update.js"></script>
 <script src="/static/extras.js"></script>
 <script src="/static/extras-vibration.js"></script>
@@ -4642,6 +4796,7 @@
 <script src="/static/extras-scapes.js"></script>
 <script src="/static/extras-todos.js"></script>
 <script src="/static/extras-anki.js"></script>
+<script>window._ccBootMark && _ccBootMark('scripts:end')</script>
 <script>
 // Single source of truth for the app version. Bumped manually when shipping
 // a user-visible change (new features, data format upgrades, etc.). Shown
@@ -5484,6 +5639,9 @@ function fmtDate(ts) {
   // a delta from this so you can see the gaps between phases.
   window._startupPhases = window._startupPhases || {};
   window._startupPhases.scriptStartedAt = performance.now();
+  // [boot timeline] step marker (see the Boot timeline script in <head>).
+  const _bootMark = window._ccBootMark || function () {};
+  _bootMark('iife:start');
 
   // Service Worker is required by the web/PWA build for offline tile
   // caching, but in the Capacitor IPA the bundled webDir already
@@ -5517,6 +5675,8 @@ function fmtDate(ts) {
     });
   }
 
+  _bootMark('sw:ready', !window.CC_SW_AVAILABLE ? 'no SW'
+    : hadController ? 'controlled' : 'first install');
   const viewKey = 'cc.view.v1';
   const savedView = (() => {
     try { return JSON.parse(localStorage.getItem(viewKey) || 'null'); } catch { return null; }
@@ -5556,6 +5716,7 @@ function fmtDate(ts) {
     try { await window.AppData.preloadFontBlobUrls(); } catch {}
     window._startupPhases.fontPreload = performance.now() - t0;
   }
+  _bootMark('fonts:done');
 
   // Capacitor IPA: also pre-download icons from the bundled
   // /bundled-data/icons/ tree into IDB BEFORE the map runs
@@ -5590,9 +5751,12 @@ function fmtDate(ts) {
       window._iconProbe = summary;
       console.error('[icon-probe]', summary);
     } catch (e) { console.error('[icon-probe err]', e); }
+    _bootMark('ios:iconProbe');
     const t0 = performance.now();
+    let bulkInfo = '';
     try {
       const r = await window.AppData.iconBulkDownload({ onProgress: () => {} });
+      bulkInfo = `${r.loaded}/${r.total}`;
       // Surface the result to the debug overlay so we can see on first
       // launch whether IDB actually got populated. Without this we're
       // flying blind when POIs render as poi-default fallbacks. The
@@ -5612,6 +5776,7 @@ function fmtDate(ts) {
         `firstPutErr=${f.firstPutErr ?? '-'}`);
     } catch (e) { console.error('[startup-iconBulkDownload err]', e); }
     window._startupPhases.iconBulkDownload = performance.now() - t0;
+    _bootMark('ios:iconBulk', bulkInfo);
   }
 
   // ── Hoisted static-region scaffolding ─────────────────────────
@@ -5780,6 +5945,7 @@ function fmtDate(ts) {
   });
   window._markStaticReady = function () {
     if (_resolveStaticReady) {
+      _bootMark('static:ready');
       _resolveStaticReady();
       _resolveStaticReady = null;
     }
@@ -5814,6 +5980,7 @@ function fmtDate(ts) {
     });
   }
 
+  _bootMark('map:ctor');
   const map = new maplibregl.Map({
     container: 'map',
     hash: true,
@@ -5859,6 +6026,7 @@ function fmtDate(ts) {
         const fd = window._tileFlowDiag;
         const m = url.match(/\/tiles\/(\d+)\/(\d+)\/(\d+)/);
         const z = m ? +m[1] : -1;
+        _bootMark('tiles:firstRequest', rewritten ? 'static-region' : 'bundled');
         fd.transform.total++;
         fd.transform.lastAt = Date.now();
         if (rewritten) fd.transform.rewritten++;
@@ -6177,6 +6345,7 @@ function fmtDate(ts) {
       ]
     },
   });
+  _bootMark('map:created');
   let tempPin = null;
   function isLngLatInView(lng, lat) {
     const p = map.project([lng, lat]);
@@ -6817,13 +6986,15 @@ function fmtDate(ts) {
   }
   map.addControl(new RoutingControl(), 'bottom-right');
   map.addControl(new SettingsControl(), 'bottom-right');
+  _bootMark('creatures:install');
   const creatureUi = Creatures.install(map);
+  _bootMark('creatures:installed');
   // Load the active creature pack's data (types/monsters/categories)
   // and point the spawn engine at it. No-op in fusion mode; fetches
   // only from the already-installed pack tree (never the network).
   if (window.Packs && window.Packs.loadActivePackData) {
     window.Packs.loadActivePackData()
-      .then(() => { if (typeof refreshSpawnOverlay === 'function') refreshSpawnOverlay(); })
+      .then(() => { _bootMark('packs:loaded'); if (typeof refreshSpawnOverlay === 'function') refreshSpawnOverlay(); })
       .catch((e) => console.error('pack data load failed', e));
   }
   // Added AFTER the pokéball so it stacks directly ABOVE it (MapLibre
@@ -7512,6 +7683,7 @@ function fmtDate(ts) {
         return orig(position);
       };
     }
+    _bootMark('gps:trigger');
     try { geolocate.trigger(); } catch {}
     localStorage.setItem('cc.geoPromptDone', '1');
   });
@@ -7577,6 +7749,7 @@ function fmtDate(ts) {
     window._startupPhases = window._startupPhases || {};
     if (window._startupPhases.firstGpsFix == null) {
       window._startupPhases.firstGpsFix = performance.now();
+      _bootMark('gps:fix', `±${Math.round(e.coords.accuracy)}m`);
     }
     // Each GPS update may move POIs in/out of range — schedule a
     // halo refresh against the new position. Coalesced via rAF.
@@ -7605,6 +7778,7 @@ function fmtDate(ts) {
     _idleTimedAlready = true;
     window._startupPhases = window._startupPhases || {};
     window._startupPhases.firstMapIdle = performance.now();
+    _bootMark('map:idle');
   });
 
 
@@ -7842,6 +8016,7 @@ function fmtDate(ts) {
     const tLoad = performance.now();
     window._startupPhases = window._startupPhases || {};
     window._startupPhases.mapLoadFiredAt = performance.now();
+    _bootMark('map:load');
     const tDefault = performance.now();
     await registerDefaultMarker();
     window._startupPhases.registerDefaultMarker = performance.now() - tDefault;
@@ -7850,6 +8025,7 @@ function fmtDate(ts) {
     window._startupPhases.loadAllIcons = performance.now() - tIcons;
     window._startupPhases.iconsRegistered = iconsLoaded;
     window._startupPhases.mapLoadHandlerSoFar = performance.now() - tLoad;
+    _bootMark('map:iconsDone', `${iconsLoaded} icons`);
     // Building-pokéstops layer: render the small dot icon at the
     // centroid of every building polygon, but only at z17+ where
     // the user is close enough to actually interact. Inserted below
@@ -7868,6 +8044,7 @@ function fmtDate(ts) {
     applyHousenumbersVisibility();
     // rebuildScheduleIndex populates transit data and kicks off refreshRoutesSource.
     await rebuildScheduleIndex();
+    _bootMark('schedule:done');
     // The walk graph is chunky (80-120 MB live for a country-sized region);
     // defer it until the user actually asks to plan a route (see ensureWalkGraph).
     applyTheme(localStorage.getItem('cc.theme') || 'medieval');
@@ -11516,7 +11693,9 @@ function fmtDate(ts) {
     setTimeout(() => { setSelected(null); }, closeDelay);
   };
 
+  _bootMark('favorites:load');
   favorites = await loadAllFavorites();
+  _bootMark('favorites:loaded', `${favorites.length}`);
   renderAllFavorites();
 
   document.getElementById('wipeBtn').onclick = async () => {
@@ -11826,10 +12005,12 @@ function fmtDate(ts) {
   map.on('mouseleave', 'route-stop-bubbles', () => { map.getCanvas().style.cursor = ''; });
 
   let allPois = await loadAllPois();
+  _bootMark('pois:loaded', `${allPois.length} POIs`);
   // Address records hydrated from each saved region's /addresses
   // bundle. Used only by the search box, not map rendering — see
   // hydrateAddressRegion for the record shape.
   let allAddresses = await loadAllAddresses();
+  _bootMark('addresses:loaded', `${allAddresses.length} addresses`);
 
   // ── Trigram POI search index ──
   // Per-region inverted index over POI names/categories. Loaded once
@@ -11872,6 +12053,7 @@ function fmtDate(ts) {
     }
   }
   await _loadAllPoiTrigrams();
+  _bootMark('trigrams:loaded', `${_trigramByRegion.size} regions`);
 
   // NFD-decompose + strip combining marks + lowercase. Mirrors
   // build-poi-trigram-index.py's normalize(); the ß→ss substitution
@@ -14330,6 +14512,67 @@ function fmtDate(ts) {
   }
   _refreshSwLoadedVersion();
 
+  // [boot timeline] + [boot history] dump blocks, from the recorder in
+  // <head> (window._ccBoot). All times are ms after the page started
+  // loading; "ready" = map idle AND the first creature sprite decoded.
+  function _bootDumpLines() {
+    const B = window._ccBoot;
+    if (!B || typeof B.snapshot !== 'function') return [`[boot timeline]`, `  (recorder not loaded)`];
+    const cur = B.snapshot();
+    const hhmm = (ms) => {
+      const d = new Date(ms);
+      const p2 = (n) => String(n).padStart(2, '0');
+      return `${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+    };
+    const out = [
+      `[boot timeline]  this session · ${hhmm(cur.at)} · nav=${cur.nav || '?'}`,
+      `  ready (map idle + first sprite decoded): ${cur.ready != null ? cur.ready + 'ms' : '— (not yet)'}`,
+    ];
+    const inf = cur.info || {};
+    if (inf.nativeLeadMs != null || inf.didBecomeActiveMs != null) {
+      out.push(`  native (iOS): LocalServer up ${inf.nativeLeadMs ?? '?'}ms before page start` +
+        (inf.didBecomeActiveMs != null
+          ? `; didBecomeActive ${inf.didBecomeActiveMs >= 0 ? '+' : ''}${inf.didBecomeActiveMs}ms` : ''));
+    }
+    out.push(`       ms       +Δ  step`);
+    let prev = 0;
+    out.push(`        0           nav:start`);
+    for (const [label, ms, info] of cur.marks) {
+      const d = ms - prev;
+      prev = ms;
+      out.push(`  ${String(ms).padStart(7)}  ${('+' + d).padStart(7)}  ${label}${info ? '  (' + info + ')' : ''}`);
+    }
+    const st = cur.stalls || {};
+    out.push(`  stalls during boot: ${st.n || 0}` +
+      (st.n ? ` (${st.ms}ms total, worst ${st.worst}ms ${st.worstWhat})` : '') +
+      (st.named && st.named.length ? `  named: ${st.named.join(', ')}` : ''));
+    const f = cur.fetch || {};
+    out.push(`  fetches before ready: ${f.n || 0} (${f.scripts || 0} scripts, last script byte @${f.scriptsEnd || 0}ms)`);
+    const slow = (f.slow || []).filter(([, , ms]) => ms >= 5);
+    out.push(slow.length
+      ? `  slowest: ` + slow.map(([u, at, ms]) => `${ms}ms ${u} @${at}`).join(' · ')
+      : `  slowest: none ≥5ms`);
+    const hist = B.history();
+    const rows = [cur].concat(hist.filter((r) => r && r.at !== cur.at));
+    out.push(`[boot history]  newest first · ms after page start · — = didn't happen`);
+    out.push(`  when         nav       scripts  map   static load  gps    spawn  sprite idle   READY  stalls`);
+    const col = (r, label) => {
+      const hit = (r.marks || []).find((m) => m[0] === label);
+      return hit ? String(hit[1]) : '—';
+    };
+    for (const r of rows.slice(0, 8)) {
+      const st2 = r.stalls || {};
+      out.push(`  ${hhmm(r.at)}  ${(r.nav || '?').padEnd(9)} ` +
+        [col(r, 'scripts:end'), col(r, 'map:created'), col(r, 'static:firstTile'),
+         col(r, 'map:load'), col(r, 'gps:fix'), col(r, 'spawns:firstMarker'),
+         col(r, 'sprites:firstVisible'), col(r, 'map:idle'),
+         r.ready != null ? String(r.ready) : '—']
+          .map((v, i) => v.padEnd(i === 0 ? 8 : 6)).join(' ') +
+        ` ${st2.n || 0}/${st2.ms || 0}ms`);
+    }
+    return out;
+  }
+
   function updateSpriteInflightBadge() {
     const _t0 = performance.now();
     const el = document.getElementById('spriteInflightBadge');
@@ -14372,8 +14615,10 @@ function fmtDate(ts) {
       const ai = window._addImageStats || {};
       const ld = window._loadAllIconsDiag || {};
       const lines = [
+        ..._bootDumpLines(),
         `[durations]`,
         `  fontPreload   : ${dur(ph.fontPreload)}`,
+        `  iconBulkDl    : ${dur(ph.iconBulkDownload)}  (iOS: awaited before the map exists)`,
         `  defaultMarker : ${dur(ph.registerDefaultMarker)}`,
         `  loadAllIcons  : ${dur(ph.loadAllIcons)} (reg ${ph.iconsRegistered ?? '—'})`,
         `  loadHandler   : ${dur(ph.mapLoadHandlerSoFar)}`,
@@ -14425,6 +14670,14 @@ function fmtDate(ts) {
           `hadBlob=${sd.variantSummaryHadBlob === undefined ? '—' : (sd.variantSummaryHadBlob ? 'y' : 'n')} ` +
           `cached=${sd.variantsCount ?? '—'}`,
         `  variantBatch: last ${sd.lastVariantBatch ?? '—'} in ${dur(sd.lastVariantBatchMs)}`,
+        (() => {
+          const pt = sd.packTiming || {};
+          const fmt = (k) => {
+            const t = pt[k];
+            return t ? `${k} n=${t.n} avg=${Math.round(t.totalMs / t.n)}ms max=${t.maxMs}ms (#${t.maxB})` : `${k} —`;
+          };
+          return `  pack reads: ${fmt('index')} · ${fmt('cell')}`;
+        })(),
         `  spriteBatches: ${sd.batchCount ?? 0}, last ${sd.lastBatchSize ?? '—'} in ${dur(sd.lastBatchMs)}`,
         `  firstSpriteInstall: ${at(sd.firstSpriteInstallAt)}`,
         `  firstSpriteVisible: ${at(sd.firstSpriteVisibleAt)}`,
@@ -17932,6 +18185,8 @@ function fmtDate(ts) {
           ? await PMTilesReader._gunzip(tile)
           : tile;
         _dbgRecordDecision(z, x, y, r.id, tried, startedAt);
+        _bootMark('static:firstTile',
+          `${Math.round(performance.now() - startedAt)}ms, ${tried.length} region(s) tried`);
         return result;
       }
       _dbgRecordDecision(z, x, y, null, tried, startedAt);

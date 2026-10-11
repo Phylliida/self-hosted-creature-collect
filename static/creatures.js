@@ -19,6 +19,12 @@
   global._scriptVersions = global._scriptVersions || {};
   global._scriptVersions['creatures.js'] = SCRIPT_VERSION;
 
+  // Settings dump [boot timeline] step marker — defined in index.html's
+  // <head>; a no-op anywhere it isn't (extras pages, tests).
+  function _bootMark(label, info) {
+    try { if (global._ccBootMark) global._ccBootMark(label, info); } catch (_) {}
+  }
+
   // Mirrors sprites.js / appdata.js — BundledData lives under this
   // prefix on every platform: Flask catch-all on web, GCDWebServer
   // on iOS, WebViewAssetLoader on Android. Override via inline
@@ -187,7 +193,9 @@
         _showStorageWarning();
         return;
       }
+      _bootMark('cstore:read');
       const r = await persist.load();
+      _bootMark('cstore:readDone', r.ok ? '' : 'read FAILED');
       if (!r.ok) _logCreatureError('cstore/hydrate', r.error);
       const capIdb = r.blobs[CSTORE_CAPTURED];
       const seenIdb = r.blobs[CSTORE_SEEN];
@@ -230,6 +238,8 @@
       const capDirty = _capStore.loadFromArray(cap);
       _seenStore.loadFromMap(seen);
       persist.ready();
+      _bootMark('cstore:loaded', `${cap.length} caught`
+        + (_cstoreDegraded ? ', DEGRADED' : ''));
       if (_cstoreDegraded) { _showStorageWarning(); return; }
 
       // Migration writes: persist, and only drop the localStorage copy
@@ -16616,13 +16626,20 @@
   // to "ready" once its sprite decodes. Closes over the record so
   // stale callbacks (record removed before sprite arrived) bail out.
   function _markerOnReady(record) {
-    return () => {
+    return (img) => {
       if (!_markers.has(record.spawn.id) || _markers.get(record.spawn.id) !== record) return;
       record.marker.getElement().classList.add('creature-marker-ready');
       record.loaded = true;
       window._spriteDiag = window._spriteDiag || {};
       if (window._spriteDiag.firstSpriteVisibleAt == null) {
         window._spriteDiag.firstSpriteVisibleAt = performance.now();
+        // onReady fires when src is assigned; the sprite is on screen
+        // once it has decoded — that's the [boot timeline] milestone.
+        _bootMark('sprites:firstSrc');
+        const decoded = (img && typeof img.decode === 'function')
+          ? img.decode() : Promise.resolve();
+        decoded.then(() => _bootMark('sprites:firstVisible'),
+          () => _bootMark('sprites:firstVisible', 'decode failed'));
       }
     };
   }
@@ -16691,6 +16708,7 @@
       window._startupPhases = window._startupPhases || {};
       if (window._startupPhases.firstSpawnMarker == null) {
         window._startupPhases.firstSpawnMarker = performance.now();
+        _bootMark('spawns:firstMarker');
       }
     }
     return record;
@@ -16731,7 +16749,9 @@
           .filter(({ spawn }) => !(typeof spawn.solo === 'string' && spawn.solo))
           .map(({ spawn }) => [spawn.speciesA, spawn.speciesB]);
         if (cells.length && global.Sprites && global.Sprites.getCellVariantCountsBatch) {
+          _bootMark('sprites:variantCounts');
           await global.Sprites.getCellVariantCountsBatch(cells);
+          _bootMark('sprites:variantCountsDone', `${cells.length} cells`);
         }
         variants = await Promise.all(
           records.map(({ spawn }) =>
@@ -16763,7 +16783,11 @@
           if (typeof spawn.solo === 'string' && spawn.solo) continue;
           pairEntries.push({ a: spawn.speciesA, b: spawn.speciesB, variant: variants[i] });
         }
-        if (pairEntries.length) await global.SpriteStore.preload(pairEntries);
+        if (pairEntries.length) {
+          _bootMark('sprites:preload', `${pairEntries.length} sprites`);
+          await global.SpriteStore.preload(pairEntries);
+          _bootMark('sprites:preloadDone');
+        }
       } catch (e) {
         _logCreatureError('addMarkersBatch/preload', e);
       }
@@ -16845,6 +16869,8 @@
       && (!focusOn || s.legendary || s.evolved)
       && metersBetween(_userLat, _userLng, s.lat, s.lng) <= VISIBILITY_RADIUS_M
     );
+    _bootMark('spawns:firstRefresh',
+      `${within.length} in range, ${Math.round(performance.now() - _t0)}ms`);
 
     // Reconcile markers: keep existing ids, add new ones, drop stale
     // ones — but only if they've been visible for at least
@@ -16939,8 +16965,10 @@
         && acc != null
         && acc > FIRST_FIX_MIN_ACCURACY_M
         && Date.now() < _firstFixDeadline) {
+      _bootMark('spawns:fixTooCoarse', `±${Math.round(acc)}m`);
       return;
     }
+    if (_userLat == null) _bootMark('spawns:fixAccepted', acc != null ? `±${Math.round(acc)}m` : '');
     _userLat = pos.coords.latitude;
     _userLng = pos.coords.longitude;
     // Accumulate trainer travel into today's daycare bucket.
@@ -18245,7 +18273,8 @@
     // so per-family shinies stay coherent across evolutions.
     if (global.ShinyStore) {
       global.ShinyStore.setRootResolver(candyRootFor);
-      global.ShinyStore.load().catch((e) => {
+      _bootMark('shiny:load');
+      global.ShinyStore.load().then(() => _bootMark('shiny:loaded'), (e) => {
         console.warn('shiny palettes failed to load', e);
       });
     }

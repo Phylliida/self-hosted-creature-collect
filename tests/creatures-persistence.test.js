@@ -104,6 +104,7 @@ function launch(dev, opts = {}) {
     const SEEN_FUSIONS_KEY = 'cc.seenFusions';
     function _logCreatureError(where, e) { errs.push(where + ': ' + (e && e.message)); }
     function _perfMark() {}
+    ${sliceFn('function _bootMark(')}
     ${sliceFn('function isSoloCreature(')}
     const _invPerf = { fn: new Proxy({}, { get: () => ({}) }) };
     ${segPersist}

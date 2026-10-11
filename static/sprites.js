@@ -1045,6 +1045,27 @@
   // Resolves the parsed pack, or null when the partner has NO pack
   // (404) or the pack is unusable (bad magic — permanent). Throws a
   // transient error (see _packTransient) for anything retryable.
+  // Pack read timing for the Settings dump ([sprites] packs: line) and
+  // the [boot timeline] — on Capacitor every marker's sprite waits on
+  // an index probe + a cell read, so slow reads here are boot latency.
+  function _notePackTiming(kind, b, t0) {
+    try {
+      if (typeof window === 'undefined' || typeof performance === 'undefined') return;
+      const ms = performance.now() - t0;
+      const d = window._spriteDiag = window._spriteDiag || {};
+      const all = d.packTiming = d.packTiming || {};
+      const st = all[kind] = all[kind] || { n: 0, totalMs: 0, maxMs: 0, maxB: null };
+      st.n++;
+      st.totalMs += ms;
+      if (ms > st.maxMs) { st.maxMs = Math.round(ms); st.maxB = b; }
+      if (window._ccBootMark) {
+        window._ccBootMark(kind === 'index' ? 'sprites:firstPackIndex' : 'sprites:firstPackCell',
+          `${Math.round(ms)}ms`);
+      }
+    } catch (_) { /* diagnostics only */ }
+  }
+  const _now = () => (typeof performance !== 'undefined' ? performance.now() : 0);
+
   async function _loadPack(b) {
     const cached = _packCache.get(b);
     if (cached) {
@@ -1055,6 +1076,7 @@
     const inflight = _packLoadPromises.get(b);
     if (inflight) return inflight;
 
+    const t0 = _now();
     const p = (async () => {
       const url = `${BUNDLED_BASE}/sprite-packs/${b}.pack`;
       // Probe the head of the file with a Range request. A server that
@@ -1116,7 +1138,10 @@
     })();
     _packLoadPromises.set(b, p);
     try { return await p; }
-    finally { _packLoadPromises.delete(b); }
+    finally {
+      _packLoadPromises.delete(b);
+      _notePackTiming('index', b, t0);
+    }
   }
 
   async function _packGetBlob(a, b, variant) {
@@ -1135,6 +1160,7 @@
     // Ranged mode: pull just this cell's PNG bytes (~tens of KB)
     // instead of holding the whole multi-MB pack in memory.
     const url = `${BUNDLED_BASE}/sprite-packs/${b}.pack`;
+    const t0 = _now();
     let resp;
     try {
       resp = await fetch(url, {
@@ -1168,6 +1194,7 @@
       throw _packTransient('packGetBlob/shortRead', b,
         `expected ${length} B, got ${bytes.byteLength}`);
     }
+    _notePackTiming('cell', b, t0);
     return new Blob([bytes], { type: 'image/png' });
   }
 
