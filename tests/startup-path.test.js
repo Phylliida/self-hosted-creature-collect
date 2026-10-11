@@ -197,6 +197,31 @@ function sliceFn(src, head) {
     'post-boot queue: extras, then POIs, then the schedule index (it snaps stops to POIs)');
 }
 
+// ── 4c. Last-known-position spawns are display-only ───────────────────
+// Until the first live fix, spawns render around the previous session's
+// last fix. That position must never reach _userLat (catch/hatch place
+// stamps, daycare distance, radar all read it), and a provisional marker
+// must not open an encounter (sightings + catches happen there).
+{
+  const creaturesSrc = fs.readFileSync(path.join(root, 'static', 'creatures.js'), 'utf8');
+  ok(!/_userLat\s*=\s*_provFix|_userLat\s*=\s*f\.lat/.test(creaturesSrc),
+    'the last-known position is never copied into _userLat');
+  const marker = sliceFn(creaturesSrc, 'function makeMarkerElement(');
+  ok(/if \(_userLat == null\) \{[\s\S]*?return;[\s\S]*?\}[\s\S]*openBattleScreen\(spawn\)/.test(marker),
+    'tapping a marker before a live fix does not open the encounter');
+  const refresh = sliceFn(creaturesSrc, 'function refreshSpawnOverlay(');
+  ok(/const center = _spawnCenter\(\)/.test(refresh) && !/metersBetween\(_userLat/.test(refresh),
+    'spawn refresh works from _spawnCenter (live fix, else last-known)');
+  ok(/rec\.provisional && center\.live/.test(refresh),
+    'provisional markers the live fix does not want are dropped at once');
+  const fix = sliceFn(creaturesSrc, 'function onLocationFix(');
+  ok(/_provFix = null;[\s\S]*_lastRefreshAt = 0;/.test(fix),
+    'the first live fix ends provisional mode and forces a refresh');
+  // Settle waits for the map AND the first sprite.
+  ok(/let sprite = false, idle = false;/.test(indexSrc),
+    'boot settles on map idle + first sprite, not whichever comes first');
+}
+
 // ── 5. Capacitor variant counts: compact cells table persisted ────────
 // The first sprite batch used to rebuild per-cell variant counts from
 // the full cells.json object (~99 k keys) on every boot — ~0.9 s on a

@@ -8704,6 +8704,12 @@
       .creature-marker.creature-marker-ready img.creature-sprite {
         display: block;
       }
+      /* Placed around the last-known position, before this session's
+         first live GPS fix: visible but not yet catchable. */
+      .creature-marker.creature-marker-provisional img.creature-sprite,
+      .creature-marker.creature-marker-provisional .creature-placeholder {
+        opacity: 0.55;
+      }
       .creature-marker.creature-marker-ready .creature-placeholder {
         display: none;
       }
@@ -15054,6 +15060,68 @@
   let _geoListening = false;
   let _userLat = null;
   let _userLng = null;
+
+  // Last-known position: the previous session's last live fix. Until this
+  // session's first live fix lands, spawns render around it, so creatures
+  // show up at once instead of after the OS's first fix (0.8–35 s on a
+  // Pixel 4a). Display only: those markers are dimmed and can't be caught,
+  // and nothing else sees this position — _userLat stays null until a live
+  // fix, so catch/hatch place stamps, daycare distance and the radar keep
+  // waiting for real GPS. The first live fix drops any provisional marker
+  // it doesn't also want (no display-time protection) and confirms the rest.
+  const LAST_FIX_KEY = 'cc.lastFix.v1';
+  const LAST_FIX_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+  const LAST_FIX_MAX_ACC_M = 100;
+  const LAST_FIX_SAVE_GAP_MS = 5000;
+  let _provFix = null;            // { lat, lng } while provisional
+  let _lastLiveFix = null;        // { lat, lng, acc } most recent live fix
+  let _lastFixSavedAt = 0;
+  function _gpsDiag() {
+    return (typeof window !== 'undefined' && window._ccGpsDiag) || null;
+  }
+  function _loadLastFix() {
+    let f = null;
+    try { f = JSON.parse(localStorage.getItem(LAST_FIX_KEY) || 'null'); } catch (_) { f = null; }
+    const g = _gpsDiag();
+    if (!f || typeof f.lat !== 'number' || typeof f.lng !== 'number' || typeof f.t !== 'number') {
+      if (g) g.provisionalSkipped = 'none stored';
+      return null;
+    }
+    const age = Date.now() - f.t;
+    if (!(age >= 0 && age < LAST_FIX_MAX_AGE_MS)) {
+      if (g) g.provisionalSkipped = `stored fix too old (${Math.round(age / 60000)} min)`;
+      return null;
+    }
+    if (f.acc != null && f.acc > LAST_FIX_MAX_ACC_M) {
+      if (g) g.provisionalSkipped = `stored fix too coarse (±${f.acc}m)`;
+      return null;
+    }
+    return f;
+  }
+  function _saveLastFix(force) {
+    const f = _lastLiveFix;
+    if (!f) return;
+    const now = Date.now();
+    if (!force && now - _lastFixSavedAt < LAST_FIX_SAVE_GAP_MS) return;
+    _lastFixSavedAt = now;
+    try {
+      localStorage.setItem(LAST_FIX_KEY, JSON.stringify({
+        lat: f.lat, lng: f.lng, acc: f.acc != null ? Math.round(f.acc) : null, t: now,
+      }));
+    } catch (_) { /* quota / private mode: next boot just waits for GPS */ }
+  }
+  if (typeof document !== 'undefined' && document.addEventListener) {
+    // The throttled save can lag the last fix by a few seconds.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') _saveLastFix(true);
+    });
+  }
+  // Where spawns are computed around: the live fix, else the last-known one.
+  function _spawnCenter() {
+    if (_userLat != null && _userLng != null) return { lat: _userLat, lng: _userLng, live: true };
+    if (_provFix) return { lat: _provFix.lat, lng: _provFix.lng, live: false };
+    return null;
+  }
   // _markers: spawn.id -> { marker, spawn, firstShownAt, loaded, variant? }
   // No URL stored on the record — sprite URLs are owned by SpriteStore.
   const _markers = new Map();
@@ -15700,6 +15768,12 @@
     // via touch/wheel events, not click, so this is safe for them.
     const onClick = (e) => {
       e.stopPropagation();
+      // Shown around the last-known position (see _provFix): catchable
+      // once a live fix confirms the player is actually here.
+      if (_userLat == null) {
+        _saveImageNotice('Waiting for GPS to confirm your location…', 1800);
+        return;
+      }
       openBattleScreen(spawn);
     };
     el.querySelector('.creature-placeholder').addEventListener('click', onClick);
@@ -16700,8 +16774,11 @@
     const marker = new global.maplibregl.Marker({ element: el, anchor: 'center' })
       .setLngLat([spawn.lng, spawn.lat])
       .addTo(_overlayMap);
+    // No live fix yet → placed around the last-known position.
+    const provisional = _userLat == null;
+    if (provisional) el.classList.add('creature-marker-provisional');
     const record = {
-      marker, spawn, firstShownAt: Date.now(),
+      marker, spawn, firstShownAt: Date.now(), provisional,
       // True once the marker's sprite has landed in the img and the
       // `creature-marker-ready` class has flipped on (revealing the
       // sprite, hiding the placeholder dot). Set by _markerOnReady,
@@ -16852,29 +16929,32 @@
     // Radar ghosts live at fixed spawn locations (no GPS needed) — refresh
     // their countdowns / pruning every tick, before the GPS-gated spawn logic.
     refreshRadarMarkers();
-    // Without a GPS fix we can't compute distance — clear any existing
-    // markers rather than leaving stale ones from a previous fix.
-    if (_userLat == null || _userLng == null) {
+    // Without a position (no live fix, no usable last-known one) we can't
+    // compute distance — clear any existing markers rather than leaving
+    // stale ones from a previous fix.
+    const center = _spawnCenter();
+    if (!center) {
       if (_markers.size) clearMarkers();
       _lastRefreshLat = _lastRefreshLng = null;
       _lastRefreshAt = 0;
       return;
     }
+    const cLat = center.lat, cLng = center.lng;
     const now = Date.now();
     const moved = _lastRefreshLat == null
-      || metersBetween(_userLat, _userLng, _lastRefreshLat, _lastRefreshLng) > 1;
+      || metersBetween(cLat, cLng, _lastRefreshLat, _lastRefreshLng) > 1;
     if (!moved && now - _lastRefreshAt < REFRESH_MIN_GAP_MS) return;
     const _t0 = performance.now();
-    _lastRefreshLat = _userLat;
-    _lastRefreshLng = _userLng;
+    _lastRefreshLat = cLat;
+    _lastRefreshLng = cLng;
     _lastRefreshAt = now;
 
     const padM = VISIBILITY_RADIUS_M + 15;
     const latPad = padM / 111000;
-    const lngPad = padM / (111000 * Math.cos(_userLat * Math.PI / 180));
+    const lngPad = padM / (111000 * Math.cos(cLat * Math.PI / 180));
     const bbox = [
-      _userLng - lngPad, _userLat - latPad,
-      _userLng + lngPad, _userLat + latPad,
+      cLng - lngPad, cLat - latPad,
+      cLng + lngPad, cLat + latPad,
     ];
     pruneCaughtSpawnIds();
     const caught = readCaughtSpawnIds();
@@ -16882,10 +16962,11 @@
     const within = spawns.filter((s) =>
       !caught.has(s.id)
       && (!focusOn || s.legendary || s.evolved)
-      && metersBetween(_userLat, _userLng, s.lat, s.lng) <= VISIBILITY_RADIUS_M
+      && metersBetween(cLat, cLng, s.lat, s.lng) <= VISIBILITY_RADIUS_M
     );
     _bootMark('spawns:firstRefresh',
-      `${within.length} in range, ${Math.round(performance.now() - _t0)}ms`);
+      `${within.length} in range, ${Math.round(performance.now() - _t0)}ms`
+      + (center.live ? '' : ', last-known position'));
 
     // Reconcile markers: keep existing ids, add new ones, drop stale
     // ones — but only if they've been visible for at least
@@ -16903,7 +16984,10 @@
     for (const id of Array.from(_markers.keys())) {
       if (wanted.has(id)) continue;
       const rec = _markers.get(id);
-      const removableAt = (rec.firstShownAt || 0) + MIN_DISPLAY_MS;
+      // A last-known-position marker the live fix doesn't want was never
+      // really "there" — no display-time protection for it.
+      const removableAt = (rec.provisional && center.live)
+        ? 0 : (rec.firstShownAt || 0) + MIN_DISPLAY_MS;
       if (now >= removableAt) {
         removeMarker(id);
       } else if (removableAt < soonestRemovableAt) {
@@ -16912,6 +16996,14 @@
     }
     // Bulk-fetch sprites for any spawns we don't yet have markers for —
     // single IDB transaction instead of one per marker.
+    // Live fix: the provisional markers it kept are real now.
+    if (center.live) {
+      for (const rec of _markers.values()) {
+        if (!rec.provisional) continue;
+        rec.provisional = false;
+        rec.marker.getElement().classList.remove('creature-marker-provisional');
+      }
+    }
     const newSpawns = within.filter((s) => !_markers.has(s.id));
     if (newSpawns.length) addMarkersBatch(newSpawns);
     if (soonestRemovableAt !== Infinity) {
@@ -16981,11 +17073,32 @@
         && acc > FIRST_FIX_MIN_ACCURACY_M
         && Date.now() < _firstFixDeadline) {
       _bootMark('spawns:fixTooCoarse', `±${Math.round(acc)}m`);
+      const g = _gpsDiag();
+      if (g) g.coarseDropped = (g.coarseDropped || 0) + 1;
       return;
     }
-    if (_userLat == null) _bootMark('spawns:fixAccepted', acc != null ? `±${Math.round(acc)}m` : '');
+    if (_userLat == null) {
+      _bootMark('spawns:fixAccepted', acc != null ? `±${Math.round(acc)}m` : '');
+      if (_provFix) {
+        // First live fix after last-known-position spawns: re-run the
+        // refresh unconditionally (bypass the dedupe) so provisional
+        // markers are confirmed or dropped right now.
+        const g = _gpsDiag();
+        if (g && g.provisional) {
+          g.provisional.confirmedAt = Math.round(performance.now());
+          g.provisional.distM = Math.round(metersBetween(
+            _provFix.lat, _provFix.lng, pos.coords.latitude, pos.coords.longitude));
+        }
+        _bootMark('spawns:confirmed');
+        _provFix = null;
+        _lastRefreshLat = _lastRefreshLng = null;
+        _lastRefreshAt = 0;
+      }
+    }
     _userLat = pos.coords.latitude;
     _userLng = pos.coords.longitude;
+    _lastLiveFix = { lat: _userLat, lng: _userLng, acc };
+    _saveLastFix(false);
     // Accumulate trainer travel into today's daycare bucket.
     // pos.timestamp is preferred over Date.now() because it reflects
     // when the OS captured the fix (not when JS ran).
@@ -17000,6 +17113,7 @@
     _geoListening = false;
     _userLat = null;
     _userLng = null;
+    _provFix = null;
     _firstFixDeadline = 0;
   }
 
@@ -17365,6 +17479,17 @@
     // has changed (warm memoized scan + a no-op marker diff).
     _overlayTimer = setInterval(refreshSpawnOverlay, SPAWN_REFRESH_MS);
     _radarRestore();   // re-create a followed radar ghost after (re)attach
+    // Spawn around the last-known position until the first live fix.
+    if (_userLat == null) {
+      const f = _loadLastFix();
+      if (f) {
+        _provFix = { lat: f.lat, lng: f.lng };
+        const g = _gpsDiag();
+        if (g) g.provisional = { ageMin: Math.round((Date.now() - f.t) / 60000), acc: f.acc };
+        _bootMark('spawns:provisional', `fix ${Math.round((Date.now() - f.t) / 60000)} min old`);
+        refreshSpawnOverlay();
+      }
+    }
   }
 
   function detachSpawnOverlay() {
