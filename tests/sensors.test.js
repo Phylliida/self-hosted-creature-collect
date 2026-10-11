@@ -101,8 +101,12 @@ ok(/stopMic\(\)/.test(sns.slice(sns.indexOf('function stop()'))),
 
 // --- 3) Wiring --------------------------------------------------------------
 const indexSrc = read('static', 'index.html');
-ok(indexSrc.includes('<script src="/static/extras-sensors.js"></script>'),
-  'index.html: script tag present');
+// index.html loads the extras after boot, in order, from
+// window._CC_DEFERRED_SCRIPTS (see _loadDeferredScripts).
+const deferredExtras = ((indexSrc.match(/window\._CC_DEFERRED_SCRIPTS = \[([\s\S]*?)\];/) || [])[1] || '')
+  .match(/\/static\/[^']+\.js/g) || [];
+ok(deferredExtras.includes('/static/extras-sensors.js'),
+  'index.html: sensors script loaded (deferred extras list)');
 ok(indexSrc.includes("'/static/extras-sensors.js'"),
   'index.html: refresh-button cache-delete list includes extras-sensors.js');
 ok(/window\.ExtrasSensors\s*&&\s*typeof window\.ExtrasSensors\.onLocationFix/.test(indexSrc),

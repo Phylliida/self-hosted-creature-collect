@@ -127,8 +127,12 @@ ok(/stopMic\(/.test(src) && /visibilitychange/.test(src),
   'tuner: mic torn down when the tool hides');
 
 const indexSrc = fs.readFileSync(path.join(root, 'static', 'index.html'), 'utf8');
-ok(indexSrc.includes('<script src="/static/extras-tuner.js"></script>'),
-  'index.html: tuner script tag present');
+// index.html loads the extras after boot, in order, from
+// window._CC_DEFERRED_SCRIPTS (see _loadDeferredScripts).
+const deferredExtras = ((indexSrc.match(/window\._CC_DEFERRED_SCRIPTS = \[([\s\S]*?)\];/) || [])[1] || '')
+  .match(/\/static\/[^']+\.js/g) || [];
+ok(deferredExtras.includes('/static/extras-tuner.js'),
+  'index.html: tuner script loaded (deferred extras list)');
 ok(indexSrc.includes("'/static/extras-tuner.js'"),
   'index.html: tuner in the refresh cache-delete list');
 const runPy = fs.readFileSync(path.join(root, 'run.py'), 'utf8');

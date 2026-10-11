@@ -130,10 +130,14 @@ ok(src.includes("localStorage.setItem(global.TodoCore.KEY") || src.includes('cc.
   'todos: persists to localStorage');
 
 const indexSrc = fs.readFileSync(path.join(root, 'static', 'index.html'), 'utf8');
-ok(indexSrc.includes('<script src="/static/extras-todos.js"></script>'),
-  'index.html: todos script tag present');
-ok(indexSrc.indexOf('<script src="/static/extras-todos.js"></script>') >
-   indexSrc.indexOf('<script src="/static/extras.js"></script>'),
+// index.html loads the extras after boot, in order, from
+// window._CC_DEFERRED_SCRIPTS (see _loadDeferredScripts).
+const deferredExtras = ((indexSrc.match(/window\._CC_DEFERRED_SCRIPTS = \[([\s\S]*?)\];/) || [])[1] || '')
+  .match(/\/static\/[^']+\.js/g) || [];
+ok(deferredExtras.includes('/static/extras-todos.js'),
+  'index.html: todos script loaded (deferred extras list)');
+ok(deferredExtras.indexOf('/static/extras-todos.js') > deferredExtras.indexOf('/static/extras.js')
+   && deferredExtras.indexOf('/static/extras.js') >= 0,
   'index.html: todos loads AFTER extras.js (registration hook must exist)');
 ok(indexSrc.includes("'/static/extras-todos.js'"),
   'index.html: todos in the refresh cache-delete list');

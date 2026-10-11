@@ -75,8 +75,9 @@ for (const api of ['ExtrasFractals', 'ExtrasFractals2', 'ExtrasSongs', 'ExtrasQu
 
 // ── (4) page wiring ──
 const page = fs.readFileSync(path.join(root, 'static', 'extras.html'), 'utf8');
-const scriptTags = [...indexSrc.matchAll(/<script src="\/static\/(extras[^"]*\.js)"><\/script>/g)]
-  .map((m) => m[1]);
+// index.html loads the extras after boot from window._CC_DEFERRED_SCRIPTS.
+const deferredBlock = (indexSrc.match(/window\._CC_DEFERRED_SCRIPTS = \[([\s\S]*?)\];/) || [])[1] || '';
+const scriptTags = [...deferredBlock.matchAll(/'\/static\/(extras[^']*\.js)'/g)].map((m) => m[1]);
 ok(scriptTags.length >= 10, `found the extras script list in index.html (${scriptTags.length})`);
 for (const s of scriptTags) {
   ok(page.includes(`/static/${s}`), `extras.html loads ${s}`);

@@ -103,8 +103,12 @@ ok(/ExtrasRegisterTool/.test(src) && /id:\s*'scapes'/.test(src),
   'scapes: registers as an Extras tool');
 
 const indexSrc = fs.readFileSync(path.join(root, 'static', 'index.html'), 'utf8');
-ok(indexSrc.includes('<script src="/static/extras-scapes.js"></script>'),
-  'index.html: scapes script tag present');
+// index.html loads the extras after boot, in order, from
+// window._CC_DEFERRED_SCRIPTS (see _loadDeferredScripts).
+const deferredExtras = ((indexSrc.match(/window\._CC_DEFERRED_SCRIPTS = \[([\s\S]*?)\];/) || [])[1] || '')
+  .match(/\/static\/[^']+\.js/g) || [];
+ok(deferredExtras.includes('/static/extras-scapes.js'),
+  'index.html: scapes script loaded (deferred extras list)');
 ok(indexSrc.includes("'/static/extras-scapes.js'"),
   'index.html: scapes in the refresh cache-delete list');
 const runPy = fs.readFileSync(path.join(root, 'run.py'), 'utf8');
