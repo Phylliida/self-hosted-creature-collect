@@ -18142,10 +18142,34 @@ function fmtDate(ts) {
     return p;
   }
 
+  // Regions whose bbox overlaps the tile go first. Each region tried
+  // costs a reader init on first touch (an IDB blob read + pmtiles
+  // header/directory parse — 372 ms for one region on a Pixel 4a), and
+  // trying regions in download order meant the first tile of a boot
+  // could pay for regions nowhere near the view. Non-overlapping
+  // regions stay as a fallback (stable order) in case a bbox is off;
+  // records without a bbox count as overlapping.
+  function _regionsForTile(regions, z, x, y) {
+    const n = 2 ** z;
+    const west = x / n * 360 - 180;
+    const east = (x + 1) / n * 360 - 180;
+    const latOf = (ty) => Math.atan(Math.sinh(Math.PI * (1 - 2 * ty / n))) * 180 / Math.PI;
+    const north = latOf(y);
+    const south = latOf(y + 1);
+    const near = [], far = [];
+    for (const r of regions) {
+      const b = r && r.bbox;
+      const overlaps = !Array.isArray(b) || b.length < 4
+        || (b[0] <= east && b[2] >= west && b[1] <= north && b[3] >= south);
+      (overlaps ? near : far).push(r);
+    }
+    return far.length ? near.concat(far) : near;
+  }
+
   // Resolve a (z, x, y) tile to bytes from any downloaded region.
   // First non-empty match wins. Returns null when no region has it.
   async function _serveStaticTile(z, x, y) {
-    const downloaded = loadStaticRegions();
+    const downloaded = _regionsForTile(loadStaticRegions(), z, x, y);
     if (!downloaded.length) return null;
     const diag = window._staticTilesDiag;
     diag.inFlight++;
