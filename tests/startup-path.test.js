@@ -197,18 +197,15 @@ function sliceFn(src, head) {
     'post-boot queue: extras, then POIs, then the schedule index (it snaps stops to POIs)');
 }
 
-// ── 4c. Last-known-position spawns are display-only ───────────────────
+// ── 4c. Last-known-position spawns only move the spawn center ─────────
 // Until the first live fix, spawns render around the previous session's
-// last fix. That position must never reach _userLat (catch/hatch place
-// stamps, daycare distance, radar all read it), and a provisional marker
-// must not open an encounter (sightings + catches happen there).
+// last fix (and can be caught — catches stamp the spawn's own location).
+// That position must never reach _userLat: hatch place stamps, daycare
+// distance and the radar read it.
 {
   const creaturesSrc = fs.readFileSync(path.join(root, 'static', 'creatures.js'), 'utf8');
   ok(!/_userLat\s*=\s*_provFix|_userLat\s*=\s*f\.lat/.test(creaturesSrc),
     'the last-known position is never copied into _userLat');
-  const marker = sliceFn(creaturesSrc, 'function makeMarkerElement(');
-  ok(/if \(_userLat == null\) \{[\s\S]*?return;[\s\S]*?\}[\s\S]*openBattleScreen\(spawn\)/.test(marker),
-    'tapping a marker before a live fix does not open the encounter');
   const refresh = sliceFn(creaturesSrc, 'function refreshSpawnOverlay(');
   ok(/const center = _spawnCenter\(\)/.test(refresh) && !/metersBetween\(_userLat/.test(refresh),
     'spawn refresh works from _spawnCenter (live fix, else last-known)');

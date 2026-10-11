@@ -8704,12 +8704,6 @@
       .creature-marker.creature-marker-ready img.creature-sprite {
         display: block;
       }
-      /* Placed around the last-known position, before this session's
-         first live GPS fix: visible but not yet catchable. */
-      .creature-marker.creature-marker-provisional img.creature-sprite,
-      .creature-marker.creature-marker-provisional .creature-placeholder {
-        opacity: 0.55;
-      }
       .creature-marker.creature-marker-ready .creature-placeholder {
         display: none;
       }
@@ -15064,11 +15058,12 @@
   // Last-known position: the previous session's last live fix. Until this
   // session's first live fix lands, spawns render around it, so creatures
   // show up at once instead of after the OS's first fix (0.8–35 s on a
-  // Pixel 4a). Display only: those markers are dimmed and can't be caught,
-  // and nothing else sees this position — _userLat stays null until a live
-  // fix, so catch/hatch place stamps, daycare distance and the radar keep
-  // waiting for real GPS. The first live fix drops any provisional marker
-  // it doesn't also want (no display-time protection) and confirms the rest.
+  // Pixel 4a). They're normal, catchable markers (catches stamp the
+  // spawn's own location). Only spawning reads this position — _userLat
+  // stays null until a live fix, so hatch place stamps, daycare distance
+  // and the radar keep waiting for real GPS. The first live fix drops any
+  // provisional marker it doesn't also want (no display-time protection)
+  // and keeps the rest.
   const LAST_FIX_KEY = 'cc.lastFix.v1';
   const LAST_FIX_MAX_AGE_MS = 12 * 60 * 60 * 1000;
   const LAST_FIX_MAX_ACC_M = 100;
@@ -15768,12 +15763,6 @@
     // via touch/wheel events, not click, so this is safe for them.
     const onClick = (e) => {
       e.stopPropagation();
-      // Shown around the last-known position (see _provFix): catchable
-      // once a live fix confirms the player is actually here.
-      if (_userLat == null) {
-        _saveImageNotice('Waiting for GPS to confirm your location…', 1800);
-        return;
-      }
       openBattleScreen(spawn);
     };
     el.querySelector('.creature-placeholder').addEventListener('click', onClick);
@@ -16776,7 +16765,6 @@
       .addTo(_overlayMap);
     // No live fix yet → placed around the last-known position.
     const provisional = _userLat == null;
-    if (provisional) el.classList.add('creature-marker-provisional');
     const record = {
       marker, spawn, firstShownAt: Date.now(), provisional,
       // True once the marker's sprite has landed in the img and the
@@ -17028,13 +17016,9 @@
     }
     // Bulk-fetch sprites for any spawns we don't yet have markers for —
     // single IDB transaction instead of one per marker.
-    // Live fix: the provisional markers it kept are real now.
+    // Live fix: the provisional markers it kept are ordinary ones now.
     if (center.live) {
-      for (const rec of _markers.values()) {
-        if (!rec.provisional) continue;
-        rec.provisional = false;
-        rec.marker.getElement().classList.remove('creature-marker-provisional');
-      }
+      for (const rec of _markers.values()) rec.provisional = false;
     }
     const newSpawns = within.filter((s) => !_markers.has(s.id));
     if (newSpawns.length) addMarkersBatch(newSpawns);
