@@ -74,6 +74,13 @@
     const retryMaxMs = cfg.retryMaxMs != null ? cfg.retryMaxMs : 60000;
     const loadAttempts = cfg.loadAttempts != null ? cfg.loadAttempts : 3;
     const loadRetryMs = cfg.loadRetryMs != null ? cfg.loadRetryMs : 500;
+    // A read/write that never settles (a known storage failure mode on
+    // iOS) must not wedge hydration or the writer forever. Generous —
+    // a big collection's blobs take a few seconds on an old phone.
+    // Safe for writes: IndexedDB runs overlapping readwrite transactions
+    // in creation order, so a timed-out write can never land AFTER a
+    // newer checkpoint and roll it back.
+    const ioTimeoutMs = cfg.ioTimeoutMs != null ? cfg.ioTimeoutMs : 60000;
 
     // storeId → { key, kind: 'list'|'map', idField, snapshot(),
     //             journalWhenDegraded, version, ckptVersion, ckptSeq,
@@ -160,6 +167,19 @@
       });
     }
     function _sleep(ms) { return new Promise((r) => setT(r, ms)); }
+    function _withTimeout(p, what) {
+      let t;
+      return Promise.race([
+        p,
+        new Promise((_, rej) => {
+          t = setT(() => {
+            const e = new Error(what + ' timed out after ' + ioTimeoutMs + 'ms');
+            e.name = 'TimeoutError';
+            rej(e);
+          }, ioTimeoutMs);
+        }),
+      ]).finally(() => clearT(t));
+    }
 
     // Read both blobs and their checkpoint seqs. Resolves
     //   { ok: true, blobs: { id: value|undefined } }
@@ -171,7 +191,7 @@
       for (let attempt = 0; attempt < loadAttempts; attempt++) {
         if (attempt) await _sleep(loadRetryMs * attempt);
         try {
-          const r = await runOp(getDb, _readBlobs);
+          const r = await _withTimeout(runOp(getDb, _readBlobs), 'collection load');
           for (const id of ids) {
             const st = stores[id];
             st.ckptSeq = r.seqs[id];
@@ -294,6 +314,12 @@
       _noteChange(storeId);
       let journaled = false;
       if (journalOk) {
+        // Another tab (web) may have advanced the shared counter — never
+        // reuse a seq it already wrote.
+        try {
+          const shared = Number(ls.getItem(NEXT_KEY)) || 0;
+          if (shared > nextSeq) nextSeq = shared;
+        } catch (_) {}
         const seq = nextSeq++;
         try {
           ls.setItem(prefix + seq, JSON.stringify(op === 'p'
@@ -370,7 +396,7 @@
       for (const id of dirty) snapVer[id] = stores[id].version;
       writing = (async () => {
         try {
-          await runOp(getDb, (db) => {
+          await _withTimeout(runOp(getDb, (db) => {
             const tx = db.transaction(storeName, 'readwrite');
             const os = tx.objectStore(storeName);
             // put() structured-clones synchronously, so this captures the
@@ -381,7 +407,7 @@
               os.put(snapSeq, stores[id].key + ':seq');
             }
             return txDone(tx);
-          });
+          }), 'checkpoint');
           for (const id of dirty) {
             const st = stores[id];
             st.ckptVersion = snapVer[id];

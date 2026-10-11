@@ -96,6 +96,7 @@ function launch(dev, opts = {}) {
     maxJournal: opts.maxJournal ?? 300,
     retryBaseMs: 20, retryMaxMs: 80,
     loadAttempts: 2, loadRetryMs: 10,
+    ioTimeoutMs: opts.ioTimeoutMs ?? 5000,
   });
   return { ctx, CCIdb, getDb, persist, mem, logs };
 }
@@ -433,6 +434,50 @@ const journalKeys = (ls) => Array.from(ls._m.keys()).filter((k) => /^cj\.\d+$/.t
     let threw = null;
     try { d1.transaction('kv', 'readonly'); } catch (e) { threw = e; }
     ok(threw && threw.name === 'InvalidStateError', 'the dropped connection was closed (not leaked)');
+  }
+
+  // ── (15) a blob read that never settles → degraded, not a hang ──────
+  {
+    const hungDb = { transaction: () => ({ objectStore: () => ({ get: () => ({}), put() {} }) }) };
+    const dev = makeDevice();
+    const app = launch(dev, { getDb: () => Promise.resolve(hungDb), ioTimeoutMs: 40 });
+    const t0 = Date.now();
+    const r = await app.persist.load();
+    ok(!r.ok && app.persist.status().degraded, 'hung load read times out → degraded');
+    ok(Date.now() - t0 < 2000, 'hydration did not hang');
+  }
+
+  // ── (16) a checkpoint write that never settles → retried, journal kept ─
+  {
+    const dev = makeDevice();
+    let hang = false;
+    const realApp = launch(dev);
+    const hungDb = { transaction: () => ({ objectStore: () => ({ get: () => ({}), put() {} }) }) };
+    const app = launch(dev, {
+      getDb: () => (hang ? Promise.resolve(hungDb) : realApp.getDb()),
+      ioTimeoutMs: 60, debounceMs: 10000,
+    });
+    await hydrate(app);
+    hang = true;
+    catchOne(app, 'h1');
+    ok(await app.persist.flush() === false, 'hung checkpoint times out as a failure');
+    ok(journalKeys(dev.ls).length === 1, 'journal entry kept while the write hangs');
+    ok(app.persist.status().writing === false, 'writer not wedged after the timeout');
+    hang = false;
+    ok(await app.persist.flush() === true, 'next checkpoint succeeds once storage responds');
+    ok(journalKeys(dev.ls).length === 0, 'journal pruned after the successful checkpoint');
+  }
+
+  // ── (17) two tabs share the journal counter ─────────────────────────
+  {
+    const dev = makeDevice();
+    const tabA = launch(dev, { debounceMs: 10000 });
+    const tabB = launch(dev, { debounceMs: 10000 });
+    await hydrate(tabA); await hydrate(tabB);
+    catchOne(tabA, 'ta1');
+    catchOne(tabB, 'tb1');
+    catchOne(tabA, 'ta2');
+    ok(journalKeys(dev.ls).length === 3, 'interleaved tabs never overwrite each other\'s journal entries');
   }
 
   console.log(`collection-store: ${passed} passed, ${failed} failed`);
