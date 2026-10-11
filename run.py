@@ -111,6 +111,10 @@ _TRACKED_JS = {
     "species.js", "spawns.js", "trip-planner.js",
     "live-update.js", "extras.js", "types.js", "specials.js", "pack-reader.js",
     "pack-install.js", "packs.js", "shiny-store.js",
+    # Storage helpers (Oct 2026): self-healing IndexedDB connections +
+    # the collection's journal/checkpoint layer. Loaded before every
+    # script that touches IndexedDB.
+    "idb-util.js", "collection-store.js",
     # Extras add-on siblings — tracked so the Refresh button / live-update
     # pick up changes (they already have the SCRIPT_VERSION='auto' hook).
     "extras-apps.js", "extras-almanac.js", "extras-vibration.js", "extras-skymap.js",
@@ -209,6 +213,9 @@ _SCRIPT_VERSION_FILES = [
     "creatures.js", "sprites.js", "sprite-store.js", "appdata.js",
     "species.js", "spawns.js", "trip-planner.js", "live-update.js", "extras.js",
     "types.js", "specials.js", "pack-reader.js", "pack-install.js", "packs.js",
+    # shiny-store.js was in _TRACKED_JS but missing here, so live-update
+    # never shipped it to the native apps (they kept the bundled copy).
+    "shiny-store.js", "idb-util.js", "collection-store.js",
     "extras-apps.js", "extras-almanac.js", "extras-vibration.js", "extras-skymap.js",
     "extras-sudoku.js", "extras-sensors.js", "extras-tuner.js", "extras-scapes.js",
     "extras-todos.js", "extras-anki.js",
@@ -367,7 +374,14 @@ def _cors_for_capacitor(resp):
             or origin.startswith("http://localhost"):
         resp.headers["Access-Control-Allow-Origin"] = origin
         resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Download"
+        # Every non-safelisted header a cross-origin client sends must be
+        # listed here, or the browser fails the preflight and the request
+        # never leaves the device (it surfaces as "Load failed", or as a
+        # synthetic 504 when the service worker relays it). Content-Encoding
+        # is sent by the Oct-2026 gzip-save clients; leaving it out silently
+        # broke every native save from those builds.
+        resp.headers["Access-Control-Allow-Headers"] = \
+            "Content-Type, Content-Encoding, X-Download"
         resp.headers["Vary"] = "Origin"
     return resp
 
