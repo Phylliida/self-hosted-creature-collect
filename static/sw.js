@@ -97,6 +97,11 @@ const TILES_CACHE = 'tiles-v1';
 // start to "map idle + first creature sprite decoded" — keeps the last
 // 8 cold starts in localStorage, and renders [boot timeline] / [boot
 // history] at the top of the Settings dump.
+// Shell bump 2026-10-11 (#14): faster cold start. index.html (cache-first
+// '/') no longer awaits POIs/addresses/favorites before releasing static
+// tiles, starts GPS at control setup, loads the extras scripts after
+// boot settles, defers the schedule index, and searches addresses in
+// place instead of hydrating millions of objects.
 
 const APP_SHELL = [
   '/',
