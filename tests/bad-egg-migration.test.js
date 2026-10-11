@@ -1,7 +1,8 @@
 // Tests the one-time illegitimate-legendary-egg migration
 // (static/creatures.js): _migrateIllegitimateLegendaryEggs converts
-// pre-feature legendary × non-legendary daycare eggs to Bad Eggs,
-// while sparing valid pairings (both/neither legendary), solo eggs,
+// legendary × non-legendary daycare eggs laid before the 2026-10-11
+// breeding-rule fix to Bad Eggs, while sparing eggs made under the fixed
+// rule (breedRule 2), valid pairings (both/neither legendary), solo eggs,
 // already-bad eggs, and completion-egg rewards (legendary ×
 // non-legendary WITHOUT displaySpecies created on/after 2026-08-10 —
 // daycare eggs always carry displaySpecies since cross-breed).
@@ -44,12 +45,13 @@ const COMPLETION_EARLIEST = Date.UTC(2026, 7, 10);
 // Run the migration against a fixture box. Returns { eggs, writes,
 // ejected, logs }. Date.now is always stubbed (default: inside the
 // window) so the suite is wall-clock independent; the cutoff const
-// itself is injected the way the module computes it (local Oct 6).
+// itself is injected the way the module computes it (local Oct 12).
 function migrate(eggs, now) {
   const writes = [], ejected = [], logs = [];
-  const cutoffLocal = new Date(2026, 9, 6).getTime();
+  const cutoffLocal = new Date(2026, 9, 12).getTime();
   const ctx = {
     BAD_EGG_MIGRATION_CUTOFF_MS: cutoffLocal,
+    EGG_BREED_RULE: 2,
     COMPLETION_EGG_EARLIEST_MS: COMPLETION_EARLIEST,
     Date: { now: () => (now == null ? cutoffLocal - 86400000 : now), UTC: Date.UTC },
     global: {},  // no Species.ensureLoaded → migration runs synchronously
@@ -123,15 +125,26 @@ const egg = (id, a, b, extra) => Object.assign(
   ok(e.bad === true, 'missing createdAt cannot be a completion egg → converts');
 }
 
+// --- eggs laid under the fixed rule --------------------------------------------
+{
+  // Mewtwo×Pidgey + Mew×Rattata can legitimately lay a Groudon×Pikachu-
+  // style legendary × non-legendary egg now; addEgg stamps breedRule 2.
+  const e = egg('e1', 383, 25, { displaySpecies: 383, breedRule: 2, createdAt: Date.UTC(2026, 9, 11, 23) });
+  const old = egg('e2', 383, 25, { displaySpecies: 383, createdAt: Date.UTC(2026, 9, 11, 20) });
+  const r = migrate([e, old]);
+  ok(!e.bad, 'legendary × non-legendary egg made under the fixed rule (breedRule 2) is spared');
+  ok(old.bad === true && r.writes.length === 1, 'the same pairing without breedRule (old code) converts');
+}
+
 // --- date gate ------------------------------------------------------------------
 {
-  const cutoffLocal = new Date(2026, 9, 6).getTime();
+  const cutoffLocal = new Date(2026, 9, 12).getTime();
   const e = egg('e1', 383, 25, { displaySpecies: 383 });
   const r = migrate([e], cutoffLocal);  // on the cutoff → no migration
-  ok(!e.bad && r.writes.length === 0, 'no migration on/after local Oct 6 2026');
+  ok(!e.bad && r.writes.length === 0, 'no migration on/after local Oct 12 2026');
 }
 {
-  const cutoffLocal = new Date(2026, 9, 6).getTime();
+  const cutoffLocal = new Date(2026, 9, 12).getTime();
   const e = egg('e1', 383, 25, { displaySpecies: 383 });
   const r = migrate([e], cutoffLocal - 1);  // just inside the window
   ok(e.bad === true, 'migration runs just before the cutoff');

@@ -60,7 +60,7 @@ function makeCtx(extra) {
 
 // ── 1. storage round-trip ────────────────────────────────────────
 {
-  const ctx = makeCtx({ EGGS_KEY: 'cc.eggs.v1' });
+  const ctx = makeCtx({ EGGS_KEY: 'cc.eggs.v1', EGG_BREED_RULE: 2 });
   for (const m of ['function readEggs(', 'function writeEggs(', 'function addEgg(']) {
     vm.runInContext(extract(m), ctx);
   }
@@ -70,8 +70,12 @@ function makeCtx(extra) {
     '1: addEgg keeps the bad flag and the parent pair');
   ok(vm.runInContext('addEgg({ speciesA: 1, speciesB: 4 })', ctx).bad === undefined,
     '1: normal pair eggs do NOT gain a bad flag');
+  ok(rec.breedRule === 2,
+    '1: fusion eggs are stamped with the current breeding rule (migration skips them)');
+  ok(vm.runInContext('addEgg({ solo: "missingno" })', ctx).breedRule === undefined,
+    '1: solo eggs carry no breeding-rule stamp');
   const eggs = vm.runInContext('readEggs()', ctx);
-  ok(eggs.length === 2 && eggs[0].bad === true,
+  ok(eggs.length === 3 && eggs[0].bad === true,
     '1: readEggs validator round-trips Bad Eggs (pair-shaped)');
 }
 
@@ -174,8 +178,8 @@ function makeCtx(extra) {
   const html = vm.runInContext('_badEggInfoHtml()', ctx);
   ok(/legendary/i.test(html) && /non-legendary/.test(html),
     '5: explainer names the cause (legendary sharing with a non-legendary)');
-  ok(/only breed with other legendaries/.test(html) && /never hatch/.test(html),
-    '5: explainer says why it never hatches');
+  ok(/<b>both<\/b> parents have at least one legendary half/.test(html) && /never hatch/.test(html),
+    '5: explainer states the rule (both parents need a legendary half) and that it never hatches');
   ok(/3×/.test(html) && /any/.test(html) && /incense/.test(html),
     '5: explainer mentions the 3×-of-any-type craft yield');
   // Wiring: the drag-drop handler refuses Bad Eggs with this modal

@@ -155,16 +155,17 @@ function build(slots, creatures, legSet) {
   ok(rootOf(1) === 1, '5: baby-less family root is itself');
 }
 
-// ── 6. Legendary present (legendary × legendary): egg rate halves, no Bad Eggs ──
+// ── 6. Every parent has a legendary half: egg rate halves, no Bad Eggs ──
+// The rule is per PARENT: (A or B legendary) and (C or D legendary).
 {
   const { model, html } = build(
     [{ id: 'A', addedAt: 1 }, { id: 'B', addedAt: 2 }],
     {
-      A: { id: 'A', name: 'L', speciesA: 150, speciesB: 151 },   // Mewtwo × Mew — both legendary
-      B: { id: 'B', name: 'N', speciesA: 4, speciesB: 1 },       // Charmander × Bulbasaur
+      A: { id: 'A', name: 'L', speciesA: 150, speciesB: 7 },     // Mewtwo × Squirtle
+      B: { id: 'B', name: 'N', speciesA: 151, speciesB: 1 },     // Mew × Bulbasaur
     },
     new Set([150, 151]));
-  ok(model.badEggs === false, '6: legendary × legendary pair does NOT trigger Bad Eggs');
+  ok(model.badEggs === false, '6: both parents carry a legendary half → normal eggs (no Bad Eggs)');
   // The halved egg band's slack folds into candy (mirrors _daycareLootAt:
   // the evo band stays pinned at the top 15%, candy absorbs the rest).
   const sA = model.slots[0], sB = model.slots[1];
@@ -176,6 +177,32 @@ function build(slots, creatures, legSet) {
   ok(html.indexOf('Egg 7.5%') >= 0 && html.indexOf('Bad Egg') < 0,
      '6: chip shows the halved rate, still a normal egg');
   ok(html.indexOf('what hatches') >= 0, '6: egg-contents section still shown');
+}
+
+// ── 6b. Only one parent has a legendary → Bad Eggs, even if it's all-legendary ──
+// The pre-2026-10-11 rule tested each creature on its own, so an
+// all-legendary parent next to a non-legendary one laid legendary ×
+// non-legendary eggs. That pairing is a mismatch now.
+{
+  const { model, html } = build(
+    [{ id: 'A', addedAt: 1 }, { id: 'B', addedAt: 2 }],
+    {
+      A: { id: 'A', name: 'L', speciesA: 150, speciesB: 151 },   // Mewtwo × Mew
+      B: { id: 'B', name: 'N', speciesA: 4, speciesB: 1 },       // Charmander × Bulbasaur
+    },
+    new Set([150, 151]));
+  ok(model.badEggs === true, '6b: all-legendary parent + non-legendary parent → Bad Eggs');
+  ok(html.indexOf('Bad Egg 7.5%') >= 0, '6b: chip reads "Bad Egg 7.5%"');
+}
+
+// ── 6c. A lone creature breeds with itself: one legendary half is enough ──
+{
+  const { model } = build(
+    [{ id: 'A', addedAt: 1 }],
+    { A: { id: 'A', name: 'M', speciesA: 150, speciesB: 7 } },   // Mewtwo × Squirtle alone
+    new Set([150]));
+  ok(model.badEggs === false, '6c: a single legendary-half creature lays normal eggs');
+  ok(close(model.slots[0].eggPct, 0.075), '6c: at the halved legendary rate');
 }
 
 // ── 7. Legendary with an item evo: evo band stays pinned, candy absorbs ──
@@ -192,16 +219,16 @@ function build(slots, creatures, legSet) {
   ok(model.badEggs === false, '7: both halves legendary → no Bad Eggs');
 }
 
-// ── 8. Legendary × non-legendary: Bad Egg replaces the egg contents ──
+// ── 8. One parent with a legendary half, one without: Bad Eggs ──
 {
   const { model, html } = build(
     [{ id: 'A', addedAt: 1 }, { id: 'B', addedAt: 2 }],
     {
-      A: { id: 'A', name: 'M', speciesA: 150, speciesB: 7 },   // Mewtwo × Squirtle — mismatched
-      B: { id: 'B', name: 'N', speciesA: 4, speciesB: 1 },     // normal pair, still poisoned
+      A: { id: 'A', name: 'M', speciesA: 150, speciesB: 7 },   // Mewtwo × Squirtle
+      B: { id: 'B', name: 'N', speciesA: 4, speciesB: 1 },     // no legendary half → mismatch
     },
     new Set([150]));
-  ok(model.badEggs === true, '8: mismatched pair flips the model to Bad Eggs');
+  ok(model.badEggs === true, '8: mismatched parents flip the model to Bad Eggs');
   // The NUMBER is the point: the chip probability is exactly the halved
   // egg rate, identical for both slots (rule is daycare-wide).
   ok(model.slots[0].eggPct === 0.15 / 2 && model.slots[1].eggPct === 0.15 / 2,

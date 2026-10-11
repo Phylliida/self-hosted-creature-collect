@@ -1258,8 +1258,8 @@
   // Legendary daycare cutoff: legendaries hatched from eggs BEFORE the
   // 2026-10-05 bad-egg rule shipped may be legendary × non-legendary
   // fusions (that pairing was possible while any legendary sat in the
-  // daycare). Those can't go back in — legendaries only breed with
-  // each other now. 2026-10-05T00:00:00-07:00 (Pacific, game time).
+  // daycare), bred outside the rules — so they can't go back in.
+  // 2026-10-05T00:00:00-07:00 (Pacific, game time).
   const LEGENDARY_DAYCARE_CUTOFF_MS = 1791183600000;
 
   // Egg inventory. Each entry is an unhatched fusion egg dropped
@@ -1273,6 +1273,9 @@
   // counter) is layered in a separate slice; for v1 eggs are just
   // collected and viewable in the new Eggs sub-view.
   const EGGS_KEY = 'cc.eggs.v1';
+  // Breeding-rule version stamped on fusion eggs at creation (addEgg).
+  // 2 = 2026-10-11 rule: every daycare parent needs a legendary half.
+  const EGG_BREED_RULE = 2;
 
   function readEggs() {
     try {
@@ -1323,9 +1326,13 @@
       if (Number.isInteger(egg.displaySpecies)) {
         record.displaySpecies = egg.displaySpecies;
       }
-      // Bad Eggs (legendary × non-legendary daycare mismatch) never
-      // hatch; they only craft into 3× incense.
+      // Bad Eggs (legendary daycare mismatch) never hatch; they only
+      // craft into 3× incense.
       if (egg.bad === true) record.bad = true;
+      // Made under the current breeding rule — the one-time Bad Egg
+      // migration leaves these alone (a legendary × non-legendary egg is
+      // legitimate now when both parents had a legendary half).
+      record.breedRule = EGG_BREED_RULE;
     }
     arr.push(record);
     writeEggs(arr);
@@ -1551,11 +1558,13 @@
   }
 
   // ── One-time migration: illegitimate legendary eggs ───────────
-  // Before the Bad Egg rule shipped (legendaries only breed with each
-  // other, 2026-10-05), the daycare could produce legendary ×
-  // non-legendary eggs that the game now treats as invalid. Convert
-  // any survivors to Bad Eggs — but only while the date is before
-  // 2026-10-06, and sparing completion-egg rewards: those
+  // Before the Bad Egg rule shipped (2026-10-05) — and, through a bug in
+  // that rule, until its fix on 2026-10-11 — the daycare could produce
+  // legendary × non-legendary eggs from parents that weren't BOTH
+  // carrying a legendary. Convert any survivors to Bad Eggs — but only
+  // while the date is before 2026-10-12, skipping eggs made under the
+  // fixed rule (breedRule — those pairings are legitimate now), and
+  // sparing completion-egg rewards: those
   // legitimately pair a legendary with the completed non-legendary
   // species, are created WITHOUT displaySpecies (daycare eggs always
   // carry one since cross-breed, 2026-05-09), and can't predate the
@@ -1563,10 +1572,10 @@
   // eggs are skipped on later boots — and self-scheduling: it waits
   // for species data so isLegendarySpecies uses the active pack's
   // legendary set rather than the gen-1 fallback.
-  // Local-time cutoff: "before October 6th 2026" reads naturally per
+  // Local-time cutoff: "before October 12th 2026" reads naturally per
   // device — a UTC-midnight gate would close the window a day early
   // for the Americas.
-  const BAD_EGG_MIGRATION_CUTOFF_MS = new Date(2026, 9, 6).getTime();
+  const BAD_EGG_MIGRATION_CUTOFF_MS = new Date(2026, 9, 12).getTime();
   const COMPLETION_EGG_EARLIEST_MS = Date.UTC(2026, 7, 10);
   function _migrateIllegitimateLegendaryEggs() {
     if (Date.now() >= BAD_EGG_MIGRATION_CUTOFF_MS) return;
@@ -1575,6 +1584,8 @@
       let converted = 0;
       for (const egg of eggs) {
         if (!egg || _isSoloEgg(egg) || _isBadEgg(egg)) continue;
+        // Laid under the fixed rule: its parents both had a legendary.
+        if (egg.breedRule === EGG_BREED_RULE) continue;
         // Both legendary or neither: a valid pairing, leave it.
         if (isLegendarySpecies(egg.speciesA) === isLegendarySpecies(egg.speciesB)) continue;
         // Legendary × non-legendary. Spare anything that could be a
@@ -1765,10 +1776,10 @@
   const DAYCARE_PROB_CANDY = 0.70;
   const DAYCARE_PROB_EGG = 0.15;  // upper bound 0.85 is also the fixed evo threshold
 
-  // Egg probability for the current daycare population. Legendaries
-  // only breed with each other, so while ANY legendary sits in the
-  // daycare the egg chance halves (the freed band folds into candy —
-  // the evo band stays pinned at the top 0.15).
+  // Egg probability for the current daycare population. Legendaries are
+  // picky breeders (see _daycareHasBadEggMismatch), so while ANY legendary
+  // sits in the daycare the egg chance halves (the freed band folds into
+  // candy — the evo band stays pinned at the top 0.15).
   function _daycareEggProb() {
     for (const s of readDaycareSlots()) {
       const c = findCreature(s.id);
@@ -1779,17 +1790,25 @@
     return DAYCARE_PROB_EGG;
   }
 
-  // Bad-egg rule: a slot holding a legendary fused with a non-legendary
-  // can't breed — and its presence poisons every egg roll in EVERY slot,
-  // turning them into Bad Eggs (never hatch; craft 3× incense of any
-  // type). Legendary × legendary pairs still produce normal eggs.
+  // Bad-egg rule: with a legendary in the daycare, eggs only come out
+  // right when EVERY parent has at least one legendary half — for
+  // parents A×B and C×D, (A or B legendary) and (C or D legendary). If
+  // one parent has a legendary half and another has none, every egg roll
+  // in every slot is a Bad Egg (never hatches; crafts 3× incense of any
+  // type). A lone creature breeds with itself, so it always passes; solo
+  // creatures don't add species to the pair pools, so they don't count.
+  // Before 2026-10-11 the test was per creature (one legendary half =
+  // mismatch), which blocked Mewtwo×Pidgey + Mew×Rattata yet let
+  // Mewtwo×Mew + Pidgey×Rattata lay legendary × non-legendary eggs.
   function _daycareHasBadEggMismatch() {
+    let withLegendary = 0, without = 0;
     for (const s of readDaycareSlots()) {
       const c = findCreature(s.id);
-      if (!c) continue;
-      if (isLegendarySpecies(c.speciesA) !== isLegendarySpecies(c.speciesB)) return true;
+      if (!c || !Number.isInteger(c.speciesA) || !Number.isInteger(c.speciesB)) continue;
+      if (isLegendarySpecies(c.speciesA) || isLegendarySpecies(c.speciesB)) withLegendary++;
+      else without++;
     }
-    return false;
+    return withLegendary > 0 && without > 0;
   }
 
   function _evoItemsForFamily(speciesId) {
@@ -1849,7 +1868,7 @@
     if (Number.isInteger(b)) secondPool.add(b);
     const allSpeciesSet = new Set([...firstPool, ...secondPool]);
     // Egg chance for this loot call — halves while any legendary is in
-    // the daycare (they only breed with each other).
+    // the daycare (see _daycareEggProb).
     const eggProb = _daycareEggProb();
 
     // Six independent uniform draws from the per-milestone seed.
@@ -1920,10 +1939,10 @@
       return candyLoot();
     }
     if (u1 < DAYCARE_PROB_CANDY + eggProb) {
-      // Bad Egg: a legendary × non-legendary creature anywhere in the
-      // daycare poisons every egg roll (legendaries only breed with
-      // each other). The egg keeps the slot's own species for art /
-      // record purposes but can never hatch — it crafts 3× incense.
+      // Bad Egg: a parent with a legendary half sharing the daycare with
+      // one that has none poisons every egg roll (_daycareHasBadEggMismatch).
+      // The egg keeps the slot's own species for art / record purposes
+      // but can never hatch — it crafts 3× incense.
       if (_daycareHasBadEggMismatch()) {
         const sizeM = Math.round((0.5 + u3 * 1.5) * 100) / 100;
         return {
@@ -2777,7 +2796,7 @@
       onToggle: (c) => {
         if (!c || c.id == null) return;
         if (!isInDaycare(c.id) && _legendaryTooOldForDaycare(c)) {
-          _saveImageNotice('Legendaries hatched before Oct 5 2026 can\'t be placed in the daycare — legendaries can only breed with each other.', 3200);
+          _saveImageNotice('Legendaries hatched from eggs before Oct 5 2026 can\'t be placed in the daycare.', 3200);
           return;
         }
         toggleDaycare(c.id);
@@ -11843,8 +11862,9 @@
     }
     if (m.badEggs) {
       h += '<div class="dc-odds-eggs"><div class="dc-odds-eggs-title">If an egg drops, it\'s a Bad Egg</div>';
-      h += '<div class="dc-odds-note">A legendary is sharing the daycare with a non-legendary, and '
-        + 'legendaries only breed with each other — so this daycare only produces <b>Bad Eggs</b>: '
+      h += '<div class="dc-odds-note">One pokémon here has a legendary half and the other is '
+        + 'entirely non-legendary — legendaries only breed when both parents have one — so this '
+        + 'daycare only produces <b>Bad Eggs</b>: '
         + 'a <b>' + _fmtPct(m.slots[0].eggPct) + '</b> chance on each ' + dist + ' drop, from either '
         + 'slot. They never hatch, no matter how far you walk; they craft into <b>3×</b> incense '
         + 'of any type.</div></div>';
@@ -12079,14 +12099,14 @@
   // Bad Egg explainer — shown when the player tries to incubate one.
   function _badEggInfoHtml() {
     let h = '';
-    h += '<p class="cc-info-p">A Bad Egg comes from the daycare while a <b>legendary</b> '
-      + 'was sharing it with a <b>non-legendary</b> pokémon.</p>';
+    h += '<p class="cc-info-p">A Bad Egg comes from the daycare when one parent has a '
+      + '<b>legendary</b> half and the other is entirely <b>non-legendary</b>.</p>';
     h += '<div class="cc-info-section">';
     h += '<div class="cc-info-section-title">Why it never hatches</div>';
     h += '<div class="cc-info-row"><span class="cc-info-k">Mixed pair</span>'
-      + '<span class="cc-info-v">Legendaries only breed with other legendaries, so an egg '
-      + 'laid next to a mismatched pair is a dud — it can\'t go in the incubator and will '
-      + 'never hatch.</span></div>';
+      + '<span class="cc-info-v">Legendaries only breed when <b>both</b> parents have at least '
+      + 'one legendary half, so an egg laid by a mismatched pair is a dud — it can\'t go in '
+      + 'the incubator and will never hatch.</span></div>';
     h += '</div>';
     h += '<div class="cc-info-section">';
     h += '<div class="cc-info-section-title">What it\'s good for</div>';
