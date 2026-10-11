@@ -176,7 +176,7 @@ function makeCtx(extra) {
 
 // --- 5) eggs: validation, helpers, hatch --------------------------------------------
 {
-  const ctx = makeCtx({ EGGS_KEY: 'cc.eggs.v1' });
+  const ctx = makeCtx({ EGGS_KEY: 'cc.eggs.v1', EGG_BREED_RULE: 2 });
   for (const m of ['function readEggs(', 'function writeEggs(', 'function addEgg(']) {
     vm.runInContext(extract(m), ctx);
   }
