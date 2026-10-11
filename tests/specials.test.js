@@ -303,7 +303,7 @@ function makeCtx(extra) {
       DAYCARE_PROB_EGG: 0.15,
     });
     for (const m of ['function _daycareEggProb(', 'function _daycareHasBadEggMismatch(',
-                     'function _daycareLootAt(']) {
+                     'function _daycareLegendaryWithoutPartner(', 'function _daycareLootAt(']) {
       vm.runInContext(extract(m), dcCtx);
     }
     let sawCandy = 0, sawEgg = 0;
@@ -349,7 +349,7 @@ function makeCtx(extra) {
         DAYCARE_PROB_EGG: 0.15,
       });
       for (const m of ['function _daycareEggProb(', 'function _daycareHasBadEggMismatch(',
-                       'function _daycareLootAt(']) {
+                       'function _daycareLegendaryWithoutPartner(', 'function _daycareLootAt(']) {
         vm.runInContext(extract(m), c2);
       }
       return c2;
@@ -383,13 +383,15 @@ function makeCtx(extra) {
       `6b: every egg roll in every slot is a Bad Egg (${mixBad} bad, ${mixNormalEgg} normal)`);
     ok(mixCandy > mixBad, '6b: candy drops keep flowing (untouched by the rule)');
 
-    // --- 6c) legendary × legendary: halved rate, but NORMAL eggs ------------
+    // --- 6c) every parent has a legendary half: halved rate, NORMAL eggs ----
     const slotP = { id: 'c-pure', addedAt: 7, distM: 1e6, claimed: [] };
-    const pureCtx = mkPairCtx([slotP], {
+    const slotP2 = { id: 'c-pure2', addedAt: 8, distM: 1e6, claimed: [] };
+    const pureCtx = mkPairCtx([slotP, slotP2], {
       'c-pure': { id: 'c-pure', speciesA: 150, speciesB: 150 },
+      'c-pure2': { id: 'c-pure2', speciesA: 150, speciesB: 4 },  // partner with a legendary half
     });
     ok(vm.runInContext('_daycareHasBadEggMismatch()', pureCtx) === false,
-      '6c: legendary × legendary does NOT trip the mismatch rule');
+      '6c: two parents that each have a legendary half do NOT trip the mismatch rule');
     ok(vm.runInContext('_daycareEggProb()', pureCtx) === 0.075,
       '6c: egg probability still halves');
     const cleanCtx = mkPairCtx([slotP], {
@@ -423,12 +425,23 @@ function makeCtx(extra) {
     ok(pureBad === 0 && pureOk > 0,
       '6c: legendary × legendary eggs stay normal (hatchable), never Bad Eggs');
 
+    // --- 6e) a legendary half with no partner lays no eggs at all ---------
+    const loneCtx = mkPairCtx([slotP], {
+      'c-pure': { id: 'c-pure', speciesA: 150, speciesB: 150 },
+    });
+    ok(vm.runInContext('_daycareLegendaryWithoutPartner()', loneCtx) === true,
+      '6e: a lone legendary-half creature has no partner');
+    ok(countEggs(loneCtx, slotP, 800) === 0,
+      '6e: no eggs (normal or Bad) in its loot stream — the egg band is candy');
+
     // --- 6d) halved rate with an item evo: slack folds into CANDY ---------
     // The evo band stays pinned at the top 15% — the odds popup's pinned
     // evoPct must mirror these real thresholds.
     const slotE = { id: 'c-evo', addedAt: 9, distM: 1e6, claimed: [] };
-    const evoCtx = mkPairCtx([slotE], {
+    const slotE2 = { id: 'c-evo2', addedAt: 10, distM: 1e6, claimed: [] };
+    const evoCtx = mkPairCtx([slotE, slotE2], {
       'c-evo': { id: 'c-evo', speciesA: 150, speciesB: 151 },   // both legendary → halved, not bad
+      'c-evo2': { id: 'c-evo2', speciesA: 150, speciesB: 4 },   // its partner (legendary half)
     });
     evoCtx._evoItemsForFamily = () => ['thunder_stone'];
     evoCtx.ITEMS = { thunder_stone: { name: 'Thunder Stone' } };

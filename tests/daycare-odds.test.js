@@ -56,7 +56,7 @@ function build(slots, creatures, legSet) {
     isFusionOwned: () => false,
   };
   vm.createContext(ctx);
-  for (const fn of ['_daycareEggProb(', '_daycareHasBadEggMismatch(',
+  for (const fn of ['_daycareEggProb(', '_daycareHasBadEggMismatch(', '_daycareLegendaryWithoutPartner(',
                     '_fmtPct(', '_daycareOddsModel()', '_daycareOddsHtml()']) {
     vm.runInContext(extract('function ' + fn), ctx);
   }
@@ -195,22 +195,37 @@ function build(slots, creatures, legSet) {
   ok(html.indexOf('Bad Egg 7.5%') >= 0, '6b: chip reads "Bad Egg 7.5%"');
 }
 
-// ── 6c. A lone creature breeds with itself: one legendary half is enough ──
+// ── 6c. A legendary half needs a partner: alone, no eggs at all ──
 {
-  const { model } = build(
+  const { model, html } = build(
     [{ id: 'A', addedAt: 1 }],
     { A: { id: 'A', name: 'M', speciesA: 150, speciesB: 7 } },   // Mewtwo × Squirtle alone
     new Set([150]));
-  ok(model.badEggs === false, '6c: a single legendary-half creature lays normal eggs');
-  ok(close(model.slots[0].eggPct, 0.075), '6c: at the halved legendary rate');
+  ok(model.noPartner === true && model.badEggs === false,
+    '6c: a lone legendary-half creature is flagged as having no partner (not Bad Eggs)');
+  ok(model.slots[0].eggPct === 0 && close(model.slots[0].candyPct, 1),
+    '6c: no egg chance — the egg band folds into candy');
+  ok(html.indexOf('Egg ') < 0 && html.indexOf('No eggs without a partner') >= 0,
+    '6c: no egg chip; the copy explains it needs a partner');
+}
+// ── 6d. A lone NON-legendary still breeds with itself ──
+{
+  const { model } = build(
+    [{ id: 'A', addedAt: 1 }],
+    { A: { id: 'A', name: 'N', speciesA: 4, speciesB: 7 } },
+    new Set([150]));
+  ok(!model.noPartner && model.slots[0].eggPct === 0.15, '6d: lone non-legendary keeps its full egg rate');
 }
 
 // ── 7. Legendary with an item evo: evo band stays pinned, candy absorbs ──
 {
   const { model } = build(
-    [{ id: 'A', addedAt: 1 }],
-    { A: { id: 'A', name: 'M', speciesA: 150, speciesB: 26 } },   // Mewtwo × Raichu — but make both "legendary"
-    new Set([150, 26]));
+    [{ id: 'A', addedAt: 1 }, { id: 'B', addedAt: 2 }],
+    {
+      A: { id: 'A', name: 'M', speciesA: 150, speciesB: 26 },   // Mewtwo × Raichu — but make both "legendary"
+      B: { id: 'B', name: 'P', speciesA: 151, speciesB: 4 },    // partner with a legendary half
+    },
+    new Set([150, 151, 26]));
   const s = model.slots[0];
   ok(close(s.eggPct, 0.075), '7: halved egg rate');
   ok(close(s.evoPct, 0.15), '7: item-evo band stays pinned at 15%');

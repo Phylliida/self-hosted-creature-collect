@@ -1255,12 +1255,13 @@
   // added — a creature's distance counter, already-claimed milestones,
   // and candy-conversion state travel with it across daycare stays.
   const DAYCARE_LIFETIME_KEY = 'cc.daycareLifetime.v1';
-  // Legendary daycare cutoff: legendaries hatched from eggs BEFORE the
-  // 2026-10-05 bad-egg rule shipped may be legendary × non-legendary
-  // fusions (that pairing was possible while any legendary sat in the
-  // daycare), bred outside the rules — so they can't go back in.
-  // 2026-10-05T00:00:00-07:00 (Pacific, game time).
-  const LEGENDARY_DAYCARE_CUTOFF_MS = 1791183600000;
+  // Legendary daycare cutoff: legendary × non-legendary pokémon hatched
+  // from eggs BEFORE the breeding rule was fixed may have been bred
+  // outside the rules (before the 2026-10-05 bad-egg rule, and through
+  // its per-creature bug until the 2026-10-11 fix), so they can't go back
+  // in. Legendary × legendary hatches were always legitimate.
+  // 2026-10-12T00:00:00-07:00 (Pacific, game time).
+  const LEGENDARY_DAYCARE_CUTOFF_MS = 1791788400000;
 
   // Egg inventory. Each entry is an unhatched fusion egg dropped
   // from the daycare loot rolls (or, in the future, traded /
@@ -1795,8 +1796,9 @@
   // parents A×B and C×D, (A or B legendary) and (C or D legendary). If
   // one parent has a legendary half and another has none, every egg roll
   // in every slot is a Bad Egg (never hatches; crafts 3× incense of any
-  // type). A lone creature breeds with itself, so it always passes; solo
-  // creatures don't add species to the pair pools, so they don't count.
+  // type). A creature with a legendary half and no partner lays no eggs
+  // at all (_daycareLegendaryWithoutPartner); solo creatures don't add
+  // species to the pair pools, so they don't count as parents.
   // Before 2026-10-11 the test was per creature (one legendary half =
   // mismatch), which blocked Mewtwo×Pidgey + Mew×Rattata yet let
   // Mewtwo×Mew + Pidgey×Rattata lay legendary × non-legendary eggs.
@@ -1809,6 +1811,22 @@
       else without++;
     }
     return withLegendary > 0 && without > 0;
+  }
+
+  // A parent with a legendary half needs a partner: when it's the only
+  // pair creature in the daycare (solo specials aren't partners), pair
+  // egg rolls lay nothing — their egg band folds into candy, like the
+  // halved legendary band does. Lone non-legendary creatures still breed
+  // with themselves.
+  function _daycareLegendaryWithoutPartner() {
+    let parents = 0, legendary = false;
+    for (const s of readDaycareSlots()) {
+      const c = findCreature(s.id);
+      if (!c || !Number.isInteger(c.speciesA) || !Number.isInteger(c.speciesB)) continue;
+      parents++;
+      if (isLegendarySpecies(c.speciesA) || isLegendarySpecies(c.speciesB)) legendary = true;
+    }
+    return parents === 1 && legendary;
   }
 
   function _evoItemsForFamily(speciesId) {
@@ -1938,7 +1956,9 @@
     if (u1 < DAYCARE_PROB_CANDY) {
       return candyLoot();
     }
-    if (u1 < DAYCARE_PROB_CANDY + eggProb) {
+    // A legendary half with no partner lays no eggs — the band is candy.
+    const pairEggProb = _daycareLegendaryWithoutPartner() ? 0 : eggProb;
+    if (u1 < DAYCARE_PROB_CANDY + pairEggProb) {
       // Bad Egg: a parent with a legendary half sharing the daycare with
       // one that has none poisons every egg roll (_daycareHasBadEggMismatch).
       // The egg keeps the slot's own species for art / record purposes
@@ -2583,14 +2603,16 @@
     return addToDaycare(id);
   }
 
-  // A hatched-from-egg legendary caught before LEGENDARY_DAYCARE_CUTOFF_MS
-  // may be a legendary × non-legendary fusion, which the bad-egg rule now
-  // forbids in the daycare — refuse to place it. Wild-caught legendaries
-  // (fromEgg unset) are unaffected. A fromEgg record without a usable
-  // timestamp can't prove it post-dates the rule, so it counts as blocked.
+  // A legendary × non-legendary pokémon hatched before
+  // LEGENDARY_DAYCARE_CUTOFF_MS may come from an egg bred outside the
+  // rules — refuse to place it in the daycare. Legendary × legendary
+  // hatches and wild catches (fromEgg unset) are unaffected. A fromEgg
+  // record without a usable timestamp can't prove it post-dates the fix,
+  // so it counts as blocked.
   function _legendaryTooOldForDaycare(c) {
     if (!c || c.fromEgg !== true) return false;
-    if (!isLegendarySpecies(c.speciesA) && !isLegendarySpecies(c.speciesB)) {
+    // Exactly one legendary half; both or neither is fine.
+    if (isLegendarySpecies(c.speciesA) === isLegendarySpecies(c.speciesB)) {
       return false;
     }
     const ts = c.caughtAt && c.caughtAt.timestamp;
@@ -2780,9 +2802,9 @@
       predicate: (c) => c && c.id != null && isInDaycare(c.id),
       visible: (c) => {
         if (!c || c.id == null) return false;
-        // Pre-cutoff hatched legendaries can't be placed (bad-egg
-        // rule) — hide the chip unless they're somehow already in,
-        // so they can still be removed.
+        // Pre-cutoff hatched legendary × non-legendary pokémon can't be
+        // placed (_legendaryTooOldForDaycare) — hide the chip unless
+        // they're somehow already in, so they can still be removed.
         if (!isInDaycare(c.id) && _legendaryTooOldForDaycare(c)) return false;
         // Show the chip when the creature is already in the daycare
         // (so it can be tapped to remove) OR when there's space for
@@ -2796,7 +2818,7 @@
       onToggle: (c) => {
         if (!c || c.id == null) return;
         if (!isInDaycare(c.id) && _legendaryTooOldForDaycare(c)) {
-          _saveImageNotice('Legendaries hatched from eggs before Oct 5 2026 can\'t be placed in the daycare.', 3200);
+          _saveImageNotice('Legendary × non-legendary pokémon hatched from eggs before Oct 12 2026 can\'t be placed in the daycare.', 3200);
           return;
         }
         toggleDaycare(c.id);
@@ -11774,8 +11796,9 @@
     }
     if (!occ.length) return { empty: true, milestoneM: DAYCARE_LOOT_MILESTONE_M };
 
-    const eggProb = _daycareEggProb();
-    const badEggs = _daycareHasBadEggMismatch();
+    const noPartner = _daycareLegendaryWithoutPartner();
+    const eggProb = noPartner ? 0 : _daycareEggProb();
+    const badEggs = !noPartner && _daycareHasBadEggMismatch();
 
     // Per-slot candy + evo-item odds (these read only that slot's own pair).
     const slots = occ.map(({ c }) => {
@@ -11822,7 +11845,7 @@
       .sort((p, q) => q.pct - p.pct);
 
     return {
-      empty: false, milestoneM: DAYCARE_LOOT_MILESTONE_M, slots, eggContents, badEggs,
+      empty: false, milestoneM: DAYCARE_LOOT_MILESTONE_M, slots, eggContents, badEggs, noPartner,
       naturalPairs: new Set(eggContents.filter((e) => e.natural).map((e) => e.name)).size,
       crossPairs: new Set(eggContents.filter((e) => !e.natural).map((e) => e.name)).size,
     };
@@ -11845,7 +11868,8 @@
       h += '<div class="dc-odds-slot"><div class="dc-odds-slot-name">' + escapeHtml(s.name) + '</div>';
       h += '<div class="dc-odds-split">'
         + '<span class="dc-tag candy">Candy ' + _fmtPct(s.candyPct) + '</span>'
-        + (m.badEggs
+        + (m.noPartner ? ''
+          : m.badEggs
             ? '<span class="dc-tag bad">Bad Egg ' + _fmtPct(s.eggPct) + '</span>'
             : '<span class="dc-tag egg">Egg ' + _fmtPct(s.eggPct) + '</span>')
         + (s.evoPct > 0 ? '<span class="dc-tag evo">Evo item ' + _fmtPct(s.evoPct) + '</span>' : '')
@@ -11859,6 +11883,13 @@
         h += '<div class="dc-odds-line dc-odds-note">No item evolutions for this pair — those rolls become extra candy.</div>';
       }
       h += '</div>';
+    }
+    if (m.noPartner) {
+      h += '<div class="dc-odds-eggs"><div class="dc-odds-eggs-title">No eggs without a partner</div>';
+      h += '<div class="dc-odds-note">A pokémon with a legendary half needs a partner to breed. Add '
+        + 'another pokémon that also has a legendary half to start getting eggs — until then, egg '
+        + 'drops become candy.</div></div>';
+      return h;
     }
     if (m.badEggs) {
       h += '<div class="dc-odds-eggs"><div class="dc-odds-eggs-title">If an egg drops, it\'s a Bad Egg</div>';
