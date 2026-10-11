@@ -222,6 +222,22 @@ function sliceFn(src, head) {
     'boot settles on map idle + first sprite, not whichever comes first');
 }
 
+// ── 4d. Sprite head start for last-known-position spawns ──────────────
+{
+  const creaturesSrc = fs.readFileSync(path.join(root, 'static', 'creatures.js'), 'utf8');
+  const spritesSrc = fs.readFileSync(path.join(root, 'static', 'sprites.js'), 'utf8');
+  const pre = sliceFn(creaturesSrc, 'async function _prefetchProvisionalSprites(');
+  ok(/_loadLastFix\(\)/.test(pre) && /SpriteStore\.preload\(/.test(pre),
+    'prefetch loads sprites for the spawns around the last-known position');
+  ok(!/addMarker|openBattleScreen|markFusionSeen|_userLat\s*=/.test(pre),
+    'prefetch is read-only (no markers, sightings or position changes)');
+  ok(/setTimeout\(_prefetchProvisionalSprites, 0\);\s*\n\s*global\.Creatures = \{/.test(creaturesSrc),
+    'prefetch is scheduled once creatures.js has fully evaluated');
+  ok(/window\.Capacitor\) \{\s*setTimeout\(\(\) => \{ _ensureVariantSummary\(\)/.test(spritesSrc),
+    'sprites.js warms the variant table at load on Capacitor');
+  ok(!/icon-probe/.test(indexSrc), 'no icon-path probe fetches at boot');
+}
+
 // ── 5. Capacitor variant counts: compact cells table persisted ────────
 // The first sprite batch used to rebuild per-cell variant counts from
 // the full cells.json object (~99 k keys) on every boot — ~0.9 s on a

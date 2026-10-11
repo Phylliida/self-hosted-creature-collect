@@ -16920,6 +16920,51 @@
     for (const id of Array.from(_markers.keys())) removeMarker(id);
   }
 
+  // Uncaught spawns within VISIBILITY_RADIUS_M of (lat, lng); in focus
+  // mode only the legendary/radar ones that stay catchable there.
+  function _spawnsAround(lat, lng, focusOn) {
+    const padM = VISIBILITY_RADIUS_M + 15;
+    const latPad = padM / 111000;
+    const lngPad = padM / (111000 * Math.cos(lat * Math.PI / 180));
+    const bbox = [lng - lngPad, lat - latPad, lng + lngPad, lat + latPad];
+    const caught = readCaughtSpawnIds();
+    return global.Spawns.spawnsInBbox(bbox).filter((s) =>
+      !caught.has(s.id)
+      && (!focusOn || s.legendary || s.evolved)
+      && metersBetween(lat, lng, s.lat, s.lng) <= VISIBILITY_RADIUS_M
+    );
+  }
+
+  // Boot head start for the last-known-position spawns. Before the map
+  // even exists, work out which creatures will spawn there and start
+  // their sprites loading (variant counts → pack reads), so the markers
+  // attachSpawnOverlay adds a few hundred ms later find them cached
+  // (SpriteStore.preload caches per-sprite promises, so the markers'
+  // own preload shares these reads instead of repeating them). Runs as
+  // its own task while the boot code awaits the service worker, fonts,
+  // etc.; read-only — markers, seen-marks and catches still go through
+  // attachSpawnOverlay / openBattleScreen.
+  async function _prefetchProvisionalSprites() {
+    try {
+      if (!readEnabled() || !global.Spawns || !global.SpriteStore) return;
+      const f = _loadLastFix();
+      if (!f) return;
+      _bootMark('spawns:prefetch');
+      const pairs = _spawnsAround(f.lat, f.lng, _focusIsActive())
+        .filter((s) => !(typeof s.solo === 'string' && s.solo));
+      if (!pairs.length) return;
+      if (global.Sprites && global.Sprites.getCellVariantCountsBatch) {
+        await global.Sprites.getCellVariantCountsBatch(pairs.map((s) => [s.speciesA, s.speciesB]));
+      }
+      const variants = await Promise.all(pairs.map((s) => resolveSpawnVariant(s)));
+      await global.SpriteStore.preload(pairs.map((s, i) =>
+        ({ a: s.speciesA, b: s.speciesB, variant: variants[i] })));
+      _bootMark('spawns:prefetched', `${pairs.length} sprites`);
+    } catch (e) {
+      _logCreatureError('prefetchProvisionalSprites', e);
+    }
+  }
+
   function refreshSpawnOverlay() {
     if (!_overlayMap || !global.Spawns) return;
     // Focus mode suppresses ordinary wild/incense spawns, but legendary
@@ -16949,21 +16994,8 @@
     _lastRefreshLng = cLng;
     _lastRefreshAt = now;
 
-    const padM = VISIBILITY_RADIUS_M + 15;
-    const latPad = padM / 111000;
-    const lngPad = padM / (111000 * Math.cos(cLat * Math.PI / 180));
-    const bbox = [
-      cLng - lngPad, cLat - latPad,
-      cLng + lngPad, cLat + latPad,
-    ];
     pruneCaughtSpawnIds();
-    const caught = readCaughtSpawnIds();
-    const spawns = global.Spawns.spawnsInBbox(bbox);
-    const within = spawns.filter((s) =>
-      !caught.has(s.id)
-      && (!focusOn || s.legendary || s.evolved)
-      && metersBetween(cLat, cLng, s.lat, s.lng) <= VISIBILITY_RADIUS_M
-    );
+    const within = _spawnsAround(cLat, cLng, focusOn);
     _bootMark('spawns:firstRefresh',
       `${within.length} in range, ${Math.round(performance.now() - _t0)}ms`
       + (center.live ? '' : ', last-known position'));
@@ -18509,6 +18541,10 @@
       });
     }
   }
+  // After this script has run (every const above initialised): the boot
+  // code is still before map creation, mostly awaiting async work.
+  setTimeout(_prefetchProvisionalSprites, 0);
+
   global.Creatures = {
     install, isEnabled: readEnabled,
     // Settings "i" bubble → guaranteed-catch explainer popup (reuses the

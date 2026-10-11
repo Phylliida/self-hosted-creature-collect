@@ -922,7 +922,8 @@
       window._spriteDiag.lastVariantBatch = need.length;
       window._spriteDiag.lastVariantBatchMs = (typeof performance !== 'undefined')
         ? performance.now() - t0 : 0;
-      window._spriteDiag.variantsCount = cache.size;
+      window._spriteDiag.variantsCount = cache.size
+        + (_cellsCompact ? _cellsCompact.keys.length : 0);
     }
     return result;
   }
@@ -2078,6 +2079,14 @@
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
+  }
+
+  // Capacitor: start reading the variant table (compact cells, see
+  // _ensureCellsCompact) as soon as this script has run, instead of when
+  // the first marker batch asks — on a Pixel 4a that read finished ~300 ms
+  // after the first spawn markers, holding their sprites back.
+  if (typeof window !== 'undefined' && window.Capacitor) {
+    setTimeout(() => { _ensureVariantSummary().catch(() => {}); }, 0);
   }
 
   global.Sprites = {
