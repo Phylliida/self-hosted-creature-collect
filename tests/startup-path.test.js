@@ -163,5 +163,19 @@ function sliceFn(src, head) {
     'POIs load from the post-boot queue');
 }
 
+// ── 4. GPS starts when the locate control is ready, not on map 'load' ──
+// MapLibre's 'load' waits for every visible tile; spawns need a fix.
+{
+  const at = (needle) => indexSrc.indexOf(needle);
+  const wrap = at('geolocate._finishSetupUI = (supported) => {');
+  const add = at("map.addControl(geolocate, 'bottom-right');");
+  ok(wrap > 0 && add > wrap, '_finishSetupUI is wrapped before the control is added');
+  const start = sliceFn(indexSrc, 'function startGeolocate(');
+  ok(/geolocate\.trigger\(\)/.test(start) && /_onSuccess/.test(start),
+    'startGeolocate triggers the watch (with the saved-view guard)');
+  const loadHandler = indexSrc.slice(indexSrc.indexOf("map.on('load', () => {\n    // Tappable-POI halo"));
+  ok(/startGeolocate\(\);/.test(loadHandler.slice(0, 800)), "map 'load' keeps startGeolocate as a fallback");
+}
+
 console.log(`startup-path: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

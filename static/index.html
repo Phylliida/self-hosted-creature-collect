@@ -7136,6 +7136,42 @@ function fmtDate(ts) {
     showAccuracyCircle: false,
     fitBoundsOptions: { maxZoom: 15 }
   });
+  // GPS starts as soon as the control finishes its (async) setup — not
+  // on map 'load', which waits for every visible tile: on a Pixel 4a
+  // that held the first fix back ~6 s, and no spawn can appear before a
+  // fix. _finishSetupUI is the control's own "ready" step (vendored
+  // MapLibre 4.7.1; an instance property, read when its setup promise
+  // resolves, so wrapping it before addControl works). Map 'load'
+  // stays as a fallback.
+  let _geoStarted = false;
+  function startGeolocate() {
+    if (_geoStarted || !geolocate._setup) return;
+    _geoStarted = true;
+    // Saved view: the first fix must not yank the camera away from it.
+    if (savedView) {
+      const orig = geolocate._onSuccess;
+      let consumed = false;
+      geolocate._onSuccess = (position) => {
+        if (!consumed) {
+          consumed = true;
+          if (geolocate._watchState === 'WAITING_ACTIVE') {
+            geolocate._watchState = 'BACKGROUND';
+          }
+        }
+        return orig(position);
+      };
+    }
+    _bootMark('gps:trigger');
+    try { geolocate.trigger(); } catch {}
+    localStorage.setItem('cc.geoPromptDone', '1');
+  }
+  if (typeof geolocate._finishSetupUI === 'function') {
+    const finishSetup = geolocate._finishSetupUI;
+    geolocate._finishSetupUI = (supported) => {
+      finishSetup(supported);
+      startGeolocate();
+    };
+  }
   map.addControl(geolocate, 'bottom-right');
 
   // --- Smooth the user-location dot between GPS fixes ------------------
@@ -7766,22 +7802,7 @@ function fmtDate(ts) {
     // Apply cooldown coloring to the POI layer for any entries
     // preserved from previous sessions via localStorage.
     try { refreshCooldownOverlays(); } catch {}
-    if (savedView) {
-      const orig = geolocate._onSuccess;
-      let consumed = false;
-      geolocate._onSuccess = (position) => {
-        if (!consumed) {
-          consumed = true;
-          if (geolocate._watchState === 'WAITING_ACTIVE') {
-            geolocate._watchState = 'BACKGROUND';
-          }
-        }
-        return orig(position);
-      };
-    }
-    _bootMark('gps:trigger');
-    try { geolocate.trigger(); } catch {}
-    localStorage.setItem('cc.geoPromptDone', '1');
+    startGeolocate();  // no-op if it already started at control setup
   });
 
   // Prompt for location permission on first load and any time the tab
