@@ -521,17 +521,11 @@
       // array (getSpriteCreditForSlot, etc.) check `_cellsMap` in
       // memory first via _getCellVariantArr below — no IDB cursor
       // walks required. Web mode unchanged so the zero-data rule holds.
+      // Counts come from the compact cells table (see _ensureCellsCompact)
+      // instead of filling this Map from the full cells.json object.
       if (cache.size === 0 && typeof window !== 'undefined' && window.Capacitor) {
         try {
-          const cellsMap = await getCells();
-          if (cellsMap && typeof cellsMap === 'object') {
-            for (const key of Object.keys(cellsMap)) {
-              const indices = cellsMap[key];
-              if (Array.isArray(indices) && indices.length > 0) {
-                cache.set(key, indices.length);
-              }
-            }
-          }
+          await _ensureCellsCompact();
         } catch (e) {
           _logSpriteError('ensureVariantSummary/cellsFallback', e);
         }
@@ -542,7 +536,10 @@
         window._spriteDiag.variantSummaryMs = (typeof performance !== 'undefined')
           ? performance.now() - t0 : 0;
         window._spriteDiag.variantSummaryHadBlob = !!blob;
-        window._spriteDiag.variantsCount = cache.size;
+        window._spriteDiag.variantSource = blob ? 'summary'
+          : _cellsCompact ? 'compact-' + _cellsCompactSource : 'none';
+        window._spriteDiag.variantsCount = cache.size
+          + (_cellsCompact ? _cellsCompact.keys.length : 0);
       }
     })();
     _variantSummaryPromise.finally(() => { _variantSummaryPromise = null; });
@@ -758,10 +755,19 @@
   async function _getCellVariantArr(a, b) {
     const key = `${a}-${b}`;
     if (_cellsMap && Array.isArray(_cellsMap[key])) return _cellsMap[key];
-    try {
-      const map = await getCells();
-      if (map && Array.isArray(map[key])) return map[key];
-    } catch (_) { /* fall through to legacy IDB lookup */ }
+    if (_cellsCompact) {
+      // Same answer as cells.json without loading the full object.
+      const ci = _cellsCompactFind(a, b);
+      if (ci >= 0) {
+        return Array.from(_cellsCompact.vals.subarray(
+          _cellsCompact.offs[ci], _cellsCompact.offs[ci + 1]));
+      }
+    } else {
+      try {
+        const map = await getCells();
+        if (map && Array.isArray(map[key])) return map[key];
+      } catch (_) { /* fall through to legacy IDB lookup */ }
+    }
     try {
       const legacy = await varGet(key);
       if (Array.isArray(legacy)) return legacy;
@@ -841,6 +847,8 @@
     const key = `${a}-${b}`;
     const cache = _variantCountCache || (_variantCountCache = new Map());
     if (cache.has(key)) return cache.get(key);
+    const ci = _cellsCompactFind(a, b);
+    if (ci >= 0) return _cellsCompact.offs[ci + 1] - _cellsCompact.offs[ci];
     // Slow fallback: summary missing or this cell wasn't in it. Look
     // up the per-cell entry directly. Future visits hit cache.
     if (_variantInflight.has(key)) return _variantInflight.get(key);
@@ -866,7 +874,9 @@
     const need = [];
     for (const [a, b] of cells) {
       const key = `${a}-${b}`;
-      if (cache.has(key)) result.set(key, cache.get(key));
+      if (cache.has(key)) { result.set(key, cache.get(key)); continue; }
+      const ci = _cellsCompactFind(a, b);
+      if (ci >= 0) result.set(key, _cellsCompact.offs[ci + 1] - _cellsCompact.offs[ci]);
       else need.push(key);
     }
     if (!need.length) return result;
@@ -1577,6 +1587,94 @@
   // Shape: { "<body>-<head>": [variant_index, ...] }
   let _cellsMap = null;
   let _cellsPromise = null;
+
+  // ─── Compact cells table ─────────────────────────────────────────
+  // cells.json as three typed arrays: sorted cell keys (a * 65536 + b),
+  // per-cell offsets, and the concatenated variant-index lists. Stored
+  // next to CELLS_KEY so a boot reads ~1 MB of typed arrays (a memcpy to
+  // deserialise) instead of the ~99 k-key object — on a Pixel 4a that
+  // object read was ~0.9 s of main thread before the first sprite.
+  // Variant counts and credit lookups read it; the full map still loads
+  // on demand for the paths that want it (lazy crop).
+  const CELLS_COMPACT_KEY = '__cellsc__' + _PACK_NS;
+  let _cellsCompact = null;          // { v, keys, offs, vals } | null
+  let _cellsCompactSource = '';      // 'idb' | 'built' (diagnostics)
+  let _cellsCompactPromise = null;
+  function _buildCellsCompact(cellsMap) {
+    const entries = [];
+    let total = 0;
+    for (const key of Object.keys(cellsMap)) {
+      const arr = cellsMap[key];
+      if (!Array.isArray(arr) || !arr.length) continue;
+      const dash = key.indexOf('-');
+      const a = Number(key.slice(0, dash));
+      const b = Number(key.slice(dash + 1));
+      const okId = (n) => Number.isInteger(n) && n >= 0 && n < 65536;
+      // Anything that doesn't fit the format: keep using the object map.
+      if (dash < 1 || !okId(a) || !okId(b) || !arr.every(okId)) return null;
+      entries.push([a * 65536 + b, arr]);
+      total += arr.length;
+    }
+    entries.sort((x, y) => x[0] - y[0]);
+    const keys = new Uint32Array(entries.length);
+    const offs = new Uint32Array(entries.length + 1);
+    const vals = new Uint16Array(total);
+    let o = 0;
+    entries.forEach(([k, arr], i) => {
+      keys[i] = k;
+      offs[i] = o;
+      vals.set(arr, o);
+      o += arr.length;
+    });
+    offs[entries.length] = o;
+    return { v: 1, keys, offs, vals };
+  }
+  function _validCellsCompact(c) {
+    return !!(c && c.v === 1 && c.keys instanceof Uint32Array
+      && c.offs instanceof Uint32Array && c.vals instanceof Uint16Array
+      && c.offs.length === c.keys.length + 1
+      && c.offs[c.keys.length] === c.vals.length);
+  }
+  // Position of cell (a, b) in the compact table, or -1.
+  function _cellsCompactFind(a, b) {
+    const c = _cellsCompact;
+    if (!c) return -1;
+    const k = a * 65536 + b;
+    let lo = 0, hi = c.keys.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >>> 1;
+      const v = c.keys[mid];
+      if (v === k) return mid;
+      if (v < k) lo = mid + 1; else hi = mid - 1;
+    }
+    return -1;
+  }
+  // Stored copy first; else derive from cells.json and store it.
+  async function _ensureCellsCompact() {
+    if (_cellsCompact) return _cellsCompact;
+    if (_cellsCompactPromise) return _cellsCompactPromise;
+    _cellsCompactPromise = (async () => {
+      try {
+        const stored = await varGet(CELLS_COMPACT_KEY);
+        if (_validCellsCompact(stored)) {
+          _cellsCompact = stored;
+          _cellsCompactSource = 'idb';
+          return stored;
+        }
+      } catch (e) { _logSpriteError('cellsCompact/idb', e); }
+      const cellsMap = await getCells();
+      if (!cellsMap || typeof cellsMap !== 'object') return null;
+      const built = _buildCellsCompact(cellsMap);
+      if (!built) return null;
+      _cellsCompact = built;
+      _cellsCompactSource = 'built';
+      varPut(CELLS_COMPACT_KEY, built).catch(() => {});
+      return built;
+    })();
+    try { return await _cellsCompactPromise; }
+    finally { _cellsCompactPromise = null; }
+  }
+
   async function getCells() {
     if (_cellsMap) return _cellsMap;
     if (_cellsPromise) return _cellsPromise;
@@ -1963,6 +2061,7 @@
     localStorage.removeItem(CUSTOM_DONE_KEY);
     _variantCountCache = null;
     _variantSummaryLoaded = false;
+    _cellsCompact = null;
     _creditsBundleCache = null;
     _splitNamesCache = null;
     // Wipe SpriteStore's in-memory URL cache too — its blob URLs are

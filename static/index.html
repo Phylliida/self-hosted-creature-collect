@@ -28,7 +28,7 @@
 //     cc.speciesEvolutions
 //   - IndexedDB store `variants` in db `creature-sprites-v1`
 //     (sprites.js): __summary__, __credits__, __splitnames_v2__,
-//     __manifest__, __cells__
+//     __manifest__, __cells__, __cellsc__
 // Both are sticky — once written they survive forever, including
 // across app updates. Without this fix, a user on a previous build
 // keeps their stale caches after installing a new APK/IPA, so
@@ -122,7 +122,7 @@
         var store = tx.objectStore('variants');
         // KEEP IN SYNC with sprites.js (search for _KEY).
         var keys = ['__summary__', '__credits__',
-                    '__splitnames_v2__', '__manifest__', '__cells__'];
+                    '__splitnames_v2__', '__manifest__', '__cells__', '__cellsc__'];
         for (var i = 0; i < keys.length; i++) store.delete(keys[i]);
         tx.oncomplete = function () { db.close(); done(); };
         tx.onerror    = function () { db.close(); done(); };
@@ -14912,6 +14912,7 @@ function fmtDate(ts) {
         `[sprites]`,
         `  variantSummary: ${dur(sd.variantSummaryMs)} ` +
           `hadBlob=${sd.variantSummaryHadBlob === undefined ? '—' : (sd.variantSummaryHadBlob ? 'y' : 'n')} ` +
+          `src=${sd.variantSource || '—'} ` +
           `cached=${sd.variantsCount ?? '—'}`,
         `  variantBatch: last ${sd.lastVariantBatch ?? '—'} in ${dur(sd.lastVariantBatchMs)}`,
         (() => {
@@ -19693,7 +19694,7 @@ function fmtDate(ts) {
               const tx = db.transaction(['variants'], 'readwrite');
               const store = tx.objectStore('variants');
               for (const k of ['__summary__', '__credits__',
-                               '__splitnames_v2__', '__manifest__', '__cells__']) {
+                               '__splitnames_v2__', '__manifest__', '__cells__', '__cellsc__']) {
                 store.delete(k);
               }
               tx.oncomplete = () => { db.close(); resolve(); };

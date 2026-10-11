@@ -177,5 +177,67 @@ function sliceFn(src, head) {
   ok(/startGeolocate\(\);/.test(loadHandler.slice(0, 800)), "map 'load' keeps startGeolocate as a fallback");
 }
 
-console.log(`startup-path: ${passed} passed, ${failed} failed`);
-process.exit(failed ? 1 : 0);
+// ── 5. Capacitor variant counts: compact cells table persisted ────────
+// The first sprite batch used to rebuild per-cell variant counts from
+// the full cells.json object (~99 k keys) on every boot — ~0.9 s on a
+// Pixel 4a. The first boot now stores a compact typed-array copy; later
+// boots read that back and never touch cells.json for counts.
+async function compactCellsTest() {
+  const fdb = require(path.join(root, 'static', 'anki', 'node_modules', 'fake-indexeddb'));
+  const idbSrc = fs.readFileSync(path.join(root, 'static', 'idb-util.js'), 'utf8');
+  const spritesSrc = fs.readFileSync(path.join(root, 'static', 'sprites.js'), 'utf8');
+  const cells = { '1-2': [0, 3, 5], '7-9': [1], '300-12': [2, 4], '45-45': [] };
+  const factory = new fdb.IDBFactory();
+  let cellsFetches = 0;
+  const launch = () => {
+    const ctx = {
+      console: { log() {}, warn() {}, error() {} },
+      setTimeout, clearTimeout, Blob, URL, Response, performance, DOMException,
+      Uint8Array, Uint16Array, Uint32Array, Array, Object,
+      indexedDB: factory,
+      localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+      document: { addEventListener() {}, visibilityState: 'visible' },
+      addEventListener() {},
+      Capacitor: {},
+      fetch: async (url) => {
+        if (/cells\.json/.test(String(url))) {
+          cellsFetches++;
+          return new Response(JSON.stringify(cells), { status: 200 });
+        }
+        return new Response(null, { status: 404 });
+      },
+    };
+    vm.createContext(ctx);
+    ctx.window = ctx;
+    vm.runInContext(idbSrc, ctx);
+    vm.runInContext(spritesSrc, ctx);
+    return ctx;
+  };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const counts = async (ctx) => {
+    const m = await ctx.Sprites.getCellVariantCountsBatch([[1, 2], [7, 9], [300, 12]]);
+    return [m.get('1-2'), m.get('7-9'), m.get('300-12')].join(',');
+  };
+
+  const first = launch();
+  ok(await counts(first) === '3,1,2', 'first boot: counts derived from cells.json');
+  ok(cellsFetches === 1, `first boot reads cells.json once (got ${cellsFetches})`);
+  ok(first._spriteDiag.variantSource === 'compact-built',
+    `first boot builds the compact table (got ${first._spriteDiag.variantSource})`);
+  ok(await first.Sprites.getCellVariantCount(300, 12) === 2, 'single lookup agrees');
+  await sleep(50);  // the background varPut lands
+
+  const second = launch();
+  ok(await counts(second) === '3,1,2', 'second boot: same counts');
+  ok(cellsFetches === 1, `second boot never re-reads cells.json (fetches: ${cellsFetches})`);
+  ok(second._spriteDiag.variantSource === 'compact-idb',
+    `second boot reads the stored compact table (got ${second._spriteDiag.variantSource})`);
+  const miss = await second.Sprites.getCellVariantCountsBatch([[2, 2]]);
+  ok(miss.get('2-2') === 0, 'a cell absent from cells.json still counts 0');
+}
+
+compactCellsTest().catch((e) => { failed++; console.error('FAIL: compact cells test threw', e); })
+  .then(() => {
+    console.log(`startup-path: ${passed} passed, ${failed} failed`);
+    process.exit(failed ? 1 : 0);
+  });
