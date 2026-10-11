@@ -185,6 +185,16 @@
   };
   window._ccBootMark('head');
 
+  // [gps] dump block: what the location pipeline did, in ms since page
+  // start. Fed by the native geolocation shims (fixes received / dropped
+  // as stale), ensureLocationPermission, the GeolocateControl events and
+  // creatures.js (coarse-fix gate, last-known-position spawns).
+  window._ccGpsDiag = {
+    path: 'web', received: 0, stale: 0, staleAges: [], controlFixes: 0,
+    errors: {}, coarseDropped: 0,
+  };
+  window._ccGpsNow = function () { return Math.round(performance.now()); };
+
   function shortPath(u) {
     var p = String(u).replace(location.origin, '');
     return p.length > 52 ? '…' + p.slice(-51) : p;
@@ -4162,18 +4172,29 @@
       let pausedByVisibility = false;
       const STALE_FIX_THRESHOLD_MS = 5000;
 
+      const gd = window._ccGpsDiag || {};
+      gd.path = 'android-bgloc';
       const ensureServiceStarted = async () => {
         if (serviceStarted) return;
         serviceStarted = true;
+        if (gd.serviceStartAt == null) gd.serviceStartAt = window._ccGpsNow();
         try { await BgLoc.start(); }
         catch (e) {
           serviceStarted = false;
+          gd.serviceError = String((e && e.message) || e).slice(0, 120);
           throw e;
         }
+        if (gd.serviceReadyAt == null) gd.serviceReadyAt = window._ccGpsNow();
         // Single shared listener fans out to every active watch —
         // adding/removing watches doesn't churn the listener.
         listenerHandle = await BgLoc.addListener('location', (data) => {
           const t = data.timestamp || Date.now();
+          gd.received++;
+          if (gd.firstRecvAt == null) gd.firstRecvAt = window._ccGpsNow();
+          if (Date.now() - t > STALE_FIX_THRESHOLD_MS) {
+            gd.stale++;
+            if (gd.staleAges.length < 8) gd.staleAges.push(Math.round((Date.now() - t) / 1000));
+          } else if (gd.firstFreshAt == null) gd.firstFreshAt = window._ccGpsNow();
           // Drop stale fixes. When the app is backgrounded and the JS
           // tick can't pause the service in time, the bridge queues
           // every fix the native side emitted while we were paused and
@@ -4294,6 +4315,8 @@
       // Matches the Android BgLoc path's threshold: anything older is a
       // cached/queued replay, not a live position.
       const STALE_FIX_THRESHOLD_MS = 5000;
+      const gd = window._ccGpsDiag || {};
+      gd.path = 'ios-plugin';
       const shim = {
         getCurrentPosition(success, error, opts) {
           // Force high accuracy. The native plugin reuses ONE shared
@@ -4316,11 +4339,14 @@
           // return the CallbackID synchronously. Defensive handling
           // for both shapes.
           let result;
+          if (gd.serviceStartAt == null) gd.serviceStartAt = window._ccGpsNow();
           try {
             result = Geo.watchPosition(opts || {}, (pos, err) => {
               if (entry.cleared) return;
               if (err) { error && error(err); return; }
               if (!pos) return;
+              gd.received++;
+              if (gd.firstRecvAt == null) gd.firstRecvAt = window._ccGpsNow();
               // The native plugin ignores maximumAge: on start CoreLocation
               // replays its cached last-known fix — possibly hours old and
               // from another part of town — with its ORIGINAL timestamp.
@@ -4335,10 +4361,15 @@
               // backwards jump on screen.
               const ts = typeof pos.timestamp === 'number' ? pos.timestamp : 0;
               if (ts) {
-                if (Date.now() - ts > STALE_FIX_THRESHOLD_MS) return;
+                if (Date.now() - ts > STALE_FIX_THRESHOLD_MS) {
+                  gd.stale++;
+                  if (gd.staleAges.length < 8) gd.staleAges.push(Math.round((Date.now() - ts) / 1000));
+                  return;
+                }
                 if (ts <= entry.lastTs) return;
                 entry.lastTs = ts;
               }
+              if (gd.firstFreshAt == null) gd.firstFreshAt = window._ccGpsNow();
               success && success(pos);
             });
           } catch (e) { error && error(e); return id; }
@@ -5726,9 +5757,9 @@ function fmtDate(ts) {
   // [boot timeline] step marker (see the Boot timeline script in <head>).
   const _bootMark = window._ccBootMark || function () {};
   _bootMark('iife:start');
-  // Boot has "settled" once the first creature sprite is on screen — or
-  // the map has sat idle for 6 s (creature mode off, nothing in range,
-  // no GPS), with a hard cap. Work the first screen doesn't need (POIs,
+  // Boot has "settled" once the map is idle AND the first creature sprite
+  // is on screen — or the map has sat idle for 6 s (creature mode off,
+  // nothing in range, no GPS), with a hard cap. Work the first screen doesn't need (POIs,
   // the transit schedule index, …) waits for this so it can't compete
   // with the map, GPS and sprites for the main thread: see the post-boot
   // queue at the end of this block.
@@ -5742,8 +5773,17 @@ function fmtDate(ts) {
     };
     const B = window._ccBoot;
     if (B && B.on) {
-      B.on('sprites:firstVisible', () => setTimeout(() => settle('first sprite'), 250));
-      B.on('map:idle', () => setTimeout(() => settle('map idle + 6s'), 6000));
+      // Both, not either: on iOS the first sprite can land before the map
+      // has finished drawing, and starting the queue then pushed map idle
+      // from ~2 s to 3.2 s (the schedule index alone is ~1 s of main thread).
+      let sprite = false, idle = false;
+      const both = () => { if (sprite && idle) setTimeout(() => settle('map idle + first sprite'), 250); };
+      B.on('sprites:firstVisible', () => { sprite = true; both(); });
+      B.on('map:idle', () => {
+        idle = true;
+        both();
+        setTimeout(() => settle('map idle + 6s'), 6000);
+      });
     }
     setTimeout(() => settle('20s cap'), 20000);
   });
@@ -7868,20 +7908,29 @@ function fmtDate(ts) {
     // touch authorization state — they never configure the manager.
     const capGeo = window.Capacitor && window.Capacitor.Plugins
       && window.Capacitor.Plugins.Geolocation;
+    const gd = window._ccGpsDiag || {};
     if (capGeo) {
       try {
         const s = await capGeo.checkPermissions();
         const st = s && s.location;
+        if (gd.permAt == null) { gd.perm = st; gd.permAt = window._ccGpsNow(); }
         if (st === 'prompt' || st === 'prompt-with-rationale') {
           await capGeo.requestPermissions();
         }
-      } catch { /* location services off — nothing to prime */ }
+      } catch (e) {
+        // Location services off — nothing to prime.
+        if (gd.permAt == null) {
+          gd.perm = 'error: ' + String((e && e.message) || e).slice(0, 60);
+          gd.permAt = window._ccGpsNow();
+        }
+      }
       return;
     }
     if (!navigator.geolocation) return;
     if (navigator.permissions) {
       try {
         const s = await navigator.permissions.query({ name: 'geolocation' });
+        if (gd.permAt == null) { gd.perm = s.state; gd.permAt = window._ccGpsNow(); }
         if (s.state !== 'prompt') return;
       } catch { /* fall through and try anyway */ }
     }
@@ -7903,11 +7952,29 @@ function fmtDate(ts) {
   geolocate.on('error', (e) => {
     const status = document.getElementById('status');
     if (status) status.textContent = 'location: ' + (e && e.message ? e.message : 'unavailable');
+    // [gps] dump block. Codes: 1 permission denied (MapLibre stops the
+    // watch), 2 position unavailable, 3 timeout (the watch keeps going).
+    const gd = window._ccGpsDiag;
+    if (gd) {
+      const code = (e && e.code != null) ? e.code : '?';
+      gd.errors[code] = (gd.errors[code] || 0) + 1;
+      if (gd.firstErrorAt == null) {
+        gd.firstErrorAt = window._ccGpsNow();
+        gd.firstErrorMsg = String((e && e.message) || '').slice(0, 80);
+      }
+    }
+    _bootMark('gps:error', `code ${(e && e.code != null) ? e.code : '?'}`);
   });
 
   let lastKnownPos = null;
   geolocate.on('geolocate', (e) => {
     lastKnownPos = { lng: e.coords.longitude, lat: e.coords.latitude };
+    const gd = window._ccGpsDiag;
+    if (gd) {
+      gd.controlFixes++;
+      if (gd.firstControlFixAt == null) gd.firstControlFixAt = window._ccGpsNow();
+      gd.lastAcc = Math.round(e.coords.accuracy);
+    }
     window._startupPhases = window._startupPhases || {};
     if (window._startupPhases.firstGpsFix == null) {
       window._startupPhases.firstGpsFix = performance.now();
@@ -14864,6 +14931,38 @@ function fmtDate(ts) {
           .map((v, i) => v.padEnd(i === 0 ? 8 : 6)).join(' ') +
         ` ${st2.n || 0}/${st2.ms || 0}ms`);
     }
+    return out.concat(_gpsDumpLines());
+  }
+
+  // [gps] block — window._ccGpsDiag, filled by the native geolocation
+  // shims, ensureLocationPermission, the GeolocateControl handlers and
+  // creatures.js. Answers "was the phone slow to give a fix, or did we
+  // drop/reject the fixes it gave?".
+  function _gpsDumpLines() {
+    const g = window._ccGpsDiag;
+    if (!g) return [];
+    const at = (ms) => ms == null ? '—'
+      : ms >= 10000 ? `@${(ms / 1000).toFixed(1)}s` : `@${ms}ms`;
+    const errs = Object.entries(g.errors || {}).map(([c, n]) => `${n}× code ${c}`).join(', ');
+    const out = [
+      `[gps]  (times after page start)`,
+      `  path=${g.path}  permission=${g.perm ?? '—'} ${at(g.permAt)}`,
+      `  watch: started ${at(g.serviceStartAt)}` +
+        (g.path === 'android-bgloc' ? ` · service ready ${at(g.serviceReadyAt)}` : '') +
+        (g.serviceError ? ` · start FAILED: ${g.serviceError}` : ''),
+      `  native fixes: ${g.received} received · ${g.stale} dropped as stale` +
+        (g.staleAges.length ? ` (ages ${g.staleAges.map((a) => a + 's').join(', ')})` : '') +
+        ` · first ${at(g.firstRecvAt)} · first fresh ${at(g.firstFreshAt)}`,
+      `  control: ${g.controlFixes} fixes${g.lastAcc != null ? ` (last ±${g.lastAcc}m)` : ''}` +
+        ` · first ${at(g.firstControlFixAt)}` +
+        ` · errors: ${errs || 'none'}` +
+        (g.firstErrorAt != null ? ` (first ${at(g.firstErrorAt)} "${g.firstErrorMsg}")` : ''),
+    ];
+    const p = g.provisional;
+    out.push(`  creatures: coarse first fixes dropped: ${g.coarseDropped || 0} · last-known spawns: ` +
+      (p ? `used (fix ${p.ageMin} min old, ±${p.acc ?? '?'}m)` +
+        (p.confirmedAt != null ? `, live fix ${at(p.confirmedAt)}, ${p.distM} m away` : ', no live fix yet')
+        : (g.provisionalSkipped || 'none stored')));
     return out;
   }
 

@@ -102,6 +102,9 @@ const TILES_CACHE = 'tiles-v1';
 // tiles, starts GPS at control setup, loads the extras scripts after
 // boot settles, defers the schedule index, and searches addresses in
 // place instead of hydrating millions of objects.
+// Shell bump 2026-10-11 (#15): index.html (cache-first '/') adds a [gps]
+// dump block (native fixes received / dropped as stale, control errors,
+// permission state) and settles boot on map idle AND first sprite.
 
 const APP_SHELL = [
   '/',
