@@ -63,6 +63,7 @@
       if (oldestKey === undefined) break;
       const old = cache.get(oldestKey);
       cache.delete(oldestKey);
+      missAt.delete(oldestKey);
       // Revoking an evicted URL is harmless to <img>s that already
       // loaded from it — the browser keeps the decoded bitmap. The URL
       // handle simply becomes unresolvable for fresh assignments.
@@ -76,15 +77,39 @@
     cache.set(key, p);
   }
 
+  // A sprite load that hasn't settled after this long is treated as a
+  // transient failure (evicted + retried). Without it, one fetch that
+  // never settles — e.g. issued just as iOS suspended the app — pinned
+  // its cache entry (and every marker/card sharing the key) forever.
+  const ATTEMPT_TIMEOUT_MS = 20000;
+  function _withTimeout(p, ms, what) {
+    let t;
+    return Promise.race([
+      p,
+      new Promise((_, rej) => {
+        t = setTimeout(() => rej(new Error(what + ' timed out')), ms);
+      }),
+    ]).finally(() => clearTimeout(t));
+  }
+
+  // Keys whose cache entry resolved to null ('missing'), with when.
+  // Lets recovery passes drop just those entries (see retryMisses).
+  const missAt = new Map();
+
   // Cache policy:
   //   - status='ok'        → Promise<url>     stored
   //   - status='missing'   → Promise<null>    stored (genuine absence;
   //                                            don't hammer the server
   //                                            forever for files that
-  //                                            aren't there)
+  //                                            aren't there) — but
+  //                                            re-checked occasionally
+  //                                            and after an app resume
+  //                                            (retryMisses), as cheap
+  //                                            insurance against a
+  //                                            misclassified failure.
   //   - status='transient' → Promise rejected, entry removed from cache,
   //                          caller (showSprite) registers the img for
-  //                          retryPoll to revisit.
+  //                          retryPoll to revisit with backoff.
   function spriteUrl(a, b, variant, shinyVariant) {
     const key = keyOf(a, b, variant, shinyVariant);
     if (cache.has(key)) {
@@ -93,7 +118,9 @@
     }
     evictUntilUnder(MAX_ENTRIES);
     const p = (async () => {
-      const r = await global.Sprites.getSpriteBlobAttempt(a, b, variant);
+      const r = await _withTimeout(
+        global.Sprites.getSpriteBlobAttempt(a, b, variant),
+        ATTEMPT_TIMEOUT_MS, 'sprite fetch ' + key);
       if (r.status === 'missing') return null;
       if (r.status !== 'ok') throw new Error('sprite fetch transient: ' + key);
       const isShiny = typeof shinyVariant === 'number' && shinyVariant >= 0;
@@ -111,7 +138,8 @@
     })();
     cache.set(key, p);
     // On rejection, evict so the next call kicks off a fresh fetch.
-    p.catch(() => { if (cache.get(key) === p) cache.delete(key); });
+    p.then((u) => { if (u === null && cache.get(key) === p) missAt.set(key, Date.now()); },
+      () => { if (cache.get(key) === p) cache.delete(key); });
     return p;
   }
 
@@ -137,9 +165,9 @@
     // Sprites.getSpriteBlobsBatch already cascades pack → IDB → lazy-
     // crop per request; on iOS it opens ONE transaction for the IDB
     // reads of the whole batch.
-    const batchP = global.Sprites.getSpriteBlobsBatch(
+    const batchP = _withTimeout(global.Sprites.getSpriteBlobsBatch(
       misses.map((r) => ({ a: r.a, b: r.b, variant: r.variant }))
-    );
+    ), ATTEMPT_TIMEOUT_MS, 'sprite batch');
     misses.forEach((m, i) => {
       // Same caching policy as spriteUrl: cache successes + permanent
       // misses, reject on transient so the cache evicts and the retry
@@ -163,7 +191,8 @@
         () => { throw new Error('sprite preload batch rejected: ' + m.key); },
       );
       cache.set(m.key, urlP);
-      urlP.catch(() => { if (cache.get(m.key) === urlP) cache.delete(m.key); });
+      urlP.then((u) => { if (u === null && cache.get(m.key) === urlP) missAt.set(m.key, Date.now()); },
+        () => { if (cache.get(m.key) === urlP) cache.delete(m.key); });
     });
     return batchP.then(() => undefined, () => undefined);
   }
@@ -199,21 +228,34 @@
 
   // Pending-retry registry. Populated when a showSprite call hits a
   // transient failure (e.g. 504 during LocalServer's restart window).
-  // Drained on a ~500ms poll; entries whose imgs have been removed from
-  // the DOM or superseded by a newer showSprite call get pruned.
+  // Polled every ~500ms; each entry retries on an exponential backoff
+  // (0.5 s → 8 s) so a long outage doesn't hammer the local server with
+  // every visible marker twice a second. Entries whose imgs have left
+  // the DOM or were superseded by a newer showSprite call get pruned.
   //
-  // Each entry: { img, a, b, variant, opts, gen }.
+  // Each entry: { img, a, b, variant, opts, gen, attempt, dueAt }.
   // gen pins the entry to the showSprite call that registered it — a
   // later call on the same img bumps img._spriteGen, which the retry
   // loop notices and skips the stale entry.
-  const pendingRetries = new Set();
+  const pendingRetries = new Map();  // img → entry
+  const RETRY_BASE_MS = 500;
+  const RETRY_MAX_MS = 8000;
 
   function registerRetry(img, a, b, variant, opts, gen) {
-    for (const e of pendingRetries) {
-      if (e.img === img) { pendingRetries.delete(e); break; }
-    }
-    pendingRetries.add({ img, a, b, variant, opts, gen });
+    const prev = pendingRetries.get(img);
+    const attempt = prev ? prev.attempt + 1 : 0;
+    const delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * Math.pow(2, attempt));
+    pendingRetries.set(img, {
+      img, a, b, variant, opts, gen, attempt, dueAt: Date.now() + delay,
+    });
   }
+
+  // Imgs whose sprite resolved to 'missing' (null). Re-checked by
+  // retryMisses — on a slow timer, and right after the app returns from
+  // the background (when a resume-window failure is most likely to have
+  // been misread as an absence).
+  const pendingMisses = new Map();   // img → { a, b, variant, opts, gen, at }
+  const MISS_RECHECK_MS = 2 * 60 * 1000;
 
   async function showSprite(img, a, b, variant, opts) {
     if (!img) return;
@@ -234,7 +276,13 @@
       return;
     }
     if (img._spriteGen !== gen) return;
-    if (!url) return; // 'missing' — permanent absence, no retry.
+    pendingRetries.delete(img);
+    if (!url) {
+      // 'missing' — treated as absent, but re-checked now and then.
+      pendingMisses.set(img, { a, b, variant, opts, gen, at: Date.now() });
+      return;
+    }
+    pendingMisses.delete(img);
     img.src = url;
     if (opts.readyClass) img.classList.add(opts.readyClass);
     if (typeof opts.onReady === 'function') {
@@ -247,24 +295,75 @@
   // through the normal showSprite path (cache hit on the now-resolved
   // spriteUrl, src assignment, onReady). Re-failures naturally re-add
   // to pendingRetries via registerRetry, picked up on the next tick.
-  function retryPoll() {
+  function retryPoll(force) {
     if (!pendingRetries.size) return;
-    const snapshot = Array.from(pendingRetries);
-    pendingRetries.clear();
-    for (const r of snapshot) {
-      if (!r.img.isConnected) continue;        // detached → drop
-      if (r.img._spriteGen !== r.gen) continue; // superseded → drop
+    const now = Date.now();
+    for (const r of Array.from(pendingRetries.values())) {
+      if (!r.img.isConnected || r.img._spriteGen !== r.gen) {
+        pendingRetries.delete(r.img);         // detached / superseded
+        continue;
+      }
+      if (!force && r.dueAt > now) continue;  // backing off
+      // Keep the entry (and its attempt count) until showSprite settles:
+      // success deletes it, another failure re-registers with a longer
+      // delay. Push dueAt out so this poll doesn't double-fire it.
+      r.dueAt = now + RETRY_MAX_MS;
       showSprite(r.img, r.a, r.b, r.variant, r.opts);
+      // showSprite bumped the img's generation synchronously; follow it
+      // so the in-flight retry isn't mistaken for a superseded one (that
+      // would reset the backoff on every failure).
+      r.gen = r.img._spriteGen;
     }
   }
   const RETRY_INTERVAL_MS = 500;
   if (typeof setInterval === 'function') setInterval(retryPoll, RETRY_INTERVAL_MS);
+
+  // Re-check 'missing' results: drop their null cache entries (all of
+  // them when forced, else only ones older than MISS_RECHECK_MS) and
+  // re-run showSprite for the imgs still showing a placeholder.
+  function retryMisses(force) {
+    const now = Date.now();
+    for (const [key, at] of Array.from(missAt)) {
+      if (force || now - at >= MISS_RECHECK_MS) {
+        missAt.delete(key);
+        const p = cache.get(key);
+        if (p) cache.delete(key);
+      }
+    }
+    for (const [img, m] of Array.from(pendingMisses)) {
+      if (!img.isConnected || img._spriteGen !== m.gen) {
+        pendingMisses.delete(img);
+        continue;
+      }
+      if (!force && now - m.at < MISS_RECHECK_MS) continue;
+      pendingMisses.delete(img);
+      showSprite(img, m.a, m.b, m.variant, m.opts);
+    }
+  }
+  if (typeof setInterval === 'function') setInterval(() => retryMisses(false), 30000);
+
+  // Coming back from the background: iOS restarts LocalServer and storage
+  // connections then, so failures from just before/around the suspension
+  // are likely stale. After a short settle delay, retry everything that's
+  // waiting — transients immediately (skipping their backoff) and misses
+  // too. Short trips (< 5 s) don't count.
+  if (typeof document !== 'undefined' && document.addEventListener) {
+    let hiddenAt = 0;
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+      const away = hiddenAt ? Date.now() - hiddenAt : 0;
+      hiddenAt = 0;
+      if (away < 5000) return;
+      setTimeout(() => { retryMisses(true); retryPoll(true); }, 3000);
+    });
+  }
 
   function invalidate(a, b, variant) {
     const key = keyOf(a, b, variant);
     const p = cache.get(key);
     if (!p) return;
     cache.delete(key);
+    missAt.delete(key);
     p.then((u) => u && URL.revokeObjectURL(u)).catch(() => {});
   }
 
@@ -273,12 +372,20 @@
       p.then((u) => u && URL.revokeObjectURL(u)).catch(() => {});
     }
     cache.clear();
+    missAt.clear();
   }
 
   global.SpriteStore = {
     spriteUrl, preload, showSprite, bestVariantFor,
     invalidate, clearAll,
-    retryPoll,
+    retryPoll, retryMisses,
     pendingRetryCount: () => pendingRetries.size,
+    // For the Settings diagnostic dump ([sprites] block).
+    stats: () => ({
+      cached: cache.size,
+      misses: missAt.size,
+      pendingRetries: pendingRetries.size,
+      pendingMisses: pendingMisses.size,
+    }),
   };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -129,10 +129,11 @@
     window._spriteDiag = window._spriteDiag || {};
     window._spriteDiag.errorCount = (window._spriteDiag.errorCount || 0) + 1;
     window._spriteDiag.errors = window._spriteDiag.errors || [];
-    if (window._spriteDiag.errors.length < 10) {
-      const msg = (err && err.message) ? err.message : String(err);
-      window._spriteDiag.errors.push(`${where}: ${msg}`);
-    }
+    // Keep the 10 MOST RECENT (was: the first 10, so a long session's
+    // dump only ever showed errors from just after launch).
+    const msg = (err && err.message) ? err.message : String(err);
+    window._spriteDiag.errors.push(`${where}: ${msg}`);
+    if (window._spriteDiag.errors.length > 10) window._spriteDiag.errors.shift();
   }
 
   // Shared CCIdb connection (idb-util.js): re-opens itself when iOS
@@ -1027,6 +1028,23 @@
     return _packCacheSet(b, { entries, buf, ranged: false });
   }
 
+  // A pack read that failed for a RECOVERABLE reason — network error,
+  // 5xx (incl. the service worker's synthetic 504 while iOS restarts
+  // LocalServer after a resume), short/garbled read. Thrown, never
+  // returned as null: null means "this sprite genuinely isn't in the
+  // pack", and callers cache that as permanent. Conflating the two was
+  // the "red dots that never recover" bug (Oct 2026).
+  function _packTransient(where, b, cause, httpStatus) {
+    const e = new Error(`${where} ${b}: ${(cause && cause.message) || cause}`);
+    e.transient = true;
+    if (httpStatus) e.httpStatus = httpStatus;
+    _logSpriteError(`${where}/${b}`, e);
+    return e;
+  }
+
+  // Resolves the parsed pack, or null when the partner has NO pack
+  // (404) or the pack is unusable (bad magic — permanent). Throws a
+  // transient error (see _packTransient) for anything retryable.
   async function _loadPack(b) {
     const cached = _packCache.get(b);
     if (cached) {
@@ -1051,11 +1069,13 @@
           headers: { Range: `bytes=0-${PACK_INDEX_PROBE - 1}` },
         });
       } catch (e) {
-        _logSpriteError(`loadPack/fetch/${b}`, e);
-        return null;
+        throw _packTransient('loadPack/fetch', b, e);
       }
-      if (!resp.ok) return null;   // 404 = no pack for this partner
-      let head = await resp.arrayBuffer();
+      if (resp.status === 404) return null;   // no pack for this partner
+      if (!resp.ok) throw _packTransient('loadPack/http', b, `HTTP ${resp.status}`, resp.status);
+      let head;
+      try { head = await resp.arrayBuffer(); }
+      catch (e) { throw _packTransient('loadPack/read', b, e); }
       if (resp.status !== 206 || head.byteLength < 8) {
         return _packFromWholeBuffer(b, head);
       }
@@ -1071,19 +1091,20 @@
         // Index larger than the probe window (no current pack is near
         // this; defensive for future format growth): fetch the exact
         // remainder once and concatenate.
-        let rest;
+        let rest, restBytes;
         try {
           rest = await fetch(url, {
             headers: { Range: `bytes=${head.byteLength}-${payloadStart - 1}` },
           });
+          if (!rest.ok) {
+            throw _packTransient('loadPack/indexRest', b, `HTTP ${rest.status}`, rest.status);
+          }
+          restBytes = await rest.arrayBuffer();
         } catch (e) {
-          _logSpriteError(`loadPack/indexRest/${b}`, e);
-          return null;
+          if (e && e.transient) throw e;
+          throw _packTransient('loadPack/indexRest', b, e);
         }
-        if (rest.status !== 206) {
-          return _packFromWholeBuffer(b, await rest.arrayBuffer());
-        }
-        const restBytes = await rest.arrayBuffer();
+        if (rest.status !== 206) return _packFromWholeBuffer(b, restBytes);
         const joined = new Uint8Array(head.byteLength + restBytes.byteLength);
         joined.set(new Uint8Array(head), 0);
         joined.set(new Uint8Array(restBytes), head.byteLength);
@@ -1120,8 +1141,7 @@
         headers: { Range: `bytes=${offset}-${offset + length - 1}` },
       });
     } catch (e) {
-      _logSpriteError(`packGetBlob/range/${b}/${key}`, e);
-      return null;
+      throw _packTransient('packGetBlob/range', b, e);
     }
     if (resp.status === 200) {
       // Server stopped honouring Range mid-session (the index probe
@@ -1135,12 +1155,18 @@
       return new Blob([new Uint8Array(whole.buf, e2[0], e2[1])],
         { type: 'image/png' });
     }
-    if (resp.status !== 206) return null;
-    const bytes = await resp.arrayBuffer();
+    // The index said this cell exists, so any other status (the SW's
+    // 504 while LocalServer restarts, a 5xx, even a 404 mid-update) is
+    // a failed READ, not a missing sprite.
+    if (resp.status !== 206) {
+      throw _packTransient('packGetBlob/http', b, `HTTP ${resp.status}`, resp.status);
+    }
+    let bytes;
+    try { bytes = await resp.arrayBuffer(); }
+    catch (e) { throw _packTransient('packGetBlob/read', b, e); }
     if (bytes.byteLength !== length) {
-      _logSpriteError(`packGetBlob/shortRead/${b}/${key}`,
-        new Error(`expected ${length} B, got ${bytes.byteLength}`));
-      return null;
+      throw _packTransient('packGetBlob/shortRead', b,
+        `expected ${length} B, got ${bytes.byteLength}`);
     }
     return new Blob([bytes], { type: 'image/png' });
   }
@@ -1227,8 +1253,16 @@
         if (blob) return { status: 'ok', blob };
       } catch (e) {
         _logSpriteError(`getSpriteBlobAttempt/pack/${a}-${b}:${variant}`, e);
-        // Fall through — lazy-crop may still succeed.
+        // The pack is the authoritative source and it was merely
+        // unreachable (LocalServer restarting after an iOS resume, a
+        // dropped read): retry later. Do NOT fall through to the
+        // lazy-crop sheets — downloaded HF packs don't ship sprites/, so
+        // the sheet answers 404 and that 404 got cached as a permanent
+        // "missing" sprite: a red dot until the app was restarted.
+        return { status: 'transient', blob: null };
       }
+      // The pack genuinely has no such cell (or no pack exists for this
+      // partner): fall back to cropping it out of a bundled sheet.
       try {
         const isCustomFallback = (typeof variant === 'number' && variant >= 0);
         const blob = isCustomFallback
@@ -1273,12 +1307,16 @@
     return cropAutogenCell(bmp, a);
   }
 
+  // Throws (instead of returning null) when cells.json / manifest.json
+  // couldn't be READ: null means "no such custom cell" and is cached as
+  // permanent by SpriteStore, so a transient load failure must not
+  // masquerade as one.
   async function lazyCropCustom(a, b, slot) {
-    const cells = await getCells().catch(() => null);
+    const cells = await getCells();
     const variantIndices = cells && cells[`${a}-${b}`];
     if (!variantIndices || slot >= variantIndices.length) return null;
     const variantIndex = variantIndices[slot];
-    const manifest = await getCustomManifest().catch(() => null);
+    const manifest = await getCustomManifest();
     const suffixes = manifest && manifest[String(b)];
     if (!suffixes || variantIndex >= suffixes.length) return null;
     const suffix = suffixes[variantIndex];
@@ -1378,7 +1416,13 @@
   /// the single-call `getSpriteBlob` path) — the click would lazy-crop
   /// + persist to IDB, then the next reload would see it.
   async function getSpriteBlobsBatch(requests) {
-    const results = await _idbBlobsBatch(requests);
+    // Native builds never store sprite blobs in IDB (sprites come from
+    // the pack files), so skip the guaranteed-miss transaction — one
+    // fewer storage round-trip per marker batch, and nothing to fail
+    // when iOS has just dropped the connection.
+    const results = (typeof window !== 'undefined' && window.Capacitor)
+      ? (requests || []).map((r, i) => ({ key: r.key != null ? r.key : i, blob: null }))
+      : await _idbBlobsBatch(requests);
     // Per-entry result shape: { key, blob, status }
     //   status: 'ok' | 'missing' | 'transient'
     //
@@ -1492,7 +1536,9 @@
   }
   async function _downloadManifest() {
     const resp = await fetch(`${BUNDLED_BASE}/manifest.json`);
-    if (!resp.ok) throw new Error(`manifest: HTTP ${resp.status}`);
+    if (!resp.ok) {
+      throw Object.assign(new Error(`manifest: HTTP ${resp.status}`), { httpStatus: resp.status });
+    }
     _customManifest = await resp.json();
     varPut(MANIFEST_KEY, _customManifest).catch(() => {});
     return _customManifest;
@@ -1525,7 +1571,9 @@
   }
   async function _downloadCells() {
     const resp = await fetch(`${BUNDLED_BASE}/cells.json`);
-    if (!resp.ok) throw new Error(`cells: HTTP ${resp.status}`);
+    if (!resp.ok) {
+      throw Object.assign(new Error(`cells: HTTP ${resp.status}`), { httpStatus: resp.status });
+    }
     _cellsMap = await resp.json();
     varPut(CELLS_KEY, _cellsMap).catch(() => {});
     return _cellsMap;
