@@ -3864,9 +3864,14 @@
         window._ccFetchLog.push({
           t: Date.now(), original: originalUrl, final: finalUrl, rewritten,
         });
+        // Only traffic that LEAVES the device is surfaced to the console
+        // (and so the diagnostic error ring). Local /bundled-data reads
+        // used to be logged too; with dozens per minute they flushed
+        // the 100-entry ring and pushed out the real errors (e.g. the
+        // IndexedDB failures behind the Oct-2026 lost catches). Every
+        // fetch is still recorded in window._ccFetchLog.
         const interesting =
-          /\/bundled-data\//.test(String(originalUrl))
-          || rewritten
+          rewritten
           || (/^https?:/.test(String(finalUrl))
               && !/^https?:\/\/localhost/.test(String(finalUrl)));
         if (interesting) {
@@ -14423,6 +14428,15 @@ function fmtDate(ts) {
         `  spriteBatches: ${sd.batchCount ?? 0}, last ${sd.lastBatchSize ?? '—'} in ${dur(sd.lastBatchMs)}`,
         `  firstSpriteInstall: ${at(sd.firstSpriteInstallAt)}`,
         `  firstSpriteVisible: ${at(sd.firstSpriteVisibleAt)}`,
+        (() => {
+          try {
+            const st = window.SpriteStore && window.SpriteStore.stats && window.SpriteStore.stats();
+            return st
+              ? `  store: cached=${st.cached} misses=${st.misses} ` +
+                `pendingRetries=${st.pendingRetries} pendingMisses=${st.pendingMisses}`
+              : `  store: —`;
+          } catch (_) { return `  store: —`; }
+        })(),
         `[sprite errors]`,
         `  count: ${sd.errorCount ?? 0}`,
       );
@@ -14942,6 +14956,57 @@ function fmtDate(ts) {
             lines.push(`    -${ago}s [${f.scope}] ${label}  ${url}`);
           }
         }
+      }
+      // Storage health — the collection's journal/checkpoint state, the
+      // IndexedDB connection counters (closes/re-opens/stale retries are
+      // the fingerprint of iOS dropping connections on suspension), and
+      // the server-backup outcome. Added after the Oct-2026 lost-catches
+      // bug, which was invisible in the dump until it was too late.
+      try {
+        const ago = (t) => t ? `${Math.round((Date.now() - t) / 1000)}s ago` : '—';
+        lines.push(`[storage]`);
+        const ps = window.Creatures && window.Creatures.persistenceStatus
+          ? window.Creatures.persistenceStatus() : null;
+        if (ps) {
+          const dirty = (ps.dirty || []).length
+            ? ps.dirty.join('+') + (ps.oldestDirtyAt ? ` (since ${ago(ps.oldestDirtyAt)})` : '')
+            : 'none';
+          lines.push(
+            `  collection: hydrated=${ps.hydrated ? 'y' : 'n'} degraded=${ps.degraded ? 'Y' : 'n'} ` +
+            `journal=${ps.journalOk === false ? 'BROKEN' : 'ok'} entries=${ps.journalCount ?? '—'} ` +
+            `unsaved=${dirty}`);
+          lines.push(
+            `  checkpoint: last ok ${ago(ps.lastOkAt)}  failStreak=${ps.failStreak ?? 0}` +
+            (ps.lastErr ? `  lastErr="${ps.lastErr}" (${ago(ps.lastErrAt)})` : '') +
+            (ps.loadError ? `  loadError="${ps.loadError}"` : ''));
+          if (ps.lastReplay && Object.keys(ps.lastReplay).length) {
+            lines.push(`  replayed at load: ` + Object.entries(ps.lastReplay)
+              .map(([k, v]) => `${k}=${v}`).join(' '));
+          }
+        } else {
+          lines.push(`  collection: —`);
+        }
+        if (window.CCIdb && window.CCIdb.stats) {
+          const st = window.CCIdb.stats();
+          lines.push(`  idb resume-invalidations=${window.CCIdb.resumeInvalidations()}`);
+          for (const name of Object.keys(st).sort()) {
+            const d = st[name];
+            lines.push(
+              `  idb ${name}: opens=${d.opens} closes=${d.closes} vchg=${d.versionChanges} ` +
+              `staleRetries=${d.staleRetries} timeouts=${d.openTimeouts} ` +
+              `openErrors=${d.openErrors}` +
+              (d.lastError ? `  last="${d.lastError}" (${ago(d.lastErrorAt)})` : ''));
+          }
+        }
+        const lastSave = Number(localStorage.getItem('cc.lastSaveAt') || 0);
+        const se = window._ccLastSaveError ? window._ccLastSaveError() : null;
+        const abFail = Number(localStorage.getItem('cc.autoBackupFailAt') || 0);
+        lines.push(
+          `  server backup: last ok ${ago(lastSave)}` +
+          (se ? `  last error ${ago(se.at)}${se.silent ? ' (auto)' : ''}: "${se.msg}"` : '') +
+          (abFail ? `  auto-backup backing off since ${ago(abFail)}` : ''));
+      } catch (e) {
+        lines.push(`  storage block failed: ${e && e.message}`);
       }
       // Inventory + pokédex perf metrics — wraps the hot functions
       // and renders so we can see where the time goes as the capture
