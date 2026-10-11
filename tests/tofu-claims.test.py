@@ -170,6 +170,27 @@ ok(r.status_code == 400, "decompressed body past the size cap -> 400")
 ok(len(list(SAVES.glob("TofuGz_*.json.gz"))) == 1,
    "rejected gzip saves wrote no files")
 
+# ── (8) CORS preflight for the native apps ──
+# The Capacitor apps POST /save cross-origin. The browser only sends the
+# real request if the preflight allows every non-safelisted header the
+# client uses — the gzip clients' Content-Encoding was missing, which
+# silently failed every native save (the SW reported it as a 504).
+for origin in ("http://localhost:60497", "https://localhost", "capacitor://localhost"):
+    r = client.open("/save", method="OPTIONS", headers={
+        "Origin": origin,
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type,content-encoding",
+    })
+    allowed = {h.strip().lower() for h in
+               r.headers.get("Access-Control-Allow-Headers", "").split(",")}
+    ok(r.status_code in (200, 204), f"preflight from {origin} succeeds")
+    ok(r.headers.get("Access-Control-Allow-Origin") == origin,
+       f"preflight echoes origin {origin}")
+    ok({"content-type", "content-encoding"} <= allowed,
+       f"preflight from {origin} allows Content-Type + Content-Encoding (got {allowed})")
+    ok("POST" in r.headers.get("Access-Control-Allow-Methods", ""),
+       f"preflight from {origin} allows POST")
+
 
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

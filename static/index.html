@@ -3885,15 +3885,17 @@
     // stack, which is a separate failure mode, so we track them
     // separately under `remote`.
     window._fetchHealth = window._fetchHealth || {
-      local:  { total: 0, ok: 0, n4xx: 0, n5xx: 0, rejected: 0,
+      local:  { total: 0, ok: 0, n4xx: 0, n5xx: 0, rejected: 0, swFailed: 0,
                 consecutiveFailures: 0,
                 lastSuccessAt: 0, lastFailureAt: 0 },
-      remote: { total: 0, ok: 0, n4xx: 0, n5xx: 0, rejected: 0,
+      remote: { total: 0, ok: 0, n4xx: 0, n5xx: 0, rejected: 0, swFailed: 0,
                 consecutiveFailures: 0,
                 lastSuccessAt: 0, lastFailureAt: 0 },
       recent: [],   // [{t, url, status, reason, scope}] capped at 20
     };
-    function _recordFetchOutcome(url, scope, status, err) {
+    // swTag: the X-CC-SW header sw.js puts on the 504 it synthesises when
+    // its own fetch fails — counted separately from real server 5xx.
+    function _recordFetchOutcome(url, scope, status, err, swTag) {
       try {
         const h = window._fetchHealth;
         const bucket = h[scope] || h.local;
@@ -3921,6 +3923,11 @@
           bucket.lastFailureAt = now;
           bucket.consecutiveFailures++;
           pushRecent(status, '');
+        } else if (swTag) {
+          bucket.swFailed = (bucket.swFailed || 0) + 1;
+          bucket.lastFailureAt = now;
+          bucket.consecutiveFailures++;
+          pushRecent(0, 'sw: ' + swTag);
         } else if (status >= 500) {
           bucket.n5xx++;
           bucket.lastFailureAt = now;
@@ -3948,7 +3955,11 @@
       }
       // Tap the outcome without disturbing the caller's chain.
       resp.then(
-        (r) => _recordFetchOutcome(url, scope, r && r.status, null),
+        (r) => {
+          let swTag = null;
+          try { swTag = r && r.headers && r.headers.get('X-CC-SW'); } catch (_) {}
+          _recordFetchOutcome(url, scope, r && r.status, null, swTag);
+        },
         (err) => _recordFetchOutcome(url, scope, 0, err),
       );
       return resp;
@@ -8450,6 +8461,7 @@ function fmtDate(ts) {
 
   // opts.silent → no alerts (used by the WiFi auto-backup). Returns whether
   // the save succeeded so callers can react without a popup.
+  const SAVE_ERROR_KEY = 'cc.lastSaveError';
   async function saveToServer(opts) {
     const silent = !!(opts && opts.silent);
     const name = (localStorage.getItem('cc.backupName') || '').trim();
@@ -8460,11 +8472,15 @@ function fmtDate(ts) {
     const data = await buildBackupPayload();
     try {
       const req = await _saveRequestBody(data);
-      const headers = { 'Content-Type': 'application/json' };
-      if (req.gzipped) headers['Content-Encoding'] = 'gzip';
+      // No Content-Encoding header, even for a gzipped body: the server
+      // sniffs the gzip magic bytes, and on the native apps this POST is
+      // cross-origin, so every extra header has to survive a CORS
+      // preflight. Content-Encoding wasn't in the server's allow-list and
+      // silently blocked every save from the first gzip builds (seen as
+      // "Load failed" / a service-worker 504).
       const resp = await fetch(_serverUrl('save', '/save'), {
         method: 'POST',
-        headers: headers,
+        headers: { 'Content-Type': 'application/json' },
         body: req.body,
       });
       const body = await resp.json().catch(() => ({}));
@@ -8472,14 +8488,28 @@ function fmtDate(ts) {
       // Successful save — record the timestamp so the inventory's
       // "save reminder" banner stays hidden for the next 7 days.
       localStorage.setItem('cc.lastSaveAt', String(Date.now()));
+      try { localStorage.removeItem(SAVE_ERROR_KEY); } catch (_) {}
       updateBackupStatus();
       if (!silent) alert(`Saved to server as ${body.saved || name + '.json'}`);
       return true;
     } catch (e) {
+      // Remembered for the Settings diagnostic dump: a failing backup is
+      // otherwise invisible (auto-backup is silent), and a long silent
+      // streak means the player has no server copy to restore from.
+      try {
+        localStorage.setItem(SAVE_ERROR_KEY, JSON.stringify({
+          at: Date.now(), silent,
+          msg: String((e && e.message) || e).slice(0, 200),
+        }));
+      } catch (_) {}
       if (!silent) alert('Save failed: ' + (e && e.message ? e.message : e));
       return false;
     }
   }
+  window._ccLastSaveError = function () {
+    try { return JSON.parse(localStorage.getItem(SAVE_ERROR_KEY) || 'null'); }
+    catch (_) { return null; }
+  };
 
   // Returns true ONLY when we can positively confirm a non-cellular (WiFi /
   // ethernet) connection. Prefers the native @capacitor/network plugin (the
@@ -8506,6 +8536,15 @@ function fmtDate(ts) {
   // backup name is set, it's been >24 h since the last save, AND we've
   // CONFIRMED WiFi. Runs silently and swallows errors so a flaky upload never
   // nags — it'll simply retry the next time the app is foregrounded.
+  //
+  // Failure backoff: a failed attempt isn't retried for
+  // AUTO_BACKUP_RETRY_MS. Building the payload serialises the whole
+  // collection (tens of MB for a big one), so retrying on every
+  // foreground — which is what happened while saves were broken — paid
+  // that cost on every resume, right when iOS is most likely to be
+  // under memory pressure.
+  const AUTO_BACKUP_RETRY_MS = 2 * 60 * 60 * 1000;
+  const AUTO_BACKUP_FAIL_KEY = 'cc.autoBackupFailAt';
   let _autoBackupBusy = false;
   async function maybeAutoBackup() {
     if (localStorage.getItem('cc.autoBackup') !== '1') return;
@@ -8513,12 +8552,20 @@ function fmtDate(ts) {
     if (!(localStorage.getItem('cc.backupName') || '').trim()) return;
     const last = Number(localStorage.getItem('cc.lastSaveAt') || 0);
     if (isFinite(last) && last > 0 && Date.now() - last < 24 * 60 * 60 * 1000) return;
+    const failAt = Number(localStorage.getItem(AUTO_BACKUP_FAIL_KEY) || 0);
+    if (isFinite(failAt) && failAt > 0 && Date.now() - failAt < AUTO_BACKUP_RETRY_MS) return;
     if (_autoBackupBusy) return;
     _autoBackupBusy = true;
     try {
-      if (await isConfirmedWifi()) await saveToServer({ silent: true });
-    } catch (_) { /* silent — retry on next foreground */ }
-    finally { _autoBackupBusy = false; }
+      if (await isConfirmedWifi()) {
+        const okSave = await saveToServer({ silent: true });
+        if (okSave) localStorage.removeItem(AUTO_BACKUP_FAIL_KEY);
+        else localStorage.setItem(AUTO_BACKUP_FAIL_KEY, String(Date.now()));
+      }
+    } catch (_) {
+      // silent — retry after the backoff
+      try { localStorage.setItem(AUTO_BACKUP_FAIL_KEY, String(Date.now())); } catch (__) {}
+    } finally { _autoBackupBusy = false; }
   }
   async function importData(fileOrData) {
     // Accepts either a File/Blob (from the Import button) or an already-
@@ -14849,7 +14896,7 @@ function fmtDate(ts) {
         const ageSec = (t) => t ? `${Math.round((Date.now() - t) / 1000)}s ago` : '—';
         const bucketLine = (name, b) =>
           `  ${name.padEnd(7)} total=${b.total} ok=${b.ok} 4xx=${b.n4xx} ` +
-          `5xx=${b.n5xx} rejected=${b.rejected} ` +
+          `5xx=${b.n5xx} swFailed=${b.swFailed || 0} rejected=${b.rejected} ` +
           `streak=${b.consecutiveFailures} ` +
           `lastOk=${ageSec(b.lastSuccessAt)} ` +
           `lastFail=${ageSec(b.lastFailureAt)}`;
@@ -18852,10 +18899,19 @@ function fmtDate(ts) {
     });
   }
   // Check shortly after load (deferred so it never competes with startup
-  // work) and whenever the app returns to the foreground.
+  // work) and whenever the app returns to the foreground — also deferred
+  // there: the first seconds after an iOS resume are when the local
+  // server is restarting and storage connections are being re-opened, so
+  // the multi-MB payload build waits until things have settled (and is
+  // dropped if the app goes back to the background first).
   setTimeout(() => { maybeAutoBackup(); }, 8000);
+  let _autoBackupResumeTimer = null;
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) maybeAutoBackup();
+    clearTimeout(_autoBackupResumeTimer);
+    if (document.hidden) return;
+    _autoBackupResumeTimer = setTimeout(() => {
+      if (!document.hidden) maybeAutoBackup();
+    }, 20000);
   });
 
   // Creature sprite status display + clear-cache button. The bulk

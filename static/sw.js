@@ -86,6 +86,12 @@ const TILES_CACHE = 'tiles-v1';
 // longer silhouettes when the resolved slot's art is byte-identical to
 // an already-seen slot (hasSeenVariantOrDupe). Both live in
 // cache-first /static/creatures.js.
+// Shell bump 2026-10-11 (#12): iOS resume resilience. index.html
+// (cache-first '/') stops sending Content-Encoding on gzip saves (CORS
+// preflight rejected it → every native save failed), backs off failed
+// auto-backups, re-opens IndexedDB connections iOS closes during
+// suspension, and adds a [storage] block to the diagnostic dump. This
+// file: non-GET requests bypass the SW; synthetic 504s are tagged.
 
 const APP_SHELL = [
   '/',
@@ -178,7 +184,25 @@ async function _missResponse(req) {
   return new Response(null, { status: 204 });
 }
 
+// Synthetic failure response for the default branch. Tagged so the
+// page's fetch-health tracker can tell "the SW's own fetch failed"
+// (LocalServer down mid-resume, CORS rejection, offline) from a real
+// 504 sent by a server — the two used to be indistinguishable.
+function _swFetchFailed() {
+  return new Response(null, {
+    status: 504, statusText: 'SW fetch failed',
+    headers: { 'X-CC-SW': 'fetch-failed' },
+  });
+}
+
 self.addEventListener('fetch', (e) => {
+  // Non-GET requests (POST /save, POST /upload-logs) bypass the SW.
+  // Nothing below can cache them, and relaying them through the default
+  // branch turned every real failure — a CORS preflight rejection, a
+  // dropped connection — into an anonymous 504. That's how the Oct-2026
+  // "native saves silently fail" bug hid. Handled by the browser
+  // directly, the page sees the real error.
+  if (e.request.method !== 'GET' && e.request.method !== 'HEAD') return;
   const url = new URL(e.request.url);
   if (url.origin === location.origin && url.pathname.startsWith('/tiles/')) {
     if (e.request.headers.get('X-Download') === '1') return;
@@ -250,9 +274,9 @@ self.addEventListener('fetch', (e) => {
     caches.match(e.request)
       .then((hit) => {
         if (hit) return hit;
-        return fetch(e.request).catch(() => new Response(null, { status: 504 }));
+        return fetch(e.request).catch(_swFetchFailed);
       })
-      .catch(() => new Response(null, { status: 504 }))
+      .catch(_swFetchFailed)
   );
 });
 

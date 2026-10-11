@@ -367,7 +367,14 @@ def _cors_for_capacitor(resp):
             or origin.startswith("http://localhost"):
         resp.headers["Access-Control-Allow-Origin"] = origin
         resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Download"
+        # Every non-safelisted header a cross-origin client sends must be
+        # listed here, or the browser fails the preflight and the request
+        # never leaves the device (it surfaces as "Load failed", or as a
+        # synthetic 504 when the service worker relays it). Content-Encoding
+        # is sent by the Oct-2026 gzip-save clients; leaving it out silently
+        # broke every native save from those builds.
+        resp.headers["Access-Control-Allow-Headers"] = \
+            "Content-Type, Content-Encoding, X-Download"
         resp.headers["Vary"] = "Origin"
     return resp
 
