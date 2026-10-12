@@ -375,6 +375,28 @@
       S.longtaskSupported = true;
     }
   } catch (_) { /* no PerformanceObserver at all — heartbeat covers it */ }
+  // Tap delay: how long a touch waited before the page could handle it
+  // (event.timeStamp is when the browser received it) — the "my tap
+  // registered a second late" symptom, measured directly. Histogram
+  // over the session; taps that waited ≥250ms are also ringed.
+  var TAP_EDGES = [50, 100, 250, 500, 1000];
+  S.taps = { n: 0, hist: [0, 0, 0, 0, 0, 0], worst: 0 };
+  try {
+    window.addEventListener('pointerdown', function (e) {
+      var d = performance.now() - e.timeStamp;
+      if (!(d >= 0 && d < 60000)) return;   // not a monotonic timeStamp
+      var T = S.taps;
+      T.n++;
+      var i = 0;
+      while (i < TAP_EDGES.length && d >= TAP_EDGES[i]) i++;
+      T.hist[i]++;
+      if (d > T.worst) T.worst = Math.round(d);
+      if (d >= 250) {
+        S.ring.push({ t: Date.now(), dur: Math.round(d), kind: 'tap', info: 'waited' });
+        if (S.ring.length > RING_MAX) S.ring.shift();
+      }
+    }, { capture: true, passive: true });
+  } catch (_) {}
   // Hidden tabs get clamped timers (that's suspension, not jank):
   // skip ticks while hidden, and ignore the first tick after any
   // visibility change so a resume doesn't log as a giant stall.
@@ -7972,6 +7994,27 @@ function fmtDate(ts) {
   map.on('idle', () => {
     try { scheduleTappablePoiHalosRefresh(); } catch {}
   });
+  // Map frames per 10 s for the [main-thread stalls] dump. With nothing
+  // moving the map should draw ~0 frames; a steady rate while standing
+  // still means something keeps requesting repaints (the Oct 2026
+  // tappable-halo setData loop drew ~50 frames/s, forever).
+  (function () {
+    const st = window._ccStalls;
+    if (!st) return;
+    const fr = st.mapFrames = { bucket: 0, n: 0, ring: [] };
+    map.on('render', () => {
+      const b = Math.floor(Date.now() / 10000);
+      if (b !== fr.bucket) {
+        if (fr.bucket) {
+          fr.ring.push([fr.bucket, fr.n]);
+          if (fr.ring.length > 30) fr.ring.shift();
+        }
+        fr.bucket = b;
+        fr.n = 0;
+      }
+      fr.n++;
+    });
+  })();
   // Map "idle" fires when the map has finished loading + rendering
   // tiles for the current view. This is a meaningful "user can see
   // the world" milestone, distinct from `load` (style ready) or
@@ -9999,6 +10042,23 @@ function fmtDate(ts) {
   // active.
   const TAPPABLE_HALO_LAYER_ID = 'tappable-poi-halo';
   const TAPPABLE_HALO_SOURCE_ID = 'tappable-pois';
+  // Sorted coordinate keys of the halos the source currently holds
+  // ('' = empty, which is what addTappablePoiHaloLayer creates it with).
+  // setData only when the set changes: every setData re-tiles the source,
+  // re-runs symbol placement and fades labels in, so the map renders for
+  // a while and then fires 'idle' — and 'idle' schedules this refresh.
+  // Unconditional setData made that a loop, ~3 refreshes and ~50 frames
+  // a second forever, even with nothing on screen changing (Oct 2026).
+  let _haloDataKey = '';
+  function _setHaloData(features, key) {
+    if (key === _haloDataKey) return;
+    try {
+      map.getSource(TAPPABLE_HALO_SOURCE_ID).setData({
+        type: 'FeatureCollection', features,
+      });
+      _haloDataKey = key;
+    } catch {}
+  }
   function refreshTappablePoiHalos() {
     if (!map.getSource(TAPPABLE_HALO_SOURCE_ID)) return;
     const inCreatureMode = !!(window.Creatures && window.Creatures.isEnabled
@@ -10038,10 +10098,7 @@ function fmtDate(ts) {
         y1 = Math.min(sw.y, nw.y, se.y, ne.y);
         y2 = Math.max(sw.y, nw.y, se.y, ne.y);
       } catch {
-        try {
-          map.getSource(TAPPABLE_HALO_SOURCE_ID).setData({
-            type: 'FeatureCollection', features: [] });
-        } catch {}
+        _setHaloData([], '');
         return;
       }
       const layers = ['poi-icons'];
@@ -10077,11 +10134,10 @@ function fmtDate(ts) {
         });
       }
     }
-    try {
-      map.getSource(TAPPABLE_HALO_SOURCE_ID).setData({
-        type: 'FeatureCollection', features,
-      });
-    } catch {}
+    const keys = features.map((f) => f.geometry.coordinates[0].toFixed(6)
+      + ',' + f.geometry.coordinates[1].toFixed(6));
+    keys.sort();
+    _setHaloData(features, keys.join(';'));
   }
   // rAF-coalesced halo refresh. moveend/idle/geolocate/cooldown
   // changes all schedule a refresh; multiple triggers within the
@@ -10109,6 +10165,7 @@ function fmtDate(ts) {
       type: 'geojson',
       data: { type: 'FeatureCollection', features: [] },
     });
+    _haloDataKey = '';
     map.addLayer({
       id: TAPPABLE_HALO_LAYER_ID,
       type: 'circle',
@@ -15784,7 +15841,8 @@ function fmtDate(ts) {
       // kind 'task' = PerformanceObserver longtask (Chrome/Android,
       // real per-task durations); 'lag' = heartbeat probe lateness
       // (the iOS fallback); 'mark' = a heavy function self-reporting
-      // its duration (the attribution layer). Sync marks are true
+      // its duration (the attribution layer); 'tap' = a touch that
+      // waited ≥250ms before the page could handle it. Sync marks are true
       // blocking time; '~wall' marks include awaited IO and only
       // prove a freeze when a lag/task entry has the same age.
       const stalls = window._ccStalls;
@@ -15794,6 +15852,23 @@ function fmtDate(ts) {
           + `  tasks≥50ms=${stalls.taskCount} (${Math.round(stalls.taskMs)}ms total)`
           + `  lagTicks=${stalls.lagCount}  worst=${stalls.worstMs}ms`
           + `  since=${Math.round((Date.now() - stalls.startedAt) / 1000)}s`);
+        const taps = stalls.taps;
+        if (taps && taps.n) {
+          const h = taps.hist;
+          lines.push(`  tap delay: n=${taps.n}  <50ms ${h[0]}  50-100 ${h[1]}  100-250 ${h[2]}`
+            + `  250-500 ${h[3]}  0.5-1s ${h[4]}  >1s ${h[5]}  worst=${taps.worst}ms`);
+        }
+        const mf = stalls.mapFrames;
+        if (mf && mf.bucket) {
+          // Last 5 min of 10 s buckets, oldest first; buckets with no
+          // frame at all never got pushed, so fill them with 0.
+          const byBucket = new Map(mf.ring);
+          byBucket.set(mf.bucket, mf.n);
+          const nowB = Math.floor(Date.now() / 10000);
+          const counts = [];
+          for (let b = nowB - 29; b <= nowB; b++) counts.push(byBucket.get(b) || 0);
+          lines.push(`  map frames/10s, last 5 min: ${counts.join(' ')}`);
+        }
         const recentStalls = stalls.ring.slice(-25).reverse();
         if (!recentStalls.length) {
           lines.push(`  none recorded ≥${stalls.longtaskSupported ? 100 : 125}ms`);

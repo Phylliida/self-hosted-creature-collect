@@ -226,8 +226,8 @@
     _pack = def || null;
     _byPrimary = null; _bySecondary = null;
     _cachedSampler = null; _cachedSamplerKey = null;
-    _ctMemo.clear(); _ctMemoSampler = null; _ctMemoOldestTick = -1;
-    _incMemo.clear(); _incMemoKey = null; _incMemoOldest = -1;
+    _ctMemo.clear(); _ctMemoSampler = null;
+    _incMemo.clear(); _incMemoKey = null;
   }
   function getPack() { return _pack; }
   // Weather always rotates over the ACTIVE type list — the pokémon 18
@@ -705,15 +705,53 @@
   // measured 100-460ms per refresh on an iPhone ([main-thread stalls]
   // mark 'spawn-refresh'). Memoizing makes steady-state refreshes Map
   // hits; only tick rollover (once a minute) and newly-entered cells
-  // compute fresh. Entries are pruned as their tick leaves the scan
-  // window. The memo resets whenever the sampler object changes
+  // compute fresh. The memo resets whenever the sampler object changes
   // (weather rotation, species data (re)load) because species
   // selection reads it; results computed while the sampler is missing
   // are never cached, so spawns still appear once data loads.
-  let _ctMemo = new Map();          // "cx:cy:t" -> spawn object | null
+  //
+  // Layout: one entry per CELL (numeric key), holding a ring of the
+  // scan window's ticks (slot = tick % CT_RING, tagged with the tick it
+  // holds, so a slot from an older minute just reads as a miss and is
+  // overwritten). The first version keyed every (cell, tick) by a
+  // "cx:cy:t" string: ~13k string builds + Map lookups per refresh
+  // (~50 ms per GPS fix on a 4×-throttled CPU while riding a bus), a
+  // full-memo sweep at every minute rollover, and on a bus the memo
+  // filled its cap within ~3 min and was wiped — the next refresh then
+  // regenerated every visible cell-tick from scratch (Oct 2026).
+  // Cells outside the current scan are evicted only when the memo
+  // outgrows CT_MEMO_MAX_CELLS, so the cells in view always stay warm.
+  const CT_RING = LIFETIME_TICKS + 1;  // the scan window is curTick-LIFETIME_TICKS..curTick
+  const CT_CELL_STRIDE = 4194304;      // 2^22 > lng cells (3.6M); key = cx * stride + cy, exact in f64
+  const CT_MEMO_MAX_CELLS = 8000;      // ~13 refresh windows of cells (~4 MB)
+  let _ctMemo = new Map();          // cellKey -> { tk: tick tags, v: spawn | null, used }
   let _ctMemoSampler = null;        // sampler identity memo was built against
-  let _ctMemoOldestTick = -1;       // ticks below this have been pruned
-  const CT_MEMO_HARD_CAP = 120000;  // teleport / zoom-out safety valve
+  let _ctScan = 0;                  // spawnsInBbox call counter (cell.used)
+  let _ctMisses = 0;                // cell-ticks generated (tests)
+  // Memo lookup for one (cell, tick); `gen` computes it on a miss.
+  // Results are stored only when `store` (see the sampler rule above).
+  function _ringGet(memo, cx, cy, t, scan, store, gen) {
+    const ck = cx * CT_CELL_STRIDE + cy;
+    let cell = memo.get(ck);
+    if (cell === undefined) {
+      cell = { tk: new Float64Array(CT_RING).fill(-1), v: new Array(CT_RING).fill(null), used: scan };
+      memo.set(ck, cell);
+    }
+    cell.used = scan;
+    const slot = ((t % CT_RING) + CT_RING) % CT_RING;
+    if (cell.tk[slot] === t) return cell.v[slot];
+    _ctMisses++;
+    const p = gen(cx, cy, t);
+    if (store) { cell.tk[slot] = t; cell.v[slot] = p; }
+    return p;
+  }
+  // Keep the memo bounded: past the cap, drop every cell the current
+  // scan didn't touch (a moving player's trail). Never cold-starts the
+  // cells in view.
+  function _ringEvict(memo, scan) {
+    if (memo.size <= CT_MEMO_MAX_CELLS) return;
+    for (const [k, cell] of memo) if (cell.used !== scan) memo.delete(k);
+  }
 
   // ── Legendary spawns (independent deterministic pull) ──────────
   // Legendaries are deliberately NOT in the normal type/weather pool
@@ -1230,7 +1268,7 @@
     const next = (state && typeof state.type === 'string'
       && typeof state.startMs === 'number') ? { type: state.type, startMs: state.startMs } : null;
     const key = next ? next.type + '|' + next.startMs : null;
-    if (key !== _incMemoKey) { _incMemo.clear(); _incMemoKey = key; _incMemoOldest = -1; }
+    if (key !== _incMemoKey) { _incMemo.clear(); _incMemoKey = key; }
     _activeIncense = next;
   }
   function getActiveIncense() { return _activeIncense; }
@@ -1339,7 +1377,6 @@
   // un-memoized rescan would double the per-refresh cost while active.
   let _incMemo = new Map();
   let _incMemoKey = null;        // "type|startMs" identity the memo was built for
-  let _incMemoOldest = -1;
   function incenseSpawnsInBbox(bbox, nowMs) {
     const now = nowMs == null ? Date.now() : nowMs;
     const inc = incenseActiveAt(now);
@@ -1356,21 +1393,13 @@
     // extra spawns show up immediately, not after a 20-minute ramp), then
     // hard-cut when the 30-minute window ends (handled by incenseActiveAt).
     const firstTick = curTick - LIFETIME_TICKS;
-    if (firstTick > _incMemoOldest) {
-      for (const k of _incMemo.keys()) {
-        if (+k.slice(k.lastIndexOf(':') + 1) < firstTick) _incMemo.delete(k);
-      }
-      _incMemoOldest = firstTick;
-    }
-    if (_incMemo.size > CT_MEMO_HARD_CAP) _incMemo.clear();
+    const scan = ++_ctScan;
+    const gen = (cx, cy, t) => generateIncenseCellAtTick(cx, cy, t, inc.type, now);
     const out = [];
     for (let cx = minLatCell; cx <= maxLatCell; cx++) {
       for (let cy = minLngCell; cy <= maxLngCell; cy++) {
         for (let t = firstTick; t <= curTick; t++) {
-          const mk = cx + ':' + cy + ':' + t;
-          let p;
-          if (_incMemo.has(mk)) p = _incMemo.get(mk);
-          else { p = generateIncenseCellAtTick(cx, cy, t, inc.type, now); _incMemo.set(mk, p); }
+          const p = _ringGet(_incMemo, cx, cy, t, scan, true, gen);
           if (!p) continue;
           if (now < p.startMs || now >= p.expireMs) continue;
           if (p.lat < south || p.lat > north || p.lng < west || p.lng > east) continue;
@@ -1378,6 +1407,7 @@
         }
       }
     }
+    _ringEvict(_incMemo, scan);
     return out;
   }
 
@@ -1404,8 +1434,8 @@
       ? { speciesId: state.speciesId, startMs: state.startMs, endMs: state.endMs } : null;
     const key = next ? next.speciesId + '|' + next.startMs + '|' + next.endMs : null;
     if (key !== _cdMemoKey) {
-      _ctMemo.clear(); _ctMemoSampler = null; _ctMemoOldestTick = -1;
-      _incMemo.clear(); _incMemoKey = null; _incMemoOldest = -1;
+      _ctMemo.clear(); _ctMemoSampler = null;
+      _incMemo.clear(); _incMemoKey = null;
       _cdMemoKey = key;
     }
     _communityDay = next;
@@ -1442,26 +1472,15 @@
     if (sampler !== _ctMemoSampler) {
       _ctMemo.clear();
       _ctMemoSampler = sampler;
-      _ctMemoOldestTick = firstTick;
-    } else if (firstTick > _ctMemoOldestTick) {
-      for (const k of _ctMemo.keys()) {
-        if (+k.slice(k.lastIndexOf(':') + 1) < firstTick) _ctMemo.delete(k);
-      }
-      _ctMemoOldestTick = firstTick;
     }
-    if (_ctMemo.size > CT_MEMO_HARD_CAP) _ctMemo.clear();
+    const scan = ++_ctScan;
+    const gen = (cx, cy, t) => generateCellAtTick(cx, cy, t, now);
+    const store = !!sampler;
     const out = [];
     for (let cx = minLatCell; cx <= maxLatCell; cx++) {
       for (let cy = minLngCell; cy <= maxLngCell; cy++) {
         for (let t = firstTick; t <= curTick; t++) {
-          const key = cx + ':' + cy + ':' + t;
-          let p;
-          if (_ctMemo.has(key)) {
-            p = _ctMemo.get(key);
-          } else {
-            p = generateCellAtTick(cx, cy, t, now);
-            if (sampler) _ctMemo.set(key, p);
-          }
+          const p = _ringGet(_ctMemo, cx, cy, t, scan, store, gen);
           if (!p) continue;
           if (now < p.startMs || now >= p.expireMs) continue;
           if (p.lat < south || p.lat > north
@@ -1470,6 +1489,7 @@
         }
       }
     }
+    _ringEvict(_ctMemo, scan);
     // Fold in the independent legendary stream (rare; cheap hash-gated
     // scan over a few coarse ticks). Legendary spawn objects share the
     // normal shape, so the marker/encounter pipeline handles them as-is.
@@ -1561,5 +1581,8 @@
     // types/monsters/rares; null restores fusion behavior.
     setPack, getPack,
     TICK_MS, LIFETIME_MS,
+    // Memo size / work counters for tests/spawn-memo.test.js.
+    _memoStats: () => ({ cells: _ctMemo.size, incCells: _incMemo.size,
+      misses: _ctMisses, maxCells: CT_MEMO_MAX_CELLS }),
   };
 })(typeof window !== 'undefined' ? window : globalThis);

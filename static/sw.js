@@ -107,6 +107,9 @@ const TILES_CACHE = 'tiles-v1';
 // permission state) and settles boot on map idle AND first sprite.
 // Shell bump 2026-10-11 (#16): index.html (cache-first '/') drops the
 // boot-time icon-path probe (5 fetches before the map, one a 504 each boot).
+// Shell bump 2026-10-11 (#17): index.html (cache-first '/') stops the
+// tappable-halo setData ↔ map idle loop (the map redrew ~50×/s even
+// standing still) and adds tap-delay + map-frame lines to the dump.
 
 const APP_SHELL = [
   '/',
