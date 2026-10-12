@@ -597,7 +597,8 @@
   }
 
   // Load the sprite-credits bundle into memory from IDB. Single
-  // ~580KB JSON object keyed `${a}-${b}` → { variantSuffix: artist }.
+  // ~580KB JSON object keyed `${head}-${body}` → { variantSuffix: artist }
+  // (the game's "<head>.<body>" credit names; see getSpriteCreditForSlot).
   // Concurrent callers share one in-flight read.
   //
   // Capacitor (IPA) bonus: same pattern as _ensureSplitNames —
@@ -793,9 +794,19 @@
     }
     if (typeof slot !== 'number' || slot < 0) { _bumpCreditDiag('badSlot'); return null; }
     const bundle = await _ensureCreditsBundle();
-    if (!bundle || Object.keys(bundle).length === 0) { _bumpCreditDiag('noBundle'); return null; }
-    const cellCredits = bundle[`${a}-${b}`];
-    if (!cellCredits) { _bumpCreditDiag('noCellInBundle'); return null; }
+    // credits.json is keyed "<head>-<body>" (the game's "<head>.<body>"
+    // CSV names), the reverse of cells.json's "<body>-<head>" — a is the
+    // body, b the head here. Reading `${a}-${b}` showed every sprite with
+    // the artist of the mirrored fusion (Oct 2026; 99.6% of credited
+    // pairs only line up with the game's sheets this way round).
+    const cellCredits = bundle ? bundle[`${b}-${a}`] : null;
+    if (!cellCredits) {
+      // Empty-vs-missing only on a miss: Object.keys over the ~100k-key
+      // bundle on every call cost a few ms per variant card.
+      _bumpCreditDiag(!bundle || Object.keys(bundle).length === 0
+        ? 'noBundle' : 'noCellInBundle');
+      return null;
+    }
     // Variants array for the cell — array of manifest indices, one
     // per non-blank slot. Resolved via the in-memory _cellsMap first
     // (the canonical cells.json now stored as a single IDB record

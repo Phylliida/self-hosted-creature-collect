@@ -28,7 +28,12 @@ kept sheet's index so credits still resolve. Output uses hardlinks
 (near-zero disk cost).
 
 Credits: each source's Data/sprites/Sprite_Credits.csv rows are remapped
-from the source's suffix to the merged suffix for that head. BAT has no
+from the source's suffix to the merged suffix for that head. A CSV row
+"<head>.<body><suffix>" names art on the HEAD's sheet (the first number —
+checked against the IF1 sheets: 98,214 of 98,627 credited pairs line up
+only that way), so the head's variant mapping is the one that applies.
+Until Oct 2026 this used the second number, which re-lettered or dropped
+every credit whose two species had different variant lists. BAT has no
 CSV of its own — its rows are looked up in all three game CSVs (IFold
 first, the closest era). Conflicts resolve in source priority order.
 
@@ -37,12 +42,15 @@ Outputs:
   data/MergedCustom/credits.csv
 
 Run: python3 merge-custom-art.py
+     python3 merge-custom-art.py --credits-only   # rewrite credits.csv only
+                                                  # (sheets untouched)
 """
 
 import hashlib
 import os
 import re
 import shutil
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -100,7 +108,8 @@ def head_variants(src_dir: Path, head: int) -> list[tuple[str, Path]]:
 
 
 def parse_credits_csv(path: Path) -> dict[tuple[int, int, str], str]:
-    """{(a, b, variant_suffix): artist} from a Sprite_Credits.csv."""
+    """{(head, body, variant_suffix): artist} from a Sprite_Credits.csv
+    (rows are named "<head>.<body><suffix>")."""
     out = {}
     if not path or not path.is_file():
         return out
@@ -117,10 +126,41 @@ def parse_credits_csv(path: Path) -> dict[tuple[int, int, str], str]:
     return out
 
 
+def merge_credits(remap, csvs, bat_csvs) -> dict[tuple[int, int, str], str]:
+    """{(head, body, merged_suffix): artist}. `remap` maps
+    (source, head, source_suffix) -> merged index; `csvs` is
+    {source: parse_credits_csv(...)} for IF1/IF2; `bat_csvs` the game
+    CSVs consulted for BAT sheets. CSV keys are (head, body, suffix)."""
+    merged_credits: dict[tuple[int, int, str], str] = {}
+
+    def put(head: int, body: int, suffix: str, artist: str) -> None:
+        merged_credits.setdefault((head, body, suffix), artist)
+
+    # IF1 / IF2 rows remap through their own source's variant mapping.
+    for src_name, _, _ in SOURCES[:2]:
+        for (head, body, suf), artist in csvs.get(src_name, {}).items():
+            idx = remap.get((src_name, head, suf))
+            if idx is not None:
+                put(head, body, canonical_suffix(idx), artist)
+    # BAT rows: no CSV of its own — look the native suffix up in the
+    # game CSVs (closest era first), remap through BAT's mapping.
+    bat_keys = {(head, suf) for (src, head, suf) in remap if src == "BAT"}
+    for csv in bat_csvs:
+        for (head, body, suf), artist in csv.items():
+            if (head, suf) not in bat_keys:
+                continue
+            idx = remap.get(("BAT", head, suf))
+            if idx is not None:
+                put(head, body, canonical_suffix(idx), artist)
+    return merged_credits
+
+
 def main() -> None:
-    if OUT_DIR.exists():
-        shutil.rmtree(OUT_DIR)
-    OUT_SHEETS.mkdir(parents=True)
+    credits_only = "--credits-only" in sys.argv[1:]
+    if not credits_only:
+        if OUT_DIR.exists():
+            shutil.rmtree(OUT_DIR)
+        OUT_SHEETS.mkdir(parents=True)
 
     heads = sorted({
         h
@@ -161,6 +201,8 @@ def main() -> None:
             continue
         stats["heads"] += 1
         stats["kept"] += len(merged)
+        if credits_only:
+            continue
         out_head = OUT_SHEETS / str(head)
         out_head.mkdir(parents=True)
         for i, path in enumerate(merged):
@@ -173,31 +215,14 @@ def main() -> None:
     # ── merged credits ────────────────────────────────────────────
     csvs = {name: parse_credits_csv(csv) for name, _, csv in SOURCES}
     bat_csvs = [parse_credits_csv(p) for p in BAT_CREDIT_CSVS]
-    merged_credits: dict[tuple[int, int, str], str] = {}
+    merged_credits = merge_credits(remap, csvs, bat_csvs)
 
-    def put(a: int, b: int, suffix: str, artist: str) -> None:
-        merged_credits.setdefault((a, b, suffix), artist)
-
-    # IF1 / IF2 rows remap through their own source's variant mapping.
-    for src_name, _, _ in SOURCES[:2]:
-        for (a, b, suf), artist in csvs[src_name].items():
-            idx = remap.get((src_name, b, suf))
-            if idx is not None:
-                put(a, b, canonical_suffix(idx), artist)
-    # BAT rows: no CSV of its own — look the native suffix up in the
-    # game CSVs (closest era first), remap through BAT's mapping.
-    bat_keys = {(head, suf) for (src, head, suf) in remap if src == "BAT"}
-    for csv in bat_csvs:
-        for (a, b, suf), artist in csv.items():
-            if (b, suf) not in bat_keys:
-                continue
-            idx = remap.get(("BAT", b, suf))
-            if idx is not None:
-                put(a, b, canonical_suffix(idx), artist)
-
-    with OUT_CREDITS.open("w", encoding="utf-8") as f:
-        for (a, b, suf), artist in sorted(merged_credits.items()):
-            f.write(f"{a}.{b}{suf},{artist},main,\n")
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = OUT_CREDITS.with_suffix(".csv.tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        for (head, body, suf), artist in sorted(merged_credits.items()):
+            f.write(f"{head}.{body}{suf},{artist},main,\n")
+    os.replace(tmp, OUT_CREDITS)
 
     print(f"heads: {stats['heads']}, sheets kept: {stats['kept']}, "
           f"dupes skipped: {stats['dupes']}")

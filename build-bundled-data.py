@@ -36,7 +36,9 @@ Inputs:
 
 Outputs (under data/BundledData/):
   split-names.json         array of [prefix, suffix] indexed by national dex
-  credits.json             {"<a>-<b>": {variant_suffix: artist}}
+  credits.json             {"<head>-<body>": {variant_suffix: artist}}
+                           — the game CSV's "<head>.<body>" names, i.e.
+                           the REVERSE of cells.json's key order
   species-names.json       array (1-indexed: array[0] == "bulbasaur")
   species-types.json       {"<id>": [type1, type2|null]}, pool ids
   species-evolutions.json  {"<id>": [[target, method, param], ...]}, pool sources
@@ -385,7 +387,11 @@ def build_split_names() -> list:
 
 def build_credits() -> dict:
     """Parse Sprite_Credits.csv, filter to fusions where both species
-    are in 1..MAX_SPECIES, and group as {"a-b": {variant: artist}}."""
+    are in 1..MAX_SPECIES, and group as {"<head>-<body>": {variant: artist}}.
+    The CSV names a fusion "<head>.<body>" (its art is on the head's
+    sheet at the body's cell); this keeps that order, so readers swap it
+    against cells.json's "<body>-<head>" (sprites.js
+    getSpriteCreditForSlot)."""
     path = CREDITS_CSV
     out: dict[str, dict[str, str]] = {}
     with path.open(encoding="utf-8", errors="replace") as f:
