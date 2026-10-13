@@ -14399,8 +14399,11 @@
           // All its art seen: a gold ring around the caught ✓, or a gold
           // dot in its place when none is owned right now.
           if (seenIt(a, b) && global.Sprites && global.Sprites.getCellVariantCount) {
-            global.Sprites.getCellVariantCount(a, b).then((count) => {
-              if (!cell.isConnected || !_allArtSeen(a, b, count, seenMap)) return;
+            Promise.all([
+              global.Sprites.getCellVariantCount(a, b),
+              global.Sprites.getArtCanon ? global.Sprites.getArtCanon() : null,
+            ]).then(([count, canonOf]) => {
+              if (!cell.isConnected || !_allArtSeen(a, b, count, seenMap, canonOf)) return;
               const badge = cell.querySelector('.caught-badge');
               if (badge) {
                 badge.classList.add('art-complete');
@@ -14560,23 +14563,44 @@
     if (entry && entry.variants) for (const k in entry.variants) keys.add(k);
     return keys;
   }
-  // Has the trainer seen every art variant of (a, b)? count = its custom
-  // variant count; with none, its one art is the autogen sprite, seen
-  // once the fusion is. Same counting as the art grid and _artTally.
-  function _allArtSeen(a, b, count, seenMap) {
+  // Distinct art among a fusion's `count` hand-drawn slots. Many cells
+  // repeat the same picture under several slots; canon (its slots from
+  // cells-dupes.bin, via Sprites.getArtCanon) maps each slot to the first
+  // slot with the same bytes, so copies count once — as the fusion
+  // view's art grid shows them. Without canon every slot counts.
+  // keys: seen/caught slot keys. Returns { total, seen } in pictures.
+  const _NO_KEYS = new Set();
+  function _distinctArt(count, canon, keys) {
+    const c = (canon && canon.length === count) ? canon : null;
+    let total = 0;
+    const seen = new Set();
+    for (let i = 0; i < count; i++) {
+      const r = c ? c[i] : i;
+      if (r === i) total++;
+      if (keys.has(String(i))) seen.add(r);
+    }
+    return { total, seen: seen.size };
+  }
+  // Has the trainer seen every picture of (a, b)? count = its custom
+  // variant count (the autogen sprite never spawns once a fusion has any,
+  // so it's ignored); with none, its one art is the autogen sprite, seen
+  // once the fusion is. canonOf = Sprites.getArtCanon's lookup (or null).
+  // Same counting as the art grid and _artTally.
+  function _allArtSeen(a, b, count, seenMap, canonOf) {
     const key = `${a}-${b}`;
     const entry = Object.prototype.hasOwnProperty.call(seenMap, key) ? seenMap[key] : null;
     if (!entry && !isFusionOwned(a, b)) return false;
     if (!count) return true;
-    const keys = _seenArtKeys(a, b, entry);
-    for (let i = 0; i < count; i++) if (!keys.has(String(i))) return false;
-    return true;
+    const d = _distinctArt(count, canonOf && canonOf(a, b), _seenArtKeys(a, b, entry));
+    return d.seen >= d.total;
   }
   // Art over a set of fusions, counted like the fusion view's art grid:
-  // each hand-drawn variant (or the one autogen sprite when a fusion
-  // has none), and how many of those the trainer has seen or caught.
-  // counts: Map "a-b" → custom variant count.
-  function _artTally(pairs, counts, seenMap) {
+  // each distinct hand-drawn picture (copies under other slots count once,
+  // the autogen sprite is ignored), or the one autogen sprite when a
+  // fusion has none, and how many of those the trainer has seen or
+  // caught. counts: Map "a-b" → custom variant count; canonOf:
+  // Sprites.getArtCanon's lookup or null (_distinctArt).
+  function _artTally(pairs, counts, seenMap, canonOf) {
     let seen = 0, total = 0;
     for (const [a, b] of pairs) {
       const key = `${a}-${b}`;
@@ -14584,12 +14608,9 @@
       const entry = Object.prototype.hasOwnProperty.call(seenMap, key) ? seenMap[key] : null;
       const known = !!entry || isFusionOwned(a, b);
       if (n === 0) { total++; if (known) seen++; continue; }
-      total += n;
-      if (!known) continue;
-      for (const k of _seenArtKeys(a, b, entry)) {
-        const i = parseInt(k, 10);
-        if (i >= 0 && i < n) seen++;
-      }
+      const d = _distinctArt(n, canonOf && canonOf(a, b), known ? _seenArtKeys(a, b, entry) : _NO_KEYS);
+      total += d.total;
+      seen += d.seen;
     }
     return { seen, total };
   }
@@ -14729,8 +14750,9 @@
       + '</div></div>'
       + '<div class="cc-info-section"><div class="cc-info-section-title">By type</div>'
       + '<div class="cc-sum-types">' + typesHtml() + '</div></div>'
-      + '<p class="cc-info-note">Art counts each fusion\'s hand-drawn variants, or its'
-      + ' auto-generated sprite when it has none.</p>';
+      + '<p class="cc-info-note">Art counts each fusion\'s distinct hand-drawn pictures'
+      + ' (a copy under another slot counts once), or its auto-generated sprite when'
+      + ' it has none.</p>';
     _openInfoModal({
       title, html,
       onWire: (root, content) => {
@@ -14757,7 +14779,9 @@
         };
         const counts = (global.Sprites && global.Sprites.getCellVariantCountsBatch)
           ? global.Sprites.getCellVariantCountsBatch(pairs) : Promise.resolve(new Map());
-        counts.then((m) => fill(_artTally(pairs, m, seenMap)))
+        const canon = (global.Sprites && global.Sprites.getArtCanon)
+          ? global.Sprites.getArtCanon() : Promise.resolve(null);
+        Promise.all([counts, canon]).then(([m, c]) => fill(_artTally(pairs, m, seenMap, c)))
           .catch(() => {
             if (token !== _summaryToken || !artEl.isConnected) return;
             artEl.innerHTML = '<div class="cc-sum-row"><span class="cc-sum-label">Art</span>'

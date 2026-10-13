@@ -36,8 +36,21 @@ The runtime looks up customKey(a, b, slot) to fetch a hand-drawn
 variant; this script writes one pack entry per (a, slot) so that key
 resolves directly.
 
+Also writes `cells-dupes.bin` next to cells.json (build_art_dupes):
+many cells list byte-identical art under more than one slot (about half
+of all slots copy another slot of the same cell, mostly slot 0). It maps
+every slot to the first slot of its cell with the same PNG bytes, so the
+app can count distinct art (the species dex's all-art ring, the
+Summary's art %) the way the fusion view's art grid already shows it.
+Format: 'CRDP', u32 LE slot count, then one byte per slot (its canonical
+slot) — cells in the order sprites.js builds its compact cells table
+(non-empty cells sorted by a * 65536 + b), slots in cells.json order.
+~250 KB for ~250k slots; the app reads it as one Uint8Array aligned with
+that table's value array.
+
 Run:
     python3 generate_sprite_packs.py
+    python3 generate_sprite_packs.py --dupes-only   # just cells-dupes.bin, from the existing packs
 """
 
 import json
@@ -67,6 +80,7 @@ SPRITES_DIR = BUNDLE_DIR / "sprites"
 PACKS_DIR = BUNDLE_DIR / "sprite-packs"
 MANIFEST_PATH = BUNDLE_DIR / "manifest.json"
 CELLS_PATH = BUNDLE_DIR / "cells.json"
+DUPES_PATH = BUNDLE_DIR / "cells-dupes.bin"
 
 PACK_MAGIC = b"CRPP"
 
@@ -254,13 +268,28 @@ def build_sprite_packs() -> tuple[int, int]:
     return pack_count, total_cells
 
 
+def build_art_dupes(packs_dir=None, cells_path=None, out_path=None) -> int:
+    """Write cells-dupes.bin for this bundle, plus its Refresh copy
+    static/art-dupes.txt when building the default bundle (see
+    art_dupes.py)."""
+    from art_dupes import build_art_dupes as _build, write_refresh_copy
+    out = Path(out_path or DUPES_PATH)
+    n = _build(Path(packs_dir or PACKS_DIR), Path(cells_path or CELLS_PATH), out)
+    if out == DUPES_PATH and BUNDLE_DIR == ROOT / "data" / "BundledData":
+        write_refresh_copy(out, ROOT / "static" / "art-dupes.txt")
+    return n
+
+
 def main() -> None:
-    print(f"→ Building sprite packs into {PACKS_DIR}...")
-    pack_count, total_cells = build_sprite_packs()
-    if pack_count == 0:
-        print("  no packs written", file=sys.stderr)
-        sys.exit(1)
-    print(f"  {pack_count} packs, {total_cells} cells total")
+    if "--dupes-only" not in sys.argv[1:]:
+        print(f"→ Building sprite packs into {PACKS_DIR}...")
+        pack_count, total_cells = build_sprite_packs()
+        if pack_count == 0:
+            print("  no packs written", file=sys.stderr)
+            sys.exit(1)
+        print(f"  {pack_count} packs, {total_cells} cells total")
+    print(f"→ Writing {DUPES_PATH.name} (duplicate art slots)...")
+    print(f"  {build_art_dupes()} cells with duplicate slots")
 
 
 if __name__ == "__main__":

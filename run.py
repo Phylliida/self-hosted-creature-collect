@@ -197,6 +197,11 @@ _SUBTREE_CSS = [
     "anki/web/styles.css",
 ]
 _TRACKED_JS |= set(_SUBTREE_JS)
+# Version-map only, like the CSS: data that rides along with Refresh.
+# art-dupes.txt is the default pack's cells-dupes.bin (art_dupes.py),
+# gzipped + base64 — text, because the iOS live-update writes every file
+# as UTF-8 — for players who installed the pack before the .bin existed.
+_VERSION_MAP_DATA = ["art-dupes.txt"]
 
 # synth.html / quiver.html are the flat single-file mini-apps loaded in
 # Extras iframes; the subtree index.html files are the entry points of the
@@ -221,7 +226,7 @@ _SCRIPT_VERSION_FILES = [
     "extras-todos.js", "extras-anki.js",
     "synth.html", "quiver.html",
     "sw.js", "index.html", "dex.html",
-] + _SUBTREE_JS + _SUBTREE_HTML + _SUBTREE_CSS
+] + _SUBTREE_JS + _SUBTREE_HTML + _SUBTREE_CSS + _VERSION_MAP_DATA
 # Capture the declaration keyword (group 1) so we can preserve it
 # during substitution — strict-mode JS rejects bare assignment to an
 # undeclared identifier, so dropping the `const` would break every

@@ -1822,6 +1822,111 @@
     finally { _cellsCompactPromise = null; }
   }
 
+  // cells-dupes.bin (content pack): many cells list byte-identical art
+  // under more than one slot (about half of all slots copy another one,
+  // mostly slot 0). One byte per slot — its canonical slot, the first of
+  // its cell with the same bytes — in the order of the compact cells
+  // table's value array (art_dupes.py), so it stays one ~250 KB
+  // Uint8Array in memory. Its header carries a hash of the cells' shape
+  // (keys + slot counts); a file built for other cells is refused.
+  // getArtCanon resolves to canonFor(a, b) → that cell's canonical slots
+  // (a Uint8Array view, one per slot) or null, letting the dex count
+  // distinct art the way the fusion view's art grid shows it. Sources, in
+  // order: the IDB copy, the pack's file, then (native) the Refresh copy
+  // static/art-dupes.txt — gzipped + base64 because the iOS live-update
+  // only writes text — for packs installed before the .bin existed. All
+  // local reads; the web build gets the .bin with Download app data.
+  // Resolves to null when none fits (callers count every slot); that's
+  // remembered for the session (a new pack or Refresh reloads the page).
+  const ART_DUPES_KEY = '__cellsdupes__' + _PACK_NS;
+  const ART_DUPES_MAGIC = 0x43524450;   // 'CRDP' read big-endian
+  const ART_DUPES_HEADER = 16;
+  let _artCanon;               // undefined = not loaded yet, null = unavailable
+  let _artCanonPromise = null;
+  function _cellsShapeHash(compact) {
+    let h = 0x811c9dc5;
+    const mix = (byte) => { h = Math.imul(h ^ byte, 0x01000193) >>> 0; };
+    for (let i = 0; i < compact.keys.length; i++) {
+      const k = compact.keys[i];
+      mix(k & 255); mix((k >>> 8) & 255); mix((k >>> 16) & 255); mix(k >>> 24);
+      mix((compact.offs[i + 1] - compact.offs[i]) & 255);
+    }
+    return h;
+  }
+  // buf (ArrayBuffer) → canonFor, or null when it isn't a cells-dupes file
+  // for exactly these cells.
+  function _artCanonFrom(buf, compact) {
+    if (!(buf instanceof ArrayBuffer) || buf.byteLength < ART_DUPES_HEADER || !compact) return null;
+    const dv = new DataView(buf);
+    if (dv.getUint32(0, false) !== ART_DUPES_MAGIC) return null;
+    const slots = dv.getUint32(4, true);
+    if (slots !== buf.byteLength - ART_DUPES_HEADER || slots !== compact.vals.length
+        || dv.getUint32(8, true) !== compact.keys.length
+        || dv.getUint32(12, true) !== _cellsShapeHash(compact)) return null;
+    const canon = new Uint8Array(buf, ART_DUPES_HEADER, slots);
+    return (a, b) => {
+      const ci = _cellsCompactFind(a, b);
+      return ci < 0 ? null : canon.subarray(compact.offs[ci], compact.offs[ci + 1]);
+    };
+  }
+  async function _readArtDupesFile(url) {
+    const { resp, body } = await _fetchLocal(url, null, 'arrayBuffer');
+    return resp.ok ? body : null;
+  }
+  // static/art-dupes.txt → the .bin's bytes (base64 → gunzip).
+  async function _readArtDupesRefreshCopy() {
+    if (typeof DecompressionStream === 'undefined' || typeof atob !== 'function') return null;
+    const { resp, body } = await _fetchLocal('/static/art-dupes.txt', null, 'text');
+    if (!resp.ok || !body) return null;
+    const bin = atob(body.trim());
+    const gz = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) gz[i] = bin.charCodeAt(i);
+    const stream = new Blob([gz]).stream().pipeThrough(new DecompressionStream('gzip'));
+    return new Response(stream).arrayBuffer();
+  }
+  function getArtCanon() {
+    if (_artCanon !== undefined) return Promise.resolve(_artCanon);
+    if (_artCanonPromise) return _artCanonPromise;
+    _artCanonPromise = (async () => {
+      let compact = null;
+      try { compact = await _ensureCellsCompact(); }
+      catch (e) { _logSpriteError('artDupes/cells', e); }
+      if (!compact) return null;    // cells not loaded yet — ask again later
+      try {
+        const stored = await varGetSoon(ART_DUPES_KEY);
+        const fn = _artCanonFrom(stored, compact);
+        if (fn) return (_artCanon = fn);
+      } catch (e) { _logSpriteError('artDupes/idb', e); }
+      if (!_isNative()) return null;   // web: arrives with Download app data
+      const sources = [
+        () => _readArtDupesFile(`${BUNDLED_BASE}/cells-dupes.bin`),
+        _readArtDupesRefreshCopy,
+      ];
+      for (const read of sources) {
+        let buf = null;
+        try { buf = await read(); }
+        catch (e) { _logSpriteError('artDupes/read', e); continue; }   // retried next time
+        const fn = _artCanonFrom(buf, compact);
+        if (!fn) continue;
+        _within(varPut(ART_DUPES_KEY, buf), IDB_READ_TIMEOUT_MS, 'idb put cells-dupes').catch(() => {});
+        return (_artCanon = fn);
+      }
+      _artCanon = null;
+      return null;
+    })();
+    _artCanonPromise.finally(() => { _artCanonPromise = null; });
+    return _artCanonPromise;
+  }
+  // Web bulkDownload: store the pack's file for getArtCanon (checked
+  // against the cells when first used).
+  async function _downloadArtDupes() {
+    const buf = await _readArtDupesFile(`${BUNDLED_BASE}/cells-dupes.bin`);
+    if (!buf) return false;
+    await _within(varPut(ART_DUPES_KEY, buf), IDB_READ_TIMEOUT_MS, 'idb put cells-dupes');
+    _artCanon = undefined;
+    return true;
+  }
+
   async function getCells() {
     if (_cellsMap) return _cellsMap;
     if (_cellsPromise) return _cellsPromise;
@@ -2088,6 +2193,9 @@
       // would return null in non-Capacitor environments.
       manifest = await _downloadManifest();
       cells = await _downloadCells();
+      // Optional: a pack without it just counts every art slot.
+      try { await _downloadArtDupes(); }
+      catch (e) { _logSpriteError('bulkDownload/artDupes', e); }
     } catch {
       onProgress({
         sheetsDone: finished, sheetsTotal: totalSheets,
@@ -2209,6 +2317,7 @@
     _variantCountCache = null;
     _variantSummaryLoaded = false;
     _cellsCompact = null;
+    _artCanon = undefined;
     _creditsBundleCache = null;
     _splitNamesCache = null;
     // Wipe SpriteStore's in-memory URL cache too — its blob URLs are
@@ -2239,7 +2348,7 @@
     getSpriteUrl, getSpriteBlob, getSpriteBlobAttempt, getSpriteBlobsBatch,
     getSpriteBlobsEach,
     getDefaultSpriteUrl, getDefaultSpriteBlob,
-    getCellVariantCount, getCellVariantCountsBatch,
+    getCellVariantCount, getCellVariantCountsBatch, getArtCanon,
     bulkDownload, getDownloadedSheets, getDownloadStatus, deleteAllSprites,
     getCustomManifest,
     getInflightCount,

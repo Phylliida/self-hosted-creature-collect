@@ -53,7 +53,7 @@ DEFAULT_OUT = ROOT / "packs" / "creature-fusion"
 ROOT_FILES = [
     "species-names.json", "species-types.json", "species-evolutions.json",
     "species-pool.json",
-    "split-names.json", "cells.json", "manifest.json", "credits.json",
+    "split-names.json", "cells.json", "cells-dupes.bin", "manifest.json", "credits.json",
     "evo-items-list.json",
     "eggs.png", "egg-default.png", "egg-base.png", "egg-cracks.png",
     "candies.png", "shiny-palettes.bin",

@@ -218,9 +218,12 @@ SUBTREE_CSS = [
     "draw/style.css", "fractals2/styles.css", "mandelbrot/style.css",
     "anki/web/styles.css",
 ]
+# Version-map only data (run.py _VERSION_MAP_DATA): the default pack's
+# duplicate-art table as text, for packs installed before it existed.
+VERSION_MAP_DATA = ["art-dupes.txt"]
 TRACKED_JS |= set(SUBTREE_JS)
 TRACKED_HTML = {"index.html", "dex.html", "synth.html", "quiver.html", *SUBTREE_HTML}
-ALL_FILES = sorted(TRACKED_JS | TRACKED_HTML | set(SUBTREE_CSS))
+ALL_FILES = sorted(TRACKED_JS | TRACKED_HTML | set(SUBTREE_CSS) | set(VERSION_MAP_DATA))
 SV_RE = re.compile(r"""((?:const|let|var)\s+)SCRIPT_VERSION\s*=\s*['"]([^'"]+)['"]""")
 HEAD_RE = re.compile(r"<head\b[^>]*>", re.IGNORECASE)
 def vfor(p):

@@ -135,9 +135,11 @@ ok(!/isFusionSeen\(/.test(extract('function renderSpeciesDex(')),
     Object, Set, parseInt,
     isFusionOwned: (a, b) => owned.has(`${a}-${b}`),
     _capStore: { variantKeysForFusion: (a, b) => new Set(capVariants[`${a}-${b}`] || []) },
+    _NO_KEYS: new Set(),
   };
   vm.createContext(ctx);
   vm.runInContext(extract('function _seenArtKeys('), ctx);
+  vm.runInContext(extract('function _distinctArt('), ctx);
   vm.runInContext(extract('function _artTally('), ctx);
   vm.runInContext(extract('function _allArtSeen('), ctx);
   const counts = new Map([['1-2', 3], ['5-6', 2], ['8-9', 4]]);
@@ -145,8 +147,10 @@ ok(!/isFusionSeen\(/.test(extract('function renderSpeciesDex(')),
     '1-2': { variants: { 0: 1, auto: 1, 7: 1 } },   // seen 0; 7 is out of range; caught 2
     '3-4': {},                                       // no custom art → its autogen counts
   };
-  const tally = (pairs) => vm.runInContext('_artTally(__p, __c, __s)',
-    Object.assign(ctx, { __p: pairs, __c: counts, __s: seenMap }));
+  // dupes: { "a-b": [canonical slots] } → the canonOf lookup getArtCanon gives.
+  const lookup = (dupes) => (dupes ? (a, b) => (dupes[`${a}-${b}`] ? Uint8Array.from(dupes[`${a}-${b}`]) : null) : null);
+  const tally = (pairs, dupes) => vm.runInContext('_artTally(__p, __c, __s, __d)',
+    Object.assign(ctx, { __p: pairs, __c: counts, __s: seenMap, __d: lookup(dupes) }));
   let t = tally([[1, 2]]);
   ok(t.seen === 2 && t.total === 3, `5: 3 variants, seen 0 + caught 2 → 2/3 (got ${t.seen}/${t.total})`);
   t = tally([[3, 4]]);
@@ -160,9 +164,19 @@ ok(!/isFusionSeen\(/.test(extract('function renderSpeciesDex(')),
   t = tally([[1, 2], [3, 4], [10, 11], [5, 6], [8, 9]]);
   ok(t.seen === 4 && t.total === 11, `5: totals add up (got ${t.seen}/${t.total})`);
 
-  // Species-dex gold mark: every art variant seen (same counting).
-  const all = (a, b, n) => vm.runInContext('_allArtSeen(__a, __b, __n, __s)',
-    Object.assign(ctx, { __a: a, __b: b, __n: n, __s: seenMap }));
+  // Duplicate slots (cells-dupes.json) count once.
+  // 1-2: slot 2 is a copy of slot 0 → 2 pictures; seen 0 (+2, the copy) → 1 of 2.
+  t = tally([[1, 2]], { '1-2': [0, 1, 0] });
+  ok(t.seen === 1 && t.total === 2, `5: dupes — copies count once (got ${t.seen}/${t.total})`);
+  // 8-9: 4 slots, all one picture, unseen → 0/1.
+  t = tally([[8, 9]], { '8-9': [0, 0, 0, 0] });
+  ok(t.seen === 0 && t.total === 1, `5: dupes — four copies of one unseen picture → 0/1 (got ${t.seen}/${t.total})`);
+  t = tally([[1, 2]], { '1-2': [0, 1] });
+  ok(t.total === 3, '5: dupes — a canon of the wrong length is ignored (every slot counts)');
+
+  // Species-dex all-art mark: every picture seen (same counting).
+  const all = (a, b, n, dupes) => vm.runInContext('_allArtSeen(__a, __b, __n, __s, __d)',
+    Object.assign(ctx, { __a: a, __b: b, __n: n, __s: seenMap, __d: lookup(dupes) }));
   ok(all(1, 2, 3) === false, '5: gold — 2 of 3 variants seen → no');
   seenMap['1-2'].variants[1] = 1;
   ok(all(1, 2, 3) === true, '5: gold — seen 0 + 1, caught 2 → all 3');
@@ -171,11 +185,18 @@ ok(!/isFusionSeen\(/.test(extract('function renderSpeciesDex(')),
   ok(all(5, 6, 2) === false && all(5, 6, 1) === false, '5: gold — caught only slot 1 of 2 → no');
   capVariants['5-6'].push('0');
   ok(all(5, 6, 2) === true, '5: gold — caught both variants (not in the seen map) → yes');
+  // Charmander × Ditto in a real save: slots [0, 27] with slot 1 a copy of
+  // slot 0; only slot 0 seen/caught. One picture, seen → ring.
+  seenMap['132-4'] = { variants: { 0: 1 } };
+  ok(all(132, 4, 2) === false, '5: gold — without the dupes table the copy looks unseen');
+  ok(all(132, 4, 2, { '132-4': [0, 0] }) === true, '5: gold — with it, one picture, seen → ring');
+  ok(all(132, 4, 3, { '132-4': [0, 0, 2] }) === false, '5: gold — a second distinct picture still unseen → no');
 }
 {
   const dex = extract('function renderSpeciesDex(');
-  ok(/_allArtSeen\(a, b, count, seenMap\)/.test(dex) && /art-complete/.test(dex) && /'art-badge'/.test(dex),
-    '5: species dex rings the ✓ in gold, or adds a gold dot, when all art is seen');
+  ok(/_allArtSeen\(a, b, count, seenMap, canonOf\)/.test(dex) && /getArtCanon/.test(dex)
+    && /art-complete/.test(dex) && /'art-badge'/.test(dex),
+    '5: species dex rings the ✓, or adds a dot, when every distinct picture is seen');
 }
 
 // ── 6. By-type sort + per-type fusion counts ──

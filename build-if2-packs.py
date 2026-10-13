@@ -576,6 +576,16 @@ def slice_subset(variant: tuple[tuple[int, ...], bool], gen_map: dict[int, int],
                     slice_sprite_pack(src, staging / "sprite-packs" / f"{b}.pack",
                                       keep)
 
+        # ── Duplicate art slots (cells-dupes.bin) for the sliced cells/packs.
+        # Optional: without it the app counts every slot as its own art.
+        if (staging / "sprite-packs").is_dir():
+            try:
+                from art_dupes import build_art_dupes
+                build_art_dupes(staging / "sprite-packs", staging / "cells.json",
+                                staging / "cells-dupes.bin")
+            except Exception as e:   # noqa: BLE001 — never fail a pack build over it
+                print(f"  ⚠ cells-dupes.bin skipped: {e}")
+
         # ── Shiny palettes: filter + re-key root pairs ──────────
         shin = UNION_DIR / "shiny-palettes.bin"
         if shin.is_file():
