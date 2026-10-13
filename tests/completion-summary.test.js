@@ -9,6 +9,9 @@
 //   4. _speciesDexPairs + _fusionTypeSummary — a species dex's fusions
 //      (the set its % counts) grouped by fusion type.
 //   5. _artTally — art counted like the fusion view's art grid.
+//   6. The by-type sort (Type / % / Seen / Left, tap again to reverse)
+//      and the completion list's per-type fusion counts (each fusion
+//      once per type, so the numbers it shows and sorts by are real).
 //
 // Run: node tests/completion-summary.test.js
 'use strict';
@@ -151,6 +154,74 @@ ok(!/isFusionSeen\(/.test(extract('function renderSpeciesDex(')),
   ok(t.seen === 0 && t.total === 4, '5: unseen with 4 variants → 0/4');
   t = tally([[1, 2], [3, 4], [10, 11], [5, 6], [8, 9]]);
   ok(t.seen === 4 && t.total === 11, `5: totals add up (got ${t.seen}/${t.total})`);
+}
+
+// ── 6. By-type sort + per-type fusion counts ──
+{
+  const ctx = {};
+  vm.createContext(ctx);
+  vm.runInContext(extract('function _sortTypeEntries('), ctx);
+  const E = [
+    { t: 'NORMAL', seen: 5, total: 10 },   // 50%, 5 left
+    { t: 'FIRE', seen: 9, total: 30 },     // 30%, 21 left
+    { t: 'WATER', seen: 2, total: 4 },     // 50%, 2 left
+    { t: 'GRASS', seen: 0, total: 8 },     // 0%, 8 left
+  ];
+  const order = (k, dir) => vm.runInContext('_sortTypeEntries(__e, __s)',
+    Object.assign(ctx, { __e: E, __s: { k, dir } })).map((e) => e.t).join(',');
+  ok(order('type', 'asc') === 'NORMAL,FIRE,WATER,GRASS', '6: Type keeps type order');
+  ok(order('type', 'desc') === 'GRASS,WATER,FIRE,NORMAL', '6: Type reversed');
+  ok(order('pct', 'desc') === 'NORMAL,WATER,FIRE,GRASS', '6: % high → low, ties in type order (got ' + order('pct', 'desc') + ')');
+  ok(order('pct', 'asc') === 'GRASS,FIRE,NORMAL,WATER', '6: % low → high');
+  ok(order('seen', 'desc') === 'FIRE,NORMAL,WATER,GRASS', '6: Seen most → fewest');
+  ok(order('left', 'asc') === 'WATER,NORMAL,GRASS,FIRE', '6: Left fewest → most');
+  ok(order('left', 'desc') === 'FIRE,GRASS,NORMAL,WATER', '6: Left reversed');
+  ok(E.map((e) => e.t).join(',') === 'NORMAL,FIRE,WATER,GRASS', '6: the input list is not reordered in place');
+
+  const sortSrc = extract('function _showCompletionSummary(');
+  ok(/chipBtn\('pct', '%'\)/.test(sortSrc) && /chipBtn\('seen', 'Seen'\)/.test(sortSrc)
+    && /chipBtn\('left', 'Left'\)/.test(sortSrc), '6: the popup has %, Seen and Left sort chips');
+  ok(/k === cur\.k\s*\?\s*\{ k, dir: cur\.dir === 'asc' \? 'desc' : 'asc' \}/.test(sortSrc),
+    '6: tapping the active chip reverses the direction');
+
+  const TYPES = { 1: ['WATER'], 2: ['WATER', 'FLYING'], 3: ['FIRE'], 4: ['GRASS'] };
+  const c2 = { Map, Set, Array, Object, _speciesTypes: (id) => TYPES[id] || [] };
+  vm.createContext(c2);
+  vm.runInContext(extract('function _listedTypeFusionCounts('), c2);
+  const counts = (nonleg, listed, seen) => vm.runInContext('_listedTypeFusionCounts(__n, __l, __s)',
+    Object.assign(c2, { __n: new Set(nonleg), __l: new Set(listed), __s: seen }));
+  // non-legendary {1,2,3,4}; listed {1,2,3} (4 is e.g. evolved and hidden)
+  const m = counts([1, 2, 3, 4], [1, 2, 3], { '1-2': {}, '3-3': {}, '2-4': {}, '5-1': {}, 'solo:x': {} });
+  const g = (t) => JSON.stringify(m.get(t) || null);
+  ok(g('WATER') === JSON.stringify({ seen: 2, total: 12 }),
+    '6: Water: 12 fusions with 1 or 2 in a half; 1-2 and 2-4 seen, 1-2 once (got ' + g('WATER') + ')');
+  ok(g('FLYING') === JSON.stringify({ seen: 2, total: 7 }), '6: Flying (got ' + g('FLYING') + ')');
+  ok(g('FIRE') === JSON.stringify({ seen: 1, total: 7 }), '6: Fire: 3-3 once (got ' + g('FIRE') + ')');
+  ok(!m.has('GRASS'), '6: an unlisted species adds no type of its own');
+
+  // The 2kn − k² totals and the seen counts match a brute-force walk.
+  {
+    const T = ['WATER', 'FIRE', 'GRASS', 'FLYING'];
+    const ids = Array.from({ length: 14 }, (_, i) => i + 1);
+    for (const id of ids) TYPES[id] = [T[id % 4]].concat(id % 3 ? [T[(id + 1) % 4]] : []);
+    const listed = ids.filter((id) => id % 5);
+    const seen = {};
+    for (const a of ids) for (const b of ids) if ((a * 7 + b * 3) % 4 === 0) seen[a + '-' + b] = {};
+    const want = new Map();
+    for (const a of ids) for (const b of ids) {
+      const ts = new Set();
+      if (listed.includes(a)) TYPES[a].forEach((t) => ts.add(t));
+      if (listed.includes(b)) TYPES[b].forEach((t) => ts.add(t));
+      for (const t of ts) {
+        const e = want.get(t) || { seen: 0, total: 0 };
+        e.total++; if (seen[a + '-' + b]) e.seen++;
+        want.set(t, e);
+      }
+    }
+    const got = counts(ids, listed, seen);
+    ok(T.every((t) => JSON.stringify(got.get(t)) === JSON.stringify(want.get(t))),
+      '6: per-type fusion counts match a brute-force walk of every pair');
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

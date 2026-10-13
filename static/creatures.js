@@ -7526,11 +7526,28 @@
         text-align: right; color: var(--ui-muted, #666); font-size: 11.5px;
         margin-top: 2px; font-variant-numeric: tabular-nums;
       }
-      #ccInfoModal .cc-sum-cols {
-        display: grid; grid-template-columns: 74px 1fr 36px 58px; gap: 8px;
-        color: var(--ui-muted, #666); font-size: 10.5px;
+      /* Type list: one grid, so the count column can widen for big
+         numbers and every row still lines up. */
+      #ccInfoModal .cc-sum-types {
+        display: grid; grid-template-columns: 74px minmax(40px, 1fr) 36px max-content;
+        gap: 7px 8px; align-items: center; font-size: 12.5px;
       }
-      #ccInfoModal .cc-sum-cols span:last-child { text-align: right; }
+      #ccInfoModal .cc-sum-types .cc-typechip { justify-self: start; }
+      #ccInfoModal .cc-sum-colh { color: var(--ui-muted, #666); font-size: 10.5px; }
+      #ccInfoModal .cc-sum-colh-r { text-align: right; }
+      #ccInfoModal .cc-sum-sort {
+        grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+      }
+      #ccInfoModal .cc-sum-sort-lbl { color: var(--ui-muted, #666); font-size: 11.5px; margin-right: 2px; }
+      #ccInfoModal .cc-sum-sort button {
+        font: inherit; font-size: 12px; padding: 3px 10px; cursor: pointer;
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.15)); border-radius: 999px;
+        background: transparent; color: var(--ui-text, #111);
+      }
+      #ccInfoModal .cc-sum-sort button.is-active {
+        background: var(--ui-accent, #3b7fdf); border-color: var(--ui-accent, #3b7fdf);
+        color: var(--ui-accent-text, #fff);
+      }
       /* Type picker grid for the type-chart explorer. */
       #ccInfoModal .cc-typegrid {
         display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 8px 0 12px;
@@ -14414,6 +14431,64 @@
     }
     return byType;
   }
+  // Per species type on the completion list: the fusions with a listed
+  // species of that type in either half, each counted once (a Water ×
+  // Water fusion once for Water), and how many are seen. The counted
+  // fusions are every pair of non-legendary species with at least one
+  // listed half (listed ⊆ nonleg), so with k listed species of a type
+  // and n non-legendary ones there are 2kn − k² of them; only the seen
+  // map needs walking (walking all ~160k pairs took ~100 ms).
+  function _listedTypeFusionCounts(nonleg, listed, seenMap) {
+    const typesOf = new Map();
+    const perType = new Map();
+    for (const id of listed) {
+      const ts = Array.from(new Set(_speciesTypes(id)));
+      typesOf.set(id, ts);
+      for (const t of ts) perType.set(t, (perType.get(t) || 0) + 1);
+    }
+    const n = nonleg.size;
+    const byType = new Map();
+    for (const [t, k] of perType) byType.set(t, { seen: 0, total: 2 * k * n - k * k });
+    const none = [];
+    for (const key in seenMap) {
+      const dash = key.indexOf('-');
+      if (dash <= 0) continue;
+      const a = +key.slice(0, dash), b = +key.slice(dash + 1);
+      if (!nonleg.has(a) || !nonleg.has(b)) continue;
+      const ta = typesOf.get(a) || none;
+      const tb = typesOf.get(b) || none;
+      for (const t of ta) byType.get(t).seen++;
+      for (const t of tb) if (!ta.includes(t)) byType.get(t).seen++;
+    }
+    return byType;
+  }
+  // By-type sort in the Summary: 'type' (type order), 'pct', 'seen' or
+  // 'left' (fusions not seen yet). Tapping the active chip flips the
+  // direction; the choice is remembered across popups.
+  const _SUM_SORT_KEY = 'cc.summaryTypeSort';
+  const _SUM_SORT_FIRST_DIR = { type: 'asc', pct: 'desc', seen: 'desc', left: 'asc' };
+  function _readSummarySort() {
+    try {
+      const v = JSON.parse(localStorage.getItem(_SUM_SORT_KEY) || 'null');
+      if (v && _SUM_SORT_FIRST_DIR[v.k] && (v.dir === 'asc' || v.dir === 'desc')) return v;
+    } catch {}
+    return { k: 'type', dir: 'asc' };
+  }
+  function _writeSummarySort(v) {
+    try { localStorage.setItem(_SUM_SORT_KEY, JSON.stringify(v)); } catch {}
+  }
+  // entries: [{ t, seen, total }] in type order. Ties keep type order.
+  function _sortTypeEntries(entries, sort) {
+    const sign = sort.dir === 'asc' ? 1 : -1;
+    const val = (e) => (sort.k === 'pct' ? (e.total ? e.seen / e.total : 0)
+      : sort.k === 'seen' ? e.seen
+      : sort.k === 'left' ? e.total - e.seen : 0);
+    return entries.map((e, i) => ({ e, i }))
+      .sort((x, y) => (sort.k === 'type'
+        ? sign * (x.i - y.i)
+        : (sign * (val(x.e) - val(y.e)) || (x.i - y.i))))
+      .map((x) => x.e);
+  }
   // Art over a set of fusions, counted like the fusion view's art grid:
   // each hand-drawn variant (or the one autogen sprite when a fusion
   // has none), and how many of those the trainer has seen or caught.
@@ -14455,7 +14530,7 @@
     const nonEvoOnly = _nonEvolvedOnly;
     const seenMap = readSeenFusions();
     const token = ++_summaryToken;
-    let title, scope, headHtml, typeTitle, typeCols, typeRows, pairs;
+    let title, scope, headHtml, typeEntries, pairs;
     const typeOrder = global.Types.list();
     const chip = (t) => '<span class="cc-typechip" style="background:' + global.Types.color(t) + '">'
       + escapeHtml(global.Types.displayName(t)) + '</span>';
@@ -14472,21 +14547,21 @@
       // fusion counts once per side — hence no raw fusion count here).
       headHtml = _sumBarRow('<span class="cc-sum-label">Fusions</span>', seenAll, totalAll, '')
         + '<div class="cc-sum-sub">' + done + ' of ' + rows.length + ' species complete</div>';
-      const byType = _completionTypeSummary(rows);
-      typeTitle = 'By type';
-      typeCols = '<div class="cc-sum-cols"><span></span><span>fusions seen</span><span></span><span>species done</span></div>';
-      typeRows = typeOrder.filter((t) => byType.has(t)).map((t) => {
-        const e = byType.get(t);
-        return _sumBarRow(chip(t), e.seen, e.total, `${e.done}/${e.count}`);
-      }).join('');
-      // Art over the fusions those rows count, each once: both halves
-      // non-legendary, at least one of them a listed species.
+      // The fusions those rows count, each once: both halves non-
+      // legendary, at least one of them a listed species. Used for the
+      // per-type fusion numbers and for art.
       const listed = new Set(rows.map((r) => r.id));
       const nonleg = supportedSpeciesSorted().filter((id) => !isLegendarySpecies(id));
       pairs = [];
       for (const a of nonleg) {
         for (const b of nonleg) if (listed.has(a) || listed.has(b)) pairs.push([a, b]);
       }
+      const bySpecies = _completionTypeSummary(rows);
+      const byFusion = _listedTypeFusionCounts(new Set(nonleg), listed, seenMap);
+      typeEntries = typeOrder.filter((t) => bySpecies.has(t)).map((t) => {
+        const sp = bySpecies.get(t), fu = byFusion.get(t) || { seen: 0, total: 0 };
+        return { t, seen: fu.seen, total: fu.total, done: sp.done, count: sp.count };
+      });
     } else {
       const X = speciesId;
       pairs = _speciesDexPairs(X, nonEvoOnly);
@@ -14500,26 +14575,65 @@
       headHtml = _sumBarRow('<span class="cc-sum-label">Fusions</span>', seenAll, pairs.length, '')
         + '<div class="cc-sum-sub">' + _fmtN(seenAll) + ' / ' + _fmtN(pairs.length) + ' seen</div>';
       const byType = _fusionTypeSummary(pairs, seenMap);
-      typeTitle = 'By type';
-      typeCols = '<div class="cc-sum-cols"><span></span><span>fusions seen</span><span></span><span>seen</span></div>';
-      typeRows = typeOrder.filter((t) => byType.has(t)).map((t) => {
-        const e = byType.get(t);
-        return _sumBarRow(chip(t), e.seen, e.total, `${e.seen}/${e.total}`);
-      }).join('');
+      typeEntries = typeOrder.filter((t) => byType.has(t))
+        .map((t) => Object.assign({ t }, byType.get(t)));
     }
+    const overall = speciesId == null;
+    // The type list (sort chips, column heads, rows) — re-rendered in
+    // place when a sort chip is tapped.
+    const typesHtml = () => {
+      const sort = _readSummarySort();
+      const arrow = sort.dir === 'asc' ? ' ↑' : ' ↓';
+      const chipBtn = (k, label) => '<button type="button" data-sort="' + k + '"'
+        + (sort.k === k ? ' class="is-active" aria-pressed="true">' + label + arrow
+          : ' aria-pressed="false">' + label) + '</button>';
+      // Right column: what the sort is about (species done on the
+      // completion list unless sorting by fusion counts).
+      const right = (e) => (sort.k === 'left' ? _fmtN(e.total - e.seen) + ' left'
+        : overall ? (sort.k === 'seen' ? _fmtN(e.seen) : `${e.done}/${e.count}`)
+        : `${e.seen}/${e.total}`);
+      const rightHead = sort.k === 'left' ? 'fusions left'
+        : overall ? (sort.k === 'seen' ? 'fusions seen' : 'species done') : 'seen';
+      return '<div class="cc-sum-sort" role="group" aria-label="Sort types">'
+        + '<span class="cc-sum-sort-lbl">Sort</span>'
+        + chipBtn('type', 'Type') + chipBtn('pct', '%') + chipBtn('seen', 'Seen') + chipBtn('left', 'Left')
+        + '</div>'
+        + '<span></span><span class="cc-sum-colh">fusions seen</span><span></span>'
+        + '<span class="cc-sum-colh cc-sum-colh-r">' + rightHead + '</span>'
+        + _sortTypeEntries(typeEntries, sort).map((e) => {
+          const pct = e.total ? Math.floor(e.seen / e.total * 100) : 0;
+          return chip(e.t)
+            + '<div class="cc-sum-bar"><div class="cc-sum-bar-fill" style="width:' + pct + '%"></div></div>'
+            + '<span class="cc-sum-pct">' + pct + '%</span>'
+            + '<span class="cc-sum-frac">' + escapeHtml(right(e)) + '</span>';
+        }).join('');
+    };
     const html = '<p class="cc-info-p">' + escapeHtml(scope) + '</p>'
       + '<div class="cc-info-section">' + headHtml
       + '<div class="cc-sum-art">'
       +   '<div class="cc-sum-row"><span class="cc-sum-label">Art</span>'
       +   '<span class="cc-info-note" style="grid-column: 2 / -1">counting…</span></div>'
       + '</div></div>'
-      + '<div class="cc-info-section"><div class="cc-info-section-title">' + typeTitle + '</div>'
-      + typeCols + typeRows + '</div>'
+      + '<div class="cc-info-section"><div class="cc-info-section-title">By type</div>'
+      + '<div class="cc-sum-types">' + typesHtml() + '</div></div>'
       + '<p class="cc-info-note">Art counts each fusion\'s hand-drawn variants, or its'
       + ' auto-generated sprite when it has none.</p>';
     _openInfoModal({
       title, html,
       onWire: (root, content) => {
+        const typesEl = content.querySelector('.cc-sum-types');
+        if (typesEl) {
+          typesEl.addEventListener('click', (e) => {
+            const btn = e.target.closest && e.target.closest('[data-sort]');
+            if (!btn) return;
+            const cur = _readSummarySort();
+            const k = btn.dataset.sort;
+            _writeSummarySort(k === cur.k
+              ? { k, dir: cur.dir === 'asc' ? 'desc' : 'asc' }
+              : { k, dir: _SUM_SORT_FIRST_DIR[k] });
+            typesEl.innerHTML = typesHtml();
+          });
+        }
         const artEl = content.querySelector('.cc-sum-art');
         if (!artEl) return;
         const fill = (art) => {
