@@ -8327,6 +8327,18 @@
         width: 16px; height: 16px; font-size: 10px; line-height: 16px;
         text-align: center; font-weight: bold; z-index: 2;
       }
+      /* Every art variant seen: a gold ring around the caught ✓, or a gold
+         dot in the ✓'s place when none is owned right now. */
+      #creatureInventory .speciesdex-cell .caught-badge.art-complete {
+        box-shadow: 0 0 0 2px #e2b33c, 0 0 5px 1px rgba(226, 179, 60, 0.75);
+      }
+      #creatureInventory .speciesdex-cell .art-badge {
+        position: absolute; top: 4px; right: 4px; z-index: 2;
+        width: 16px; height: 16px; border-radius: 999px; box-sizing: border-box;
+        background: radial-gradient(circle at 35% 35%, #fff1b0, #e2b33c 55%, #b8860b);
+        border: 1px solid rgba(120, 80, 0, 0.55);
+        box-shadow: 0 0 5px 1px rgba(226, 179, 60, 0.6);
+      }
       /* "auto" tag (top-left, opposite the caught ✓) — same pill shape as the
          encounter screen's "New" badge, muted since it's just informational. */
       #creatureInventory .speciesdex-cell .speciesdex-auto-tag {
@@ -14382,6 +14394,23 @@
             : (global.SpriteStore.bestVariantFor
                 ? global.SpriteStore.bestVariantFor(a, b) : Promise.resolve(null));
           resolved.then((v) => { cell.classList.toggle('is-auto', v === null); }).catch(() => {});
+          // All its art seen: a gold ring around the caught ✓, or a gold
+          // dot in its place when none is owned right now.
+          if (seenIt(a, b) && global.Sprites && global.Sprites.getCellVariantCount) {
+            global.Sprites.getCellVariantCount(a, b).then((count) => {
+              if (!cell.isConnected || !_allArtSeen(a, b, count, seenMap)) return;
+              const badge = cell.querySelector('.caught-badge');
+              if (badge) {
+                badge.classList.add('art-complete');
+                badge.title = 'caught · all art seen';
+              } else if (!cell.querySelector('.art-badge')) {
+                const dot = document.createElement('span');
+                dot.className = 'art-badge';
+                dot.title = 'all art seen';
+                cell.appendChild(dot);
+              }
+            }).catch(() => {});
+          }
         });
       },
     });
@@ -14520,6 +14549,27 @@
     if (pc < 0.01) return '<0.01%';
     return (pc < 1 ? pc.toFixed(2) : pc < 10 ? pc.toFixed(1) : String(Math.round(pc))) + '%';
   }
+  // The art variants seen for a fusion ('auto' / slot numbers as
+  // strings): its captures' variants plus the seen map's — what
+  // readSeenVariants returns, without re-reading the whole seen map.
+  // entry = seenMap["a-b"] or null.
+  function _seenArtKeys(a, b, entry) {
+    const keys = _capStore.variantKeysForFusion(a, b);
+    if (entry && entry.variants) for (const k in entry.variants) keys.add(k);
+    return keys;
+  }
+  // Has the trainer seen every art variant of (a, b)? count = its custom
+  // variant count; with none, its one art is the autogen sprite, seen
+  // once the fusion is. Same counting as the art grid and _artTally.
+  function _allArtSeen(a, b, count, seenMap) {
+    const key = `${a}-${b}`;
+    const entry = Object.prototype.hasOwnProperty.call(seenMap, key) ? seenMap[key] : null;
+    if (!entry && !isFusionOwned(a, b)) return false;
+    if (!count) return true;
+    const keys = _seenArtKeys(a, b, entry);
+    for (let i = 0; i < count; i++) if (!keys.has(String(i))) return false;
+    return true;
+  }
   // Art over a set of fusions, counted like the fusion view's art grid:
   // each hand-drawn variant (or the one autogen sprite when a fusion
   // has none), and how many of those the trainer has seen or caught.
@@ -14534,11 +14584,7 @@
       if (n === 0) { total++; if (known) seen++; continue; }
       total += n;
       if (!known) continue;
-      // readSeenVariants re-reads the whole seen map per call; build the
-      // same union from the map in hand.
-      const keys = _capStore.variantKeysForFusion(a, b);
-      if (entry && entry.variants) for (const k in entry.variants) keys.add(k);
-      for (const k of keys) {
+      for (const k of _seenArtKeys(a, b, entry)) {
         const i = parseInt(k, 10);
         if (i >= 0 && i < n) seen++;
       }
