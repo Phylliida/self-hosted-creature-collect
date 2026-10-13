@@ -261,16 +261,23 @@
   }
 
   // Imgs whose sprite resolved to 'missing' (null). Re-checked by
-  // retryMisses — on a slow timer, and right after the app returns from
+  // retryMisses — on a timer, and right after the app returns from
   // the background (when a resume-window failure is most likely to have
   // been misread as an absence).
-  const pendingMisses = new Map();   // img → { a, b, variant, opts, gen, at }
+  const pendingMisses = new Map();   // img → { a, b, variant, opts, gen, n, dueAt }
   // Native packs hold every sprite the app asks for (checked against
   // cells.json, Oct 2026), so a 'missing' there is almost certainly a
-  // misread failure: re-check it soon. On the web a miss usually means
-  // the sprite data simply isn't downloaded.
+  // misread failure: re-check it within a few seconds, backing off
+  // (3 s, 6 s, 12 s, … 30 s) only if the same img keeps coming back
+  // missing. On the web a miss usually means the sprite data simply
+  // isn't downloaded, so it's re-checked rarely.
   const MISS_RECHECK_MS = (typeof window !== 'undefined' && window.Capacitor)
-    ? 30 * 1000 : 2 * 60 * 1000;
+    ? 3000 : 2 * 60 * 1000;
+  const MISS_RECHECK_MAX_MS = Math.max(MISS_RECHECK_MS, 30 * 1000);
+  const MISS_SWEEP_MS = 1000;
+  function missDelay(n) {
+    return Math.min(MISS_RECHECK_MAX_MS, MISS_RECHECK_MS * Math.pow(2, n));
+  }
 
   async function showSprite(img, a, b, variant, opts) {
     if (!img) return;
@@ -287,14 +294,22 @@
     try { url = await spriteUrl(a, b, variant, shinyVariant); }
     catch {
       // Transient failure — register for retry instead of giving up.
-      if (img._spriteGen === gen) registerRetry(img, a, b, variant, opts, gen);
+      if (img._spriteGen === gen) {
+        pendingMisses.delete(img);   // retryPoll owns it now
+        registerRetry(img, a, b, variant, opts, gen);
+      }
       return;
     }
     if (img._spriteGen !== gen) return;
     pendingRetries.delete(img);
     if (!url) {
-      // 'missing' — treated as absent, but re-checked now and then.
-      pendingMisses.set(img, { a, b, variant, opts, gen, at: Date.now() });
+      // 'missing' — treated as absent, but re-checked (see missDelay).
+      // Back off only when this was retryMisses re-checking the same
+      // sprite; any other call starts over at the short delay.
+      const prev = pendingMisses.get(img);
+      const n = (prev && prev.gen === gen && prev.a === a && prev.b === b
+        && prev.variant === variant) ? prev.n + 1 : 0;
+      pendingMisses.set(img, { a, b, variant, opts, gen, n, dueAt: Date.now() + missDelay(n) });
       return;
     }
     pendingMisses.delete(img);
@@ -335,7 +350,7 @@
 
   // Re-check 'missing' results: drop their null cache entries (all of
   // them when forced, else only ones older than MISS_RECHECK_MS) and
-  // re-run showSprite for the imgs still showing a placeholder.
+  // re-run showSprite for the imgs whose re-check is due.
   function retryMisses(force) {
     const now = Date.now();
     for (const [key, at] of Array.from(missAt)) {
@@ -350,12 +365,16 @@
         pendingMisses.delete(img);
         continue;
       }
-      if (!force && now - m.at < MISS_RECHECK_MS) continue;
-      pendingMisses.delete(img);
+      if (!force && m.dueAt > now) continue;
+      // Keep the entry (and its count) until showSprite settles, as
+      // retryPoll does; push dueAt out so the next sweep doesn't
+      // double-fire it, and follow the generation showSprite just bumped.
+      m.dueAt = now + MISS_RECHECK_MAX_MS;
       showSprite(img, m.a, m.b, m.variant, m.opts);
+      m.gen = img._spriteGen;
     }
   }
-  if (typeof setInterval === 'function') setInterval(() => retryMisses(false), 15000);
+  if (typeof setInterval === 'function') setInterval(() => retryMisses(false), MISS_SWEEP_MS);
 
   // Coming back from the background: iOS restarts LocalServer and storage
   // connections then, so failures from just before/around the suspension

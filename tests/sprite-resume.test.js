@@ -241,6 +241,59 @@ function loadSprites(server, src) {
     await sleep(700);
     ok(SS.pendingRetryCount() === 0, 'retry for a detached img is pruned');
   }
+  {
+    // Native: a 'missing' is re-checked on its own within seconds (no
+    // resume needed), backing off if it keeps coming back missing.
+    ok(/MISS_RECHECK_MS = \(typeof window[^;]*\? 3000 :/.test(storeSrc)
+      && /const MISS_SWEEP_MS = 1000;/.test(storeSrc),
+      'native misses re-check after 3 s, swept every 1 s');
+    const src = storeSrc
+      .replace(/\? 3000 :/, '? 120 :')
+      .replace(/Math\.max\(MISS_RECHECK_MS, 30 \* 1000\)/, 'Math.max(MISS_RECHECK_MS, 2000)')
+      .replace(/const MISS_SWEEP_MS = 1000;/, 'const MISS_SWEEP_MS = 40;');
+    const script = {};
+    const calls = {};
+    const ctx = {
+      console, setTimeout, clearTimeout, setInterval, clearInterval, Promise, Date,
+      URL: { createObjectURL: (b) => 'blob:' + b.tag, revokeObjectURL() {} },
+      Capacitor: {},
+    };
+    ctx.Sprites = {
+      getSpriteBlobAttempt: (a, b) => {
+        const k = `${a}-${b}`;
+        calls[k] = (calls[k] || 0) + 1;
+        const q = script[k] || [];
+        return Promise.resolve(q.length ? q.shift() : { status: 'ok', blob: { tag: k } });
+      },
+      getSpriteBlobsBatch: async () => [],
+    };
+    vm.createContext(ctx);
+    ctx.window = ctx;
+    vm.runInContext(src, ctx);
+    const SS = ctx.SpriteStore;
+    const miss = { status: 'missing', blob: null };
+
+    script['5-7'] = [miss, miss];
+    const i5 = { isConnected: true, src: '' };
+    await SS.showSprite(i5, 5, 7, null);
+    ok(i5.src === '' && SS.stats().pendingMisses === 1, 'native: missing → placeholder');
+    await sleep(250);
+    ok(calls['5-7'] === 2 && i5.src === '', `native: re-checked once on its own (${calls['5-7']} calls)`);
+    await sleep(600);
+    ok(i5.src === 'blob:5-7', 'native: the next re-check lands the sprite');
+    ok(SS.stats().pendingMisses === 0 && SS.stats().misses === 0, 'native: miss bookkeeping cleared');
+
+    script['6-8'] = Array(50).fill(miss);
+    const i6 = { isConnected: true, src: '' };
+    await SS.showSprite(i6, 6, 8, null);
+    await sleep(1000);
+    // 120 ms, then 240, 480 → ~3 re-checks in 1 s (8 without backoff).
+    ok(calls['6-8'] >= 3 && calls['6-8'] <= 5,
+      `native: a sprite that stays missing backs off (${calls['6-8']} calls in 1 s)`);
+    i6.isConnected = false;
+    await sleep(100);
+    ok(SS.stats().pendingMisses === 0, 'native: re-check for a detached img is pruned');
+  }
 
 
   // ── (3) hangs below SpriteStore ────────────────────────────────────
