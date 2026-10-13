@@ -7536,11 +7536,14 @@
       #ccInfoModal .cc-sum-colh { color: var(--ui-muted, #666); font-size: 10.5px; }
       #ccInfoModal .cc-sum-colh-r { text-align: right; }
       #ccInfoModal .cc-sum-sort {
-        grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+        grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
       }
       #ccInfoModal .cc-sum-sort-lbl { color: var(--ui-muted, #666); font-size: 11.5px; margin-right: 2px; }
+      #ccInfoModal .cc-sum-sortnote {
+        grid-column: 1 / -1; color: var(--ui-muted, #666); font-size: 11.5px; line-height: 1.4;
+      }
       #ccInfoModal .cc-sum-sort button {
-        font: inherit; font-size: 12px; padding: 3px 10px; cursor: pointer;
+        font: inherit; font-size: 12px; padding: 3px 8px; cursor: pointer;
         border: 1px solid var(--ui-border, rgba(0,0,0,0.15)); border-radius: 999px;
         background: transparent; color: var(--ui-text, #111);
       }
@@ -14466,7 +14469,7 @@
   // 'left' (fusions not seen yet). Tapping the active chip flips the
   // direction; the choice is remembered across popups.
   const _SUM_SORT_KEY = 'cc.summaryTypeSort';
-  const _SUM_SORT_FIRST_DIR = { type: 'asc', pct: 'desc', seen: 'desc', left: 'asc' };
+  const _SUM_SORT_FIRST_DIR = { type: 'asc', pct: 'desc', seen: 'desc', left: 'asc', incense: 'desc' };
   function _readSummarySort() {
     try {
       const v = JSON.parse(localStorage.getItem(_SUM_SORT_KEY) || 'null');
@@ -14482,12 +14485,40 @@
     const sign = sort.dir === 'asc' ? 1 : -1;
     const val = (e) => (sort.k === 'pct' ? (e.total ? e.seen / e.total : 0)
       : sort.k === 'seen' ? e.seen
-      : sort.k === 'left' ? e.total - e.seen : 0);
+      : sort.k === 'left' ? e.total - e.seen
+      : sort.k === 'incense' ? (e.incense || 0) : 0);
     return entries.map((e, i) => ({ e, i }))
       .sort((x, y) => (sort.k === 'type'
         ? sign * (x.i - y.i)
         : (sign * (val(x.e) - val(y.e)) || (x.i - y.i))))
       .map((x) => x.e);
+  }
+  // Chance that one spawn from a `t` incense is a fusion in scope you
+  // haven't seen, from the incense stream's own odds (Spawns.
+  // incensePairOdds: today's and this week's theme types, a community
+  // day). A type with many species is spread over many fusions, so a
+  // big gap in it can still be a small chance per spawn. seenNum: seen
+  // pairs as a*65536+b.
+  function _incenseNewChance(t, inScope, seenNum, nowMs) {
+    const blocks = (global.Spawns && global.Spawns.incensePairOdds)
+      ? global.Spawns.incensePairOdds(t, nowMs) : [];
+    let p = 0;
+    for (const blk of blocks) {
+      let n = 0;
+      for (const a of blk.bodies) {
+        for (const b of blk.heads) if (inScope(a, b) && !seenNum.has(a * 65536 + b)) n++;
+      }
+      p += blk.p * n / (blk.bodies.length * blk.heads.length);
+    }
+    return p;
+  }
+  // More decimals for small chances: a species dex's types sit well
+  // under 1% and would otherwise all read the same.
+  function _fmtChance(p) {
+    const pc = p * 100;
+    if (pc <= 0) return '0%';
+    if (pc < 0.01) return '<0.01%';
+    return (pc < 1 ? pc.toFixed(2) : pc < 10 ? pc.toFixed(1) : String(Math.round(pc))) + '%';
   }
   // Art over a set of fusions, counted like the fusion view's art grid:
   // each hand-drawn variant (or the one autogen sprite when a fusion
@@ -14530,7 +14561,7 @@
     const nonEvoOnly = _nonEvolvedOnly;
     const seenMap = readSeenFusions();
     const token = ++_summaryToken;
-    let title, scope, headHtml, typeEntries, pairs;
+    let title, scope, headHtml, typeEntries, pairs, inScope;
     const typeOrder = global.Types.list();
     const chip = (t) => '<span class="cc-typechip" style="background:' + global.Types.color(t) + '">'
       + escapeHtml(global.Types.displayName(t)) + '</span>';
@@ -14556,8 +14587,10 @@
       for (const a of nonleg) {
         for (const b of nonleg) if (listed.has(a) || listed.has(b)) pairs.push([a, b]);
       }
+      const nonlegSet = new Set(nonleg);
+      inScope = (a, b) => nonlegSet.has(a) && nonlegSet.has(b) && (listed.has(a) || listed.has(b));
       const bySpecies = _completionTypeSummary(rows);
-      const byFusion = _listedTypeFusionCounts(new Set(nonleg), listed, seenMap);
+      const byFusion = _listedTypeFusionCounts(nonlegSet, listed, seenMap);
       typeEntries = typeOrder.filter((t) => bySpecies.has(t)).map((t) => {
         const sp = bySpecies.get(t), fu = byFusion.get(t) || { seen: 0, total: 0 };
         return { t, seen: fu.seen, total: fu.total, done: sp.done, count: sp.count };
@@ -14577,27 +14610,59 @@
       const byType = _fusionTypeSummary(pairs, seenMap);
       typeEntries = typeOrder.filter((t) => byType.has(t))
         .map((t) => Object.assign({ t }, byType.get(t)));
+      const pairNum = new Set(pairs.map(([a, b]) => a * 65536 + b));
+      inScope = (a, b) => pairNum.has(a * 65536 + b);
     }
+    // Incense odds: computed the first time that sort is shown.
+    let incenseDone = false;
+    const ensureIncense = () => {
+      if (incenseDone) return;
+      incenseDone = true;
+      const seenNum = new Set();
+      for (const key in seenMap) {
+        const dash = key.indexOf('-');
+        if (dash > 0) seenNum.add(+key.slice(0, dash) * 65536 + +key.slice(dash + 1));
+      }
+      const now = Date.now();
+      for (const e of typeEntries) e.incense = _incenseNewChance(e.t, inScope, seenNum, now);
+    };
+    const incenseNote = () => {
+      const S = global.Spawns;
+      const w = S && S.currentWeather ? S.currentWeather() : null;
+      const cd = S && S.getCommunityDay ? S.getCommunityDay() : null;
+      const cdOn = cd && Date.now() >= cd.startMs && Date.now() < cd.endMs;
+      const name = (t) => global.Types.displayName(t);
+      return 'Chance one incense spawn is ' + (overall ? 'a fusion' : `a ${speciesNameFor(speciesId)} fusion`)
+        + ' you haven\'t seen'
+        + (cdOn ? ` (Community Day: every spawn has ${speciesNameFor(cd.speciesId)})`
+          : w ? ` (today's theme: ${name(w.daily)}, this week's: ${name(w.weekly)})` : '')
+        + '.';
+    };
     const overall = speciesId == null;
     // The type list (sort chips, column heads, rows) — re-rendered in
     // place when a sort chip is tapped.
     const typesHtml = () => {
       const sort = _readSummarySort();
+      if (sort.k === 'incense') ensureIncense();
       const arrow = sort.dir === 'asc' ? ' ↑' : ' ↓';
       const chipBtn = (k, label) => '<button type="button" data-sort="' + k + '"'
         + (sort.k === k ? ' class="is-active" aria-pressed="true">' + label + arrow
           : ' aria-pressed="false">' + label) + '</button>';
       // Right column: what the sort is about (species done on the
       // completion list unless sorting by fusion counts).
-      const right = (e) => (sort.k === 'left' ? _fmtN(e.total - e.seen) + ' left'
+      const right = (e) => (sort.k === 'incense' ? _fmtChance(e.incense || 0) + ' new'
+        : sort.k === 'left' ? _fmtN(e.total - e.seen) + ' left'
         : overall ? (sort.k === 'seen' ? _fmtN(e.seen) : `${e.done}/${e.count}`)
         : `${e.seen}/${e.total}`);
-      const rightHead = sort.k === 'left' ? 'fusions left'
+      const rightHead = sort.k === 'incense' ? 'per incense spawn'
+        : sort.k === 'left' ? 'fusions left'
         : overall ? (sort.k === 'seen' ? 'fusions seen' : 'species done') : 'seen';
       return '<div class="cc-sum-sort" role="group" aria-label="Sort types">'
         + '<span class="cc-sum-sort-lbl">Sort</span>'
         + chipBtn('type', 'Type') + chipBtn('pct', '%') + chipBtn('seen', 'Seen') + chipBtn('left', 'Left')
+        + chipBtn('incense', 'Incense')
         + '</div>'
+        + (sort.k === 'incense' ? '<div class="cc-sum-sortnote">' + escapeHtml(incenseNote()) + '</div>' : '')
         + '<span></span><span class="cc-sum-colh">fusions seen</span><span></span>'
         + '<span class="cc-sum-colh cc-sum-colh-r">' + rightHead + '</span>'
         + _sortTypeEntries(typeEntries, sort).map((e) => {

@@ -1373,6 +1373,49 @@
       community: cd ? cd.speciesId : undefined,
     };
   }
+  // The incense stream's spawn distribution for one incense type at
+  // `nowMs`, by the same rules generateIncenseCellAtTick samples: the
+  // other type 40% uniform / 30% weekly / 30% daily; the incense type as
+  // the head's primary or the body's secondary, a coin flip when both
+  // work and the pair dropped when neither does; a community day swaps
+  // in its featured species. Returns blocks [{ p, bodies, heads }]: with
+  // probability p the spawn is a uniform body from `bodies` (slot A) and
+  // a uniform head from `heads` (slot B). The p's sum to 1, or [] when
+  // the type can't spawn. For odds like "chance an incense spawn is
+  // new" (creatures.js Summary); tests check it against the generator.
+  function incensePairOdds(incenseType, nowMs) {
+    if (_pack || !_buildTypeIndices()) return [];
+    const types = _weatherTypes();
+    if (types.indexOf(incenseType) < 0) return [];
+    const byP = _byPrimary, byS = _bySecondary;
+    const blocks = [];
+    const cd = _communityActiveAt(nowMs);
+    if (cd) {
+      const v1 = byP[incenseType].length > 0;
+      const v2 = byS[incenseType].length > 0;
+      const share = (v1 && v2) ? 0.5 : 1;
+      if (v1) blocks.push({ p: share, bodies: [cd.speciesId], heads: byP[incenseType] });
+      if (v2) blocks.push({ p: share, bodies: byS[incenseType], heads: [cd.speciesId] });
+      return blocks;
+    }
+    const w = currentWeather(nowMs);
+    const otherP = new Map();
+    for (const t of types) otherP.set(t, (otherP.get(t) || 0) + 0.40 / types.length);
+    otherP.set(w.weekly, (otherP.get(w.weekly) || 0) + 0.30);
+    otherP.set(w.daily, (otherP.get(w.daily) || 0) + 0.30);
+    let kept = 0;
+    for (const [o, po] of otherP) {
+      const v1 = byP[incenseType].length > 0 && byS[o].length > 0;   // [incense, other]
+      const v2 = byP[o].length > 0 && byS[incenseType].length > 0;   // [other, incense]
+      const share = (v1 && v2) ? 0.5 : 1;
+      if (v1) blocks.push({ p: po * share, bodies: byS[o], heads: byP[incenseType] });
+      if (v2) blocks.push({ p: po * share, bodies: byS[incenseType], heads: byP[o] });
+      if (v1 || v2) kept += po;
+    }
+    if (!kept) return [];
+    for (const b of blocks) b.p /= kept;
+    return blocks;
+  }
   // Memo mirrors _ctMemo — incense generation is ~normal-density, so an
   // un-memoized rescan would double the per-refresh cost while active.
   let _incMemo = new Map();
@@ -1566,7 +1609,7 @@
     // Incense stream — creatures.js sets the active state (from the save
     // file); spawnsInBbox folds it in while active.
     setActiveIncense, getActiveIncense, incenseSpawnsInBbox,
-    generateIncenseCellAtTick, INCENSE_DURATION_MS,
+    generateIncenseCellAtTick, incensePairOdds, INCENSE_DURATION_MS,
     // Focus mode — random base-pool encounter roll (see above).
     rollWildEncounter,
     // Community day — weekly featured-species schedule (deterministic)

@@ -9,6 +9,9 @@
 //   4. _speciesDexPairs + _fusionTypeSummary — a species dex's fusions
 //      (the set its % counts) grouped by fusion type.
 //   5. _artTally — art counted like the fusion view's art grid.
+//   7. The Incense sort: chance one incense spawn of a type is an unseen
+//      fusion in scope (Spawns.incensePairOdds is checked against the
+//      generator in tests/incense-odds.test.js).
 //   6. The by-type sort (Type / % / Seen / Left, tap again to reverse)
 //      and the completion list's per-type fusion counts (each fusion
 //      once per type, so the numbers it shows and sorts by are real).
@@ -222,6 +225,41 @@ ok(!/isFusionSeen\(/.test(extract('function renderSpeciesDex(')),
     ok(T.every((t) => JSON.stringify(got.get(t)) === JSON.stringify(want.get(t))),
       '6: per-type fusion counts match a brute-force walk of every pair');
   }
+}
+
+// ── 7. Incense ──
+{
+  // Two blocks: 75% body ∈ {1,2} × head ∈ {10}; 25% body ∈ {3} × head ∈ {10,11}.
+  const BLOCKS = { FIRE: [
+    { p: 0.75, bodies: [1, 2], heads: [10] },
+    { p: 0.25, bodies: [3], heads: [10, 11] },
+  ] };
+  const ctx = { global: { Spawns: { incensePairOdds: (t) => BLOCKS[t] || [] } } };
+  vm.createContext(ctx);
+  vm.runInContext(extract('function _incenseNewChance('), ctx);
+  vm.runInContext(extract('function _fmtChance('), ctx);
+  const chance = (t, scope, seen) => vm.runInContext('_incenseNewChance(__t, __in, __s, 0)',
+    Object.assign(ctx, { __t: t, __in: scope, __s: new Set(seen.map(([a, b]) => a * 65536 + b)) }));
+  const all = () => true;
+  ok(chance('FIRE', all, []) === 1, '7: nothing seen → every spawn is new');
+  ok(Math.abs(chance('FIRE', all, [[1, 10]]) - (0.75 * 0.5 + 0.25)) < 1e-12, '7: seeing 1-10 halves the first block');
+  ok(Math.abs(chance('FIRE', all, [[1, 10], [2, 10], [3, 10]]) - 0.125) < 1e-12, '7: only 3-11 left → 25% × ½');
+  ok(Math.abs(chance('FIRE', (a, b) => a === 3, []) - 0.25) < 1e-12, '7: out-of-scope fusions never count as new');
+  ok(chance('WATER', all, []) === 0, '7: a type that can\'t spawn → 0');
+  const fmt = (p) => vm.runInContext('_fmtChance(__p)', Object.assign(ctx, { __p: p }));
+  ok(fmt(0) === '0%' && fmt(0.00005) === '<0.01%' && fmt(0.0024) === '0.24%'
+    && fmt(0.0234) === '2.3%' && fmt(0.456) === '46%', '7: chance formatting');
+
+  const c3 = {};
+  vm.createContext(c3);
+  vm.runInContext(extract('function _sortTypeEntries('), c3);
+  const E = [{ t: 'A', incense: 0.1 }, { t: 'B', incense: 0.3 }, { t: 'C', incense: 0.2 }];
+  const order = (dir) => vm.runInContext('_sortTypeEntries(__e, __s)',
+    Object.assign(c3, { __e: E, __s: { k: 'incense', dir } })).map((e) => e.t).join('');
+  ok(order('desc') === 'BCA' && order('asc') === 'ACB', '7: Incense sorts by the chance, either way');
+  ok(/chipBtn\('incense', 'Incense'\)/.test(extract('function _showCompletionSummary(')),
+    '7: the popup has an Incense chip');
+  ok(/incense: 'desc'/.test(src), '7: Incense starts with the best type first');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
