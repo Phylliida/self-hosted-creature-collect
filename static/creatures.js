@@ -18608,6 +18608,7 @@
   // call. `force` recomputes immediately (on activation).
   function refreshRadarMarkers(force) {
     if (!_overlayMap) return;
+    refreshBubbleOverlay(force);
     if (!_radarActive || _userLat == null || _userLng == null
         || !global.Spawns || !global.Spawns.nearestRadar) {
       if (_radarMarkers.size) _radarClearMarkers();
@@ -18645,7 +18646,7 @@
     _radarActive = !!on;
     try { localStorage.setItem(RADAR_ACTIVE_KEY, _radarActive ? '1' : '0'); } catch (e) { /* ignore */ }
     _updateRadarBubble();
-    if (!_radarActive) _radarClearMarkers();
+    if (!_radarActive) { _radarClearMarkers(); _clearBubbleOverlay(); }
     else refreshRadarMarkers(true);
   }
   function _radarRestore() {
@@ -18662,6 +18663,112 @@
     if (!_radarActive) return;
     _radarClearMarkers();
     refreshRadarMarkers(true);
+  }
+
+  // ── Spawn bubbles on the map (while the radar is on) ──────────────────
+  // Today's bubbles near you (Spawns.bubblesNear; see spawns.js) drawn as
+  // soft circles in the theme accent. Four nested discs stack toward the
+  // centre, echoing the density ramp (1× at the edge, 2× in the middle).
+  // No labels and nothing to tap: what lives in a bubble is for the player
+  // to discover, and its centre spawn shows up as an ordinary radar blip.
+  const BUBBLE_SOURCE_ID = 'cc-spawn-bubbles';
+  const BUBBLE_FILL_LAYER_ID = 'cc-spawn-bubbles-fill';
+  const BUBBLE_EDGE_LAYER_ID = 'cc-spawn-bubbles-edge';
+  const BUBBLE_SHOW_RADIUS_M = 3000;     // draw bubbles with a centre this close
+  const BUBBLE_RESCAN_M = 250;           // recompute the set after moving this far
+  const BUBBLE_DISCS = [1, 0.75, 0.5, 0.25];
+  let _bubbleDrawn = null;               // { day, lat, lng } the drawn set was computed for
+  let _bubbleAccent = null;
+
+  function _bubbleDisc(lat, lng, radiusM) {
+    const ring = [];
+    const dLat = radiusM / 111320;
+    const dLng = radiusM / (111320 * Math.max(0.05, Math.cos(lat * Math.PI / 180)));
+    for (let k = 0; k <= 48; k++) {
+      const a = (k % 48) / 48 * 2 * Math.PI;
+      ring.push([lng + dLng * Math.cos(a), lat + dLat * Math.sin(a)]);
+    }
+    return ring;
+  }
+  function _bubbleCollection(list) {
+    const features = [];
+    for (const b of list) {
+      BUBBLE_DISCS.forEach((frac, k) => features.push({
+        type: 'Feature',
+        geometry: { type: 'Polygon', coordinates: [_bubbleDisc(b.lat, b.lng, b.radiusM * frac)] },
+        properties: { disc: k },
+      }));
+    }
+    return { type: 'FeatureCollection', features };
+  }
+  function _bubbleAccentColor() {
+    let c = '';
+    try { c = getComputedStyle(document.documentElement).getPropertyValue('--ui-accent').trim(); } catch (e) { /* ignore */ }
+    return c || '#5b8cff';
+  }
+  // Add the source + layers when missing (first use, or after a style
+  // reload wiped them), under the map's labels; keep the colour on the
+  // current theme accent.
+  function _ensureBubbleLayers(map) {
+    const accent = _bubbleAccentColor();
+    if (!map.getSource(BUBBLE_SOURCE_ID)) {
+      map.addSource(BUBBLE_SOURCE_ID, { type: 'geojson', data: _bubbleCollection([]) });
+      _bubbleDrawn = null;
+    }
+    if (!map.getLayer(BUBBLE_FILL_LAYER_ID) || !map.getLayer(BUBBLE_EDGE_LAYER_ID)) {
+      let beforeId;
+      try {
+        const sym = (map.getStyle().layers || []).find((l) => l.type === 'symbol');
+        beforeId = sym ? sym.id : undefined;
+      } catch (e) { beforeId = undefined; }
+      if (!map.getLayer(BUBBLE_FILL_LAYER_ID)) {
+        map.addLayer({
+          id: BUBBLE_FILL_LAYER_ID, type: 'fill', source: BUBBLE_SOURCE_ID,
+          paint: { 'fill-color': accent, 'fill-opacity': 0.07 },
+        }, beforeId);
+      }
+      if (!map.getLayer(BUBBLE_EDGE_LAYER_ID)) {
+        map.addLayer({
+          id: BUBBLE_EDGE_LAYER_ID, type: 'line', source: BUBBLE_SOURCE_ID,
+          filter: ['==', ['get', 'disc'], 0],
+          paint: { 'line-color': accent, 'line-opacity': 0.5, 'line-width': 1.5, 'line-dasharray': [3, 2] },
+        }, beforeId);
+      }
+      _bubbleAccent = accent;
+    } else if (accent !== _bubbleAccent) {
+      map.setPaintProperty(BUBBLE_FILL_LAYER_ID, 'fill-color', accent);
+      map.setPaintProperty(BUBBLE_EDGE_LAYER_ID, 'line-color', accent);
+      _bubbleAccent = accent;
+    }
+  }
+  function _clearBubbleOverlay() {
+    const map = _overlayMap;
+    _bubbleDrawn = null;
+    if (!map) return;
+    try {
+      const src = map.getSource(BUBBLE_SOURCE_ID);
+      if (src) src.setData(_bubbleCollection([]));
+    } catch (e) { /* ignore */ }
+  }
+  // Called with every radar refresh (the 3 s spawn tick): recompute the set
+  // when the radar is on and you've moved BUBBLE_RESCAN_M or the UTC day
+  // rolled over; otherwise just make sure the layers survived.
+  function refreshBubbleOverlay(force) {
+    const map = _overlayMap;
+    if (!map || !global.Spawns || !global.Spawns.bubblesNear) return;
+    if (!_radarActive || _userLat == null || _userLng == null) {
+      if (_bubbleDrawn) _clearBubbleOverlay();
+      return;
+    }
+    if (map.isStyleLoaded && !map.isStyleLoaded()) return;
+    try { _ensureBubbleLayers(map); } catch (e) { return; }
+    const day = Math.floor(Date.now() / 86400000);
+    const moved = _bubbleDrawn
+      ? metersBetween(_bubbleDrawn.lat, _bubbleDrawn.lng, _userLat, _userLng) : Infinity;
+    if (!force && _bubbleDrawn && _bubbleDrawn.day === day && moved < BUBBLE_RESCAN_M) return;
+    const list = global.Spawns.bubblesNear(_userLat, _userLng, BUBBLE_SHOW_RADIUS_M);
+    try { map.getSource(BUBBLE_SOURCE_ID).setData(_bubbleCollection(list)); } catch (e) { return; }
+    _bubbleDrawn = { day, lat: _userLat, lng: _userLng };
   }
 
   function attachSpawnOverlay(map) {
@@ -18693,6 +18800,7 @@
   function detachSpawnOverlay() {
     if (!_overlayMap) return;
     clearMarkers();
+    _clearBubbleOverlay();
     if (_overlayTimer) clearInterval(_overlayTimer);
     if (_overlayPopup) _overlayPopup.remove();
     if (_zoomHandler) _overlayMap.off('zoom', _zoomHandler);

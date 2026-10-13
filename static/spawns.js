@@ -591,7 +591,14 @@
   // override, never the underlying deterministic identity.
   function generateCellAtTick(cellX, cellY, tick, nowMs) {
     const arng = getxor4069(cellTickSeed(cellX, cellY, tick));
-    if (arng() >= SPAWN_CHANCE_PER_TICK) return null;
+    // Spawn bubbles raise the chance toward their centres (see the bubble
+    // section below). The same first draw decides, so outside every bubble
+    // the stream is unchanged, and inside one every plain spawn still
+    // exists (only its species can differ) plus the extra ones.
+    const roll = arng();
+    if (roll >= SPAWN_CHANCE_PER_TICK * BUBBLE_MAX_DENSITY) return null;
+    const bubbles = _bubblesForCell(cellX, cellY, tick);
+    if (roll >= SPAWN_CHANCE_PER_TICK * _bubbleDensity(bubbles)) return null;
     const fx = arng();
     const fy = arng();
     const lat = (cellX + fx) / SCALE - 90;
@@ -606,10 +613,12 @@
     const pair = _sampleTypePair(sampler, arng());
     // Slot B is the fusion's head (contributes the primary type), slot A
     // the body (contributes the secondary) — Species.fusionHead/fusionBody.
+    // Inside a bubble the pick within each type leans on its weights.
     const poolA = sampler.bySecondary[pair.b];
     const poolB = sampler.byPrimary[pair.a];
-    const speciesA = poolA[Math.floor(arng() * poolA.length)];
-    const speciesB = poolB[Math.floor(arng() * poolB.length)];
+    const bub = _pickBubble(bubbles, cellX, cellY, tick);
+    const speciesA = bub ? _bubblePick(bub, poolA, arng()) : poolA[Math.floor(arng() * poolA.length)];
+    const speciesB = bub ? _bubblePick(bub, poolB, arng()) : poolB[Math.floor(arng() * poolB.length)];
     const level = expDistr(5, 50, arng()) + 1;
     const sizeM = 0.15 + arng() * 2.0;
     // Deterministic intra-tick birth offset (0..TICK_MS-1 ms) so spawns
@@ -1017,16 +1026,16 @@
     return true;
   }
 
-  // Forward-evolution forms of a community day's featured species, for the
-  // radar override: the whole loaded descendant set (chain A→B→C ⇒ {B, C}),
-  // matching the normal evolved-half draw convention. Cached per species
-  // (generateEvolvedAtTick runs per cell-tick during radar scans); the cache
-  // is rebuilt if the loaded species count changes. Falls back to the base
-  // species itself when it has no loaded evolutions, so single-stage
-  // featured species still appear on the radar as themselves.
+  // Forward-evolution forms of a species, for the radar's community-day
+  // override and the spawn-bubble centres: the whole loaded descendant set
+  // (chain A→B→C ⇒ {B, C}), matching the normal evolved-half draw
+  // convention. Cached per species (generateEvolvedAtTick runs per
+  // cell-tick during radar scans); the cache is rebuilt if the loaded
+  // species count changes. Falls back to the species itself when it has no
+  // loaded evolutions, so single-stage species still appear as themselves.
   let _cdFormsCache = new Map();     // speciesId -> forward-evolution id array
   let _cdFormsCacheLen = -1;         // allSpecies length the cache was built against
-  function _communityFeaturedForms(speciesId) {
+  function _forwardForms(speciesId) {
     const Species = global.Species;
     if (!Species || !Species.evolutionsFor || !Species.allSpecies) return [speciesId];
     const all = Species.allSpecies();
@@ -1114,7 +1123,7 @@
       // stream bit-identical.
       const slotCoin = arng();
       const other = _evoFlat[Math.floor(arng() * _evoFlat.length)];
-      const forms = _communityFeaturedForms(cd.speciesId);
+      const forms = _forwardForms(cd.speciesId);
       const featured = forms[Math.floor(arng() * forms.length)];
       outA = slotCoin < 0.5 ? featured : other;
       outB = slotCoin < 0.5 ? other : featured;
@@ -1151,6 +1160,290 @@
         }
       }
     }
+    return out;
+  }
+
+  // ── Spawn bubbles ("nests") ─────────────────────────────────────
+  // Big circles where the wild pool leans toward a few species, so walking
+  // somewhere new turns up different pokémon. Each UTC day (rotating with
+  // the daily type) the world is cut into ~BUBBLE_GRID_M squares with one
+  // bubble at a seeded spot inside each: the nearest centre is ~720 m away
+  // on median (a 5–10 minute walk), ~26% of the ground is inside a bubble,
+  // and overlaps are rare (~1%).
+  //
+  // Inside a bubble (BUBBLE_RADIUS_M, 5× the 100 m view radius):
+  //  - Density ramps from 1× at the edge to BUBBLE_MAX_DENSITY× at the
+  //    centre (generateCellAtTick scales its spawn chance).
+  //  - Types still follow the daily/weekly weather; only the species pick
+  //    within a type changes, from uniform to the bubble's weights:
+  //    exp(BUBBLE_SHARPNESS × z) with z ~ N(0, 1) per species. Sharp enough
+  //    that one or two species dominate each type (in a 33-species pool
+  //    the top two are ~64% of picks; ~75% in a 14-species one).
+  //  - Where bubbles overlap, a spawn takes one bubble's weights, chosen in
+  //    proportion to its closeness to each centre (1 − d/R).
+  //  - The centre holds a radar spawn for the whole day ('E:B:' ids, so
+  //    creatures.js treats it as a radar catch everywhere): one half the
+  //    evolved form of the bubble's most common species, the other the
+  //    evolved form of a draw from the bubble's species distribution
+  //    (often that same species).
+  // All of it is seeded from (square, day) only, so every player sees the
+  // same bubbles. A spawn follows the bubbles of the day it was born.
+  // Fusion mode only: pack mode has no radar stream, and focus mode's
+  // rollWildEncounter has no location.
+  const BUBBLE_RADIUS_M = 500;
+  const BUBBLE_GRID_M = 1700;
+  const BUBBLE_SHARPNESS = 2.5;
+  const BUBBLE_MAX_DENSITY = 2;
+  const BUBBLE_SALT = 0x4E455354;                  // 'NEST' — distinct seed namespace
+  const BUBBLE_M_PER_DEG = 111320;
+  const BUBBLE_LAT_STEP = BUBBLE_GRID_M / BUBBLE_M_PER_DEG;
+  let _bubblesEnabled = true;                      // tests compare against the plain stream
+
+  // Latitude band j: its squares are BUBBLE_GRID_M wide at the band's
+  // middle, rounded so a whole number of them wraps the globe.
+  const _bubbleBands = new Map();
+  function _bubbleBand(j) {
+    let band = _bubbleBands.get(j);
+    if (!band) {
+      const midLat = Math.max(-89.9, Math.min(89.9, -90 + (j + 0.5) * BUBBLE_LAT_STEP));
+      const cosLat = Math.max(0.01, Math.cos(midLat * Math.PI / 180));
+      const cells = Math.max(1, Math.floor(360 * BUBBLE_M_PER_DEG * cosLat / BUBBLE_GRID_M));
+      band = { cells, lngStep: 360 / cells };
+      _bubbleBands.set(j, band);
+    }
+    return band;
+  }
+  // One bubble per (day, band, square). Cached; the species weights and
+  // per-pool pick tables fill in lazily. The cache resets when the type
+  // pools are rebuilt (pick tables are keyed by pool array).
+  let _bubbleCache = new Map();
+  let _bubblePoolRef = null;
+  function _bubbleAt(day, j, i) {
+    if (_bubblePoolRef !== _byPrimary) { _bubbleCache = new Map(); _bubblePoolRef = _byPrimary; }
+    const band = _bubbleBand(j);
+    const ii = goodMod(i, band.cells);
+    const id = day + ':' + j + ':' + ii;
+    let b = _bubbleCache.get(id);
+    if (b) return b;
+    if (_bubbleCache.size > 4000) _bubbleCache = new Map();
+    const rng = getxor4069('bubble|' + BUBBLE_SALT + '|' + id);
+    const lat = -90 + (j + rng()) * BUBBLE_LAT_STEP;
+    const lng = -180 + (ii + rng()) * band.lngStep;
+    b = { id, day, lat, lng, cosLat: Math.cos(lat * Math.PI / 180),
+          weights: null, cum: new Map(), center: undefined };
+    _bubbleCache.set(id, b);
+    return b;
+  }
+  function _bubbleDistM(b, lat, lng) {
+    let dLng = lng - b.lng;
+    if (dLng > 180) dLng -= 360; else if (dLng < -180) dLng += 360;
+    const dx = dLng * BUBBLE_M_PER_DEG * b.cosLat;
+    const dy = (lat - b.lat) * BUBBLE_M_PER_DEG;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+  // The bubbles whose circle holds (lat, lng) on `day`, each with its
+  // closeness f = 1 − d/R (1 at the centre, 0 at the edge). A square is
+  // wider than a bubble, so only the 3×3 squares around the point matter.
+  function _bubblesAround(lat, lng, day) {
+    const out = [];
+    if (!_bubblesEnabled || _pack) return out;
+    const j0 = Math.floor((lat + 90) / BUBBLE_LAT_STEP);
+    for (let j = j0 - 1; j <= j0 + 1; j++) {
+      const band = _bubbleBand(j);
+      const i0 = Math.floor((lng + 180) / band.lngStep);
+      for (let i = i0 - 1; i <= i0 + 1; i++) {
+        const b = _bubbleAt(day, j, i);
+        if (out.some((e) => e.b === b)) continue;   // tiny polar bands wrap onto themselves
+        const d = _bubbleDistM(b, lat, lng);
+        if (d < BUBBLE_RADIUS_M) out.push({ b, f: 1 - d / BUBBLE_RADIUS_M });
+      }
+    }
+    return out;
+  }
+  // generateCellAtTick's view: the bubbles over a spawn cell's centre on the
+  // day of its birth tick (a cell is ~11 m, invisible on a 500 m circle).
+  function _bubblesForCell(cellX, cellY, tick) {
+    return _bubblesAround((cellX + 0.5) / SCALE - 90, (cellY + 0.5) / SCALE - 180,
+      Math.floor(tick * TICK_MS / DAY_MS));
+  }
+  function _bubbleDensity(bubbles) {
+    let f = 0;
+    for (const e of bubbles) if (e.f > f) f = e.f;
+    return 1 + (BUBBLE_MAX_DENSITY - 1) * f;
+  }
+  // Which bubble's weights a spawn uses: the only one, or (overlap) one
+  // picked in proportion to closeness by a hash of the cell-tick, so the
+  // spawn's own PRNG stream isn't shifted.
+  function _pickBubble(bubbles, cellX, cellY, tick) {
+    if (!bubbles.length) return null;
+    if (bubbles.length === 1) return bubbles[0].b;
+    const h = (Math.imul(cellX, 73856093) ^ Math.imul(cellY, 19349663)
+      ^ Math.imul(tick, 83492791) ^ BUBBLE_SALT) >>> 0;
+    let total = 0;
+    for (const e of bubbles) total += e.f;
+    let r = (h / 4294967296) * total;
+    for (const e of bubbles) { r -= e.f; if (r < 0) return e.b; }
+    return bubbles[bubbles.length - 1].b;
+  }
+  function _gauss(rng) {
+    let u = rng();
+    while (u <= 0) u = rng();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rng());
+  }
+  // The bubble's weight for every wild species, in id order so the draws
+  // don't depend on how the pool list happens to be ordered.
+  function _bubbleWeights(b) {
+    if (b.weights) return b.weights;
+    const rng = getxor4069('bubble-weights|' + BUBBLE_SALT + '|' + b.id);
+    const ids = _spawnPoolA().slice().sort((x, y) => x - y);
+    const w = new Map();
+    for (const id of ids) w.set(id, Math.exp(BUBBLE_SHARPNESS * _gauss(rng)));
+    b.weights = w;
+    return w;
+  }
+  // Cumulative pick table for one type pool, normalised to end at 1.
+  function _bubbleCum(b, pool) {
+    let cum = b.cum.get(pool);
+    if (cum) return cum;
+    const w = _bubbleWeights(b);
+    cum = new Float64Array(pool.length);
+    let total = 0;
+    for (let k = 0; k < pool.length; k++) { total += w.get(pool[k]) || 1; cum[k] = total; }
+    for (let k = 0; k < pool.length; k++) cum[k] /= total;
+    if (pool.length) cum[pool.length - 1] = 1;
+    b.cum.set(pool, cum);
+    return cum;
+  }
+  // Weighted pick from a type pool with a uniform draw r in [0, 1).
+  function _bubblePick(b, pool, r) {
+    const cum = _bubbleCum(b, pool);
+    let lo = 0, hi = pool.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (cum[mid] <= r) lo = mid + 1; else hi = mid;
+    }
+    return pool[lo];
+  }
+  // How often each wild species turns up in this bubble on its day: every
+  // weather type pair's weight, split over the head pool and the body pool
+  // by the bubble's pick tables. Map id → share, summing to 2 (two halves).
+  function _bubbleSpeciesShares(b) {
+    if (!_buildTypeIndices()) return null;
+    const w = currentWeather(b.day * DAY_MS);
+    const sampler = _composePairSampler(_byPrimary, _bySecondary, w.daily, w.weekly);
+    if (!sampler) return null;
+    let total = 0;
+    for (const e of sampler.entries) total += e.w;
+    const shares = new Map();
+    for (const e of sampler.entries) {
+      for (const pool of [sampler.byPrimary[e.a], sampler.bySecondary[e.b]]) {
+        const cum = _bubbleCum(b, pool);
+        let prev = 0;
+        for (let k = 0; k < pool.length; k++) {
+          const add = (cum[k] - prev) * e.w / total;
+          prev = cum[k];
+          shares.set(pool[k], (shares.get(pool[k]) || 0) + add);
+        }
+      }
+    }
+    return shares;
+  }
+  // The bubble's centre spawn (see the section header), or null when there
+  // isn't one yet (species/evolution data still loading — not cached then).
+  function _bubbleCenterSpawn(b) {
+    if (b.center !== undefined) return b.center;
+    if (_pack || !_buildTypeIndices() || !_buildEvoIndices()) return null;
+    const shares = _bubbleSpeciesShares(b);
+    if (!shares || !shares.size) return null;
+    const ids = Array.from(shares.keys()).sort((x, y) => x - y);
+    let top = ids[0], sum = 0;
+    for (const id of ids) { sum += shares.get(id); if (shares.get(id) > shares.get(top)) top = id; }
+    const rng = getxor4069('bubble-center|' + BUBBLE_SALT + '|' + b.id);
+    const topIsHead = rng() < 0.5;
+    let r = rng() * sum, other = ids[ids.length - 1];
+    for (const id of ids) { r -= shares.get(id); if (r < 0) { other = id; break; } }
+    const topForms = _forwardForms(top);
+    const otherForms = _forwardForms(other);
+    const topForm = topForms[Math.floor(rng() * topForms.length)];
+    const otherForm = otherForms[Math.floor(rng() * otherForms.length)];
+    const level = expDistr(7, 50, rng()) + 3;   // like the evolved stream
+    const sizeM = 0.15 + rng() * 2.0;
+    const variantSeed = rng();
+    const startMs = b.day * DAY_MS;
+    b.center = {
+      // 'E:B:' — a radar catch to every 'E:' prefix check in creatures.js;
+      // isSpawnIdStale ages it out with its day.
+      id: 'E:B:' + b.id,
+      lat: b.lat, lng: b.lng,
+      // Slot B is the head, slot A the body (generateCellAtTick's convention).
+      speciesA: topIsHead ? otherForm : topForm,
+      speciesB: topIsHead ? topForm : otherForm,
+      level, sizeM, variantSeed,
+      startMs, expireMs: startMs + DAY_MS,
+      evolved: true, bubble: true,
+    };
+    return b.center;
+  }
+  // Every square of `day` that could hold a bubble centre inside the box.
+  function _bubblesInBox(west, south, east, north, day) {
+    const out = [];
+    if (!_bubblesEnabled || _pack) return out;
+    const j0 = Math.floor((south + 90) / BUBBLE_LAT_STEP);
+    const j1 = Math.floor((north + 90) / BUBBLE_LAT_STEP);
+    for (let j = j0; j <= j1; j++) {
+      const band = _bubbleBand(j);
+      const i0 = Math.floor((west + 180) / band.lngStep);
+      const i1 = Math.min(i0 + band.cells - 1, Math.floor((east + 180) / band.lngStep));
+      for (let i = i0; i <= i1; i++) {
+        const b = _bubbleAt(day, j, i);
+        if (b.lat >= south && b.lat <= north && b.lng >= west && b.lng <= east) out.push(b);
+      }
+    }
+    return out;
+  }
+  // A community day session morphs a centre like any radar spawn
+  // (generateEvolvedAtTick's override): one half a form from the featured
+  // species' line, the other a uniform evolved form. Query-time, from its
+  // own seed, so the centre is itself again when the session ends.
+  function _bubbleCenterCommunity(c, cd) {
+    if (!_evoFlat || !_evoFlat.length) return c;
+    const rng = getxor4069('bubble-center-cd|' + BUBBLE_SALT + '|' + c.id + '|' + cd.speciesId);
+    const slotCoin = rng();
+    const other = _evoFlat[Math.floor(rng() * _evoFlat.length)];
+    const forms = _forwardForms(cd.speciesId);
+    const featured = forms[Math.floor(rng() * forms.length)];
+    return Object.assign({}, c, {
+      speciesA: slotCoin < 0.5 ? featured : other,
+      speciesB: slotCoin < 0.5 ? other : featured,
+      community: cd.speciesId,
+    });
+  }
+  // Alive bubble-centre spawns inside a bbox ([west, south, east, north]).
+  function bubbleCentersInBbox(bbox, nowMs) {
+    const now = nowMs == null ? Date.now() : nowMs;
+    const cd = _communityActiveAt(now);
+    const out = [];
+    for (const b of _bubblesInBox(bbox[0], bbox[1], bbox[2], bbox[3], Math.floor(now / DAY_MS))) {
+      const c = _bubbleCenterSpawn(b);
+      if (!c || now < c.startMs || now >= c.expireMs) continue;
+      out.push(cd ? _bubbleCenterCommunity(c, cd) : c);
+    }
+    return out;
+  }
+  // Today's bubbles with a centre within radiusM of a point, nearest first,
+  // for the map overlay: [{ id, lat, lng, radiusM }].
+  function bubblesNear(lat, lng, radiusM, nowMs) {
+    if (lat == null || lng == null || !isFinite(lat) || !isFinite(lng)) return [];
+    const now = nowMs == null ? Date.now() : nowMs;
+    const r = radiusM || 3000;
+    const cosLat = Math.max(0.05, Math.cos(lat * Math.PI / 180));
+    const latPad = r / BUBBLE_M_PER_DEG, lngPad = r / (BUBBLE_M_PER_DEG * cosLat);
+    const out = [];
+    for (const b of _bubblesInBox(lng - lngPad, lat - latPad, lng + lngPad, lat + latPad, Math.floor(now / DAY_MS))) {
+      const d = _bubbleDistM(b, lat, lng);
+      if (d <= r) out.push({ id: b.id, lat: b.lat, lng: b.lng, radiusM: BUBBLE_RADIUS_M, distM: d });
+    }
+    out.sort((x, y) => x.distM - y.distM);
     return out;
   }
 
@@ -1194,7 +1487,8 @@
     return arr.slice(0, want);
   }
 
-  // Nearest N alive radar targets — evolved spawns AND legendaries, merged and
+  // Nearest N alive radar targets — evolved spawns, legendaries and spawn-bubble
+  // centres, merged and
   // sorted by distance. Same expanding-box search as nearestEvolved, scanning
   // both streams in each box; legendaries are ~20× rarer so usually none are
   // near, but when one is closer than the Nth evolved it takes a slot. Returned
@@ -1230,6 +1524,10 @@
             if (sp) found.set(sp.id, sp);
           }
         }
+      }
+      // Spawn-bubble centres are radar spawns too.
+      for (const c of bubbleCentersInBbox([lng - lngPad, lat - latPad, lng + lngPad, lat + latPad], now)) {
+        if (!found.has(c.id)) found.set(c.id, c);
       }
       if (found.size >= want || radiusM >= maxR) break;
       radiusM *= 2;
@@ -1545,6 +1843,9 @@
     if (!_pack) {
       const evos = evolvedInBbox(bbox, now);
       for (let i = 0; i < evos.length; i++) out.push(evos[i]);
+      // Spawn-bubble centres (radar spawns that last their bubble's day).
+      const centres = bubbleCentersInBbox(bbox, now);
+      for (let i = 0; i < centres.length; i++) out.push(centres[i]);
     }
     // Fold in the incense stream — only non-empty while an incense is
     // active. Normal density, so this is what doubles the spawn count.
@@ -1565,6 +1866,12 @@
       const ltick = +lparts[3];
       if (!Number.isFinite(ltick)) return true;
       return ltick < currentLegTick(nowMs) - LEG_LIFETIME_TICKS;
+    }
+    // Spawn-bubble centre IDs ('E:B:day:band:square') last their UTC day.
+    if (id.startsWith('E:B:')) {
+      const day = +id.split(':')[2];
+      if (!Number.isFinite(day)) return true;
+      return day < Math.floor((nowMs == null ? Date.now() : nowMs) / DAY_MS);
     }
     // Evolved IDs ('E:cx:cy:evotick:0') age out on the coarse evo-tick scale +
     // 12-hour window, like legendaries but on their own cadence.
@@ -1606,6 +1913,17 @@
     // tests + the future poké-radar detection UI.
     evolvedInBbox, generateEvolvedAtTick, currentEvoTick, nearestEvolved, nearestRadar,
     EVO_TICK_MS, EVO_LIFETIME_MS, EVO_RARITY,
+    // Spawn bubbles — the map overlay reads bubblesNear; the centres are
+    // folded into spawnsInBbox + nearestRadar.
+    bubblesNear, bubbleCentersInBbox, BUBBLE_RADIUS_M, BUBBLE_GRID_M,
+    _bubbleTest: {
+      setEnabled(on) { _bubblesEnabled = !!on; _ctMemo.clear(); _ctMemoSampler = null; },
+      around: (lat, lng, nowMs) => _bubblesAround(lat, lng, Math.floor(nowMs / DAY_MS))
+        .map((e) => ({ id: e.b.id, lat: e.b.lat, lng: e.b.lng, f: e.f })),
+      weights: (id) => { const [d, j, i] = id.split(':').map(Number); return _bubbleWeights(_bubbleAt(d, j, i)); },
+      shares: (id) => { const [d, j, i] = id.split(':').map(Number); return _bubbleSpeciesShares(_bubbleAt(d, j, i)); },
+      forwardForms: (sp) => _forwardForms(sp),
+    },
     // Incense stream — creatures.js sets the active state (from the save
     // file); spawnsInBbox folds it in while active.
     setActiveIncense, getActiveIncense, incenseSpawnsInBbox,
