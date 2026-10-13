@@ -117,6 +117,7 @@ const TILES_CACHE = 'tiles-v1';
 // active bonus incense (berry) in the save file.
 // Shell bump 2026-10-13 (#20): icon.svg (cache-first) is the new logo,
 // drawn by scripts/make-logo.py instead of the old placeholder.
+// Shell bump 2026-10-13 (#21): icon.svg's two rings sit level.
 
 const APP_SHELL = [
   '/',

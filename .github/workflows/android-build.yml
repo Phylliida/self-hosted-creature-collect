@@ -932,9 +932,12 @@ jobs:
           keytool -list -v -keystore android-debug.keystore -storepass android \
             | grep -E "SHA256:|androiddebugkey" || true
 
-      # Set the launcher icon from assets/icon-only.png (drawn by
-      # scripts/make-logo.py). @capacitor/assets regenerates every mipmap density + the
-      # adaptive icon into the freshly-scaffolded android/ project.
+      # Set the launcher icon from the logo drawn by scripts/make-logo.py:
+      # assets/icon-only.png for the legacy icons, and assets/icon-
+      # foreground.png + icon-background.png for the adaptive icon (with only
+      # icon-only.png, @capacitor/assets leaves Capacitor's default adaptive
+      # icon in place, which is what Android 8+ shows). Every mipmap density
+      # goes into the freshly-scaffolded android/ project.
       # continue-on-error: an icon hiccup must NEVER block the APK — worst
       # case the build just keeps Capacitor's default icon.
       - name: Generate app icon

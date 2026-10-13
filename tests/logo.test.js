@@ -22,13 +22,20 @@ execFileSync('python3', [script, '--out', tmp]);
 execFileSync('python3', [script, '--out', tmp2]);
 const read = (p) => fs.readFileSync(p, 'utf8');
 
-const icon = read(path.join(tmp, 'icon.svg')), full = read(path.join(tmp, 'logo-full.svg'));
-ok(icon === read(path.join(tmp2, 'icon.svg')) && full === read(path.join(tmp2, 'logo-full.svg')),
-  'the script draws the same logo every run');
-ok(icon === read(path.join(root, 'static', 'icon.svg')), 'static/icon.svg is the script\'s output (regenerate with scripts/make-logo.py)');
-ok(full === read(path.join(root, 'assets', 'logo-full.svg')), 'assets/logo-full.svg is the script\'s output');
+const SVGS = { 'icon.svg': 'static', 'logo-full.svg': 'assets', 'logo-android-bg.svg': 'assets', 'logo-android-fg.svg': 'assets' };
+const drawn = {};
+for (const [name, dir] of Object.entries(SVGS)) {
+  drawn[name] = read(path.join(tmp, name));
+  ok(drawn[name] === read(path.join(tmp2, name)), `${name}: the script draws it the same every run`);
+  ok(drawn[name] === read(path.join(root, dir, name)), `${dir}/${name} is the script's output (regenerate with scripts/make-logo.py)`);
+}
+const icon = drawn['icon.svg'], full = drawn['logo-full.svg'];
+const bg = drawn['logo-android-bg.svg'], fg = drawn['logo-android-fg.svg'];
+// The Android layers split the full logo: map in the background, rings in front.
+ok(!/url\(#bg\)|url\(#og\)/.test(bg) && /<clipPath id='r0'>/.test(bg), 'Android background: the map, no rings');
+ok(/url\(#bg\)/.test(fg) && /url\(#og\)/.test(fg) && !/<clipPath id='r0'>/.test(fg), 'Android foreground: the rings, no map');
 
-for (const [name, svg] of [['icon.svg', icon], ['logo-full.svg', full]]) {
+for (const [name, svg] of Object.entries(drawn)) {
   ok(/^<svg xmlns='http:\/\/www\.w3\.org\/2000\/svg' viewBox='0 0 1024 1024'/.test(svg) && svg.trim().endsWith('</svg>'), `${name}: a 1024 SVG`);
   const open = (svg.match(/<(?!\/)[a-zA-Z]/g) || []).length;
   const close = (svg.match(/<\/[a-zA-Z]+>|\/>/g) || []).length;
@@ -37,13 +44,17 @@ for (const [name, svg] of [['icon.svg', icon], ['logo-full.svg', full]]) {
   ok(svg.length < 140000, `${name}: stays small for the cache-first app shell (${svg.length} bytes)`);
 }
 ok(/clip-path='url\(#tile\)'/.test(icon) && !/clip-path='url\(#tile\)'/.test(full), 'icon.svg is the rounded tile, logo-full.svg full bleed');
+// Both rings sit at the same height.
+const cy = (key) => (new RegExp(`<mask id='${key}m'[^>]*><circle cx='[\\d.]+' cy='([\\d.]+)'`).exec(full) || [])[1];
+ok(cy('b') && cy('b') === cy('o'), `the rings are level (blue y ${cy('b')}, orange y ${cy('o')})`);
 
 // PNGs: IHDR width/height/colour type.
 function ihdr(p) {
   const b = fs.readFileSync(p);
   return { w: b.readUInt32BE(16), h: b.readUInt32BE(20), type: b[25] };
 }
-for (const [p, size] of [['static/icon.png', 512], ['static/icon-maskable.png', 512], ['assets/icon-only.png', 1024]]) {
+for (const [p, size] of [['static/icon.png', 512], ['static/icon-maskable.png', 512], ['assets/icon-only.png', 1024],
+  ['assets/icon-background.png', 1024], ['assets/icon-foreground.png', 1024]]) {
   const h = ihdr(path.join(root, p));
   ok(h.w === size && h.h === size && h.type === 6, `${p}: ${size}×${size} RGBA (got ${h.w}×${h.h} type ${h.type})`);
 }

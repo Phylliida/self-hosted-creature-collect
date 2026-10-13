@@ -8,15 +8,18 @@ map — as SVG, from code.
 Outputs:
   static/icon.svg            rounded tile (favicon, manifest "any")
   assets/logo-full.svg       full-bleed square (source for the PNGs)
+  assets/logo-android-bg.svg Android adaptive background: the map, no rings
+  assets/logo-android-fg.svg Android adaptive foreground: the rings alone
   static/icon.png            512, rounded tile, transparent corners
   static/icon-maskable.png   512, full bleed (maskable + apple-touch-icon)
-  assets/icon-only.png       1024, full bleed (@capacitor/assets, CI)
+  assets/icon-only.png       1024, full bleed (iOS + legacy Android icons)
+  assets/icon-background.png 1024 } Android adaptive layers: @capacitor/assets
+  assets/icon-foreground.png 1024 } insets each 16.7%, so each image spans the
+                                    visible icon exactly, like the full logo
 
-The map is a jittered triangle mesh; each triangle takes a class (deep
-water, shallow water, land, ice) from a field of blobs placed like the
-old logo's continents, plus a little value noise, and a seeded shade
-jitter so the facets read. Everything is seeded: the same script always
-draws the same logo.
+The map is straight-edged continents, ice and shallows (REGIONS) placed
+like the old logo's, filled from one jittered triangle mesh so the facets
+read. Everything is seeded: the same script always draws the same logo.
 """
 import math
 import random
@@ -142,7 +145,7 @@ def graticule_svg():
 # Then the interlock split along that line never cuts an overlap.
 M, BAND = 176, 104               # mid radius, band width
 BLUE = dict(c=(394, 512), hi='#dff7ff', mid='#6cc4f4', lo='#3584dc', line='#f2fbff', glow='#5cc0ff', turn=1)
-ORANGE = dict(c=(630, 494), hi='#fff0c6', mid='#ffae6e', lo='#f26e43', line='#fff6e4', glow='#ff9a58', turn=1)
+ORANGE = dict(c=(630, 512), hi='#fff0c6', mid='#ffae6e', lo='#f26e43', line='#fff6e4', glow='#ff9a58', turn=1)
 
 
 def ring_defs(key, r):
@@ -231,44 +234,61 @@ def rings_svg():
             + f"<g clip-path='url(#lowx)'>{blue}</g>")
 
 
-def logo_svg(rounded):
+def logo_svg(kind):
+    """kind: 'rounded' (tile), 'full' (full bleed), 'bg' (no rings) or
+    'fg' (the rings alone, on transparency)."""
     rng = random.Random(SEED)
     defs = ("<defs>"
             "<filter id='glow' x='-30%' y='-30%' width='160%' height='160%'><feGaussianBlur stdDeviation='24'/></filter>"
             f"<clipPath id='lowx'><polygon points='{below_centre_line()}'/></clipPath>"
             + ring_defs('b', BLUE) + ring_defs('o', ORANGE)
-            + (f"<clipPath id='tile'><rect width='{W}' height='{W}' rx='{W * 0.2}'/></clipPath>" if rounded else '')
+            + (f"<clipPath id='tile'><rect width='{W}' height='{W}' rx='{W * 0.2}'/></clipPath>" if kind == 'rounded' else '')
             + "<radialGradient id='vig' cx='50%' cy='48%' r='72%'><stop offset='0.55' stop-color='#000' stop-opacity='0'/>"
               "<stop offset='1' stop-color='#000' stop-opacity='0.32'/></radialGradient>"
             "</defs>")
-    body = (map_svg(rng) + graticule_svg()
-            + f"<rect width='{W}' height='{W}' fill='url(#vig)'/>"
-            + rings_svg())
-    if rounded:
+    body = ''
+    if kind != 'fg':
+        body += (map_svg(rng) + graticule_svg()
+                 + f"<rect width='{W}' height='{W}' fill='url(#vig)'/>")
+    if kind != 'bg':
+        body += rings_svg()
+    if kind == 'rounded':
         body = f"<g clip-path='url(#tile)'>{body}</g>"
     return (f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {W} {W}' width='{W}' height='{W}'>"
             + defs + body + "</svg>\n")
 
 
+SVGS = {   # output name → (directory, kind)
+    'icon.svg': ('static', 'rounded'),
+    'logo-full.svg': ('assets', 'full'),
+    'logo-android-bg.svg': ('assets', 'bg'),
+    'logo-android-fg.svg': ('assets', 'fg'),
+}
+PNGS = (   # (svg, png, size)
+    ('icon.svg', 'static/icon.png', 512),
+    ('logo-full.svg', 'static/icon-maskable.png', 512),
+    ('logo-full.svg', 'assets/icon-only.png', 1024),
+    ('logo-android-bg.svg', 'assets/icon-background.png', 1024),
+    ('logo-android-fg.svg', 'assets/icon-foreground.png', 1024),
+)
+
+
 def main():
     root = Path(__file__).resolve().parent.parent
-    out_icon = root / 'static' / 'icon.svg'
-    out_full = root / 'assets' / 'logo-full.svg'
-    if '--out' in sys.argv:           # preview: write both next to a path
+    out = {name: root / d / name for name, (d, _) in SVGS.items()}
+    if '--out' in sys.argv:           # preview: write the SVGs to a directory
         base = Path(sys.argv[sys.argv.index('--out') + 1])
-        out_icon, out_full = base / 'icon.svg', base / 'logo-full.svg'
-    out_icon.write_text(logo_svg(rounded=True))
-    out_full.write_text(logo_svg(rounded=False))
-    print('wrote', out_icon, out_full)
+        out = {name: base / name for name in SVGS}
+    for name, (_, kind) in SVGS.items():
+        out[name].write_text(logo_svg(kind))
+        print('wrote', out[name])
     if '--png' in sys.argv:
         rsvg = shutil.which('rsvg-convert')
         if not rsvg:
             sys.exit('--png needs rsvg-convert (librsvg); or render the SVGs with any SVG renderer')
-        for src, dst, size in ((out_icon, root / 'static' / 'icon.png', 512),
-                               (out_full, root / 'static' / 'icon-maskable.png', 512),
-                               (out_full, root / 'assets' / 'icon-only.png', 1024)):
-            subprocess.run([rsvg, '-w', str(size), '-h', str(size), '-o', str(dst), str(src)], check=True)
-            print('wrote', dst)
+        for name, dst, size in PNGS:
+            subprocess.run([rsvg, '-w', str(size), '-h', str(size), '-o', str(root / dst), str(out[name])], check=True)
+            print('wrote', root / dst)
 
 
 if __name__ == '__main__':
