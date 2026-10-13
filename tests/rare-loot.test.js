@@ -1,6 +1,7 @@
 // Rare pokéstop loot: the Candy Ball and the bonus-incense berries.
 //
-//   A. rollCollectibleItem — each rare kind 2% per item; balls
+//   A. rollCollectibleItem — each rare kind from 1% of pokéstop spins
+//      (2 berries + half an evo item per 50 spins); balls
 //      Poké : Great : Candy = 2 : 2 : 1 for the rest
 //   B. _rollEvoItem — the data set's evo items, weighted 1 / (1 + held)
 //   C. catalog — Candy Ball throwable at ~80% (between Poké and Great),
@@ -111,7 +112,7 @@ function makeWorld(opts = {}) {
     'function _stepScanRadius(', 'function _visibilityRadiusM(']) {
     vm.runInContext(extract(m), ctx);
   }
-  for (const c of ['RARE_LOOT_CHANCE', 'RARE_LOOT', 'BALL_LOOT', 'THROWABLE_BALL_KEYS',
+  for (const c of ['RARE_PER_SPIN', 'POKESTOP_ITEMS_PER_SPIN', 'RARE_LOOT_CHANCE', 'RARE_LOOT', 'BALL_LOOT', 'THROWABLE_BALL_KEYS',
     'VISIBILITY_RADIUS_M', 'RADIUS_RAMP_M']) {
     vm.runInContext(constLine(c).replace(/^\s*const /, 'var '), ctx);
   }
@@ -125,35 +126,55 @@ function makeWorld(opts = {}) {
   // ── A. loot roll ──
   {
     const w = makeWorld({ evoParams: ['FIRESTONE', 'WATERSTONE'] });
-    // Scripted rolls: the first draw picks the rare band (2% each), the
-    // next picks a ball (weights 2:2:1 of 5).
+    const c = w.run('RARE_LOOT_CHANCE');
+    ok(near(c, 0.01 / 3.5, 1e-12), 'A: each item rolls each rare kind at 1% / 3.5');
+    // index.html's Collect handler must still hand out 1–6 items (mean
+    // 3.5), or the per-spin rate drifts.
+    ok(/const count = 1 \+ Math\.floor\(Math\.random\(\) \* 6\);/.test(html)
+      && w.run('POKESTOP_ITEMS_PER_SPIN') === (1 + 2 + 3 + 4 + 5 + 6) / 6,
+      'A: POKESTOP_ITEMS_PER_SPIN matches the Collect handler’s 1–6 items');
+    // Scripted rolls: the first draw picks the rare band, the next a ball
+    // (weights 2:2:1 of 5).
     const seq = (xs) => { let i = 0; return () => xs[i++]; };
     const roll = (xs) => w.run('rollCollectibleItem(__a[0])', [seq(xs)]);
-    ok(roll([0.000]) === 'candy_berry', 'A: [0, 2%) → Candy Berry');
-    ok(roll([0.025]) === 'calm_berry', 'A: [2, 4%) → Calm Berry');
-    ok(roll([0.041]) === 'hawkeye_berry', 'A: [4, 6%) → Hawk-Eye Berry');
-    ok(roll([0.0799]) === 'owleye_berry', 'A: [6, 8%) → Owl-Eye Berry');
-    ok(['FIRESTONE', 'WATERSTONE', 'METALCOAT'].includes(roll([0.09, 0.5])), 'A: [8, 10%) → an evolution item');
-    ok(roll([0.10, 0.00]) === 'poke_ball', 'A: 10%+ → balls: Poké first');
+    ok(roll([0]) === 'candy_berry' && roll([c * 0.99]) === 'candy_berry', 'A: band 1 → Candy Berry');
+    ok(roll([c * 1.01]) === 'calm_berry', 'A: band 2 → Calm Berry');
+    ok(roll([c * 2.5]) === 'hawkeye_berry', 'A: band 3 → Hawk-Eye Berry');
+    ok(roll([c * 3.99]) === 'owleye_berry', 'A: band 4 → Owl-Eye Berry');
+    ok(['FIRESTONE', 'WATERSTONE', 'METALCOAT'].includes(roll([c * 4.5, 0.5])), 'A: band 5 → an evolution item');
+    ok(roll([c * 5.01, 0.00]) === 'poke_ball', 'A: past the rare bands → balls, Poké first');
     ok(roll([0.5, 0.39]) === 'poke_ball' && roll([0.5, 0.41]) === 'great_ball', 'A: Poké 0–40% of the ball draw, then Great');
     ok(roll([0.99, 0.79]) === 'great_ball' && roll([0.99, 0.81]) === 'candy_ball', 'A: Candy Ball the last 20%');
 
-    const counts = {};
-    const rng = rngFrom(7);
-    const N = 400000;
-    for (let i = 0; i < N; i++) {
-      let k = w.run('rollCollectibleItem(__a[0])', [rng]);
-      if (/^[A-Z]+$/.test(k)) k = 'evo';
-      counts[k] = (counts[k] || 0) + 1;
-    }
-    const f = (k) => (counts[k] || 0) / N;
+    // Whole spins, as the Collect handler does them.
+    const SPINS = 300000;
+    const counts = w.run(`(() => {
+      const rng = __a[0], c = {};
+      let items = 0;
+      for (let s = 0; s < __a[1]; s++) {
+        const n = 1 + Math.floor(rng() * 6);
+        for (let i = 0; i < n; i++) {
+          let k = rollCollectibleItem(rng);
+          if (/^[A-Z]+$/.test(k)) k = 'evo';
+          c[k] = (c[k] || 0) + 1;
+          items++;
+        }
+      }
+      c.__items = items;
+      return c;
+    })()`, [rngFrom(7), SPINS]);
+    const perSpin = (k) => (counts[k] || 0) / SPINS;
     for (const k of ['candy_berry', 'calm_berry', 'hawkeye_berry', 'owleye_berry', 'evo']) {
-      ok(near(f(k), 0.02, 0.0015), `A: ${k} ≈ 2% per item (got ${(f(k) * 100).toFixed(2)}%)`);
+      ok(near(perSpin(k), 0.01, 0.0007), `A: ${k} from ≈1% of spins (got ${(perSpin(k) * 100).toFixed(2)}%)`);
     }
-    ok(near(f('poke_ball'), 0.36, 0.004) && near(f('great_ball'), 0.36, 0.004),
-      `A: Poké / Great ≈ 36% each (got ${(f('poke_ball') * 100).toFixed(1)} / ${(f('great_ball') * 100).toFixed(1)})`);
-    ok(near(f('candy_ball'), 0.18, 0.003), `A: Candy Ball ≈ 18% — half the Great Ball rate (got ${(f('candy_ball') * 100).toFixed(1)}%)`);
-    ok(Object.keys(counts).length === 8, 'A: nothing else drops');
+    const berries50 = 50 * ['candy_berry', 'calm_berry', 'hawkeye_berry', 'owleye_berry'].reduce((a, k) => a + perSpin(k), 0);
+    ok(near(berries50, 2, 0.12), `A: 50 spins ≈ 2 berries (got ${berries50.toFixed(2)})`);
+    ok(near(50 * perSpin('evo'), 0.5, 0.05), `A: …and ≈ half an evolution item (got ${(50 * perSpin('evo')).toFixed(2)})`);
+    const f = (k) => (counts[k] || 0) / counts.__items;
+    ok(near(f('poke_ball'), 0.3943, 0.003) && near(f('great_ball'), 0.3943, 0.003),
+      `A: Poké / Great ≈ 39.4% of items each (got ${(f('poke_ball') * 100).toFixed(1)} / ${(f('great_ball') * 100).toFixed(1)})`);
+    ok(near(f('candy_ball'), 0.1971, 0.003), `A: Candy Ball ≈ 19.7% — half the Great Ball rate (got ${(f('candy_ball') * 100).toFixed(1)}%)`);
+    ok(Object.keys(counts).length === 9, 'A: nothing else drops');
   }
 
   // ── B. evolution-item weighting ──
