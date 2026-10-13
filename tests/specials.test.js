@@ -95,6 +95,9 @@ function makeCtx(extra) {
       removeItem(k) { delete this._m[k]; },
     },
   }, extra || {});
+  // creatures.js looks item names up through getItemMeta; read this
+  // context's ITEMS stub (tests reassign it after creation).
+  if (!ctx.getItemMeta) ctx.getItemMeta = (k) => (ctx.ITEMS || {})[k] || null;
   vm.createContext(ctx);
   return ctx;
 }

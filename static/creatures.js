@@ -7502,6 +7502,35 @@
         text-shadow: 0 1px 1px rgba(0,0,0,0.25); white-space: nowrap;
       }
       #ccInfoModal .cc-typechip.dim { opacity: 0.42; }
+      /* Completion summary: label/chip, bar, percent, count. */
+      #ccInfoModal .cc-sum-row {
+        display: grid; grid-template-columns: 74px 1fr 36px 58px; gap: 8px;
+        align-items: center; margin-top: 7px; font-size: 12.5px;
+      }
+      #ccInfoModal .cc-sum-row .cc-typechip { justify-self: start; }
+      #ccInfoModal .cc-sum-label { font-weight: 600; }
+      #ccInfoModal .cc-sum-bar {
+        height: 7px; border-radius: 4px; overflow: hidden;
+        background: var(--ui-border, rgba(0,0,0,0.14));
+      }
+      #ccInfoModal .cc-sum-bar-fill {
+        height: 100%; border-radius: 4px; min-width: 2px;
+        background: var(--ui-accent, #5b8cff);
+      }
+      #ccInfoModal .cc-sum-pct { text-align: right; font-weight: 700; }
+      #ccInfoModal .cc-sum-frac {
+        text-align: right; color: var(--ui-muted, #666); font-size: 11.5px;
+        font-variant-numeric: tabular-nums; white-space: nowrap;
+      }
+      #ccInfoModal .cc-sum-sub {
+        text-align: right; color: var(--ui-muted, #666); font-size: 11.5px;
+        margin-top: 2px; font-variant-numeric: tabular-nums;
+      }
+      #ccInfoModal .cc-sum-cols {
+        display: grid; grid-template-columns: 74px 1fr 36px 58px; gap: 8px;
+        color: var(--ui-muted, #666); font-size: 10.5px;
+      }
+      #ccInfoModal .cc-sum-cols span:last-child { text-align: right; }
       /* Type picker grid for the type-chart explorer. */
       #ccInfoModal .cc-typegrid {
         display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 8px 0 12px;
@@ -8147,8 +8176,14 @@
       /* Non-evolved filter chip — a plain outlined button by default,
          accent-filled when the filter is active (aria-pressed). Matches
          the .family-toggle idiom but centered like a filter pill. */
+      /* Non-evolved toggle + Summary side by side. */
+      #creatureInventory .completion-actions {
+        display: flex; justify-content: center; flex-wrap: wrap; gap: 8px;
+      }
       #creatureInventory .completion-filter,
-      #creatureInventory .speciesdex-filter {
+      #creatureInventory .speciesdex-filter,
+      #creatureInventory .completion-summary-btn,
+      #creatureInventory .speciesdex-summary-btn {
         align-self: center; background: transparent;
         border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
         border-radius: var(--ui-radius, 8px);
@@ -8157,7 +8192,9 @@
         font-size: 12px; font-family: inherit; cursor: pointer;
       }
       #creatureInventory .completion-filter:hover,
-      #creatureInventory .speciesdex-filter:hover {
+      #creatureInventory .speciesdex-filter:hover,
+      #creatureInventory .completion-summary-btn:hover,
+      #creatureInventory .speciesdex-summary-btn:hover {
         background: var(--ui-hover, rgba(0,0,0,0.04));
       }
       #creatureInventory .completion-filter.is-active,
@@ -8262,6 +8299,8 @@
       }
       #creatureInventory .speciesdex-cell.ready .speciesdex-cell-ph { display: none; }
       #creatureInventory .speciesdex-cell.silhouette img { filter: brightness(0); }
+      /* Type filter on: the fusion in a row that doesn't match is dimmed. */
+      #creatureInventory .speciesdex-cell.type-miss { opacity: 0.3; }
       #creatureInventory .speciesdex-cell .caught-badge {
         position: absolute; top: 4px; right: 4px;
         background: var(--ui-accent, #2a8); color: #fff; border-radius: 999px;
@@ -9258,15 +9297,43 @@
         <div class="completion-view">
           <button class="completion-back" type="button" aria-label="back">←</button>
           <h3 class="subview-title">Completion</h3>
-          <button class="completion-filter" type="button" aria-pressed="false">Show non-evolved only</button>
+          <div class="completion-actions">
+            <button class="completion-filter" type="button" aria-pressed="false">Show non-evolved only</button>
+            <button class="completion-summary-btn" type="button">Summary</button>
+          </div>
           <div class="completion-stats"></div>
+          <div class="search-row">
+            <div class="ac-field">
+              <input id="completionSearch" type="search" placeholder="Species" autocomplete="off">
+              <ul class="ac-list" id="completionAc" role="listbox"></ul>
+            </div>
+          </div>
+          <div class="type-filter-row">
+            <label class="type-pair"><span>Either:</span>${typeFilterSelectHtml('completionFilterType')}</label>
+            <label class="type-pair"><span>First:</span>${typeFilterSelectHtml('completionFilterTypeA')}</label>
+            <label class="type-pair"><span>Second:</span>${typeFilterSelectHtml('completionFilterTypeB')}</label>
+          </div>
           <div class="completion-grid"></div>
         </div>
         <div class="speciesdex-view">
           <button class="speciesdex-back" type="button" aria-label="back">←</button>
           <h3 class="subview-title speciesdex-title">Dex</h3>
-          <button class="speciesdex-filter" type="button" aria-pressed="false">Show non-evolved only</button>
+          <div class="completion-actions">
+            <button class="speciesdex-filter" type="button" aria-pressed="false">Show non-evolved only</button>
+            <button class="speciesdex-summary-btn" type="button">Summary</button>
+          </div>
           <div class="speciesdex-stats"></div>
+          <div class="search-row">
+            <div class="ac-field">
+              <input id="speciesdexSearch" type="search" placeholder="Partner species" autocomplete="off">
+              <ul class="ac-list" id="speciesdexAc" role="listbox"></ul>
+            </div>
+          </div>
+          <div class="type-filter-row">
+            <label class="type-pair"><span>Either:</span>${typeFilterSelectHtml('speciesdexFilterType')}</label>
+            <label class="type-pair"><span>First:</span>${typeFilterSelectHtml('speciesdexFilterTypeA')}</label>
+            <label class="type-pair"><span>Second:</span>${typeFilterSelectHtml('speciesdexFilterTypeB')}</label>
+          </div>
           <div class="speciesdex-head-row">
             <span class="speciesdex-col-label speciesdex-col-head"></span>
             <span class="speciesdex-col-mid">#</span>
@@ -9638,6 +9705,30 @@
       const top = _viewStack[_viewStack.length - 1];
       if (top && top.view === 'speciesdex') renderSpeciesDex(top.species);
     });
+    // Name search + type filters on both views; each re-renders only
+    // while its view is on top.
+    for (const view of ['completion', 'speciesdex']) {
+      const ids = _DEX_FILTER_IDS[view];
+      const rerender = () => {
+        const top = _viewStack[_viewStack.length - 1];
+        if (!top || top.view !== view) return;
+        if (view === 'completion') renderCompletion();
+        else renderSpeciesDex(top.species);
+      };
+      const search = panel.querySelector('#' + ids.q);
+      search.addEventListener('input', rerender);
+      attachSpeciesAutocomplete(search, panel.querySelector('#' + ids.ac), _dexSearchAllowed);
+      for (const k of ['t', 'tA', 'tB']) {
+        const sel = panel.querySelector('#' + ids[k]);
+        sel.addEventListener('change', () => { applyTypeSelectColor(sel); rerender(); });
+      }
+    }
+    panel.querySelector('.completion-summary-btn').addEventListener('click',
+      () => _showCompletionSummary(null));
+    panel.querySelector('.speciesdex-summary-btn').addEventListener('click', () => {
+      const top = _viewStack[_viewStack.length - 1];
+      if (top && top.view === 'speciesdex') _showCompletionSummary(+top.species);
+    });
     // Delegated row taps. Listeners live on the (persistent) grid element;
     // virtualizeGrid swaps the rows underneath them as the user scrolls.
     panel.querySelector('.completion-grid').addEventListener('click', (e) => {
@@ -9978,6 +10069,9 @@
         // left with. Fresh pushes carry no snapshot and keep the shared
         // current value (that's what carries the filter INTO this view).
         if (top.filters) _nonEvolvedOnly = !!top.filters.nonEvolvedOnly;
+        // Back-nav also restores the name/type filters; a fresh push
+        // starts with an empty name search.
+        _applyDexFilters(panel, 'completion', top.filters || null);
         // Show first so virtualizeGrid's offsetParent check passes, then
         // restore any saved scroll before the grid's first paint.
         panel.querySelector('.completion-view').classList.add('show');
@@ -9989,6 +10083,7 @@
       case 'speciesdex': {
         // Same non-evolved toggle restore as the completion case above.
         if (top.filters) _nonEvolvedOnly = !!top.filters.nonEvolvedOnly;
+        _applyDexFilters(panel, 'speciesdex', top.filters || null);
         panel.querySelector('.speciesdex-view').classList.add('show');
         const sheet = panel.querySelector('.sheet');
         if (sheet) sheet.scrollTop = (top.scrollY || 0);
@@ -10142,9 +10237,10 @@
     } else if (top.view === 'browse') {
       top.filters = _captureInventoryFilters(panel);
     } else if (top.view === 'completion' || top.view === 'speciesdex') {
-      // The shared non-evolved toggle is these views' only filter;
-      // snapshot it so back-nav restores the state the view was left in.
-      top.filters = { nonEvolvedOnly: _nonEvolvedOnly };
+      // The shared non-evolved toggle plus this view's name/type
+      // filters, so back-nav restores the state the view was left in.
+      top.filters = Object.assign({ nonEvolvedOnly: _nonEvolvedOnly },
+        _captureDexFilters(panel, top.view));
     }
   }
 
@@ -13674,6 +13770,61 @@
   // (not persisted to localStorage), like the family-tree expand toggle.
   let _nonEvolvedOnly = false;
 
+  // Name + type filters on the completion list and a species dex. The
+  // values live in the inputs (session-local, like _nonEvolvedOnly);
+  // each view-stack entry snapshots its view's values on push and gets
+  // them back on back-nav (_captureCurrentFilters / applyTopView). They
+  // narrow the rows only — the stats line and Summary describe the
+  // whole dex, like the pokédex's caught/encountered line.
+  const _DEX_FILTER_IDS = {
+    completion: { q: 'completionSearch', ac: 'completionAc',
+      t: 'completionFilterType', tA: 'completionFilterTypeA', tB: 'completionFilterTypeB' },
+    speciesdex: { q: 'speciesdexSearch', ac: 'speciesdexAc',
+      t: 'speciesdexFilterType', tA: 'speciesdexFilterTypeA', tB: 'speciesdexFilterTypeB' },
+  };
+  function _dexFilterSelectors(view) {
+    const ids = _DEX_FILTER_IDS[view];
+    return [ids.q, ids.t, ids.tA, ids.tB].map((id) => '#' + id);
+  }
+  function _captureDexFilters(panel, view) {
+    const ids = _DEX_FILTER_IDS[view];
+    const val = (id) => (panel.querySelector('#' + id) || {}).value || '';
+    return { q: val(ids.q), t: val(ids.t), tA: val(ids.tA), tB: val(ids.tB) };
+  }
+  // f = a snapshot from _captureDexFilters, or null for a fresh push:
+  // that clears the name search and keeps the type picks (as the
+  // pokédex does).
+  function _applyDexFilters(panel, view, f) {
+    const ids = _DEX_FILTER_IDS[view];
+    const q = panel.querySelector('#' + ids.q);
+    if (q) q.value = (f && f.q) || '';
+    if (!f) return;
+    for (const k of ['t', 'tA', 'tB']) {
+      const sel = panel.querySelector('#' + ids[k]);
+      if (sel) { sel.value = f[k] || ''; applyTypeSelectColor(sel); }
+    }
+  }
+  // Either / First / Second, as in the pokédex: any of the types, the
+  // first type, the second type.
+  function _typesPassFilter(types, t, tA, tB) {
+    if (!t && !tA && !tB) return true;
+    if (!types || !types.length) return false;
+    if (t && !types.includes(t)) return false;
+    if (tA && types[0] !== tA) return false;
+    if (tB && types[1] !== tB) return false;
+    return true;
+  }
+  function _speciesTypes(id) {
+    return (global.Species && global.Species.typesFor) ? global.Species.typesFor(id) : [];
+  }
+  // Species the name search can suggest: the list's species (minus
+  // evolved ones while the non-evolved toggle is on).
+  function _dexSearchAllowed() {
+    const set = _supportedSet();
+    if (!_nonEvolvedOnly) return set;
+    return new Set(Array.from(set).filter((id) => !_isEvolvedSpecies(id)));
+  }
+
   // ── Glitch dex: solo (special, non-fusion) creatures ───────────
   // Separate section with its own progress bar; does NOT feed the
   // fusion completion % (solo keys carry no '-' and are skipped by
@@ -14013,12 +14164,26 @@
     const grid = panel.querySelector('.completion-grid');
     if (!grid) return;
     const sheet = panel.querySelector('.sheet');
+    // Name search + type filters (the species' own types) narrow the
+    // list; the stats above still cover the whole dex.
+    updateFilterIndicators(panel, _dexFilterSelectors('completion'));
+    const f = _captureDexFilters(panel, 'completion');
+    const q = f.q.trim().toLowerCase();
+    const shown = rows.filter((r) =>
+      (!q || speciesNameFor(r.id).toLowerCase().includes(q))
+      && _typesPassFilter(_speciesTypes(r.id), f.t, f.tA, f.tB));
+    if (!shown.length) {
+      virtualizeGrid({ scrollEl: sheet, gridEl: grid, items: [], cols: 1, rowGap: 6 });
+      grid.innerHTML = '<div class="creature-empty">No species match those filters.</div>';
+      return;
+    }
+    const seenMap = readSeenFusions();
     // Species at 100% with their one-time reward egg still unclaimed get
     // a tappable egg at the row's right end (legendary rows never do —
     // the reward is for non-legendary completion).
     const eggClaimed = new Set(readCompletionRewards().claimed);
     virtualizeGrid({
-      scrollEl: sheet, gridEl: grid, items: rows,
+      scrollEl: sheet, gridEl: grid, items: shown,
       cols: 1, rowGap: 6, cardHeight: 60,
       initialScrollTop: sheet ? sheet.scrollTop : 0,
       makeCardEl(r) {
@@ -14035,7 +14200,8 @@
         card.setAttribute('tabindex', '0');
         // Silhouette the X×X icon until the pure form is actually seen/caught,
         // so the completion list doesn't spoil sprites you haven't found yet.
-        const pureSeen = isFusionSeen(r.id, r.id) || isFusionOwned(r.id, r.id);
+        const pureSeen = Object.prototype.hasOwnProperty.call(seenMap, `${r.id}-${r.id}`)
+          || isFusionOwned(r.id, r.id);
         card.innerHTML =
           `<div class="completion-icon${pureSeen ? '' : ' silhouette'}"><img alt=""></div>`
           + `<div class="completion-info">`
@@ -14105,12 +14271,17 @@
     // Legendary partners still render in the grid below (as uncounted bonus
     // cells), but they don't count toward this page's % — matching the
     // completion-dex row for X.
+    // One read of the seen map: isFusionSeen re-reads it per call, and
+    // that read is O(dex size) — too slow for ~4 calls per partner on
+    // every keystroke in the search box.
+    const seenMap = readSeenFusions();
+    const seenIt = (a, b) => Object.prototype.hasOwnProperty.call(seenMap, `${a}-${b}`);
     let seenHead = 0, seenBody = 0, counted = 0;
     for (const p of partners) {
       if (isLegendarySpecies(p)) continue;
       counted++;
-      if (isFusionSeen(X, p)) seenHead++;
-      if (isFusionSeen(p, X)) seenBody++;
+      if (seenIt(X, p)) seenHead++;
+      if (seenIt(p, X)) seenBody++;
     }
     const total = 2 * counted;
     const seenAll = seenHead + seenBody;
@@ -14124,15 +14295,31 @@
     const grid = panel.querySelector('.speciesdex-grid');
     if (!grid) return;
     const sheet = panel.querySelector('.sheet');
+    // The name search matches the partner; the type filters match each
+    // fusion's own types (as in the pokédex). A row stays when either of
+    // its fusions matches, and the one that doesn't is dimmed.
+    updateFilterIndicators(panel, _dexFilterSelectors('speciesdex'));
+    const f = _captureDexFilters(panel, 'speciesdex');
+    const q = f.q.trim().toLowerCase();
+    const typed = !!(f.t || f.tA || f.tB);
+    const typeOk = (a, b) => !typed || _typesPassFilter(fusionTypesFor(a, b), f.t, f.tA, f.tB);
+    const shown = partners.filter((p) =>
+      (!q || speciesNameFor(p).toLowerCase().includes(q))
+      && (typeOk(X, p) || typeOk(p, X)));
+    if (!shown.length) {
+      virtualizeGrid({ scrollEl: sheet, gridEl: grid, items: [], cols: 1, rowGap: 6 });
+      grid.innerHTML = '<div class="creature-empty">No partners match those filters.</div>';
+      return;
+    }
     virtualizeGrid({
-      scrollEl: sheet, gridEl: grid, items: partners,
+      scrollEl: sheet, gridEl: grid, items: shown,
       cols: 1, rowGap: 6, cardHeight: 84,
       initialScrollTop: sheet ? sheet.scrollTop : 0,
       makeCardEl(p) {
-        const cell = (a, b, seenIt) =>
-          `<div class="speciesdex-cell${seenIt ? '' : ' silhouette'}" `
+        const cell = (a, b, isSeen) =>
+          `<div class="speciesdex-cell${isSeen ? '' : ' silhouette'}${typeOk(a, b) ? '' : ' type-miss'}" `
           + `data-a="${a}" data-b="${b}" role="button" tabindex="0" `
-          + `title="${escapeHtml(seenIt ? speciesNameFor(b) + ' × ' + speciesNameFor(a) : '???')}">`
+          + `title="${escapeHtml(isSeen ? speciesNameFor(b) + ' × ' + speciesNameFor(a) : '???')}">`
           + `<span class="speciesdex-cell-ph" aria-hidden="true">·</span><img alt="">`
           // "auto" tag — hidden until loadSpriteFor resolves the ACTUAL
           // rendered variant (shown via .is-auto), so it works for silhouettes
@@ -14145,10 +14332,10 @@
         const row = document.createElement('div');
         row.className = 'speciesdex-row';
         row.innerHTML =
-          cell(X, p, isFusionSeen(X, p))
+          cell(X, p, seenIt(X, p))
           + `<div class="speciesdex-partner"><span class="sd-num">#${p}</span>`
           +   `<span class="sd-name">${escapeHtml(speciesNameFor(p))}</span></div>`
-          + cell(p, X, isFusionSeen(p, X));
+          + cell(p, X, seenIt(p, X));
         return row;
       },
       loadSpriteFor(row, p) {
@@ -14176,6 +14363,179 @@
                 ? global.SpriteStore.bestVariantFor(a, b) : Promise.resolve(null));
           resolved.then((v) => { cell.classList.toggle('is-auto', v === null); }).catch(() => {});
         });
+      },
+    });
+  }
+
+  // ── Completion summary popup ───────────────────────────────────
+  // Opened from the completion list (speciesId null) or a species dex.
+  // Same scope as that page's stats line — non-legendary partners, the
+  // non-evolved toggle applied — and it ignores the name/type filters.
+
+  // The fusions a species dex counts: X×P and P×X for every partner P
+  // the page counts (renderSpeciesDex's stats loop).
+  function _speciesDexPairs(X, nonEvoOnly) {
+    const pairs = [];
+    for (const p of supportedSpeciesSorted()) {
+      if (nonEvoOnly && _isEvolvedSpecies(p)) continue;
+      if (isLegendarySpecies(p)) continue;
+      pairs.push([X, p], [p, X]);
+    }
+    return pairs;
+  }
+  // Per type: how many of the fusions carry it (fusion types, the same
+  // ones the dex's type filter uses) and how many of those are seen.
+  function _fusionTypeSummary(pairs, seenMap) {
+    const byType = new Map();
+    for (const [a, b] of pairs) {
+      const isSeen = Object.prototype.hasOwnProperty.call(seenMap, `${a}-${b}`);
+      for (const t of new Set(fusionTypesFor(a, b))) {
+        let e = byType.get(t);
+        if (!e) { e = { seen: 0, total: 0 }; byType.set(t, e); }
+        e.total++;
+        if (isSeen) e.seen++;
+      }
+    }
+    return byType;
+  }
+  // Per type over the completion list's counted species (their own
+  // types, as the list's type filter uses): species at 100% (done of
+  // count) and their fusions seen (seen of total).
+  function _completionTypeSummary(rows) {
+    const byType = new Map();
+    for (const r of rows) {
+      if (r.legendary) continue;
+      for (const t of new Set(_speciesTypes(r.id))) {
+        let e = byType.get(t);
+        if (!e) { e = { seen: 0, total: 0, done: 0, count: 0 }; byType.set(t, e); }
+        e.seen += r.seen; e.total += r.total; e.count++;
+        if (r.total > 0 && r.seen >= r.total) e.done++;
+      }
+    }
+    return byType;
+  }
+  // Art over a set of fusions, counted like the fusion view's art grid:
+  // each hand-drawn variant (or the one autogen sprite when a fusion
+  // has none), and how many of those the trainer has seen or caught.
+  // counts: Map "a-b" → custom variant count.
+  function _artTally(pairs, counts, seenMap) {
+    let seen = 0, total = 0;
+    for (const [a, b] of pairs) {
+      const key = `${a}-${b}`;
+      const n = counts.get(key) || 0;
+      const entry = Object.prototype.hasOwnProperty.call(seenMap, key) ? seenMap[key] : null;
+      const known = !!entry || isFusionOwned(a, b);
+      if (n === 0) { total++; if (known) seen++; continue; }
+      total += n;
+      if (!known) continue;
+      // readSeenVariants re-reads the whole seen map per call; build the
+      // same union from the map in hand.
+      const keys = _capStore.variantKeysForFusion(a, b);
+      if (entry && entry.variants) for (const k in entry.variants) keys.add(k);
+      for (const k of keys) {
+        const i = parseInt(k, 10);
+        if (i >= 0 && i < n) seen++;
+      }
+    }
+    return { seen, total };
+  }
+
+  function _sumBarRow(labelHtml, seen, total, fracText) {
+    // Floor, as on the completion rows: 100% only when complete.
+    const pct = total ? Math.floor(seen / total * 100) : 0;
+    return '<div class="cc-sum-row">' + labelHtml
+      + '<div class="cc-sum-bar"><div class="cc-sum-bar-fill" style="width:' + pct + '%"></div></div>'
+      + '<span class="cc-sum-pct">' + pct + '%</span>'
+      + '<span class="cc-sum-frac">' + escapeHtml(fracText) + '</span></div>';
+  }
+  const _fmtN = (n) => Number(n).toLocaleString();
+
+  let _summaryToken = 0;
+  function _showCompletionSummary(speciesId) {
+    const nonEvoOnly = _nonEvolvedOnly;
+    const seenMap = readSeenFusions();
+    const token = ++_summaryToken;
+    let title, scope, headHtml, typeTitle, typeCols, typeRows, pairs;
+    const typeOrder = global.Types.list();
+    const chip = (t) => '<span class="cc-typechip" style="background:' + global.Types.color(t) + '">'
+      + escapeHtml(global.Types.displayName(t)) + '</span>';
+    if (speciesId == null) {
+      const rows = computeSpeciesCompletion().filter((r) => !r.legendary && (!nonEvoOnly || !r.evolved));
+      let seenAll = 0, totalAll = 0, done = 0;
+      for (const r of rows) {
+        seenAll += r.seen; totalAll += r.total;
+        if (r.total > 0 && r.seen >= r.total) done++;
+      }
+      title = 'Completion summary';
+      scope = nonEvoOnly ? 'Non-evolved, non-legendary species.' : 'All non-legendary species.';
+      // Same % as the page's headline (each species' fusions, so every
+      // fusion counts once per side — hence no raw fusion count here).
+      headHtml = _sumBarRow('<span class="cc-sum-label">Fusions</span>', seenAll, totalAll, '')
+        + '<div class="cc-sum-sub">' + done + ' of ' + rows.length + ' species complete</div>';
+      const byType = _completionTypeSummary(rows);
+      typeTitle = 'By type';
+      typeCols = '<div class="cc-sum-cols"><span></span><span>fusions seen</span><span></span><span>species done</span></div>';
+      typeRows = typeOrder.filter((t) => byType.has(t)).map((t) => {
+        const e = byType.get(t);
+        return _sumBarRow(chip(t), e.seen, e.total, `${e.done}/${e.count}`);
+      }).join('');
+      // Art over the fusions those rows count, each once: both halves
+      // non-legendary, at least one of them a listed species.
+      const listed = new Set(rows.map((r) => r.id));
+      const nonleg = supportedSpeciesSorted().filter((id) => !isLegendarySpecies(id));
+      pairs = [];
+      for (const a of nonleg) {
+        for (const b of nonleg) if (listed.has(a) || listed.has(b)) pairs.push([a, b]);
+      }
+    } else {
+      const X = speciesId;
+      pairs = _speciesDexPairs(X, nonEvoOnly);
+      let seenAll = 0;
+      for (const [a, b] of pairs) {
+        if (Object.prototype.hasOwnProperty.call(seenMap, `${a}-${b}`)) seenAll++;
+      }
+      title = `${speciesNameFor(X)} dex summary`;
+      scope = nonEvoOnly ? 'Fusions with non-evolved, non-legendary partners.'
+        : 'Fusions with non-legendary partners.';
+      headHtml = _sumBarRow('<span class="cc-sum-label">Fusions</span>', seenAll, pairs.length, '')
+        + '<div class="cc-sum-sub">' + _fmtN(seenAll) + ' / ' + _fmtN(pairs.length) + ' seen</div>';
+      const byType = _fusionTypeSummary(pairs, seenMap);
+      typeTitle = 'By type';
+      typeCols = '<div class="cc-sum-cols"><span></span><span>fusions seen</span><span></span><span>seen</span></div>';
+      typeRows = typeOrder.filter((t) => byType.has(t)).map((t) => {
+        const e = byType.get(t);
+        return _sumBarRow(chip(t), e.seen, e.total, `${e.seen}/${e.total}`);
+      }).join('');
+    }
+    const html = '<p class="cc-info-p">' + escapeHtml(scope) + '</p>'
+      + '<div class="cc-info-section">' + headHtml
+      + '<div class="cc-sum-art">'
+      +   '<div class="cc-sum-row"><span class="cc-sum-label">Art</span>'
+      +   '<span class="cc-info-note" style="grid-column: 2 / -1">counting…</span></div>'
+      + '</div></div>'
+      + '<div class="cc-info-section"><div class="cc-info-section-title">' + typeTitle + '</div>'
+      + typeCols + typeRows + '</div>'
+      + '<p class="cc-info-note">Art counts each fusion\'s hand-drawn variants, or its'
+      + ' auto-generated sprite when it has none.</p>';
+    _openInfoModal({
+      title, html,
+      onWire: (root, content) => {
+        const artEl = content.querySelector('.cc-sum-art');
+        if (!artEl) return;
+        const fill = (art) => {
+          if (token !== _summaryToken || !artEl.isConnected) return;
+          artEl.innerHTML = _sumBarRow('<span class="cc-sum-label">Art</span>', art.seen, art.total, '')
+            + '<div class="cc-sum-sub">' + _fmtN(art.seen) + ' / ' + _fmtN(art.total)
+            + ' art variants seen</div>';
+        };
+        const counts = (global.Sprites && global.Sprites.getCellVariantCountsBatch)
+          ? global.Sprites.getCellVariantCountsBatch(pairs) : Promise.resolve(new Map());
+        counts.then((m) => fill(_artTally(pairs, m, seenMap)))
+          .catch(() => {
+            if (token !== _summaryToken || !artEl.isConnected) return;
+            artEl.innerHTML = '<div class="cc-sum-row"><span class="cc-sum-label">Art</span>'
+              + '<span class="cc-info-note" style="grid-column: 2 / -1">couldn\'t count art</span></div>';
+          });
       },
     });
   }
