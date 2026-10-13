@@ -18776,6 +18776,14 @@
     };
     try {
       const entry = await recordCaptureFromSpawn(spawn);
+      // Register it in the Pokédex now, art included. Wild catches are
+      // marked at the encounter screen and hatches in hatchEgg; a grant has
+      // neither, so it only reached the dex at the next boot's backfill
+      // (and then without its art).
+      try {
+        if (enc.solo) markSoloSeen(enc.solo, 'auto');
+        else markFusionSeen(entry.speciesA, entry.speciesB, spawn, entry.variant);
+      } catch (e) { _logCreatureError('focus/markSeen', e); }
       a.earned.creatures.push({
         id: entry.id,
         solo: enc.solo || undefined,
