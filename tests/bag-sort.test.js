@@ -36,9 +36,13 @@ function extract(marker) {
   return src.slice(start, i + 1);
 }
 
-// Representative catalog: incense (has incenseType), evo items (have
-// evoItem), balls (have catchShakeRate), and a placeholder "other".
+// Representative catalog: berries (bonusIncense), incense (incenseType)
+// and the community pass, evo items (evoItem), balls (catchShakeRate),
+// and a placeholder "other".
 const ITEMS = {
+  candy_berry: { name: 'Candy Berry', bonusIncense: true },
+  calm_berry: { name: 'Calm Berry', bonusIncense: true },
+  community_pass: { name: 'Community Day Pass', communityDay: true },
   poke_ball: { name: 'Poké Ball', catchShakeRate: 0.8879 },
   great_ball: { name: 'Great Ball', catchShakeRate: 0.9655 },
   test_orb: { name: 'Test Orb' },
@@ -59,11 +63,12 @@ const rank = (k) => vm.runInContext('_bagEntryRank(__k)', Object.assign(ctx, { _
 const sorted = (bag) => vm.runInContext('_sortedBagEntries(__bag)', Object.assign(ctx, { __bag: bag }));
 
 // ── 1. Category ranks ──
-ok(rank('incense_fire') === 0, '1: incense is rank 0');
-ok(rank('THUNDERSTONE') === 1, '1: evo item is rank 1');
-ok(rank('poke_ball') === 2, '1: poké ball is rank 2');
-ok(rank('test_orb') === 3, '1: other item is rank 3');
-ok(rank('totally_unknown_key') === 3, '1: unknown key falls to rank 3');
+ok(rank('candy_berry') === 0, '1: berries are rank 0');
+ok(rank('incense_fire') === 1 && rank('community_pass') === 1, '1: incense and the community pass are rank 1');
+ok(rank('THUNDERSTONE') === 2, '1: evo item is rank 2');
+ok(rank('poke_ball') === 3, '1: poké ball is rank 3');
+ok(rank('test_orb') === 4, '1: other item is rank 4');
+ok(rank('totally_unknown_key') === 4, '1: unknown key falls to rank 4');
 
 // ── 2. Full ordering across categories ──
 {
@@ -76,14 +81,19 @@ ok(rank('totally_unknown_key') === 3, '1: unknown key falls to rank 3');
     FIRESTONE: 2,
     great_ball: 10,
     incense_grass: 0,   // zero count → dropped
+    calm_berry: 1,
+    community_pass: 2,
+    candy_berry: 1,
   });
   const keys = entries.map(([k]) => k);
   ok(JSON.stringify(keys) === JSON.stringify([
+    'calm_berry', 'candy_berry',       // berries first: same count → name asc
+    'community_pass',                  // incense group: count desc (2 > 1)
     'incense_fire', 'incense_water',   // incense: same count → name asc
     'FIRESTONE', 'THUNDERSTONE',       // evo: same count → name asc (Fire < Thunder)
     'great_ball', 'poke_ball',         // balls: count desc (10 > 5)
     'test_orb',                        // other, last
-  ]), '2: ordered incense → evo → balls → other, tiebroken by count then name');
+  ]), '2: ordered berries → incense → evo → balls → other, tiebroken by count then name');
   ok(!keys.includes('incense_grass'), '2: zero-count entry filtered out');
 }
 
@@ -101,7 +111,7 @@ ok(rank('totally_unknown_key') === 3, '1: unknown key falls to rank 3');
 
 // ── 5. Every evolution item gets a bag entry ──
 {
-  ok(rank('neo_paintbrush_red') === 1, '5: pack paintbrush ranks with evolution items');
+  ok(rank('neo_paintbrush_red') === 2, '5: pack paintbrush ranks with evolution items');
   const keys = sorted({ neo_paintbrush_red: 1, THUNDERSTONE: 1, FIRESTONE: 1 }).map(([k]) => k);
   ok(JSON.stringify(keys) === JSON.stringify(['FIRESTONE', 'neo_paintbrush_red', 'THUNDERSTONE']),
     '5: pack items sort by display name (Fire < Red < Thunder) — got ' + keys.join(','));

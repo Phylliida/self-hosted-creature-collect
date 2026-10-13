@@ -523,17 +523,13 @@
     },
   };
 
-  // Candy Ball art: the Poké Ball's geometry (the throw animation splits
-  // the icon at its seam) with a gold, candy-striped top.
+  // Candy Ball art: the Poké Ball's drawing (the throw animation splits
+  // the icon at its seam) with a gold top and a candy-pink button.
   function _candyBallIcon() {
     const svg =
       "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'>" +
-      "<defs><clipPath id='t'><path d='M1.5 12A10.5 10.5 0 0 1 22.5 12Z'/></clipPath></defs>" +
-      "<circle cx='12' cy='12' r='10.5' fill='#ffffff'/>" +
-      "<path d='M1.5 12A10.5 10.5 0 0 1 22.5 12Z' fill='#ffd23f'/>" +
-      "<g clip-path='url(#t)' stroke='#ff5fa2' stroke-width='2.1'><path d='M-1 10L10 -1M4 13L15 2M9 13L20 2M14 13L25 2M19 13L26 6'/></g>" +
-      "<ellipse cx='7.6' cy='6.2' rx='2.6' ry='1.3' fill='#ffffff' opacity='0.6' transform='rotate(-32 7.6 6.2)'/>" +
-      "<circle cx='12' cy='12' r='10.5' fill='none' stroke='#1a1a1a' stroke-width='1.2'/>" +
+      "<circle cx='12' cy='12' r='10.5' fill='#ffffff' stroke='#1a1a1a' stroke-width='1.2'/>" +
+      "<path d='M 1.5 12 A 10.5 10.5 0 0 1 22.5 12 Z' fill='#f5b82e'/>" +
       "<line x1='1.5' y1='12' x2='22.5' y2='12' stroke='#1a1a1a' stroke-width='1.6'/>" +
       "<circle cx='12' cy='12' r='2.6' fill='#ffffff' stroke='#1a1a1a' stroke-width='1.2'/>" +
       "<circle cx='12' cy='12' r='1.2' fill='#ff5fa2' stroke='#1a1a1a' stroke-width='0.7'/>" +
@@ -11859,21 +11855,23 @@
   // broken alphabetically by display name. Items with no catalog entry
   // (e.g. forward-compat from a future build) still render via their
   // raw key so nothing silently disappears.
-  // Category rank for the bag list: incense first, then evolution
-  // items, then poké balls, then anything else (e.g. the test_orb
-  // placeholder). Lower rank sorts higher in the list.
+  // Category rank for the bag list: berries (bonus incense) first, then
+  // incense and the community day pass, evolution items, poké balls, and
+  // anything else (e.g. the test_orb placeholder). Lower rank sorts
+  // higher in the list.
   function _bagEntryRank(key) {
     const meta = getItemMeta(key) || {};
-    if (meta.communityDay) return 0;        // community day pass
-    if (meta.incenseType) return 0;         // incense
-    if (meta.bonusIncense) return 0;        // bonus incense (berries)
-    if (meta.evoItem) return 1;             // evolution items (incl. pack paintbrushes)
-    if (meta.catchShakeRate) return 2;      // poké balls
-    return 3;                               // everything else
+    if (meta.bonusIncense) return 0;        // berries
+    if (meta.incenseType) return 1;         // incense
+    if (meta.communityDay) return 1;        // community day pass
+    if (meta.evoItem) return 2;             // evolution items (incl. pack paintbrushes)
+    if (meta.catchShakeRate) return 3;      // poké balls
+    return 4;                               // everything else
   }
   // Bag entries ([key, count]) with empties dropped, ordered by
-  // category (incense → evo → balls → other), then count-desc, then
-  // display name. Pulled out of renderBag so it can be unit-tested.
+  // category (berries → incense → evo → balls → other), then
+  // count-desc, then display name. Pulled out of renderBag so it can be
+  // unit-tested.
   function _sortedBagEntries(bag) {
     return Object.entries(bag)
       .filter(([, n]) => n > 0)
