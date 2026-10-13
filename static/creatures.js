@@ -3324,6 +3324,76 @@
     entry.caught = true;
     writeSeenFusions(seen, `${a}-${b}`);
   }
+  // Put a capture's art variant on its fusion's dex row. The art seen for
+  // (a, b) is that row's variants plus the variants of captures that are
+  // still (a, b), so art known only from a capture (an egg hatched before
+  // hatches marked the dex, a focus-mode grant) vanished when the capture
+  // evolved: Grak's evolved-away Bulbasaur × Nosepass egg kept its row but
+  // showed its only art unseen. performEvolution calls this before the
+  // capture stops being (a, b); evolving is the only way a capture leaves
+  // its fusion, so that's enough. Adds the row when it's missing (the
+  // trainer owned the fusion, so it's no phantom). Mutates `seen`; returns
+  // true when it changed it.
+  function _keepCaptureArt(seen, c) {
+    if (!c || c.speciesA == null || c.speciesB == null) return false;
+    const key = `${c.speciesA}-${c.speciesB}`;
+    const vKey = (typeof c.variant === 'number' && c.variant >= 0) ? String(c.variant) : 'auto';
+    let entry = seen[key];
+    if (entry && entry.variants && entry.variants[vKey] != null) return false;
+    const ts = (c.caughtAt && c.caughtAt.timestamp) || Date.now();
+    if (!entry) entry = seen[key] = { firstSeen: ts };
+    if (!entry.variants) entry.variants = {};
+    entry.variants[vKey] = ts;
+    return true;
+  }
+  // One-time repair for rows that lost their art before _keepCaptureArt: a
+  // fusion caught then evolved away whose row has no art at all. Besides
+  // the caught-away flag (which backfillCaughtAwayLineage also sets by
+  // inference, and radar catches skip the early forms), the row must have
+  // no lastSeen: every encounter stamps one, so it was minted from a
+  // capture of exactly this fusion, and with that capture gone it can
+  // only have evolved. When the fusion has a single distinct picture,
+  // that's the one the capture had, so credit it; with several we can't
+  // tell which, so leave it. Its duplicate slots come from
+  // Sprites.getArtCanon, which also only answers once the cells table has
+  // loaded, so the counts are real; until then it waits for the next boot.
+  // Runs after backfillCaughtAwayLineage.
+  const CAUGHT_AWAY_ART_KEY = 'cc.caughtAwayArt.v1';
+  async function recoverCaughtAwayArt() {
+    if (localStorage.getItem(CAUGHT_AWAY_ART_KEY) === '1') return;
+    const S = global.Sprites;
+    if (!S || !S.getCellVariantCount || !S.getArtCanon) return;
+    const todo = [];
+    const seen0 = readSeenFusions();
+    for (const key in seen0) {
+      const e = seen0[key];
+      if (!e || !e.caught || e.lastSeen != null) continue;
+      if (e.variants && Object.keys(e.variants).length) continue;
+      const m = /^(\d+)-(\d+)$/.exec(key);
+      if (m && !isFusionOwned(+m[1], +m[2])) todo.push([+m[1], +m[2]]);
+    }
+    const credit = [];
+    if (todo.length) {
+      let canonOf = null;
+      try { canonOf = await S.getArtCanon(); } catch {}
+      if (!canonOf) return;
+      for (const [a, b] of todo) {
+        const count = await S.getCellVariantCount(a, b);
+        if (count && _distinctArt(count, canonOf(a, b), new Set()).total === 1) credit.push(`${a}-${b}`);
+      }
+    }
+    // Re-read: the store may have moved on during the awaits.
+    const seen = readSeenFusions();
+    let changed = false;
+    for (const key of credit) {
+      const e = seen[key];
+      if (!e || (e.variants && Object.keys(e.variants).length)) continue;
+      e.variants = { 0: e.firstSeen || Date.now() };
+      changed = true;
+    }
+    if (changed) writeSeenFusions(seen);
+    localStorage.setItem(CAUGHT_AWAY_ART_KEY, '1');
+  }
   // Losslessly merge an imported seenFusions map into the current one (backup
   // restore). New fusions are copied whole; for a fusion already known we keep
   // the earliest firstSeen / latest lastSeen, UNION the art variants and shiny
@@ -5065,6 +5135,12 @@
     // We just evolved our copy of the OLD fusion away. If that was our last one
     // (isFusionOwned(old) now false), a future re-catch of it should read as
     // "Fresh", not "New" — flag its dex row so the encounter screen knows.
+    // The row keeps the art this copy had first (it may have lived only on
+    // the capture — see _keepCaptureArt).
+    try {
+      const seen = readSeenFusions();
+      if (_keepCaptureArt(seen, c)) writeSeenFusions(seen, `${c.speciesA}-${c.speciesB}`);
+    } catch {}
     try { markFusionCaughtAway(c.speciesA, c.speciesB); } catch {}
     // If we just evolved a shiny, its capture no longer exists as the OLD
     // fusion — persist the shiny style onto that pre-evolution's dex row so
@@ -19081,6 +19157,8 @@
           // Same lineage-walk infra: flag pre-existing evolved-away forms so
           // re-encounters show "Fresh" (see backfillCaughtAwayLineage).
           backfillCaughtAwayLineage();
+          // Then re-credit the art such rows lost (see recoverCaughtAwayArt).
+          return recoverCaughtAwayArt();
         }).catch(() => {});
       }
     });
