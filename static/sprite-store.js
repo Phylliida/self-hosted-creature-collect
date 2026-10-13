@@ -149,6 +149,10 @@
   // to one. Cache entries are seeded synchronously, so any spriteUrl()
   // call for the same key while preload's IDB read is in flight reuses
   // the same Promise rather than kicking off its own fetch.
+  //
+  // Each entry settles on its OWN result (Sprites.getSpriteBlobsEach):
+  // waiting for the whole batch meant one slow or hung pack read kept
+  // every marker in it a red dot until the batch timed out (Oct 2026).
   function preload(reqs) {
     if (!reqs || !reqs.length) return Promise.resolve();
     const misses = [];
@@ -162,19 +166,24 @@
     }
     if (!misses.length) return Promise.resolve();
     evictUntilUnder(MAX_ENTRIES - misses.length);
-    // Sprites.getSpriteBlobsBatch already cascades pack → IDB → lazy-
-    // crop per request; on iOS it opens ONE transaction for the IDB
-    // reads of the whole batch.
-    const batchP = _withTimeout(global.Sprites.getSpriteBlobsBatch(
-      misses.map((r) => ({ a: r.a, b: r.b, variant: r.variant }))
-    ), ATTEMPT_TIMEOUT_MS, 'sprite batch');
+    // Sprites.getSpriteBlobsEach / getSpriteBlobsBatch cascade pack →
+    // IDB → lazy-crop per request; on the web they open ONE transaction
+    // for the IDB reads of the whole batch.
+    const blobReqs = misses.map((r) => ({ a: r.a, b: r.b, variant: r.variant }));
+    const each = global.Sprites.getSpriteBlobsEach
+      ? global.Sprites.getSpriteBlobsEach(blobReqs) : null;
+    const batchP = each ? null : _withTimeout(
+      global.Sprites.getSpriteBlobsBatch(blobReqs), ATTEMPT_TIMEOUT_MS, 'sprite batch');
+    const urlPs = [];
     misses.forEach((m, i) => {
+      const resultP = each
+        ? _withTimeout(each[i], ATTEMPT_TIMEOUT_MS, 'sprite ' + m.key)
+        : batchP.then((results) => results && results[i]);
       // Same caching policy as spriteUrl: cache successes + permanent
       // misses, reject on transient so the cache evicts and the retry
       // loop kicks in via showSprite's catch.
-      const urlP = batchP.then(
-        async (results) => {
-          const r = results && results[i];
+      const urlP = resultP.then(
+        async (r) => {
           if (r && r.status === 'missing') return null;
           if (!r || !r.blob) {
             throw new Error('sprite preload transient: ' + m.key);
@@ -188,13 +197,14 @@
           } catch { /* fall through */ }
           return URL.createObjectURL(r.blob);
         },
-        () => { throw new Error('sprite preload batch rejected: ' + m.key); },
+        () => { throw new Error('sprite preload rejected: ' + m.key); },
       );
       cache.set(m.key, urlP);
       urlP.then((u) => { if (u === null && cache.get(m.key) === urlP) missAt.set(m.key, Date.now()); },
         () => { if (cache.get(m.key) === urlP) cache.delete(m.key); });
+      urlPs.push(urlP);
     });
-    return batchP.then(() => undefined, () => undefined);
+    return Promise.all(urlPs.map((p) => p.catch(() => null))).then(() => undefined);
   }
 
   // "Best available" variant resolver — mirrors the old useSpriteInto's
@@ -255,7 +265,12 @@
   // the background (when a resume-window failure is most likely to have
   // been misread as an absence).
   const pendingMisses = new Map();   // img → { a, b, variant, opts, gen, at }
-  const MISS_RECHECK_MS = 2 * 60 * 1000;
+  // Native packs hold every sprite the app asks for (checked against
+  // cells.json, Oct 2026), so a 'missing' there is almost certainly a
+  // misread failure: re-check it soon. On the web a miss usually means
+  // the sprite data simply isn't downloaded.
+  const MISS_RECHECK_MS = (typeof window !== 'undefined' && window.Capacitor)
+    ? 30 * 1000 : 2 * 60 * 1000;
 
   async function showSprite(img, a, b, variant, opts) {
     if (!img) return;
@@ -340,7 +355,7 @@
       showSprite(img, m.a, m.b, m.variant, m.opts);
     }
   }
-  if (typeof setInterval === 'function') setInterval(() => retryMisses(false), 30000);
+  if (typeof setInterval === 'function') setInterval(() => retryMisses(false), 15000);
 
   // Coming back from the background: iOS restarts LocalServer and storage
   // connections then, so failures from just before/around the suspension

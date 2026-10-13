@@ -136,6 +136,56 @@
     if (window._spriteDiag.errors.length > 10) window._spriteDiag.errors.shift();
   }
 
+  // Deadlines for local reads. On iOS a fetch (or IndexedDB request)
+  // issued just as the app is suspended can stay pending forever, and
+  // the shared in-flight promises built on them — one per pack index,
+  // the cells table, the manifest, a sheet — then pinned their key
+  // until the app restarted: every retry got the same stuck promise
+  // back, and those creatures stayed red dots (Oct 2026). A deadline
+  // turns the hang into an ordinary failure that the retry paths
+  // already handle.
+  const _isNative = () => typeof window !== 'undefined' && !!window.Capacitor;
+  const LOCAL_FETCH_TIMEOUT_MS = 8000;    // one pack / cells.json / cell read
+  const SHEET_FETCH_TIMEOUT_MS = 15000;   // a multi-MB sheet + decode
+  const IDB_READ_TIMEOUT_MS = 5000;       // one IndexedDB get
+  // One deadline across a fetch and its body read: `race(p)` rejects
+  // once the time is up (and aborts the request via `signal`), even if
+  // the underlying promise never settles.
+  function _deadline(ms, what) {
+    const ctl = (typeof AbortController === 'function') ? new AbortController() : null;
+    let timer = null;
+    const gate = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        try { if (ctl) ctl.abort(); } catch (_) {}
+        reject(new Error(`${what} timed out after ${ms}ms`));
+      }, ms);
+    });
+    gate.catch(() => {});
+    return {
+      signal: ctl ? ctl.signal : undefined,
+      race: (p) => Promise.race([p, gate]),
+      done: () => clearTimeout(timer),
+    };
+  }
+  // Settle within `ms` or reject (the original promise is abandoned).
+  function _within(p, ms, what) {
+    const dl = _deadline(ms, what);
+    return dl.race(p).finally(dl.done);
+  }
+  // fetch + body read under one deadline. `read` is a Response method
+  // name ('arrayBuffer', 'json', 'blob'); the body is only read for ok
+  // responses. Resolves { resp, body }.
+  async function _fetchLocal(url, init, read, ms) {
+    const dl = _deadline(ms || LOCAL_FETCH_TIMEOUT_MS, `fetch ${url}`);
+    try {
+      const resp = await dl.race(fetch(url, Object.assign({}, init || {}, { signal: dl.signal })));
+      const body = (read && resp.ok) ? await dl.race(resp[read]()) : null;
+      return { resp, body };
+    } finally {
+      dl.done();
+    }
+  }
+
   // Shared CCIdb connection (idb-util.js): re-opens itself when iOS
   // drops it during a background suspension — the old cached handle
   // failed every sprite read after such a resume (web build: red dots
@@ -179,6 +229,10 @@
   const idbPut  = (key, value) => _idbReq(STORE_ICONS,    'readwrite', (s) => s.put(value, key));
   const idbDel  = (key)        => _idbReq(STORE_ICONS,    'readwrite', (s) => s.delete(key));
   const varGet  = (key)        => _idbReq(STORE_VARIANTS, 'readonly',  (s) => s.get(key));
+  // varGet for the boot-critical tables: a hung read rejects instead of
+  // holding every marker's variant lookup (callers fall back to fetching
+  // the table from the bundle).
+  const varGetSoon = (key) => _within(varGet(key), IDB_READ_TIMEOUT_MS, `idb get ${key}`);
   const varPut  = (key, value) => _idbReq(STORE_VARIANTS, 'readwrite', (s) => s.put(value, key));
 
   // Batched IDB writes — every `items` entry goes in one transaction.
@@ -213,14 +267,13 @@
     }
     if (_sheetPromises.has(url)) return _sheetPromises.get(url);
     const p = (async () => {
-      const resp = await fetch(url);
+      const { resp, body: blob } = await _fetchLocal(url, null, 'blob', SHEET_FETCH_TIMEOUT_MS);
       if (!resp.ok) {
         const err = new Error(`${url}: HTTP ${resp.status}`);
         err.httpStatus = resp.status;
         throw err;
       }
-      const blob = await resp.blob();
-      const bmp = await createImageBitmap(blob);
+      const bmp = await _within(createImageBitmap(blob), SHEET_FETCH_TIMEOUT_MS, `decode ${url}`);
       _sheetCache.set(url, bmp);
       while (_sheetCache.size > MAX_SHEET_CACHE) {
         const firstKey = _sheetCache.keys().next().value;
@@ -482,55 +535,71 @@
   // every getCellVariantCount becomes an O(1) Map lookup.
   // Concurrent callers share one in-flight read.
   let _variantSummaryPromise = null;
+  // Native: when neither the summary nor the cells table could be read
+  // (storage hung / LocalServer down), counts stay unknown and callers
+  // render autogen meanwhile; the load is retried after this instant
+  // instead of being marked done for the whole session.
+  let _variantSummaryRetryAt = 0;
+  const VARIANT_SUMMARY_RETRY_MS = 5000;
   function _ensureVariantSummary() {
     if (_variantSummaryLoaded) return Promise.resolve();
     if (_variantSummaryPromise) return _variantSummaryPromise;
+    if (Date.now() < _variantSummaryRetryAt) return Promise.resolve();
     _variantSummaryPromise = (async () => {
       const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
-      let db;
-      try { db = await openDb(); }
-      catch (e) { _logSpriteError('ensureVariantSummary/openDb', e); _variantSummaryLoaded = true; return; }
-      const blob = await new Promise((resolve) => {
-        try {
-          const tx = db.transaction(STORE_VARIANTS, 'readonly');
-          const r = tx.objectStore(STORE_VARIANTS).get(VARIANT_SUMMARY_KEY);
-          r.onsuccess = () => resolve(r.result || null);
-          r.onerror = () => { _logSpriteError('ensureVariantSummary/get', r.error); resolve(null); };
-        } catch (e) { _logSpriteError('ensureVariantSummary/setup', e); resolve(null); }
-      });
+      const native = typeof window !== 'undefined' && !!window.Capacitor;
       const cache = _variantCountCache || (_variantCountCache = new Map());
-      if (blob && blob.byteLength === SPECIES_MAX_DIM * SPECIES_MAX_DIM) {
-        const arr = new Uint8Array(blob);
-        for (let a = 1; a <= SPECIES_MAX_DIM; a++) {
-          for (let b = 1; b <= SPECIES_MAX_DIM; b++) {
-            const c = arr[(a - 1) * SPECIES_MAX_DIM + (b - 1)];
-            if (c > 0) cache.set(`${a}-${b}`, c);
-          }
-        }
-      }
-      // Capacitor (IPA) fallback: VARIANT_SUMMARY isn't written by the
-      // IPA (welcome download UI is hidden, so bulkDownload never runs
-      // pass 2). Populate the in-memory count cache from cells.json,
-      // which is itself stored as a single IDB record at CELLS_KEY by
-      // getCells() — one ~hundred-KB blob instead of thousands of
-      // tiny per-cell rows. The earlier per-row bulk-write took
-      // ~40 s of wall-clock on iOS WebKit and blocked startup; the
-      // single-record path is instant since getCells() either reads
-      // the cached blob from IDB or fetches a single response from
-      // LocalServer. All consumers that need the per-cell variant
-      // array (getSpriteCreditForSlot, etc.) check `_cellsMap` in
-      // memory first via _getCellVariantArr below — no IDB cursor
-      // walks required. Web mode unchanged so the zero-data rule holds.
-      // Counts come from the compact cells table (see _ensureCellsCompact)
-      // instead of filling this Map from the full cells.json object.
-      if (cache.size === 0 && typeof window !== 'undefined' && window.Capacitor) {
+      // Capacitor (IPA/APK): counts come from the compact cells table
+      // (see _ensureCellsCompact) — stored in IDB, else derived from
+      // the bundled cells.json served by LocalServer. The summary blob
+      // below is written only by the web build's bulkDownload, so on
+      // native it's skipped while the table is available. Every step
+      // has a deadline: callers wait on this one shared promise, so a
+      // hung read here used to leave every new marker a red dot.
+      if (native) {
         try {
           await _ensureCellsCompact();
         } catch (e) {
           _logSpriteError('ensureVariantSummary/cellsFallback', e);
         }
       }
-      _variantSummaryLoaded = true;
+      let blob = null;
+      if (!_cellsCompact) {
+        // A failed open used to end the load right here AND mark it
+        // done — on native that skipped the cells table above (which
+        // doesn't need this database), so every spawn for the rest of
+        // the session got autogen art.
+        let db = null;
+        try { db = await _within(openDb(), IDB_READ_TIMEOUT_MS, 'idb open sprites'); }
+        catch (e) { _logSpriteError('ensureVariantSummary/openDb', e); }
+        blob = !db ? null : await _within(new Promise((resolve) => {
+          try {
+            const tx = db.transaction(STORE_VARIANTS, 'readonly');
+            const r = tx.objectStore(STORE_VARIANTS).get(VARIANT_SUMMARY_KEY);
+            r.onsuccess = () => resolve(r.result || null);
+            r.onerror = () => { _logSpriteError('ensureVariantSummary/get', r.error); resolve(null); };
+          } catch (e) { _logSpriteError('ensureVariantSummary/setup', e); resolve(null); }
+        }), IDB_READ_TIMEOUT_MS, 'idb get variant summary').catch((e) => {
+          _logSpriteError('ensureVariantSummary/get', e);
+          return null;
+        });
+        if (blob && blob.byteLength === SPECIES_MAX_DIM * SPECIES_MAX_DIM) {
+          const arr = new Uint8Array(blob);
+          for (let a = 1; a <= SPECIES_MAX_DIM; a++) {
+            for (let b = 1; b <= SPECIES_MAX_DIM; b++) {
+              const c = arr[(a - 1) * SPECIES_MAX_DIM + (b - 1)];
+              if (c > 0) cache.set(`${a}-${b}`, c);
+            }
+          }
+        }
+      }
+      if (native && cache.size === 0 && !_cellsCompact) {
+        _variantSummaryRetryAt = Date.now() + VARIANT_SUMMARY_RETRY_MS;
+        _logSpriteError('ensureVariantSummary', new Error(
+          `no variant table yet; retrying in ${VARIANT_SUMMARY_RETRY_MS} ms`));
+      } else {
+        _variantSummaryLoaded = true;
+      }
       if (typeof window !== 'undefined') {
         window._spriteDiag = window._spriteDiag || {};
         window._spriteDiag.variantSummaryMs = (typeof performance !== 'undefined')
@@ -613,7 +682,7 @@
     if (_creditsBundlePromise) return _creditsBundlePromise;
     _creditsBundlePromise = (async () => {
       try {
-        const stored = await varGet(CREDITS_BUNDLE_KEY);
+        const stored = await varGetSoon(CREDITS_BUNDLE_KEY);
         _creditsBundleCache = stored || null;
       } catch (e) {
         _logSpriteError('ensureCreditsBundle/get', e);
@@ -640,11 +709,13 @@
   // finalization. Idempotent — re-fetching just overwrites.
   async function _downloadCreditsBundle() {
     try {
-      const r = await fetch(`${BUNDLED_BASE}/credits.json`);
+      const { resp: r, body: bundle } = await _fetchLocal(`${BUNDLED_BASE}/credits.json`, null, 'json');
       if (!r.ok) return;
-      const bundle = await r.json();
-      await varPut(CREDITS_BUNDLE_KEY, bundle);
       _creditsBundleCache = bundle;
+      // Persisting is best-effort; a hung IDB write mustn't hold the
+      // shared credits promise.
+      await _within(varPut(CREDITS_BUNDLE_KEY, bundle), IDB_READ_TIMEOUT_MS, 'idb put credits')
+        .catch((e) => _logSpriteError('downloadCreditsBundle/put', e));
     } catch (e) {
       _logSpriteError('downloadCreditsBundle', e);
     }
@@ -665,7 +736,7 @@
     if (_splitNamesPromise) return _splitNamesPromise;
     _splitNamesPromise = (async () => {
       try {
-        const stored = await varGet(SPLIT_NAMES_KEY);
+        const stored = await varGetSoon(SPLIT_NAMES_KEY);
         _splitNamesCache = Array.isArray(stored) ? stored : null;
       } catch (e) {
         _logSpriteError('ensureSplitNames/get', e);
@@ -686,12 +757,12 @@
 
   async function _downloadSplitNames() {
     try {
-      const r = await fetch(`${BUNDLED_BASE}/split-names.json`);
+      const { resp: r, body: arr } = await _fetchLocal(`${BUNDLED_BASE}/split-names.json`, null, 'json');
       if (!r.ok) return;
-      const arr = await r.json();
       if (!Array.isArray(arr)) return;
-      await varPut(SPLIT_NAMES_KEY, arr);
       _splitNamesCache = arr;
+      await _within(varPut(SPLIT_NAMES_KEY, arr), IDB_READ_TIMEOUT_MS, 'idb put split names')
+        .catch((e) => _logSpriteError('downloadSplitNames/put', e));
     } catch (e) {
       _logSpriteError('downloadSplitNames', e);
     }
@@ -770,7 +841,7 @@
       } catch (_) { /* fall through to legacy IDB lookup */ }
     }
     try {
-      const legacy = await varGet(key);
+      const legacy = await varGetSoon(key);
       if (Array.isArray(legacy)) return legacy;
     } catch (_) {}
     return null;
@@ -836,7 +907,7 @@
     let db;
     try { db = await openDb(); }
     catch (e) { _logSpriteError('readVariantCount/openDb', e); return 0; }
-    return new Promise((resolve) => {
+    return _within(new Promise((resolve) => {
       try {
         const tx = db.transaction(STORE_VARIANTS, 'readonly');
         const r = tx.objectStore(STORE_VARIANTS).get(key);
@@ -849,6 +920,9 @@
         _logSpriteError(`readVariantCount/tx/${key}`, e);
         resolve(0);
       }
+    }), IDB_READ_TIMEOUT_MS, `idb get ${key}`).catch((e) => {
+      _logSpriteError(`readVariantCount/${key}`, e);
+      return 0;
     });
   }
 
@@ -860,6 +934,11 @@
     if (cache.has(key)) return cache.get(key);
     const ci = _cellsCompactFind(a, b);
     if (ci >= 0) return _cellsCompact.offs[ci + 1] - _cellsCompact.offs[ci];
+    // Native: the table answers every cell (absent = no custom art), and
+    // there are no per-cell rows to fall back to. While it's still
+    // unknown (load failed, retrying), answer 0 WITHOUT caching it, so
+    // the real count is used once the table lands.
+    if (_isNative()) return 0;
     // Slow fallback: summary missing or this cell wasn't in it. Look
     // up the per-cell entry directly. Future visits hit cache.
     if (_variantInflight.has(key)) return _variantInflight.get(key);
@@ -888,6 +967,7 @@
       if (cache.has(key)) { result.set(key, cache.get(key)); continue; }
       const ci = _cellsCompactFind(a, b);
       if (ci >= 0) result.set(key, _cellsCompact.offs[ci + 1] - _cellsCompact.offs[ci]);
+      else if (_isNative()) result.set(key, 0);   // see getCellVariantCount
       else need.push(key);
     }
     if (!need.length) return result;
@@ -899,7 +979,7 @@
       for (const k of need) { cache.set(k, 0); result.set(k, 0); }
       return result;
     }
-    const counts = await new Promise((resolve) => {
+    const counts = await _within(new Promise((resolve) => {
       try {
         const tx = db.transaction(STORE_VARIANTS, 'readonly');
         const store = tx.objectStore(STORE_VARIANTS);
@@ -923,7 +1003,15 @@
         _logSpriteError('getCellVariantCountsBatch/setup', e);
         resolve(need.map(() => 0));
       }
+    }), IDB_READ_TIMEOUT_MS, 'idb variant batch').catch((e) => {
+      _logSpriteError('getCellVariantCountsBatch/timeout', e);
+      return null;
     });
+    if (!counts) {
+      // Unknown, not zero: don't cache — the next lookup asks again.
+      for (const k of need) result.set(k, 0);
+      return result;
+    }
     for (let i = 0; i < need.length; i++) {
       cache.set(need[i], counts[i]);
       result.set(need[i], counts[i]);
@@ -1088,6 +1176,70 @@
   }
   const _now = () => (typeof performance !== 'undefined' ? performance.now() : 0);
 
+  // One pack's index read (see _loadPack), every await under `dl`'s
+  // deadline so a hung fetch can't pin _packLoadPromises.get(b).
+  async function _readPackIndex(b, dl) {
+    const url = `${BUNDLED_BASE}/sprite-packs/${b}.pack`;
+    // Probe the head of the file with a Range request. A server that
+    // honours Range answers 206 with just the index bytes — the
+    // multi-MB payload never crosses the wire until a marker
+    // actually needs one specific cell. A server that ignores Range
+    // answers 200 with the full file, which is exactly what
+    // whole-pack mode needs, so nothing is wasted either way.
+    let resp;
+    try {
+      resp = await dl.race(fetch(url, {
+        headers: { Range: `bytes=0-${PACK_INDEX_PROBE - 1}` },
+        signal: dl.signal,
+      }));
+    } catch (e) {
+      throw _packTransient('loadPack/fetch', b, e);
+    }
+    if (resp.status === 404) return null;   // no pack for this partner
+    if (!resp.ok) throw _packTransient('loadPack/http', b, `HTTP ${resp.status}`, resp.status);
+    let head;
+    try { head = await dl.race(resp.arrayBuffer()); }
+    catch (e) { throw _packTransient('loadPack/read', b, e); }
+    if (resp.status !== 206 || head.byteLength < 8) {
+      return _packFromWholeBuffer(b, head);
+    }
+    const header = new DataView(head, 0, 8);
+    if (header.getUint32(0, false) !== PACK_MAGIC_BE) {
+      _logSpriteError(`loadPack/badMagic/${b}`,
+        new Error(`pack ${b} bad magic`));
+      return null;
+    }
+    const cellCount = header.getUint32(4, true);
+    const payloadStart = 8 + cellCount * 16;
+    if (payloadStart > head.byteLength) {
+      // Index larger than the probe window (no current pack is near
+      // this; defensive for future format growth): fetch the exact
+      // remainder once and concatenate.
+      let rest, restBytes;
+      try {
+        rest = await dl.race(fetch(url, {
+          headers: { Range: `bytes=${head.byteLength}-${payloadStart - 1}` },
+          signal: dl.signal,
+        }));
+        if (!rest.ok) {
+          throw _packTransient('loadPack/indexRest', b, `HTTP ${rest.status}`, rest.status);
+        }
+        restBytes = await dl.race(rest.arrayBuffer());
+      } catch (e) {
+        if (e && e.transient) throw e;
+        throw _packTransient('loadPack/indexRest', b, e);
+      }
+      if (rest.status !== 206) return _packFromWholeBuffer(b, restBytes);
+      const joined = new Uint8Array(head.byteLength + restBytes.byteLength);
+      joined.set(new Uint8Array(head), 0);
+      joined.set(new Uint8Array(restBytes), head.byteLength);
+      head = joined.buffer;
+    }
+    const entries = _packParseIndex(new DataView(head, 0, payloadStart));
+    if (!entries) return null;  // magic checked above; unreachable
+    return _packCacheSet(b, { entries, ranged: true });
+  }
+
   async function _loadPack(b) {
     const cached = _packCache.get(b);
     if (cached) {
@@ -1100,63 +1252,9 @@
 
     const t0 = _now();
     const p = (async () => {
-      const url = `${BUNDLED_BASE}/sprite-packs/${b}.pack`;
-      // Probe the head of the file with a Range request. A server that
-      // honours Range answers 206 with just the index bytes — the
-      // multi-MB payload never crosses the wire until a marker
-      // actually needs one specific cell. A server that ignores Range
-      // answers 200 with the full file, which is exactly what
-      // whole-pack mode needs, so nothing is wasted either way.
-      let resp;
-      try {
-        resp = await fetch(url, {
-          headers: { Range: `bytes=0-${PACK_INDEX_PROBE - 1}` },
-        });
-      } catch (e) {
-        throw _packTransient('loadPack/fetch', b, e);
-      }
-      if (resp.status === 404) return null;   // no pack for this partner
-      if (!resp.ok) throw _packTransient('loadPack/http', b, `HTTP ${resp.status}`, resp.status);
-      let head;
-      try { head = await resp.arrayBuffer(); }
-      catch (e) { throw _packTransient('loadPack/read', b, e); }
-      if (resp.status !== 206 || head.byteLength < 8) {
-        return _packFromWholeBuffer(b, head);
-      }
-      const header = new DataView(head, 0, 8);
-      if (header.getUint32(0, false) !== PACK_MAGIC_BE) {
-        _logSpriteError(`loadPack/badMagic/${b}`,
-          new Error(`pack ${b} bad magic`));
-        return null;
-      }
-      const cellCount = header.getUint32(4, true);
-      const payloadStart = 8 + cellCount * 16;
-      if (payloadStart > head.byteLength) {
-        // Index larger than the probe window (no current pack is near
-        // this; defensive for future format growth): fetch the exact
-        // remainder once and concatenate.
-        let rest, restBytes;
-        try {
-          rest = await fetch(url, {
-            headers: { Range: `bytes=${head.byteLength}-${payloadStart - 1}` },
-          });
-          if (!rest.ok) {
-            throw _packTransient('loadPack/indexRest', b, `HTTP ${rest.status}`, rest.status);
-          }
-          restBytes = await rest.arrayBuffer();
-        } catch (e) {
-          if (e && e.transient) throw e;
-          throw _packTransient('loadPack/indexRest', b, e);
-        }
-        if (rest.status !== 206) return _packFromWholeBuffer(b, restBytes);
-        const joined = new Uint8Array(head.byteLength + restBytes.byteLength);
-        joined.set(new Uint8Array(head), 0);
-        joined.set(new Uint8Array(restBytes), head.byteLength);
-        head = joined.buffer;
-      }
-      const entries = _packParseIndex(new DataView(head, 0, payloadStart));
-      if (!entries) return null;  // magic checked above; unreachable
-      return _packCacheSet(b, { entries, ranged: true });
+      const dl = _deadline(LOCAL_FETCH_TIMEOUT_MS, `pack ${b} index`);
+      try { return await _readPackIndex(b, dl); }
+      finally { dl.done(); }
     })();
     _packLoadPromises.set(b, p);
     try { return await p; }
@@ -1183,11 +1281,20 @@
     // instead of holding the whole multi-MB pack in memory.
     const url = `${BUNDLED_BASE}/sprite-packs/${b}.pack`;
     const t0 = _now();
+    const dl = _deadline(LOCAL_FETCH_TIMEOUT_MS, `pack ${b} cell`);
+    try {
+      return await _readPackCell(b, key, url, offset, length, dl, t0);
+    } finally {
+      dl.done();
+    }
+  }
+  async function _readPackCell(b, key, url, offset, length, dl, t0) {
     let resp;
     try {
-      resp = await fetch(url, {
+      resp = await dl.race(fetch(url, {
         headers: { Range: `bytes=${offset}-${offset + length - 1}` },
-      });
+        signal: dl.signal,
+      }));
     } catch (e) {
       throw _packTransient('packGetBlob/range', b, e);
     }
@@ -1196,7 +1303,10 @@
       // established support, so this shouldn't happen). Switch this
       // pack to whole-pack mode and answer from the buffer just
       // received.
-      const whole = _packFromWholeBuffer(b, await resp.arrayBuffer());
+      let buf;
+      try { buf = await dl.race(resp.arrayBuffer()); }
+      catch (e) { throw _packTransient('packGetBlob/read', b, e); }
+      const whole = _packFromWholeBuffer(b, buf);
       if (!whole) return null;
       const e2 = whole.entries.get(key);
       if (!e2) return null;
@@ -1210,7 +1320,7 @@
       throw _packTransient('packGetBlob/http', b, `HTTP ${resp.status}`, resp.status);
     }
     let bytes;
-    try { bytes = await resp.arrayBuffer(); }
+    try { bytes = await dl.race(resp.arrayBuffer()); }
     catch (e) { throw _packTransient('packGetBlob/read', b, e); }
     if (bytes.byteLength !== length) {
       throw _packTransient('packGetBlob/shortRead', b,
@@ -1501,6 +1611,31 @@
     return results;
   }
 
+  /// Per-request form of getSpriteBlobsBatch: one Promise per request,
+  /// each settling as soon as ITS sprite is known, so one slow or hung
+  /// read can't hold every other marker in the batch as a red dot
+  /// (SpriteStore.preload used to wait for the whole batch). Web still
+  /// reads IndexedDB in ONE transaction (iOS serialises transactions)
+  /// and fans the results out. Same { status, blob } shape as
+  /// getSpriteBlobAttempt; never rejects.
+  function getSpriteBlobsEach(requests) {
+    const reqs = requests || [];
+    const idbP = _isNative() ? null : _idbBlobsBatch(reqs).catch(() => null);
+    return reqs.map((req, i) => (async () => {
+      if (idbP) {
+        const results = await idbP;
+        const hit = results && results[i] && results[i].blob;
+        if (hit) return { status: 'ok', blob: hit };
+      }
+      try {
+        return await getSpriteBlobAttempt(req.a, req.b, req.variant);
+      } catch (e) {
+        _logSpriteError(`getSpriteBlobsEach/${req.a}-${req.b}/v${req.variant}`, e);
+        return { status: 'transient', blob: null };
+      }
+    })());
+  }
+
   function getInflightCount() { return _inflightSpriteReads; }
 
   // Abstract views (pokédex, evolution previews, family grids) don't
@@ -1569,7 +1704,7 @@
     if (_customManifestPromise) return _customManifestPromise;
     _customManifestPromise = (async () => {
       try {
-        const stored = await varGet(MANIFEST_KEY);
+        const stored = await varGetSoon(MANIFEST_KEY);
         if (stored && typeof stored === 'object') {
           _customManifest = stored;
           return _customManifest;
@@ -1584,11 +1719,11 @@
     finally { _customManifestPromise = null; }
   }
   async function _downloadManifest() {
-    const resp = await fetch(`${BUNDLED_BASE}/manifest.json`);
+    const { resp, body } = await _fetchLocal(`${BUNDLED_BASE}/manifest.json`, null, 'json');
     if (!resp.ok) {
       throw Object.assign(new Error(`manifest: HTTP ${resp.status}`), { httpStatus: resp.status });
     }
-    _customManifest = await resp.json();
+    _customManifest = body;
     varPut(MANIFEST_KEY, _customManifest).catch(() => {});
     return _customManifest;
   }
@@ -1667,7 +1802,7 @@
     if (_cellsCompactPromise) return _cellsCompactPromise;
     _cellsCompactPromise = (async () => {
       try {
-        const stored = await varGet(CELLS_COMPACT_KEY);
+        const stored = await varGetSoon(CELLS_COMPACT_KEY);
         if (_validCellsCompact(stored)) {
           _cellsCompact = stored;
           _cellsCompactSource = 'idb';
@@ -1692,7 +1827,7 @@
     if (_cellsPromise) return _cellsPromise;
     _cellsPromise = (async () => {
       try {
-        const stored = await varGet(CELLS_KEY);
+        const stored = await varGetSoon(CELLS_KEY);
         if (stored && typeof stored === 'object') {
           _cellsMap = stored;
           return _cellsMap;
@@ -1707,11 +1842,11 @@
     finally { _cellsPromise = null; }
   }
   async function _downloadCells() {
-    const resp = await fetch(`${BUNDLED_BASE}/cells.json`);
+    const { resp, body } = await _fetchLocal(`${BUNDLED_BASE}/cells.json`, null, 'json');
     if (!resp.ok) {
       throw Object.assign(new Error(`cells: HTTP ${resp.status}`), { httpStatus: resp.status });
     }
-    _cellsMap = await resp.json();
+    _cellsMap = body;
     varPut(CELLS_KEY, _cellsMap).catch(() => {});
     return _cellsMap;
   }
@@ -2102,6 +2237,7 @@
 
   global.Sprites = {
     getSpriteUrl, getSpriteBlob, getSpriteBlobAttempt, getSpriteBlobsBatch,
+    getSpriteBlobsEach,
     getDefaultSpriteUrl, getDefaultSpriteBlob,
     getCellVariantCount, getCellVariantCountsBatch,
     bulkDownload, getDownloadedSheets, getDownloadStatus, deleteAllSprites,

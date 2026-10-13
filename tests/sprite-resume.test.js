@@ -22,6 +22,13 @@
 //     - transient failures retry (with backoff) until the sprite lands
 //     - a 'missing' result is re-checked by retryMisses (resume path)
 //     - a fetch that never settles times out and is retried
+// (3) hangs below SpriteStore (Oct 2026, red dots for 20-30 s, then a
+//     restart): a pack fetch that never settles must not pin that
+//     partner's shared index load; the native variant table loads from
+//     the bundled cells.json when IndexedDB is unusable and retries
+//     (without caching a 0) when that fetch hangs; one hung sprite in a
+//     preload doesn't hold back the others; addMarkersBatch doesn't wait
+//     for the whole preload before showing markers.
 //
 // Run: node tests/sprite-resume.test.js
 'use strict';
@@ -67,11 +74,17 @@ function makeServer() {
     down: false,        // every request → SW synthetic 504
     refuse: false,      // every request → fetch rejects
     failNext: 0,        // next N requests → 504, then healthy
+    hang: null,         // RegExp: matching requests never settle (once each)
+    cells: '{}',
     log: [],
   };
   server.fetch = async (url, init) => {
     url = String(url);
     server.log.push(url);
+    if (server.hang && server.hang.test(url)) {
+      server.hang = null;
+      return new Promise(() => {});   // ignores abort too — worst case
+    }
     if (server.refuse) throw new TypeError('Load failed');
     if (server.down || server.failNext > 0) {
       if (server.failNext > 0) server.failNext--;
@@ -89,23 +102,30 @@ function makeServer() {
       return new Response(pk, { status: 200 });
     }
     if (/\/sprites\//.test(url)) return new Response(null, { status: 404 });  // HF pack: no sheets
-    if (/cells\.json|manifest\.json/.test(url)) return new Response('{}', { status: 200 });
+    if (/cells\.json/.test(url)) return new Response(server.cells, { status: 200 });
+    if (/manifest\.json/.test(url)) return new Response('{}', { status: 200 });
     return new Response(null, { status: 404 });
   };
   return server;
 }
 
-function loadSprites(server) {
+// Short deadlines so the hang cases run fast.
+const fastSpritesSrc = spritesSrc
+  .replace(/const LOCAL_FETCH_TIMEOUT_MS = \d+;/, 'const LOCAL_FETCH_TIMEOUT_MS = 150;')
+  .replace(/const IDB_READ_TIMEOUT_MS = \d+;/, 'const IDB_READ_TIMEOUT_MS = 150;')
+  .replace(/const VARIANT_SUMMARY_RETRY_MS = \d+;/, 'const VARIANT_SUMMARY_RETRY_MS = 200;');
+
+function loadSprites(server, src) {
   const ctx = {
     console: { log() {}, warn() {}, error() {} },
-    setTimeout, clearTimeout, Blob, URL, Response, performance,
+    setTimeout, clearTimeout, Blob, URL, Response, performance, AbortController,
     fetch: (...a) => server.fetch(...a),
     localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
     Capacitor: {},
   };
   vm.createContext(ctx);
   ctx.window = ctx;
-  vm.runInContext(spritesSrc, ctx);
+  vm.runInContext(src || spritesSrc, ctx);
   return ctx.Sprites;
 }
 
@@ -220,6 +240,96 @@ function loadSprites(server) {
     i4.isConnected = false;
     await sleep(700);
     ok(SS.pendingRetryCount() === 0, 'retry for a detached img is pruned');
+  }
+
+
+  // ── (3) hangs below SpriteStore ────────────────────────────────────
+  {
+    ok(fastSpritesSrc.includes('LOCAL_FETCH_TIMEOUT_MS = 150')
+      && fastSpritesSrc.includes('IDB_READ_TIMEOUT_MS = 150')
+      && fastSpritesSrc.includes('VARIANT_SUMMARY_RETRY_MS = 200'),
+      '3: found the deadlines to shorten');
+    const server = makeServer();
+    server.packs[30] = buildPack([{ a: 1, variant: -1, bytes: PNG_1_25 }]);
+    const S = loadSprites(server, fastSpritesSrc);
+
+    // Pack index fetch never settles: the attempt fails on its own...
+    server.hang = /sprite-packs\/30\.pack/;
+    let t0 = Date.now();
+    let r = await S.getSpriteBlobAttempt(1, 30, null);
+    ok(r.status === 'transient', `3: hung pack index → transient (got ${r.status})`);
+    ok(Date.now() - t0 < 1000, `3: …within the deadline (${Date.now() - t0} ms)`);
+    // ...and the next attempt makes a FRESH request instead of getting
+    // the stuck shared promise back (that pinned the partner until restart).
+    r = await S.getSpriteBlobAttempt(1, 30, null);
+    ok(r.status === 'ok', `3: next attempt recovers (got ${r.status})`);
+
+    // Per-cell ranged read hangs (index already cached).
+    server.packs[31] = buildPack([{ a: 1, variant: -1, bytes: PNG_1_25 }]);
+    r = await S.getSpriteBlobAttempt(1, 31, null);   // caches the index
+    server.hang = /sprite-packs\/31\.pack/;
+    r = await S.getSpriteBlobAttempt(1, 31, null);
+    ok(r.status === 'transient', `3: hung cell read → transient (got ${r.status})`);
+    r = await S.getSpriteBlobAttempt(1, 31, null);
+    ok(r.status === 'ok', '3: cell read recovers');
+  }
+  {
+    // IndexedDB unusable (no CCIdb here → every open rejects): the
+    // native variant table still loads, from the bundled cells.json.
+    // Before, a failed open marked the load done with NO table, and
+    // every spawn that session got autogen art.
+    const server = makeServer();
+    server.cells = JSON.stringify({ '1-25': [0, 1], '2-25': [0] });
+    const S = loadSprites(server, fastSpritesSrc);
+    ok(await S.getCellVariantCount(1, 25) === 2, '3: counts load from cells.json when IDB fails');
+    ok(await S.getCellVariantCount(2, 25) === 1, '3: …for every cell');
+    ok(await S.getCellVariantCount(3, 25) === 0, '3: a cell without custom art → 0');
+  }
+  {
+    // cells.json fetch hangs once: counts are unknown for a moment
+    // (answered 0, NOT cached), then the retry loads the real table.
+    const server = makeServer();
+    server.cells = JSON.stringify({ '1-25': [0, 1, 2] });
+    server.hang = /cells\.json/;
+    const S = loadSprites(server, fastSpritesSrc);
+    const t0 = Date.now();
+    const first = await S.getCellVariantCount(1, 25);
+    ok(first === 0 && Date.now() - t0 < 1500,
+      `3: hung cells.json → unknown answered promptly (${first}, ${Date.now() - t0} ms)`);
+    await sleep(260);   // past VARIANT_SUMMARY_RETRY_MS
+    ok(await S.getCellVariantCount(1, 25) === 3, '3: the retry loads the table; the 0 was not cached');
+    const batch = await S.getCellVariantCountsBatch([[1, 25], [9, 25]]);
+    ok(batch.get('1-25') === 3 && batch.get('9-25') === 0, '3: batch counts agree');
+  }
+  {
+    // SpriteStore.preload: one hung entry doesn't hold back the rest.
+    const ctx = {
+      console, setTimeout, clearTimeout, setInterval, clearInterval, Promise, Date,
+      URL: { createObjectURL: (b) => 'blob:' + b.tag, revokeObjectURL() {} },
+    };
+    ctx.Sprites = {
+      getSpriteBlobsEach: (reqs) => reqs.map((r) => (r.a === 3
+        ? new Promise(() => {})
+        : Promise.resolve({ status: 'ok', blob: { tag: `${r.a}-${r.b}` } }))),
+      getSpriteBlobsBatch: () => new Promise(() => {}),
+      getSpriteBlobAttempt: () => new Promise(() => {}),
+    };
+    vm.createContext(ctx);
+    ctx.window = ctx;
+    vm.runInContext(storeSrc, ctx);
+    const SS = ctx.SpriteStore;
+    SS.preload([{ a: 3, b: 4, variant: null }, { a: 5, b: 6, variant: null }]);
+    const fast = { isConnected: true, src: '' };
+    await Promise.race([SS.showSprite(fast, 5, 6, null), sleep(300)]);
+    ok(fast.src === 'blob:5-6', '3: a ready sprite shows while another in the same preload hangs');
+  }
+  {
+    const creaturesSrc = fs.readFileSync(path.join(root, 'static', 'creatures.js'), 'utf8');
+    const i = creaturesSrc.indexOf('async function addMarkersBatch(');
+    const body = creaturesSrc.slice(i, creaturesSrc.indexOf('\n  function removeMarker(', i));
+    ok(i > 0 && body.includes('SpriteStore.preload(pairEntries)'), '3: found addMarkersBatch');
+    ok(!/await\s+global\.SpriteStore\.preload/.test(body),
+      '3: addMarkersBatch shows markers without waiting for the whole preload');
   }
 
   console.log(`sprite-resume: ${passed} passed, ${failed} failed`);

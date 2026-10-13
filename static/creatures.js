@@ -16902,9 +16902,10 @@
       if (window._spriteDiag.firstSpriteInstallAt == null) {
         window._spriteDiag.firstSpriteInstallAt = performance.now();
       }
-      // One batched IDB read seeds SpriteStore's cache for every marker;
-      // the subsequent showSprite calls await per-entry Promises that
-      // resolve from that single read.
+      // One batched read seeds SpriteStore's cache for every marker; the
+      // showSprite calls below await their own per-entry Promises from
+      // it. Not awaited here: waiting for the whole batch meant one slow
+      // or hung sprite kept EVERY marker in it a red dot (Oct 2026).
       try {
         // Preload is pair-only: solo spawns have fixed full-PNG art
         // that never touches the sprite cell machinery.
@@ -16916,8 +16917,8 @@
         }
         if (pairEntries.length) {
           _bootMark('sprites:preload', `${pairEntries.length} sprites`);
-          await global.SpriteStore.preload(pairEntries);
-          _bootMark('sprites:preloadDone');
+          global.SpriteStore.preload(pairEntries)
+            .then(() => _bootMark('sprites:preloadDone'), () => {});
         }
       } catch (e) {
         _logCreatureError('addMarkersBatch/preload', e);
