@@ -115,6 +115,8 @@ const TILES_CACHE = 'tiles-v1';
 // dex's all-art ring, replacing a fixed gold that clashed with blue.
 // Shell bump 2026-10-13 (#19): index.html (cache-first '/') carries the
 // active bonus incense (berry) in the save file.
+// Shell bump 2026-10-13 (#20): icon.svg (cache-first) is the new logo,
+// drawn by scripts/make-logo.py instead of the old placeholder.
 
 const APP_SHELL = [
   '/',

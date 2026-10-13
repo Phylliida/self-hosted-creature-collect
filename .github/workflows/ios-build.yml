@@ -262,8 +262,8 @@ jobs:
           cd ios/App
           pod install --repo-update
 
-      # Set the app icon from assets/icon-only.png (a squared copy of
-      # tmpicon). @capacitor/assets writes every size into the project's
+      # Set the app icon from assets/icon-only.png (drawn by
+      # scripts/make-logo.py). @capacitor/assets writes every size into the project's
       # Assets.xcassets/AppIcon.appiconset so xcodebuild compiles it in.
       # continue-on-error: an icon hiccup must NEVER block the IPA — worst
       # case the build just keeps Capacitor's default icon.
