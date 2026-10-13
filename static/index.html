@@ -2113,16 +2113,20 @@
   html[data-theme="medieval"] .maplibregl-ctrl-zoom-out .maplibregl-ctrl-icon {
     filter: none;
   }
-  /* "Lock rotate" is on → the compass is a bearing *indicator* only. The
-     needle keeps pointing at the locked bearing, but the button no longer
-     resets north and can't be dragged to rotate. pointer-events:none is
-     what actually kills the drag — MapLibre binds its own rotate handler
-     directly to the compass element, independent of map.dragRotate. */
-  .maplibregl-ctrl-compass.cc-compass-locked {
-    opacity: 0.45;
-    cursor: default;
-    pointer-events: none;
+  /* "Lock rotate" / "Lock zoom" hide the buttons they make pointless (the
+     classes on <html> are set by applyRotateLock / applyZoomLock). Hiding the
+     compass also keeps the lock honest: MapLibre binds its reset-north click
+     and drag-to-rotate straight to that button, not through map.dragRotate.
+     With the +/- pair gone the compass is the group's only button, so drop
+     its divider; with all three gone, hide the empty group (.cc-nav-ctrl is
+     tagged where the NavigationControl is added). */
+  html.cc-rotate-locked .maplibregl-ctrl-compass,
+  html.cc-zoom-locked .maplibregl-ctrl-zoom-in,
+  html.cc-zoom-locked .maplibregl-ctrl-zoom-out,
+  html.cc-zoom-locked.cc-rotate-locked .cc-nav-ctrl {
+    display: none;
   }
+  html.cc-zoom-locked .maplibregl-ctrl-compass { border-top: 0; }
   /* Geolocate "you are here" dot — MapLibre default is Twitter blue.
      Follow the theme accent so it matches the route line and CTAs. */
   .maplibregl-user-location-dot,
@@ -7185,6 +7189,11 @@ function fmtDate(ts) {
   // prepends bottom-corner controls, so later-added = higher).
   map.addControl(new FocusControl(), 'bottom-right');
   map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
+  // Tag the +/-/compass group so the Settings locks can hide it whole.
+  try {
+    map.getContainer().querySelector('.maplibregl-ctrl-compass')
+      .closest('.maplibregl-ctrl-group').classList.add('cc-nav-ctrl');
+  } catch {}
 
   map.on('moveend', () => {
     const c = map.getCenter();
@@ -19237,10 +19246,13 @@ function fmtDate(ts) {
   // even when the geolocate button or any other code calls flyTo —
   // setMinZoom/setMaxZoom clamp programmatic + gesture zoom changes,
   // and dragRotate.disable + touchZoomRotate.disableRotation block
-  // rotation gestures while leaving pinch-zoom intact.
+  // rotation gestures while leaving pinch-zoom intact. Each lock also hides
+  // its map buttons (+/- or the compass) via a class on <html>; see the
+  // "MapLibre built-in controls" CSS.
   let _zoomLockSnapshot = null;
   let _rotateLockSnapshot = null;
   function applyZoomLock(locked) {
+    document.documentElement.classList.toggle('cc-zoom-locked', !!locked);
     if (locked) {
       _zoomLockSnapshot = map.getZoom();
       try { map.setMinZoom(_zoomLockSnapshot); } catch {}
@@ -19262,30 +19274,10 @@ function fmtDate(ts) {
       try { map.doubleClickZoom.enable(); } catch {}
     }
   }
-  // The compass button in MapLibre's NavigationControl resets the bearing to
-  // north on click, and carries its own drag-to-rotate handler bound straight
-  // to the button element — neither goes through map.dragRotate, so both
-  // survive applyRotateLock's handler teardown. Neutralise the button itself:
-  // `disabled` kills click/keyboard activation, and the .cc-compass-locked
-  // class adds pointer-events:none (which is what stops the drag) plus a
-  // dimmed look so it doesn't read as a button that's simply broken. The
-  // needle still rotates with the map, so it stays useful as an indicator.
-  function _applyCompassLock(locked) {
-    let btn = null;
-    try { btn = map.getContainer().querySelector('.maplibregl-ctrl-compass'); } catch {}
-    if (!btn) return false;
-    btn.disabled = !!locked;
-    btn.classList.toggle('cc-compass-locked', !!locked);
-    if (locked) btn.setAttribute('aria-disabled', 'true');
-    else btn.removeAttribute('aria-disabled');
-    return true;
-  }
   function applyRotateLock(locked) {
-    // The NavigationControl may not be in the DOM yet on the early
-    // restore-from-settings path; retry once the map is up.
-    if (!_applyCompassLock(locked)) {
-      try { map.once('load', () => _applyCompassLock(localStorage.getItem('cc.lockRotate') === '1')); } catch {}
-    }
+    // Hiding the compass is part of the lock: its reset-north click and
+    // drag-to-rotate are bound to the button, not to map.dragRotate.
+    document.documentElement.classList.toggle('cc-rotate-locked', !!locked);
     if (locked) {
       _rotateLockSnapshot = map.getBearing();
       // Snap to the snapshot so any in-flight rotation lands on the
@@ -19381,6 +19373,8 @@ function fmtDate(ts) {
   const lockZoomToggle = document.getElementById('lockZoomToggle');
   if (lockZoomToggle) {
     lockZoomToggle.checked = localStorage.getItem('cc.lockZoom') === '1';
+    // Hide the +/- now; the zoom clamp itself waits for the style below.
+    document.documentElement.classList.toggle('cc-zoom-locked', lockZoomToggle.checked);
     lockZoomToggle.addEventListener('change', () => {
       localStorage.setItem('cc.lockZoom', lockZoomToggle.checked ? '1' : '0');
       applyZoomLock(lockZoomToggle.checked);
@@ -19396,6 +19390,7 @@ function fmtDate(ts) {
   const lockRotateToggle = document.getElementById('lockRotateToggle');
   if (lockRotateToggle) {
     lockRotateToggle.checked = localStorage.getItem('cc.lockRotate') === '1';
+    document.documentElement.classList.toggle('cc-rotate-locked', lockRotateToggle.checked);
     lockRotateToggle.addEventListener('change', () => {
       localStorage.setItem('cc.lockRotate', lockRotateToggle.checked ? '1' : '0');
       applyRotateLock(lockRotateToggle.checked);

@@ -118,6 +118,8 @@ const TILES_CACHE = 'tiles-v1';
 // Shell bump 2026-10-13 (#20): icon.svg (cache-first) is the new logo,
 // drawn by scripts/make-logo.py instead of the old placeholder.
 // Shell bump 2026-10-13 (#21): icon.svg's two rings sit level.
+// Shell bump 2026-10-13 (#22): index.html hides the +/- and compass map
+// buttons while Lock zoom / Lock rotate are on.
 
 const APP_SHELL = [
   '/',
