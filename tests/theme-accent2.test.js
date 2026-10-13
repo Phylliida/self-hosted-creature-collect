@@ -7,7 +7,8 @@
 //   2. that stands out from the panel (the ring sits on it, separated
 //      from the badge by a 1px panel-color gap),
 //   3. it reaches the page: :root default, the early-boot script and
-//      applyTheme set --ui-accent2, and the creatures.js marks use it.
+//      applyTheme set --ui-accent2, and the creatures.js marks use it
+//      (one hollow ring rule for the ✓ ring and the not-owned mark).
 //
 // Run: node tests/theme-accent2.test.js
 'use strict';
@@ -70,9 +71,18 @@ ok(rootDefault && rootDefault.toLowerCase() === String(THEMES.default.ui.accent2
   ':root --ui-accent2 matches the default theme (custom themes use the :root palette)');
 ok((src.match(/setProperty\('--ui-accent2',\s+t\.ui\.accent2\)/g) || []).length === 2,
   'both the early-boot script and applyTheme set --ui-accent2');
-ok(/\.caught-badge\.art-complete \{[^}]*var\(--ui-accent2/.test(creatures)
-  && /\.art-badge \{[^}]*var\(--ui-accent2/.test(creatures),
-  'the species dex ring and dot use --ui-accent2');
+// The ring around the ✓ (16px badge, 1px gap, 2px ring) and the
+// not-owned mark (hollow 18px circle, 2px ring) are the same ring: same
+// centre, radius 9-11px, --ui-accent2.
+{
+  const rule = (sel) => { const m = creatures.match(new RegExp(sel.replace(/\./g, '\\.') + ' \\{([^}]*)\\}')); return m ? m[1] : ''; };
+  const ring = rule('.speciesdex-cell .caught-badge.art-complete');
+  const mark = rule('.speciesdex-cell .art-badge');
+  ok(/0 0 0 1px var\(--ui-bg[^)]*\), 0 0 0 3px var\(--ui-accent2/.test(ring), 'the ✓ ring: 1px gap + ring in --ui-accent2');
+  ok(/top: 3px; right: 3px/.test(mark) && /width: 18px; height: 18px/.test(mark)
+    && /box-shadow: 0 0 0 2px var\(--ui-accent2/.test(mark), 'the not-owned mark: the same ring, same centre, same radius');
+  ok(!/background/.test(mark), 'the not-owned mark is hollow (no fill)');
+}
 ok(!/#e2b33c/i.test(creatures), 'no fixed gold left in creatures.js');
 
 console.log(`\n${passed} passed, ${failed} failed`);

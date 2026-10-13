@@ -8329,17 +8329,20 @@
       }
       /* Every art variant seen: a ring in the theme's second accent
          (--ui-accent2, picked per theme to sit well next to --ui-accent)
-         around the caught ✓, or a dot of it in the ✓'s place when none is
-         owned right now. The 1px panel-color gap keeps the two colors from
-         touching, so the ring only has to stand out from the panel. */
+         around the caught ✓ — or, when none is owned right now, the same
+         ring on its own, hollow, where the ✓ would be. The 1px panel-color
+         gap keeps the two colors from touching, so the ring only has to
+         stand out from the panel. */
       #creatureInventory .speciesdex-cell .caught-badge.art-complete {
         box-shadow: 0 0 0 1px var(--ui-bg, #fff), 0 0 0 3px var(--ui-accent2, #5b3cc4);
       }
+      /* The same ring on its own: the badge's 16px plus its 1px gap, same
+         centre, same 2px ring (radius 9-11px) — without a gap ring that
+         would show inside it. */
       #creatureInventory .speciesdex-cell .art-badge {
-        position: absolute; top: 4px; right: 4px; z-index: 2;
-        width: 16px; height: 16px; border-radius: 999px;
-        background: var(--ui-accent2, #5b3cc4);
-        box-shadow: 0 0 0 1px var(--ui-bg, #fff), 0 0 0 2px rgba(0, 0, 0, 0.2);
+        position: absolute; top: 3px; right: 3px; z-index: 2;
+        width: 18px; height: 18px; border-radius: 999px;
+        box-shadow: 0 0 0 2px var(--ui-accent2, #5b3cc4);
       }
       /* "auto" tag (top-left, opposite the caught ✓) — same pill shape as the
          encounter screen's "New" badge, muted since it's just informational. */
