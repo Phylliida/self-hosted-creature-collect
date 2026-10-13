@@ -8612,8 +8612,9 @@
       #creatureInventory .speciesdex-stats {
         text-align: center; font-size: 12px; opacity: 0.8; margin: 2px 0 10px;
       }
-      /* Non-evolved filter chip — a plain outlined button by default,
-         accent-filled when the filter is active (aria-pressed). Matches
+      /* Filter chips (Non-Evolved Only, Incomplete Only) — short labels
+         that don't change; a plain outlined button when off, accent-filled when
+         the filter is on (aria-pressed). Matches
          the .family-toggle idiom but centered like a filter pill. */
       /* Non-evolved toggle + Summary side by side. */
       #creatureInventory .completion-actions {
@@ -9761,7 +9762,7 @@
           <button class="completion-back" type="button" aria-label="back">←</button>
           <h3 class="subview-title">Completion</h3>
           <div class="completion-actions">
-            <button class="completion-filter" type="button" aria-pressed="false">Show non-evolved only</button>
+            <button class="completion-filter" type="button" aria-pressed="false" title="Only non-evolved species, the ones you can catch or hatch">Non-Evolved Only</button>
             <button class="completion-summary-btn" type="button">Summary</button>
           </div>
           <div class="completion-stats"></div>
@@ -9782,8 +9783,8 @@
           <button class="speciesdex-back" type="button" aria-label="back">←</button>
           <h3 class="subview-title speciesdex-title">Dex</h3>
           <div class="completion-actions">
-            <button class="speciesdex-filter" type="button" aria-pressed="false">Show non-evolved only</button>
-            <button class="speciesdex-incomplete" type="button" aria-pressed="false">Show incomplete only</button>
+            <button class="speciesdex-filter" type="button" aria-pressed="false" title="Only non-evolved partners, the ones you can catch or hatch">Non-Evolved Only</button>
+            <button class="speciesdex-incomplete" type="button" aria-pressed="false" title="Hide rows whose two fusions are both seen">Incomplete Only</button>
             <button class="speciesdex-summary-btn" type="button">Summary</button>
           </div>
           <div class="speciesdex-stats"></div>
@@ -14647,9 +14648,6 @@
     if (filterBtn) {
       filterBtn.classList.toggle('is-active', nonEvoOnly);
       filterBtn.setAttribute('aria-pressed', nonEvoOnly ? 'true' : 'false');
-      filterBtn.textContent = nonEvoOnly
-        ? 'Non-evolved only (to catch / hatch)'
-        : 'Show non-evolved only';
     }
 
     const statsEl = panel.querySelector('.completion-stats');
@@ -14762,15 +14760,11 @@
     if (filterBtn) {
       filterBtn.classList.toggle('is-active', nonEvoOnly);
       filterBtn.setAttribute('aria-pressed', nonEvoOnly ? 'true' : 'false');
-      filterBtn.textContent = nonEvoOnly
-        ? 'Non-evolved only (to catch / hatch)'
-        : 'Show non-evolved only';
     }
     const incompleteBtn = panel.querySelector('.speciesdex-incomplete');
     if (incompleteBtn) {
       incompleteBtn.classList.toggle('is-active', _incompleteOnly);
       incompleteBtn.setAttribute('aria-pressed', _incompleteOnly ? 'true' : 'false');
-      incompleteBtn.textContent = _incompleteOnly ? 'Incomplete only' : 'Show incomplete only';
     }
 
     const titleEl = panel.querySelector('.speciesdex-title');

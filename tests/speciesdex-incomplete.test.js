@@ -77,8 +77,12 @@ ok(shownFor({ q: '', typeOk: onlyUnseenHalfTyped, seenIt, incompleteOnly: true }
    'type + incomplete: shown when the unseen fusion passes the type filter');
 
 // ── the wiring ───────────────────────────────────────────────────────────
-ok(/<button class="speciesdex-incomplete" type="button" aria-pressed="false">Show incomplete only<\/button>/.test(src),
-   'species dex has the Show incomplete only button');
+ok(/<button class="speciesdex-incomplete" type="button" aria-pressed="false"[^>]*>Incomplete Only<\/button>/.test(src),
+   'species dex has the Incomplete Only button');
+ok(/<button class="speciesdex-filter" type="button" aria-pressed="false"[^>]*>Non-Evolved Only<\/button>/.test(src)
+   && /<button class="completion-filter" type="button" aria-pressed="false"[^>]*>Non-Evolved Only<\/button>/.test(src),
+   'both non-evolved buttons say Non-Evolved Only');
+ok(!/textContent = (nonEvoOnly|_incompleteOnly)/.test(src), 'filter labels stay put; the accent fill shows on/off');
 ok(/let _incompleteOnly = false;/.test(src), '_incompleteOnly state exists');
 ok(/\.speciesdex-incomplete'\)\.addEventListener\('click', \(\) => \{\s*_incompleteOnly = !_incompleteOnly;/.test(src),
    'the button toggles _incompleteOnly');
