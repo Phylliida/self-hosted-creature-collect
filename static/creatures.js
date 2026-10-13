@@ -8327,17 +8327,19 @@
         width: 16px; height: 16px; font-size: 10px; line-height: 16px;
         text-align: center; font-weight: bold; z-index: 2;
       }
-      /* Every art variant seen: a gold ring around the caught ✓, or a gold
-         dot in the ✓'s place when none is owned right now. */
+      /* Every art variant seen: a ring in the theme's second accent
+         (--ui-accent2, picked per theme to sit well next to --ui-accent)
+         around the caught ✓, or a dot of it in the ✓'s place when none is
+         owned right now. The 1px panel-color gap keeps the two colors from
+         touching, so the ring only has to stand out from the panel. */
       #creatureInventory .speciesdex-cell .caught-badge.art-complete {
-        box-shadow: 0 0 0 2px #e2b33c, 0 0 5px 1px rgba(226, 179, 60, 0.75);
+        box-shadow: 0 0 0 1px var(--ui-bg, #fff), 0 0 0 3px var(--ui-accent2, #5b3cc4);
       }
       #creatureInventory .speciesdex-cell .art-badge {
         position: absolute; top: 4px; right: 4px; z-index: 2;
-        width: 16px; height: 16px; border-radius: 999px; box-sizing: border-box;
-        background: radial-gradient(circle at 35% 35%, #fff1b0, #e2b33c 55%, #b8860b);
-        border: 1px solid rgba(120, 80, 0, 0.55);
-        box-shadow: 0 0 5px 1px rgba(226, 179, 60, 0.6);
+        width: 16px; height: 16px; border-radius: 999px;
+        background: var(--ui-accent2, #5b3cc4);
+        box-shadow: 0 0 0 1px var(--ui-bg, #fff), 0 0 0 2px rgba(0, 0, 0, 0.2);
       }
       /* "auto" tag (top-left, opposite the caught ✓) — same pill shape as the
          encounter screen's "New" badge, muted since it's just informational. */

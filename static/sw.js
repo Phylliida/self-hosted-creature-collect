@@ -110,6 +110,9 @@ const TILES_CACHE = 'tiles-v1';
 // Shell bump 2026-10-11 (#17): index.html (cache-first '/') stops the
 // tappable-halo setData ↔ map idle loop (the map redrew ~50×/s even
 // standing still) and adds tap-delay + map-frame lines to the dump.
+// Shell bump 2026-10-13 (#18): index.html (cache-first '/') gives every
+// theme a second accent (ui.accent2 → --ui-accent2) for the species
+// dex's all-art ring, replacing a fixed gold that clashed with blue.
 
 const APP_SHELL = [
   '/',
