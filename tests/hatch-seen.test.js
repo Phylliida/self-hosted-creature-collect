@@ -46,6 +46,7 @@ function extract(marker) {
     Math, Date: { now: () => 1700000000000 },
     global: { CreatureCollectAPI: null },
     CANDY_HATCH_CAPTURE: 10,
+    _candyMultiplier: () => 1,   // no Candy Berry burning
     readEggs: () => eggs,
     writeEggs: (a) => { eggs = a; },
     eggReadyToHatch: () => true,

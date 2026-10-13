@@ -274,6 +274,7 @@ function makeCtx(extra) {
     _rollFreshShinyVariant: () => null,
     eggReadyToHatch: () => true,
     CANDY_HATCH_CAPTURE: 10,
+    _candyMultiplier: () => 1,   // no Candy Berry burning
     _userLat: null, _userLng: null,
   });
   for (const m of [

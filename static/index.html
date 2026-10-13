@@ -8808,6 +8808,9 @@ function fmtDate(ts) {
       // remaining time across devices / restarts.
       activeIncense: (window.Creatures && window.Creatures.getActiveIncense)
         ? window.Creatures.getActiveIncense() : null,
+      // Active bonus incense (berry: {key, startMs}), same idea.
+      activeBonusIncense: (window.Creatures && window.Creatures.getActiveBonusIncense)
+        ? window.Creatures.getActiveBonusIncense() : null,
       // Community day ({weekKey, count, active}) — weekly pass count and
       // any running session, so both survive device hops.
       communityDay: (window.Creatures && window.Creatures.getCommunityDay)
@@ -9538,6 +9541,10 @@ function fmtDate(ts) {
     if (data.activeIncense && window.Creatures && window.Creatures.setActiveIncenseState) {
       try { window.Creatures.setActiveIncenseState(data.activeIncense); }
       catch (e) { console.error('importActiveIncense failed', e); }
+    }
+    if (data.activeBonusIncense && window.Creatures && window.Creatures.setActiveBonusIncenseState) {
+      try { window.Creatures.setActiveBonusIncenseState(data.activeBonusIncense); }
+      catch (e) { console.error('importActiveBonusIncense failed', e); }
     }
     // Community day — merge week stamp / pass count / active session
     // (newer week wins; same week merges; expired sessions ignored).
@@ -11903,9 +11910,9 @@ function fmtDate(ts) {
   document.getElementById('poiCardDirections').onclick = openDirectionsForSelectedPoi;
   document.getElementById('poiCardDirectionsTop').onclick = openDirectionsForSelectedPoi;
 
-  // POI "Collect items" — pokéstop loot drop. Each press samples
-  // 1-6 items uniformly from Creatures.rollCollectibleItem (currently
-  // Poké Ball / Great Ball), grants them, and shows a brief icon
+  // POI "Collect items" — pokéstop loot drop. Each press rolls 1-6
+  // items from Creatures.rollCollectibleItem (balls, plus rare berries
+  // and evolution items), grants them, and shows a brief icon
   // animation in the button area. The card stays open for 500ms so
   // the player sees what they got, then closes (also masking the
   // tiny lag while MapLibre re-evaluates the icon-color expression

@@ -509,12 +509,37 @@
       icon: '/static/great-ball.svg',
       catchShakeRate: 0.9655, // ≈ 90% catch
     },
+    candy_ball: {
+      name: 'Candy Ball',
+      desc: 'Catches better than a Poké Ball but not as well as a Great Ball — and doubles the candy from whatever it catches (4× with a Candy Berry).',
+      icon: _candyBallIcon(),
+      catchShakeRate: 0.9283, // ≈ 80% catch
+      candyMult: 2,            // _candyMultiplier
+    },
     test_orb: {
       name: 'Test Orb',
       desc: 'Placeholder daycare drop. Settings → "Repopulate daycare test loot" resets claimed indices so they reappear.',
       icon: '/static/test-orb.svg',
     },
   };
+
+  // Candy Ball art: the Poké Ball's geometry (the throw animation splits
+  // the icon at its seam) with a gold, candy-striped top.
+  function _candyBallIcon() {
+    const svg =
+      "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'>" +
+      "<defs><clipPath id='t'><path d='M1.5 12A10.5 10.5 0 0 1 22.5 12Z'/></clipPath></defs>" +
+      "<circle cx='12' cy='12' r='10.5' fill='#ffffff'/>" +
+      "<path d='M1.5 12A10.5 10.5 0 0 1 22.5 12Z' fill='#ffd23f'/>" +
+      "<g clip-path='url(#t)' stroke='#ff5fa2' stroke-width='2.1'><path d='M-1 10L10 -1M4 13L15 2M9 13L20 2M14 13L25 2M19 13L26 6'/></g>" +
+      "<ellipse cx='7.6' cy='6.2' rx='2.6' ry='1.3' fill='#ffffff' opacity='0.6' transform='rotate(-32 7.6 6.2)'/>" +
+      "<circle cx='12' cy='12' r='10.5' fill='none' stroke='#1a1a1a' stroke-width='1.2'/>" +
+      "<line x1='1.5' y1='12' x2='22.5' y2='12' stroke='#1a1a1a' stroke-width='1.6'/>" +
+      "<circle cx='12' cy='12' r='2.6' fill='#ffffff' stroke='#1a1a1a' stroke-width='1.2'/>" +
+      "<circle cx='12' cy='12' r='1.2' fill='#ff5fa2' stroke='#1a1a1a' stroke-width='0.7'/>" +
+      "</svg>";
+    return 'data:image/svg+xml,' + encodeURIComponent(svg);
+  }
 
   // Format a PIF item identifier (FIRESTONE, KINGSROCK, LINKINGCORD)
   // into a human-readable display name (Fire Stone, Kings Rock,
@@ -565,12 +590,17 @@
     };
   }
   for (const key of EVO_ITEM_KEYS) _addEvoItem(key);
-  // Items the pokéstop "Collect items" button can grant. Each press
-  // samples 1-3 items uniformly from this list (with replacement).
-  const COLLECTIBLE_ITEM_KEYS = ['poke_ball', 'great_ball'];
+  // Pokéstop loot (and focus mode's item grants), rolled once per item a
+  // press hands out (rollCollectibleItem). Each rare kind drops 2% of the
+  // time: the four bonus-incense berries (BONUS_INCENSE) and an evolution
+  // item (_rollEvoItem). The other 90% are balls, Poké : Great : Candy =
+  // 2 : 2 : 1 — a Candy Ball comes half as often as a Great Ball.
+  const RARE_LOOT_CHANCE = 0.02;
+  const RARE_LOOT = ['candy_berry', 'calm_berry', 'hawkeye_berry', 'owleye_berry', 'evo_item'];
+  const BALL_LOOT = [['poke_ball', 2], ['great_ball', 2], ['candy_ball', 1]];
   // Items the player can throw at a wild creature. Order here drives
   // the order they appear in the battle screen's ball list.
-  const THROWABLE_BALL_KEYS = ['poke_ball', 'great_ball'];
+  const THROWABLE_BALL_KEYS = ['poke_ball', 'great_ball', 'candy_ball'];
   // Starter items granted on first-ever bag read (anyone who's played
   // before gets these too on next load).
   const STARTER_BAG = { poke_ball: 2 };
@@ -1726,8 +1756,10 @@
           { lat: entry.caughtAt.lat, lng: entry.caughtAt.lng }, variant);
       }
     } catch {}
-    if (isSoloEgg) awardCandyForSolo(egg.solo, CANDY_HATCH_CAPTURE);
-    else awardCandyForCapture(egg.speciesA, egg.speciesB, CANDY_HATCH_CAPTURE);
+    // A Candy Berry doubles hatch candy too.
+    const hatchCandy = CANDY_HATCH_CAPTURE * _candyMultiplier(null);
+    if (isSoloEgg) awardCandyForSolo(egg.solo, hatchCandy);
+    else awardCandyForCapture(egg.speciesA, egg.speciesB, hatchCandy);
     eggs.splice(idx, 1);
     writeEggs(eggs);
     removeFromIncubator(eggId);
@@ -4206,6 +4238,14 @@
       renderBag();
       return;
     }
+    const bonusLeft = bonusIncenseRemainingMs();
+    if (panel.querySelector('.bag-bonus-banner') && !bonusLeft) {
+      renderBag();
+      return;
+    }
+    panel.querySelectorAll('.bag-bonus-countdown').forEach((el) => {
+      el.textContent = _fmtCountdownHMS(bonusLeft);
+    });
     panel.querySelectorAll('.bag-cd-countdown').forEach((el) => {
       el.textContent = (s && s.active) ? _fmtCountdownHMS(s.active.endMs - Date.now()) : '';
     });
@@ -4271,6 +4311,150 @@
     try { localStorage.setItem(ACTIVE_INCENSE_KEY, JSON.stringify({ type: state.type, startMs: state.startMs })); } catch (_) {}
     _pushActiveIncenseToSpawns();
     if (typeof refreshSpawnOverlay === 'function') refreshSpawnOverlay();
+  }
+
+  // ── Bonus incense (berries) ──
+  // Timed boosts that help instead of adding spawns, from rare pokéstop
+  // drops (RARE_LOOT). One burns at a time, in its own slot beside the
+  // type incense; using another replaces it (the bag warns, as it does
+  // for incense). Like incense it runs on the wall clock, through app
+  // closes and restarts, and travels in the save file. Effects:
+  //   candyMult  catch + hatch candy multiplier (_candyMultiplier)
+  //   calm       throws fail half as often (_catchShakeRate)
+  //   sightMult  visibility-radius multiplier (_visibilityRadiusM)
+  const BONUS_INCENSE = {
+    candy_berry: {
+      name: 'Candy Berry', minutes: 15, candyMult: 2,
+      effect: 'every catch and egg hatch gives double candy (4× with a Candy Ball)',
+      svg:
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'>" +
+        "<defs><radialGradient id='g' cx='38%' cy='32%' r='72%'><stop offset='0' stop-color='#ffd6ea'/><stop offset='0.45' stop-color='#ff5fa2'/><stop offset='1' stop-color='#c2185b'/></radialGradient></defs>" +
+        "<path d='M10 21.5L2.5 15.5Q4.6 21.5 2.5 27.5Z' fill='#ffd84d' stroke='#b07d00' stroke-width='1' stroke-linejoin='round'/>" +
+        "<path d='M30 21.5L37.5 15.5Q35.4 21.5 37.5 27.5Z' fill='#ffd84d' stroke='#b07d00' stroke-width='1' stroke-linejoin='round'/>" +
+        "<circle cx='20' cy='21.5' r='11.5' fill='url(#g)' stroke='#8e1048' stroke-width='1.2'/>" +
+        "<path d='M11.5 25C15 18.5 24.5 28 28.5 19.5' fill='none' stroke='#ffffff' stroke-width='2.2' stroke-linecap='round' opacity='0.85'/>" +
+        "<ellipse cx='15.2' cy='15.6' rx='3' ry='1.7' fill='#ffffff' opacity='0.65' transform='rotate(-30 15.2 15.6)'/>" +
+        "<path d='M20 10.2V7.4' stroke='#6d4c41' stroke-width='1.5' stroke-linecap='round'/>" +
+        "<path d='M20.3 8.4C21 5.6 23.3 4.1 26.3 4.1C25.5 7 23.4 8.6 20.3 8.4Z' fill='#5cbf60' stroke='#2e7d32' stroke-width='0.8' stroke-linejoin='round'/>" +
+        "</svg>",
+    },
+    calm_berry: {
+      name: 'Calm Berry', minutes: 15, calm: true,
+      effect: 'wild pokémon break out of your balls half as often',
+      svg:
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'>" +
+        "<defs><radialGradient id='g' cx='38%' cy='32%' r='72%'><stop offset='0' stop-color='#ece6ff'/><stop offset='0.45' stop-color='#9d8cff'/><stop offset='1' stop-color='#5544c8'/></radialGradient></defs>" +
+        "<path d='M19 10.5C16.5 7.5 12.8 7.2 10.5 8.6C12.4 11.1 15.8 11.8 19 10.5Z' fill='#5cbf60' stroke='#2e7d32' stroke-width='0.8' stroke-linejoin='round'/>" +
+        "<path d='M19.5 10.5C20.4 7.2 22.9 5.6 25.4 5.9C24.9 8.8 22.6 10.6 19.5 10.5Z' fill='#7dd17f' stroke='#2e7d32' stroke-width='0.8' stroke-linejoin='round'/>" +
+        "<circle cx='19' cy='23' r='12.5' fill='url(#g)' stroke='#3a2a9a' stroke-width='1.2'/>" +
+        "<ellipse cx='13.8' cy='17' rx='2.8' ry='1.6' fill='#ffffff' opacity='0.6' transform='rotate(-30 13.8 17)'/>" +
+        "<path d='M11.6 23.4Q14 25.6 16.4 23.4M21.6 23.4Q24 25.6 26.4 23.4' fill='none' stroke='#22195e' stroke-width='1.5' stroke-linecap='round'/>" +
+        "<circle cx='11.4' cy='27' r='1.7' fill='#ff9ecb' opacity='0.75'/>" +
+        "<circle cx='26.6' cy='27' r='1.7' fill='#ff9ecb' opacity='0.75'/>" +
+        "<path d='M17.4 28.2Q19 29.4 20.6 28.2' fill='none' stroke='#22195e' stroke-width='1.2' stroke-linecap='round'/>" +
+        "<path d='M29.5 6.5H34L29.5 11H34' fill='none' stroke='#8f7dff' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/>" +
+        "<path d='M33.5 13.2H36.3L33.5 16H36.3' fill='none' stroke='#b3a6ff' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/>" +
+        "</svg>",
+    },
+    hawkeye_berry: {
+      name: 'Hawk-Eye Berry', minutes: 5, sightMult: 3,
+      effect: 'you see (and can catch) pokémon 3× as far away',
+      svg:
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'>" +
+        "<defs><radialGradient id='g' cx='38%' cy='32%' r='72%'><stop offset='0' stop-color='#ffe7b8'/><stop offset='0.45' stop-color='#ff9f1c'/><stop offset='1' stop-color='#c25400'/></radialGradient></defs>" +
+        "<path d='M19.5 10.4C19.8 7.2 22 5.2 25 4.9C24.8 7.9 22.6 10 19.5 10.4Z' fill='#5cbf60' stroke='#2e7d32' stroke-width='0.8' stroke-linejoin='round'/>" +
+        "<circle cx='19' cy='23' r='12.5' fill='url(#g)' stroke='#7a3300' stroke-width='1.2'/>" +
+        "<path d='M9.6 23.4Q19 14.6 28.4 23.4Q19 32 9.6 23.4Z' fill='#ffffff' stroke='#5a2400' stroke-width='1.2' stroke-linejoin='round'/>" +
+        "<circle cx='19.8' cy='23.4' r='4.3' fill='#ffd21f' stroke='#8a5a00' stroke-width='0.8'/>" +
+        "<circle cx='20.3' cy='23.4' r='2.1' fill='#1a1a1a'/>" +
+        "<circle cx='21.4' cy='22.2' r='0.85' fill='#ffffff'/>" +
+        "<path d='M9.2 17.6L27.8 15.2' stroke='#5a2400' stroke-width='2.2' stroke-linecap='round'/>" +
+        "<path d='M33 17.5Q35.2 23 33 28.5M36 15.5Q38.8 23 36 30.5' fill='none' stroke='#ff9f1c' stroke-width='1.4' stroke-linecap='round' opacity='0.85'/>" +
+        "</svg>",
+    },
+    owleye_berry: {
+      name: 'Owl-Eye Berry', minutes: 15, sightMult: 2,
+      effect: 'you see (and can catch) pokémon 2× as far away',
+      svg:
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'>" +
+        "<defs><radialGradient id='g' cx='38%' cy='32%' r='72%'><stop offset='0' stop-color='#d4fbe9'/><stop offset='0.45' stop-color='#2fc9a2'/><stop offset='1' stop-color='#00796b'/></radialGradient></defs>" +
+        "<path d='M11.2 13.6L8.6 4.6L16.4 10.6Z' fill='#5cbf60' stroke='#2e7d32' stroke-width='0.8' stroke-linejoin='round'/>" +
+        "<path d='M28.8 13.6L31.4 4.6L23.6 10.6Z' fill='#5cbf60' stroke='#2e7d32' stroke-width='0.8' stroke-linejoin='round'/>" +
+        "<circle cx='20' cy='23' r='12.5' fill='url(#g)' stroke='#00463e' stroke-width='1.2'/>" +
+        "<circle cx='14.6' cy='21.4' r='5' fill='#ffffff' stroke='#00463e' stroke-width='1.1'/>" +
+        "<circle cx='25.4' cy='21.4' r='5' fill='#ffffff' stroke='#00463e' stroke-width='1.1'/>" +
+        "<circle cx='14.8' cy='21.6' r='3' fill='#ffb300'/>" +
+        "<circle cx='25.2' cy='21.6' r='3' fill='#ffb300'/>" +
+        "<circle cx='14.9' cy='21.7' r='1.7' fill='#1a1a1a'/>" +
+        "<circle cx='25.1' cy='21.7' r='1.7' fill='#1a1a1a'/>" +
+        "<circle cx='15.8' cy='20.6' r='0.75' fill='#ffffff'/>" +
+        "<circle cx='26' cy='20.6' r='0.75' fill='#ffffff'/>" +
+        "<path d='M18.4 26L21.6 26L20 29Z' fill='#ffb300' stroke='#8a5a00' stroke-width='0.7' stroke-linejoin='round'/>" +
+        "</svg>",
+    },
+  };
+  for (const key of Object.keys(BONUS_INCENSE)) {
+    const b = BONUS_INCENSE[key];
+    ITEMS[key] = {
+      name: b.name,
+      desc: 'Bonus incense: for ' + b.minutes + ' min, ' + b.effect + '.',
+      icon: 'data:image/svg+xml,' + encodeURIComponent(b.svg),
+      bonusIncense: true,   // bag Use button + ordering (_bagEntryRank)
+    };
+  }
+  // { key, startMs } in localStorage AND the save file.
+  const ACTIVE_BONUS_KEY = 'cc.activeBonusIncense.v1';
+  function readActiveBonusIncense() {
+    let s = null;
+    try { s = JSON.parse(localStorage.getItem(ACTIVE_BONUS_KEY) || 'null'); } catch { s = null; }
+    if (!s || !BONUS_INCENSE[s.key] || typeof s.startMs !== 'number') return null;
+    if (Date.now() >= s.startMs + BONUS_INCENSE[s.key].minutes * 60000) {
+      try { localStorage.removeItem(ACTIVE_BONUS_KEY); } catch (_) {}
+      return null;
+    }
+    return { key: s.key, startMs: s.startMs };
+  }
+  function bonusIncenseRemainingMs() {
+    const a = readActiveBonusIncense();
+    return a ? Math.max(0, a.startMs + BONUS_INCENSE[a.key].minutes * 60000 - Date.now()) : 0;
+  }
+  // The burning berry's BONUS_INCENSE entry, or null.
+  function _activeBonus() {
+    const a = readActiveBonusIncense();
+    return a ? BONUS_INCENSE[a.key] : null;
+  }
+  // Consume one berry and start its window, replacing any active one.
+  function activateBonusIncense(key) {
+    if (!BONUS_INCENSE[key] || !consumeItem(key, 1)) return false;
+    try { localStorage.setItem(ACTIVE_BONUS_KEY, JSON.stringify({ key, startMs: Date.now() })); } catch (_) {}
+    // A sight berry widens the view (or the one it replaced narrows it).
+    if (typeof _refreshSpawnsNow === 'function') _refreshSpawnsNow();
+    return true;
+  }
+  // Save-import hook (index.html), as setActiveIncenseState: adopt a
+  // backup's active berry with its original start time.
+  function setActiveBonusIncenseState(state) {
+    if (!state || !BONUS_INCENSE[state.key] || typeof state.startMs !== 'number') return;
+    if (Date.now() >= state.startMs + BONUS_INCENSE[state.key].minutes * 60000) return;
+    try { localStorage.setItem(ACTIVE_BONUS_KEY, JSON.stringify({ key: state.key, startMs: state.startMs })); } catch (_) {}
+    if (typeof _refreshSpawnsNow === 'function') _refreshSpawnsNow();
+  }
+  // Candy multiplier for a catch with `ballKey` (null for a hatch or a
+  // focus grant): the Candy Ball doubles, the Candy Berry doubles, so
+  // both make 4×.
+  function _candyMultiplier(ballKey) {
+    const ball = ballKey ? ITEMS[ballKey] : null;
+    const b = _activeBonus();
+    return ((ball && ball.candyMult) || 1) * ((b && b.candyMult) || 1);
+  }
+  // Per-shake stay-closed rate for a throw with this ball. A throw catches
+  // when all three shakes hold (p = rate³); a Calm Berry halves the miss,
+  // p → (1 + p) / 2, taken back to a per-shake rate so the manual roll and
+  // Steady Catch's plan (whose fixed time comes from the odds) both use it.
+  function _catchShakeRate(ballMeta) {
+    const r = (ballMeta && ballMeta.catchShakeRate) || 0.65;
+    const b = _activeBonus();
+    return (b && b.calm) ? Math.cbrt((1 + r * r * r) / 2) : r;
   }
 
   function typeChipsHtml(types) {
@@ -7764,6 +7948,8 @@
       #creatureInventory .bag-incense-banner .bag-icon { width: 30px; height: 30px; align-self: center; }
       /* Community-day variant of the banner — gold border. */
       #creatureInventory .bag-incense-banner.bag-community-banner { border-color: #e8a13a; }
+      /* Bonus-incense (berry) variant — the theme's second accent. */
+      #creatureInventory .bag-incense-banner.bag-bonus-banner { border-color: var(--ui-accent2, #5b3cc4); }
       #creatureInventory .bag-row-right {
         display: flex; flex-direction: column; align-items: flex-end;
         gap: 6px; align-self: center;
@@ -9054,6 +9240,10 @@
         flex-direction: column;
         align-items: center;
         gap: 12px;
+        /* Sized to its content: from left:50% it could only take half the
+           screen, which wrapped three balls onto two rows. */
+        width: max-content;
+        max-width: calc(100vw - 32px);
       }
       #battleScreen .battle-balls {
         display: flex; gap: 10px; flex-wrap: wrap;
@@ -11515,6 +11705,7 @@
     const meta = getItemMeta(key) || {};
     if (meta.communityDay) return 0;        // community day pass
     if (meta.incenseType) return 0;         // incense
+    if (meta.bonusIncense) return 0;        // bonus incense (berries)
     if (meta.evoItem) return 1;             // evolution items (incl. pack paintbrushes)
     if (meta.catchShakeRate) return 2;      // poké balls
     return 3;                               // everything else
@@ -11560,6 +11751,16 @@
         + `<div class="bag-desc">~${mins} min left · extra ${escapeHtml(tn)} spawns, double shiny</div></div>`
         + `</div>`;
     }
+    // Active bonus-incense banner, with a live countdown.
+    const bonus = readActiveBonusIncense();
+    if (bonus) {
+      const b = BONUS_INCENSE[bonus.key];
+      bannerHtml += `<div class="bag-incense-banner bag-bonus-banner">`
+        + `<img class="bag-icon" src="${escapeHtml(ITEMS[bonus.key].icon)}" alt="">`
+        + `<div class="bag-info"><div class="bag-name">${escapeHtml(b.name)} active</div>`
+        + `<div class="bag-desc"><span class="bag-bonus-countdown">${_fmtCountdownHMS(bonusIncenseRemainingMs())}</span> left · ${escapeHtml(b.effect)}</div></div>`
+        + `</div>`;
+    }
     // Active community-day banner (if a session is running).
     const cd = readCommunityDay();
     if (cd && cd.active) {
@@ -11582,6 +11783,9 @@
       });
       body.querySelectorAll('.bag-use-community').forEach((btn) => {
         btn.addEventListener('click', _confirmUseCommunityPass);
+      });
+      body.querySelectorAll('.bag-use-bonus').forEach((btn) => {
+        btn.addEventListener('click', () => _confirmUseBonusIncense(btn.dataset.bonus));
       });
     };
     const bag = readBag();
@@ -11608,7 +11812,9 @@
         ? `<button class="bag-use" type="button" data-incense="${escapeHtml(meta.incenseType)}">Use</button>`
         : (meta.communityDay
           ? `<button class="bag-use bag-use-community" type="button">Use</button>`
-          : '');
+          : (meta.bonusIncense
+            ? `<button class="bag-use bag-use-bonus" type="button" data-bonus="${escapeHtml(key)}">Use</button>`
+            : ''));
       const descHtml = meta.communityDay
         ? _communityPassDescHtml()
         : (meta.desc ? `<div class="bag-desc">${escapeHtml(meta.desc)}</div>` : '');
@@ -11650,6 +11856,19 @@
     }
     if (!confirm(msg)) return;
     if (activateCommunityPass()) renderBag();
+  }
+  function _confirmUseBonusIncense(key) {
+    const b = BONUS_INCENSE[key];
+    if (!b) return;
+    let msg = `Use a ${b.name}?\n\nFor ${b.minutes} minutes, ${b.effect}.`;
+    const active = readActiveBonusIncense();
+    if (active) {
+      const mins = Math.ceil(bonusIncenseRemainingMs() / 60000);
+      msg += `\n\nOnly one bonus incense burns at a time: this replaces your active ${BONUS_INCENSE[active.key].name} (~${mins} min left).`;
+    }
+    if (!confirm(msg)) return;
+    if (activateBonusIncense(key)) renderBag();
+    else alert(`You have no ${b.name}.`);
   }
   function _confirmUseIncense(type) {
     if (!type || !global.Types.isValid(type)) return;
@@ -12544,7 +12763,9 @@
     h += '<div class="cc-info-section-title">Why it\'s still balanced</div>';
     h += '<div class="cc-info-row"><span class="cc-info-k">Same odds</span>'
       + '<span class="cc-info-v">The catch rate is unchanged. A Great Ball still '
-      + 'catches at Great Ball odds; rarer creatures are no cheaper to land.</span></div>';
+      + 'catches at Great Ball odds; rarer creatures are no cheaper to land. '
+      + 'A Calm Berry improves the odds the same way as when throwing by hand, '
+      + 'so the catch takes less time and fewer balls.</span></div>';
     h += '<div class="cc-info-row"><span class="cc-info-k">Same-ish time</span>'
       + '<span class="cc-info-v">The catch always takes the <b>same fixed time</b> '
       + 'for a given ball: about <b>10% longer</b> than throwing by hand takes '
@@ -15782,6 +16003,11 @@
   // you have to actually be there to see a creature. Markers reconcile
   // by spawn id so bucket rollover replaces (not duplicates) the set.
   const VISIBILITY_RADIUS_M = 100;
+  // Sight berries (bonus incense) widen it. Pokéstop reach stays 100 m.
+  function _visibilityRadiusM() {
+    const b = _activeBonus();
+    return VISIBILITY_RADIUS_M * ((b && b.sightMult) || 1);
+  }
   const MARKER_SIZE_PX = 168;
   // Size scales like the map: at MARKER_REF_ZOOM a creature is
   // MARKER_SIZE_PX pixels; each zoom level in or out doubles/halves that
@@ -15879,6 +16105,21 @@
   let _lastRefreshLat = null;
   let _lastRefreshLng = null;
   let _lastRefreshAt = 0;
+  // The radius the overlay currently scans. It follows _visibilityRadiusM,
+  // growing at most RADIUS_RAMP_M per refresh (the first scan of a 300 m
+  // window costs ~60× a walking refresh — a freeze if done in one go) and
+  // shrinking at once.
+  const RADIUS_RAMP_M = 50;
+  let _radiusNowM = VISIBILITY_RADIUS_M;
+  function _stepScanRadius(curM, targetM) {
+    return targetM <= curM ? targetM : Math.min(targetM, curM + RADIUS_RAMP_M);
+  }
+  // Recompute now rather than at the next throttled tick — the visibility
+  // radius changed (a sight berry started or was replaced).
+  function _refreshSpawnsNow() {
+    _lastRefreshAt = 0;
+    refreshSpawnOverlay();
+  }
   // Once a marker has appeared on the map it's protected from removal
   // for MIN_DISPLAY_MS so a brief GPS jitter (or a quick walk past the
   // edge of the visibility radius) doesn't yank it before the user can
@@ -16877,7 +17118,9 @@
   // remove marker, request storage persistence). Returns the new
   // capture entry — the caller decides whether to close the battle
   // screen and/or open the inventory detail view.
-  async function recordCaptureFromSpawn(spawn) {
+  // opts.ballKey: the ball that landed the catch (a Candy Ball doubles
+  // its candy — _candyMultiplier).
+  async function recordCaptureFromSpawn(spawn, opts) {
     // Make sure the collection has finished hydrating from IDB before we
     // read-modify-write it, so a catch in the first moments after launch
     // can't build on (and then persist) an empty list. No-op once loaded.
@@ -16952,9 +17195,9 @@
     // leave the spawn un-marked — that was the "catches it repeatedly"
     // bug. The creature is already recorded above; just log and continue.
     try {
-      const candyTotal = spawn.legendary
+      const candyTotal = (spawn.legendary
         ? CANDY_LEGENDARY_CAPTURE
-        : (spawn.evolved ? CANDY_EVOLVED_CAPTURE : 2);
+        : (spawn.evolved ? CANDY_EVOLVED_CAPTURE : 2)) * _candyMultiplier(opts && opts.ballKey);
       if (isSolo) awardCandyForSolo(spawn.solo, candyTotal);
       else awardCandyForCapture(spawn.speciesA, spawn.speciesB, candyTotal);
     }
@@ -17137,7 +17380,7 @@
     // relaunching still finds the throw fully resolved — ball spent,
     // caught creature already in the inventory. A kill on a breakout
     // only skips the pop-open visual; nothing more was owed.
-    const rate = meta.catchShakeRate || 0.65;
+    const rate = _catchShakeRate(meta);
     const rollShakes = () => {
       let n = 0;
       for (let i = 0; i < 3; i++) {
@@ -17172,7 +17415,7 @@
     let caughtEntry = null;
     if (caught) {
       try {
-        caughtEntry = await recordCaptureFromSpawn(spawn);
+        caughtEntry = await recordCaptureFromSpawn(spawn, { ballKey });
       } catch (e) {
         _logCreatureError('throwBall/recordCapture', e);
         battleEl.classList.remove('throwing');
@@ -17654,10 +17897,12 @@
     for (const id of Array.from(_markers.keys())) removeMarker(id);
   }
 
-  // Uncaught spawns within VISIBILITY_RADIUS_M of (lat, lng); in focus
-  // mode only the legendary/radar ones that stay catchable there.
-  function _spawnsAround(lat, lng, focusOn) {
-    const padM = VISIBILITY_RADIUS_M + 15;
+  // Uncaught spawns within radiusM (default VISIBILITY_RADIUS_M) of
+  // (lat, lng); in focus mode only the legendary/radar ones that stay
+  // catchable there.
+  function _spawnsAround(lat, lng, focusOn, radiusM) {
+    const r = radiusM || VISIBILITY_RADIUS_M;
+    const padM = r + 15;
     const latPad = padM / 111000;
     const lngPad = padM / (111000 * Math.cos(lat * Math.PI / 180));
     const bbox = [lng - lngPad, lat - latPad, lng + lngPad, lat + latPad];
@@ -17665,7 +17910,7 @@
     return global.Spawns.spawnsInBbox(bbox).filter((s) =>
       !caught.has(s.id)
       && (!focusOn || s.legendary || s.evolved)
-      && metersBetween(lat, lng, s.lat, s.lng) <= VISIBILITY_RADIUS_M
+      && metersBetween(lat, lng, s.lat, s.lng) <= r
     );
   }
 
@@ -17729,7 +17974,8 @@
     _lastRefreshAt = now;
 
     pruneCaughtSpawnIds();
-    const within = _spawnsAround(cLat, cLng, focusOn);
+    _radiusNowM = _stepScanRadius(_radiusNowM, _visibilityRadiusM());
+    const within = _spawnsAround(cLat, cLng, focusOn, _radiusNowM);
     _bootMark('spawns:firstRefresh',
       `${within.length} in range, ${Math.round(performance.now() - _t0)}ms`
       + (center.live ? '' : ', last-known position'));
@@ -19256,13 +19502,39 @@
     };
   }
 
-  // Pick a uniform-random item key from the pokéstop loot table.
-  // Exposed so the POI "Collect items" handler in index.html can
-  // sample without needing the catalog details.
-  function rollCollectibleItem() {
-    if (!COLLECTIBLE_ITEM_KEYS.length) return null;
-    const i = Math.floor(Math.random() * COLLECTIBLE_ITEM_KEYS.length);
-    return COLLECTIBLE_ITEM_KEYS[i];
+  // One pokéstop loot item (see RARE_LOOT / BALL_LOOT). Exposed so the
+  // POI "Collect items" handler in index.html can sample without needing
+  // the catalog details; focus mode's item grants use it too. rng is for
+  // tests.
+  function rollCollectibleItem(rng) {
+    rng = rng || Math.random;
+    const rare = Math.floor(rng() / RARE_LOOT_CHANCE);
+    if (rare < RARE_LOOT.length) {
+      if (RARE_LOOT[rare] !== 'evo_item') return RARE_LOOT[rare];
+      const evo = _rollEvoItem(rng);
+      if (evo) return evo;
+    }
+    let total = 0;
+    for (const [, w] of BALL_LOOT) total += w;
+    let x = rng() * total;
+    for (const [k, w] of BALL_LOOT) { x -= w; if (x < 0) return k; }
+    return BALL_LOOT[BALL_LOOT.length - 1][0];
+  }
+  // A pokéstop evolution item: one the active data set's species evolve
+  // with, weighted 1 / (1 + how many you hold), so the ones you lack come
+  // up most (holding 79 Magnet Stones makes one 1/80 as likely as an item
+  // you have none of).
+  function _rollEvoItem(rng) {
+    const params = _evoItemParams();
+    const pool = params ? Array.from(params) : EVO_ITEM_KEYS;
+    if (!pool.length) return null;
+    const bag = readBag();
+    const w = pool.map((k) => 1 / (1 + (bag[k] || 0)));
+    let x = rng() * w.reduce((a, b) => a + b, 0);
+    let pick = pool[pool.length - 1];
+    for (let i = 0; i < pool.length; i++) { x -= w[i]; if (x < 0) { pick = pool[i]; break; } }
+    getItemMeta(pick);   // registers an IF2-only item's catalog entry
+    return pick;
   }
   function getItemMeta(key) {
     return ITEMS[key] || _packItems.get(key) || _evoItemOnDemand(key) || null;
@@ -19277,21 +19549,26 @@
   let _evoParamSet = null;
   function _evoItemOnDemand(key) {
     if (typeof key !== 'string' || !key) return null;
-    if (!_evoParamSet) {
-      const S = global.Species;
-      if (!S || !S.allSpecies || !S.evolutionsFor) return null;
-      const set = new Set();
-      for (const sp of S.allSpecies()) {
-        for (const e of S.evolutionsFor(sp.id)) {
-          if (_EVO_ITEM_METHODS.has(e.method) && typeof e.param === 'string') set.add(e.param);
-        }
-      }
-      if (!set.size) return null;   // species data not loaded yet
-      _evoParamSet = set;
-    }
-    if (!_evoParamSet.has(key)) return null;
+    const params = _evoItemParams();
+    if (!params || !params.has(key)) return null;
     _addEvoItem(key);
     return ITEMS[key];
+  }
+  // Every item the active data set's species evolve with, or null while
+  // the species data hasn't loaded.
+  function _evoItemParams() {
+    if (_evoParamSet) return _evoParamSet;
+    const S = global.Species;
+    if (!S || !S.allSpecies || !S.evolutionsFor) return null;
+    const set = new Set();
+    for (const sp of S.allSpecies()) {
+      for (const e of S.evolutionsFor(sp.id)) {
+        if (_EVO_ITEM_METHODS.has(e.method) && typeof e.param === 'string') set.add(e.param);
+      }
+    }
+    if (!set.size) return null;   // species data not loaded yet
+    _evoParamSet = set;
+    return set;
   }
 
   // Pack items (e.g. neopets paintbrushes) registered when a solo pack
@@ -19348,6 +19625,8 @@
     // Community day (weekly featured-species event): pass count + active
     // session, carried in the save file the same way.
     getCommunityDay: readCommunityDay,
+    getActiveBonusIncense: readActiveBonusIncense,
+    setActiveBonusIncenseState,
     setCommunityDayState,
     // Focus mode — index.html gates the POI "Collect items" button and
     // the tappable halos on isFocusActive; showFocus is the creature

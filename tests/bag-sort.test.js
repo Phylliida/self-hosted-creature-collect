@@ -133,7 +133,7 @@ ok(rank('totally_unknown_key') === 3, '1: unknown key falls to rank 3');
     global: { Species: { allSpecies: () => [{ id: 1 }, { id: 2 }], evolutionsFor: (id) => evos[id] || [] } },
   };
   vm.createContext(c6);
-  for (const m of ['function _addEvoItem(', 'function getItemMeta(', 'function _evoItemOnDemand(']) vm.runInContext(extract(m), c6);
+  for (const m of ['function _addEvoItem(', 'function getItemMeta(', 'function _evoItemOnDemand(', 'function _evoItemParams(']) vm.runInContext(extract(m), c6);
   vm.runInContext('let _evoParamSet = null;', c6);
   const meta = vm.runInContext('getItemMeta("GALARICACUFF")', c6);
   ok(meta && meta.evoItem && meta.icon === '/bundled-data/evo-items/GALARICACUFF.png' && meta.desc,

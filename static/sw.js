@@ -113,6 +113,8 @@ const TILES_CACHE = 'tiles-v1';
 // Shell bump 2026-10-13 (#18): index.html (cache-first '/') gives every
 // theme a second accent (ui.accent2 → --ui-accent2) for the species
 // dex's all-art ring, replacing a fixed gold that clashed with blue.
+// Shell bump 2026-10-13 (#19): index.html (cache-first '/') carries the
+// active bonus incense (berry) in the save file.
 
 const APP_SHELL = [
   '/',
