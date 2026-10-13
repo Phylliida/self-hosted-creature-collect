@@ -63,12 +63,13 @@ const rank = (k) => vm.runInContext('_bagEntryRank(__k)', Object.assign(ctx, { _
 const sorted = (bag) => vm.runInContext('_sortedBagEntries(__bag)', Object.assign(ctx, { __bag: bag }));
 
 // ── 1. Category ranks ──
-ok(rank('candy_berry') === 0, '1: berries are rank 0');
-ok(rank('incense_fire') === 1 && rank('community_pass') === 1, '1: incense and the community pass are rank 1');
-ok(rank('THUNDERSTONE') === 2, '1: evo item is rank 2');
-ok(rank('poke_ball') === 3, '1: poké ball is rank 3');
-ok(rank('test_orb') === 4, '1: other item is rank 4');
-ok(rank('totally_unknown_key') === 4, '1: unknown key falls to rank 4');
+ok(rank('community_pass') === 0, '1: the community day pass is rank 0 (always on top)');
+ok(rank('candy_berry') === 1, '1: berries are rank 1');
+ok(rank('incense_fire') === 2, '1: incense is rank 2');
+ok(rank('THUNDERSTONE') === 3, '1: evo item is rank 3');
+ok(rank('poke_ball') === 4, '1: poké ball is rank 4');
+ok(rank('test_orb') === 5, '1: other item is rank 5');
+ok(rank('totally_unknown_key') === 5, '1: unknown key falls to rank 5');
 
 // ── 2. Full ordering across categories ──
 {
@@ -87,13 +88,13 @@ ok(rank('totally_unknown_key') === 4, '1: unknown key falls to rank 4');
   });
   const keys = entries.map(([k]) => k);
   ok(JSON.stringify(keys) === JSON.stringify([
-    'calm_berry', 'candy_berry',       // berries first: same count → name asc
-    'community_pass',                  // incense group: count desc (2 > 1)
+    'community_pass',                  // the pass, always on top
+    'calm_berry', 'candy_berry',       // berries: same count → name asc
     'incense_fire', 'incense_water',   // incense: same count → name asc
     'FIRESTONE', 'THUNDERSTONE',       // evo: same count → name asc (Fire < Thunder)
     'great_ball', 'poke_ball',         // balls: count desc (10 > 5)
     'test_orb',                        // other, last
-  ]), '2: ordered berries → incense → evo → balls → other, tiebroken by count then name');
+  ]), '2: ordered pass → berries → incense → evo → balls → other, tiebroken by count then name');
   ok(!keys.includes('incense_grass'), '2: zero-count entry filtered out');
 }
 
@@ -111,7 +112,7 @@ ok(rank('totally_unknown_key') === 4, '1: unknown key falls to rank 4');
 
 // ── 5. Every evolution item gets a bag entry ──
 {
-  ok(rank('neo_paintbrush_red') === 2, '5: pack paintbrush ranks with evolution items');
+  ok(rank('neo_paintbrush_red') === 3, '5: pack paintbrush ranks with evolution items');
   const keys = sorted({ neo_paintbrush_red: 1, THUNDERSTONE: 1, FIRESTONE: 1 }).map(([k]) => k);
   ok(JSON.stringify(keys) === JSON.stringify(['FIRESTONE', 'neo_paintbrush_red', 'THUNDERSTONE']),
     '5: pack items sort by display name (Fire < Red < Thunder) — got ' + keys.join(','));

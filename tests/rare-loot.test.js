@@ -366,7 +366,7 @@ function makeWorld(opts = {}) {
     const rb = extract('function renderBag(');
     ok(/bag-use-bonus/.test(rb) && /_confirmUseBonusIncense\(btn\.dataset\.bonus\)/.test(rb), 'F: berries get a Use button');
     ok(/bag-bonus-banner/.test(rb) && /bag-bonus-countdown/.test(rb), 'F: an active berry shows a countdown banner');
-    ok(/meta\.bonusIncense\) return 0;/.test(extract('function _bagEntryRank(')), 'F: berries sort with incense');
+    // Bag ordering (berries right after the community pass) is bag-sort.test.js's.
 
     // Save file.
     ok(/activeBonusIncense: \(window\.Creatures && window\.Creatures\.getActiveBonusIncense\)/.test(html), 'F: the save exports the active berry');
