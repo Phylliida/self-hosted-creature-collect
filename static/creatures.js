@@ -4020,10 +4020,165 @@
   }
 
   // ── Incense items (one per type) ──
-  // Crafted from eggs (Bag → Craft). The capture/use mechanic lands
-  // later; for now they're collectible bag items whose art is a shaded
-  // orb in the type colour.
+  // Crafted from eggs (Bag → Craft), each drawn as a censer with its
+  // type's emblem (_incenseIcon).
   function _incenseKey(type) { return 'incense_' + type.toLowerCase(); }
+  // Incense art: one censer in the type colour, back to front: feet, the
+  // rim's far side and opening, the type's emblem rising out of it, then
+  // the bowl's near side, so the emblem sits inside. Emblems are drawn in
+  // x 8–32, y 1.5–22.5 of a 40-unit box (the rim is at y 24) and outlined
+  // in a darker shade of the colour (d), with a lighter tint (l) for
+  // fills that need to stand off the bowl. Built once per type
+  // (_incenseIcon); a type with no emblem — one a pack adds — keeps the
+  // plain orb.
+  function _mixHex(hex, to, t) {
+    const p = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+    const a = p(hex), b = p(to);
+    return '#' + a.map((v, i) => Math.round(v + (b[i] - v) * t).toString(16).padStart(2, '0')).join('');
+  }
+  const _r2 = (n) => Math.round(n * 100) / 100;
+  function _incenseEmblem(type, c, d, l) {
+    const S = `stroke='${d}' stroke-width='1.2' stroke-linejoin='round'`;
+    const hi = (x, y, rx, ry, rot) => `<ellipse cx='${x}' cy='${y}' rx='${rx}' ry='${ry}' fill='#ffffff' opacity='0.6' transform='rotate(${rot} ${x} ${y})'/>`;
+    // An outlined stroke: a dark wide pass under a light narrow one.
+    const line = (dd, w, col) => `<path d='${dd}' fill='none' stroke='${d}' stroke-width='${w + 2.2}' stroke-linecap='round' stroke-linejoin='round'/>`
+      + `<path d='${dd}' fill='none' stroke='${col}' stroke-width='${w}' stroke-linecap='round' stroke-linejoin='round'/>`;
+    switch (type) {
+      case 'NORMAL':
+        return line('M20 21 C14.5 17 25.5 14.5 20 10.5 C16 7.5 21 4 25 3.5', 2.6, l)
+          + line('M14.5 19 C12 16.5 14.5 13.5 12.5 10.5', 1.6, l);
+      case 'FIRE':
+        return `<path d='M20 2 C22.5 7 28 9.5 28 15 C28 19.2 24.4 22 20 22 C15.6 22 12 19.2 12 15 C12 11.4 14.6 9.8 15.8 6 C17.4 8.8 18.6 9.8 19.6 10.4 C19.6 7.4 19.4 4.8 20 2 Z' fill='${c}' ${S}/>`
+          + `<path d='M20 11.5 C21.6 14 24.2 15.4 24.2 18 C24.2 20.2 22.3 21.6 20 21.6 C17.7 21.6 15.8 20.2 15.8 18 C15.8 15.9 17.4 14.9 18 13.4 C18.6 14.4 19.3 14.9 20 15.1 C19.8 13.9 19.8 12.7 20 11.5 Z' fill='#ffe17a'/>`;
+      case 'WATER':
+        return `<path d='M20 2.5 C24.6 8.6 27.8 12 27.8 15.6 C27.8 19.6 24.3 22.2 20 22.2 C15.7 22.2 12.2 19.6 12.2 15.6 C12.2 12 15.4 8.6 20 2.5 Z' fill='url(#e)' ${S}/>`
+          + `<path d='M16.3 16 C16.1 13.8 17.1 11.9 18.6 10.4' fill='none' stroke='#ffffff' stroke-width='1.7' stroke-linecap='round' opacity='0.85'/>`
+          + `<circle cx='29.6' cy='8.4' r='1.7' fill='${l}' ${S}/><circle cx='31.4' cy='3.8' r='1.1' fill='${l}' stroke='${d}' stroke-width='0.9'/>`;
+      case 'ELECTRIC':
+        return `<path d='M23.5 1.8 L12 14 H19 L16.4 22 L28.2 9.3 H21.3 Z' fill='${c}' stroke='${d}' stroke-width='1.3' stroke-linejoin='round'/>`
+          + `<path d='M21.6 4.6 L15.6 11.6' stroke='#ffffff' stroke-width='1.3' stroke-linecap='round' opacity='0.75'/>`;
+      case 'GRASS':
+        return `<path d='M20 22 C20 17 20.2 12.5 21 8.5' fill='none' stroke='${d}' stroke-width='1.8' stroke-linecap='round'/>`
+          + `<path d='M20.2 16 C14 16.4 10.2 12.4 10.2 6.6 C16.2 6.4 20.4 9.8 20.2 16 Z' fill='${c}' ${S}/>`
+          + `<path d='M20.8 12 C26.2 12.4 30 8.6 30.2 2.8 C24.6 2.8 20.6 6.2 20.8 12 Z' fill='${l}' ${S}/>`
+          + `<path d='M19.4 14.6 C17 12 14.6 10 12.4 8.4M21.6 10.6 C23.4 8.4 25.6 6.4 28.4 4.6' fill='none' stroke='${d}' stroke-width='0.9' stroke-linecap='round' opacity='0.7'/>`;
+      case 'ICE': {
+        let arms = '';
+        for (const a of [0, 60, 120, 180, 240, 300]) arms += `<g transform='rotate(${a} 20 12)'><path d='M20 12 V2.6 M16.9 5.1 L20 8.2 L23.1 5.1'/></g>`;
+        return `<g fill='none' stroke='${d}' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'>${arms}</g>`
+          + `<g fill='none' stroke='${l}' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'>${arms}</g>`
+          + `<circle cx='20' cy='12' r='2.2' fill='#ffffff' stroke='${d}' stroke-width='1'/>`;
+      }
+      case 'FIGHTING':
+        return `<path d='M12.6 12.4 C12.6 6.6 16.4 3 21.2 3 C26.4 3 29 6.8 29 11.6 C29 15.8 26.4 18.4 22.8 18.4 H16.4 C14.2 18.4 12.6 16.8 12.6 14.6 Z' fill='${c}' ${S}/>`
+          + `<path d='M13.6 12.6 C11.2 12.3 9.8 14 10.4 15.9 C11 17.6 12.8 18 14.6 17.2' fill='${c}' ${S}/>`
+          + `<rect x='15' y='17.8' width='10.4' height='4.4' rx='1.3' fill='#ffffff' stroke='${d}' stroke-width='1.2'/>`
+          + `<path d='M20.4 7.6 C22.6 7.4 24.8 8.4 25.8 10.4' fill='none' stroke='${d}' stroke-width='1' stroke-linecap='round' opacity='0.6'/>`
+          + hi(17.4, 6.8, 2.4, 1.3, -30);
+      case 'POISON':
+        return `<circle cx='18.6' cy='15.6' r='5.6' fill='url(#e)' ${S}/>`
+          + `<circle cx='25.8' cy='8.6' r='3.6' fill='url(#e)' ${S}/>`
+          + `<circle cx='16.2' cy='5.4' r='2.3' fill='url(#e)' ${S}/>`
+          + hi(16.6, 13.6, 1.8, 1.1, -30) + hi(24.7, 7.4, 1.1, 0.7, -30);
+      case 'GROUND':
+        // A mole popping out of a dirt mound, a few clods flying.
+        return `<path d='M15 19.6 V12.2 C15 8.2 17.2 5.2 20.4 5.2 C23.6 5.2 25.8 8.2 25.8 12.2 V19.6 Z' fill='#9a6a3a' stroke='#4a2c12' stroke-width='1.2' stroke-linejoin='round'/>`
+          + `<ellipse cx='18.4' cy='10.2' rx='0.95' ry='1.3' fill='#1a1a1a'/><ellipse cx='22.4' cy='10.2' rx='0.95' ry='1.3' fill='#1a1a1a'/>`
+          + `<ellipse cx='20.4' cy='13.6' rx='2.4' ry='1.5' fill='#f48fb1' stroke='#4a2c12' stroke-width='0.8'/>`
+          + hi(17.6, 7.6, 1.6, 0.8, -30)
+          + `<path d='M8.4 22.8 C10.2 18.4 14.2 16.4 20.4 16.4 C26.6 16.4 30.6 18.4 32.2 22.8 Z' fill='${c}' ${S}/>`
+          + `<path d='M12.2 20.6 C14.6 19.4 17 18.9 19.6 18.8M23 19.4 C25 19.6 27 20.2 28.6 21' fill='none' stroke='${d}' stroke-width='0.9' stroke-linecap='round' opacity='0.5'/>`
+          + `<circle cx='11.4' cy='13.8' r='1.2' fill='${c}' stroke='${d}' stroke-width='0.7'/><circle cx='29' cy='12' r='1.5' fill='${c}' stroke='${d}' stroke-width='0.7'/><circle cx='30.6' cy='7.4' r='0.9' fill='${c}' stroke='${d}' stroke-width='0.7'/>`;
+      case 'FLYING':
+        return `<path d='M10 21 C9.6 11.8 16.6 4.2 30.6 2.8 C29 6 27.4 8 25 9.4 C27.6 9.8 29 10.6 29.6 12 C26.6 13.2 24.8 13.6 22.2 14 C24.4 15 25.4 16 25.6 17.6 C21.2 19 15.4 20 10 21 Z' fill='${l}' ${S}/>`
+          + `<path d='M11.8 19.4 C14.8 14.2 19.4 9 27.4 5.4M13.6 19.2 C17 17.2 20.4 15.4 23.8 14.6M13 17.6 C17.2 14.4 21.2 12 26.6 10.8' fill='none' stroke='${c}' stroke-width='1.2' stroke-linecap='round'/>`;
+      case 'PSYCHIC': {
+        let p = '';
+        for (let i = 0; i <= 64; i++) {
+          const th = i / 64 * Math.PI * 4, r = 0.4 + 2.05 * th / Math.PI;
+          p += (i ? ' L' : 'M') + _r2(20 + r * Math.cos(th)) + ' ' + _r2(11.6 + r * Math.sin(th));
+        }
+        return line(p, 2, l) + `<circle cx='20' cy='11.6' r='1.2' fill='${d}'/>`;
+      }
+      case 'BUG':
+        return `<path d='M17.4 6 C16.4 3.6 14.4 2.6 12.6 3.2M22.6 6 C23.6 3.6 25.6 2.6 27.4 3.2' fill='none' stroke='${d}' stroke-width='1.4' stroke-linecap='round'/>`
+          + `<ellipse cx='20' cy='14.4' rx='7.4' ry='7.6' fill='${c}' ${S}/>`
+          + `<path d='M14 9.8 C15.6 7.2 17.6 6 20 6 C22.4 6 24.4 7.2 26 9.8 Z' fill='${d}'/>`
+          + `<path d='M20 9.8 V22' stroke='${d}' stroke-width='1.2'/>`
+          + `<circle cx='16.6' cy='14' r='1.5' fill='${d}'/><circle cx='23.4' cy='14' r='1.5' fill='${d}'/><circle cx='17.4' cy='18.4' r='1.1' fill='${d}'/><circle cx='22.6' cy='18.4' r='1.1' fill='${d}'/>`
+          + hi(16.2, 11.4, 1.8, 0.9, -30);
+      case 'ROCK':
+        return `<path d='M23.4 9.4 L26 4.2 L30.4 5.2 L31.4 10.4 L27.6 12.4 Z' fill='${l}' ${S}/>`
+          + `<path d='M10.6 21.6 L11.8 12.8 L17.6 8 L24.4 10 L27.4 17.2 L25.2 21.6 Z' fill='${c}' ${S}/>`
+          + `<path d='M17.6 8 L18.6 14.2 L11.8 12.8M18.6 14.2 L27.4 17.2M18.6 14.2 L17 21.6' fill='none' stroke='${d}' stroke-width='0.9' stroke-linejoin='round' opacity='0.6'/>`
+          + hi(15.8, 11.2, 2, 1, -35);
+      case 'GHOST':
+        return `<path d='M12.8 21.6 V12 C12.8 7.4 16 3.6 20 3.6 C24 3.6 27.2 7.4 27.2 12 V21.6 L24.8 19.4 L22.4 21.6 L20 19.4 L17.6 21.6 L15.2 19.4 Z' fill='url(#e)' ${S}/>`
+          + `<ellipse cx='17.4' cy='11.4' rx='1.5' ry='2.1' fill='#2a1a40'/><ellipse cx='22.6' cy='11.4' rx='1.5' ry='2.1' fill='#2a1a40'/>`
+          + `<path d='M18.4 15.6 Q20 16.8 21.6 15.6' fill='none' stroke='#2a1a40' stroke-width='1.1' stroke-linecap='round'/>`
+          + hi(16, 7.6, 1.8, 1, -30);
+      case 'DRAGON':
+        return `<path d='M12.2 22.6 C11.2 16.4 12.6 11.8 16.4 9.6 L15.4 3.6 L19.8 8.4 L22.2 2.6 L23.6 8.8 C27.2 9.4 30.6 11.2 31.4 14 C31.6 15.4 30.6 16.4 29 16.4 L24.8 16.6 C25.8 18 25.6 20.2 23.6 22.6 Z' fill='url(#e)' ${S}/>`
+          + `<path d='M24.8 16.6 L28.4 16.4' stroke='${d}' stroke-width='1' stroke-linecap='round'/>`
+          + `<ellipse cx='22.4' cy='12.2' rx='1.9' ry='1.3' fill='#ffd23f' stroke='${d}' stroke-width='0.7'/>`
+          + `<ellipse cx='22.6' cy='12.2' rx='0.45' ry='1.1' fill='#1a1a1a'/>`
+          + `<circle cx='29.6' cy='13.8' r='0.6' fill='${d}'/>`
+          + `<path d='M14.6 14.6 L17.2 16.2M14 18.2 L16.8 19.2' stroke='${l}' stroke-width='1' stroke-linecap='round' opacity='0.8'/>`;
+      case 'DARK':
+        return `<path d='M23.2 2.6 A9.6 9.6 0 1 0 29.6 18.2 A7.4 7.4 0 1 1 23.2 2.6 Z' fill='${l}' ${S}/>`
+          + `<path d='M28.6 4.6 L29.2 6.4 L31 7 L29.2 7.6 L28.6 9.4 L28 7.6 L26.2 7 L28 6.4 Z' fill='#fff3c4' stroke='${d}' stroke-width='0.6' stroke-linejoin='round'/>`
+          + hi(14.6, 9, 1.6, 1, -50);
+      case 'STEEL': {
+        let g = '';
+        const n = 8, ro = 9, ri = 7, cx = 20, cy = 12;
+        for (let i = 0; i < n; i++) {
+          const a0 = (i / n) * Math.PI * 2, w = Math.PI / n;
+          const pts = [[ri, a0 - w * 0.62], [ro, a0 - w * 0.36], [ro, a0 + w * 0.36], [ri, a0 + w * 0.62]];
+          for (const [r, a] of pts) g += (g ? ' L' : 'M') + _r2(cx + r * Math.cos(a)) + ' ' + _r2(cy + r * Math.sin(a));
+        }
+        return `<path d='${g} Z' fill='url(#e)' ${S}/>`
+          + `<circle cx='20' cy='12' r='2.8' fill='#ffffff' stroke='${d}' stroke-width='1.2'/>`
+          + hi(16.4, 8.4, 2, 1, -40);
+      }
+      case 'FAIRY':
+        return `<path d='M19 3 Q20.2 10.4 27 11.8 Q20.2 13.2 19 21 Q17.8 13.2 11 11.8 Q17.8 10.4 19 3 Z' fill='${l}' ${S}/>`
+          + `<path d='M27.6 2.4 Q28.2 5.2 30.8 5.8 Q28.2 6.4 27.6 9.2 Q27 6.4 24.4 5.8 Q27 5.2 27.6 2.4 Z' fill='#ffffff' stroke='${d}' stroke-width='0.8' stroke-linejoin='round'/>`
+          + `<path d='M28.4 14.4 Q28.8 16.2 30.4 16.6 Q28.8 17 28.4 18.8 Q28 17 26.4 16.6 Q28 16.2 28.4 14.4 Z' fill='#ffffff' stroke='${d}' stroke-width='0.7' stroke-linejoin='round'/>`;
+    }
+    return '';
+  }
+  // null when the type has no emblem (or its colour isn't #rrggbb).
+  function _incenseCenserSvg(type, c) {
+    if (!/^#[0-9a-f]{6}$/i.test(c)) return null;
+    const d = _mixHex(c, '#000000', 0.5), l = _mixHex(c, '#ffffff', 0.55), ll = _mixHex(c, '#ffffff', 0.8);
+    const emblem = _incenseEmblem(type, c, d, l);
+    if (!emblem) return null;
+    return "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'>"
+      + "<defs>"
+      + `<linearGradient id='b' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='${l}'/><stop offset='0.45' stop-color='${c}'/><stop offset='1' stop-color='${_mixHex(c, '#000000', 0.25)}'/></linearGradient>`
+      + `<radialGradient id='e' cx='38%' cy='32%' r='72%'><stop offset='0' stop-color='${ll}'/><stop offset='0.5' stop-color='${c}'/><stop offset='1' stop-color='${_mixHex(c, '#000000', 0.2)}'/></radialGradient>`
+      + "</defs>"
+      // Censer, back to front: feet, the rim's far side and opening, the
+      // emblem (so it rises out of the bowl), then the bowl's near side.
+      + `<path d='M13.4 33.6 L12 37.6 M26.6 33.6 L28 37.6' stroke='${d}' stroke-width='2.4' stroke-linecap='round'/>`
+      + `<ellipse cx='20' cy='24' rx='13.2' ry='2.9' fill='${l}' stroke='${d}' stroke-width='1.2'/>`
+      + `<ellipse cx='20' cy='24' rx='10.6' ry='1.9' fill='${d}' opacity='0.6'/>`
+      + `<ellipse cx='20' cy='24.2' rx='6' ry='1' fill='${ll}' opacity='0.45'/>`
+      + emblem
+      + `<path d='M6.8 24 A13.2 2.9 0 0 0 33.2 24 C33.2 31.6 28 35.6 20 35.6 C12 35.6 6.8 31.6 6.8 24 Z' fill='url(#b)' stroke='${d}' stroke-width='1.2' stroke-linejoin='round'/>`
+      + `<path d='M8.4 24.9 A11.8 2.2 0 0 0 31.6 24.9' fill='none' stroke='${ll}' stroke-width='1.3' stroke-linecap='round' opacity='0.8'/>`
+      + `<path d='M9.2 29.2 Q20 32.2 30.8 29.2' fill='none' stroke='${ll}' stroke-width='1.2' stroke-linecap='round' opacity='0.55'/>`
+      + "</svg>";
+  }
+  const _incenseIconCache = new Map();
+  function _incenseIcon(type) {
+    if (_incenseIconCache.has(type)) return _incenseIconCache.get(type);
+    const color = global.Types.color(type);
+    const art = _incenseCenserSvg(type, color);
+    const uri = art ? 'data:image/svg+xml,' + encodeURIComponent(art) : _incenseOrbIcon(color);
+    _incenseIconCache.set(type, uri);
+    return uri;
+  }
   function _incenseOrbIcon(color) {
     // Shaded orb: a top-left highlight, the type colour, and a dark rim.
     const svg =
@@ -4049,7 +4204,7 @@
       name: global.Types.displayName(t) + ' Incense',
       desc: 'Use it for 30 min of extra ' + global.Types.displayName(t)
         + '-type spawns (double shiny rate). Crafted from eggs.',
-      icon: _incenseOrbIcon(global.Types.color(t)),
+      icon: _incenseIcon(t),
       incenseType: t,
     };
   }
@@ -11949,11 +12104,10 @@
     if (st.step === 1 || !st.type) {
       _craftSetTitle('Choose incense');
       const orbs = ALL_TYPES.map((t) => {
-        const color = global.Types.color(t);
         const n = _craftableEggsFor(t).length;
         return `
           <button class="craft-orb" type="button" data-type="${t}">
-            <img class="craft-orb-img" src="${escapeHtml(_incenseOrbIcon(color))}" alt="">
+            <img class="craft-orb-img" src="${escapeHtml(_incenseIcon(t))}" alt="">
             <span class="craft-orb-name">${escapeHtml(global.Types.displayName(t))}</span>
             <span class="craft-orb-count">${n} egg${n === 1 ? '' : 's'}</span>
           </button>`;
@@ -12038,7 +12192,7 @@
           <div class="craft-egg-art big${_isBadEgg(egg) ? ' egg-bad' : ''}" style="${artStyle}"></div>
           <span class="craft-arrow">&rarr;</span>
           <span class="craft-orb-wrap">
-            <img class="craft-confirm-orb" src="${escapeHtml(_incenseOrbIcon(global.Types.color(st.type)))}" alt="">
+            <img class="craft-confirm-orb" src="${escapeHtml(_incenseIcon(st.type))}" alt="">
             ${orbMult}
           </span>
         </div>
@@ -12066,7 +12220,7 @@
       _craftSetTitle('Crafted!');
       body.innerHTML = `
         <div class="craft-done">
-          <img class="craft-done-orb" src="${escapeHtml(_incenseOrbIcon(global.Types.color(st.type)))}" alt="">
+          <img class="craft-done-orb" src="${escapeHtml(_incenseIcon(st.type))}" alt="">
           <div class="craft-done-text">Crafted <b>${escapeHtml(yieldLabel)}</b>!
             It's in your bag.</div>
           <div class="craft-confirm-actions">
@@ -12085,7 +12239,7 @@
   // Small inline incense chip (orb + label) for the chosen incense.
   function _incenseChipHtml(type) {
     return `<span class="craft-chip">`
-      + `<img class="craft-chip-orb" src="${escapeHtml(_incenseOrbIcon(global.Types.color(type)))}" alt="">`
+      + `<img class="craft-chip-orb" src="${escapeHtml(_incenseIcon(type))}" alt="">`
       + `${escapeHtml(global.Types.displayName(type))} Incense</span>`;
   }
 
@@ -15211,7 +15365,7 @@
     const incenseHtml = c.fromIncense
       ? `<div class="detail-incense-row">`
         + ((c.incenseType && global.Types.isValid(c.incenseType))
-          ? `<img class="detail-incense-orb" src="${escapeHtml(_incenseOrbIcon(global.Types.color(c.incenseType)))}" alt="">`
+          ? `<img class="detail-incense-orb" src="${escapeHtml(_incenseIcon(c.incenseType))}" alt="">`
           : '')
         + 'From ' + escapeHtml((c.incenseType ? global.Types.displayName(c.incenseType) + ' ' : '') + 'Incense')
         + `</div>`
@@ -16939,7 +17093,7 @@
     const incEl = el.querySelector('.battle-incense');
     if (incEl) {
       if (spawn.incense && spawn.incenseType && global.Types.isValid(spawn.incenseType)) {
-        incEl.src = _incenseOrbIcon(global.Types.color(spawn.incenseType));
+        incEl.src = _incenseIcon(spawn.incenseType);
         incEl.title = global.Types.displayName(spawn.incenseType) + ' Incense';
         incEl.hidden = false;
       } else {
