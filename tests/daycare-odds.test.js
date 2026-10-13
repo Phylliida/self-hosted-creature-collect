@@ -49,7 +49,7 @@ function build(slots, creatures, legSet) {
     fusionName: (a, b) => (NAMES[a] || ('#' + a)) + '×' + (NAMES[b] || ('#' + b)),
     // Pikachu family (25/26) evolves via Thunder Stone; the others are level-only.
     _evoItemsForFamily: (id) => (id === 25 || id === 26) ? ['thunder_stone'] : [],
-    ITEMS: { thunder_stone: { name: 'Thunder Stone' } },
+    getItemMeta: (k) => ({ thunder_stone: { name: 'Thunder Stone' } })[k] || null,
     _formatItemName: (k) => k,
     escapeHtml: (s) => String(s),
     isFusionSeen: () => true,

@@ -542,29 +542,29 @@
   // Every key here MUST have a PNG shipped under
   // data/BundledData/evo-items/ (an out-of-sync list is why
   // DUSKSTONE/DAWNSTONE/REAPERCLOTH had no bag icons while phantom
-  // keys with no PNG were listed instead) — but this is a SUBSET of
-  // evo-items-list.json, not a mirror: DRAGONSCALE, DUBIOUSDISC,
-  // ELECTIRIZER, KINGSROCK, MAGMARIZER, METALCOAT, PRISMSCALE,
-  // PROTECTOR and UPGRADE still ship art without a bag entry (known
-  // gap, tracked separately). Each entry gets a name, an icon URL
-  // pointing at the bundled PNG, and a desc — slotting into the bag
-  // UI the same way poke_ball / great_ball do.
+  // keys with no PNG were listed instead). It mirrors the default
+  // pack's evo-items-list.json; items only another data set uses
+  // (IF2) get the same entry on first lookup (_evoItemOnDemand).
+  // Each entry gets a name, an icon URL pointing at the bundled PNG,
+  // and a desc — slotting into the bag UI the same way poke_ball /
+  // great_ball do.
   const EVO_ITEM_KEYS = [
-    'DAWNSTONE', 'DEEPSEASCALE', 'DEEPSEATOOTH', 'DUSKSTONE', 'FIRESTONE',
-    'ICESTONE', 'LEAFSTONE', 'LINKINGCORD', 'MAGNETSTONE', 'MOONSTONE',
-    'OVALSTONE', 'REAPERCLOTH', 'SHINYSTONE', 'SUNSTONE', 'THUNDERSTONE',
-    'WATERSTONE',
+    'DAWNSTONE', 'DEEPSEASCALE', 'DEEPSEATOOTH', 'DRAGONSCALE', 'DUBIOUSDISC',
+    'DUSKSTONE', 'ELECTIRIZER', 'FIRESTONE', 'ICESTONE', 'KINGSROCK',
+    'LEAFSTONE', 'LINKINGCORD', 'MAGMARIZER', 'MAGNETSTONE', 'METALCOAT',
+    'MOONSTONE', 'OVALSTONE', 'PRISMSCALE', 'PROTECTOR', 'REAPERCLOTH',
+    'SHINYSTONE', 'SUNSTONE', 'THUNDERSTONE', 'UPGRADE', 'WATERSTONE',
   ];
-  for (const key of EVO_ITEM_KEYS) {
-    if (ITEMS[key]) continue;
+  function _addEvoItem(key) {
+    if (ITEMS[key]) return;
     ITEMS[key] = {
       name: _formatItemName(key),
       desc: 'Evolution item — usable when the right pokémon is ready.',
       icon: `${BUNDLED_BASE}/evo-items/${key}.png`,
+      evoItem: true,   // bag ordering (see _bagEntryRank)
     };
   }
-  // Fast membership test for bag ordering (see _bagEntryRank).
-  const EVO_ITEM_SET = new Set(EVO_ITEM_KEYS);
+  for (const key of EVO_ITEM_KEYS) _addEvoItem(key);
   // Items the pokéstop "Collect items" button can grant. Each press
   // samples 1-3 items uniformly from this list (with replacement).
   const COLLECTIBLE_ITEM_KEYS = ['poke_ball', 'great_ball'];
@@ -2034,7 +2034,7 @@
     ));
     if (!possible.length) return candyLoot();
     const itemKey = possible[Math.floor(u2 * possible.length)] || possible[0];
-    const meta = ITEMS[itemKey];
+    const meta = getItemMeta(itemKey);
     return {
       kind: 'evo_item',
       itemKey,
@@ -2114,7 +2114,7 @@
       );
     }
     if (loot.kind === 'evo_item') {
-      const meta = ITEMS[loot.itemKey];
+      const meta = getItemMeta(loot.itemKey);
       const url = (meta && meta.icon) || `${BUNDLED_BASE}/evo-items/${loot.itemKey}.png`;
       return (
         `background-image: url('${url}');`
@@ -11303,10 +11303,10 @@
   // items, then poké balls, then anything else (e.g. the test_orb
   // placeholder). Lower rank sorts higher in the list.
   function _bagEntryRank(key) {
-    const meta = ITEMS[key] || {};
+    const meta = getItemMeta(key) || {};
     if (meta.communityDay) return 0;        // community day pass
     if (meta.incenseType) return 0;         // incense
-    if (EVO_ITEM_SET.has(key)) return 1;    // evolution items
+    if (meta.evoItem) return 1;             // evolution items (incl. pack paintbrushes)
     if (meta.catchShakeRate) return 2;      // poké balls
     return 3;                               // everything else
   }
@@ -11320,8 +11320,9 @@
         const ra = _bagEntryRank(a[0]), rb = _bagEntryRank(b[0]);
         if (ra !== rb) return ra - rb;
         if (b[1] !== a[1]) return b[1] - a[1];
-        const na = (ITEMS[a[0]] && ITEMS[a[0]].name) || a[0];
-        const nb = (ITEMS[b[0]] && ITEMS[b[0]].name) || b[0];
+        const ma = getItemMeta(a[0]), mb = getItemMeta(b[0]);
+        const na = (ma && ma.name) || a[0];
+        const nb = (mb && mb.name) || b[0];
         return na.localeCompare(nb);
       });
   }
@@ -11390,7 +11391,7 @@
     const total = entries.reduce((sum, [, n]) => sum + n, 0);
     const subtitle = `${total} item${total === 1 ? '' : 's'} across ${entries.length} type${entries.length === 1 ? '' : 's'}`;
     const rows = entries.map(([key, n]) => {
-      const meta = ITEMS[key] || { name: key, desc: '' };
+      const meta = getItemMeta(key) || { name: key, desc: '' };
       const iconHtml = meta.icon
         ? `<img class="bag-icon" src="${escapeHtml(meta.icon)}" alt="">`
         : '';
@@ -11814,7 +11815,10 @@
       return {
         name, candyPct, eggPct: eggProb, evoPct,
         candy: candyShares.map((cd) => ({ name: speciesNameFor(cd.species), pct: cd.share * candyPct })),
-        evo: items.map((k) => ({ name: (ITEMS[k] && ITEMS[k].name) || _formatItemName(k), pct: evoPct / items.length })),
+        evo: items.map((k) => {
+          const meta = getItemMeta(k);
+          return { name: (meta && meta.name) || _formatItemName(k), pct: evoPct / items.length };
+        }),
       };
     });
 
@@ -18560,7 +18564,35 @@
     const i = Math.floor(Math.random() * COLLECTIBLE_ITEM_KEYS.length);
     return COLLECTIBLE_ITEM_KEYS[i];
   }
-  function getItemMeta(key) { return ITEMS[key] || _packItems.get(key) || null; }
+  function getItemMeta(key) {
+    return ITEMS[key] || _packItems.get(key) || _evoItemOnDemand(key) || null;
+  }
+
+  // An evolution item the active data set uses but EVO_ITEM_KEYS doesn't
+  // name (IF2 packs evolve with items IF1 never had): give it the same
+  // catalog entry on first lookup. Its PNG ships as evo-items/<KEY>.png —
+  // build-bundled-data.py / build-if2-packs.py copy exactly the items
+  // the pack's evolutions use. The param set is built once, after the
+  // species data has loaded (a pack switch reloads the page).
+  let _evoParamSet = null;
+  function _evoItemOnDemand(key) {
+    if (typeof key !== 'string' || !key) return null;
+    if (!_evoParamSet) {
+      const S = global.Species;
+      if (!S || !S.allSpecies || !S.evolutionsFor) return null;
+      const set = new Set();
+      for (const sp of S.allSpecies()) {
+        for (const e of S.evolutionsFor(sp.id)) {
+          if (_EVO_ITEM_METHODS.has(e.method) && typeof e.param === 'string') set.add(e.param);
+        }
+      }
+      if (!set.size) return null;   // species data not loaded yet
+      _evoParamSet = set;
+    }
+    if (!_evoParamSet.has(key)) return null;
+    _addEvoItem(key);
+    return ITEMS[key];
+  }
 
   // Pack items (e.g. neopets paintbrushes) registered when a solo pack
   // loads. Namespaced keys ('neo_paintbrush_red'), icon is a full URL
@@ -18574,6 +18606,7 @@
         name: it.name || it.key,
         desc: it.kind === 'evo' ? 'Evolves certain creatures.' : '',
         icon: it.icon || '',
+        evoItem: it.kind === 'evo',
       });
     }
   }

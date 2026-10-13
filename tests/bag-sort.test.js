@@ -1,6 +1,10 @@
 // Tests bag item ordering (_bagEntryRank / _sortedBagEntries in
 // static/creatures.js): incense first, then evolution items, then poké
 // balls, then anything else — with count-desc / name-asc inside a category.
+// Also (section 5) that every evolution item the default pack ships art
+// for has a bag entry, and that the bag reads item info through
+// getItemMeta (pack paintbrushes, IF2-only items) — KINGSROCK, METALCOAT,
+// UPGRADE etc. used to show as bare text: raw key, no icon, no desc.
 //
 // Run: node tests/bag-sort.test.js
 'use strict';
@@ -32,20 +36,22 @@ function extract(marker) {
   return src.slice(start, i + 1);
 }
 
-// Representative catalog: incense (has incenseType), evo items (in
-// EVO_ITEM_SET), balls (have catchShakeRate), and a placeholder "other".
+// Representative catalog: incense (has incenseType), evo items (have
+// evoItem), balls (have catchShakeRate), and a placeholder "other".
 const ITEMS = {
   poke_ball: { name: 'Poké Ball', catchShakeRate: 0.8879 },
   great_ball: { name: 'Great Ball', catchShakeRate: 0.9655 },
   test_orb: { name: 'Test Orb' },
-  THUNDERSTONE: { name: 'Thunder Stone' },
-  FIRESTONE: { name: 'Fire Stone' },
+  THUNDERSTONE: { name: 'Thunder Stone', evoItem: true },
+  FIRESTONE: { name: 'Fire Stone', evoItem: true },
   incense_fire: { name: 'Fire Incense', incenseType: 'FIRE' },
   incense_water: { name: 'Water Incense', incenseType: 'WATER' },
 };
-const EVO_ITEM_SET = new Set(['THUNDERSTONE', 'FIRESTONE']);
+// Pack items (registerPackItems) live outside ITEMS.
+const PACK_ITEMS = { neo_paintbrush_red: { name: 'Red Paintbrush', evoItem: true } };
+const getItemMeta = (k) => ITEMS[k] || PACK_ITEMS[k] || null;
 
-const ctx = { Object, Set, Array, Math, String, Number, ITEMS, EVO_ITEM_SET };
+const ctx = { Object, Set, Array, Math, String, Number, ITEMS, getItemMeta };
 vm.createContext(ctx);
 vm.runInContext(extract('function _bagEntryRank('), ctx);
 vm.runInContext(extract('function _sortedBagEntries('), ctx);
@@ -91,6 +97,48 @@ ok(rank('totally_unknown_key') === 3, '1: unknown key falls to rank 3');
 {
   ok(sorted({}).length === 0, '4: empty bag yields no entries');
   ok(sorted({ poke_ball: 0, THUNDERSTONE: 0 }).length === 0, '4: all-zero bag yields no entries');
+}
+
+// ── 5. Every evolution item gets a bag entry ──
+{
+  ok(rank('neo_paintbrush_red') === 1, '5: pack paintbrush ranks with evolution items');
+  const keys = sorted({ neo_paintbrush_red: 1, THUNDERSTONE: 1, FIRESTONE: 1 }).map(([k]) => k);
+  ok(JSON.stringify(keys) === JSON.stringify(['FIRESTONE', 'neo_paintbrush_red', 'THUNDERSTONE']),
+    '5: pack items sort by display name (Fire < Red < Thunder) — got ' + keys.join(','));
+
+  const listSrc = src.slice(src.indexOf('const EVO_ITEM_KEYS = ['));
+  const listed = new Set(listSrc.slice(0, listSrc.indexOf('];')).match(/'([A-Z0-9]+)'/g).map((q) => q.slice(1, -1)));
+  const shipped = JSON.parse(fs.readFileSync(
+    path.join(__dirname, '..', 'data', 'BundledData', 'evo-items-list.json'), 'utf8')).items;
+  const unlisted = shipped.filter((k) => !listed.has(k));
+  ok(shipped.length > 0 && !unlisted.length,
+    '5: every evo item the default pack ships art for is in EVO_ITEM_KEYS (missing: ' + unlisted.join(',') + ')');
+  const noArt = [...listed].filter((k) => !shipped.includes(k));
+  ok(!noArt.length, '5: no EVO_ITEM_KEYS entry without shipped art (' + noArt.join(',') + ')');
+
+  const bag = extract('function renderBag(');
+  ok(/getItemMeta\(key\)/.test(bag) && !/ITEMS\[key\]/.test(bag),
+    '5: bag rows read item info through getItemMeta (pack + on-demand items)');
+  ok(/_evoItemOnDemand\(key\)/.test(extract('function getItemMeta(')),
+    '5: getItemMeta falls back to evolution items the active data set uses');
+}
+
+// ── 6. An evolution item only another data set uses (IF2) ──
+{
+  const evos = { 1: [{ target: 2, method: 'Item', param: 'GALARICACUFF' }], 2: [{ target: 3, method: 'Level', param: 30 }] };
+  const c6 = {
+    Set, ITEMS: {}, BUNDLED_BASE: '/bundled-data', _packItems: new Map(),
+    _EVO_ITEM_METHODS: new Set(['Item', 'TradeItem', 'DayHoldItem']),
+    _formatItemName: (k) => k.charAt(0) + k.slice(1).toLowerCase(),
+    global: { Species: { allSpecies: () => [{ id: 1 }, { id: 2 }], evolutionsFor: (id) => evos[id] || [] } },
+  };
+  vm.createContext(c6);
+  for (const m of ['function _addEvoItem(', 'function getItemMeta(', 'function _evoItemOnDemand(']) vm.runInContext(extract(m), c6);
+  vm.runInContext('let _evoParamSet = null;', c6);
+  const meta = vm.runInContext('getItemMeta("GALARICACUFF")', c6);
+  ok(meta && meta.evoItem && meta.icon === '/bundled-data/evo-items/GALARICACUFF.png' && meta.desc,
+    '6: an item the data set\'s evolutions use gets an evo entry with its icon on demand');
+  ok(vm.runInContext('getItemMeta("NOTANITEM")', c6) === null, '6: an unknown key still has no entry');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
