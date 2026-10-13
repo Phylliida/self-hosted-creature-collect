@@ -8621,6 +8621,7 @@
       }
       #creatureInventory .completion-filter,
       #creatureInventory .speciesdex-filter,
+      #creatureInventory .speciesdex-incomplete,
       #creatureInventory .completion-summary-btn,
       #creatureInventory .speciesdex-summary-btn {
         align-self: center; background: transparent;
@@ -8632,12 +8633,14 @@
       }
       #creatureInventory .completion-filter:hover,
       #creatureInventory .speciesdex-filter:hover,
+      #creatureInventory .speciesdex-incomplete:hover,
       #creatureInventory .completion-summary-btn:hover,
       #creatureInventory .speciesdex-summary-btn:hover {
         background: var(--ui-hover, rgba(0,0,0,0.04));
       }
       #creatureInventory .completion-filter.is-active,
-      #creatureInventory .speciesdex-filter.is-active {
+      #creatureInventory .speciesdex-filter.is-active,
+      #creatureInventory .speciesdex-incomplete.is-active {
         background: var(--ui-accent, #3b7fdf);
         border-color: var(--ui-accent, #3b7fdf);
         color: var(--ui-accent-text, #fff);
@@ -9780,6 +9783,7 @@
           <h3 class="subview-title speciesdex-title">Dex</h3>
           <div class="completion-actions">
             <button class="speciesdex-filter" type="button" aria-pressed="false">Show non-evolved only</button>
+            <button class="speciesdex-incomplete" type="button" aria-pressed="false">Show incomplete only</button>
             <button class="speciesdex-summary-btn" type="button">Summary</button>
           </div>
           <div class="speciesdex-stats"></div>
@@ -10160,6 +10164,14 @@
     // reset scroll so the (now shorter/longer) grid starts from the top.
     panel.querySelector('.speciesdex-filter').addEventListener('click', () => {
       _nonEvolvedOnly = !_nonEvolvedOnly;
+      const sheet = panel.querySelector('.sheet');
+      if (sheet) sheet.scrollTop = 0;
+      const top = _viewStack[_viewStack.length - 1];
+      if (top && top.view === 'speciesdex') renderSpeciesDex(top.species);
+    });
+    // "Incomplete only" on a species dex (see _incompleteOnly).
+    panel.querySelector('.speciesdex-incomplete').addEventListener('click', () => {
+      _incompleteOnly = !_incompleteOnly;
       const sheet = panel.querySelector('.sheet');
       if (sheet) sheet.scrollTop = 0;
       const top = _viewStack[_viewStack.length - 1];
@@ -14262,6 +14274,13 @@
   // (not persisted to localStorage), like the family-tree expand toggle.
   let _nonEvolvedOnly = false;
 
+  // "Incomplete only" on a species dex: hide the partner rows whose two
+  // fusions are both seen, so the grid lists only what's left to find. A
+  // row with one seen and one unseen fusion stays, both cells shown.
+  // Session-local; it isn't snapshotted per view, so it stays on as you go
+  // from one species dex to the next.
+  let _incompleteOnly = false;
+
   // Name + type filters on the completion list and a species dex. The
   // values live in the inputs (session-local, like _nonEvolvedOnly);
   // each view-stack entry snapshots its view's values on push and gets
@@ -14747,6 +14766,12 @@
         ? 'Non-evolved only (to catch / hatch)'
         : 'Show non-evolved only';
     }
+    const incompleteBtn = panel.querySelector('.speciesdex-incomplete');
+    if (incompleteBtn) {
+      incompleteBtn.classList.toggle('is-active', _incompleteOnly);
+      incompleteBtn.setAttribute('aria-pressed', _incompleteOnly ? 'true' : 'false');
+      incompleteBtn.textContent = _incompleteOnly ? 'Incomplete only' : 'Show incomplete only';
+    }
 
     const titleEl = panel.querySelector('.speciesdex-title');
     if (titleEl) titleEl.textContent = `${name} dex`;
@@ -14787,20 +14812,20 @@
     const grid = panel.querySelector('.speciesdex-grid');
     if (!grid) return;
     const sheet = panel.querySelector('.sheet');
-    // The name search matches the partner; the type filters match each
-    // fusion's own types (as in the pokédex). A row stays when either of
-    // its fusions matches, and the one that doesn't is dimmed.
     updateFilterIndicators(panel, _dexFilterSelectors('speciesdex'));
     const f = _captureDexFilters(panel, 'speciesdex');
-    const q = f.q.trim().toLowerCase();
     const typed = !!(f.t || f.tA || f.tB);
     const typeOk = (a, b) => !typed || _typesPassFilter(fusionTypesFor(a, b), f.t, f.tA, f.tB);
-    const shown = partners.filter((p) =>
-      (!q || speciesNameFor(p).toLowerCase().includes(q))
-      && (typeOk(X, p) || typeOk(p, X)));
+    const rowsFor = (incompleteOnly) => _speciesDexShownPartners(X, partners,
+      { q: f.q, typeOk, seenIt, incompleteOnly });
+    const shown = rowsFor(_incompleteOnly);
     if (!shown.length) {
       virtualizeGrid({ scrollEl: sheet, gridEl: grid, items: [], cols: 1, rowGap: 6 });
-      grid.innerHTML = '<div class="creature-empty">No partners match those filters.</div>';
+      // Rows matched, but "incomplete only" hid them all: nothing left to find.
+      const allSeen = _incompleteOnly && rowsFor(false).length > 0;
+      grid.innerHTML = allSeen
+        ? '<div class="creature-empty">Every fusion here is seen!</div>'
+        : '<div class="creature-empty">No partners match those filters.</div>';
       return;
     }
     virtualizeGrid({
@@ -14877,6 +14902,19 @@
         });
       },
     });
+  }
+
+  // A species dex's rows: the partners whose name matches the search and
+  // whose row has a fusion (X×P or P×X) that passes the type filters, and,
+  // with incompleteOnly, is also unseen. So a row stays while either of its
+  // fusions is still to find, even if the other one is seen. Fusions that
+  // fail the type filter are dimmed by the caller.
+  function _speciesDexShownPartners(X, partners, { q, typeOk, seenIt, incompleteOnly }) {
+    const needle = (q || '').trim().toLowerCase();
+    const cellOk = (a, b) => typeOk(a, b) && (!incompleteOnly || !seenIt(a, b));
+    return partners.filter((p) =>
+      (!needle || speciesNameFor(p).toLowerCase().includes(needle))
+      && (cellOk(X, p) || cellOk(p, X)));
   }
 
   // ── Completion summary popup ───────────────────────────────────
