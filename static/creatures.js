@@ -524,7 +524,7 @@
   };
 
   // Candy Ball art: the Poké Ball's drawing (the throw animation splits
-  // the icon at its seam) with a sunny yellow top and a candy-pink button.
+  // the icon at its seam) with a sunny yellow top.
   function _candyBallIcon() {
     const svg =
       "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'>" +
@@ -532,7 +532,7 @@
       "<path d='M 1.5 12 A 10.5 10.5 0 0 1 22.5 12 Z' fill='#ffdb1f'/>" +
       "<line x1='1.5' y1='12' x2='22.5' y2='12' stroke='#1a1a1a' stroke-width='1.6'/>" +
       "<circle cx='12' cy='12' r='2.6' fill='#ffffff' stroke='#1a1a1a' stroke-width='1.2'/>" +
-      "<circle cx='12' cy='12' r='1.2' fill='#ff5fa2' stroke='#1a1a1a' stroke-width='0.7'/>" +
+      "<circle cx='12' cy='12' r='1.2' fill='#ffffff' stroke='#1a1a1a' stroke-width='0.7'/>" +
       "</svg>";
     return 'data:image/svg+xml,' + encodeURIComponent(svg);
   }
