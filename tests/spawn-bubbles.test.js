@@ -430,14 +430,12 @@ const halvesFrom = (c, pr) => {
   ok(on < off * 1.5 + 5, '12: bubbles add little to a cold refresh');
 }
 
-// ── 13. Centre snapping (Settings → Snap bubble centers): the centre
-// pokémon moves, the bubble doesn't ─────────────────────────────────────
+// ── 13. Centre snapping (Settings → Snap bubble centers): the bubble — its
+// centre pokémon and its area — moves to the snapped spot ───────────────
 {
   const box = (lat, lng, pad) => [lng - pad, lat - pad, lng + pad, lat + pad];
   const raw = S.bubbleCentersInBbox(box(B.lat, B.lng, 0.001), NOW)[0];
   const bubblesBefore = JSON.stringify(S.bubblesNear(MTL[0], MTL[1], 3000, NOW));
-  const sample = Array.from(plainById.keys()).slice(0, 200);
-  const spawnsBefore = JSON.stringify(sample.map((id) => { const [cx, cy, t] = id.split(':').map(Number); return S.generateCellAtTick(cx, cy, t, NOW); }));
   // Moves the centre 0.004° north (~445 m) — onto "a road".
   let answer = 'north', calls = 0;
   S.setBubbleSnapProvider((lat, lng) => {
@@ -478,22 +476,73 @@ const halvesFrom = (c, pr) => {
   ok(JSON.stringify(at(B.lat, B.lng)) === JSON.stringify(raw), '13: legendary snapping leaves centres alone');
   S.setLegendarySnapProvider(null);
   ok(JSON.stringify(at(B.lat, B.lng)) === JSON.stringify(raw), '13: off → the centre is back at the bubble centre');
-  // Where spawns lean never moves (same bubble centres, same spawns); the
-  // overlay draws each bubble around its centre pokémon (centerLat/Lng).
-  S.setBubbleSnapProvider((lat, lng) => ({ lat: lat + 0.004, lng, kind: 'road' }));
+  // The whole bubble moves with it: its area (density ramp, which spawns
+  // carry its pair) centres on the snapped spot, and the overlay draws it
+  // there. Every bubble is moved 0.004° north (~445 m) from here on.
+  const N4 = 0.004;
+  const north4 = (lat, lng) => ({ lat: lat + N4, lng, kind: 'road' });
+  S.setBubbleSnapProvider(north4);
   const near = S.bubblesNear(MTL[0], MTL[1], 3000, NOW);
-  const strip = (list) => JSON.stringify(list.map(({ centerLat, centerLng, ...rest }) => rest));
-  ok(strip(near) === strip(JSON.parse(bubblesBefore)), '13: bubble centres (where spawns lean) unchanged');
   ok(JSON.parse(bubblesBefore).every((b) => b.centerLat === b.lat && b.centerLng === b.lng),
     '13: snapping off → drawn at the bubble centre');
-  ok(near.every((b) => Math.abs(b.centerLat - (b.lat + 0.004)) < 1e-12 && b.centerLng === b.lng),
-    '13: snapping on → drawn around the snapped centre pokémon');
+  ok(near.length > 0 && near.every((b) => Math.abs(b.centerLat - (b.lat + N4)) < 1e-12 && b.centerLng === b.lng),
+    '13: snapping on → drawn around the snapped spot');
+  const fB = (lat, lng) => (T.around(lat, lng, NOW).find((e) => e.id === B.id) || { f: 0 }).f;
+  ok(fB(B.lat + N4, B.lng) > 0.99, '13: its area is centred on the snapped spot');
+  ok(Math.abs(fB(B.lat, B.lng) - (1 - N4 * M_PER_DEG / 500)) < 0.01, '13: and the rolled spot is ~445 m off-centre now');
+  // Cells near the new centre that only B covers, and cells no bubble
+  // covers with snapping on or off.
+  const nLat = B.lat + N4;
+  const nearCells = [], freeCells = [];
+  for (let cx = Math.floor((nLat - 0.006 + 90) * SCALE); cx <= Math.floor((nLat + 0.006 + 90) * SCALE); cx += 3) {
+    for (let cy = Math.floor((B.lng - 0.008 + 180) * SCALE); cy <= Math.floor((B.lng + 0.008 + 180) * SCALE); cy += 3) {
+      const lat = (cx + 0.5) / SCALE - 90, lng = (cy + 0.5) / SCALE - 180;
+      const on = T.around(lat, lng, NOW);
+      if (distM(lat, lng, nLat, B.lng) < 400 && on.length === 1 && on[0].id === B.id) nearCells.push([cx, cy]);
+      else if (!on.length) freeCells.push([cx, cy]);
+    }
+  }
+  S.setBubbleSnapProvider(null);
+  const freeBoth = freeCells.filter(([cx, cy]) => !T.around((cx + 0.5) / SCALE - 90, (cy + 0.5) / SCALE - 180, NOW).length);
+  const gen = (cells, ticks) => {
+    const out = new Map();
+    for (const [cx, cy] of cells) for (let t = tick0; t < tick0 + ticks; t++) { const p = S.generateCellAtTick(cx, cy, t, NOW); if (p) out.set(p.id, p); }
+    return out;
+  };
+  const freeOff = gen(freeBoth, 300);
+  S.setBubbleSnapProvider(north4);
+  const nearOn = gen(nearCells, 400), freeOn = gen(freeBoth, 300);
+  const carries = (p) => [p.speciesA, p.speciesB].some((sp) => sp === P || sp === SEC);
+  ok(nearOn.size > 50 && Array.from(nearOn.values()).every(carries),
+    `13: every spawn within 400 m of the snapped centre carries the pair (${nearOn.size})`);
+  ok(freeBoth.length > 50 && freeOff.size > 20 && JSON.stringify([...freeOff]) === JSON.stringify([...freeOn]),
+    `13: spawns away from every bubble (snapped or not) are untouched (${freeOn.size})`);
+  // Pack mode follows the same moved areas, so its spawns still co-locate.
+  const pk = { id: 'test', types: ['PLAIN', 'FLUFFY'], monsters: [0, 1, 2, 3].map((k) => ({ key: 'm' + k, types: [k % 2 ? 'FLUFFY' : 'PLAIN'] })), rares: [] };
+  S.setPack(pk);
+  const nearPack = gen(nearCells, 400);
+  S.setPack(null);
+  S.setBubbleSnapProvider(north4);
+  ok(nearPack.size === nearOn.size && Array.from(nearOn.values()).every((f) => { const q = nearPack.get(f.id); return q && q.lat === f.lat && q.lng === f.lng; }),
+    '13: pack spawns stand exactly where fusion spawns do around a snapped bubble');
+  // Still loading → the bubble stays put; once known, the next scans redo
+  // the memoized spawns around the new spot.
+  let known = false;
+  S.setBubbleSnapProvider((lat, lng) => (known ? north4(lat, lng) : undefined));
+  const scanBox = [B.lng - 0.004, nLat - 0.003, B.lng + 0.004, nLat + 0.003];
+  const inNear = (list) => list.filter((p) => /^\d/.test(p.id) && nearCells.some(([cx, cy]) => p.id.startsWith(cx + ':' + cy + ':')));
+  const shareCarrying = (list) => { const l = inNear(list); return { n: l.length, k: l.filter(carries).length }; };
+  const before = shareCarrying(S.spawnsInBbox(scanBox, NOW));
+  ok(S.bubblesNear(B.lat, B.lng, 100, NOW).some((b) => b.id === B.id && b.centerLat === B.lat), '13: while loading, the bubble stays where it rolled');
+  known = true;
+  S.spawnsInBbox(scanBox, NOW);                 // asks again: now known, moves the area
+  const after = shareCarrying(S.spawnsInBbox(scanBox, NOW));
+  console.log(`snap: spawns near the snapped centre carrying the pair — ${before.k}/${before.n} while loading, ${after.k}/${after.n} once known`);
+  ok(before.n > 5 && before.k < before.n, '13: while loading, spawns near the new spot still follow the old area');
+  ok(after.n > 5 && after.k === after.n, '13: once known, the memoized spawns are redone around the new spot');
   S.setBubbleSnapProvider(() => null);
   ok(S.bubblesNear(MTL[0], MTL[1], 3000, NOW).every((b) => b.centerLat === b.lat),
-    '13: a hidden centre (nothing in reach) leaves the bubble drawn where it is');
-  S.setBubbleSnapProvider((lat, lng) => ({ lat: lat + 0.004, lng, kind: 'road' }));
-  ok(JSON.stringify(sample.map((id) => { const [cx, cy, t] = id.split(':').map(Number); return S.generateCellAtTick(cx, cy, t, NOW); })) === spawnsBefore,
-    '13: spawns in and around the bubble unchanged');
+    '13: nothing within reach → the bubble stays where it rolled (its pokémon hidden)');
   S.setBubbleSnapProvider(null);
 }
 

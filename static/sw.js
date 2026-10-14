@@ -126,6 +126,8 @@ const TILES_CACHE = 'tiles-v1';
 // roads/POIs" and a faster grid-based snap lookup.
 // Shell bump 2026-10-14 (#25): index.html's snap skips uncategorised POIs
 // (ponds, lakes, rivers — their point is in the water).
+// Shell bump 2026-10-14 (#26): index.html's "Snap bubble centers" tooltip
+// (the whole bubble moves now).
 
 const APP_SHELL = [
   '/',

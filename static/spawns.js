@@ -850,9 +850,18 @@
   // different downloaded map data, but spawn ids are unaffected.
   const SNAP_CACHE_MAX = 256;
   const _legSnap = { provider: null, cache: new Map() };
-  const _bubSnap = { provider: null, cache: new Map() };
+  const _bubSnap = { provider: null, cache: new Map(), gen: 0 };
   function setLegendarySnapProvider(fn) { _legSnap.provider = fn || null; _legSnap.cache.clear(); }
-  function setBubbleSnapProvider(fn) { _bubSnap.provider = fn || null; _bubSnap.cache.clear(); }
+  // A bubble's whole area follows its snapped centre (see _bubbleArea), so
+  // switching providers re-places areas: drop every memoized spawn too.
+  function setBubbleSnapProvider(fn) {
+    _bubSnap.provider = fn || null;
+    _bubSnap.cache.clear();
+    _bubSnap.gen++;
+    _bubblesPending.clear();
+    _ctMemo.clear(); _ctMemoSampler = null;
+    _incMemo.clear();
+  }
   function _applySnap(snap, p) {
     if (!snap.provider) return p;
     if (snap.cache.has(p.id)) {
@@ -1196,6 +1205,12 @@
   //    forms (where they exist) of the primary and the secondary.
   // All of it is seeded from (square, day) only, so every player sees the
   // same bubbles. A spawn follows the bubbles of the day it was born.
+  // Centre snapping (Settings → Snap bubble centers; setBubbleSnapProvider)
+  // moves a bubble — its centre pokémon, its density ramp and which spawns
+  // carry its pair — to the nearest road, path or POI, once that's known on
+  // this device (see _bubbleArea). That spot depends on the device's
+  // downloaded map data, so near a snapped bubble's edge players with
+  // different settings or downloads can see slightly different spawns.
   // Pack mode gets the same bubbles (density + pair, over monsters), so its
   // spawns still stand exactly where fusion-mode spawns do, but no centre
   // spawn (packs have no radar stream). Focus mode's rollWildEncounter has
@@ -1244,6 +1259,44 @@
     _bubbleCache.set(id, b);
     return b;
   }
+  // Where a bubble's area is centred: its own centre, or with centre
+  // snapping on, wherever its centre pokémon is snapped to — once the
+  // provider knows (a hidden centre, nothing in reach, keeps the bubble
+  // where it is). While the answer is still loading the bubble stays put
+  // and is asked again at most once per spawn scan — at each scan's start
+  // too (_bubbleAreasRecheck), since its memoized spawns won't ask. When an
+  // answer moves a bubble that spawns were already made around, the
+  // memoized spawns are dropped so they follow. Returns b itself or
+  // { lat, lng, cosLat }.
+  let _bubbleAreaDirty = false;
+  const _bubblesPending = new Set();
+  function _bubbleArea(b) {
+    if (!_bubSnap.provider) return b;
+    if (b.areaGen === _bubSnap.gen) return b.area;
+    const id = 'E:B:' + b.id;
+    if (!_bubSnap.cache.has(id)) {
+      if (b.askGen === _bubSnap.gen && b.askScan === _ctScan) return b;
+      b.askGen = _bubSnap.gen; b.askScan = _ctScan;
+      _applySnap(_bubSnap, { id, lat: b.lat, lng: b.lng });
+      if (!_bubSnap.cache.has(id)) { b.pendingGen = _bubSnap.gen; _bubblesPending.add(b); return b; }
+    }
+    _bubblesPending.delete(b);
+    const t = _bubSnap.cache.get(id);
+    b.areaGen = _bubSnap.gen;
+    b.area = t ? { lat: t.lat, lng: t.lng, cosLat: Math.cos(t.lat * Math.PI / 180) } : b;
+    if (t && b.pendingGen === _bubSnap.gen) _bubbleAreaDirty = true;
+    return b.area;
+  }
+  // Start of a spawn scan (after _ctScan moved on): ask still-loading
+  // bubbles again, and drop memoized spawns if one has moved since they
+  // were made.
+  function _bubbleAreasRecheck() {
+    for (const b of Array.from(_bubblesPending)) {
+      if (b.pendingGen !== _bubSnap.gen) _bubblesPending.delete(b);
+      else _bubbleArea(b);
+    }
+    if (_bubbleAreaDirty) { _bubbleAreaDirty = false; _ctMemo.clear(); _incMemo.clear(); }
+  }
   function _bubbleDistM(b, lat, lng) {
     let dLng = lng - b.lng;
     if (dLng > 180) dLng -= 360; else if (dLng < -180) dLng += 360;
@@ -1253,18 +1306,21 @@
   }
   // The bubbles whose circle holds (lat, lng) on `day`, each with its
   // closeness f = 1 − d/R (1 at the centre, 0 at the edge). A square is
-  // wider than a bubble, so only the 3×3 squares around the point matter.
+  // wider than a bubble, so only the 3×3 squares around the point matter —
+  // 5×5 with centre snapping on (a snapped area can sit up to
+  // BUBBLE_SNAP_PAD_M from its square's bubble).
   function _bubblesAround(lat, lng, day) {
     const out = [];
     if (!_bubblesEnabled) return out;
+    const reach = _bubSnap.provider ? 2 : 1;
     const j0 = Math.floor((lat + 90) / BUBBLE_LAT_STEP);
-    for (let j = j0 - 1; j <= j0 + 1; j++) {
+    for (let j = j0 - reach; j <= j0 + reach; j++) {
       const band = _bubbleBand(j);
       const i0 = Math.floor((lng + 180) / band.lngStep);
-      for (let i = i0 - 1; i <= i0 + 1; i++) {
+      for (let i = i0 - reach; i <= i0 + reach; i++) {
         const b = _bubbleAt(day, j, i);
         if (out.some((e) => e.b === b)) continue;   // tiny polar bands wrap onto themselves
-        const d = _bubbleDistM(b, lat, lng);
+        const d = _bubbleDistM(_bubbleArea(b), lat, lng);
         if (d < BUBBLE_RADIUS_M) out.push({ b, f: 1 - d / BUBBLE_RADIUS_M });
       }
     }
@@ -1456,8 +1512,7 @@
   // With centre snapping on (setBubbleSnapProvider) a centre stands where
   // the provider puts it — up to BUBBLE_SNAP_PAD_M from its bubble's centre
   // — so squares that far around the box are looked at too, and the box
-  // test uses where it stands. The bubble itself (its circle, density and
-  // pair) never moves: that part is the same for every player.
+  // test uses where it stands. The bubble's area moves with it (_bubbleArea).
   const BUBBLE_SNAP_PAD_M = 2000;
   function bubbleCentersInBbox(bbox, nowMs) {
     const now = nowMs == null ? Date.now() : nowMs;
@@ -1483,28 +1538,23 @@
   }
   // Today's bubbles with a centre within radiusM of a point, nearest first,
   // for the map overlay: [{ id, lat, lng, radiusM, distM, centerLat,
-  // centerLng }]. lat/lng is the bubble's own centre (where its spawns
-  // lean, the same for everyone); centerLat/centerLng is where its centre
-  // pokémon stands — moved there by centre snapping once that's known,
-  // else the same spot. The overlay draws the bubble around the latter so
-  // a snapped bubble isn't drawn out in a river.
+  // centerLng }]. lat/lng is the bubble's rolled centre; centerLat/centerLng
+  // is where it stands — its area and centre pokémon, moved by centre
+  // snapping once that's known (_bubbleArea), else the same spot. distM is
+  // to where it stands; the overlay draws it there.
   function bubblesNear(lat, lng, radiusM, nowMs) {
     if (lat == null || lng == null || !isFinite(lat) || !isFinite(lng)) return [];
     const now = nowMs == null ? Date.now() : nowMs;
     const r = radiusM || 3000;
     const cosLat = Math.max(0.05, Math.cos(lat * Math.PI / 180));
-    const latPad = r / BUBBLE_M_PER_DEG, lngPad = r / (BUBBLE_M_PER_DEG * cosLat);
+    const pad = r + (_bubSnap.provider ? BUBBLE_SNAP_PAD_M : 0);
+    const latPad = pad / BUBBLE_M_PER_DEG, lngPad = pad / (BUBBLE_M_PER_DEG * cosLat);
     const out = [];
     for (const b of _bubblesInBox(lng - lngPad, lat - latPad, lng + lngPad, lat + latPad, Math.floor(now / DAY_MS))) {
-      const d = _bubbleDistM(b, lat, lng);
+      const a = _bubbleArea(b);
+      const d = _bubbleDistM(a, lat, lng);
       if (d > r) continue;
-      let cLat = b.lat, cLng = b.lng;
-      if (_bubSnap.provider && !_pack) {
-        const c = _bubbleCenterSpawn(b);
-        const sp = c && _applySnap(_bubSnap, c);
-        if (sp) { cLat = sp.lat; cLng = sp.lng; }
-      }
-      out.push({ id: b.id, lat: b.lat, lng: b.lng, radiusM: BUBBLE_RADIUS_M, distM: d, centerLat: cLat, centerLng: cLng });
+      out.push({ id: b.id, lat: b.lat, lng: b.lng, radiusM: BUBBLE_RADIUS_M, distM: d, centerLat: a.lat, centerLng: a.lng });
     }
     out.sort((x, y) => x.distM - y.distM);
     return out;
@@ -1808,6 +1858,7 @@
     // hard-cut when the 30-minute window ends (handled by incenseActiveAt).
     const firstTick = curTick - LIFETIME_TICKS;
     const scan = ++_ctScan;
+    _bubbleAreasRecheck();
     const gen = (cx, cy, t) => generateIncenseCellAtTick(cx, cy, t, inc.type, now);
     const out = [];
     for (let cx = minLatCell; cx <= maxLatCell; cx++) {
@@ -1882,12 +1933,13 @@
     // birth toward the end of that minute.
     const firstTick = curTick - LIFETIME_TICKS;
     // Memo maintenance — see the block comment above _ctMemo.
+    const scan = ++_ctScan;
+    _bubbleAreasRecheck();
     const sampler = getTypePairSampler();
     if (sampler !== _ctMemoSampler) {
       _ctMemo.clear();
       _ctMemoSampler = sampler;
     }
-    const scan = ++_ctScan;
     const gen = (cx, cy, t) => generateCellAtTick(cx, cy, t, now);
     const store = !!sampler;
     const out = [];
@@ -1996,6 +2048,7 @@
       around: (lat, lng, nowMs) => _bubblesAround(lat, lng, Math.floor(nowMs / DAY_MS))
         .map((e) => ({ id: e.b.id, lat: e.b.lat, lng: e.b.lng, f: e.f })),
       pair: (id) => { const [d, j, i] = id.split(':').map(Number); return _bubblePair(_bubbleAt(d, j, i)); },
+      area: (id) => { const [d, j, i] = id.split(':').map(Number); const a = _bubbleArea(_bubbleAt(d, j, i)); return { lat: a.lat, lng: a.lng }; },
       mix: (day) => _bubbleDayMix(day),
       forwardForms: (sp) => _forwardForms(sp),
     },
