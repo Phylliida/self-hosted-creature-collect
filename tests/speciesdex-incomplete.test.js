@@ -92,5 +92,39 @@ ok(/incompleteBtn\.classList\.toggle\('is-active', _incompleteOnly\)/.test(rende
 ok(/Every fusion here is seen!/.test(render), 'all-seen empty state');
 ok(/\.speciesdex-incomplete\.is-active/.test(src), 'active chip styling');
 
+// ── Back-nav: each dex entry remembers the toggle it was left with ──
+// (On in species X's dex → wander off → open X's dex again → turn it
+// off → Back all the way: the first X dex is on again.)
+const capture = matchFn('function _captureCurrentFilters()');
+ok(/incompleteOnly: _incompleteOnly/.test(capture), 'pushing off a dex entry snapshots incompleteOnly');
+const restoreSrc = matchFn('function _restoreDexToggles(f)');
+for (const view of ['completion', 'speciesdex']) {
+  const at = src.indexOf(`case '${view}': {`);
+  ok(at > 0 && /_restoreDexToggles\(top\.filters\)/.test(src.slice(at, at + 700)), `back into ${view} restores the toggles`);
+}
+{
+  const box = { _nonEvolvedOnly: false, _incompleteOnly: false };
+  vm.createContext(box);
+  vm.runInContext('var _nonEvolvedOnly = false, _incompleteOnly = false;\n' + restoreSrc
+    + '\nthis.restore = _restoreDexToggles; this.get = () => [_nonEvolvedOnly, _incompleteOnly];'
+    + '\nthis.set = (n, i) => { _nonEvolvedOnly = n; _incompleteOnly = i; };', box);
+  // A stack walked the user's way; each push snapshots the live toggles.
+  const stack = [];
+  const push = (view) => { if (stack.length) { const [n, i] = box.get(); stack[stack.length - 1].filters = { nonEvolvedOnly: n, incompleteOnly: i }; } stack.push({ view }); };
+  const pop = () => { stack.pop(); const top = stack[stack.length - 1]; if (top.view === 'speciesdex' || top.view === 'completion') box.restore(top.filters); return box.get()[1]; };
+  push('completion'); push('speciesdex');
+  box.set(false, true);                       // Incomplete Only on
+  push('fusion'); push('pokedex'); push('completion'); push('speciesdex');
+  ok(box.get()[1] === true, 'the second X dex opens with it still on (carried)');
+  box.set(false, false);                      // turned off there
+  const seen = [pop(), pop(), pop(), pop()];  // → completion, pokedex, fusion, first X dex
+  ok(seen[3] === true, `Back to the first X dex: on again (${seen})`);
+  ok(pop() === false && stack[stack.length - 1].view === 'completion',
+    'the completion list below gets what it was left with (off: it was turned on later, in the dex)');
+  box.set(true, true);
+  box.restore({ nonEvolvedOnly: false });     // an entry saved before this snapshot existed
+  ok(box.get()[0] === false && box.get()[1] === true, 'old entries without incompleteOnly leave it alone');
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

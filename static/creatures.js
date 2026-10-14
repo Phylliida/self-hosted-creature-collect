@@ -10734,10 +10734,12 @@
         panel.querySelector('.tags-view').classList.add('show');
         return;
       case 'completion': {
-        // Back-nav: restore the non-evolved toggle state this entry was
-        // left with. Fresh pushes carry no snapshot and keep the shared
-        // current value (that's what carries the filter INTO this view).
-        if (top.filters) _nonEvolvedOnly = !!top.filters.nonEvolvedOnly;
+        // Back-nav: restore the shared toggles this entry was left with
+        // (incomplete-only only matters on species dexes, but carrying
+        // it here too keeps it consistent with what you go on to open).
+        // Fresh pushes carry no snapshot and keep the shared current
+        // value (that's what carries the filter INTO this view).
+        _restoreDexToggles(top.filters);
         // Back-nav also restores the name/type filters; a fresh push
         // starts with an empty name search.
         _applyDexFilters(panel, 'completion', top.filters || null);
@@ -10750,8 +10752,8 @@
         return;
       }
       case 'speciesdex': {
-        // Same non-evolved toggle restore as the completion case above.
-        if (top.filters) _nonEvolvedOnly = !!top.filters.nonEvolvedOnly;
+        // Same toggle restore as the completion case above.
+        _restoreDexToggles(top.filters);
         _applyDexFilters(panel, 'speciesdex', top.filters || null);
         panel.querySelector('.speciesdex-view').classList.add('show');
         const sheet = panel.querySelector('.sheet');
@@ -10896,6 +10898,14 @@
     const sortBy = panel.querySelector('#creatureSortBy');
     if (sortBy && f.sortBy) sortBy.value = f.sortBy;
   }
+  // Back-nav into a completion / species-dex entry: put the shared dex
+  // toggles back the way that entry was left (entries saved before
+  // incompleteOnly was snapshotted leave it as it is).
+  function _restoreDexToggles(f) {
+    if (!f) return;
+    _nonEvolvedOnly = !!f.nonEvolvedOnly;
+    if (typeof f.incompleteOnly === 'boolean') _incompleteOnly = f.incompleteOnly;
+  }
   function _captureCurrentFilters() {
     const panel = document.getElementById('creatureInventory');
     if (!panel) return;
@@ -10906,9 +10916,10 @@
     } else if (top.view === 'browse') {
       top.filters = _captureInventoryFilters(panel);
     } else if (top.view === 'completion' || top.view === 'speciesdex') {
-      // The shared non-evolved toggle plus this view's name/type
-      // filters, so back-nav restores the state the view was left in.
-      top.filters = Object.assign({ nonEvolvedOnly: _nonEvolvedOnly },
+      // The shared non-evolved / incomplete toggles plus this view's
+      // name/type filters, so back-nav restores the state the view was
+      // left in.
+      top.filters = Object.assign({ nonEvolvedOnly: _nonEvolvedOnly, incompleteOnly: _incompleteOnly },
         _captureDexFilters(panel, top.view));
     }
   }
@@ -15361,8 +15372,10 @@
   // "Incomplete only" on a species dex: hide the partner rows whose two
   // fusions are both seen, so the grid lists only what's left to find. A
   // row with one seen and one unseen fusion stays, both cells shown.
-  // Session-local; it isn't snapshotted per view, so it stays on as you go
-  // from one species dex to the next.
+  // Session-local and shared like _nonEvolvedOnly: it carries into the
+  // next species dex you open, and each dex entry snapshots it on push
+  // (_captureCurrentFilters) so Back returns that dex to the state it
+  // was left in, whatever it was toggled to further up the stack.
   let _incompleteOnly = false;
 
   // Name + type filters on the completion list and a species dex. The
