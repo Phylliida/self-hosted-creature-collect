@@ -6446,6 +6446,7 @@
       #creatureInventory .focus-back,
       #creatureInventory .tags-back,
       #creatureInventory .gifts-back,
+      #creatureInventory .gift-back,
       #creatureInventory .giftcreate-back,
       #creatureInventory .completion-back,
       #creatureInventory .speciesdex-back {
@@ -6502,6 +6503,7 @@
       #creatureInventory .focus-back:hover,
       #creatureInventory .tags-back:hover,
       #creatureInventory .gifts-back:hover,
+      #creatureInventory .gift-back:hover,
       #creatureInventory .giftcreate-back:hover,
       #creatureInventory .completion-back:hover,
       #creatureInventory .speciesdex-back:hover {
@@ -8161,8 +8163,10 @@
       }
       /* ── Gifts ── */
       #creatureInventory .gifts-view,
+      #creatureInventory .gift-view,
       #creatureInventory .giftcreate-view { display: none; }
       #creatureInventory .gifts-view.show,
+      #creatureInventory .gift-view.show,
       #creatureInventory .giftcreate-view.show { display: flex; flex-direction: column; }
       #creatureInventory .gifts-section {
         font-size: 12px; font-weight: 600; color: var(--ui-muted, #666);
@@ -8201,9 +8205,21 @@
         background: none; border: none; color: var(--ui-muted, #666); cursor: pointer;
         text-decoration: underline; text-underline-offset: 3px;
       }
-      button.gift-poke-link { font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
-        background: transparent; color: var(--ui-text, #111); }
-      #ccInfoModal .gift-row-in { cursor: pointer; margin: 0 0 10px; }
+      /* The pokémon in a gift: its art beside its name. Big in the gift
+         view (a link to its page once opened), a small icon in lists. */
+      .gift-poke {
+        display: flex; align-items: center; gap: 10px; width: 100%; box-sizing: border-box;
+        padding: 6px 10px; font: inherit; font-size: 13px; font-weight: 600; text-align: left;
+        color: var(--ui-text, #111); background: transparent;
+        border: 1px solid var(--ui-accent, #b06cff); border-radius: var(--ui-radius, 8px);
+      }
+      .gift-poke-img { flex: none; width: 72px; height: 72px; object-fit: contain; image-rendering: pixelated; }
+      .gift-poke-img:not([src]) { visibility: hidden; }
+      .gift-poke-name { flex: 1; min-width: 0; }
+      .gift-poke-go { flex: none; font-size: 18px; color: var(--ui-accent, #b06cff); }
+      button.gift-poke-link { cursor: pointer; }
+      .gift-poke.gift-poke-sm { gap: 6px; padding: 2px 8px 2px 4px; font-size: 12px; }
+      .gift-poke-sm .gift-poke-img { width: 40px; height: 40px; }
       #creatureInventory .gift-older { align-self: center; margin: 4px auto 12px; display: block; }
       #creatureInventory .detail-gift-from {
         text-align: center; font-size: 12px; margin: -2px 0 8px; cursor: pointer;
@@ -9895,6 +9911,11 @@
           <h3 class="subview-title">Gifts</h3>
           <div class="gifts-body"></div>
         </div>
+        <div class="gift-view">
+          <button class="gift-back" type="button" aria-label="back">←</button>
+          <h3 class="subview-title gift-title">Gift</h3>
+          <div class="gift-body"></div>
+        </div>
         <div class="giftcreate-view">
           <button class="giftcreate-back" type="button" aria-label="back">←</button>
           <h3 class="subview-title">Send a gift</h3>
@@ -10286,6 +10307,7 @@
     panel.querySelector('.craft-back').addEventListener('click', _craftBack);
     panel.querySelector('.focus-back').addEventListener('click', popView);
     panel.querySelector('.gifts-back').addEventListener('click', popView);
+    panel.querySelector('.gift-back').addEventListener('click', popView);
     panel.querySelector('.giftcreate-back').addEventListener('click', popView);
     panel.querySelector('.gift-pick-cancel').addEventListener('click', popView);
     const focusInfo = panel.querySelector('.focus-info');
@@ -10583,6 +10605,7 @@
     panel.querySelector('.craft-view').classList.remove('show');
     panel.querySelector('.focus-view').classList.remove('show');
     panel.querySelector('.gifts-view').classList.remove('show');
+    panel.querySelector('.gift-view').classList.remove('show');
     panel.querySelector('.giftcreate-view').classList.remove('show');
     // Collection list in pick mode (Send a gift → Choose a pokémon).
     panel.classList.toggle('cc-gift-pick', top.view === 'browse' && top.pick === 'gift');
@@ -10697,6 +10720,10 @@
       case 'gifts':
         renderGifts();
         panel.querySelector('.gifts-view').classList.add('show');
+        return;
+      case 'gift':
+        renderGiftView(top);
+        panel.querySelector('.gift-view').classList.add('show');
         return;
       case 'giftCreate':
         renderGiftCreate();
@@ -12688,10 +12715,19 @@
   }
   // A gift as a card: who, when, photo, message, place, what's inside.
   // Received photos aren't on the record (see _giftStoreReceived): the
-  // caller passes o.photo (full size, the gift popup) or o.thumb (lists,
-  // with o.compact: a small square beside the text). In the full card the
-  // pokémon (o.creatureId: what it became once opened) and a place with
-  // coordinates are links; _wireGiftLinks wires them.
+  // caller passes o.photo (full size, the gift view) or o.thumb (lists,
+  // with o.compact: a small square beside the text). The pokémon shows
+  // with its art (_loadGiftSprites fills it in): big in the gift view,
+  // where it links to its page once opened (o.creatureId), a small icon
+  // in lists. A place with coordinates links to the map. _wireGiftLinks
+  // wires both.
+  function _giftPokeImg(c) {
+    const shiny = typeof c.shinyVariant === 'number' ? c.shinyVariant : '';
+    return c.solo
+      ? `<img class="gift-poke-img" alt="" data-solo="${escapeHtml(c.solo)}" data-shiny="${shiny}">`
+      : `<img class="gift-poke-img" alt="" data-a="${Number(c.speciesA)}" data-b="${Number(c.speciesB)}"`
+        + ` data-v="${typeof c.variant === 'number' ? c.variant : 'auto'}" data-shiny="${shiny}">`;
+  }
   function _giftCardHtml(g, opts) {
     const o = opts || {};
     const sentTo = o.outgoing ? `To <b>${escapeHtml(g.to)}</b>` : `From <b>${escapeHtml(g.from)}</b>`;
@@ -12700,11 +12736,18 @@
       const meta = getItemMeta(g.item.key) || {};
       contents.push(`<span class="gift-chip">${meta.icon ? `<img src="${escapeHtml(meta.icon)}" alt="">` : ''}${escapeHtml(_giftItemLabel(g.item))}</span>`);
     }
-    if (g.creature) {
-      const label = escapeHtml(_giftCreatureLabel(g.creature));
-      contents.push(!o.compact && o.creatureId
-        ? `<button class="gift-chip gift-chip-poke gift-poke-link" type="button" data-cid="${escapeHtml(o.creatureId)}" title="see this pokémon">${label} ›</button>`
-        : `<span class="gift-chip gift-chip-poke">${label}</span>`);
+    let pokeHtml = '';
+    const c = g.creature;
+    if (c && (c.solo || (Number.isInteger(c.speciesA) && Number.isInteger(c.speciesB)))) {
+      const label = escapeHtml(_giftCreatureLabel(c));
+      if (o.compact) {
+        pokeHtml = `<div class="gift-poke gift-poke-sm">${_giftPokeImg(c)}<span class="gift-poke-name">${label}</span></div>`;
+      } else if (o.creatureId) {
+        pokeHtml = `<button class="gift-poke gift-poke-link" type="button" data-cid="${escapeHtml(o.creatureId)}" title="see this pokémon">`
+          + `${_giftPokeImg(c)}<span class="gift-poke-name">${label}</span><span class="gift-poke-go">›</span></button>`;
+      } else {
+        pokeHtml = `<div class="gift-poke">${_giftPokeImg(c)}<span class="gift-poke-name">${label}</span></div>`;
+      }
     }
     const pl = g.place;
     const placeHtml = !pl ? ''
@@ -12717,33 +12760,34 @@
     if (o.compact) {
       return `<div class="gift-card gift-card-compact">`
         + (o.thumb ? `<img class="gift-thumb" src="${escapeHtml(o.thumb)}" alt="" loading="lazy">` : '')
-        + `<div class="gift-card-text">${head}${message}${placeHtml}${chips}</div></div>`;
+        + `<div class="gift-card-text">${head}${message}${placeHtml}${pokeHtml}${chips}</div></div>`;
     }
     return `<div class="gift-card">${head}`
       + (o.photo ? `<img class="gift-photo" src="${escapeHtml(o.photo)}" alt="">` : '')
-      + message + placeHtml + chips + `</div>`;
+      + message + placeHtml + pokeHtml + chips + `</div>`;
   }
-  // The pokémon a gift became (a chip on its card) → that pokémon's page;
-  // the place it was sent from → the map, like a pokémon's catch spot.
+  // Fill in the pokémon art _giftPokeImg left placeholders for.
+  function _loadGiftSprites(root) {
+    root.querySelectorAll('img.gift-poke-img').forEach((img) => {
+      const d = img.dataset;
+      const c = d.solo ? { solo: d.solo }
+        : { speciesA: Number(d.a), speciesB: Number(d.b), variant: d.v === 'auto' ? 'auto' : Number(d.v) };
+      const opts = d.shiny !== '' ? { shinyVariant: Number(d.shiny) } : {};
+      try { Promise.resolve(showCreatureArt(img, c, opts)).catch(() => {}); } catch {}
+    });
+  }
+  // The pokémon a gift became → that pokémon's page; the place it was
+  // sent from → the map, like a pokémon's catch spot. Both are ordinary
+  // panel navigation, so Back walks gift ↔ pokémon hops back in order.
   function _wireGiftLinks(root) {
     root.querySelectorAll('.gift-poke-link').forEach((b) => b.addEventListener('click', (e) => {
       e.stopPropagation();
-      _giftGoToCreature(b.dataset.cid);
+      showDetail(b.dataset.cid);
     }));
     root.querySelectorAll('.gift-place-link').forEach((b) => b.addEventListener('click', (e) => {
       e.stopPropagation();
-      _closeInfoModal();
       flyToCaughtLocation(Number(b.dataset.lat), Number(b.dataset.lng));
     }));
-  }
-  function _giftGoToCreature(id) {
-    _closeInfoModal();
-    const panel = document.getElementById('creatureInventory');
-    if (!panel || !panel.classList.contains('show')) show();
-    // Came here from that pokémon's own "Gift from" line: just close.
-    const top = _viewStack[_viewStack.length - 1];
-    if (top && top.view === 'detail' && top.id === id) return;
-    showDetail(id);
   }
   // The pokémon an opened gift became: remembered on the record since
   // this was added; older ones (and a new device's) are found by the
@@ -12770,53 +12814,59 @@
     if (res.creature) bits.push(escapeHtml(_giftCreatureLabel(res.gift.creature)) + ' joined your collection');
     return bits.length ? bits.join(' and ') + '.' : 'Opened.';
   }
-  // A received gift, full size, with its Open button (titled as new when
-  // it pops up after the save that brought it). The full photo is read
-  // only now, for this one gift. opts.push stacks it on the open popup
-  // (Back returns there); opts.from names the sender when the gift's card
-  // isn't on this phone (a pokémon's "Gift from" line on a new device
-  // whose gift history hasn't come back yet).
-  async function _showGiftModal(id, fresh, opts) {
-    const o = opts || {};
+  // One received gift, full size ({ view: 'gift', id }): photo, message,
+  // place, its pokémon, what else is inside, and Open. The full photo is
+  // read only here. top.fresh titles it as new (the save that brought
+  // it opened it); top.from names the sender when the gift's card isn't
+  // on this phone (a pokémon's "Gift from" line on a new device whose
+  // gift history hasn't come back yet).
+  let _giftViewSeq = 0;
+  async function renderGiftView(top) {
+    const panel = document.getElementById('creatureInventory');
+    const body = panel && panel.querySelector('.gift-body');
+    const title = panel && panel.querySelector('.gift-view .gift-title');
+    if (!body || !title) return;
+    const seq = ++_giftViewSeq;
+    let g = null, photo = null, creatureId = null;
     try {
       await _giftsReady();
-      const g = await _giftsGet('inbox', id);
-      if (!g) {
-        if (o.from) {
-          _openInfoModal({
-            title: `Gift from ${o.from}`,
-            html: `<div class="gift-opened-note">This gift’s card isn’t on this phone yet. It comes back with your next save.</div>`,
-          });
-        }
-        return;
+      g = await _giftsGet('inbox', top.id);
+      if (g) {
+        photo = g.hasPhoto ? await _giftsMediaGet(g.id + '/photo')
+          : (typeof g.photo === 'string' ? g.photo : null);
+        if (_giftOpenedIds().has(g.id)) creatureId = await _giftCaptureId(g);
       }
-      const photo = g.hasPhoto ? await _giftsMediaGet(id + '/photo')
-        : (typeof g.photo === 'string' ? g.photo : null);
-      let creatureId = _giftOpenedIds().has(g.id) ? await _giftCaptureId(g) : null;
-      let note = '';
-      const view = {
-        title: fresh ? `New gift from ${g.from}!` : `Gift from ${g.from}`,
-        html: () => _giftCardHtml(g, { photo, creatureId })
-          + (_giftOpenedIds().has(g.id)
-            ? `<div class="gift-opened-note">${note || 'Opened.'}</div>`
-            : `<button class="gift-open-btn" type="button">Open</button>`),
-        onWire: (root, content) => {
-          _wireGiftLinks(content);
-          const b = content.querySelector('.gift-open-btn');
-          if (b) b.addEventListener('click', async () => {
-            b.disabled = true;
-            const res = await openGift(g.id);
-            note = res ? _giftOpenedSummary(res) : 'Opened.';
-            if (res && res.creature) creatureId = res.creature.id;
-            _renderInfoModalTop();
-          });
-        },
-      };
-      if (o.push && _infoModalStack.length) _pushInfoView(view);
-      else _openInfoModal(view);
-    } catch (e) { _logCreatureError('gifts/modal', e); }
+    } catch (e) { _logCreatureError('gifts/view', e); }
+    if (seq !== _giftViewSeq || _viewStack[_viewStack.length - 1] !== top) return;
+    revokeObjectUrlsIn(body);
+    if (!g) {
+      title.textContent = top.from ? `Gift from ${top.from}` : 'Gift';
+      body.innerHTML = `<div class="gift-opened-note">This gift’s card isn’t on this phone yet. It comes back with your next save.</div>`;
+      return;
+    }
+    const opened = _giftOpenedIds().has(g.id);
+    title.textContent = top.fresh && !opened ? `New gift from ${g.from}!` : `Gift from ${g.from}`;
+    body.innerHTML = _giftCardHtml(g, { photo, creatureId })
+      + (opened
+        ? `<div class="gift-opened-note">${top.note || 'Opened.'}</div>`
+        : `<button class="gift-open-btn" type="button">Open</button>`);
+    _wireGiftLinks(body);
+    _loadGiftSprites(body);
+    const sheet = panel.querySelector('.sheet');
+    if (sheet) sheet.scrollTop = top.scrollY || 0;
+    const b = body.querySelector('.gift-open-btn');
+    if (b) b.addEventListener('click', async () => {
+      b.disabled = true;
+      const res = await openGift(g.id);
+      top.note = res ? _giftOpenedSummary(res) : 'Opened.';
+      if (_viewStack[_viewStack.length - 1] === top) renderGiftView(top);
+    });
   }
-  // After a save brought new gifts: pop them up, once each.
+  // After a save brought new gifts: open the panel on them, once each —
+  // on the gift itself when there's one, else on Bag → Gifts (newest
+  // first, each with its Open button). Built as the stack you'd have
+  // walked (collection → Bag → Gifts → gift), so Back goes up through
+  // it; if the panel is already open, they go on top of where you are.
   async function showNewGifts() {
     let inbox;
     try { await _giftsReady(); inbox = await _giftsAll('inbox'); }
@@ -12827,35 +12877,19 @@
     inbox = null;
     if (!fresh.length) return;
     for (const g of fresh) { g.announced = true; await _giftsPut('inbox', g); }
-    if (fresh.length === 1) { _showGiftModal(fresh[0].id, true); return; }
-    const shown = fresh.slice(0, 6);
-    let thumbs = {};
-    try { thumbs = await _giftThumbs(shown); } catch (e) { _logCreatureError('gifts/new-thumbs', e); }
-    const notes = {};
-    _openInfoModal({
-      title: `${fresh.length} new gifts!`,
-      html: () => shown.map((g) => `<div class="gift-row-in" data-id="${escapeHtml(g.id)}">`
-        + _giftCardHtml(g, { compact: true, thumb: thumbs[g.id] })
-        + (_giftOpenedIds().has(g.id)
-          ? `<div class="gift-opened-note">${notes[g.id] || 'Opened.'}</div>`
-          : `<button class="gift-open-btn" type="button" data-id="${escapeHtml(g.id)}">Open</button>`)
-        + `</div>`).join('')
-        + (fresh.length > 6 ? `<div class="gift-more">…and ${fresh.length - 6} more in Bag → Gifts.</div>` : ''),
-      onWire: (root, content) => {
-        content.querySelectorAll('.gift-open-btn').forEach((b) => b.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          b.disabled = true;
-          const res = await openGift(b.dataset.id);
-          notes[b.dataset.id] = res ? _giftOpenedSummary(res) : 'Opened.';
-          _renderInfoModalTop();
-        }));
-        // A card opens that gift, full size (Back comes back here).
-        content.querySelectorAll('.gift-row-in').forEach((row) => row.addEventListener('click', (e) => {
-          if (e.target.closest('.gift-open-btn')) return;
-          _showGiftModal(row.dataset.id, false, { push: true });
-        }));
-      },
-    });
+    const panel = ensurePanel();
+    const frames = [{ view: 'gifts' }];
+    if (fresh.length === 1) frames.push({ view: 'gift', id: fresh[0].id, fresh: true });
+    if (panel.classList.contains('show')) {
+      _captureCurrentScroll();
+      _captureCurrentFilters();
+      _viewStack.push(...frames);
+    } else {
+      _viewStack = [{ view: 'browse' }, { view: 'bag' }, ...frames];
+    }
+    _giftsShown = GIFTS_PAGE;
+    applyTopView();
+    panel.classList.add('show');
   }
   function _giftsViewsChanged() {
     const top = _viewStack[_viewStack.length - 1];
@@ -12864,7 +12898,7 @@
   }
   // Bag → Gifts: what's waiting to go out, then everything received,
   // newest first, GIFTS_PAGE at a time (with thumbnails, so a long
-  // history stays light).
+  // history stays light). A gift opens as its own view on the stack.
   let _giftsShown = GIFTS_PAGE;
   let _giftsRenderSeq = 0;
   function showGifts() { _giftsShown = GIFTS_PAGE; pushView({ view: 'gifts' }); }
@@ -12872,6 +12906,7 @@
     const panel = document.getElementById('creatureInventory');
     const body = panel && panel.querySelector('.gifts-body');
     if (!body) return;
+    const frame = _viewStack[_viewStack.length - 1];
     const seq = ++_giftsRenderSeq;
     let inbox = [], outbox = [], thumbs = {};
     try {
@@ -12905,7 +12940,12 @@
         h += `<button class="gift-small gift-older" type="button">Show ${more} older gift${more === 1 ? '' : 's'}</button>`;
       }
     }
+    revokeObjectUrlsIn(body);
     body.innerHTML = h;
+    _loadGiftSprites(body);
+    // Coming back to the list (from a gift or a pokémon): where you were.
+    const sheet = panel.querySelector('.sheet');
+    if (sheet && frame && frame.view === 'gifts' && frame.scrollY) sheet.scrollTop = frame.scrollY;
     body.querySelector('.gift-new').addEventListener('click', () => showGiftCreate());
     body.querySelectorAll('.gift-cancel').forEach((b) => b.addEventListener('click', async () => {
       if (!confirm('Cancel this gift? Its item and pokémon come back to you.')) return;
@@ -12914,7 +12954,7 @@
     }));
     body.querySelectorAll('.gift-row-in').forEach((row) => row.addEventListener('click', (e) => {
       if (e.target.closest('.gift-open-btn')) return;
-      _showGiftModal(row.dataset.id);
+      pushView({ view: 'gift', id: row.dataset.id });
     }));
     body.querySelectorAll('.gift-row-in .gift-open-btn').forEach((b) => b.addEventListener('click', async () => {
       b.disabled = true;
@@ -16568,7 +16608,7 @@
     if (giftBtn) giftBtn.addEventListener('click', () => showGiftCreate(c.id));
     const giftFrom = body.querySelector('.detail-gift-from');
     if (giftFrom) {
-      const openIt = () => _showGiftModal(c.gift.id, false, { from: c.gift.from });
+      const openIt = () => pushView({ view: 'gift', id: c.gift.id, from: c.gift.from });
       giftFrom.addEventListener('click', openIt);
       giftFrom.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openIt(); }
