@@ -9074,15 +9074,22 @@ function fmtDate(ts) {
   // Gzip the save body when the webview supports CompressionStream
   // (Chrome 80+, Safari 16.4+) — cuts a large save's upload ~5x. The
   // server sniffs the gzip magic bytes, so older clients posting plain
-  // JSON keep working unchanged.
+  // JSON keep working unchanged. Built from the same streamed pieces as
+  // Export (_gzipChunks / _jsonChunks), so the uncompressed save is never
+  // one string in memory — it used to be, plus a Blob copy of it, which
+  // is tens of MB for a big save.
   async function _saveRequestBody(data) {
-    const text = JSON.stringify(data);
-    if (typeof CompressionStream === 'undefined') return { body: text, gzipped: false };
+    const plain = () => ({
+      body: new Blob(Array.from(_jsonChunks(data, EXPORT_CHUNK_CHARS))),
+      gzipped: false,
+    });
+    if (typeof CompressionStream !== 'function') return plain();
     try {
-      const stream = new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'));
-      return { body: await new Response(stream).blob(), gzipped: true };
+      const parts = [];
+      for await (const part of _gzipChunks(data, EXPORT_GZIP_BYTES)) parts.push(part);
+      return { body: new Blob(parts), gzipped: true };
     } catch (_) {
-      return { body: text, gzipped: false };
+      return plain();
     }
   }
 

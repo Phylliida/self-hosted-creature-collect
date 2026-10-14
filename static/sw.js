@@ -136,6 +136,8 @@ const TILES_CACHE = 'tiles-v1';
 // of MB at a time (a big save in one write crashed the iOS webview).
 // Shell bump 2026-10-14 (#30): index.html's Export is gzipped (.json.gz),
 // and Import reads .json.gz as well as .json.
+// Shell bump 2026-10-14 (#31): index.html's Save builds its gzipped body
+// from the streamed export pieces (no whole-save string in memory).
 
 const APP_SHELL = [
   '/',

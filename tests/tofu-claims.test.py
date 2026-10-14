@@ -145,6 +145,21 @@ ok(json.loads(gzip.decompress(stored.read_bytes()))["marker"] == "gz1",
 r = client.get("/load?name=TofuGz")
 ok(r.status_code == 200 and r.get_json().get("marker") == "gz1",
    "/load decompresses a .json.gz save")
+# Browsers/webviews all accept gzip: they get the stored bytes as-is with
+# Content-Encoding: gzip (and unzip them transparently) — 5x less to send.
+r = client.get("/load?name=TofuGz", headers={"Accept-Encoding": "gzip, deflate, br"})
+ok(r.status_code == 200 and r.headers.get("Content-Encoding") == "gzip",
+   f"/load sends a .json.gz save gzipped to gzip clients (got {r.headers.get('Content-Encoding')})")
+ok(r.get_data() == stored.read_bytes(), "... as the stored bytes, not recompressed")
+ok(json.loads(gzip.decompress(r.get_data()))["marker"] == "gz1", "... which unzip to the save")
+ok("Accept-Encoding" in r.headers.get("Vary", ""), "... with Vary: Accept-Encoding")
+ok(r.headers.get("Content-Type", "").startswith("application/json")
+   and r.headers.get("Cache-Control") == "no-store", "... still application/json, no-store")
+for ae in ("identity", "gzip;q=0", "br"):
+    r = client.get("/load?name=TofuGz", headers={"Accept-Encoding": ae})
+    ok(r.status_code == 200 and "Content-Encoding" not in r.headers
+       and r.get_json().get("marker") == "gz1",
+       f"Accept-Encoding {ae!r} -> plain JSON")
 r = client.get("/save-names")
 ok(r.status_code == 200 and "TofuGz" in r.get_json(),
    "/save-names lists a .json.gz-only name")
@@ -156,6 +171,9 @@ legacy.write_text(json.dumps({"backupName": "TofuGz", "marker": "legacy-plain"})
 r = client.get("/load?name=TofuGz")
 ok(r.get_json().get("marker") == "legacy-plain",
    "/load picks a newer plain .json over older .json.gz")
+r = client.get("/load?name=TofuGz", headers={"Accept-Encoding": "gzip"})
+ok("Content-Encoding" not in r.headers and r.get_json().get("marker") == "legacy-plain",
+   "a plain .json save goes out plain even to gzip clients")
 legacy.unlink()
 ok(client.get("/load?name=TofuGz").get_json().get("marker") == "gz1",
    "/load falls back to the .json.gz once the plain one is gone")

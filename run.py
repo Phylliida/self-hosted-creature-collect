@@ -1125,8 +1125,11 @@ def load_backup():
     saves are plain `<name>_<millis>.json`), so the most recent is the one
     with the highest numeric suffix. Falls back to mtime ordering if any
     file's name doesn't match the pattern (e.g. a manual upload). 404 when
-    no save exists for that name. Gzipped saves are decompressed before
-    serving, so clients always receive plain JSON.
+    no save exists for that name. A gzipped save goes out as stored, with
+    Content-Encoding: gzip, to any client that accepts gzip (every
+    browser/webview — it unzips it transparently, so the page still just
+    sees JSON): ~5x fewer bytes over the wire (Grak: 7.4 MB, not 36 MB)
+    and no decompress/recompress here. Others get it decompressed.
 
     LAN-only: saves carry long-term GPS traces (and the name's write
     token), so the public (tunnel-facing) instance refuses — loading
@@ -1152,7 +1155,11 @@ def load_backup():
         abort(404)
     candidates.sort(key=lambda t: t[0], reverse=True)
     latest = candidates[0][1]
-    if latest.name.endswith(".gz"):
+    if latest.name.endswith(".gz") and request.accept_encodings["gzip"] > 0:
+        resp = Response(latest.read_bytes(), mimetype="application/json")
+        resp.headers["Content-Encoding"] = "gzip"
+        resp.headers["Vary"] = "Accept-Encoding"
+    elif latest.name.endswith(".gz"):
         with gzip.open(latest, "rb") as f:
             resp = Response(f.read(), mimetype="application/json")
     else:
