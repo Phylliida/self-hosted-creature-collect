@@ -3731,6 +3731,10 @@
       <label for="consistentIconWidthToggle">Consistent poké icon size (no zoom)</label>
       <input type="checkbox" id="consistentIconWidthToggle">
     </div>
+    <div class="row" title="Each pokémon's level and height, on its card, its page and the encounter screen (and Level/Size in the collection's sort menu). Neither changes anything in play, so they're hidden unless this is on. Pack creatures that need a level to evolve still show theirs on their page.">
+      <label for="levelSizeToggle">Show pokémon level and height</label>
+      <input type="checkbox" id="levelSizeToggle">
+    </div>
     <div class="settings-subsection">
       <h4 class="settings-subsection-title">
         Visibility
@@ -8528,6 +8532,8 @@ function fmtDate(ts) {
     // Default-OFF: only '1' snaps bubble centres.
     { key: 'cc.bubbleSnap',           values: _ONOFF },
     { key: 'cc.consistentIconWidth',  values: _ONOFF },
+    // Default-OFF: only '1' shows level and height (creatures.js).
+    { key: 'cc.showLevelSize',        values: _ONOFF },
     { key: 'cc.buildingPois',         values: _ONOFF },
     { key: 'cc.renderBuildings',      values: _ONOFF },
     { key: 'cc.renderTransitLines',   values: _ONOFF },
@@ -19906,6 +19912,25 @@ function fmtDate(ts) {
     });
   }
 
+  // "Show pokémon level and height" — default off (unset = hidden).
+  // creatures.js reads cc.showLevelSize at render time; a change redraws
+  // whatever's open and fixes up the collection's sort menu.
+  window._applyLevelSize = function () {
+    try {
+      if (window.Creatures && window.Creatures.applyLevelSizeSetting) {
+        window.Creatures.applyLevelSizeSetting();
+      }
+    } catch (e) { console.error(e); }
+  };
+  const levelSizeToggle = document.getElementById('levelSizeToggle');
+  if (levelSizeToggle) {
+    levelSizeToggle.checked = localStorage.getItem('cc.showLevelSize') === '1';
+    levelSizeToggle.addEventListener('change', () => {
+      localStorage.setItem('cc.showLevelSize', levelSizeToggle.checked ? '1' : '0');
+      window._applyLevelSize();
+    });
+  }
+
   const lockZoomToggle = document.getElementById('lockZoomToggle');
   if (lockZoomToggle) {
     lockZoomToggle.checked = localStorage.getItem('cc.lockZoom') === '1';
@@ -20229,6 +20254,9 @@ function fmtDate(ts) {
         window._applyConsistentIcons(on('cc.consistentIconWidth'));
       }
     } catch (e) { console.error(e); }
+
+    setChecked('levelSizeToggle', on('cc.showLevelSize'));
+    if (typeof window._applyLevelSize === 'function') window._applyLevelSize();
 
     setChecked('actionIconsToggle', on('cc.actionButtonsAsIcons'));
     try { window.dispatchEvent(new CustomEvent('cc-action-buttons-style-changed')); }

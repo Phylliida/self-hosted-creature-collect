@@ -140,6 +140,8 @@ const TILES_CACHE = 'tiles-v1';
 // from the streamed export pieces (no whole-save string in memory).
 // Shell bump 2026-10-14 (#32): index.html's poisInRange returns each POI's
 // lat/lng (a gift's "sent from" place links to the map).
+// Shell bump 2026-10-14 (#33): index.html adds Settings → "Show pokémon level
+// and height" (cc.showLevelSize, default off).
 
 const APP_SHELL = [
   '/',

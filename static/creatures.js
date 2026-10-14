@@ -4905,7 +4905,13 @@
       return row;
     }
 
+    // Set by cleanup: a frame callback this instance already queued (the
+    // safety-net pass below, a scroll update) must not draw its old rows
+    // into the grid after a newer render took it over — two renders in
+    // one frame used to leave both sets of cards on screen.
+    let dead = false;
     function recomputeWindow() {
+      if (dead) return;
       // Cheap escape: when this grid's view is hidden (display:none on
       // any ancestor), offsetParent is null and we can skip.
       if (gridEl.offsetParent === null) return;
@@ -4968,6 +4974,7 @@
     });
 
     gridEl._virtCleanup = () => {
+      dead = true;
       scrollEl.removeEventListener('scroll', scheduleUpdate);
       // Revoke every still-loading sprite URL before wiping the rows,
       // otherwise their blobs hang around in memory.
@@ -6051,9 +6058,53 @@
   }
   const SORT_DIRS = new Set(['asc', 'desc']);
 
+  // Settings → "Show pokémon level and height" (cc.showLevelSize, default
+  // off): neither stat changes anything in play, so they're hidden unless
+  // asked for — on cards, pages, the encounter screen, gift and focus
+  // lists, and as sort keys. Read at render time; applyLevelSizeSetting
+  // redraws what's open when it changes.
+  function _showLevelSize() { return localStorage.getItem('cc.showLevelSize') === '1'; }
+  // A pack creature whose evolution needs a level: its level matters, so
+  // its page shows it even while levels are hidden.
+  function _levelGatesEvolution(c) {
+    if (!isSoloCreature(c) || !global.Packs || !global.Packs.packData) return false;
+    try {
+      const pd = global.Packs.packData();
+      const spec = pd && pd.speciesById ? pd.speciesById.get(c.solo) : null;
+      return !!(spec && (spec.evolutions || []).some((e) => typeof e.level === 'number'));
+    } catch { return false; }
+  }
   function readSortKey() {
     const v = localStorage.getItem('cc.creatureSortBy');
-    return SORT_KEYS.has(v) ? v : 'level';
+    const k = SORT_KEYS.has(v) ? v : 'level';
+    // Hidden stats aren't offered as sorts: Recent stands in, and the
+    // stored choice comes back if they're shown again.
+    return (k === 'level' || k === 'size') && !_showLevelSize() ? 'recent' : k;
+  }
+  // The Level / Size options in the collection's sort menu follow the
+  // setting (removed rather than hidden: iOS ignores hidden <option>s).
+  function _syncLevelSizeSort(panel) {
+    const sel = panel && panel.querySelector('#creatureSortBy');
+    if (!sel) return;
+    const show = _showLevelSize();
+    for (const [value, label] of [['level', 'Level'], ['size', 'Size']]) {
+      const opt = sel.querySelector(`option[value="${value}"]`);
+      if (show && !opt) {
+        const o = document.createElement('option');
+        o.value = value; o.textContent = label;
+        sel.insertBefore(o, sel.querySelector('option[value="name"]'));
+      } else if (!show && opt) {
+        opt.remove();
+      }
+    }
+    sel.value = readSortKey();
+  }
+  function applyLevelSizeSetting() {
+    const panel = document.getElementById('creatureInventory');
+    if (!panel) return;   // not built yet; everything reads it at render
+    _syncLevelSizeSort(panel);
+    _dropCachedSlots(() => true);
+    if (panel.classList.contains('show')) applyTopView();
   }
   function readSortDir() {
     const v = localStorage.getItem('cc.creatureSortDir');
@@ -10062,7 +10113,7 @@
       sortDir.textContent = dir === 'asc' ? '↑' : '↓';
       sortDir.title = dir === 'asc' ? 'ascending (low to high)' : 'descending (high to low)';
     };
-    sortBy.value = readSortKey();
+    _syncLevelSizeSort(panel);
     syncDirButton();
     sortBy.addEventListener('change', () => {
       localStorage.setItem('cc.creatureSortBy', sortBy.value);
@@ -10916,7 +10967,7 @@
     const ftb = panel.querySelector('#creatureFilterTypeB');
     if (ftb) { ftb.value = f.filterTypeB || ''; applyTypeSelectColor(ftb); }
     const sortBy = panel.querySelector('#creatureSortBy');
-    if (sortBy && f.sortBy) sortBy.value = f.sortBy;
+    if (sortBy && f.sortBy) sortBy.value = readSortKey();
   }
   // Back-nav into a completion / species-dex entry: put the shared dex
   // toggles back the way that entry was left (entries saved before
@@ -12731,7 +12782,7 @@
   function _giftCreatureLabel(c) {
     if (!c) return '';
     const name = c.solo ? creatureName({ solo: c.solo }) : creatureName({ speciesA: c.speciesA, speciesB: c.speciesB });
-    return (c.nickname ? `${c.nickname} (${name})` : name) + (Number.isFinite(c.level) ? ` · Lv ${c.level}` : '')
+    return (c.nickname ? `${c.nickname} (${name})` : name) + (Number.isFinite(c.level) && _showLevelSize() ? ` · Lv ${c.level}` : '')
       + (typeof c.shinyVariant === 'number' ? ' · shiny' : '');
   }
   function _giftItemLabel(item) {
@@ -14803,8 +14854,10 @@
           // Ordered HTML chunks joined by " · " separators. Each chunk
           // is fully escaped so user-controlled text can't sneak in.
           const chunks = [];
-          if (cap.level != null) chunks.push(escapeHtml(`Lv ${cap.level}`));
-          if (cap.sizeM != null) chunks.push(escapeHtml(formatSize(cap.sizeM)));
+          if (_showLevelSize()) {
+            if (cap.level != null) chunks.push(escapeHtml(`Lv ${cap.level}`));
+            if (cap.sizeM != null) chunks.push(escapeHtml(formatSize(cap.sizeM)));
+          }
           if (variantLabel) {
             const vAttr = (typeof cap.variant === 'number') ? cap.variant : '';
             chunks.push(`<span class="row-variant" data-variant="${vAttr}">${escapeHtml(variantLabel)}</span>`);
@@ -16445,8 +16498,9 @@
     const nick = readNicknames()[c.id];
     const name = nick || c.name;
     const stats = [];
-    if (c.level != null) stats.push(`Lv ${c.level}`);
-    if (c.sizeM != null) stats.push(formatSize(c.sizeM));
+    const showLv = _showLevelSize();
+    if (c.level != null && (showLv || _levelGatesEvolution(c))) stats.push(`Lv ${c.level}`);
+    if (c.sizeM != null && showLv) stats.push(formatSize(c.sizeM));
     const statsHtml = stats.length
       ? `<div class="detail-stats">${stats.map((s, i) =>
           (i ? '<span class="sep">·</span>' : '') + `<span>${escapeHtml(s)}</span>`
@@ -17238,6 +17292,7 @@
     // in applyTopView's 'browse' case before the first render so the
     // live value is already correct on re-entry from a sub-view.
     _lastInventoryItems = items;
+    const showLv = _showLevelSize();
     const _tVirt = performance.now();
     virtualizeGrid({
       scrollEl: sheet,
@@ -17254,8 +17309,8 @@
         card.setAttribute('role', 'button');
         card.tabIndex = 0;
         const stats = [];
-        if (c.level != null) stats.push(`Lv ${c.level}`);
-        if (c.sizeM != null) stats.push(formatSize(c.sizeM));
+        if (showLv && c.level != null) stats.push(`Lv ${c.level}`);
+        if (showLv && c.sizeM != null) stats.push(formatSize(c.sizeM));
         const statsHtml = stats.length
           ? `<div class="stats">${stats.map((s, i) =>
               (i ? '<span class="sep">·</span>' : '') + `<span>${escapeHtml(s)}</span>`
@@ -18258,7 +18313,8 @@
     const nameEl = el.querySelector('.battle-name');
     const statsEl = el.querySelector('.battle-stats');
     nameEl.textContent = isSoloSpawn ? creatureName(spawn) : fusionName(spawn.speciesA, spawn.speciesB);
-    statsEl.textContent = `Lv ${spawn.level} · ${formatSize(spawn.sizeM)}`;
+    statsEl.textContent = _showLevelSize() ? `Lv ${spawn.level} · ${formatSize(spawn.sizeM)}` : '';
+    statsEl.hidden = !_showLevelSize();
     const typesEl = el.querySelector('.battle-types');
     if (typesEl) {
       typesEl.innerHTML = typeChipsHtml(creatureTypes(spawn));
@@ -20685,7 +20741,7 @@
         '<div class="cc-info-row"><span class="cc-info-v">'
         + escapeHtml(_focusCreatureName(c))
         + (c.shiny ? ' ★' : '')
-        + ' · lvl ' + escapeHtml(String(c.level))
+        + (_showLevelSize() ? ' · lvl ' + escapeHtml(String(c.level)) : '')
         + '</span></div>').join('');
     } else {
       h += '<p class="cc-info-p">None — the first pokémon arrives after 1 hour of focus.</p>';
@@ -21089,6 +21145,9 @@
     // ball's entry point while a session is active.
     isFocusActive: _focusIsActive,
     showFocus,
+    // Settings → "Show pokémon level and height" changed (or a save
+    // restored it): fix the sort menu and redraw what's open.
+    applyLevelSizeSetting,
     getCandy: readCandy, getBag: readBag, getTags: readTags,
     // Gifts (index.html syncGifts drives the save-time exchange).
     giftsOutbox, giftsCursor, giftsSyncResult, showNewGifts,

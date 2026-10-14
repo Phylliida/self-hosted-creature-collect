@@ -56,7 +56,7 @@ function makeEnv() {
   ['wifiOnlyToggle', 'steadyCatchToggle', 'actionIconsToggle', 'lockZoomToggle',
    'lockRotateToggle', 'memBadgeToggle', 'debugConsoleToggle', 'buildingPoisToggle',
    'renderBuildingsToggle', 'renderTransitLinesToggle', 'renderHousenumbersToggle',
-   'showPanelToggle', 'legendarySnapToggle', 'bubbleSnapToggle'].forEach((id) => el(id, 'checkbox'));
+   'showPanelToggle', 'legendarySnapToggle', 'bubbleSnapToggle', 'levelSizeToggle'].forEach((id) => el(id, 'checkbox'));
   ['clockFormatSelect', 'timezoneSelect', 'routingWalkWeight', 'routingTransferMin',
    'unitsSelect', 'backupName'].forEach((id) => el(id, 'select'));
   // The timezone <select> is populated from this device's Intl data; the
@@ -162,6 +162,8 @@ function makeEnv() {
    'cc.renderTransitLines', 'cc.renderHousenumbers'].forEach((k) => {
     ok(tableKeys.has(k), `${k} is in SAVED_SETTINGS`);
   });
+
+  ok(tableKeys.has('cc.showLevelSize'), 'cc.showLevelSize (level/height display) is in SAVED_SETTINGS');
 
   // The pedometer must stay out of the table: its restore needs the native
   // permission prompt + sync-marker seed, so it can't be flipped on blindly.
