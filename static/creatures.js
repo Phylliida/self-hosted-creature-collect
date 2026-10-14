@@ -3077,9 +3077,14 @@
       // Incense-origin flags, for the "From <type> Incense" detail line.
       fromIncense: e.fromIncense === true,
       incenseType: (typeof e.incenseType === 'string') ? e.incenseType : null,
-      // Gift origin ("Gift from <name>" on the detail page, the Gift tag);
-      // giftOldEgg keeps a pre-cutoff legendary hatch out of the daycare.
-      gift: (e.gift && typeof e.gift.from === 'string') ? { from: e.gift.from } : null,
+      // Gift origin ("Gift from <name>" on the detail page, a link to the
+      // gift; the Gift tag); giftOldEgg keeps a pre-cutoff legendary hatch
+      // out of the daycare.
+      gift: (e.gift && typeof e.gift.from === 'string')
+        ? { from: e.gift.from,
+            id: typeof e.gift.id === 'string' ? e.gift.id : null,
+            receivedAt: Number.isFinite(e.gift.receivedAt) ? e.gift.receivedAt : null }
+        : null,
       giftOldEgg: e.giftOldEgg === true,
       level: e.level,
       sizeM: e.sizeM,
@@ -8180,9 +8185,33 @@
         width: 100%; max-height: 360px; object-fit: contain;
         border-radius: var(--ui-radius, 8px); background: rgba(0,0,0,0.06);
       }
-      .gift-photo.gift-photo-thumb { max-height: 140px; object-fit: cover; }
+      .gift-card-compact { flex-direction: row; align-items: flex-start; gap: 10px; }
+      .gift-thumb {
+        flex: none; width: 64px; height: 64px; object-fit: cover;
+        border-radius: var(--ui-radius, 8px); background: rgba(0,0,0,0.06);
+      }
+      .gift-card-text { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
       .gift-message { font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+      .gift-message.gift-message-clip {
+        display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+      }
       .gift-place { font-size: 12px; color: var(--ui-muted, #666); }
+      button.gift-place-link {
+        align-self: flex-start; padding: 0; font: inherit; font-size: 12px; text-align: left;
+        background: none; border: none; color: var(--ui-muted, #666); cursor: pointer;
+        text-decoration: underline; text-underline-offset: 3px;
+      }
+      button.gift-poke-link { font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+        background: transparent; color: var(--ui-text, #111); }
+      #ccInfoModal .gift-row-in { cursor: pointer; margin: 0 0 10px; }
+      #creatureInventory .gift-older { align-self: center; margin: 4px auto 12px; display: block; }
+      #creatureInventory .detail-gift-from {
+        text-align: center; font-size: 12px; margin: -2px 0 8px; cursor: pointer;
+        color: var(--ui-muted, #666);
+      }
+      #creatureInventory .detail-gift-from:hover {
+        color: var(--ui-text, #111); text-decoration: underline; text-underline-offset: 3px;
+      }
       .gift-contents, #creatureInventory .gift-chips { display: flex; flex-wrap: wrap; gap: 6px; }
       .gift-chip {
         display: inline-flex; align-items: center; gap: 4px;
@@ -12211,18 +12240,25 @@
   // gift gives them back); a received gift pays out when it's opened.
   //
   // Privacy: photos are redrawn on a canvas before they leave the phone
-  // (dropping their EXIF/GPS) and kept small; a sent pokémon carries no
-  // catch location or time — its spawnId keeps only the class prefix
-  // ('E:'/'L:', for the Radar/legendary rules) and it arrives as caught
-  // when opened.
+  // (dropping their EXIF/GPS) and kept small. A sent pokémon carries where
+  // and when it was caught, which its page shows the recipient just like
+  // their own catches (the sender is told when they send it); its spawnId
+  // keeps only the class prefix ('E:'/'L:', for the Radar/legendary rules).
+  // The place a gift is sent from carries its POI's coordinates, so the
+  // card can show it on the map.
   //
-  // Storage: received gifts (with photos) and the outbox live in the
-  // cc-gifts IDB. Opened ids ride in the save (giftsOpened) so a new
-  // device, which re-downloads its gift history, can't open one twice.
+  // Storage: received gifts and the outbox live in the cc-gifts IDB. A
+  // received gift's photo is kept apart from its record, in the 'media'
+  // store ('<id>/photo', plus a small '<id>/thumb' for lists), so listing
+  // gifts never loads full photos; the list also shows them a page at a
+  // time. Opened ids ride in the save (giftsOpened) so a new device,
+  // which re-downloads its gift history, can't open one twice.
   const GIFT_COUNTS = [1, 5, 10, 50];
   const GIFT_MESSAGE_MAX = 140;
   const GIFT_PHOTO_MAX_PX = 1280;
   const GIFT_PHOTO_MAX_CHARS = 560 * 1024;   // under the server's ~600 KB cap
+  const GIFT_THUMB_PX = 192;                  // square list thumbnail (64 px at 3x)
+  const GIFTS_PAGE = 20;                      // received gifts per page of the list
   const GIFTS_OPENED_KEY = 'cc.giftsOpened.v1';
   const GIFTS_CURSOR_KEY = 'cc.giftsCursor.v1';
   const GIFTS_PLAYERS_KEY = 'cc.giftPlayers.v1';
@@ -12231,9 +12267,11 @@
   let _giftsGetDb = null;
   function _giftsDb() {
     if (!_giftsGetDb) {
-      _giftsGetDb = global.CCIdb.opener(GIFTS_DB, 1, (db) => {
+      _giftsGetDb = global.CCIdb.opener(GIFTS_DB, 2, (db) => {
         if (!db.objectStoreNames.contains('inbox')) db.createObjectStore('inbox', { keyPath: 'id' });
         if (!db.objectStoreNames.contains('outbox')) db.createObjectStore('outbox', { keyPath: 'id' });
+        // v2: received photos, out of line ('<id>/photo', '<id>/thumb').
+        if (!db.objectStoreNames.contains('media')) db.createObjectStore('media');
       });
     }
     return _giftsGetDb;
@@ -12252,6 +12290,79 @@
       tx.objectStore(store).put(rec);
       return global.CCIdb.txDone(tx);
     });
+  }
+  function _giftsKeys(store) {
+    return global.CCIdb.run(_giftsDb(), (db) =>
+      global.CCIdb.request(db.transaction(store, 'readonly').objectStore(store).getAllKeys()));
+  }
+  function _giftsMediaPut(pairs) {
+    return global.CCIdb.run(_giftsDb(), (db) => {
+      const tx = db.transaction('media', 'readwrite');
+      const st = tx.objectStore('media');
+      for (const [k, v] of pairs) st.put(v, k);
+      return global.CCIdb.txDone(tx);
+    });
+  }
+  function _giftsMediaGetMany(keys) {
+    if (!keys.length) return Promise.resolve([]);
+    return global.CCIdb.run(_giftsDb(), (db) => {
+      const st = db.transaction('media', 'readonly').objectStore('media');
+      return Promise.all(keys.map((k) => global.CCIdb.request(st.get(k))));
+    });
+  }
+  async function _giftsMediaGet(key) { return (await _giftsMediaGetMany([key]))[0] || null; }
+  // A small square JPEG of a gift photo for the lists (~10 KB), so a list
+  // of gifts never holds or decodes full-size photos. null if the photo
+  // can't be read.
+  async function _giftThumb(dataUrl) {
+    try {
+      const img = await new Promise((resolve, reject) => {
+        const i = new Image();
+        i.onload = () => resolve(i);
+        i.onerror = () => reject(new Error('unreadable photo'));
+        i.src = dataUrl;
+      });
+      const side = Math.min(img.naturalWidth, img.naturalHeight);
+      if (!side) return null;
+      const out = Math.min(GIFT_THUMB_PX, side);
+      const cv = document.createElement('canvas');
+      cv.width = cv.height = out;
+      cv.getContext('2d').drawImage(img,
+        (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, out, out);
+      const data = cv.toDataURL('image/jpeg', 0.75);
+      return data.startsWith('data:image/jpeg') ? data : null;
+    } catch { return null; }
+  }
+  // Store a received gift: its photo (and a thumbnail) go to the media
+  // store, the record keeps only hasPhoto. Media first, so a crash part
+  // way leaves the photo on the record to be moved again next time.
+  async function _giftStoreReceived(g) {
+    const rec = Object.assign({}, g);
+    const photo = typeof rec.photo === 'string' && rec.photo.startsWith('data:image/') ? rec.photo : null;
+    delete rec.photo;
+    rec.hasPhoto = !!photo;
+    if (photo) {
+      const thumb = await _giftThumb(photo);
+      await _giftsMediaPut(thumb ? [[rec.id + '/photo', photo], [rec.id + '/thumb', thumb]]
+                                 : [[rec.id + '/photo', photo]]);
+    }
+    await _giftsPut('inbox', rec);
+  }
+  // v1 kept each received photo on its gift record, so listing gifts
+  // loaded every photo. Move them to the media store once, a record at a
+  // time; inbox reads wait for this. A failure is logged and retried on
+  // the next read (the records still work meanwhile, just heavier).
+  let _giftsMigration = null;
+  function _giftsReady() {
+    if (!_giftsMigration) {
+      _giftsMigration = (async () => {
+        for (const id of await _giftsKeys('inbox')) {
+          const g = await _giftsGet('inbox', id);
+          if (g && typeof g.photo === 'string') await _giftStoreReceived(g);
+        }
+      })().catch((e) => { _giftsMigration = null; _logCreatureError('gifts/migrate', e); });
+    }
+    return _giftsMigration;
   }
   function _giftsDel(store, id) {
     return global.CCIdb.run(_giftsDb(), (db) => {
@@ -12288,7 +12399,32 @@
   function _rawCapture(id) {
     return readCapturedCreatures().find((e) => e && e.id === id) || null;
   }
-  // What a sent pokémon carries: no catch location or time.
+  // Where and when a pokémon was caught, as its page shows it (time, map
+  // spot, nearest POI, city): the known fields only, type-checked, since
+  // a received one comes from another phone. null when there's nothing.
+  function _giftCaughtAt(ca) {
+    if (!ca || typeof ca !== 'object') return null;
+    const num = (v) => (typeof v === 'number' && isFinite(v) ? v : null);
+    const str = (v, n) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, n) : null);
+    const lat = num(ca.lat), lng = num(ca.lng);
+    const spot = lat != null && lng != null && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+    const out = {
+      timestamp: num(ca.timestamp),
+      lat: spot ? lat : null, lng: spot ? lng : null,
+      poi: null, place: null,
+    };
+    const p = ca.poi;
+    if (p && typeof p === 'object' && str(p.name, 120) && num(p.lat) != null && num(p.lng) != null) {
+      out.poi = { name: str(p.name, 120), lat: num(p.lat), lng: num(p.lng), distanceM: Math.max(0, num(p.distanceM) || 0) };
+    }
+    const pl = ca.place;
+    if (pl && typeof pl === 'object' && (str(pl.city, 80) || str(pl.country, 80))) {
+      out.place = { city: str(pl.city, 80), country: str(pl.country, 80) };
+    }
+    return out.timestamp != null || spot || out.poi || out.place ? out : null;
+  }
+  // What a sent pokémon carries: its species, form, level, nickname, and
+  // where/when it was caught — not its id or spawn cell.
   function _giftCreaturePayload(raw) {
     const sid = typeof raw.spawnId === 'string' ? raw.spawnId : '';
     const out = {
@@ -12306,6 +12442,8 @@
     if (raw.fromIncense === true) { out.fromIncense = true; out.incenseType = raw.incenseType || null; }
     const nick = readNicknames()[raw.id];
     if (nick) out.nickname = String(nick).slice(0, 40);
+    const caught = _giftCaughtAt(raw.caughtAt);
+    if (caught) out.caughtAt = caught;
     return out;
   }
   // The pokémon leaves the collection. Keep the dex credit it held, the
@@ -12338,6 +12476,16 @@
       _slotCache.delete(k);
     }
   }
+  // The POI a gift is sent from: its name and category, and its spot so
+  // the card can show it on the map.
+  function _giftPlace(p) {
+    const out = { name: String(p.name).slice(0, 120), category: p.category || '' };
+    if (typeof p.lat === 'number' && isFinite(p.lat) && Math.abs(p.lat) <= 90
+        && typeof p.lng === 'number' && isFinite(p.lng) && Math.abs(p.lng) <= 180) {
+      out.lat = p.lat; out.lng = p.lng;
+    }
+    return out;
+  }
   // Wrap a gift: it goes to the outbox (sent with the next save) and the
   // item stack / pokémon leave right away. Returns { gift } or { error }.
   async function createGift(d) {
@@ -12368,15 +12516,16 @@
     const gift = {
       id: 'g-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10),
       to, day, createdAt: Date.now(), message,
-      place: d.place && d.place.name ? { name: d.place.name, category: d.place.category || '' } : null,
+      place: d.place && d.place.name ? _giftPlace(d.place) : null,
       item,
       creature: raw ? _giftCreaturePayload(raw) : null,
       photo: d.photo || null,
     };
     // Outbox first, so nothing leaves the bag or collection unless the
-    // gift is safely queued. The refund half is never sent.
+    // gift is safely queued. The refund half and thumb are never sent.
     await _giftsPut('outbox', {
       id: gift.id, gift,
+      thumb: gift.photo ? await _giftThumb(gift.photo) : null,
       refund: { item, creature: raw, nickname: raw ? (readNicknames()[raw.id] || '') : '' },
     });
     if (item) {
@@ -12446,7 +12595,7 @@
     for (const g of (Array.isArray(body.inbox) ? body.inbox : [])) {
       if (!g || typeof g.id !== 'string' || typeof g.from !== 'string') continue;
       if (await _giftsGet('inbox', g.id)) continue;
-      await _giftsPut('inbox', Object.assign({}, g, { receivedAt: Date.now(), announced: false }));
+      await _giftStoreReceived(Object.assign({}, g, { receivedAt: Date.now(), announced: false }));
       out.received++;
     }
     if (typeof body.cursor === 'number' && body.cursor > giftsCursor()) {
@@ -12458,8 +12607,9 @@
     if (out.sent || out.returned || out.received) _giftsViewsChanged();
     return out;
   }
-  // A received pokémon joins the collection: a fresh id, no catch place,
-  // "caught" when opened, and who it came from.
+  // A received pokémon joins the collection: a fresh id, where and when
+  // it was caught (gifts from before that travelled have neither: they
+  // count as caught when opened), and which gift it came in.
   async function _giftAddCapture(g) {
     const c = g.creature;
     if (!c || typeof c !== 'object') return null;
@@ -12475,10 +12625,11 @@
       shinyVariant: (typeof c.shinyVariant === 'number') ? c.shinyVariant : null,
       level: Number.isFinite(c.level) ? c.level : 1,
       sizeM: Number.isFinite(c.sizeM) ? c.sizeM : 1.0,
-      caughtAt: { timestamp: Date.now(), lat: null, lng: null, poi: null, place: null },
+      caughtAt: _giftCaughtAt(c.caughtAt) || { timestamp: null, lat: null, lng: null, poi: null, place: null },
       pack: 'creature-fusion',
-      gift: { from: g.from, id: g.id },
+      gift: { from: g.from, id: g.id, receivedAt: Date.now() },
     };
+    if (!Number.isFinite(entry.caughtAt.timestamp)) entry.caughtAt.timestamp = Date.now();
     if (solo) entry.solo = solo;
     if (c.fromEgg === true) entry.fromEgg = true;
     if (c.oldEgg === true) entry.giftOldEgg = true;
@@ -12499,6 +12650,7 @@
   async function openGift(id) {
     const opened = _giftOpenedIds();
     if (opened.has(id)) return null;
+    await _giftsReady();
     const g = await _giftsGet('inbox', id);
     if (!g) return null;
     // Mark first: a crash mid-way can lose a payout but never repeat one.
@@ -12509,6 +12661,10 @@
       grantItem(g.item.key, g.item.count);
     }
     const added = await _giftAddCapture(g).catch((e) => { _logCreatureError('gifts/open', e); return null; });
+    if (added) {
+      g.captureId = added.id;
+      await _giftsPut('inbox', g).catch(() => {});
+    }
     _giftsViewsChanged();
     return { gift: g, creature: added };
   }
@@ -12531,6 +12687,11 @@
     return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
   }
   // A gift as a card: who, when, photo, message, place, what's inside.
+  // Received photos aren't on the record (see _giftStoreReceived): the
+  // caller passes o.photo (full size, the gift popup) or o.thumb (lists,
+  // with o.compact: a small square beside the text). In the full card the
+  // pokémon (o.creatureId: what it became once opened) and a place with
+  // coordinates are links; _wireGiftLinks wires them.
   function _giftCardHtml(g, opts) {
     const o = opts || {};
     const sentTo = o.outgoing ? `To <b>${escapeHtml(g.to)}</b>` : `From <b>${escapeHtml(g.from)}</b>`;
@@ -12539,14 +12700,69 @@
       const meta = getItemMeta(g.item.key) || {};
       contents.push(`<span class="gift-chip">${meta.icon ? `<img src="${escapeHtml(meta.icon)}" alt="">` : ''}${escapeHtml(_giftItemLabel(g.item))}</span>`);
     }
-    if (g.creature) contents.push(`<span class="gift-chip gift-chip-poke">${escapeHtml(_giftCreatureLabel(g.creature))}</span>`);
-    return `<div class="gift-card">`
-      + `<div class="gift-card-head"><span>${sentTo}</span><span class="gift-date">${escapeHtml(_giftWhen(g.createdAt || g.serverMs))}</span></div>`
-      + (g.photo ? `<img class="gift-photo${o.thumb ? ' gift-photo-thumb' : ''}" src="${escapeHtml(g.photo)}" alt="">` : '')
-      + (g.message ? `<div class="gift-message">${escapeHtml(g.message)}</div>` : '')
-      + (g.place ? `<div class="gift-place">Sent from ${escapeHtml(g.place.name)}</div>` : '')
-      + (contents.length ? `<div class="gift-contents">${contents.join('')}</div>` : '')
-      + `</div>`;
+    if (g.creature) {
+      const label = escapeHtml(_giftCreatureLabel(g.creature));
+      contents.push(!o.compact && o.creatureId
+        ? `<button class="gift-chip gift-chip-poke gift-poke-link" type="button" data-cid="${escapeHtml(o.creatureId)}" title="see this pokémon">${label} ›</button>`
+        : `<span class="gift-chip gift-chip-poke">${label}</span>`);
+    }
+    const pl = g.place;
+    const placeHtml = !pl ? ''
+      : (!o.compact && Number.isFinite(pl.lat) && Number.isFinite(pl.lng))
+        ? `<button class="gift-place gift-place-link" type="button" data-lat="${pl.lat}" data-lng="${pl.lng}" title="show on map">Sent from ${escapeHtml(pl.name)}</button>`
+        : `<div class="gift-place">Sent from ${escapeHtml(pl.name)}</div>`;
+    const head = `<div class="gift-card-head"><span>${sentTo}</span><span class="gift-date">${escapeHtml(_giftWhen(g.createdAt || g.serverMs))}</span></div>`;
+    const message = g.message ? `<div class="gift-message${o.compact ? ' gift-message-clip' : ''}">${escapeHtml(g.message)}</div>` : '';
+    const chips = contents.length ? `<div class="gift-contents">${contents.join('')}</div>` : '';
+    if (o.compact) {
+      return `<div class="gift-card gift-card-compact">`
+        + (o.thumb ? `<img class="gift-thumb" src="${escapeHtml(o.thumb)}" alt="" loading="lazy">` : '')
+        + `<div class="gift-card-text">${head}${message}${placeHtml}${chips}</div></div>`;
+    }
+    return `<div class="gift-card">${head}`
+      + (o.photo ? `<img class="gift-photo" src="${escapeHtml(o.photo)}" alt="">` : '')
+      + message + placeHtml + chips + `</div>`;
+  }
+  // The pokémon a gift became (a chip on its card) → that pokémon's page;
+  // the place it was sent from → the map, like a pokémon's catch spot.
+  function _wireGiftLinks(root) {
+    root.querySelectorAll('.gift-poke-link').forEach((b) => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _giftGoToCreature(b.dataset.cid);
+    }));
+    root.querySelectorAll('.gift-place-link').forEach((b) => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _closeInfoModal();
+      flyToCaughtLocation(Number(b.dataset.lat), Number(b.dataset.lng));
+    }));
+  }
+  function _giftGoToCreature(id) {
+    _closeInfoModal();
+    const panel = document.getElementById('creatureInventory');
+    if (!panel || !panel.classList.contains('show')) show();
+    // Came here from that pokémon's own "Gift from" line: just close.
+    const top = _viewStack[_viewStack.length - 1];
+    if (top && top.view === 'detail' && top.id === id) return;
+    showDetail(id);
+  }
+  // The pokémon an opened gift became: remembered on the record since
+  // this was added; older ones (and a new device's) are found by the
+  // gift id on the capture. null if it has left the collection since.
+  async function _giftCaptureId(g) {
+    await _whenReady();
+    if (g.captureId && _rawCapture(g.captureId)) return g.captureId;
+    const c = readCapturedCreatures().find((e) => e && e.gift && e.gift.id === g.id);
+    return c ? c.id : null;
+  }
+  // { <gift id>: thumb data URL } for the ones with photos.
+  async function _giftThumbs(gifts) {
+    const withPhoto = gifts.filter((g) => g.hasPhoto);
+    const vals = await _giftsMediaGetMany(withPhoto.map((g) => g.id + '/thumb'));
+    const out = {};
+    withPhoto.forEach((g, i) => { if (typeof vals[i] === 'string') out[g.id] = vals[i]; });
+    // Not moved to the media store yet (see _giftsReady): the photo itself.
+    for (const g of gifts) if (!out[g.id] && typeof g.photo === 'string') out[g.id] = g.photo;
+    return out;
   }
   function _giftOpenedSummary(res) {
     const bits = [];
@@ -12555,54 +12771,88 @@
     return bits.length ? bits.join(' and ') + '.' : 'Opened.';
   }
   // A received gift, full size, with its Open button (titled as new when
-  // it pops up after the save that brought it).
-  function _showGiftModal(id, fresh) {
-    _giftsGet('inbox', id).then((g) => {
-      if (!g) return;
+  // it pops up after the save that brought it). The full photo is read
+  // only now, for this one gift. opts.push stacks it on the open popup
+  // (Back returns there); opts.from names the sender when the gift's card
+  // isn't on this phone (a pokémon's "Gift from" line on a new device
+  // whose gift history hasn't come back yet).
+  async function _showGiftModal(id, fresh, opts) {
+    const o = opts || {};
+    try {
+      await _giftsReady();
+      const g = await _giftsGet('inbox', id);
+      if (!g) {
+        if (o.from) {
+          _openInfoModal({
+            title: `Gift from ${o.from}`,
+            html: `<div class="gift-opened-note">This gift’s card isn’t on this phone yet. It comes back with your next save.</div>`,
+          });
+        }
+        return;
+      }
+      const photo = g.hasPhoto ? await _giftsMediaGet(id + '/photo')
+        : (typeof g.photo === 'string' ? g.photo : null);
+      let creatureId = _giftOpenedIds().has(g.id) ? await _giftCaptureId(g) : null;
       let note = '';
       const view = {
         title: fresh ? `New gift from ${g.from}!` : `Gift from ${g.from}`,
-        html: () => _giftCardHtml(g)
+        html: () => _giftCardHtml(g, { photo, creatureId })
           + (_giftOpenedIds().has(g.id)
             ? `<div class="gift-opened-note">${note || 'Opened.'}</div>`
             : `<button class="gift-open-btn" type="button">Open</button>`),
         onWire: (root, content) => {
+          _wireGiftLinks(content);
           const b = content.querySelector('.gift-open-btn');
           if (b) b.addEventListener('click', async () => {
             b.disabled = true;
             const res = await openGift(g.id);
             note = res ? _giftOpenedSummary(res) : 'Opened.';
+            if (res && res.creature) creatureId = res.creature.id;
             _renderInfoModalTop();
           });
         },
       };
-      _openInfoModal(view);
-    }).catch((e) => _logCreatureError('gifts/modal', e));
+      if (o.push && _infoModalStack.length) _pushInfoView(view);
+      else _openInfoModal(view);
+    } catch (e) { _logCreatureError('gifts/modal', e); }
   }
   // After a save brought new gifts: pop them up, once each.
   async function showNewGifts() {
     let inbox;
-    try { inbox = await _giftsAll('inbox'); } catch (e) { _logCreatureError('gifts/new', e); return; }
+    try { await _giftsReady(); inbox = await _giftsAll('inbox'); }
+    catch (e) { _logCreatureError('gifts/new', e); return; }
     const opened = _giftOpenedIds();
     const fresh = inbox.filter((g) => !g.announced && !opened.has(g.id))
       .sort((a, b) => (a.serverMs || 0) - (b.serverMs || 0));
+    inbox = null;
     if (!fresh.length) return;
     for (const g of fresh) { g.announced = true; await _giftsPut('inbox', g); }
     if (fresh.length === 1) { _showGiftModal(fresh[0].id, true); return; }
+    const shown = fresh.slice(0, 6);
+    let thumbs = {};
+    try { thumbs = await _giftThumbs(shown); } catch (e) { _logCreatureError('gifts/new-thumbs', e); }
     const notes = {};
     _openInfoModal({
       title: `${fresh.length} new gifts!`,
-      html: () => fresh.slice(0, 6).map((g) => _giftCardHtml(g, { thumb: true })
+      html: () => shown.map((g) => `<div class="gift-row-in" data-id="${escapeHtml(g.id)}">`
+        + _giftCardHtml(g, { compact: true, thumb: thumbs[g.id] })
         + (_giftOpenedIds().has(g.id)
           ? `<div class="gift-opened-note">${notes[g.id] || 'Opened.'}</div>`
-          : `<button class="gift-open-btn" type="button" data-id="${escapeHtml(g.id)}">Open</button>`)).join('')
+          : `<button class="gift-open-btn" type="button" data-id="${escapeHtml(g.id)}">Open</button>`)
+        + `</div>`).join('')
         + (fresh.length > 6 ? `<div class="gift-more">…and ${fresh.length - 6} more in Bag → Gifts.</div>` : ''),
       onWire: (root, content) => {
-        content.querySelectorAll('.gift-open-btn').forEach((b) => b.addEventListener('click', async () => {
+        content.querySelectorAll('.gift-open-btn').forEach((b) => b.addEventListener('click', async (e) => {
+          e.stopPropagation();
           b.disabled = true;
           const res = await openGift(b.dataset.id);
           notes[b.dataset.id] = res ? _giftOpenedSummary(res) : 'Opened.';
           _renderInfoModalTop();
+        }));
+        // A card opens that gift, full size (Back comes back here).
+        content.querySelectorAll('.gift-row-in').forEach((row) => row.addEventListener('click', (e) => {
+          if (e.target.closest('.gift-open-btn')) return;
+          _showGiftModal(row.dataset.id, false, { push: true });
         }));
       },
     });
@@ -12612,33 +12862,48 @@
     if (top && top.view === 'gifts') renderGifts();
     if (top && top.view === 'bag') renderBag();
   }
-  // Bag → Gifts: what's waiting to go out, then everything received.
-  function showGifts() { pushView({ view: 'gifts' }); }
+  // Bag → Gifts: what's waiting to go out, then everything received,
+  // newest first, GIFTS_PAGE at a time (with thumbnails, so a long
+  // history stays light).
+  let _giftsShown = GIFTS_PAGE;
+  let _giftsRenderSeq = 0;
+  function showGifts() { _giftsShown = GIFTS_PAGE; pushView({ view: 'gifts' }); }
   async function renderGifts() {
     const panel = document.getElementById('creatureInventory');
     const body = panel && panel.querySelector('.gifts-body');
     if (!body) return;
-    let inbox = [], outbox = [];
-    try { [inbox, outbox] = await Promise.all([_giftsAll('inbox'), _giftsAll('outbox')]); }
-    catch (e) { _logCreatureError('gifts/render', e); }
+    const seq = ++_giftsRenderSeq;
+    let inbox = [], outbox = [], thumbs = {};
+    try {
+      await _giftsReady();
+      [inbox, outbox] = await Promise.all([_giftsAll('inbox'), _giftsAll('outbox')]);
+      inbox.sort((a, b) => (b.serverMs || 0) - (a.serverMs || 0));
+      thumbs = await _giftThumbs(inbox.slice(0, _giftsShown));
+    } catch (e) { _logCreatureError('gifts/render', e); }
+    if (seq !== _giftsRenderSeq) return;   // a newer render is on its way
     const opened = _giftOpenedIds();
-    inbox.sort((a, b) => (b.serverMs || 0) - (a.serverMs || 0));
     outbox.sort((a, b) => (b.gift.createdAt || 0) - (a.gift.createdAt || 0));
+    const page = inbox.slice(0, _giftsShown);
     let h = `<div class="bag-launchers"><button class="bag-craft gift-new" type="button">Send a gift</button></div>`;
     if (outbox.length) {
       h += `<div class="gifts-section">Waiting to send · they go with your next save</div>`;
-      h += outbox.map((e) => `<div class="gift-row">${_giftCardHtml(e.gift, { outgoing: true, thumb: true })}`
+      h += outbox.map((e) => `<div class="gift-row">`
+        + _giftCardHtml(e.gift, { outgoing: true, compact: true, thumb: e.thumb || e.gift.photo })
         + `<button class="gift-cancel" type="button" data-id="${escapeHtml(e.id)}">Cancel</button></div>`).join('');
     }
-    h += `<div class="gifts-section">Received</div>`;
+    h += `<div class="gifts-section">Received${inbox.length ? ` · ${inbox.length}` : ''}</div>`;
     if (!inbox.length) {
       h += `<div class="bag-empty">No gifts yet. Gifts from friends arrive when you save.</div>`;
     } else {
-      h += inbox.map((g) => `<div class="gift-row gift-row-in" data-id="${escapeHtml(g.id)}">`
-        + _giftCardHtml(g, { thumb: true })
+      h += page.map((g) => `<div class="gift-row gift-row-in" data-id="${escapeHtml(g.id)}">`
+        + _giftCardHtml(g, { compact: true, thumb: thumbs[g.id] })
         + (opened.has(g.id) ? `<div class="gift-opened-tag">Opened</div>`
           : `<button class="gift-open-btn" type="button" data-id="${escapeHtml(g.id)}">Open</button>`)
         + `</div>`).join('');
+      if (inbox.length > page.length) {
+        const more = Math.min(GIFTS_PAGE, inbox.length - page.length);
+        h += `<button class="gift-small gift-older" type="button">Show ${more} older gift${more === 1 ? '' : 's'}</button>`;
+      }
     }
     body.innerHTML = h;
     body.querySelector('.gift-new').addEventListener('click', () => showGiftCreate());
@@ -12657,6 +12922,8 @@
       if (res) _saveImageNotice(_giftOpenedSummary(res).replace(/<[^>]+>/g, ''), 2600);
       renderGifts();
     }));
+    const older = body.querySelector('.gift-older');
+    if (older) older.addEventListener('click', () => { _giftsShown += GIFTS_PAGE; renderGifts(); });
   }
 
   // ── Gifts: the "Send a gift" sheet ──
@@ -12805,7 +13072,7 @@
     body.querySelector('.gift-send').addEventListener('click', async () => {
       if (d.busy) return;
       const place = d.placeIdx > 0 ? places[d.placeIdx - 1] : null;
-      if (d.creatureId && !confirm('Send this pokémon? It leaves your collection now.')) return;
+      if (d.creatureId && !confirm(`Send this pokémon? It leaves your collection now, and ${d.to || 'they'} will see where you caught it.`)) return;
       d.busy = true;
       let res;
       try {
@@ -16132,15 +16399,18 @@
       // origin label instead. Otherwise prefer the nearest POI's
       // name; fall back to coordinates; final fallback is a generic
       // "Unknown location" so a missing lat/lng never throws.
+      // A gift shows where its sender caught it (gifts from before catch
+      // spots travelled have none: no line); "Gift from" is its own row
+      // below.
       let where;
-      if (c.gift) {
-        where = 'Gift from ' + c.gift.from;
-      } else if (c.fromEgg) {
+      if (c.fromEgg) {
         where = 'Hatched from egg';
       } else if (c.caughtAt.poi && c.caughtAt.poi.name) {
         where = `${c.caughtAt.poi.name} (${Math.round(c.caughtAt.poi.distanceM)} m away)`;
       } else if (c.caughtAt.lat != null && c.caughtAt.lng != null) {
         where = `${c.caughtAt.lat.toFixed(5)}, ${c.caughtAt.lng.toFixed(5)}`;
+      } else if (c.gift) {
+        where = '';
       } else {
         where = 'Unknown location';
       }
@@ -16168,6 +16438,14 @@
         + (placeStr ? `<div class="detail-caught-place">${escapeHtml(placeStr)}</div>` : '')
         + `</div>`;
     }
+    // "Gift from <name> · <date it arrived>", under the caught block: a
+    // link to the gift itself (its photo, message, place).
+    const giftFromHtml = c.gift
+      ? `<div class="detail-gift-from" role="button" tabindex="0" title="see the gift">`
+        + `Gift from <b>${escapeHtml(c.gift.from)}</b>`
+        + (c.gift.receivedAt ? ` · ${escapeHtml(new Date(c.gift.receivedAt).toLocaleDateString())}` : '')
+        + `</div>`
+      : '';
     // "From <type> Incense" — its own row, between the Lv·size stats and
     // the caught-location block.
     const incenseHtml = c.fromIncense
@@ -16280,6 +16558,7 @@
       ${statsHtml}
       ${incenseHtml}
       ${caughtLine}
+      ${giftFromHtml}
       ${candyTallyForCreature(c)}
       ${detailTagsHtml(c)}
       ${evosHtml}
@@ -16287,6 +16566,14 @@
     `;
     const giftBtn = body.querySelector('.detail-gift-btn');
     if (giftBtn) giftBtn.addEventListener('click', () => showGiftCreate(c.id));
+    const giftFrom = body.querySelector('.detail-gift-from');
+    if (giftFrom) {
+      const openIt = () => _showGiftModal(c.gift.id, false, { from: c.gift.from });
+      giftFrom.addEventListener('click', openIt);
+      giftFrom.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openIt(); }
+      });
+    }
     const pokedexLink = body.querySelector('.detail-pokedex-link');
     if (pokedexLink) {
       pokedexLink.addEventListener('click', () => {

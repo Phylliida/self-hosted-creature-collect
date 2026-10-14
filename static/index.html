@@ -13185,13 +13185,15 @@ function fmtDate(ts) {
     whenPoisReady() { return ensurePoisLoaded(); },
     // Named POIs within reach of (lat, lng) — the pokéstop range
     // (POI_COLLECT_MAX_DISTANCE_M) by default — nearest first, for the
-    // gift sheet's "sent from" picker: [{ name, category, distanceM }].
+    // gift sheet's "sent from" picker: [{ name, category, lat, lng, distanceM }].
     poisInRange(lat, lng, maxMeters = POI_COLLECT_MAX_DISTANCE_M) {
       const out = [];
       for (const p of allPois) {
         if (!p || !p.name) continue;
         const distanceM = haversineKm(lat, lng, p.lat, p.lng) * 1000;
-        if (distanceM <= maxMeters) out.push({ name: p.name, category: p.category || '', distanceM });
+        if (distanceM <= maxMeters) {
+          out.push({ name: p.name, category: p.category || '', lat: p.lat, lng: p.lng, distanceM });
+        }
       }
       out.sort((a, b) => a.distanceM - b.distanceM);
       return out;

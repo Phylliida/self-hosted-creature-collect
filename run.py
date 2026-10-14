@@ -5,6 +5,7 @@ import gzip
 import hashlib
 import hmac
 import json
+import math
 import os
 import pathlib
 import re
@@ -738,9 +739,54 @@ def _clean_gift_photo(photo):
     return prefix + base64.b64encode(clean).decode("ascii"), None
 
 
+def _gift_num(v):
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+        return None
+    return v
+
+
+def _gift_str(v, n):
+    return v.strip()[:n] if isinstance(v, str) and v.strip() else None
+
+
+def _gift_latlng(lat, lng):
+    lat, lng = _gift_num(lat), _gift_num(lng)
+    if lat is None or lng is None or abs(lat) > 90 or abs(lng) > 180:
+        return None
+    return lat, lng
+
+
+def _clean_caught_at(ca):
+    """Where and when a sent pokémon was caught, which its page shows the
+    recipient like their own catches: the known fields only, type-checked
+    (the client does the same). None when there's nothing."""
+    if not isinstance(ca, dict):
+        return None
+    spot = _gift_latlng(ca.get("lat"), ca.get("lng"))
+    ts = _gift_num(ca.get("timestamp"))
+    out = {"timestamp": int(ts) if ts is not None and ts > 0 else None,
+           "lat": spot[0] if spot else None, "lng": spot[1] if spot else None,
+           "poi": None, "place": None}
+    poi = ca.get("poi")
+    if isinstance(poi, dict) and _gift_str(poi.get("name"), 120):
+        at = _gift_latlng(poi.get("lat"), poi.get("lng"))
+        if at:
+            out["poi"] = {"name": _gift_str(poi.get("name"), 120), "lat": at[0], "lng": at[1],
+                          "distanceM": max(0, _gift_num(poi.get("distanceM")) or 0)}
+    place = ca.get("place")
+    if isinstance(place, dict):
+        city, country = _gift_str(place.get("city"), 80), _gift_str(place.get("country"), 80)
+        if city or country:
+            out["place"] = {"city": city, "country": country}
+    if out["timestamp"] is None and not spot and not out["poi"] and not out["place"]:
+        return None
+    return out
+
+
 def _clean_gift_creature(c):
-    """A sent pokémon, minus anything that says where or when it was
-    caught (the client strips these too). Returns (creature, error)."""
+    """A sent pokémon: no spawn cell (its id never travels either); where
+    and when it was caught, cleaned (see _clean_caught_at). Returns
+    (creature, error)."""
     if c is None:
         return None, None
     if not isinstance(c, dict):
@@ -752,7 +798,9 @@ def _clean_gift_creature(c):
     if size > _GIFT_CREATURE_MAX:
         return None, "pokémon record too large"
     c = dict(c)
-    c.pop("caughtAt", None)
+    caught = _clean_caught_at(c.pop("caughtAt", None))
+    if caught:
+        c["caughtAt"] = caught
     c.pop("spawnId", None)
     return c, None
 
@@ -779,8 +827,11 @@ def _clean_gift(g, sender, players):
         if not isinstance(place, dict) or not isinstance(place.get("name"), str) or not place["name"].strip():
             return None, "bad place"
         cat = place.get("category")
+        at = _gift_latlng(place.get("lat"), place.get("lng"))
         place = {"name": place["name"].strip()[:120],
                  "category": cat[:40] if isinstance(cat, str) else ""}
+        if at:   # the POI's spot, so the card can show it on the map
+            place["lat"], place["lng"] = at
     item = g.get("item")
     if item is not None:
         if (not isinstance(item, dict) or not isinstance(item.get("key"), str)

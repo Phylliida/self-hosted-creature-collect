@@ -8,7 +8,9 @@ Against a real Flask test client and a scratch saves dir:
   (3) a gift round trip — sender's outbox stored, recipient's inbox gets it,
       the players list excludes the caller
   (4) privacy — photo EXIF/APPn segments stripped, a sent pokémon loses
-      caughtAt and spawnId
+      its spawnId; its caughtAt (where/when it was caught, shown to the
+      recipient) comes through with only the known, well-typed fields;
+      the place keeps its POI's coordinates (bad ones are dropped)
   (5) rules — one gift per sender → recipient per day, retried uploads are
       idempotent, item counts 1/5/10/50 only, no passes, no gifts to
       yourself or unknown players, message capped at 140 characters
@@ -101,22 +103,31 @@ photo = "data:image/jpeg;base64," + base64.b64encode(jpeg_with_exif()).decode()
 creature = {"id": "c-1", "speciesA": 1, "speciesB": 4, "level": 12, "shinyVariant": 0,
             "spawnId": "1355017:1064327:29865600:0",
             "caughtAt": {"timestamp": 1791900000000, "lat": 45.5017, "lng": -73.5673,
-                         "poi": {"name": "Café X"}, "place": {"city": "Montréal"}}}
+                         "poi": {"name": " Café X ", "lat": 45.5018, "lng": -73.5674, "distanceM": 12.5,
+                                 "extra": "<script>"},
+                         "place": {"city": "Montréal", "country": 7}, "secret": "drop me"}}
 g1 = gift("g-bees-grak-01", "Grak", message="x" * 300, photo=photo, creature=creature,
-          item={"key": "great_ball", "count": 5}, place={"name": "Parc Jarry", "category": "park"})
+          item={"key": "great_ball", "count": 5},
+          place={"name": "Parc Jarry", "category": "park", "lat": 45.5341, "lng": -73.6276, "x": 1})
 code, body = sync("Bees", [g1])
 ok(code == 200 and body["accepted"] == ["g-bees-grak-01"] and not body["rejected"], f"gift accepted ({body})")
 code, body = sync("Grak")
 ok(code == 200 and len(body["inbox"]) == 1, "recipient's inbox has it")
 got = body["inbox"][0]
 ok(got["from"] == "Bees" and got["to"] == "Grak" and got["item"] == {"key": "great_ball", "count": 5}
-   and got["place"] == {"name": "Parc Jarry", "category": "park"}, "sender, item and place come through")
+   and got["place"] == {"name": "Parc Jarry", "category": "park", "lat": 45.5341, "lng": -73.6276},
+   f"sender, item and place (with its spot) come through ({got['place']})")
 ok(len(got["message"]) == 140, "message capped at 140 characters")
 raw = base64.b64decode(got["photo"].split(",", 1)[1])
 ok(raw.startswith(b"\xff\xd8") and b"Exif" not in raw and b"GPS" not in raw and b"comment" not in raw
    and b"JFIF" in raw and raw.endswith(b"\x12\x34\x56\xff\xd9"), "photo EXIF/GPS and comments stripped, image kept")
-ok("caughtAt" not in got["creature"] and "spawnId" not in got["creature"]
-   and got["creature"]["speciesA"] == 1 and got["creature"]["level"] == 12, "pokémon keeps its species/level, loses where/when it was caught")
+ok("spawnId" not in got["creature"]
+   and got["creature"]["speciesA"] == 1 and got["creature"]["level"] == 12, "pokémon keeps its species/level, loses its spawn cell")
+ok(got["creature"].get("caughtAt") == {
+       "timestamp": 1791900000000, "lat": 45.5017, "lng": -73.5673,
+       "poi": {"name": "Café X", "lat": 45.5018, "lng": -73.5674, "distanceM": 12.5},
+       "place": {"city": "Montréal", "country": None}},
+   f"where/when it was caught comes through, known fields only ({got['creature'].get('caughtAt')})")
 ok(sorted(body["players"]) == ["Art2", "Bees"], "players list excludes the caller")
 ok(body["cursor"] == got["serverMs"] and body["more"] is False, "cursor moves to the last gift")
 code, body = sync("Grak", cursor=body["cursor"])
@@ -128,7 +139,11 @@ ok(body["rejected"] and "already sent" in body["rejected"][0]["error"], "one gif
 code, body = sync("Bees", [g1])
 ok(body["accepted"] == ["g-bees-grak-01"], "a retried upload of the same gift is accepted again")
 ok(len(run._read_gift_index("Grak")) == 1, "…without storing it twice")
-code, body = sync("Bees", [gift("g-bees-grak-03", "Grak", day="2026-10-15")])
+# (also: junk where-caught and an off-the-map place spot are dropped, below)
+code, body = sync("Bees", [gift("g-bees-grak-03", "Grak", day="2026-10-15",
+                               creature={"speciesA": 2, "speciesB": 3, "level": 5,
+                                         "caughtAt": {"lat": "45", "poi": "x", "place": [], "timestamp": True}},
+                               place={"name": "Somewhere", "lat": 999, "lng": -73.6})])
 ok(body["accepted"] == ["g-bees-grak-03"], "a different day is fine")
 cases = [
     (gift("g-bad-count-01", "Art2", item={"key": "poke_ball", "count": 3}), "bad item"),
@@ -157,6 +172,9 @@ ids = [g["id"] for g in b1["inbox"] + b2["inbox"]]
 ok(len(set(ids)) == 13, "no gift delivered twice across batches")
 ms = [g["serverMs"] for g in b1["inbox"] + b2["inbox"]]
 ok(ms == sorted(ms) and len(set(ms)) == len(ms), "serverMs strictly increasing per recipient")
+g3 = next(g for g in b1["inbox"] + b2["inbox"] if g["id"] == "g-bees-grak-03")
+ok("caughtAt" not in g3["creature"] and g3["creature"]["speciesA"] == 2, "junk where-caught is dropped, pokémon kept")
+ok(g3["place"] == {"name": "Somewhere", "category": ""}, f"an off-the-map place spot is dropped ({g3['place']})")
 
 # The gifts folder doesn't look like a save to /load.
 ok(not list(SAVES.glob("gifts_*.json*")), "gifts never land where saves are listed")

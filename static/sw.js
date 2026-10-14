@@ -138,6 +138,8 @@ const TILES_CACHE = 'tiles-v1';
 // and Import reads .json.gz as well as .json.
 // Shell bump 2026-10-14 (#31): index.html's Save builds its gzipped body
 // from the streamed export pieces (no whole-save string in memory).
+// Shell bump 2026-10-14 (#32): index.html's poisInRange returns each POI's
+// lat/lng (a gift's "sent from" place links to the map).
 
 const APP_SHELL = [
   '/',
