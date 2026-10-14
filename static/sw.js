@@ -120,6 +120,8 @@ const TILES_CACHE = 'tiles-v1';
 // Shell bump 2026-10-13 (#21): icon.svg's two rings sit level.
 // Shell bump 2026-10-13 (#22): index.html hides the +/- and compass map
 // buttons while Lock zoom / Lock rotate are on.
+// Shell bump 2026-10-14 (#23): index.html snaps legendaries to the nearest
+// point on a road or path (or a nearer POI) instead of an intersection.
 
 const APP_SHELL = [
   '/',

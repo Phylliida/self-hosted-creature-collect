@@ -842,9 +842,11 @@
   // stays pure/deterministic; the host app registers a provider that maps a
   // rolled (lat, lng) to a real-world anchor ({ lat, lng, kind }) or null
   // when nothing suitable is nearby (the legendary is then hidden — keeps
-  // players from being sent somewhere they shouldn't go). Results are
-  // cached per spawn id; positions may differ between devices with
-  // different downloaded map data, but spawn ids are unaffected.
+  // players from being sent somewhere they shouldn't go), or undefined
+  // when it can't tell yet (map data still loading: hidden for now, asked
+  // again next time). Answers are cached per spawn id; positions may
+  // differ between devices with different downloaded map data, but spawn
+  // ids are unaffected.
   let _legSnapProvider = null;
   const _legSnapCache = new Map();
   const LEG_SNAP_CACHE_MAX = 256;
@@ -860,6 +862,7 @@
     }
     let target = null;
     try { target = _legSnapProvider(p.lat, p.lng); } catch (e) { target = null; }
+    if (target === undefined) return null;   // not known yet: don't cache
     if (_legSnapCache.size >= LEG_SNAP_CACHE_MAX) {
       _legSnapCache.delete(_legSnapCache.keys().next().value);
     }

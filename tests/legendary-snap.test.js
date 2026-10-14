@@ -6,8 +6,10 @@
 //   - Provider returning null: the legendary is hidden from both
 //     legendariesInBbox and nearestRadar (nothing safe within range).
 //   - Provider results are cached per spawn id (no rescans on refresh).
-// The road/POI priority chain itself lives in index.html
-// (legendarySnapTarget) and is not exercisable from Node.
+//   - Provider returning undefined (map data still loading): hidden for
+//     now and NOT cached, so the next query asks again.
+// The road/path/POI geometry in index.html (legendarySnapTarget) is
+// tested on real map data by legendary-snap-road.test.js.
 //
 // Run: node tests/legendary-snap.test.js
 'use strict';
@@ -123,6 +125,22 @@ const WIDE_PAD = 0.008;
   const withoutSnap = S.nearestRadar(leg.lat, leg.lng, 5);
   ok(!withoutSnap.some((p) => p.id === leg.id),
     '4: null snap target removes the legendary from the radar');
+}
+
+// ── 5) undefined = not known yet → hidden, asked again next time ─
+{
+  let answer, calls = 0;
+  S.setLegendarySnapProvider(() => { calls++; return answer; });
+  const box = bboxAround(leg.lat, leg.lng, WIDE_PAD);
+  ok(!S.legendariesInBbox(box, NOW).some((p) => p.id === leg.id), '5: hidden while the provider can\'t tell yet');
+  ok(!S.nearestRadar(leg.lat, leg.lng, 5).some((p) => p.id === leg.id), '5: and off the radar');
+  const before = calls;
+  answer = { lat: leg.lat, lng: leg.lng, kind: 'road' };   // map data loaded
+  const hit = S.legendariesInBbox(box, NOW).find((p) => p.id === leg.id);
+  ok(calls > before && hit && hit.snappedTo === 'road', '5: the not-yet answer wasn\'t cached: asked again, now shown');
+  const after = calls;
+  S.legendariesInBbox(box, NOW);
+  ok(calls === after, '5: a real answer is cached as before');
 }
 
 S.setLegendarySnapProvider(null);

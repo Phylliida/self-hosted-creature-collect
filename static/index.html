@@ -5369,6 +5369,7 @@ async function saveWalkGraph(regionId, buffer) {
   tx.objectStore('regions').put({ regionId, buffer });
   await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
   db.close();
+  if (window._legSnapMapDataChanged) window._legSnapMapDataChanged(regionId);
 }
 async function loadAllWalkGraphs(includeRegionIds) {
   // includeRegionIds is an optional Set<string>. When provided, ONLY
@@ -5471,6 +5472,7 @@ async function deleteWalkGraphByRegion(regionId) {
   tx.objectStore('regions').delete(regionId);
   await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = () => j(tx.error); });
   db.close();
+  if (window._legSnapMapDataChanged) window._legSnapMapDataChanged(regionId);
 }
 
 // Housenumbers: fetched lazily (only when the map first zooms past the
@@ -12397,6 +12399,8 @@ function fmtDate(ts) {
     allPois = allPois.filter((p) => p.regionId !== regionId);
     if (hydrate) for (const p of hydrate()) allPois.push(p);
     _rebuildPoisByRegion();
+    // Legendary snap answers may now point at removed POIs, or miss new ones.
+    if (window._legSnapMapDataChanged) window._legSnapMapDataChanged(null);
     return true;
   }
   function _addrRegionChanged(regionId, makeIndex) {
@@ -12573,86 +12577,185 @@ function fmtDate(ts) {
   // Expose for diagnostics / future consumers.
   window._searchPois = searchPois;
 
-  // ── Legendary spawn snapping (roads first, then POIs, else hidden) ──
+  // ── Legendary spawn snapping (nearest road, path or POI) ──
   // spawns.js rolls legendary positions uniformly inside ~11 m cells —
   // which can land them in backyards, water, private property, etc. Here
-  // we hand the engine a snap provider: a rolled position is moved to the
-  // nearest walk-graph (road) node within 2 km, else the nearest POI
-  // within 2 km, else the legendary is hidden entirely. Snap targets come
-  // from downloaded region data only, so a legendary in an area with no
-  // downloaded map data is hidden too (safe default — we can't verify the
-  // spot is somewhere a player should go).
+  // we hand the engine a snap provider: a rolled position moves to the
+  // nearest point on any road or walking path (the walk graph's full
+  // lines, bends included, not just its intersections) or to the nearest
+  // POI, whichever is closer, within 2 km; with nothing in reach the
+  // legendary is hidden. Snap targets come from downloaded map data only
+  // (static regions and saved areas alike), so a legendary in an area
+  // with no downloaded map data is hidden too (safe default — we can't
+  // verify the spot is somewhere a player should go).
   const LEG_SNAP_MAX_M = 2000;
-  // regionId -> { nodeLng, nodeLat, N } | null (region has no routing.bin).
-  // Lazy-warmed from IDB on first query near a region; routing views are
-  // zero-copy typed-array views over the IDB buffer.
-  const _legSnapRoadGraphs = new Map();
-  const _legSnapRoadLoading = new Set();
-  // Kick off async loads for any not-yet-cached regions intersecting the
-  // 2 km circle around (lat, lng). Returns true while any intersecting
-  // region's road data is still unresolved (caller hides the legendary
-  // this pass so roads keep priority over POIs once loaded).
-  function _legSnapWarmRoadGraphs(lat, lng) {
-    if (!window.RegionPicker || !window._regionsManifest) return true;
+  // regionId -> _legSnapWalkView | null (no walk graph stored). Loaded
+  // from IDB on the first query near a downloaded area.
+  const _legSnapWalk = new Map();
+  const _legSnapLoading = new Set();
+  // <legendary-snap-geometry> (tests/legendary-snap-road.test.js runs this block)
+  // A slim zero-copy view of a walk.bin (v3, the layout viewWalkRegion
+  // reads) for snapping: node coords, edge ends, edge lengths and the
+  // per-edge shape blobs (a road's bends between intersections). Decodes
+  // nothing up front; only a per-32-edges count of shaped edges (to find
+  // an edge's blob) is built — ~100 KB for a 700k-edge region.
+  function _legSnapWalkView(buffer) {
+    const dv = new DataView(buffer);
+    const magic = String.fromCharCode(dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3));
+    if (magic !== 'WALK' || dv.getUint32(4, true) !== 3) return null;
+    const N = dv.getUint32(8, true), E = dv.getUint32(12, true);
+    const namesByteLen = dv.getUint32(20, true), shapesByteLen = dv.getUint32(24, true);
+    const u8End = dv.getUint32(28, true), u16End = dv.getUint32(32, true);
+    const nameIdxWidth = dv.getUint32(36, true), shapeEdgeCount = dv.getUint32(40, true);
+    const align4 = (x) => (x + 3) & ~3;
+    const edgesStart = 48 + 16 * N;
+    const w8Off = edgesStart + 8 * E;
+    const w16Off = w8Off + align4(u8End);
+    const w32Off = w16Off + align4(2 * (u16End - u8End));
+    const bitmapOff = w32Off + 4 * (E - u16End) + align4(nameIdxWidth * E);
+    const bitmapBytes = align4((E + 7) >> 3);
+    const sparseOffOff = bitmapOff + bitmapBytes;
+    const sparseLenOff = sparseOffOff + 4 * shapeEdgeCount;
+    const namesStart = sparseLenOff + align4(2 * shapeEdgeCount);
+    const bits = new Uint32Array(buffer, bitmapOff, bitmapBytes >> 2);
+    const rank = new Uint32Array(bits.length);
+    for (let k = 0, n = 0; k < bits.length; k++) { rank[k] = n; n += _legSnapPopcount(bits[k]); }
+    return {
+      E, u8End, u16End, rank, bits,
+      nodeLng: new Float32Array(buffer, 48 + 8 * N, N),
+      nodeLat: new Float32Array(buffer, 48 + 12 * N, N),
+      edgeFrom: new Uint32Array(buffer, edgesStart, E),
+      edgeTo: new Uint32Array(buffer, edgesStart + 4 * E, E),
+      w8: new Uint8Array(buffer, w8Off, u8End),
+      w16: new Uint16Array(buffer, w16Off, u16End - u8End),
+      w32: new Float32Array(buffer, w32Off, E - u16End),
+      sparseOff: new Uint32Array(buffer, sparseOffOff, shapeEdgeCount),
+      sparseLen: new Uint16Array(buffer, sparseLenOff, shapeEdgeCount),
+      shapes: new Uint8Array(buffer, namesStart + namesByteLen, shapesByteLen),
+    };
+  }
+  function _legSnapPopcount(x) {
+    x -= (x >>> 1) & 0x55555555;
+    x = (x & 0x33333333) + ((x >>> 2) & 0x33333333);
+    return (Math.imul((x + (x >>> 4)) & 0x0F0F0F0F, 0x01010101) >>> 24);
+  }
+  // Nearest point on any road or path of one walk view to (lat, lng),
+  // closer than maxM: { lat, lng, m } or null. Distances are local metres
+  // (flat around the query point — plenty exact over 2 km). Most edges are
+  // ruled out without decoding their shape: a point at distance s along
+  // an edge of length L is within s of one end and L − s of the other, so
+  // nothing on it is nearer than (dA + dB − L) / 2. L is the stored
+  // length (the full line, rounded; the stored bends are simplified, so
+  // a little slack covers quantization).
+  function _legSnapNearestOnWalk(v, lat, lng, maxM) {
+    const M = 111320, kx = M * Math.cos(lat * Math.PI / 180);
+    let best = maxM, hitX = 0, hitY = 0, hit = false;
+    const xs = [], ys = [];
+    const seg = (ax, ay, bx, by) => {
+      const vx = bx - ax, vy = by - ay, L2 = vx * vx + vy * vy;
+      let t = L2 > 0 ? -(ax * vx + ay * vy) / L2 : 0;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const px = ax + t * vx, py = ay + t * vy, d = Math.sqrt(px * px + py * py);
+      if (d < best) { best = d; hitX = px; hitY = py; hit = true; }
+    };
+    const { E, u8End, u16End, nodeLng, nodeLat, edgeFrom, edgeTo } = v;
+    for (let e = 0; e < E; e++) {
+      const a = edgeFrom[e], b = edgeTo[e];
+      const ax = (nodeLng[a] - lng) * kx, ay = (nodeLat[a] - lat) * M;
+      const bx = (nodeLng[b] - lng) * kx, by = (nodeLat[b] - lat) * M;
+      const len = e < u8End ? v.w8[e] : e < u16End ? v.w16[e - u8End] : v.w32[e - u16End];
+      if (Math.sqrt(ax * ax + ay * ay) + Math.sqrt(bx * bx + by * by) - len * 1.05 - 10 >= 2 * best) continue;
+      const word = e >>> 5, bit = e & 31;
+      if (!(v.bits[word] & (1 << bit))) { seg(ax, ay, bx, by); continue; }
+      // Bends: zigzag-varint microdegree deltas from the start node.
+      const si = v.rank[word] + _legSnapPopcount(v.bits[word] & ((1 << bit) - 1));
+      const off = v.sparseOff[si], end = off + v.sparseLen[si];
+      let lngU = Math.round(nodeLng[a] * 1e6), latU = Math.round(nodeLat[a] * 1e6);
+      let px = ax, py = ay, k = off, half = 0, dLng = 0;
+      while (k < end) {
+        let val = 0, shift = 0, byte;
+        do { byte = v.shapes[k++]; val |= (byte & 0x7F) << shift; shift += 7; } while (byte & 0x80);
+        const d = (val >>> 1) ^ -(val & 1);
+        if (!half) { dLng = d; half = 1; continue; }
+        half = 0;
+        lngU += dLng; latU += d;
+        const qx = (lngU / 1e6 - lng) * kx, qy = (latU / 1e6 - lat) * M;
+        seg(px, py, qx, qy);
+        px = qx; py = qy;
+      }
+      seg(px, py, bx, by);
+    }
+    return hit ? { lat: lat + hitY / M, lng: lng + hitX / kx, m: best } : null;
+  }
+  // Nearest POI to (lat, lng) closer than maxM: { lat, lng, m } or null.
+  function _legSnapNearestPoi(pois, lat, lng, maxM) {
+    const M = 111320, kx = M * Math.cos(lat * Math.PI / 180);
+    let best = maxM, out = null;
+    for (const p of pois) {
+      if (!p) continue;
+      const dx = (p.lng - lng) * kx, dy = (p.lat - lat) * M, d = Math.sqrt(dx * dx + dy * dy);
+      if (d < best) { best = d; out = p; }
+    }
+    return out ? { lat: out.lat, lng: out.lng, m: best } : null;
+  }
+  // </legendary-snap-geometry>
+  // Downloaded areas (static regions and saved areas) whose bbox comes
+  // within LEG_SNAP_MAX_M of (lat, lng). Both kinds store their walk graph
+  // under their own id.
+  function _legSnapAreasNear(lat, lng) {
     const padLat = LEG_SNAP_MAX_M / 111000;
-    const cosLat = Math.max(0.2, Math.cos(lat * Math.PI / 180));
-    const padLng = padLat / cosLat;
-    const regs = window.RegionPicker.findByBbox(
-      lng - padLng, lat - padLat, lng + padLng, lat + padLat);
+    const padLng = padLat / Math.max(0.2, Math.cos(lat * Math.PI / 180));
+    const ids = [];
+    let lists = [];
+    try { lists = [loadStaticRegions(), loadRegions()]; } catch { lists = []; }
+    for (const list of lists) {
+      for (const r of (Array.isArray(list) ? list : [])) {
+        const b = r && r.bbox;
+        if (!b || b.length !== 4 || ids.includes(r.id)) continue;
+        if (b[0] <= lng + padLng && b[2] >= lng - padLng
+            && b[1] <= lat + padLat && b[3] >= lat - padLat) ids.push(r.id);
+      }
+    }
+    return ids;
+  }
+  // Starts loading any of those areas' walk graphs not loaded yet.
+  // Returns true while one is still loading.
+  function _legSnapWarm(ids) {
     let pending = false;
-    for (const r of regs) {
-      if (_legSnapRoadGraphs.has(r.id)) continue;
+    for (const id of ids) {
+      if (_legSnapWalk.has(id)) continue;
       pending = true;
-      if (_legSnapRoadLoading.has(r.id)) continue;
-      _legSnapRoadLoading.add(r.id);
-      loadRoutingGraphs(new Set([r.id])).then((recs) => {
-        const rec = recs.find((x) => x.regionId === r.id);
-        if (rec) {
-          try {
-            const v = viewRoutingRegion(rec.buffer);
-            _legSnapRoadGraphs.set(r.id, { nodeLng: v.nodeLng, nodeLat: v.nodeLat, N: v.N });
-          } catch { _legSnapRoadGraphs.set(r.id, null); }
-        } else {
-          _legSnapRoadGraphs.set(r.id, null);
-        }
-      }).catch(() => { _legSnapRoadGraphs.set(r.id, null); })
-        .finally(() => { _legSnapRoadLoading.delete(r.id); });
+      if (_legSnapLoading.has(id)) continue;
+      _legSnapLoading.add(id);
+      loadAllWalkGraphs(new Set([id])).then((recs) => {
+        const rec = recs.find((x) => x.regionId === id);
+        let view = null;
+        try { if (rec && rec.buffer) view = _legSnapWalkView(rec.buffer); } catch { view = null; }
+        _legSnapWalk.set(id, view);
+      }).catch(() => { _legSnapWalk.set(id, null); })
+        .finally(() => { _legSnapLoading.delete(id); });
     }
     return pending;
   }
-  // Nearest cached road-graph node to (lat, lng). Cheap squared-degrees
-  // scan (same as findNearestWalkNodeMulti) — provider calls are rare
-  // (legendary candidates only) and results are cached by spawns.js.
-  function _legSnapNearestRoad(lat, lng) {
-    let best = null, bestD2 = Infinity;
-    for (const g of _legSnapRoadGraphs.values()) {
-      if (!g) continue;
-      const lngs = g.nodeLng, lats = g.nodeLat;
-      for (let i = 0; i < g.N; i++) {
-        const dLng = lngs[i] - lng, dLat = lats[i] - lat;
-        const d2 = dLng * dLng + dLat * dLat;
-        if (d2 < bestD2) { bestD2 = d2; best = { lat: lats[i], lng: lngs[i] }; }
-      }
-    }
-    if (!best) return null;
-    return { lat: best.lat, lng: best.lng, distanceM: haversineKm(lat, lng, best.lat, best.lng) * 1000 };
-  }
+  // The provider. undefined = can't tell yet (POIs or a walk graph still
+  // loading): spawns.js hides the legendary for now and asks again on the
+  // next refresh instead of caching the answer. POIs load in the post-boot
+  // queue (ensurePoisLoaded); waiting for them also keeps the walk-graph
+  // reads out of the startup path.
   function legendarySnapTarget(lat, lng) {
-    if (_legSnapWarmRoadGraphs(lat, lng)) return null;  // road data in flight
-    const road = _legSnapNearestRoad(lat, lng);
-    if (road && road.distanceM <= LEG_SNAP_MAX_M) {
-      return { lat: road.lat, lng: road.lng, kind: 'road' };
+    if (!_poisReady) return undefined;
+    const areas = _legSnapAreasNear(lat, lng);
+    if (_legSnapWarm(areas)) return undefined;
+    let best = null;
+    for (const id of areas) {
+      const v = _legSnapWalk.get(id);
+      if (!v) continue;
+      const hit = _legSnapNearestOnWalk(v, lat, lng, best ? best.m : LEG_SNAP_MAX_M);
+      if (hit) best = { lat: hit.lat, lng: hit.lng, m: hit.m, kind: 'road' };
     }
-    let best = null, bestKm = Infinity;
-    for (const p of allPois) {
-      if (!p) continue;
-      const d = haversineKm(lat, lng, p.lat, p.lng);
-      if (d < bestKm) { bestKm = d; best = p; }
-    }
-    if (best && bestKm * 1000 <= LEG_SNAP_MAX_M) {
-      return { lat: best.lat, lng: best.lng, kind: 'poi' };
-    }
-    return null;
+    const poi = _legSnapNearestPoi(allPois, lat, lng, best ? best.m : LEG_SNAP_MAX_M);
+    if (poi) best = { lat: poi.lat, lng: poi.lng, m: poi.m, kind: 'poi' };
+    return best ? { lat: best.lat, lng: best.lng, kind: best.kind } : null;
   }
   // The "Snap legendaries to roads/POIs" settings toggle (default ON)
   // gates registration; setLegendarySnapProvider clears the engine's
@@ -12665,6 +12768,12 @@ function fmtDate(ts) {
     Spawns.setLegendarySnapProvider(on ? legendarySnapTarget : null);
   };
   window._applyLegendarySnapSetting();
+  // Map data changed (an area's walk graph or POIs saved or deleted):
+  // forget that area's walk view and every cached snap answer.
+  window._legSnapMapDataChanged = function (regionId) {
+    if (regionId != null) _legSnapWalk.delete(regionId);
+    window._applyLegendarySnapSetting();
+  };
 
   // Hand creatures.js a locally-scoped POI query — the POI array lives
   // inside this IIFE and we don't want to scatter POI loads around.
