@@ -128,6 +128,8 @@ const TILES_CACHE = 'tiles-v1';
 // (ponds, lakes, rivers — their point is in the water).
 // Shell bump 2026-10-14 (#26): index.html's "Snap bubble centers" tooltip
 // (the whole bubble moves now).
+// Shell bump 2026-10-14 (#27): index.html keeps snap answers on the device
+// across restarts (cc.snapStore.v1).
 
 const APP_SHELL = [
   '/',

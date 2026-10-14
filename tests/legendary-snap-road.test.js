@@ -214,6 +214,37 @@ function brute(nodes, edges, lat, lng) {
   ok(hit2 && hit2.lat === pois[0].lat, '4: a nearer uncategorised POI (a pond) is skipped');
 }
 
+// ── 4b. Saved answers (the <legendary-snap-store> block) ───────────────
+{
+  const c = src.indexOf('// <legendary-snap-store>'), d = src.indexOf('// </legendary-snap-store>');
+  ok(c > 0 && d > c, '4b: store block found in index.html');
+  const St = new Function(src.slice(c, d) + '\nreturn { _snapStoreLoad, _snapStoreSave, _snapStoreKey, _snapStoreAnswer, SNAP_STORE_KEY };')();
+  const mem = new Map();
+  const storage = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)) };
+  const today = 20740;
+  const m = new Map();
+  const legLat = 45.50123456789012, legLng = -73.56789012345678;
+  m.set(St._snapStoreKey(legLat, legLng), [today, 45.5013, -73.5679, 'road']);
+  m.set(St._snapStoreKey(44.1, -123.1), [today]);                      // nothing in reach
+  m.set(St._snapStoreKey(44.2, -123.2), [today - 2, 44.2, -123.2, 'poi']);   // too old
+  St._snapStoreSave(storage, m);
+  const back = St._snapStoreLoad(storage, today);
+  const a = back.get(St._snapStoreKey(legLat, legLng));
+  ok(a && St._snapStoreAnswer(a).lat === 45.5013 && St._snapStoreAnswer(a).kind === 'road', '4b: a saved spot comes back exactly (same key from the same numbers)');
+  ok(back.has(St._snapStoreKey(44.1, -123.1)) && St._snapStoreAnswer(back.get(St._snapStoreKey(44.1, -123.1))) === null, '4b: "nothing in reach" is saved too');
+  ok(!back.has(St._snapStoreKey(44.2, -123.2)), '4b: answers older than two days are dropped on load');
+  ok(St._snapStoreLoad(storage, today + 2).size === 0, '4b: and everything is gone two days later');
+  mem.set(St.SNAP_STORE_KEY, '{not json');
+  ok(St._snapStoreLoad(storage, today).size === 0, '4b: a damaged store loads as empty');
+  mem.set(St.SNAP_STORE_KEY, JSON.stringify({ a: 'x', b: [today, 'NaN'], c: [today, 1, 2, 'road'] }));
+  ok(St._snapStoreLoad(storage, today).size === 1, '4b: malformed entries are skipped');
+  const big = new Map();
+  for (let i = 0; i < 4100; i++) big.set('k' + i, [today]);
+  St._snapStoreSave(storage, big);
+  const kept = St._snapStoreLoad(storage, today);
+  ok(kept.size === 4000 && kept.has('k4099') && !kept.has('k0'), '4b: capped at 4000, keeping the newest');
+}
+
 // ── 5. Real Montreal map data (when downloaded into regions/) ──────────
 const regionDirs = ['region-0361', 'region-0530'].map((id) => path.join(root, 'regions', id));
 if (regionDirs.every((d) => fs.existsSync(path.join(d, 'walk.bin')))) {

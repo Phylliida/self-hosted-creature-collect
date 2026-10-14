@@ -12801,6 +12801,50 @@ function fmtDate(ts) {
     return out ? { lat: out.lat, lng: out.lng, m: best } : null;
   }
   // </legendary-snap-geometry>
+  // <legendary-snap-store> (tests/legendary-snap-road.test.js runs this block)
+  // Snap answers are kept on this device (localStorage), so after a restart
+  // bubbles and legendaries already stand in their spots, without loading
+  // and searching the map data again. Keyed by the rolled position (a
+  // spawn asks with the same numbers every time); each entry carries the
+  // UTC day it was found and goes after SNAP_STORE_DAYS (bubbles and
+  // legendaries last about a day). A map-data change clears it all
+  // (_legSnapMapDataChanged); bump the key when the snap rules change.
+  // Entry: [day] (nothing in reach) or [day, lat, lng, kind].
+  const SNAP_STORE_KEY = 'cc.snapStore.v1';
+  const SNAP_STORE_DAYS = 2, SNAP_STORE_MAX = 4000;
+  function _snapStoreLoad(storage, today) {
+    const m = new Map();
+    let raw = null;
+    try { raw = JSON.parse(storage.getItem(SNAP_STORE_KEY) || 'null'); } catch { raw = null; }
+    if (!raw || typeof raw !== 'object') return m;
+    for (const k of Object.keys(raw)) {
+      const e = raw[k];
+      if (!Array.isArray(e) || typeof e[0] !== 'number' || today - e[0] >= SNAP_STORE_DAYS) continue;
+      if (e.length !== 1 && !(e.length === 4 && isFinite(e[1]) && isFinite(e[2]))) continue;
+      m.set(k, e);
+    }
+    return m;
+  }
+  function _snapStoreSave(storage, m) {
+    let entries = Array.from(m.entries());   // oldest first
+    if (entries.length > SNAP_STORE_MAX) entries = entries.slice(entries.length - SNAP_STORE_MAX);
+    try { storage.setItem(SNAP_STORE_KEY, JSON.stringify(Object.fromEntries(entries))); } catch { /* full or blocked */ }
+  }
+  const _snapStoreKey = (lat, lng) => lat + ',' + lng;
+  const _snapStoreAnswer = (e) => (e.length > 1 ? { lat: e[1], lng: e[2], kind: e[3] } : null);
+  // </legendary-snap-store>
+  let _snapStore = null;        // loaded on first use
+  let _snapStoreTimer = null;
+  function _snapStoreGet(lat, lng) {
+    if (!_snapStore) _snapStore = _snapStoreLoad(localStorage, Math.floor(Date.now() / 86400000));
+    return _snapStore.get(_snapStoreKey(lat, lng));
+  }
+  function _snapStorePut(lat, lng, answer) {
+    const day = Math.floor(Date.now() / 86400000);
+    _snapStore.set(_snapStoreKey(lat, lng), answer ? [day, answer.lat, answer.lng, answer.kind] : [day]);
+    if (_snapStoreTimer) return;
+    _snapStoreTimer = setTimeout(() => { _snapStoreTimer = null; _snapStoreSave(localStorage, _snapStore); }, 2000);
+  }
   // Downloaded areas (static regions and saved areas) whose bbox comes
   // within LEG_SNAP_MAX_M of (lat, lng). Both kinds store their walk graph
   // under their own id.
@@ -12854,6 +12898,8 @@ function fmtDate(ts) {
   // (ensurePoisLoaded); waiting for them also keeps the walk-graph reads
   // out of the startup path.
   function legendarySnapTarget(lat, lng) {
+    const saved = _snapStoreGet(lat, lng);
+    if (saved) return _snapStoreAnswer(saved);
     if (!_poisReady) return undefined;
     const areas = _legSnapAreasNear(lat, lng);
     if (_legSnapWarm(areas)) return undefined;
@@ -12866,7 +12912,9 @@ function fmtDate(ts) {
     }
     const poi = _legSnapNearestPoi(allPois, lat, lng, best ? best.m : LEG_SNAP_MAX_M);
     if (poi) best = { lat: poi.lat, lng: poi.lng, m: poi.m, kind: 'poi' };
-    return best ? { lat: best.lat, lng: best.lng, kind: best.kind } : null;
+    const answer = best ? { lat: best.lat, lng: best.lng, kind: best.kind } : null;
+    _snapStorePut(lat, lng, answer);
+    return answer;
   }
   // The "Snap legendaries to roads/POIs" (default ON) and "Snap bubble
   // centers to roads/POIs" (default OFF) settings toggles gate
@@ -12887,9 +12935,12 @@ function fmtDate(ts) {
   };
   window._applySnapSettings();
   // Map data changed (an area's walk graph or POIs saved or deleted):
-  // forget that area's walk view and every cached snap answer.
+  // forget that area's walk view and every cached snap answer, saved ones
+  // included.
   window._legSnapMapDataChanged = function (regionId) {
     if (regionId != null) _legSnapWalk.delete(regionId);
+    _snapStore = new Map();
+    _snapStoreSave(localStorage, _snapStore);
     window._applySnapSettings();
   };
 
