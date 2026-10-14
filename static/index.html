@@ -8742,6 +8742,10 @@ function fmtDate(ts) {
       // deck-without-replacement picker (see cc.completionRewards.v1 in
       // creatures.js). Plain JSON blob, travels with the save.
       completionRewards: JSON.parse(localStorage.getItem('cc.completionRewards.v1') || 'null'),
+      // Ids of received gifts already opened (items/pokémon claimed). The
+      // gifts themselves live on the server and come back to a new device
+      // with its first save; this list keeps them from paying out twice.
+      giftsOpened: JSON.parse(localStorage.getItem('cc.giftsOpened.v1') || '[]'),
       // TOFU write token for this trainer name (see _writeTokenFor). It
       // deliberately rides in the save: /load only answers on the home
       // network, so loading at home is what re-grants a device the right
@@ -8960,7 +8964,16 @@ function fmtDate(ts) {
       localStorage.setItem('cc.lastSaveAt', String(Date.now()));
       try { localStorage.removeItem(SAVE_ERROR_KEY); } catch (_) {}
       updateBackupStatus();
-      if (!silent) alert(`Saved to server as ${body.saved || name + '.json'}`);
+      // Gifts ride on the save: send ours, fetch any waiting for us.
+      const gifts = await syncGifts(name);
+      if (!silent) {
+        let msg = `Saved to server as ${body.saved || name + '.json'}`;
+        if (gifts && gifts.sent) msg += `\nSent ${gifts.sent} gift${gifts.sent === 1 ? '' : 's'}.`;
+        if (gifts && gifts.returned) msg += `\n${gifts.returned} gift${gifts.returned === 1 ? '' : 's'} couldn\u2019t be sent and went back to your bag.`;
+        if (gifts && gifts.error) msg += `\nGifts didn\u2019t sync: ${gifts.error}`;
+        alert(msg);
+      }
+      try { if (window.Creatures && window.Creatures.showNewGifts) window.Creatures.showNewGifts(); } catch (_) {}
       return true;
     } catch (e) {
       // Remembered for the Settings diagnostic dump: a failing backup is
@@ -8975,6 +8988,43 @@ function fmtDate(ts) {
       if (!silent) alert('Save failed: ' + (e && e.message ? e.message : e));
       return false;
     }
+  }
+  // Gifts (see run.py /gifts): right after a successful save, POST our
+  // outgoing gifts and our inbox cursor; the reply carries the gifts
+  // waiting for us (in batches — photos make them big) and the list of
+  // players we can send to. Same server and write token as the save, and
+  // only ever as part of one, so gifts use no data beyond saving. Never
+  // fails the save: problems are reported back and remembered for the
+  // diagnostics dump. → { sent, returned, received, error }.
+  const GIFTS_ERROR_KEY = 'cc.lastGiftsError';
+  async function syncGifts(name) {
+    const C = window.Creatures;
+    if (!C || !C.giftsOutbox || !C.giftsSyncResult) return null;
+    const out = { sent: 0, returned: 0, received: 0, error: null };
+    try {
+      const token = _writeTokenFor(name);
+      let outbox = await C.giftsOutbox();
+      let cursor = C.giftsCursor();
+      for (let round = 0; round < 25; round++) {
+        const resp = await fetch(_serverUrl('save', '/gifts'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ backupName: name, writeToken: token, cursor, outbox }),
+        });
+        const body = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+        const r = await C.giftsSyncResult(body);
+        out.sent += r.sent; out.returned += r.returned; out.received += r.received;
+        outbox = [];
+        cursor = body.cursor;
+        if (!body.more) break;
+      }
+      try { localStorage.removeItem(GIFTS_ERROR_KEY); } catch (_) {}
+    } catch (e) {
+      out.error = String((e && e.message) || e).slice(0, 200);
+      try { localStorage.setItem(GIFTS_ERROR_KEY, JSON.stringify({ at: Date.now(), msg: out.error })); } catch (_) {}
+    }
+    return out;
   }
   window._ccLastSaveError = function () {
     try { return JSON.parse(localStorage.getItem(SAVE_ERROR_KEY) || 'null'); }
@@ -9491,6 +9541,13 @@ function fmtDate(ts) {
       }
       localStorage.setItem('cc.completionRewards.v1',
         JSON.stringify({ claimed: [...claimed], counts }));
+    }
+    // Opened gifts: union, so a gift opened on either device stays opened.
+    if (Array.isArray(data.giftsOpened)) {
+      let cur = [];
+      try { cur = JSON.parse(localStorage.getItem('cc.giftsOpened.v1') || '[]') || []; } catch (_) { cur = []; }
+      const ids = new Set(cur.concat(data.giftsOpened).filter((id) => typeof id === 'string'));
+      localStorage.setItem('cc.giftsOpened.v1', JSON.stringify([...ids]));
     }
     // Daycare: per-day-max merge for the summary; incoming wins for
     // path days the local device doesn't already have. See
@@ -12045,7 +12102,9 @@ function fmtDate(ts) {
                        'cc.housenumbers.v1',
                        // Creature data DBs (collection now lives here).
                        'creature-collection-v1', 'creature-tracker-v1',
-                       'creature-sprites-v1', 'creature-appdata-v1']) {
+                       'creature-sprites-v1', 'creature-appdata-v1',
+                       // Gifts received + waiting to send (creatures.js).
+                       'cc-gifts']) {
         if (!names.includes(n)) names.push(n);
       }
       log('deleting ' + names.length + ' IDB(s)…');
@@ -12952,6 +13011,19 @@ function fmtDate(ts) {
     // stamp a place onto a catch/sighting await this first so an early
     // catch doesn't record "no place" just because the list was empty.
     whenPoisReady() { return ensurePoisLoaded(); },
+    // Named POIs within reach of (lat, lng) — the pokéstop range
+    // (POI_COLLECT_MAX_DISTANCE_M) by default — nearest first, for the
+    // gift sheet's "sent from" picker: [{ name, category, distanceM }].
+    poisInRange(lat, lng, maxMeters = POI_COLLECT_MAX_DISTANCE_M) {
+      const out = [];
+      for (const p of allPois) {
+        if (!p || !p.name) continue;
+        const distanceM = haversineKm(lat, lng, p.lat, p.lng) * 1000;
+        if (distanceM <= maxMeters) out.push({ name: p.name, category: p.category || '', distanceM });
+      }
+      out.sort((a, b) => a.distanceM - b.distanceM);
+      return out;
+    },
     findNearestNamedPoi(lat, lng, maxMeters = 500) {
       let best = null, bestKm = Infinity;
       for (const p of allPois) {

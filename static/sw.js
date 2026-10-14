@@ -130,6 +130,8 @@ const TILES_CACHE = 'tiles-v1';
 // (the whole bubble moves now).
 // Shell bump 2026-10-14 (#27): index.html keeps snap answers on the device
 // across restarts (cc.snapStore.v1).
+// Shell bump 2026-10-14 (#28): index.html sends and fetches gifts with each
+// save (syncGifts), and saves the opened-gift list.
 
 const APP_SHELL = [
   '/',

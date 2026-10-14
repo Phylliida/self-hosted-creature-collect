@@ -12,6 +12,7 @@ import sqlite3
 from schedule_query import build_schedule_payload, EMPTY_PAYLOAD
 import struct
 import sys
+import threading
 import time
 from io import BytesIO
 from flask import Flask, g, send_from_directory, Response, abort, redirect, request, jsonify
@@ -642,6 +643,257 @@ def save_backup():
     tmp.write_bytes(gz_bytes)
     tmp.replace(path)
     return jsonify({"ok": True, "saved": path.name})
+
+
+# ── Gifts ─────────────────────────────────────────────────────────────
+#
+# Players send each other gifts (a message, an optional photo, an item
+# stack, an optional pokémon, and the place it was sent from). Both ways
+# ride on a save: right after /save the client POSTs /gifts with its
+# outgoing gifts and its inbox cursor, and the reply carries the gifts
+# waiting for it plus the list of players it can send to. Nothing else
+# ever leaves the server: the reply holds only gifts addressed to the
+# caller, so the "saves are never read back outside home" rule stands.
+#
+# Auth is the save's TOFU write token: the caller's name must be claimed
+# and the token must match. Who can take part at all is the allowlist in
+# saves/.gift-players.json (a JSON list of names) — the public instance
+# takes saves from anyone, so without it a stranger could claim a name
+# and send the group photos. When the file doesn't exist yet it's created
+# from the names claimed so far (the existing group); add newcomers by
+# hand.
+#
+# Storage: saves/gifts/<recipient>/<serverMs>_<id>.json, one file per
+# gift, plus index.json per recipient ({id, from, day, serverMs}) for the
+# one-gift-per-recipient-per-day rule and the inbox cursor. serverMs is
+# strictly increasing per recipient, so "everything after my cursor" is
+# exact. Gifts are kept, so a new device (cursor 0) gets its history back.
+_GIFTS_DIR = _SAVES_DIR / "gifts"
+_GIFT_PLAYERS_PATH = _SAVES_DIR / ".gift-players.json"
+_GIFT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+_GIFT_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_GIFT_ITEM_RE = re.compile(r"^[A-Za-z0-9_]{1,64}$")
+_GIFT_COUNTS = (1, 5, 10, 50)
+_GIFT_MESSAGE_MAX = 140
+_GIFT_PHOTO_MAX = 600 * 1024          # data-URL characters (~450 KB of JPEG)
+_GIFT_CREATURE_MAX = 32 * 1024        # JSON characters
+_GIFT_INBOX_BATCH = 8                 # gifts per reply (photos make them big)
+_gifts_lock = threading.Lock()
+
+
+def _gift_players():
+    try:
+        data = json.loads(_GIFT_PLAYERS_PATH.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return [n for n in data if isinstance(n, str) and _SAFE_NAME_RE.fullmatch(n)]
+    except (OSError, ValueError):
+        pass
+    names = sorted(_load_claims().keys())
+    _GIFT_PLAYERS_PATH.parent.mkdir(exist_ok=True)
+    tmp = _GIFT_PLAYERS_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(names, indent=2), encoding="utf-8")
+    tmp.replace(_GIFT_PLAYERS_PATH)
+    return names
+
+
+def _strip_jpeg_metadata(data):
+    """Drop APPn (EXIF/GPS, XMP, …) and COM segments from a JPEG, keeping
+    the image. Clients redraw photos before sending (which already drops
+    them); this is the server's own guarantee. Returns None if the bytes
+    aren't a well-formed baseline JPEG header."""
+    if data[:2] != b"\xff\xd8":
+        return None
+    out = bytearray(b"\xff\xd8")
+    i = 2
+    while i + 4 <= len(data):
+        if data[i] != 0xFF:
+            return None
+        marker = data[i + 1]
+        if marker == 0xDA:                      # start of scan: the rest is image data
+            out += data[i:]
+            return bytes(out)
+        seg_len = int.from_bytes(data[i + 2:i + 4], "big")
+        if seg_len < 2 or i + 2 + seg_len > len(data):
+            return None
+        seg = data[i:i + 2 + seg_len]
+        if not (0xE1 <= marker <= 0xEF or marker == 0xFE):   # keep APP0 (JFIF), drop APP1-15 + COM
+            out += seg
+        i += 2 + seg_len
+    return None
+
+
+def _clean_gift_photo(photo):
+    if photo is None:
+        return None, None
+    prefix = "data:image/jpeg;base64,"
+    if not isinstance(photo, str) or not photo.startswith(prefix) or len(photo) > _GIFT_PHOTO_MAX:
+        return None, "photo must be a JPEG under ~450 KB"
+    try:
+        raw = base64.b64decode(photo[len(prefix):], validate=True)
+    except ValueError:
+        return None, "photo is not valid base64"
+    clean = _strip_jpeg_metadata(raw)
+    if clean is None:
+        return None, "photo is not a JPEG"
+    return prefix + base64.b64encode(clean).decode("ascii"), None
+
+
+def _clean_gift_creature(c):
+    """A sent pokémon, minus anything that says where or when it was
+    caught (the client strips these too). Returns (creature, error)."""
+    if c is None:
+        return None, None
+    if not isinstance(c, dict):
+        return None, "pokémon must be an object"
+    try:
+        size = len(json.dumps(c))
+    except (TypeError, ValueError):
+        return None, "pokémon is not JSON"
+    if size > _GIFT_CREATURE_MAX:
+        return None, "pokémon record too large"
+    c = dict(c)
+    c.pop("caughtAt", None)
+    c.pop("spawnId", None)
+    return c, None
+
+
+def _clean_gift(g, sender, players):
+    """Validate one outgoing gift. Returns (record, error)."""
+    if not isinstance(g, dict):
+        return None, "gift must be an object"
+    gid = g.get("id")
+    if not isinstance(gid, str) or not _GIFT_ID_RE.fullmatch(gid):
+        return None, "bad gift id"
+    to = g.get("to")
+    if not isinstance(to, str) or to == sender or to not in players:
+        return None, "unknown player"
+    day = g.get("day")
+    if not isinstance(day, str) or not _GIFT_DAY_RE.fullmatch(day):
+        return None, "bad day"
+    message = g.get("message") or ""
+    if not isinstance(message, str):
+        return None, "bad message"
+    message = message.strip()[:_GIFT_MESSAGE_MAX]
+    place = g.get("place")
+    if place is not None:
+        if not isinstance(place, dict) or not isinstance(place.get("name"), str) or not place["name"].strip():
+            return None, "bad place"
+        cat = place.get("category")
+        place = {"name": place["name"].strip()[:120],
+                 "category": cat[:40] if isinstance(cat, str) else ""}
+    item = g.get("item")
+    if item is not None:
+        if (not isinstance(item, dict) or not isinstance(item.get("key"), str)
+                or not _GIFT_ITEM_RE.fullmatch(item["key"]) or item.get("count") not in _GIFT_COUNTS):
+            return None, "bad item"
+        if "pass" in item["key"]:
+            return None, "passes can't be gifted"
+        item = {"key": item["key"], "count": item["count"]}
+    creature, err = _clean_gift_creature(g.get("creature"))
+    if err:
+        return None, err
+    photo, err = _clean_gift_photo(g.get("photo"))
+    if err:
+        return None, err
+    created = g.get("createdAt")
+    created = int(created) if isinstance(created, (int, float)) and created > 0 else None
+    return {
+        "id": gid, "from": sender, "to": to, "day": day, "createdAt": created,
+        "message": message, "place": place, "item": item,
+        "creature": creature, "photo": photo,
+    }, None
+
+
+def _gift_index_path(name):
+    return _GIFTS_DIR / name / "index.json"
+
+
+def _read_gift_index(name):
+    try:
+        data = json.loads(_gift_index_path(name).read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def _store_gift(rec):
+    """Store an accepted gift for its recipient. Caller holds _gifts_lock.
+    Returns None, or an error string (duplicate per day)."""
+    to = rec["to"]
+    index = _read_gift_index(to)
+    if any(e.get("id") == rec["id"] for e in index):
+        return None                              # a retried upload: already stored
+    if any(e.get("from") == rec["from"] and e.get("day") == rec["day"] for e in index):
+        return f"already sent {to} a gift on {rec['day']}"
+    now = int(time.time() * 1000)
+    last = max((e.get("serverMs", 0) for e in index), default=0)
+    rec = dict(rec, serverMs=max(now, last + 1))
+    folder = _GIFTS_DIR / to
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{rec['serverMs']}_{rec['id']}.json"
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(rec), encoding="utf-8")
+    tmp.replace(path)
+    index.append({"id": rec["id"], "from": rec["from"], "day": rec["day"],
+                  "serverMs": rec["serverMs"], "file": path.name})
+    ipath = _gift_index_path(to)
+    itmp = ipath.with_suffix(".json.tmp")
+    itmp.write_text(json.dumps(index), encoding="utf-8")
+    itmp.replace(ipath)
+    return None
+
+
+@app.route("/gifts", methods=["POST"])
+def gifts_sync():
+    """Send outgoing gifts and fetch incoming ones (see the block comment
+    above). Body: {backupName, writeToken, cursor, outbox: [gift…]}.
+    Reply: {ok, accepted: [id], rejected: [{id, error}], inbox: [gift…],
+    cursor, more, players: [name]}."""
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "expected JSON object"}), 400
+    name = (payload.get("backupName") or "").strip()
+    if not name or not _SAFE_NAME_RE.fullmatch(name):
+        return jsonify({"error": "invalid name"}), 400
+    token = payload.get("writeToken")
+    token = token.strip() if isinstance(token, str) else ""
+    rec = _load_claims().get(name)
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest() if token else ""
+    if not rec or not token or not hmac.compare_digest(digest, rec.get("sha256", "")):
+        return jsonify({"error": "save first — gifts need this device's write token"}), 403
+    with _gifts_lock:
+        players = _gift_players()
+        if name not in players:
+            return jsonify({"error": "gifts aren't enabled for this player on this server"}), 403
+        accepted, rejected = [], []
+        outbox = payload.get("outbox") or []
+        if not isinstance(outbox, list):
+            outbox = []
+        for g in outbox[:20]:
+            gift, err = _clean_gift(g, name, players)
+            if not err:
+                err = _store_gift(gift)
+            gid = g.get("id") if isinstance(g, dict) else None
+            if err:
+                rejected.append({"id": gid, "error": err})
+            else:
+                accepted.append(gid)
+        cursor = payload.get("cursor")
+        cursor = int(cursor) if isinstance(cursor, (int, float)) and cursor > 0 else 0
+        pending = sorted((e for e in _read_gift_index(name) if e.get("serverMs", 0) > cursor),
+                         key=lambda e: e["serverMs"])
+    inbox = []
+    for e in pending[:_GIFT_INBOX_BATCH]:
+        try:
+            inbox.append(json.loads((_GIFTS_DIR / name / e["file"]).read_text(encoding="utf-8")))
+        except (OSError, ValueError, KeyError):
+            continue
+    new_cursor = pending[min(len(pending), _GIFT_INBOX_BATCH) - 1]["serverMs"] if pending else cursor
+    return jsonify({
+        "ok": True, "accepted": accepted, "rejected": rejected,
+        "inbox": inbox, "cursor": new_cursor, "more": len(pending) > _GIFT_INBOX_BATCH,
+        "players": [p for p in players if p != name],
+    })
 
 
 @app.route("/upload-logs", methods=["POST"])
