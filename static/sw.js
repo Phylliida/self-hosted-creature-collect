@@ -132,6 +132,8 @@ const TILES_CACHE = 'tiles-v1';
 // across restarts (cc.snapStore.v1).
 // Shell bump 2026-10-14 (#28): index.html sends and fetches gifts with each
 // save (syncGifts), and saves the opened-gift list.
+// Shell bump 2026-10-14 (#29): index.html's Export writes the save a couple
+// of MB at a time (a big save in one write crashed the iOS webview).
 
 const APP_SHELL = [
   '/',

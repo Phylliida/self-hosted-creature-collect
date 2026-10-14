@@ -8839,9 +8839,92 @@ function fmtDate(ts) {
     };
   }
 
+  // <export-json-chunks> (tests/export-json-chunks.test.js runs this block)
+  // A save as compact JSON, handed out in pieces of about `size` chars, so
+  // the export never has to hold it as one giant string. Saves run to tens
+  // of MB (Grak's was 58 MB pretty-printed): one writeFile with all of it
+  // made the native bridge copy it several times over, and iOS killed the
+  // webview, which shows up as the app just reloading. The save is walked
+  // here, and the parts too small to matter go to JSON.stringify, with its
+  // rules kept: toJSON() is honoured, undefined/functions/symbols drop out
+  // of objects and turn into null in arrays. The pieces join to exactly
+  // JSON.stringify(value).
+  const _jsonWalkable = (v) => v !== null && typeof v === 'object'
+    && typeof v.toJSON !== 'function'
+    && (Array.isArray(v) || Object.getPrototypeOf(v) === Object.prototype
+        || Object.getPrototypeOf(v) === null);
+  const _jsonSkipped = (x) => x === undefined || typeof x === 'function' || typeof x === 'symbol';
+  // The save and its direct fields are always walked; below that a value
+  // is stringified whole, and only walked instead when that came out
+  // bigger than `size` (daycare.paths, a few MB of GPS tracks, splits by
+  // day). Walking deeper than needed is what costs: a big save has ~10^5
+  // creatures and pokédex entries, and each walked field is one more call.
+  function* _jsonPieces(v, depth, size) {
+    if (!_jsonWalkable(v)) {
+      const s = JSON.stringify(v);
+      yield s === undefined ? 'null' : s;
+      return;
+    }
+    const arr = Array.isArray(v);
+    const keys = arr ? null : Object.keys(v);
+    const n = arr ? v.length : keys.length;
+    yield arr ? '[' : '{';
+    let sep = '';
+    for (let i = 0; i < n; i++) {
+      const k = arr ? String(i) : keys[i];
+      let x = v[k];
+      if (x && typeof x.toJSON === 'function') x = x.toJSON(k);
+      if (_jsonSkipped(x)) {
+        if (!arr) continue;
+        x = null;
+      }
+      const head = sep + (arr ? '' : JSON.stringify(k) + ':');
+      sep = ',';
+      if (_jsonWalkable(x)) {
+        const s = depth > 1 ? null : JSON.stringify(x);
+        if (s === null || s.length > size) {
+          if (head) yield head;
+          yield* _jsonPieces(x, depth - 1, size);
+        } else {
+          yield head + s;
+        }
+      } else {
+        yield head + JSON.stringify(x);
+      }
+    }
+    yield arr ? ']' : '}';
+  }
+  function* _jsonChunks(value, size) {
+    let buf = '';
+    for (const p of _jsonPieces(value, 2, size)) {
+      buf += p;
+      if (buf.length >= size) { yield buf; buf = ''; }
+    }
+    if (buf) yield buf;
+  }
+  // </export-json-chunks>
+  // ~2M chars per native write: small enough that the bridge's copies
+  // don't matter, few enough calls (~20 for a big save) to stay quick.
+  const EXPORT_CHUNK_CHARS = 2 * 1024 * 1024;
+
+  let _exporting = false;
   async function exportData() {
+    // A second tap while a big export is still building would build a
+    // second copy alongside it.
+    if (_exporting) return;
+    _exporting = true;
+    const btn = document.getElementById('exportBtn');
+    const label = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Exporting…'; }
+    try { await _exportData(); }
+    finally {
+      _exporting = false;
+      if (btn) { btn.disabled = false; btn.textContent = label; }
+    }
+  }
+
+  async function _exportData() {
     const data = await buildBackupPayload();
-    const json = JSON.stringify(data, null, 2);
     const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
     const filename = `creature-collect-${stamp}.json`;
     // Native app (Capacitor): the browser `<a download>` + blob-URL trick
@@ -8854,23 +8937,41 @@ function fmtDate(ts) {
         const Fs = cap.Plugins && cap.Plugins.Filesystem;
         const Share = cap.Plugins && cap.Plugins.Share;
         if (!Fs || !Share) throw new Error('Filesystem/Share plugin unavailable');
+        // Earlier exports are still sitting in the cache dir, each a full
+        // save; the share sheet is long done with them.
+        try {
+          const ls = await Fs.readdir({ path: '', directory: 'CACHE' });
+          for (const f of (ls && ls.files) || []) {
+            const n = typeof f === 'string' ? f : f && f.name;
+            if (n && n !== filename && /^creature-collect-[\d-]+\.json$/.test(n)) {
+              await Fs.deleteFile({ path: n, directory: 'CACHE' }).catch(() => {});
+            }
+          }
+        } catch (_) {}
         // Cache dir is covered by Capacitor's FileProvider, so the share
         // sheet can hand the file:// URI to other apps (Files/Drive/etc.).
-        const res = await Fs.writeFile({
-          path: filename, data: json, directory: 'CACHE', encoding: 'utf8',
-        });
+        // Written a piece at a time (see _jsonChunks).
+        let uri = null;
+        for (const part of _jsonChunks(data, EXPORT_CHUNK_CHARS)) {
+          const opts = { path: filename, data: part, directory: 'CACHE', encoding: 'utf8' };
+          if (uri === null) uri = (await Fs.writeFile(opts)).uri;
+          else await Fs.appendFile(opts);
+        }
         await Share.share({
           title: filename,
-          files: [res.uri],
+          files: [uri],
           dialogTitle: 'Export creature-collect save',
         });
       } catch (e) {
+        // Closing the share sheet without picking anything rejects too.
+        if (/cancel/i.test(String(e && e.message || e))) return;
         console.error('native export failed', e);
         alert('Export failed: ' + (e && e.message ? e.message : e));
       }
       return;
     }
-    const blob = new Blob([json], { type: 'application/json' });
+    const blob = new Blob(Array.from(_jsonChunks(data, EXPORT_CHUNK_CHARS)),
+      { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
