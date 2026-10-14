@@ -162,13 +162,15 @@ Flask process behind a Cloudflare tunnel.
 
 ### Backup & sync
 
-- **Export to JSON** dumps every captured creature, nickname, candy,
+- **Export** dumps every captured creature, nickname, candy,
   bag, tags, favorites, regions, theme, units, daycare slots, and
   daycare history (per-day distance + full GPS paths) to a single
-  human-readable file.
-- **Import** merges by capture id (idempotent re-imports), with
-  per-key max merge for candy and bag so combining devices keeps
-  whichever had more.
+  gzipped JSON file (`.json.gz`; plain `.json` on browsers without
+  CompressionStream), written a piece at a time so big saves fit in
+  memory.
+- **Import** takes `.json` or `.json.gz` and merges by capture id
+  (idempotent re-imports), with per-key max merge for candy and bag so
+  combining devices keeps whichever had more.
 - **Save / Load to server** — same payload, stored under a trainer
   name on the Flask backend (`/save`, `/load`). 7-day "have you
   saved recently?" reminder banner in the inventory.

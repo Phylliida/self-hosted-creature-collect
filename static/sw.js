@@ -134,6 +134,8 @@ const TILES_CACHE = 'tiles-v1';
 // save (syncGifts), and saves the opened-gift list.
 // Shell bump 2026-10-14 (#29): index.html's Export writes the save a couple
 // of MB at a time (a big save in one write crashed the iOS webview).
+// Shell bump 2026-10-14 (#30): index.html's Export is gzipped (.json.gz),
+// and Import reads .json.gz as well as .json.
 
 const APP_SHELL = [
   '/',

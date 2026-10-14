@@ -3817,7 +3817,7 @@
         <button id="importBtn" type="button" style="padding: 6px 10px; font-size: 13px;">Import</button>
         <button id="saveBtn" type="button" style="padding: 6px 10px; font-size: 13px;">Save</button>
         <button id="loadBtn" type="button" style="padding: 6px 10px; font-size: 13px;">Load</button>
-        <input type="file" id="importFile" accept=".json,application/json" style="display:none">
+        <input type="file" id="importFile" accept=".json,.gz,application/json,application/gzip,application/x-gzip" style="display:none">
       </span>
     </div>
     <div id="backupStatus" style="font-size: 11px; color: var(--ui-muted); margin: -4px 0 6px;"></div>
@@ -8902,10 +8902,52 @@ function fmtDate(ts) {
     }
     if (buf) yield buf;
   }
+  // The same save gzipped, as Uint8Array pieces of about `bytes` bytes. The
+  // JSON pieces go through the webview's own CompressionStream as they're
+  // made, so neither the JSON nor the .gz is ever whole in memory. About
+  // 5x smaller than the JSON (Grak's 36 MB save comes to ~7.4 MB). Needs
+  // CompressionStream (Safari 16.4+, Chrome 80+).
+  async function* _gzipChunks(value, bytes) {
+    const it = _jsonChunks(value, 256 * 1024);
+    const enc = new TextEncoder();
+    const src = new ReadableStream({
+      pull(c) { const r = it.next(); if (r.done) c.close(); else c.enqueue(enc.encode(r.value)); },
+    });
+    const reader = src.pipeThrough(new CompressionStream('gzip')).getReader();
+    let parts = [], n = 0;
+    const take = () => {
+      const out = new Uint8Array(n);
+      let o = 0;
+      for (const p of parts) { out.set(p, o); o += p.length; }
+      parts = []; n = 0;
+      return out;
+    };
+    try {
+      for (;;) {
+        const { value: b, done } = await reader.read();
+        if (done) break;
+        parts.push(b); n += b.length;
+        if (n >= bytes) yield take();
+      }
+      if (n) yield take();
+    } finally {
+      // A failed write stops the loop early: stop pulling the save, too.
+      reader.cancel().catch(() => {});
+    }
+  }
+  function _bytesToBase64(u8) {
+    let s = '';
+    for (let i = 0; i < u8.length; i += 0x8000) {
+      s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+    }
+    return btoa(s);
+  }
   // </export-json-chunks>
   // ~2M chars per native write: small enough that the bridge's copies
   // don't matter, few enough calls (~20 for a big save) to stay quick.
+  // Gzip pieces go over as base64, so 1.5 MB of bytes is 2M chars too.
   const EXPORT_CHUNK_CHARS = 2 * 1024 * 1024;
+  const EXPORT_GZIP_BYTES = 1.5 * 1024 * 1024;
 
   let _exporting = false;
   async function exportData() {
@@ -8926,7 +8968,13 @@ function fmtDate(ts) {
   async function _exportData() {
     const data = await buildBackupPayload();
     const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
-    const filename = `creature-collect-${stamp}.json`;
+    // Gzipped (.json.gz, what the server keeps too) wherever the webview
+    // can compress; Import reads both.
+    const gzip = typeof CompressionStream === 'function';
+    const filename = `creature-collect-${stamp}.json${gzip ? '.gz' : ''}`;
+    const pieces = () => gzip
+      ? _gzipChunks(data, EXPORT_GZIP_BYTES)
+      : _jsonChunks(data, EXPORT_CHUNK_CHARS);
     // Native app (Capacitor): the browser `<a download>` + blob-URL trick
     // is a no-op in Android's WebView (and unreliable on iOS), so write
     // the file with the Filesystem plugin and hand it to the OS share
@@ -8943,17 +8991,20 @@ function fmtDate(ts) {
           const ls = await Fs.readdir({ path: '', directory: 'CACHE' });
           for (const f of (ls && ls.files) || []) {
             const n = typeof f === 'string' ? f : f && f.name;
-            if (n && n !== filename && /^creature-collect-[\d-]+\.json$/.test(n)) {
+            if (n && n !== filename && /^creature-collect-[\d-]+\.json(\.gz)?$/.test(n)) {
               await Fs.deleteFile({ path: n, directory: 'CACHE' }).catch(() => {});
             }
           }
         } catch (_) {}
         // Cache dir is covered by Capacitor's FileProvider, so the share
         // sheet can hand the file:// URI to other apps (Files/Drive/etc.).
-        // Written a piece at a time (see _jsonChunks).
+        // Written a piece at a time (see _jsonChunks); the plugin takes
+        // bytes as base64 (no encoding) and text as utf8.
         let uri = null;
-        for (const part of _jsonChunks(data, EXPORT_CHUNK_CHARS)) {
-          const opts = { path: filename, data: part, directory: 'CACHE', encoding: 'utf8' };
+        for await (const part of pieces()) {
+          const opts = gzip
+            ? { path: filename, data: _bytesToBase64(part), directory: 'CACHE' }
+            : { path: filename, data: part, directory: 'CACHE', encoding: 'utf8' };
           if (uri === null) uri = (await Fs.writeFile(opts)).uri;
           else await Fs.appendFile(opts);
         }
@@ -8970,8 +9021,9 @@ function fmtDate(ts) {
       }
       return;
     }
-    const blob = new Blob(Array.from(_jsonChunks(data, EXPORT_CHUNK_CHARS)),
-      { type: 'application/json' });
+    const parts = [];
+    for await (const part of pieces()) parts.push(part);
+    const blob = new Blob(parts, { type: gzip ? 'application/gzip' : 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -9188,6 +9240,18 @@ function fmtDate(ts) {
       try { localStorage.setItem(AUTO_BACKUP_FAIL_KEY, String(Date.now())); } catch (__) {}
     } finally { _autoBackupBusy = false; }
   }
+  // Exports are gzipped (.json.gz) where the webview can compress, older
+  // ones and other tools' files are plain JSON: tell them apart by the
+  // gzip magic bytes rather than the name.
+  async function _readSaveFileText(file) {
+    const head = new Uint8Array(await file.slice(0, 2).arrayBuffer());
+    if (head[0] !== 0x1f || head[1] !== 0x8b) return file.text();
+    if (typeof DecompressionStream !== 'function') {
+      throw new Error('this browser can\u2019t open compressed (.gz) saves');
+    }
+    return new Response(file.stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  }
+
   async function importData(fileOrData) {
     // Accepts either a File/Blob (from the Import button) or an already-
     // parsed JSON object (from the Load-from-server button). Keeps the
@@ -9197,7 +9261,7 @@ function fmtDate(ts) {
     try { await _loadDeferredScripts(); } catch (_) {}
     let data;
     if (fileOrData && typeof fileOrData.text === 'function') {
-      data = JSON.parse(await fileOrData.text());
+      data = JSON.parse(await _readSaveFileText(fileOrData));
     } else {
       data = fileOrData;
     }

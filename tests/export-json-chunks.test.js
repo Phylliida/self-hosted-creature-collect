@@ -2,12 +2,15 @@
 // block): Export writes a save a couple of MB at a time instead of as one
 // giant string, and the pieces must join to exactly what JSON.stringify
 // would have produced — same keys dropped, same nulls, same toJSON calls —
-// so the file imports like any other save.
+// so the file imports like any other save. The gzip pieces (the .json.gz
+// export) must concatenate to one valid gzip of that same JSON, and the
+// base64 the native write sends must decode back to the same bytes.
 //
 // Run: node tests/export-json-chunks.test.js
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 
 let failed = 0, passed = 0;
 function ok(cond, msg) { if (cond) { passed++; } else { failed++; console.error('FAIL: ' + msg); } }
@@ -16,7 +19,7 @@ const root = path.join(__dirname, '..');
 const src = fs.readFileSync(path.join(root, 'static', 'index.html'), 'utf8');
 const a = src.indexOf('// <export-json-chunks>'), b = src.indexOf('// </export-json-chunks>');
 ok(a > 0 && b > a, 'serializer block found in index.html');
-const S = new Function(src.slice(a, b) + '\nreturn { _jsonPieces, _jsonChunks };')();
+const S = new Function(src.slice(a, b) + '\nreturn { _jsonPieces, _jsonChunks, _gzipChunks, _bytesToBase64 };')();
 
 const join = (v, size) => Array.from(S._jsonChunks(v, size)).join('');
 
@@ -87,5 +90,44 @@ ok(join(undefined, 4) === 'null', 'top-level undefined → null');
   ok(touched < 100, `first chunk only serializes what it needs (${touched}/100)`);
 }
 
-console.log(`export-json-chunks: ${passed} passed, ${failed} failed`);
-process.exit(failed ? 1 : 0);
+// ── Gzip: streamed pieces make one valid .gz of exactly the JSON ──
+async function gzipTests() {
+  const big = {
+    version: 1,
+    captured: Array.from({ length: 20000 }, (_, i) => ({ id: 'c' + i, head: i % 500, body: (i * 7) % 500, nick: i % 5 ? null : 'Mön ♀ 🐛 ' + i })),
+    // Random digits so it doesn't all compress to nothing.
+    daycare: { paths: Object.fromEntries(Array.from({ length: 30 }, (_, d) => ['2026-09-' + d,
+      Array.from({ length: 2000 }, () => [45 + Math.random() / 100, -73 - Math.random() / 100])])) },
+  };
+  const want = JSON.stringify(big);
+  const bytes = 64 * 1024;
+  const chunks = [];
+  for await (const c of S._gzipChunks(big, bytes)) chunks.push(c);
+  ok(chunks.every((c) => c instanceof Uint8Array), 'gzip pieces are Uint8Arrays');
+  ok(chunks.length > 3, `gzip splits into several pieces (${chunks.length})`);
+  ok(chunks.slice(0, -1).every((c) => c.length >= bytes), 'every gzip piece but the last reaches the target');
+  const gz = Buffer.concat(chunks);
+  ok(gz[0] === 0x1f && gz[1] === 0x8b, 'starts with the gzip magic bytes');
+  ok(zlib.gunzipSync(gz).toString('utf8') === want, 'gunzips to exactly JSON.stringify');
+  ok(gz.length < want.length / 2, `smaller than the JSON (${gz.length} vs ${Buffer.byteLength(want)} bytes)`);
+  // base64 per piece, decoded and appended one by one, as the native write does.
+  const viaB64 = Buffer.concat(chunks.map((c) => Buffer.from(S._bytesToBase64(c), 'base64')));
+  ok(viaB64.equals(gz), 'base64 pieces decode back to the same bytes');
+  ok(S._bytesToBase64(new Uint8Array(0)) === '', 'base64 of nothing');
+  const odd = new Uint8Array(100003).map((_, i) => (i * 131) & 255);
+  ok(S._bytesToBase64(odd) === Buffer.from(odd).toString('base64'), 'base64 matches Buffer over the 32 KB batches');
+  // Small saves come out as a single piece.
+  const small = [];
+  for await (const c of S._gzipChunks({ a: 1 }, bytes)) small.push(c);
+  ok(small.length === 1 && zlib.gunzipSync(Buffer.from(small[0])).toString() === '{"a":1}', 'tiny save → one piece');
+  // A value JSON.stringify throws on surfaces as a rejection, not a hang.
+  const cyc = { list: [{}] }; cyc.list[0].self = cyc.list[0];
+  let threw = false;
+  try { for await (const _ of S._gzipChunks(cyc, bytes)) { /* drain */ } } catch (e) { threw = /circular/i.test(e.message); }
+  ok(threw, 'circular value rejects with the stringify error');
+}
+
+gzipTests().catch((e) => { failed++; console.error('FAIL: gzip tests threw', e); }).then(() => {
+  console.log(`export-json-chunks: ${passed} passed, ${failed} failed`);
+  process.exit(failed ? 1 : 0);
+});
