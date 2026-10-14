@@ -8440,24 +8440,44 @@
         font-size: 12px; color: var(--ui-muted, #666);
         text-align: center; margin: 0 0 12px;
       }
-      #creatureInventory .craft-strip {
-        display: flex; gap: 10px; overflow-x: auto; padding: 4px 2px 12px;
-        scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch;
+      /* Step 1: every incense at once, in a grid that fits the sheet with
+         no scrolling. The craft view (while .craft-fit) and its body
+         flex to the sheet's fixed height; the grid takes what's left
+         under the title and hint, its 5 rows share it, and each orb's
+         image flexes to whatever its cell has left over the labels
+         (capped, so tall screens don't get giant orbs). 18 types: 4 rows
+         of 4, then the last 2 centred (8 half-columns, each orb spans 2). */
+      #creatureInventory .craft-view.show.craft-fit { flex: 1 1 auto; min-height: 0; }
+      #creatureInventory .craft-fit .craft-body {
+        flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+      }
+      #creatureInventory .craft-fit .craft-hint { margin-bottom: 8px; }
+      #creatureInventory .craft-grid {
+        flex: 0 1 auto; min-height: 0;
+        display: grid; gap: 6px; padding: 0 0 2px;
+        grid-template-columns: repeat(8, minmax(0, 1fr));
+        grid-template-rows: repeat(5, minmax(0, 148px));
       }
       #creatureInventory .craft-orb {
-        flex: 0 0 auto; scroll-snap-align: center;
-        display: flex; flex-direction: column; align-items: center; gap: 4px;
-        width: 92px; padding: 10px 6px; cursor: pointer;
+        grid-column: span 2; min-width: 0; min-height: 0; overflow: hidden;
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+        padding: 5px 3px; cursor: pointer;
         background: var(--ui-hover, rgba(0,0,0,0.04));
         border: 1px solid var(--ui-hairline, rgba(0,0,0,0.08));
         border-radius: var(--ui-radius, 10px); font: inherit;
       }
+      #creatureInventory .craft-orb:nth-child(4n + 1):nth-last-child(2) { grid-column: 3 / span 2; }
       #creatureInventory .craft-orb:active { transform: scale(0.96); }
-      #creatureInventory .craft-orb-img { width: 54px; height: 54px; }
-      #creatureInventory .craft-orb-name {
-        font-size: 13px; font-weight: 600; color: var(--ui-text, #111);
+      #creatureInventory .craft-orb-img {
+        flex: 1 1 0; min-height: 0; width: 100%; max-height: 80px; object-fit: contain;
       }
-      #creatureInventory .craft-orb-count { font-size: 11px; color: var(--ui-muted, #666); }
+      #creatureInventory .craft-orb-name {
+        flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        font-size: clamp(10px, 3.1vw, 13px); font-weight: 600; color: var(--ui-text, #111);
+      }
+      #creatureInventory .craft-orb-count {
+        flex: none; font-size: clamp(9px, 2.7vw, 11px); color: var(--ui-muted, #666); white-space: nowrap;
+      }
       #creatureInventory .craft-chosen { text-align: center; margin: 0 0 10px; }
       #creatureInventory .craft-chip {
         display: inline-flex; align-items: center; gap: 6px;
@@ -13152,7 +13172,7 @@
   }
 
   // 3 steps inside one 'craft' view: pick an incense type (swipe the
-  // orb strip), pick a valid egg (its type must be neutral-or-effective
+  // orb grid), pick a valid egg (its type must be neutral-or-effective
   // against the chosen incense type), confirm. Eggs currently in an
   // incubator slot are excluded (they're committed to hatching). The
   // craft-view back button steps backward, then exits to the bag.
@@ -13205,7 +13225,11 @@
     if (!body) return;
     const st = _craftState;
 
-    // Step 1 — choose an incense type from the swipeable orb strip.
+    // Step 1 (the grid of every incense) fits the sheet without scrolling;
+    // the egg list and confirm steps scroll as usual.
+    const view = panel.querySelector('.craft-view');
+    if (view) view.classList.toggle('craft-fit', st.step === 1 || !st.type);
+    // Step 1 — choose an incense type from the grid.
     if (st.step === 1 || !st.type) {
       _craftSetTitle('Choose incense');
       const orbs = ALL_TYPES.map((t) => {
@@ -13218,8 +13242,8 @@
           </button>`;
       }).join('');
       body.innerHTML = `
-        <div class="craft-hint">Swipe and tap an incense to craft.</div>
-        <div class="craft-strip">${orbs}</div>
+        <div class="craft-hint">Tap an incense to craft.</div>
+        <div class="craft-grid">${orbs}</div>
       `;
       body.querySelectorAll('.craft-orb').forEach((b) => {
         b.addEventListener('click', () => {
