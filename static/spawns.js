@@ -613,12 +613,15 @@
     const pair = _sampleTypePair(sampler, arng());
     // Slot B is the fusion's head (contributes the primary type), slot A
     // the body (contributes the secondary) — Species.fusionHead/fusionBody.
-    // Inside a bubble the pick within each type leans on its weights.
     const poolA = sampler.bySecondary[pair.b];
     const poolB = sampler.byPrimary[pair.a];
-    const bub = _pickBubble(bubbles, cellX, cellY, tick);
-    const speciesA = bub ? _bubblePick(bub, poolA, arng()) : poolA[Math.floor(arng() * poolA.length)];
-    const speciesB = bub ? _bubblePick(bub, poolB, arng()) : poolB[Math.floor(arng() * poolB.length)];
+    let speciesA = poolA[Math.floor(arng() * poolA.length)];
+    let speciesB = poolB[Math.floor(arng() * poolB.length)];
+    // Inside a bubble one half (a random slot) is the bubble's primary or
+    // secondary pokémon; the other half stays the weather draw above. In
+    // pack mode the head is the solo, so half the spawns there are it.
+    const role = _bubbleRole(bubbles, cellX + ':' + cellY + ':' + tick);
+    if (role) { if (role.slotCoin < 0.5) speciesB = role.species; else speciesA = role.species; }
     const level = expDistr(5, 50, arng()) + 1;
     const sizeM = 0.15 + arng() * 2.0;
     // Deterministic intra-tick birth offset (0..TICK_MS-1 ms) so spawns
@@ -1164,40 +1167,39 @@
   }
 
   // ── Spawn bubbles ("nests") ─────────────────────────────────────
-  // Big circles where the wild pool leans toward a few species, so walking
-  // somewhere new turns up different pokémon. Each UTC day (rotating with
-  // the daily type) the world is cut into ~BUBBLE_GRID_M squares with one
-  // bubble at a seeded spot inside each: the nearest centre is ~720 m away
-  // on median (a 5–10 minute walk), ~26% of the ground is inside a bubble,
-  // and overlaps are rare (~1%).
+  // Big circles that each feature two pokémon, so walking somewhere new
+  // turns up different ones. Each UTC day (rotating with the daily type)
+  // the world is cut into ~BUBBLE_GRID_M squares with one bubble at a
+  // seeded spot inside each: the nearest centre is ~720 m away on median
+  // (a 5–10 minute walk), ~26% of the ground is inside a bubble, and
+  // overlaps are rare (~1%).
   //
-  // Inside a bubble (BUBBLE_RADIUS_M, 5× the 100 m view radius):
+  // Each bubble draws a primary and a secondary pokémon from its day's
+  // natural wild mix (so they follow the daily/weekly types; they can be
+  // the same one). Inside it (BUBBLE_RADIUS_M, 5× the 100 m view radius):
   //  - Density ramps from 1× at the edge to BUBBLE_MAX_DENSITY× at the
   //    centre (generateCellAtTick scales its spawn chance).
-  //  - Types still follow the daily/weekly weather; only the species pick
-  //    within a type changes, from uniform to the bubble's weights:
-  //    exp(BUBBLE_SHARPNESS × z) with z ~ N(0, 1) per species. Sharp enough
-  //    that one or two species dominate each type (in a 33-species pool
-  //    the top two are ~64% of picks; ~75% in a 14-species one).
-  //  - Incense spawns inside a bubble use its weights for both halves too
-  //    (their type rule is unchanged, so one half is still the incense
-  //    type); incense density isn't ramped.
-  //  - Where bubbles overlap, a spawn takes one bubble's weights, chosen in
-  //    proportion to its closeness to each centre (1 − d/R).
+  //  - Every spawn has one half (head or body, a coin flip) that is the
+  //    primary (BUBBLE_PRIMARY_SHARE, 2/3 of spawns) or the secondary
+  //    (the other 1/3). The other half is the usual weather draw.
+  //  - Incense spawns have one half the bubble's pokémon too, and still
+  //    carry the incense type: when the bubble's pokémon has it, the other
+  //    half is the incense stream's usual free half, else it is from the
+  //    incense type. Incense density isn't ramped.
+  //  - Where bubbles overlap, a spawn belongs to one, chosen in proportion
+  //    to its closeness to each centre (1 − d/R).
   //  - The centre holds a radar spawn for the whole day ('E:B:' ids, so
-  //    creatures.js treats it as a radar catch everywhere): one half the
-  //    evolved form of the bubble's most common species, the other the
-  //    evolved form of a draw from the bubble's species distribution
-  //    (often that same species).
+  //    creatures.js treats it as a radar catch everywhere): the evolved
+  //    forms (where they exist) of the primary and the secondary.
   // All of it is seeded from (square, day) only, so every player sees the
   // same bubbles. A spawn follows the bubbles of the day it was born.
-  // Pack mode gets the same bubbles (density + weights per monster key), so
-  // its spawns still stand exactly where fusion-mode spawns do, but no
-  // centre spawn (packs have no radar stream). Focus mode's
-  // rollWildEncounter has no location.
+  // Pack mode gets the same bubbles (density + pair, over monsters), so its
+  // spawns still stand exactly where fusion-mode spawns do, but no centre
+  // spawn (packs have no radar stream). Focus mode's rollWildEncounter has
+  // no location.
   const BUBBLE_RADIUS_M = 500;
   const BUBBLE_GRID_M = 1700;
-  const BUBBLE_SHARPNESS = 2.5;
+  const BUBBLE_PRIMARY_SHARE = 2 / 3;
   const BUBBLE_MAX_DENSITY = 2;
   const BUBBLE_SALT = 0x4E455354;                  // 'NEST' — distinct seed namespace
   const BUBBLE_M_PER_DEG = 111320;
@@ -1218,9 +1220,9 @@
     }
     return band;
   }
-  // One bubble per (day, band, square). Cached; the species weights and
-  // per-pool pick tables fill in lazily. The cache resets when the type
-  // pools are rebuilt (pick tables are keyed by pool array).
+  // One bubble per (day, band, square). Cached; its pair and centre fill in
+  // lazily. The cache resets when the type pools are rebuilt (the pair
+  // holds pool items).
   let _bubbleCache = new Map();
   let _bubblePoolRef = null;
   function _bubbleAt(day, j, i) {
@@ -1235,7 +1237,7 @@
     const lat = -90 + (j + rng()) * BUBBLE_LAT_STEP;
     const lng = -180 + (ii + rng()) * band.lngStep;
     b = { id, day, lat, lng, cosLat: Math.cos(lat * Math.PI / 180),
-          weights: null, cum: new Map(), center: undefined };
+          pair: null, center: undefined };
     _bubbleCache.set(id, b);
     return b;
   }
@@ -1276,105 +1278,125 @@
     for (const e of bubbles) if (e.f > f) f = e.f;
     return 1 + (BUBBLE_MAX_DENSITY - 1) * f;
   }
-  // Which bubble's weights a spawn uses: the only one, or (overlap) one
-  // picked in proportion to closeness by a hash of the cell-tick, so the
-  // spawn's own PRNG stream isn't shifted.
-  function _pickBubble(bubbles, cellX, cellY, tick) {
-    if (!bubbles.length) return null;
-    if (bubbles.length === 1) return bubbles[0].b;
-    const h = (Math.imul(cellX, 73856093) ^ Math.imul(cellY, 19349663)
-      ^ Math.imul(tick, 83492791) ^ BUBBLE_SALT) >>> 0;
-    let total = 0;
-    for (const e of bubbles) total += e.f;
-    let r = (h / 4294967296) * total;
-    for (const e of bubbles) { r -= e.f; if (r < 0) return e.b; }
-    return bubbles[bubbles.length - 1].b;
-  }
-  function _gauss(rng) {
-    let u = rng();
-    while (u <= 0) u = rng();
-    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rng());
-  }
-  // The bubble's weight for every wild species (pack mode: every monster
-  // key), in sorted order so the draws don't depend on how the pool list
-  // happens to be ordered.
+  // The day's natural wild mix: how often each species turns up as a spawn
+  // half under that day's weather (type pair weights, uniform within each
+  // type pool), as a cumulative table over the species in sorted order so
+  // draws don't depend on pool order. Pack spawns are solos (the head
+  // draw), so there only the head pools count. Cached per day.
   const _bubbleKeyOf = (item) => (item !== null && typeof item === 'object' ? item.key : item);
-  function _bubbleWeights(b) {
-    if (b.weights) return b.weights;
-    const rng = getxor4069('bubble-weights|' + BUBBLE_SALT + '|' + b.id);
-    const ids = _pack
-      ? _pack.monsters.map((m) => m.key).sort()
-      : _spawnPoolA().slice().sort((x, y) => x - y);
-    const w = new Map();
-    for (const id of ids) w.set(id, Math.exp(BUBBLE_SHARPNESS * _gauss(rng)));
-    b.weights = w;
-    return w;
-  }
-  // Cumulative pick table for one type pool, normalised to end at 1.
-  function _bubbleCum(b, pool) {
-    let cum = b.cum.get(pool);
-    if (cum) return cum;
-    const w = _bubbleWeights(b);
-    cum = new Float64Array(pool.length);
-    let total = 0;
-    for (let k = 0; k < pool.length; k++) { total += w.get(_bubbleKeyOf(pool[k])) || 1; cum[k] = total; }
-    for (let k = 0; k < pool.length; k++) cum[k] /= total;
-    if (pool.length) cum[pool.length - 1] = 1;
-    b.cum.set(pool, cum);
-    return cum;
-  }
-  // Weighted pick from a type pool with a uniform draw r in [0, 1).
-  function _bubblePick(b, pool, r) {
-    const cum = _bubbleCum(b, pool);
-    let lo = 0, hi = pool.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi) >>> 1;
-      if (cum[mid] <= r) lo = mid + 1; else hi = mid;
-    }
-    return pool[lo];
-  }
-  // How often each wild species turns up in this bubble on its day: every
-  // weather type pair's weight, split over the head pool and the body pool
-  // by the bubble's pick tables. Map id → share, summing to 2 (two halves).
-  function _bubbleSpeciesShares(b) {
+  let _bubbleMixCache = new Map();
+  let _bubbleMixRef = null;
+  function _bubbleDayMix(day) {
     if (!_buildTypeIndices()) return null;
-    const w = currentWeather(b.day * DAY_MS);
+    if (_bubbleMixRef !== _byPrimary) { _bubbleMixCache = new Map(); _bubbleMixRef = _byPrimary; }
+    let mix = _bubbleMixCache.get(day);
+    if (mix) return mix;
+    const w = currentWeather(day * DAY_MS);
     const sampler = _composePairSampler(_byPrimary, _bySecondary, w.daily, w.weekly);
     if (!sampler) return null;
     let total = 0;
     for (const e of sampler.entries) total += e.w;
-    const shares = new Map();
+    const share = new Map();
+    const add = (pool, p) => { for (const sp of pool) share.set(sp, (share.get(sp) || 0) + p / pool.length); };
     for (const e of sampler.entries) {
-      for (const pool of [sampler.byPrimary[e.a], sampler.bySecondary[e.b]]) {
-        const cum = _bubbleCum(b, pool);
-        let prev = 0;
-        for (let k = 0; k < pool.length; k++) {
-          const add = (cum[k] - prev) * e.w / total;
-          prev = cum[k];
-          shares.set(pool[k], (shares.get(pool[k]) || 0) + add);
-        }
-      }
+      add(sampler.byPrimary[e.a], e.w / total);
+      if (!_pack) add(sampler.bySecondary[e.b], e.w / total);
     }
-    return shares;
+    const items = Array.from(share.keys()).sort((x, y) => {
+      const a = _bubbleKeyOf(x), b = _bubbleKeyOf(y);
+      return a < b ? -1 : a > b ? 1 : 0;
+    });
+    const cum = new Float64Array(items.length);
+    let sum = 0;
+    for (let k = 0; k < items.length; k++) { sum += share.get(items[k]); cum[k] = sum; }
+    mix = { items, cum, sum, share };
+    if (_bubbleMixCache.size > 8) _bubbleMixCache = new Map();
+    _bubbleMixCache.set(day, mix);
+    return mix;
+  }
+  function _bubbleMixPick(mix, r) {
+    const x = r * mix.sum;
+    let lo = 0, hi = mix.items.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (mix.cum[mid] <= x) lo = mid + 1; else hi = mid;
+    }
+    return mix.items[lo];
+  }
+  // The bubble's two pokémon: { primary, secondary }, drawn independently
+  // from its day's mix (so both follow the weather; they may be the same).
+  // Null while species data is still loading.
+  function _bubblePair(b) {
+    if (b.pair) return b.pair;
+    const mix = _bubbleDayMix(b.day);
+    if (!mix || !mix.items.length) return null;
+    const rng = getxor4069('bubble-pair|' + BUBBLE_SALT + '|' + b.id);
+    b.pair = { primary: _bubbleMixPick(mix, rng()), secondary: _bubbleMixPick(mix, rng()) };
+    return b.pair;
+  }
+  // A spawn's part in its bubble: which bubble (where they overlap, one
+  // picked in proportion to closeness), the pokémon it carries (the primary
+  // BUBBLE_PRIMARY_SHARE of the time, else the secondary), and a slot coin.
+  // Seeded from the spawn's own key so its PRNG stream isn't shifted.
+  // Null outside every bubble.
+  function _bubbleRole(bubbles, key) {
+    if (!bubbles.length) return null;
+    const rng = getxor4069('bubble-role|' + BUBBLE_SALT + '|' + key);
+    const rPick = rng(), rRole = rng(), slotCoin = rng();
+    let total = 0;
+    for (const e of bubbles) total += e.f;
+    let r = rPick * total, b = bubbles[bubbles.length - 1].b;
+    for (const e of bubbles) { r -= e.f; if (r < 0) { b = e.b; break; } }
+    const pair = _bubblePair(b);
+    if (!pair) return null;
+    return { b, species: rRole < BUBBLE_PRIMARY_SHARE ? pair.primary : pair.secondary, slotCoin };
+  }
+  // A pool item's type in each fusion slot: the head shows its primary, the
+  // body its secondary (or only) type, as in _byPrimary / _bySecondary.
+  function _slotTypesOf(item) {
+    const types = (item !== null && typeof item === 'object') ? item.types
+      : (global.Species && global.Species.typesFor ? global.Species.typesFor(item) : null);
+    if (!types || !types.length) return null;
+    return { head: types[0], body: types[1] || types[0] };
+  }
+  // An incense spawn's halves inside a bubble: { a: body, b: head }, one of
+  // them the bubble's pokémon R, with the incense type kept. Where R shows
+  // the incense type in a slot (its primary as the head, its secondary or
+  // only type as the body), the other half is free: the incense stream's
+  // usual other type. Otherwise the other half is from the incense type's
+  // pool. Placements whose partner pool is empty are skipped and the slot
+  // coin picks between two that work; null when none does (the plain
+  // incense pick stands). rA / rB are the spawn's own body / head draws.
+  function _incenseBubblePlace(role, incenseType, otherType, rA, rB) {
+    const t = _slotTypesOf(role.species);
+    if (!t) return null;
+    const byP = _byPrimary, byS = _bySecondary;
+    let opts = [];
+    if (t.head === incenseType && byS[otherType].length) opts.push({ asHead: true, pool: byS[otherType] });
+    if (t.body === incenseType && byP[otherType].length) opts.push({ asHead: false, pool: byP[otherType] });
+    if (!opts.length) {
+      if (byS[incenseType].length) opts.push({ asHead: true, pool: byS[incenseType] });
+      if (byP[incenseType].length) opts.push({ asHead: false, pool: byP[incenseType] });
+    }
+    if (!opts.length) return null;
+    const o = opts.length > 1 && role.slotCoin >= 0.5 ? opts[1] : opts[0];
+    return o.asHead
+      ? { a: o.pool[Math.floor(rA * o.pool.length)], b: role.species }
+      : { a: role.species, b: o.pool[Math.floor(rB * o.pool.length)] };
   }
   // The bubble's centre spawn (see the section header), or null when there
   // isn't one yet (species/evolution data still loading — not cached then).
   function _bubbleCenterSpawn(b) {
     if (b.center !== undefined) return b.center;
     if (_pack || !_buildTypeIndices() || !_buildEvoIndices()) return null;
-    const shares = _bubbleSpeciesShares(b);
-    if (!shares || !shares.size) return null;
-    const ids = Array.from(shares.keys()).sort((x, y) => x - y);
-    let top = ids[0], sum = 0;
-    for (const id of ids) { sum += shares.get(id); if (shares.get(id) > shares.get(top)) top = id; }
+    const pair = _bubblePair(b);
+    if (!pair) return null;
     const rng = getxor4069('bubble-center|' + BUBBLE_SALT + '|' + b.id);
-    const topIsHead = rng() < 0.5;
-    let r = rng() * sum, other = ids[ids.length - 1];
-    for (const id of ids) { r -= shares.get(id); if (r < 0) { other = id; break; } }
-    const topForms = _forwardForms(top);
-    const otherForms = _forwardForms(other);
-    const topForm = topForms[Math.floor(rng() * topForms.length)];
-    const otherForm = otherForms[Math.floor(rng() * otherForms.length)];
+    const primaryIsHead = rng() < 0.5;
+    const pForms = _forwardForms(pair.primary);
+    const sForms = _forwardForms(pair.secondary);
+    const pForm = pForms[Math.floor(rng() * pForms.length)];
+    const sForm = sForms[Math.floor(rng() * sForms.length)];
     const level = expDistr(7, 50, rng()) + 3;   // like the evolved stream
     const sizeM = 0.15 + rng() * 2.0;
     const variantSeed = rng();
@@ -1385,8 +1407,8 @@
       id: 'E:B:' + b.id,
       lat: b.lat, lng: b.lng,
       // Slot B is the head, slot A the body (generateCellAtTick's convention).
-      speciesA: topIsHead ? otherForm : topForm,
-      speciesB: topIsHead ? topForm : otherForm,
+      speciesA: primaryIsHead ? sForm : pForm,
+      speciesB: primaryIsHead ? pForm : sForm,
       level, sizeM, variantSeed,
       startMs, expireMs: startMs + DAY_MS,
       evolved: true, bubble: true,
@@ -1628,13 +1650,17 @@
     else return null;
     // Slot A is the body (secondary-type index), slot B the head
     // (primary-type index) — same convention as generateCellAtTick.
-    // Inside a spawn bubble both halves pick their species with the
-    // bubble's weights (the types above are unchanged, so one half is
-    // still the incense type); incense density doesn't change there.
     const poolA = byS[typeB], poolB = byP[typeA];
-    const bub = _pickBubble(_bubblesForCell(cellX, cellY, tick), cellX, cellY, tick);
-    const speciesA = bub ? _bubblePick(bub, poolA, arng()) : poolA[Math.floor(arng() * poolA.length)];
-    const speciesB = bub ? _bubblePick(bub, poolB, arng()) : poolB[Math.floor(arng() * poolB.length)];
+    const rA = arng(), rB = arng();
+    let speciesA = poolA[Math.floor(rA * poolA.length)];
+    let speciesB = poolB[Math.floor(rB * poolB.length)];
+    // Inside a spawn bubble one half is the bubble's pokémon and the
+    // fusion still carries the incense type (_incenseBubblePlace). The
+    // same incense spawns exist either way: density doesn't change there.
+    const role = _bubbleRole(_bubblesForCell(cellX, cellY, tick),
+      'I:' + cellX + ':' + cellY + ':' + tick + ':' + typeIdx);
+    const placed = role && _incenseBubblePlace(role, incenseType, otherType, rA, rB);
+    if (placed) { speciesA = placed.a; speciesB = placed.b; }
     const level = expDistr(5, 50, arng()) + 1;
     const sizeM = 0.15 + arng() * 2.0;
     const bornOffset = Math.floor(arng() * TICK_MS);
@@ -1695,8 +1721,8 @@
   // a uniform head from `heads` (slot B). The p's sum to 1, or [] when
   // the type can't spawn. For odds like "chance an incense spawn is
   // new" (creatures.js Summary); tests check it against the generator.
-  // Outside spawn bubbles, that is: inside one the species lean on the
-  // bubble's weights, which these location-free odds leave out.
+  // Outside spawn bubbles, that is: inside one, one half is the bubble's
+  // pokémon, which these location-free odds leave out.
   function incensePairOdds(incenseType, nowMs) {
     if (_pack || !_buildTypeIndices()) return [];
     const types = _weatherTypes();
@@ -1936,8 +1962,8 @@
       setEnabled(on) { _bubblesEnabled = !!on; _ctMemo.clear(); _ctMemoSampler = null; _incMemo.clear(); },
       around: (lat, lng, nowMs) => _bubblesAround(lat, lng, Math.floor(nowMs / DAY_MS))
         .map((e) => ({ id: e.b.id, lat: e.b.lat, lng: e.b.lng, f: e.f })),
-      weights: (id) => { const [d, j, i] = id.split(':').map(Number); return _bubbleWeights(_bubbleAt(d, j, i)); },
-      shares: (id) => { const [d, j, i] = id.split(':').map(Number); return _bubbleSpeciesShares(_bubbleAt(d, j, i)); },
+      pair: (id) => { const [d, j, i] = id.split(':').map(Number); return _bubblePair(_bubbleAt(d, j, i)); },
+      mix: (day) => _bubbleDayMix(day),
       forwardForms: (sp) => _forwardForms(sp),
     },
     // Incense stream — creatures.js sets the active state (from the save

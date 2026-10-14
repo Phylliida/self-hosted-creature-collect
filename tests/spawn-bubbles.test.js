@@ -1,10 +1,12 @@
 // Tests the spawn bubbles ("nests") in static/spawns.js: ~1.7 km squares
 // with one 500 m bubble each per UTC day; inside, the normal stream's density
-// ramps from 1× (edge) to 2× (centre) and the species pick within each type
-// leans on per-bubble Gaussian-softmax weights; the centre holds a radar spawn
-// ('E:B:' id) for the whole day. Incense spawns inside use the weights for
-// both halves but keep their density and type rule. Pack mode gets the same
-// bubbles (so its spawns co-locate with fusion mode's) but no centre.
+// ramps from 1× (edge) to 2× (centre) and every spawn has one half that is
+// the bubble's primary (2/3) or secondary (1/3) pokémon, the other half the
+// usual weather draw; the centre holds a radar spawn ('E:B:' id) of their
+// evolved forms for the whole day. Incense spawns inside have one half the
+// bubble's pokémon and still the incense type, at the same density. Pack mode
+// gets the same bubbles (so its spawns co-locate with fusion mode's) but no
+// centre.
 //
 // Runs the real spawns.js against the bundled species data (same setup as
 // legendary-rate / spawn-memo) and measures the stream directly, comparing
@@ -175,54 +177,67 @@ console.log(`stream scan: ${(performance.now() - t0).toFixed(0)} ms`);
   }
 }
 
-// ── 5. Species bias: one or two species dominate each type ─────────────
+// ── 5. The pair: every spawn inside carries the primary or the secondary ─
+const PAIR = T.pair(B.id);
+const P = PAIR.primary, SEC = PAIR.secondary;
+const slotT = (sp) => { const t = global.Species.typesFor(sp); return { head: t[0], body: t[1] || t[0] }; };
+// Cells inside B and no other bubble (some of B's spawns belong to a neighbour).
+const onlyB = (lat, lng) => { const a = T.around(lat, lng, NOW); return a.length === 1 && a[0].id === B.id; };
 {
-  const shares = T.shares(B.id);
-  const ranked = Array.from(shares.entries()).sort((a, b) => b[1] - a[1]);
-  const [top, topShare] = ranked[0];
-  const counts = new Map();
-  let halves = 0;
-  for (const p of bubSpawns) {
-    for (const sp of [p.speciesA, p.speciesB]) { counts.set(sp, (counts.get(sp) || 0) + 1); halves++; }
+  console.log(`pair: primary #${P}, secondary #${SEC}`);
+  let carries = 0, kept = 0, matched = 0, head = 0, prim = 0, sec = 0, solo = 0;
+  for (const q of bubSpawns) {
+    if (!onlyB(q.lat, q.lng)) continue;
+    solo++;
+    if ([q.speciesA, q.speciesB].some((sp) => sp === P || sp === SEC)) carries++;
+    const p = plainById.get(q.id);
+    if (!p) continue;
+    matched++;
+    // Exactly one slot was swapped for the bubble's pokémon; the other is the plain draw.
+    const bodySwapped = q.speciesB === p.speciesB && (q.speciesA === P || q.speciesA === SEC);
+    const headSwapped = q.speciesA === p.speciesA && (q.speciesB === P || q.speciesB === SEC);
+    if (bodySwapped || headSwapped) kept++;
+    if (q.speciesB !== p.speciesB) { head++; (q.speciesB === P ? prim++ : sec++); }
+    else if (q.speciesA !== p.speciesA) { (q.speciesA === P ? prim++ : sec++); }
   }
-  const observed = (counts.get(top) || 0) / halves;
-  const plainCounts = new Map();
-  let plainHalves = 0;
-  for (const p of plainById.values()) {
-    if (p.r >= 1) continue;
-    for (const sp of [p.speciesA, p.speciesB]) { plainCounts.set(sp, (plainCounts.get(sp) || 0) + 1); plainHalves++; }
-  }
-  const plainTop = (plainCounts.get(top) || 0) / plainHalves;
-  console.log(`bias: top species #${top} predicted ${(topShare / 2 * 100).toFixed(1)}% of halves, observed ${(observed * 100).toFixed(1)}%,`
-    + ` plain stream ${(plainTop * 100).toFixed(1)}%`);
-  ok(Math.abs(observed - topShare / 2) < 0.03, '5: the most common species turns up as often as the weights predict');
-  ok(observed > 1.5 * plainTop, '5: and more often than in the plain stream');
-  // Within one type (the bias picks species inside a type): among heads of
-  // the daily type, the top two species carry most picks.
+  const swapped = prim + sec;
+  console.log(`pair: ${solo} spawns, head swapped ${(head / swapped * 100).toFixed(0)}%,`
+    + ` primary ${(prim / swapped * 100).toFixed(0)}% of swaps`);
+  ok(solo > 300 && carries === solo, `5: every spawn in the bubble has the primary or secondary as a half (${carries}/${solo})`);
+  ok(matched > 150 && kept === matched, `5: the other half is the plain weather draw (${kept}/${matched})`);
+  ok(Math.abs(head / swapped - 0.5) < 0.08, '5: head or body is a coin flip');
+  if (P !== SEC) ok(Math.abs(prim / swapped - 2 / 3) < 0.08, '5: the primary is in 2/3 of spawns, the secondary in 1/3');
+}
+// Across many bubbles: the pair follows the day's natural mix (so the
+// daily/weekly types), and is sometimes the same pokémon twice.
+{
+  const mix = T.mix(DAY);
+  let total = 0, same = 0, dailyP = 0;
   const daily = S.currentWeather(NOW).daily;
-  const top2 = (list) => {
-    const m = new Map();
-    for (const sp of list) m.set(sp, (m.get(sp) || 0) + 1);
-    const v = Array.from(m.values()).sort((x, y) => y - x);
-    return { share: ((v[0] || 0) + (v[1] || 0)) / list.length, n: list.length, kinds: m.size };
-  };
-  const isDaily = (sp) => (global.Species.typesFor(sp)[0] === daily);
-  const bTop = top2(bubSpawns.map((p) => p.speciesB).filter(isDaily));
-  const pTop = top2(Array.from(plainById.values()).filter((p) => p.r < 1).map((p) => p.speciesB).filter(isDaily));
-  console.log(`bias: ${daily} heads — top two species ${(bTop.share * 100).toFixed(0)}% in the bubble (n=${bTop.n}),`
-    + ` ${(pTop.share * 100).toFixed(0)}% plain (n=${pTop.n}, ${pTop.kinds} species)`);
-  ok(bTop.share > 0.45 && bTop.share > 1.8 * pTop.share, '5: within a type, one or two species carry most picks');
-  let sum = 0;
-  for (const v of shares.values()) sum += v;
-  ok(Math.abs(sum - 2) < 1e-9, '5: species shares sum to 2 (two halves per spawn)');
-  // The weights are exp(2.5 z), z ~ N(0, 1): log-weights / 2.5 look standard normal.
-  const z = Array.from(T.weights(B.id).values()).map((w) => Math.log(w) / 2.5);
-  const mean = z.reduce((a, c) => a + c, 0) / z.length;
-  const sd = Math.sqrt(z.reduce((a, c) => a + (c - mean) ** 2, 0) / z.length);
-  ok(Math.abs(mean) < 0.3 && Math.abs(sd - 1) < 0.25, `5: weights are Gaussian-softmax (z mean ${mean.toFixed(2)}, sd ${sd.toFixed(2)})`);
-  // Same species, other bubble: the weights differ.
-  const other = today[1];
-  ok(Math.abs(T.weights(B.id).get(top) - T.weights(other.id).get(top)) > 1e-6, '5: each bubble has its own weights');
+  const wide = S.bubblesNear(MTL[0], MTL[1], 40000, NOW);
+  const counts = new Map();
+  for (const b of wide) {
+    const pr = T.pair(b.id);
+    total++;
+    if (pr.primary === pr.secondary) same++;
+    counts.set(pr.primary, (counts.get(pr.primary) || 0) + 1);
+    if (Object.values(slotT(pr.primary)).includes(daily)) dailyP++;
+  }
+  let expSame = 0, expDaily = 0, top = null;
+  for (const [sp, v] of mix.share) {
+    const f = v / mix.sum;
+    expSame += f * f;
+    if (Object.values(slotT(sp)).includes(daily)) expDaily += f;
+    if (top == null || v > mix.share.get(top)) top = sp;
+  }
+  const expTop = mix.share.get(top) / mix.sum, gotTop = (counts.get(top) || 0) / total;
+  console.log(`pairs: ${total} bubbles; primary of the ${daily} day type ${(dailyP / total * 100).toFixed(0)}% (mix ${(expDaily * 100).toFixed(0)}%),`
+    + ` top species #${top} ${(gotTop * 100).toFixed(1)}% (mix ${(expTop * 100).toFixed(1)}%), same twice ${(same / total * 100).toFixed(1)}% (mix ${(expSame * 100).toFixed(1)}%)`);
+  ok(total > 500, '5: plenty of bubbles in a 40 km radius');
+  ok(Math.abs(dailyP / total - expDaily) < 0.05, '5: primaries follow the day\'s types');
+  ok(Math.abs(gotTop - expTop) < 0.03, '5: the most common wild species is the most common primary');
+  ok(same > 0 && Math.abs(same / total - expSame) < 0.03, '5: primary and secondary are sometimes the same pokémon');
+  ok(JSON.stringify(T.pair(B.id)) === JSON.stringify(PAIR), '5: deterministic');
 }
 
 // ── 6. Overlaps blend; density takes the closest centre ────────────────
@@ -238,6 +253,11 @@ console.log(`stream scan: ${(performance.now() - t0).toFixed(0)} ms`);
 }
 
 // ── 7. The centre: a radar spawn that lasts the bubble's day ───────────
+const halvesFrom = (c, pr) => {
+  const fp = new Set(T.forwardForms(pr.primary)), fs = new Set(T.forwardForms(pr.secondary));
+  return { ok: (fp.has(c.speciesB) && fs.has(c.speciesA)) || (fs.has(c.speciesB) && fp.has(c.speciesA)),
+           primaryHead: fp.has(c.speciesB) };
+};
 {
   const box = [B.lng - 0.001, B.lat - 0.001, B.lng + 0.001, B.lat + 0.001];
   const centres = S.bubbleCentersInBbox(box, NOW);
@@ -248,11 +268,7 @@ console.log(`stream scan: ${(performance.now() - t0).toFixed(0)} ms`);
     ok(c.lat === B.lat && c.lng === B.lng, '7: stands exactly at the centre');
     ok(c.startMs === DAY * DAY_MS && c.expireMs === (DAY + 1) * DAY_MS, '7: alive for the whole UTC day');
     ok(c.evolved === true && c.bubble === true, '7: flagged evolved (radar) + bubble');
-    const shares = T.shares(B.id);
-    const top = Array.from(shares.entries()).sort((a, b) => b[1] - a[1])[0][0];
-    const topForms = new Set(T.forwardForms(top));
-    ok(topForms.has(c.speciesA) || topForms.has(c.speciesB),
-      '7: one half is the evolved form of the bubble\'s most common species');
+    ok(halvesFrom(c, PAIR).ok, '7: its halves are the (evolved) primary and secondary');
     ok(S.spawnsInBbox(box, NOW).some((p) => p.id === c.id), '7: spawnsInBbox includes it (catchable when in range)');
     ok(!S.isSpawnIdStale(c.id, NOW + 3600000), '7: not stale later the same day');
     ok(S.isSpawnIdStale(c.id, NOW + DAY_MS), '7: stale the next day');
@@ -261,22 +277,27 @@ console.log(`stream scan: ${(performance.now() - t0).toFixed(0)} ms`);
     ok(S.bubbleCentersInBbox(box, NOW).length === 0, '7: no centre when bubbles are off');
     T.setEnabled(true);
   }
-  // Across many bubbles: the other half is often the same species' line.
-  let same = 0, total = 0, evolvedBoth = 0;
-  const wide = S.bubblesNear(MTL[0], MTL[1], 40000, NOW);
-  for (const b of wide) {
+  // Across many bubbles: always the pair's lines, evolved where they can be.
+  let total = 0, good = 0, primaryHead = 0, evolvable = 0, evolved = 0;
+  for (const b of S.bubblesNear(MTL[0], MTL[1], 40000, NOW)) {
     const [cc] = S.bubbleCentersInBbox([b.lng - 1e-4, b.lat - 1e-4, b.lng + 1e-4, b.lat + 1e-4], NOW);
     if (!cc) continue;
-    const top = Array.from(T.shares(b.id).entries()).sort((x, y) => y[1] - x[1])[0][0];
-    const forms = new Set(T.forwardForms(top));
+    const pr = T.pair(b.id);
+    const h = halvesFrom(cc, pr);
     total++;
-    if (forms.has(cc.speciesA) && forms.has(cc.speciesB)) same++;
-    if (T.forwardForms(cc.speciesA).length && T.forwardForms(cc.speciesB).length) evolvedBoth++;
+    if (h.ok) good++;
+    if (h.primaryHead) primaryHead++;
+    const pForms = T.forwardForms(pr.primary);
+    if (!(pForms.length === 1 && pForms[0] === pr.primary)) {
+      evolvable++;
+      if (cc.speciesA !== pr.primary && cc.speciesB !== pr.primary) evolved++;
+    }
   }
-  console.log(`centres: ${total} bubbles, both halves from the top species' line in ${(same / total * 100).toFixed(0)}%`);
-  ok(total > 500, '7: plenty of bubbles in a 40 km radius');
-  ok(same / total > 0.15 && same / total < 0.6, '7: the other half is sometimes the same species\' line');
-  ok(evolvedBoth === total, '7: both halves resolve to a species');
+  console.log(`centres: ${total} bubbles, primary as head ${(primaryHead / total * 100).toFixed(0)}%,`
+    + ` evolved primary ${evolved}/${evolvable} where it can evolve`);
+  ok(total > 500 && good === total, '7: every centre is the evolved primary + evolved secondary');
+  ok(Math.abs(primaryHead / total - 0.5) < 0.06, '7: either order');
+  ok(evolvable > 50 && evolved === evolvable, '7: a primary that can evolve always shows evolved');
 }
 
 // ── 8. Radar: the nearest centre shows up like any radar spawn ─────────
@@ -294,9 +315,8 @@ console.log(`stream scan: ${(performance.now() - t0).toFixed(0)} ms`);
   ok(at > 0 && !/bubble/i.test(body), '9: rollWildEncounter (focus mode) ignores bubbles');
 }
 
-// ── 10. Incense inside a bubble: weighted halves, same type rule + density
+// ── 10. Incense inside a bubble: the pair + the incense type, same density
 {
-  const TYPE = 'WATER';
   const latPad = 700 / M_PER_DEG, lngPad = 700 / (M_PER_DEG * cosB);
   const cx0 = Math.floor((B.lat - latPad + 90) * SCALE), cx1 = Math.ceil((B.lat + latPad + 90) * SCALE);
   const cy0 = Math.floor((B.lng - lngPad + 180) * SCALE), cy1 = Math.ceil((B.lng + lngPad + 180) * SCALE);
@@ -307,72 +327,57 @@ console.log(`stream scan: ${(performance.now() - t0).toFixed(0)} ms`);
     for (let cy = cy0; cy <= cy1; cy += 4) {
       const lat = (cx + 0.5) / SCALE - 90, lng = (cy + 0.5) / SCALE - 180;
       if (distM(lat, lng, B.lat, B.lng) / 500 >= 0.95) continue;
-      if (T.around(lat, lng, NOW).length !== 1) continue;
+      if (!onlyB(lat, lng)) continue;
       cells.push([cx, cy]);
     }
   }
-  const run = (enabled) => {
+  const run = (type, enabled) => {
     T.setEnabled(enabled);
     const out = new Map();
     for (const [cx, cy] of cells) {
       for (let t = tick0; t < tick0 + 900; t++) {
-        const p = S.generateIncenseCellAtTick(cx, cy, t, TYPE, NOW);
+        const p = S.generateIncenseCellAtTick(cx, cy, t, type, NOW);
         if (p) out.set(p.id, p);
       }
     }
     return out;
   };
-  const plainInc = run(false), bubInc = run(true);
+  const shows = (p, type) => slotT(p.speciesB).head === type || slotT(p.speciesA).body === type;
+  const isPair = (sp) => sp === P || sp === SEC;
+  const pairTypes = new Set([P, SEC].flatMap((sp) => [slotT(sp).head, slotT(sp).body]));
+
+  // An incense type the pair doesn't have: the bubble's pokémon is one half,
+  // the other half is from the incense type.
+  const pool = (slot, type) => Object.keys(typesMap).some((k) => slotT(Number(k))[slot] === type);
+  const NONE = global.Types.list().find((t) => !pairTypes.has(t) && pool('head', t) && pool('body', t));
+  const plainInc = run(NONE, false), bubInc = run(NONE, true);
   const same = (p, q) => q && q.lat === p.lat && q.lng === p.lng && q.level === p.level
     && q.sizeM === p.sizeM && q.startMs === p.startMs && q.variantSeed === p.variantSeed;
   ok(plainInc.size > 100 && bubInc.size === plainInc.size
     && Array.from(plainInc.values()).every((p) => same(p, bubInc.get(p.id))),
-    `10: incense density unchanged inside a bubble (${bubInc.size} spawns, same spots/levels/births)`);
-  const types = (sp) => global.Species.typesFor(sp);
-  const hasType = (p) => types(p.speciesB)[0] === TYPE || (types(p.speciesA)[1] || types(p.speciesA)[0]) === TYPE;
-  ok(Array.from(bubInc.values()).every(hasType), '10: every incense spawn still has a ' + TYPE + ' half');
-  // The incense half leans on the bubble's weights: top two species among
-  // the WATER-typed halves, bubble vs plain.
-  const waterHalves = (m) => {
-    const out = [];
-    for (const p of m.values()) {
-      if (types(p.speciesB)[0] === TYPE) out.push(p.speciesB);
-      if ((types(p.speciesA)[1] || types(p.speciesA)[0]) === TYPE) out.push(p.speciesA);
-    }
-    return out;
-  };
-  const top2share = (list) => {
-    const m = new Map();
-    for (const sp of list) m.set(sp, (m.get(sp) || 0) + 1);
-    const v = Array.from(m.values()).sort((x, y) => y - x);
-    return ((v[0] || 0) + (v[1] || 0)) / list.length;
-  };
-  const bTop = top2share(waterHalves(bubInc)), pTop = top2share(waterHalves(plainInc));
-  console.log(`incense: ${TYPE} halves — top two species ${(bTop * 100).toFixed(0)}% in the bubble, ${(pTop * 100).toFixed(0)}% plain`);
-  ok(bTop > 0.4 && bTop > 2 * pTop, '10: the incense half leans on the bubble\'s weights');
-  // The other half too: the non-incense halves concentrate as well.
-  const otherHalves = (m) => {
-    const out = [];
-    for (const p of m.values()) {
-      const headWater = types(p.speciesB)[0] === TYPE;
-      out.push(headWater ? p.speciesA : p.speciesB);
-    }
-    return out;
-  };
-  const effective = (list) => {
-    const m = new Map();
-    for (const sp of list) m.set(sp, (m.get(sp) || 0) + 1);
-    let q = 0;
-    for (const v of m.values()) q += (v / list.length) ** 2;
-    return 1 / q;
-  };
-  const eB = effective(otherHalves(bubInc)), eP = effective(otherHalves(plainInc));
-  console.log(`incense: other halves — effective species ${eB.toFixed(1)} in the bubble vs ${eP.toFixed(1)} plain`);
-  ok(eB < 0.75 * eP, '10: the other half leans on the bubble\'s weights too');
+    `10: incense density unchanged inside a bubble (${bubInc.size} ${NONE} spawns, same spots/levels/births)`);
+  const partnered = Array.from(bubInc.values()).filter((p) =>
+    (isPair(p.speciesB) && slotT(p.speciesA).body === NONE) || (isPair(p.speciesA) && slotT(p.speciesB).head === NONE));
+  ok(partnered.length === bubInc.size,
+    `10: ${NONE} incense (not the pair's type): the pair's pokémon + a ${NONE} half (${partnered.length}/${bubInc.size})`);
+
+  // An incense type the primary has: the primary shows it, so the other half
+  // is free (the incense stream's 40/30/30 other type), not always that type.
+  const FREE = slotT(P).head;
+  const freeInc = run(FREE, true);
+  ok(Array.from(freeInc.values()).every((p) => shows(p, FREE)), `10: every ${FREE} incense spawn still has a ${FREE} half`);
+  ok(Array.from(freeInc.values()).every((p) => isPair(p.speciesA) || isPair(p.speciesB)), '10: and the pair\'s pokémon as a half');
+  const pHead = Array.from(freeInc.values()).filter((p) => p.speciesB === P);
+  const freeShare = pHead.filter((p) => slotT(p.speciesA).body !== FREE).length / pHead.length;
+  const w = S.currentWeather(NOW);
+  const expFree = 1 - (0.4 / global.Types.list().length + 0.3 * (w.weekly === FREE) + 0.3 * (w.daily === FREE));
+  console.log(`incense: ${FREE} with primary #${P} as head (n=${pHead.length}): other half not ${FREE} ${(freeShare * 100).toFixed(0)}%`
+    + ` (free half predicts ~${(expFree * 100).toFixed(0)}%)`);
+  ok(pHead.length > 20 && Math.abs(freeShare - expFree) < 0.15, '10: when the pokémon has the incense type, the other half is free');
   T.setEnabled(true);
 }
 
-// ── 11. Pack mode: same spots as fusion mode, monsters weighted, no centre
+// ── 11. Pack mode: same spots as fusion mode, the pair as solos, no centre
 {
   const types = ['PLAIN', 'FLUFFY', 'AQUATIC'];
   const monsters = [];
@@ -392,17 +397,18 @@ console.log(`stream scan: ${(performance.now() - t0).toFixed(0)} ms`);
   const fusion = gen();
   S.setPack({ id: 'test', types, monsters, rares: [] });
   const pack = gen();
-  const keyCounts = new Map();
-  for (const p of pack.values()) keyCounts.set(p.solo, (keyCounts.get(p.solo) || 0) + 1);
-  const topKey = Math.max(...keyCounts.values()) / pack.size;
+  const pr = T.pair(B.id);
   const centres = S.bubbleCentersInBbox([B.lng - 0.001, B.lat - 0.001, B.lng + 0.001, B.lat + 0.001], NOW);
   S.setPack(null);
   ok(pack.size > 50 && pack.size === fusion.size
     && Array.from(fusion.values()).every((f) => { const p = pack.get(f.id);
       return p && p.lat === f.lat && p.lng === f.lng && p.level === f.level && p.startMs === f.startMs; }),
     `11: pack spawns stand exactly where fusion spawns do inside a bubble (${pack.size})`);
-  console.log(`pack: top monster ${(topKey * 100).toFixed(0)}% of spawns near the centre (uniform would be ~${(100 / 24).toFixed(0)}%)`);
-  ok(topKey > 3 / 24, '11: pack monsters lean on the bubble\'s weights');
+  ok(pr && typeof pr.primary.key === 'string' && monsters.includes(pr.primary) && monsters.includes(pr.secondary),
+    '11: the pack bubble\'s pair are pack monsters');
+  const pairShare = Array.from(pack.values()).filter((p) => p.solo === pr.primary.key || p.solo === pr.secondary.key).length / pack.size;
+  console.log(`pack: the pair (${pr.primary.key}, ${pr.secondary.key}) is ${(pairShare * 100).toFixed(0)}% of solos near the centre (uniform would be ~${(200 / 24).toFixed(0)}%)`);
+  ok(pairShare > 0.4, '11: the solo is the bubble\'s pokémon about half the time (the head slot)');
   ok(centres.length === 0, '11: no centre spawn in pack mode');
 }
 
