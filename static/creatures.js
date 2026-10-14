@@ -12050,7 +12050,6 @@
       + `<button class="bag-craft" type="button">Craft incense</button>`
       + `<button class="bag-craft bag-focus" type="button">Focus mode</button>`
       + `<button class="bag-craft bag-gifts" type="button">Gifts</button>`
-      + `<button class="bag-craft bag-gift-new" type="button">Send a gift</button>`
       + `</div>`;
     // Active-incense banner (if one is burning).
     const active = readActiveIncense();
@@ -12094,8 +12093,6 @@
       if (fb) fb.addEventListener('click', () => pushView({ view: 'focus' }));
       const gb = body.querySelector('.bag-gifts');
       if (gb) gb.addEventListener('click', showGifts);
-      const gn = body.querySelector('.bag-gift-new');
-      if (gn) gn.addEventListener('click', () => showGiftCreate());
       body.querySelectorAll('.bag-use').forEach((btn) => {
         btn.addEventListener('click', () => _confirmUseIncense(btn.dataset.incense));
       });
