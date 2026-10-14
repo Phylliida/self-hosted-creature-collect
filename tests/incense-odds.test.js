@@ -34,6 +34,10 @@ global.Species = {
 };
 require(path.join(root, 'static', 'spawns.js'));
 const S = global.Spawns;
+// incensePairOdds is the location-free distribution; spawn bubbles lean the
+// species inside them (tests/spawn-bubbles.test.js covers that), so compare
+// against the generator with bubbles off.
+S._bubbleTest.setEnabled(false);
 const MIN = 60000;
 // Midday, so every tick below shares one daily + weekly type.
 const NOW = Date.UTC(2026, 6, 22, 12, 0, 0);

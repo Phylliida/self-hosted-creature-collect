@@ -1179,6 +1179,9 @@
   //    exp(BUBBLE_SHARPNESS × z) with z ~ N(0, 1) per species. Sharp enough
   //    that one or two species dominate each type (in a 33-species pool
   //    the top two are ~64% of picks; ~75% in a 14-species one).
+  //  - Incense spawns inside a bubble use its weights for both halves too
+  //    (their type rule is unchanged, so one half is still the incense
+  //    type); incense density isn't ramped.
   //  - Where bubbles overlap, a spawn takes one bubble's weights, chosen in
   //    proportion to its closeness to each centre (1 − d/R).
   //  - The centre holds a radar spawn for the whole day ('E:B:' ids, so
@@ -1188,7 +1191,9 @@
   //    (often that same species).
   // All of it is seeded from (square, day) only, so every player sees the
   // same bubbles. A spawn follows the bubbles of the day it was born.
-  // Fusion mode only: pack mode has no radar stream, and focus mode's
+  // Pack mode gets the same bubbles (density + weights per monster key), so
+  // its spawns still stand exactly where fusion-mode spawns do, but no
+  // centre spawn (packs have no radar stream). Focus mode's
   // rollWildEncounter has no location.
   const BUBBLE_RADIUS_M = 500;
   const BUBBLE_GRID_M = 1700;
@@ -1246,7 +1251,7 @@
   // wider than a bubble, so only the 3×3 squares around the point matter.
   function _bubblesAround(lat, lng, day) {
     const out = [];
-    if (!_bubblesEnabled || _pack) return out;
+    if (!_bubblesEnabled) return out;
     const j0 = Math.floor((lat + 90) / BUBBLE_LAT_STEP);
     for (let j = j0 - 1; j <= j0 + 1; j++) {
       const band = _bubbleBand(j);
@@ -1290,12 +1295,16 @@
     while (u <= 0) u = rng();
     return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rng());
   }
-  // The bubble's weight for every wild species, in id order so the draws
-  // don't depend on how the pool list happens to be ordered.
+  // The bubble's weight for every wild species (pack mode: every monster
+  // key), in sorted order so the draws don't depend on how the pool list
+  // happens to be ordered.
+  const _bubbleKeyOf = (item) => (item !== null && typeof item === 'object' ? item.key : item);
   function _bubbleWeights(b) {
     if (b.weights) return b.weights;
     const rng = getxor4069('bubble-weights|' + BUBBLE_SALT + '|' + b.id);
-    const ids = _spawnPoolA().slice().sort((x, y) => x - y);
+    const ids = _pack
+      ? _pack.monsters.map((m) => m.key).sort()
+      : _spawnPoolA().slice().sort((x, y) => x - y);
     const w = new Map();
     for (const id of ids) w.set(id, Math.exp(BUBBLE_SHARPNESS * _gauss(rng)));
     b.weights = w;
@@ -1308,7 +1317,7 @@
     const w = _bubbleWeights(b);
     cum = new Float64Array(pool.length);
     let total = 0;
-    for (let k = 0; k < pool.length; k++) { total += w.get(pool[k]) || 1; cum[k] = total; }
+    for (let k = 0; k < pool.length; k++) { total += w.get(_bubbleKeyOf(pool[k])) || 1; cum[k] = total; }
     for (let k = 0; k < pool.length; k++) cum[k] /= total;
     if (pool.length) cum[pool.length - 1] = 1;
     b.cum.set(pool, cum);
@@ -1387,7 +1396,7 @@
   // Every square of `day` that could hold a bubble centre inside the box.
   function _bubblesInBox(west, south, east, north, day) {
     const out = [];
-    if (!_bubblesEnabled || _pack) return out;
+    if (!_bubblesEnabled) return out;
     const j0 = Math.floor((south + 90) / BUBBLE_LAT_STEP);
     const j1 = Math.floor((north + 90) / BUBBLE_LAT_STEP);
     for (let j = j0; j <= j1; j++) {
@@ -1423,6 +1432,7 @@
     const now = nowMs == null ? Date.now() : nowMs;
     const cd = _communityActiveAt(now);
     const out = [];
+    if (_pack) return out;
     for (const b of _bubblesInBox(bbox[0], bbox[1], bbox[2], bbox[3], Math.floor(now / DAY_MS))) {
       const c = _bubbleCenterSpawn(b);
       if (!c || now < c.startMs || now >= c.expireMs) continue;
@@ -1618,9 +1628,13 @@
     else return null;
     // Slot A is the body (secondary-type index), slot B the head
     // (primary-type index) — same convention as generateCellAtTick.
+    // Inside a spawn bubble both halves pick their species with the
+    // bubble's weights (the types above are unchanged, so one half is
+    // still the incense type); incense density doesn't change there.
     const poolA = byS[typeB], poolB = byP[typeA];
-    const speciesA = poolA[Math.floor(arng() * poolA.length)];
-    const speciesB = poolB[Math.floor(arng() * poolB.length)];
+    const bub = _pickBubble(_bubblesForCell(cellX, cellY, tick), cellX, cellY, tick);
+    const speciesA = bub ? _bubblePick(bub, poolA, arng()) : poolA[Math.floor(arng() * poolA.length)];
+    const speciesB = bub ? _bubblePick(bub, poolB, arng()) : poolB[Math.floor(arng() * poolB.length)];
     const level = expDistr(5, 50, arng()) + 1;
     const sizeM = 0.15 + arng() * 2.0;
     const bornOffset = Math.floor(arng() * TICK_MS);
@@ -1681,6 +1695,8 @@
   // a uniform head from `heads` (slot B). The p's sum to 1, or [] when
   // the type can't spawn. For odds like "chance an incense spawn is
   // new" (creatures.js Summary); tests check it against the generator.
+  // Outside spawn bubbles, that is: inside one the species lean on the
+  // bubble's weights, which these location-free odds leave out.
   function incensePairOdds(incenseType, nowMs) {
     if (_pack || !_buildTypeIndices()) return [];
     const types = _weatherTypes();
@@ -1917,7 +1933,7 @@
     // folded into spawnsInBbox + nearestRadar.
     bubblesNear, bubbleCentersInBbox, BUBBLE_RADIUS_M, BUBBLE_GRID_M,
     _bubbleTest: {
-      setEnabled(on) { _bubblesEnabled = !!on; _ctMemo.clear(); _ctMemoSampler = null; },
+      setEnabled(on) { _bubblesEnabled = !!on; _ctMemo.clear(); _ctMemoSampler = null; _incMemo.clear(); },
       around: (lat, lng, nowMs) => _bubblesAround(lat, lng, Math.floor(nowMs / DAY_MS))
         .map((e) => ({ id: e.b.id, lat: e.b.lat, lng: e.b.lng, f: e.f })),
       weights: (id) => { const [d, j, i] = id.split(':').map(Number); return _bubbleWeights(_bubbleAt(d, j, i)); },

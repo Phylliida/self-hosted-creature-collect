@@ -2,7 +2,9 @@
 // with one 500 m bubble each per UTC day; inside, the normal stream's density
 // ramps from 1× (edge) to 2× (centre) and the species pick within each type
 // leans on per-bubble Gaussian-softmax weights; the centre holds a radar spawn
-// ('E:B:' id) for the whole day.
+// ('E:B:' id) for the whole day. Incense spawns inside use the weights for
+// both halves but keep their density and type rule. Pack mode gets the same
+// bubbles (so its spawns co-locate with fusion mode's) but no centre.
 //
 // Runs the real spawns.js against the bundled species data (same setup as
 // legendary-rate / spawn-memo) and measures the stream directly, comparing
@@ -40,6 +42,9 @@ const T = S._bubbleTest;
 const SCALE = 10000;
 const DAY_MS = 86400000;
 const NOW = Date.UTC(2026, 9, 13, 15, 0, 0);          // a fixed afternoon (UTC)
+// The normal stream's weather sampler and nearestRadar read the real clock;
+// pin it so the weather matches NOW's day whenever this runs.
+Date.now = () => NOW;
 const DAY = Math.floor(NOW / DAY_MS);
 const MTL = [45.5017, -73.5673];
 const M_PER_DEG = 111320;
@@ -115,7 +120,7 @@ const plain = RINGS.map(() => 0), bub = RINGS.map(() => 0);
 const plainById = new Map();
 const bubSpawns = [];
 let plainSpawnsInside = 0;
-const t0 = Date.now();
+const t0 = performance.now();
 T.setEnabled(false);
 scan((cx, cy, t, r) => {
   const p = S.generateCellAtTick(cx, cy, t, NOW);
@@ -132,7 +137,7 @@ scan((cx, cy, t, r) => {
   if (k >= 0) bub[k]++;
   if (r < 1) bubSpawns.push(p);
 });
-console.log(`stream scan: ${Date.now() - t0} ms`);
+console.log(`stream scan: ${(performance.now() - t0).toFixed(0)} ms`);
 
 // ── 3. Outside: untouched. Inside: every plain spawn kept, plus extras ──
 {
@@ -276,8 +281,7 @@ console.log(`stream scan: ${Date.now() - t0} ms`);
 
 // ── 8. Radar: the nearest centre shows up like any radar spawn ─────────
 {
-  const real = Date.now();
-  const [nb] = S.bubblesNear(MTL[0], MTL[1], 3000, real);
+  const [nb] = S.bubblesNear(MTL[0], MTL[1], 3000, NOW);
   const near = S.nearestRadar(nb.lat + 0.0005, nb.lng, 5);
   ok(near.some((p) => p.id === 'E:B:' + nb.id), '8: nearestRadar includes the centre next to you');
 }
@@ -290,7 +294,119 @@ console.log(`stream scan: ${Date.now() - t0} ms`);
   ok(at > 0 && !/bubble/i.test(body), '9: rollWildEncounter (focus mode) ignores bubbles');
 }
 
-// ── 10. Cost: a cold refresh-sized scan at a bubble centre ─────────────
+// ── 10. Incense inside a bubble: weighted halves, same type rule + density
+{
+  const TYPE = 'WATER';
+  const latPad = 700 / M_PER_DEG, lngPad = 700 / (M_PER_DEG * cosB);
+  const cx0 = Math.floor((B.lat - latPad + 90) * SCALE), cx1 = Math.ceil((B.lat + latPad + 90) * SCALE);
+  const cy0 = Math.floor((B.lng - lngPad + 180) * SCALE), cy1 = Math.ceil((B.lng + lngPad + 180) * SCALE);
+  // Cells well inside B and no other bubble (picked with bubbles on).
+  T.setEnabled(true);
+  const cells = [];
+  for (let cx = cx0; cx <= cx1; cx += 4) {
+    for (let cy = cy0; cy <= cy1; cy += 4) {
+      const lat = (cx + 0.5) / SCALE - 90, lng = (cy + 0.5) / SCALE - 180;
+      if (distM(lat, lng, B.lat, B.lng) / 500 >= 0.95) continue;
+      if (T.around(lat, lng, NOW).length !== 1) continue;
+      cells.push([cx, cy]);
+    }
+  }
+  const run = (enabled) => {
+    T.setEnabled(enabled);
+    const out = new Map();
+    for (const [cx, cy] of cells) {
+      for (let t = tick0; t < tick0 + 900; t++) {
+        const p = S.generateIncenseCellAtTick(cx, cy, t, TYPE, NOW);
+        if (p) out.set(p.id, p);
+      }
+    }
+    return out;
+  };
+  const plainInc = run(false), bubInc = run(true);
+  const same = (p, q) => q && q.lat === p.lat && q.lng === p.lng && q.level === p.level
+    && q.sizeM === p.sizeM && q.startMs === p.startMs && q.variantSeed === p.variantSeed;
+  ok(plainInc.size > 100 && bubInc.size === plainInc.size
+    && Array.from(plainInc.values()).every((p) => same(p, bubInc.get(p.id))),
+    `10: incense density unchanged inside a bubble (${bubInc.size} spawns, same spots/levels/births)`);
+  const types = (sp) => global.Species.typesFor(sp);
+  const hasType = (p) => types(p.speciesB)[0] === TYPE || (types(p.speciesA)[1] || types(p.speciesA)[0]) === TYPE;
+  ok(Array.from(bubInc.values()).every(hasType), '10: every incense spawn still has a ' + TYPE + ' half');
+  // The incense half leans on the bubble's weights: top two species among
+  // the WATER-typed halves, bubble vs plain.
+  const waterHalves = (m) => {
+    const out = [];
+    for (const p of m.values()) {
+      if (types(p.speciesB)[0] === TYPE) out.push(p.speciesB);
+      if ((types(p.speciesA)[1] || types(p.speciesA)[0]) === TYPE) out.push(p.speciesA);
+    }
+    return out;
+  };
+  const top2share = (list) => {
+    const m = new Map();
+    for (const sp of list) m.set(sp, (m.get(sp) || 0) + 1);
+    const v = Array.from(m.values()).sort((x, y) => y - x);
+    return ((v[0] || 0) + (v[1] || 0)) / list.length;
+  };
+  const bTop = top2share(waterHalves(bubInc)), pTop = top2share(waterHalves(plainInc));
+  console.log(`incense: ${TYPE} halves — top two species ${(bTop * 100).toFixed(0)}% in the bubble, ${(pTop * 100).toFixed(0)}% plain`);
+  ok(bTop > 0.4 && bTop > 2 * pTop, '10: the incense half leans on the bubble\'s weights');
+  // The other half too: the non-incense halves concentrate as well.
+  const otherHalves = (m) => {
+    const out = [];
+    for (const p of m.values()) {
+      const headWater = types(p.speciesB)[0] === TYPE;
+      out.push(headWater ? p.speciesA : p.speciesB);
+    }
+    return out;
+  };
+  const effective = (list) => {
+    const m = new Map();
+    for (const sp of list) m.set(sp, (m.get(sp) || 0) + 1);
+    let q = 0;
+    for (const v of m.values()) q += (v / list.length) ** 2;
+    return 1 / q;
+  };
+  const eB = effective(otherHalves(bubInc)), eP = effective(otherHalves(plainInc));
+  console.log(`incense: other halves — effective species ${eB.toFixed(1)} in the bubble vs ${eP.toFixed(1)} plain`);
+  ok(eB < 0.75 * eP, '10: the other half leans on the bubble\'s weights too');
+  T.setEnabled(true);
+}
+
+// ── 11. Pack mode: same spots as fusion mode, monsters weighted, no centre
+{
+  const types = ['PLAIN', 'FLUFFY', 'AQUATIC'];
+  const monsters = [];
+  for (let k = 0; k < 24; k++) monsters.push({ key: 'neo:' + k, types: [types[k % 3]] });
+  const cells = [];
+  for (let cx = Math.floor((B.lat + 90) * SCALE) - 30; cx <= Math.floor((B.lat + 90) * SCALE) + 30; cx += 3) {
+    for (let cy = Math.floor((B.lng + 180) * SCALE) - 30; cy <= Math.floor((B.lng + 180) * SCALE) + 30; cy += 3) cells.push([cx, cy]);
+  }
+  const gen = () => {
+    const out = new Map();
+    for (const [cx, cy] of cells) for (let t = tick0; t < tick0 + 1200; t++) {
+      const p = S.generateCellAtTick(cx, cy, t, NOW);
+      if (p) out.set(p.id, p);
+    }
+    return out;
+  };
+  const fusion = gen();
+  S.setPack({ id: 'test', types, monsters, rares: [] });
+  const pack = gen();
+  const keyCounts = new Map();
+  for (const p of pack.values()) keyCounts.set(p.solo, (keyCounts.get(p.solo) || 0) + 1);
+  const topKey = Math.max(...keyCounts.values()) / pack.size;
+  const centres = S.bubbleCentersInBbox([B.lng - 0.001, B.lat - 0.001, B.lng + 0.001, B.lat + 0.001], NOW);
+  S.setPack(null);
+  ok(pack.size > 50 && pack.size === fusion.size
+    && Array.from(fusion.values()).every((f) => { const p = pack.get(f.id);
+      return p && p.lat === f.lat && p.lng === f.lng && p.level === f.level && p.startMs === f.startMs; }),
+    `11: pack spawns stand exactly where fusion spawns do inside a bubble (${pack.size})`);
+  console.log(`pack: top monster ${(topKey * 100).toFixed(0)}% of spawns near the centre (uniform would be ~${(100 / 24).toFixed(0)}%)`);
+  ok(topKey > 3 / 24, '11: pack monsters lean on the bubble\'s weights');
+  ok(centres.length === 0, '11: no centre spawn in pack mode');
+}
+
+// ── 12. Cost: a cold refresh-sized scan at a bubble centre ─────────────
 {
   const bbox = (lat, lng) => {
     const latPad = 115 / M_PER_DEG, lngPad = 115 / (M_PER_DEG * Math.cos(lat * Math.PI / 180));
@@ -305,7 +421,7 @@ console.log(`stream scan: ${Date.now() - t0} ms`);
   time(true);
   const off = time(false), on = time(true);
   console.log(`cold refresh at a centre: ${on.toFixed(1)} ms with bubbles, ${off.toFixed(1)} ms without`);
-  ok(on < off * 1.5 + 5, '10: bubbles add little to a cold refresh');
+  ok(on < off * 1.5 + 5, '12: bubbles add little to a cold refresh');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
