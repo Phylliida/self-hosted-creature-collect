@@ -18688,9 +18688,8 @@
   const BUBBLE_FILL_LAYER_ID = 'cc-spawn-bubbles-fill';
   const BUBBLE_EDGE_LAYER_ID = 'cc-spawn-bubbles-edge';
   const BUBBLE_SHOW_RADIUS_M = 3000;     // draw bubbles with a centre this close
-  const BUBBLE_RESCAN_M = 250;           // recompute the set after moving this far
   const BUBBLE_DISCS = [1, 0.75, 0.5, 0.25];
-  let _bubbleDrawn = null;               // { day, lat, lng } the drawn set was computed for
+  let _bubbleDrawn = null;               // { sig } of the drawn set (ids + drawn centres)
   let _bubbleAccent = null;
 
   function _bubbleDisc(lat, lng, radiusM) {
@@ -18708,7 +18707,8 @@
     for (const b of list) {
       BUBBLE_DISCS.forEach((frac, k) => features.push({
         type: 'Feature',
-        geometry: { type: 'Polygon', coordinates: [_bubbleDisc(b.lat, b.lng, b.radiusM * frac)] },
+        // Around where its centre pokémon stands (moved by centre snapping).
+        geometry: { type: 'Polygon', coordinates: [_bubbleDisc(b.centerLat ?? b.lat, b.centerLng ?? b.lng, b.radiusM * frac)] },
         properties: { disc: k },
       }));
     }
@@ -18763,9 +18763,11 @@
       if (src) src.setData(_bubbleCollection([]));
     } catch (e) { /* ignore */ }
   }
-  // Called with every radar refresh (the 3 s spawn tick): recompute the set
-  // when the radar is on and you've moved BUBBLE_RESCAN_M or the UTC day
-  // rolled over; otherwise just make sure the layers survived.
+  // Called with every radar refresh (the 3 s spawn tick): while the radar is
+  // on, re-list the bubbles around you (cheap — a dozen squares, centre
+  // snaps cached in spawns.js) and redraw only when the set or a drawn
+  // centre changed: you moved, the UTC day rolled over, or a snapped centre
+  // became known.
   function refreshBubbleOverlay(force) {
     const map = _overlayMap;
     if (!map || !global.Spawns || !global.Spawns.bubblesNear) return;
@@ -18775,13 +18777,11 @@
     }
     if (map.isStyleLoaded && !map.isStyleLoaded()) return;
     try { _ensureBubbleLayers(map); } catch (e) { return; }
-    const day = Math.floor(Date.now() / 86400000);
-    const moved = _bubbleDrawn
-      ? metersBetween(_bubbleDrawn.lat, _bubbleDrawn.lng, _userLat, _userLng) : Infinity;
-    if (!force && _bubbleDrawn && _bubbleDrawn.day === day && moved < BUBBLE_RESCAN_M) return;
     const list = global.Spawns.bubblesNear(_userLat, _userLng, BUBBLE_SHOW_RADIUS_M);
+    const sig = list.map((b) => b.id + '@' + (b.centerLat ?? b.lat).toFixed(6) + ',' + (b.centerLng ?? b.lng).toFixed(6)).join('|');
+    if (!force && _bubbleDrawn && _bubbleDrawn.sig === sig) return;
     try { map.getSource(BUBBLE_SOURCE_ID).setData(_bubbleCollection(list)); } catch (e) { return; }
-    _bubbleDrawn = { day, lat: _userLat, lng: _userLng };
+    _bubbleDrawn = { sig };
   }
 
   function attachSpawnOverlay(map) {

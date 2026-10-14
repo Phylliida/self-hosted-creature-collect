@@ -203,10 +203,15 @@ function brute(nodes, edges, lat, lng) {
 
 // ── 4. POIs: nearest, and only when nearer than the road ───────────────
 {
-  const pois = [{ lat: north(50), lng: east(0) }, { lat: north(400), lng: east(0) }, null];
+  const pois = [{ lat: north(50), lng: east(0), category: 'cafe' }, { lat: north(400), lng: east(0), category: 'park' }, null];
   const hit = G._legSnapNearestPoi(pois, LAT, LNG, 2000);
   ok(hit && Math.abs(hit.m - 50) < 0.1 && hit.lat === pois[0].lat, '4: nearest POI');
   ok(G._legSnapNearestPoi(pois, LAT, LNG, 40) === null, '4: none closer than the bound (e.g. a nearer road) → null');
+  // Uncategorised POIs are mostly natural features (a pond's point is in
+  // the pond — "Derr Pond", Eugene): never a snap target.
+  const pond = { lat: north(10), lng: east(0), name: 'Derr Pond', category: '' };
+  const hit2 = G._legSnapNearestPoi([pond, ...pois], LAT, LNG, 2000);
+  ok(hit2 && hit2.lat === pois[0].lat, '4: a nearer uncategorised POI (a pond) is skipped');
 }
 
 // ── 5. Real Montreal map data (when downloaded into regions/) ──────────

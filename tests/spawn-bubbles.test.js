@@ -478,9 +478,20 @@ const halvesFrom = (c, pr) => {
   ok(JSON.stringify(at(B.lat, B.lng)) === JSON.stringify(raw), '13: legendary snapping leaves centres alone');
   S.setLegendarySnapProvider(null);
   ok(JSON.stringify(at(B.lat, B.lng)) === JSON.stringify(raw), '13: off → the centre is back at the bubble centre');
-  // The bubble itself never moves: same circles, same spawns.
+  // Where spawns lean never moves (same bubble centres, same spawns); the
+  // overlay draws each bubble around its centre pokémon (centerLat/Lng).
   S.setBubbleSnapProvider((lat, lng) => ({ lat: lat + 0.004, lng, kind: 'road' }));
-  ok(JSON.stringify(S.bubblesNear(MTL[0], MTL[1], 3000, NOW)) === bubblesBefore, '13: bubble circles unchanged');
+  const near = S.bubblesNear(MTL[0], MTL[1], 3000, NOW);
+  const strip = (list) => JSON.stringify(list.map(({ centerLat, centerLng, ...rest }) => rest));
+  ok(strip(near) === strip(JSON.parse(bubblesBefore)), '13: bubble centres (where spawns lean) unchanged');
+  ok(JSON.parse(bubblesBefore).every((b) => b.centerLat === b.lat && b.centerLng === b.lng),
+    '13: snapping off → drawn at the bubble centre');
+  ok(near.every((b) => Math.abs(b.centerLat - (b.lat + 0.004)) < 1e-12 && b.centerLng === b.lng),
+    '13: snapping on → drawn around the snapped centre pokémon');
+  S.setBubbleSnapProvider(() => null);
+  ok(S.bubblesNear(MTL[0], MTL[1], 3000, NOW).every((b) => b.centerLat === b.lat),
+    '13: a hidden centre (nothing in reach) leaves the bubble drawn where it is');
+  S.setBubbleSnapProvider((lat, lng) => ({ lat: lat + 0.004, lng, kind: 'road' }));
   ok(JSON.stringify(sample.map((id) => { const [cx, cy, t] = id.split(':').map(Number); return S.generateCellAtTick(cx, cy, t, NOW); })) === spawnsBefore,
     '13: spawns in and around the bubble unchanged');
   S.setBubbleSnapProvider(null);

@@ -124,6 +124,8 @@ const TILES_CACHE = 'tiles-v1';
 // point on a road or path (or a nearer POI) instead of an intersection.
 // Shell bump 2026-10-14 (#24): index.html adds "Snap bubble centers to
 // roads/POIs" and a faster grid-based snap lookup.
+// Shell bump 2026-10-14 (#25): index.html's snap skips uncategorised POIs
+// (ponds, lakes, rivers — their point is in the water).
 
 const APP_SHELL = [
   '/',

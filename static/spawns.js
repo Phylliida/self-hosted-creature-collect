@@ -1482,7 +1482,12 @@
     return out;
   }
   // Today's bubbles with a centre within radiusM of a point, nearest first,
-  // for the map overlay: [{ id, lat, lng, radiusM }].
+  // for the map overlay: [{ id, lat, lng, radiusM, distM, centerLat,
+  // centerLng }]. lat/lng is the bubble's own centre (where its spawns
+  // lean, the same for everyone); centerLat/centerLng is where its centre
+  // pokémon stands — moved there by centre snapping once that's known,
+  // else the same spot. The overlay draws the bubble around the latter so
+  // a snapped bubble isn't drawn out in a river.
   function bubblesNear(lat, lng, radiusM, nowMs) {
     if (lat == null || lng == null || !isFinite(lat) || !isFinite(lng)) return [];
     const now = nowMs == null ? Date.now() : nowMs;
@@ -1492,7 +1497,14 @@
     const out = [];
     for (const b of _bubblesInBox(lng - lngPad, lat - latPad, lng + lngPad, lat + latPad, Math.floor(now / DAY_MS))) {
       const d = _bubbleDistM(b, lat, lng);
-      if (d <= r) out.push({ id: b.id, lat: b.lat, lng: b.lng, radiusM: BUBBLE_RADIUS_M, distM: d });
+      if (d > r) continue;
+      let cLat = b.lat, cLng = b.lng;
+      if (_bubSnap.provider && !_pack) {
+        const c = _bubbleCenterSpawn(b);
+        const sp = c && _applySnap(_bubSnap, c);
+        if (sp) { cLat = sp.lat; cLng = sp.lng; }
+      }
+      out.push({ id: b.id, lat: b.lat, lng: b.lng, radiusM: BUBBLE_RADIUS_M, distM: d, centerLat: cLat, centerLng: cLng });
     }
     out.sort((x, y) => x.distM - y.distM);
     return out;

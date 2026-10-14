@@ -12787,11 +12787,14 @@ function fmtDate(ts) {
     return hit ? { lat: lat + hitY / M, lng: lng + hitX / kx, m: best } : null;
   }
   // Nearest POI to (lat, lng) closer than maxM: { lat, lng, m } or null.
+  // Only POIs with a category (shops, parks, cafés, …): the uncategorised
+  // ones are mostly named natural features — lakes, ponds, rivers, creeks,
+  // buttes — whose point sits in the water or on a summit.
   function _legSnapNearestPoi(pois, lat, lng, maxM) {
     const M = 111320, kx = M * Math.cos(lat * Math.PI / 180);
     let best = maxM, out = null;
     for (const p of pois) {
-      if (!p) continue;
+      if (!p || !p.category) continue;
       const dx = (p.lng - lng) * kx, dy = (p.lat - lat) * M, d = Math.sqrt(dx * dx + dy * dy);
       if (d < best) { best = d; out = p; }
     }
