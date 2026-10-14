@@ -838,37 +838,37 @@
     // 1/LEG_CHANCE_PER_CELLTICK isn't an integer power-of-ten-ish match.
     return (h / 4294967296) < LEG_CHANCE_PER_CELLTICK;
   }
-  // Legendary position snapping (opt-in, app-injected). The engine itself
-  // stays pure/deterministic; the host app registers a provider that maps a
-  // rolled (lat, lng) to a real-world anchor ({ lat, lng, kind }) or null
-  // when nothing suitable is nearby (the legendary is then hidden — keeps
-  // players from being sent somewhere they shouldn't go), or undefined
-  // when it can't tell yet (map data still loading: hidden for now, asked
-  // again next time). Answers are cached per spawn id; positions may
-  // differ between devices with different downloaded map data, but spawn
-  // ids are unaffected.
-  let _legSnapProvider = null;
-  const _legSnapCache = new Map();
-  const LEG_SNAP_CACHE_MAX = 256;
-  function setLegendarySnapProvider(fn) {
-    _legSnapProvider = fn || null;
-    _legSnapCache.clear();
-  }
-  function _applyLegendarySnap(p) {
-    if (!_legSnapProvider) return p;
-    if (_legSnapCache.has(p.id)) {
-      const c = _legSnapCache.get(p.id);
+  // Position snapping (opt-in, app-injected) for legendaries and for
+  // spawn-bubble centres, each with its own provider (one Settings toggle
+  // each) and cache. The engine itself stays pure/deterministic; the host
+  // app registers a provider that maps a rolled (lat, lng) to a real-world
+  // anchor ({ lat, lng, kind }) or null when nothing suitable is nearby
+  // (the spawn is then hidden — keeps players from being sent somewhere
+  // they shouldn't go), or undefined when it can't tell yet (map data
+  // still loading: hidden for now, asked again next time). Answers are
+  // cached per spawn id; positions may differ between devices with
+  // different downloaded map data, but spawn ids are unaffected.
+  const SNAP_CACHE_MAX = 256;
+  const _legSnap = { provider: null, cache: new Map() };
+  const _bubSnap = { provider: null, cache: new Map() };
+  function setLegendarySnapProvider(fn) { _legSnap.provider = fn || null; _legSnap.cache.clear(); }
+  function setBubbleSnapProvider(fn) { _bubSnap.provider = fn || null; _bubSnap.cache.clear(); }
+  function _applySnap(snap, p) {
+    if (!snap.provider) return p;
+    if (snap.cache.has(p.id)) {
+      const c = snap.cache.get(p.id);
       return c ? Object.assign({}, p, { lat: c.lat, lng: c.lng, snappedTo: c.kind }) : null;
     }
     let target = null;
-    try { target = _legSnapProvider(p.lat, p.lng); } catch (e) { target = null; }
+    try { target = snap.provider(p.lat, p.lng); } catch (e) { target = null; }
     if (target === undefined) return null;   // not known yet: don't cache
-    if (_legSnapCache.size >= LEG_SNAP_CACHE_MAX) {
-      _legSnapCache.delete(_legSnapCache.keys().next().value);
+    if (snap.cache.size >= SNAP_CACHE_MAX) {
+      snap.cache.delete(snap.cache.keys().next().value);
     }
-    _legSnapCache.set(p.id, target || null);
+    snap.cache.set(p.id, target || null);
     return target ? Object.assign({}, p, { lat: target.lat, lng: target.lng, snappedTo: target.kind }) : null;
   }
+  function _applyLegendarySnap(p) { return _applySnap(_legSnap, p); }
   function generateLegendaryAtTick(cellX, cellY, ltick) {
     if (!_legCandidate(cellX, cellY, ltick)) return null;
     if (_pack) {
@@ -1453,14 +1453,30 @@
     });
   }
   // Alive bubble-centre spawns inside a bbox ([west, south, east, north]).
+  // With centre snapping on (setBubbleSnapProvider) a centre stands where
+  // the provider puts it — up to BUBBLE_SNAP_PAD_M from its bubble's centre
+  // — so squares that far around the box are looked at too, and the box
+  // test uses where it stands. The bubble itself (its circle, density and
+  // pair) never moves: that part is the same for every player.
+  const BUBBLE_SNAP_PAD_M = 2000;
   function bubbleCentersInBbox(bbox, nowMs) {
     const now = nowMs == null ? Date.now() : nowMs;
     const cd = _communityActiveAt(now);
     const out = [];
     if (_pack) return out;
-    for (const b of _bubblesInBox(bbox[0], bbox[1], bbox[2], bbox[3], Math.floor(now / DAY_MS))) {
-      const c = _bubbleCenterSpawn(b);
+    const [west, south, east, north] = bbox;
+    let pLat = 0, pLng = 0;
+    if (_bubSnap.provider) {
+      pLat = BUBBLE_SNAP_PAD_M / BUBBLE_M_PER_DEG;
+      pLng = pLat / Math.max(0.05, Math.cos(Math.max(Math.abs(south), Math.abs(north)) * Math.PI / 180));
+    }
+    for (const b of _bubblesInBox(west - pLng, south - pLat, east + pLng, north + pLat, Math.floor(now / DAY_MS))) {
+      let c = _bubbleCenterSpawn(b);
       if (!c || now < c.startMs || now >= c.expireMs) continue;
+      if (_bubSnap.provider) {
+        c = _applySnap(_bubSnap, c);
+        if (!c || c.lat < south || c.lat > north || c.lng < west || c.lng > east) continue;
+      }
       out.push(cd ? _bubbleCenterCommunity(c, cd) : c);
     }
     return out;
@@ -1954,6 +1970,8 @@
     // Optional app-injected legendary position snap (road/POI anchoring);
     // null (default) keeps raw rolled positions.
     setLegendarySnapProvider,
+    // The same for spawn-bubble centres (their own toggle + cache).
+    setBubbleSnapProvider,
     // Evolved ("poké-radar") stream — folded into spawnsInBbox; exposed for
     // tests + the future poké-radar detection UI.
     evolvedInBbox, generateEvolvedAtTick, currentEvoTick, nearestEvolved, nearestRadar,

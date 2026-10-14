@@ -3719,9 +3719,13 @@
       <label for="radarAutogenToggle">Show autogen labels on radar</label>
       <input type="checkbox" id="radarAutogenToggle">
     </div>
-    <div class="row" title="Legendaries appear at the nearest road (or POI, if no road) within 2 km of their rolled spot, and not at all where there's neither — so they never send you into backyards, water, or private property. Turn this off to get raw spawns anywhere, e.g. if you're riding a boat.">
+    <div class="row" title="Legendaries appear at the nearest point on a road or path, or at a POI if one is closer, within 2 km of their rolled spot, and not at all where there's none (or no downloaded map data) — so they never send you into backyards, water, or private property. Turn this off to get raw spawns anywhere, e.g. if you're riding a boat.">
       <label for="legendarySnapToggle">Snap legendaries to roads/POIs</label>
       <input type="checkbox" id="legendarySnapToggle">
+    </div>
+    <div class="row" title="The radar pokémon at a bubble's center appears at the nearest point on a road or path, or at a POI if one is closer, within 2 km of its spot, and not at all where there's none (or no downloaded map data). The bubble itself stays where it is.">
+      <label for="bubbleSnapToggle">Snap bubble centers to roads/POIs</label>
+      <input type="checkbox" id="bubbleSnapToggle">
     </div>
     <div class="row" title="On the map, sprites render at their native pixel size. Everywhere else (encounter, Pokédex, silhouettes) they are zoomed to fill their box, so small creatures look chunky and inconsistent. Turn this on to render every sprite at native size everywhere — one sprite pixel is the same size in every view.">
       <label for="consistentIconWidthToggle">Consistent poké icon size (no zoom)</label>
@@ -8519,8 +8523,10 @@ function fmtDate(ts) {
     { key: 'cc.debugConsole',         values: _ONOFF },
     { key: 'cc.steadyCatch',          values: _ONOFF },
     // Default-ON: unset means snapping is active; only an explicit '0'
-    // disables it (see the toggle wiring + _applyLegendarySnapSetting).
+    // disables it (see the toggle wiring + _applySnapSettings).
     { key: 'cc.legendarySnap',        values: _ONOFF },
+    // Default-OFF: only '1' snaps bubble centres.
+    { key: 'cc.bubbleSnap',           values: _ONOFF },
     { key: 'cc.consistentIconWidth',  values: _ONOFF },
     { key: 'cc.buildingPois',         values: _ONOFF },
     { key: 'cc.renderBuildings',      values: _ONOFF },
@@ -12621,7 +12627,7 @@ function fmtDate(ts) {
     const rank = new Uint32Array(bits.length);
     for (let k = 0, n = 0; k < bits.length; k++) { rank[k] = n; n += _legSnapPopcount(bits[k]); }
     return {
-      E, u8End, u16End, rank, bits,
+      N, E, u8End, u16End, rank, bits, grid: null,
       nodeLng: new Float32Array(buffer, 48 + 8 * N, N),
       nodeLat: new Float32Array(buffer, 48 + 12 * N, N),
       edgeFrom: new Uint32Array(buffer, edgesStart, E),
@@ -12639,18 +12645,94 @@ function fmtDate(ts) {
     x = (x & 0x33333333) + ((x >>> 2) & 0x33333333);
     return (Math.imul((x + (x >>> 4)) & 0x0F0F0F0F, 0x01010101) >>> 24);
   }
+  // An edge's stored length is its full line, rounded; its stored bends are
+  // simplified and quantized, so the drawn line can run a little longer.
+  // This bound (checked on real map data by the test) covers that.
+  const _legSnapLen = (v, e) => 1.05 * (e < v.u8End ? v.w8[e] : e < v.u16End ? v.w16[e - v.u8End] : v.w32[e - v.u16End]) + 10;
+  // A coarse grid (~450 m cells) listing the edges that may pass through
+  // each cell, so a lookup only reads the roads around it. Every point P of
+  // an edge has |PA| + |PB| ≤ len: it lies in the ellipse with foci A, B,
+  // which sticks out of the ends' box by at most its semi-minor axis
+  // √(len² − |AB|²) / 2. So the edge goes in every cell that box, grown by
+  // that, touches; the grid spans all those boxes, so nothing is clipped.
+  // Built once per region, in steps (_legSnapGridBuilder yields every 32k
+  // edges) so the app can build it in the background: three passes over
+  // the edges, ~200 ms and ~5 MB per 700k-edge region on a desktop. Edges
+  // spanning over GRID_MAX_SPAN cells (very long rural roads) are kept in
+  // a short list checked on every lookup instead.
+  function _legSnapBuildGrid(v) {
+    const it = _legSnapGridBuilder(v);
+    let step;
+    do { step = it.next(); } while (!step.done);
+    return step.value;
+  }
+  function* _legSnapGridBuilder(v) {
+    const M = 111320, DEG = 0.004, GRID_MAX_SPAN = 4096;
+    const { N, E, nodeLng, nodeLat, edgeFrom, edgeTo } = v;
+    let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+    for (let i = 0; i < N; i++) {
+      const la = nodeLat[i], ln = nodeLng[i];
+      if (la < minLat) minLat = la; if (la > maxLat) maxLat = la;
+      if (ln < minLng) minLng = ln; if (ln > maxLng) maxLng = ln;
+    }
+    if (!(minLat <= maxLat) || !E) return { nx: 0, ny: 0, start: new Uint32Array(1), items: new Uint32Array(0), big: [] };
+    const cosMin = Math.max(0.05, Math.cos(Math.min(89, Math.max(Math.abs(minLat), Math.abs(maxLat)) + 0.5) * Math.PI / 180));
+    const cosMid = Math.max(0.05, Math.cos((minLat + maxLat) / 2 * Math.PI / 180));
+    const cellLat = DEG, cellLng = DEG / cosMid;
+    // Grown boxes reach at most half the longest edge past the nodes.
+    let longest = 0;
+    for (let e = 0; e < E; e++) { const L = _legSnapLen(v, e); if (L > longest) longest = L; }
+    yield;
+    const padLat = longest / 2 / M, padLng = longest / 2 / (M * cosMin);
+    const w = minLng - padLng, so = minLat - padLat;
+    const nx = Math.max(1, Math.ceil((maxLng + padLng - w) / cellLng));
+    const ny = Math.max(1, Math.ceil((maxLat + padLat - so) / cellLat));
+    // Cell range [i0, i1] × [j0, j1] of edge e's grown box, into r.
+    const r = new Int32Array(4);
+    const rangeOf = (e) => {
+      const a = edgeFrom[e], b = edgeTo[e];
+      const la = nodeLng[a], lb = nodeLng[b], pa = nodeLat[a], pb = nodeLat[b];
+      const dx = (la - lb) * M * cosMin, dy = (pa - pb) * M, L = _legSnapLen(v, e);
+      const m = Math.sqrt(Math.max(0, L * L - dx * dx - dy * dy)) / 2;
+      const mLat = m / M, mLng = m / (M * cosMin);
+      r[0] = Math.max(0, Math.floor(((la < lb ? la : lb) - mLng - w) / cellLng));
+      r[1] = Math.min(nx - 1, Math.floor(((la < lb ? lb : la) + mLng - w) / cellLng));
+      r[2] = Math.max(0, Math.floor(((pa < pb ? pa : pb) - mLat - so) / cellLat));
+      r[3] = Math.min(ny - 1, Math.floor(((pa < pb ? pb : pa) + mLat - so) / cellLat));
+    };
+    const start = new Uint32Array(nx * ny + 1);
+    const big = [];
+    for (let e = 0; e < E; e++) {
+      if (!(e & 0x7FFF)) yield;
+      rangeOf(e);
+      if ((r[1] - r[0] + 1) * (r[3] - r[2] + 1) > GRID_MAX_SPAN) { big.push(e); continue; }
+      for (let j = r[2]; j <= r[3]; j++) for (let i = r[0]; i <= r[1]; i++) start[j * nx + i + 1]++;
+    }
+    for (let k = 1; k < start.length; k++) start[k] += start[k - 1];
+    const fill = start.slice(0, nx * ny);
+    const items = new Uint32Array(start[nx * ny]);
+    for (let e = 0, bi = 0; e < E; e++) {
+      if (!(e & 0x7FFF)) yield;
+      if (bi < big.length && big[bi] === e) { bi++; continue; }
+      rangeOf(e);
+      for (let j = r[2]; j <= r[3]; j++) for (let i = r[0]; i <= r[1]; i++) items[fill[j * nx + i]++] = e;
+    }
+    return { nx, ny, w, s: so, cellLng, cellLat, start, items, big,
+      // The narrowest a cell gets in metres, for the ring bound.
+      sideM: Math.min(cellLat * M, cellLng * M * cosMin) };
+  }
   // Nearest point on any road or path of one walk view to (lat, lng),
   // closer than maxM: { lat, lng, m } or null. Distances are local metres
-  // (flat around the query point — plenty exact over 2 km). Most edges are
-  // ruled out without decoding their shape: a point at distance s along
-  // an edge of length L is within s of one end and L − s of the other, so
-  // nothing on it is nearer than (dA + dB − L) / 2. L is the stored
-  // length (the full line, rounded; the stored bends are simplified, so
-  // a little slack covers quantization).
+  // (flat around the query point — plenty exact over 2 km). Grid cells are
+  // read in rings outward from the query (clamped onto the grid, which is
+  // never farther from any cell than the query itself) until the next ring
+  // can't hold anything nearer. Within them an edge whose two ends are far
+  // enough apart from the query, given its length, is skipped without
+  // decoding its bends: nothing on it is nearer than (dA + dB − len) / 2.
   function _legSnapNearestOnWalk(v, lat, lng, maxM) {
+    const g = v.grid || (v.grid = _legSnapBuildGrid(v));
     const M = 111320, kx = M * Math.cos(lat * Math.PI / 180);
     let best = maxM, hitX = 0, hitY = 0, hit = false;
-    const xs = [], ys = [];
     const seg = (ax, ay, bx, by) => {
       const vx = bx - ax, vy = by - ay, L2 = vx * vx + vy * vy;
       let t = L2 > 0 ? -(ax * vx + ay * vy) / L2 : 0;
@@ -12658,15 +12740,14 @@ function fmtDate(ts) {
       const px = ax + t * vx, py = ay + t * vy, d = Math.sqrt(px * px + py * py);
       if (d < best) { best = d; hitX = px; hitY = py; hit = true; }
     };
-    const { E, u8End, u16End, nodeLng, nodeLat, edgeFrom, edgeTo } = v;
-    for (let e = 0; e < E; e++) {
+    const { nodeLng, nodeLat, edgeFrom, edgeTo } = v;
+    const edge = (e) => {
       const a = edgeFrom[e], b = edgeTo[e];
       const ax = (nodeLng[a] - lng) * kx, ay = (nodeLat[a] - lat) * M;
       const bx = (nodeLng[b] - lng) * kx, by = (nodeLat[b] - lat) * M;
-      const len = e < u8End ? v.w8[e] : e < u16End ? v.w16[e - u8End] : v.w32[e - u16End];
-      if (Math.sqrt(ax * ax + ay * ay) + Math.sqrt(bx * bx + by * by) - len * 1.05 - 10 >= 2 * best) continue;
+      if (Math.sqrt(ax * ax + ay * ay) + Math.sqrt(bx * bx + by * by) - _legSnapLen(v, e) >= 2 * best) return;
       const word = e >>> 5, bit = e & 31;
-      if (!(v.bits[word] & (1 << bit))) { seg(ax, ay, bx, by); continue; }
+      if (!(v.bits[word] & (1 << bit))) { seg(ax, ay, bx, by); return; }
       // Bends: zigzag-varint microdegree deltas from the start node.
       const si = v.rank[word] + _legSnapPopcount(v.bits[word] & ((1 << bit) - 1));
       const off = v.sparseOff[si], end = off + v.sparseLen[si];
@@ -12684,6 +12765,24 @@ function fmtDate(ts) {
         px = qx; py = qy;
       }
       seg(px, py, bx, by);
+    };
+    for (const e of g.big) edge(e);
+    if (g.nx && g.ny) {
+      const ci = Math.min(g.nx - 1, Math.max(0, Math.floor((lng - g.w) / g.cellLng)));
+      const cj = Math.min(g.ny - 1, Math.max(0, Math.floor((lat - g.s) / g.cellLat)));
+      const visit = (i, j) => {
+        if (i < 0 || j < 0 || i >= g.nx || j >= g.ny) return;
+        const c = j * g.nx + i;
+        for (let k = g.start[c], end = g.start[c + 1]; k < end; k++) edge(g.items[k]);
+      };
+      const maxRing = Math.max(g.nx, g.ny);
+      for (let r = 0; r <= maxRing; r++) {
+        // Every cell of ring r is at least (r − 1) cells' width away.
+        if (r > 0 && (r - 1) * g.sideM >= best) break;
+        if (r === 0) { visit(ci, cj); continue; }
+        for (let i = ci - r; i <= ci + r; i++) { visit(i, cj - r); visit(i, cj + r); }
+        for (let j = cj - r + 1; j <= cj + r - 1; j++) { visit(ci - r, j); visit(ci + r, j); }
+      }
     }
     return hit ? { lat: lat + hitY / M, lng: lng + hitX / kx, m: best } : null;
   }
@@ -12727,21 +12826,30 @@ function fmtDate(ts) {
       pending = true;
       if (_legSnapLoading.has(id)) continue;
       _legSnapLoading.add(id);
-      loadAllWalkGraphs(new Set([id])).then((recs) => {
+      loadAllWalkGraphs(new Set([id])).then(async (recs) => {
         const rec = recs.find((x) => x.regionId === id);
         let view = null;
         try { if (rec && rec.buffer) view = _legSnapWalkView(rec.buffer); } catch { view = null; }
+        // Its lookup grid, a slice at a time between frames.
+        if (view) {
+          const it = _legSnapGridBuilder(view);
+          for (let step = it.next(); ; step = it.next()) {
+            if (step.done) { view.grid = step.value; break; }
+            await new Promise((res) => setTimeout(res, 0));
+          }
+        }
         _legSnapWalk.set(id, view);
       }).catch(() => { _legSnapWalk.set(id, null); })
         .finally(() => { _legSnapLoading.delete(id); });
     }
     return pending;
   }
-  // The provider. undefined = can't tell yet (POIs or a walk graph still
-  // loading): spawns.js hides the legendary for now and asks again on the
-  // next refresh instead of caching the answer. POIs load in the post-boot
-  // queue (ensurePoisLoaded); waiting for them also keeps the walk-graph
-  // reads out of the startup path.
+  // The provider (legendaries and, when its toggle is on, bubble centres).
+  // undefined = can't tell yet (POIs or a walk graph still loading):
+  // spawns.js hides the spawn for now and asks again on the next refresh
+  // instead of caching the answer. POIs load in the post-boot queue
+  // (ensurePoisLoaded); waiting for them also keeps the walk-graph reads
+  // out of the startup path.
   function legendarySnapTarget(lat, lng) {
     if (!_poisReady) return undefined;
     const areas = _legSnapAreasNear(lat, lng);
@@ -12757,22 +12865,29 @@ function fmtDate(ts) {
     if (poi) best = { lat: poi.lat, lng: poi.lng, m: poi.m, kind: 'poi' };
     return best ? { lat: best.lat, lng: best.lng, kind: best.kind } : null;
   }
-  // The "Snap legendaries to roads/POIs" settings toggle (default ON)
-  // gates registration; setLegendarySnapProvider clears the engine's
-  // per-id snap cache, so flipping the toggle re-resolves positions on
-  // the next overlay refresh. Exposed so the toggle wiring and the
-  // post-import settings re-sync can re-apply it.
-  window._applyLegendarySnapSetting = function () {
-    if (!window.Spawns || typeof Spawns.setLegendarySnapProvider !== 'function') return;
-    const on = localStorage.getItem('cc.legendarySnap') !== '0';
-    Spawns.setLegendarySnapProvider(on ? legendarySnapTarget : null);
+  // The "Snap legendaries to roads/POIs" (default ON) and "Snap bubble
+  // centers to roads/POIs" (default OFF) settings toggles gate
+  // registration; each set*SnapProvider clears that engine snap cache, so
+  // flipping a toggle re-resolves positions on the next overlay refresh.
+  // Exposed so the toggle wiring and the post-import settings re-sync can
+  // re-apply them.
+  window._applySnapSettings = function () {
+    if (!window.Spawns) return;
+    if (typeof Spawns.setLegendarySnapProvider === 'function') {
+      const on = localStorage.getItem('cc.legendarySnap') !== '0';
+      Spawns.setLegendarySnapProvider(on ? legendarySnapTarget : null);
+    }
+    if (typeof Spawns.setBubbleSnapProvider === 'function') {
+      const on = localStorage.getItem('cc.bubbleSnap') === '1';
+      Spawns.setBubbleSnapProvider(on ? legendarySnapTarget : null);
+    }
   };
-  window._applyLegendarySnapSetting();
+  window._applySnapSettings();
   // Map data changed (an area's walk graph or POIs saved or deleted):
   // forget that area's walk view and every cached snap answer.
   window._legSnapMapDataChanged = function (regionId) {
     if (regionId != null) _legSnapWalk.delete(regionId);
-    window._applyLegendarySnapSetting();
+    window._applySnapSettings();
   };
 
   // Hand creatures.js a locally-scoped POI query — the POI array lives
@@ -19455,8 +19570,20 @@ function fmtDate(ts) {
     legendarySnapToggle.checked = localStorage.getItem('cc.legendarySnap') !== '0';
     legendarySnapToggle.addEventListener('change', () => {
       localStorage.setItem('cc.legendarySnap', legendarySnapToggle.checked ? '1' : '0');
-      if (typeof window._applyLegendarySnapSetting === 'function') {
-        window._applyLegendarySnapSetting();
+      if (typeof window._applySnapSettings === 'function') {
+        window._applySnapSettings();
+      }
+    });
+  }
+  // "Snap bubble centers to roads/POIs" — default OFF. Same provider and
+  // rules as legendaries, for the radar spawn at each bubble's centre.
+  const bubbleSnapToggle = document.getElementById('bubbleSnapToggle');
+  if (bubbleSnapToggle) {
+    bubbleSnapToggle.checked = localStorage.getItem('cc.bubbleSnap') === '1';
+    bubbleSnapToggle.addEventListener('change', () => {
+      localStorage.setItem('cc.bubbleSnap', bubbleSnapToggle.checked ? '1' : '0');
+      if (typeof window._applySnapSettings === 'function') {
+        window._applySnapSettings();
       }
     });
   }
@@ -19789,10 +19916,11 @@ function fmtDate(ts) {
     setChecked('wifiOnlyToggle', on('cc.wifiOnly'));
     setChecked('steadyCatchToggle', on('cc.steadyCatch'));
 
-    // Default-ON toggle: unset means snapping is active.
+    // Legendary snap is default-ON (unset means on); bubble snap default-OFF.
     setChecked('legendarySnapToggle', get('cc.legendarySnap') !== '0');
-    if (typeof window._applyLegendarySnapSetting === 'function') {
-      try { window._applyLegendarySnapSetting(); } catch (e) { console.error(e); }
+    setChecked('bubbleSnapToggle', get('cc.bubbleSnap') === '1');
+    if (typeof window._applySnapSettings === 'function') {
+      try { window._applySnapSettings(); } catch (e) { console.error(e); }
     }
 
     setChecked('consistentIconWidthToggle', on('cc.consistentIconWidth'));

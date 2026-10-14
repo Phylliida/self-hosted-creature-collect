@@ -56,7 +56,7 @@ function makeEnv() {
   ['wifiOnlyToggle', 'steadyCatchToggle', 'actionIconsToggle', 'lockZoomToggle',
    'lockRotateToggle', 'memBadgeToggle', 'debugConsoleToggle', 'buildingPoisToggle',
    'renderBuildingsToggle', 'renderTransitLinesToggle', 'renderHousenumbersToggle',
-   'showPanelToggle'].forEach((id) => el(id, 'checkbox'));
+   'showPanelToggle', 'legendarySnapToggle', 'bubbleSnapToggle'].forEach((id) => el(id, 'checkbox'));
   ['clockFormatSelect', 'timezoneSelect', 'routingWalkWeight', 'routingTransferMin',
    'unitsSelect', 'backupName'].forEach((id) => el(id, 'select'));
   // The timezone <select> is populated from this device's Intl data; the
@@ -302,11 +302,12 @@ function makeEnv() {
   A.store.set('cc.steadyCatch', '1');
   A.store.set('cc.clockFormat', '12h');
   A.store.set('cc.debugConsole', '1');
+  A.store.set('cc.bubbleSnap', '1');
   const payload = JSON.parse(JSON.stringify(A.sandbox.collectSavedSettings()));
 
   const B = makeEnv();
   const n = B.sandbox.restoreSavedSettings(payload);
-  ok(n === 8, `all 8 settings crossed the wire (got ${n})`);
+  ok(n === 9, `all 9 settings crossed the wire (got ${n})`);
   B.sandbox.window._applySettingsFromStorage();
 
   ok(B.els.get('lockRotateToggle').checked === true, 'B: lock rotate on');
@@ -316,6 +317,8 @@ function makeEnv() {
   ok(B.els.get('renderHousenumbersToggle').checked === true, 'B: house numbers on');
   ok(B.els.get('steadyCatchToggle').checked === true, 'B: guaranteed catch on');
   ok(B.els.get('debugConsoleToggle').checked === true, 'B: debug console on');
+  ok(B.els.get('bubbleSnapToggle').checked === true, 'B: bubble center snapping on');
+  ok(B.els.get('legendarySnapToggle').checked === true, 'B: legendary snapping on (default, unset)');
   ok(B.els.get('clockFormatSelect').value === '12h', 'B: 12h clock');
   ok(B.calls.includes('applyRotateLock:true'), 'B: rotate lock applied to the map');
 

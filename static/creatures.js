@@ -18204,6 +18204,15 @@
     }
     const newSpawns = within.filter((s) => !_markers.has(s.id));
     if (newSpawns.length) addMarkersBatch(newSpawns);
+    // A snapped spawn (legendary / bubble centre) moves when its snap
+    // setting or the downloaded map data changes: keep its marker on it.
+    for (const s of within) {
+      const rec = _markers.get(s.id);
+      if (rec && rec.marker && (rec.spawn.lat !== s.lat || rec.spawn.lng !== s.lng)) {
+        rec.marker.setLngLat([s.lng, s.lat]);
+        rec.spawn = s;
+      }
+    }
     if (soonestRemovableAt !== Infinity) {
       // Re-run after the soonest TTL-protected marker becomes
       // removable. Bypasses dedupe by zeroing _lastRefreshAt before
@@ -18590,6 +18599,10 @@
         .setLngLat([sp.lng, sp.lat]).addTo(_overlayMap);
       rec = { marker, el, spawn: sp };
       _radarMarkers.set(sp.id, rec);
+    } else if (rec.spawn.lat !== sp.lat || rec.spawn.lng !== sp.lng) {
+      // A snapped spawn moved (its snap setting or the map data changed).
+      rec.marker.setLngLat([sp.lng, sp.lat]);
+      rec.spawn = sp;
     }
     return rec;
   }

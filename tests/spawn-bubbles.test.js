@@ -430,5 +430,61 @@ const halvesFrom = (c, pr) => {
   ok(on < off * 1.5 + 5, '12: bubbles add little to a cold refresh');
 }
 
+// ── 13. Centre snapping (Settings → Snap bubble centers): the centre
+// pokémon moves, the bubble doesn't ─────────────────────────────────────
+{
+  const box = (lat, lng, pad) => [lng - pad, lat - pad, lng + pad, lat + pad];
+  const raw = S.bubbleCentersInBbox(box(B.lat, B.lng, 0.001), NOW)[0];
+  const bubblesBefore = JSON.stringify(S.bubblesNear(MTL[0], MTL[1], 3000, NOW));
+  const sample = Array.from(plainById.keys()).slice(0, 200);
+  const spawnsBefore = JSON.stringify(sample.map((id) => { const [cx, cy, t] = id.split(':').map(Number); return S.generateCellAtTick(cx, cy, t, NOW); }));
+  // Moves the centre 0.004° north (~445 m) — onto "a road".
+  let answer = 'north', calls = 0;
+  S.setBubbleSnapProvider((lat, lng) => {
+    calls++;
+    if (answer === 'north') return { lat: lat + 0.004, lng, kind: 'road' };
+    if (answer === 'far') return { lat: lat + 0.015, lng, kind: 'poi' };   // ~1.7 km
+    return answer;                                                         // null / undefined
+  });
+  const at = (lat, lng) => S.bubbleCentersInBbox(box(lat, lng, 0.0005), NOW).find((c) => c.id === raw.id);
+  const moved = at(B.lat + 0.004, B.lng);
+  ok(moved && moved.snappedTo === 'road' && Math.abs(moved.lat - (B.lat + 0.004)) < 1e-12 && moved.lng === B.lng,
+    '13: the centre stands where the provider puts it, flagged snappedTo');
+  ok(!at(B.lat, B.lng), '13: and is no longer at the bubble centre');
+  ok(moved && moved.speciesA === raw.speciesA && moved.speciesB === raw.speciesB && moved.expireMs === raw.expireMs,
+    '13: same pokémon, same day');
+  ok(S.nearestRadar(B.lat + 0.004, B.lng, 5).some((p) => p.id === raw.id && p.lat === moved.lat),
+    '13: the radar shows it at the snapped spot');
+  const c1 = calls;
+  at(B.lat + 0.004, B.lng);
+  ok(calls === c1, '13: the answer is cached per centre');
+  // Far snaps are still found from a box around where it stands.
+  S.setBubbleSnapProvider(null);
+  answer = 'far';
+  S.setBubbleSnapProvider((lat, lng) => ({ lat: lat + 0.015, lng, kind: 'poi' }));
+  ok(!!at(B.lat + 0.015, B.lng), '13: a centre snapped ~1.7 km away is found in a small box around its new spot');
+  // Not known yet → hidden, asked again; nothing nearby → hidden.
+  answer = undefined;
+  S.setBubbleSnapProvider((lat, lng) => { calls++; return answer === 'ok' ? { lat, lng, kind: 'road' } : answer; });
+  ok(!at(B.lat, B.lng), '13: hidden while the provider can\'t tell yet');
+  answer = 'ok';
+  ok(!!at(B.lat, B.lng), '13: shown once it can (the not-yet answer wasn\'t cached)');
+  S.setBubbleSnapProvider(() => null);
+  ok(!at(B.lat, B.lng) && !S.nearestRadar(B.lat, B.lng, 5).some((p) => p.id === raw.id),
+    '13: nothing within reach → hidden from the map and the radar');
+  // Independent of the legendary toggle, both ways.
+  S.setBubbleSnapProvider(null);
+  S.setLegendarySnapProvider(() => null);
+  ok(JSON.stringify(at(B.lat, B.lng)) === JSON.stringify(raw), '13: legendary snapping leaves centres alone');
+  S.setLegendarySnapProvider(null);
+  ok(JSON.stringify(at(B.lat, B.lng)) === JSON.stringify(raw), '13: off → the centre is back at the bubble centre');
+  // The bubble itself never moves: same circles, same spawns.
+  S.setBubbleSnapProvider((lat, lng) => ({ lat: lat + 0.004, lng, kind: 'road' }));
+  ok(JSON.stringify(S.bubblesNear(MTL[0], MTL[1], 3000, NOW)) === bubblesBefore, '13: bubble circles unchanged');
+  ok(JSON.stringify(sample.map((id) => { const [cx, cy, t] = id.split(':').map(Number); return S.generateCellAtTick(cx, cy, t, NOW); })) === spawnsBefore,
+    '13: spawns in and around the bubble unchanged');
+  S.setBubbleSnapProvider(null);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

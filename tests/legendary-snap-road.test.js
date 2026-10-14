@@ -2,9 +2,10 @@
 // <legendary-snap-geometry> block): a legendary moves to the nearest point
 // on any road or walking path — the walk graph's full lines, bends
 // included, not just its intersections — or the nearest POI, whichever is
-// closer. Runs the real functions on hand-built walk.bin (v3) graphs with
-// known answers, then (when the downloaded Montreal regions are present in
-// regions/) against a brute-force scan of every road segment.
+// closer. Runs the real functions (grid lookup included) on hand-built
+// walk.bin (v3) graphs with known answers, then (when the downloaded
+// Montreal regions are present in regions/) against a brute-force scan of
+// every road segment.
 //
 // Run: node tests/legendary-snap-road.test.js
 'use strict';
@@ -20,7 +21,7 @@ const src = fs.readFileSync(path.join(root, 'static', 'index.html'), 'utf8');
 const a = src.indexOf('// <legendary-snap-geometry>'), b = src.indexOf('// </legendary-snap-geometry>');
 ok(a > 0 && b > a, 'geometry block found in index.html');
 const G = new Function(src.slice(a, b)
-  + '\nreturn { _legSnapWalkView, _legSnapNearestOnWalk, _legSnapNearestPoi };')();
+  + '\nreturn { _legSnapWalkView, _legSnapNearestOnWalk, _legSnapNearestPoi, _legSnapBuildGrid, _legSnapGridBuilder };')();
 
 const M = 111320;
 const distM = (lat1, lng1, lat2, lng2) =>
@@ -147,7 +148,57 @@ function brute(nodes, edges, lat, lng) {
     const hit = G._legSnapNearestOnWalk(v, lat, lng, 2000);
     if (hit && Math.abs(hit.m - brute(nodes, edges, lat, lng)) < 0.05) agree++;
   }
-  ok(agree === 200, `3: pruned scan matches brute force on a random 500-edge graph with bends (${agree}/200)`);
+  ok(agree === 200, `3: grid lookup matches brute force on a random 500-edge graph with bends (${agree}/200)`);
+  // Outside the graph's extent (up to ~1.8 km beyond it): still exact.
+  let outside = 0, outsideAgree = 0;
+  for (let k = 0; k < 100; k++) {
+    const side = Math.floor(rnd() * 4), t = rnd() * 3000, d = 3000 + 200 + rnd() * 1600;
+    const [x, y] = side === 0 ? [t, d] : side === 1 ? [t, -d + 3000] : side === 2 ? [d, t] : [-d + 3000, t];
+    const lat = north(y), lng = east(x);
+    const want = brute(nodes, edges, lat, lng);
+    const hit = G._legSnapNearestOnWalk(v, lat, lng, 2000);
+    if (want >= 2000) { if (!hit) outsideAgree++; continue; }
+    outside++;
+    if (hit && Math.abs(hit.m - want) < 0.05) outsideAgree++;
+  }
+  ok(outside > 20 && outsideAgree === 100, `3: and for spots outside the graph's extent (${outsideAgree}/100)`);
+}
+
+// ── 3b. Very long roads ───────────────────────────────────────────────
+{
+  // A straight 40 km road, and a 70 km winding one whose ends are only
+  // 10 km apart (its bends swing 30 km north): too wide for the grid, so
+  // it goes in the long-road list.
+  const wind = [[east(30000), north(30000)], [east(40000), north(30000)]];
+  const nodes = [[east(-20000), LAT], [east(20000), LAT], [east(30000), north(-100)], [east(40000), north(-100)]];
+  const edges = [{ from: 0, to: 1, len: 40000 },
+    { from: 2, to: 3, len: lineLen([nodes[2], ...wind, nodes[3]]), shape: wind }];
+  const v = G._legSnapWalkView(buildWalk(nodes, edges));
+  const hit = G._legSnapNearestOnWalk(v, north(40), east(300), 2000);
+  ok(hit && Math.abs(hit.m - 40) < 0.5, `3b: 40 m from a 40 km road, 20 km from its ends → found (${hit && hit.m.toFixed(1)})`);
+  const top = G._legSnapNearestOnWalk(v, north(30050), east(35000), 2000);
+  ok(top && Math.abs(top.m - 50) < 0.5, `3b: 50 m from the far bend of a winding road → found (${top && top.m.toFixed(1)})`);
+  ok(v.grid && v.grid.big.length === 1, '3b: the winding road is in the long-road list, not spread over the grid');
+}
+
+// ── 3c. The app's stepped (background) build = the one-shot build ──────
+{
+  const nodes = [], edges = [];
+  for (let i = 0; i < 2000; i++) nodes.push([east(rnd() * 20000), north(rnd() * 20000)]);
+  for (let i = 0; i < 70000; i++) {
+    const from = Math.floor(rnd() * 2000), to = Math.floor(rnd() * 2000);
+    edges.push({ from, to, len: Math.max(1, lineLen([nodes[from], nodes[to]])) });
+  }
+  const buf = buildWalk(nodes, edges);
+  const v1 = G._legSnapWalkView(buf), v2 = G._legSnapWalkView(buf);
+  const g1 = G._legSnapBuildGrid(v1);
+  const it = G._legSnapGridBuilder(v2);
+  let steps = 0, step;
+  while (!(step = it.next()).done) steps++;
+  const g2 = step.value;
+  ok(steps >= 4 && Buffer.compare(Buffer.from(g1.items.buffer), Buffer.from(g2.items.buffer)) === 0
+    && Buffer.compare(Buffer.from(g1.start.buffer), Buffer.from(g2.start.buffer)) === 0,
+    `3c: the stepped build (${steps} steps) makes the same grid`);
 }
 
 // ── 4. POIs: nearest, and only when nearer than the road ───────────────
@@ -164,8 +215,11 @@ if (regionDirs.every((d) => fs.existsSync(path.join(d, 'walk.bin')))) {
   const read = (p) => { let x = fs.readFileSync(p); if (x[0] === 0x1f && x[1] === 0x8b) x = zlib.gunzipSync(x); return x.buffer.slice(x.byteOffset, x.byteOffset + x.byteLength); };
   const views = regionDirs.map((d) => G._legSnapWalkView(read(path.join(d, 'walk.bin'))));
   ok(views.every(Boolean), '5: real walk.bin files parse');
+  // The lookup's length bound: no drawn line is longer than 1.05 × its
+  // stored length + 10 m (bends are simplified and quantized).
   // Every segment as flat local data for a brute-force check.
   const segs = [];
+  let overLong = 0, edgesChecked = 0;
   for (const v of views) {
     for (let e = 0; e < v.E; e++) {
       const fa = v.edgeFrom[e], tb = v.edgeTo[e];
@@ -181,8 +235,13 @@ if (regionDirs.every((d) => fs.existsSync(path.join(d, 'walk.bin')))) {
       }
       pts.push([v.nodeLng[tb], v.nodeLat[tb]]);
       for (let k = 1; k < pts.length; k++) segs.push(pts[k - 1][0], pts[k - 1][1], pts[k][0], pts[k][1]);
+      const stored = e < v.u8End ? v.w8[e] : e < v.u16End ? v.w16[e - v.u8End] : v.w32[e - v.u16End];
+      const drawn = lineLen(pts);
+      if (drawn > 1.05 * stored + 10) overLong++;
+      edgesChecked++;
     }
   }
+  ok(edgesChecked > 1e6 && overLong === 0, `5: every edge's line fits the length bound (${overLong} of ${edgesChecked} over)`);
   const S = Float64Array.from(segs);
   const bruteReal = (lat, lng) => {
     const kx = M * Math.cos(lat * Math.PI / 180);
@@ -198,9 +257,12 @@ if (regionDirs.every((d) => fs.existsSync(path.join(d, 'walk.bin')))) {
   };
   let agree = 0, n = 0, worst = 0;
   const moved = [];
-  const t0 = process.hrtime.bigint();
+  // Grids are built on first use; time that separately from lookups.
+  const b0 = process.hrtime.bigint();
+  for (const v of views) G._legSnapNearestOnWalk(v, 45.5, -73.6, 2000);
+  const buildMs = Number(process.hrtime.bigint() - b0) / 1e6;
   let scanMs = 0;
-  for (let k = 0; k < 40; k++) {
+  for (let k = 0; k < 120; k++) {
     const lat = 45.44 + rnd() * 0.16, lng = -73.70 + rnd() * 0.17;
     const s0 = process.hrtime.bigint();
     let best = null;
@@ -212,10 +274,12 @@ if (regionDirs.every((d) => fs.existsSync(path.join(d, 'walk.bin')))) {
     worst = Math.max(worst, best ? Math.abs(best.m - want) : Infinity);
     if (best) moved.push(best.m);
   }
-  void t0;
   moved.sort((x, y) => x - y);
   console.log(`montreal: ${segs.length / 4} road segments; moved median ${moved[moved.length >> 1].toFixed(0)} m,`
-    + ` max ${moved[moved.length - 1].toFixed(0)} m; ${(scanMs / n).toFixed(1)} ms per legendary (both regions)`);
+    + ` max ${moved[moved.length - 1].toFixed(0)} m; grids built in ${buildMs.toFixed(0)} ms,`
+    + ` (${(views.reduce((t, v) => t + v.grid.items.byteLength + v.grid.start.byteLength, 0) / 1048576).toFixed(1)} MB),`
+    + ` then ${(scanMs / n).toFixed(2)} ms per lookup (both regions)`);
+  ok(scanMs / n < 5, '5: a lookup reads only the roads around it (a few ms at most)');
   ok(agree === n, `5: matches the exact nearest road point everywhere (${agree}/${n}, worst off by ${worst.toFixed(3)} m)`);
   ok(moved[moved.length >> 1] < 25, '5: in the city a legendary moves only metres onto the nearest road or path');
 } else {

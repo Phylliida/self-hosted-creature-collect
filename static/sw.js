@@ -122,6 +122,8 @@ const TILES_CACHE = 'tiles-v1';
 // buttons while Lock zoom / Lock rotate are on.
 // Shell bump 2026-10-14 (#23): index.html snaps legendaries to the nearest
 // point on a road or path (or a nearer POI) instead of an intersection.
+// Shell bump 2026-10-14 (#24): index.html adds "Snap bubble centers to
+// roads/POIs" and a faster grid-based snap lookup.
 
 const APP_SHELL = [
   '/',
