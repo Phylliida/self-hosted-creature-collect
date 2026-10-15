@@ -8219,22 +8219,72 @@
       #creatureInventory .focus-view.show,
       #creatureInventory .focussession-view.show { display: flex; flex-direction: column; }
       /* Length picker + live progress (see renderFocus). */
-      #creatureInventory .focus-len-title {
-        text-align: center; font-size: 13px; font-weight: 600; margin: 4px 0 8px;
+      /* Length picker: big readout over a snapping slider (_focusWireSlider). */
+      #creatureInventory .focus-pick { display: flex; flex-direction: column; align-items: stretch; margin: 2px 0 6px; }
+      #creatureInventory .focus-pick-title {
+        text-align: center; font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
+        text-transform: uppercase; color: var(--ui-muted, #666);
       }
-      #creatureInventory .focus-lens {
-        display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin: 0 0 8px;
+      #creatureInventory .focus-pick-value {
+        display: flex; justify-content: center; align-items: baseline; gap: 2px 8px; flex-wrap: wrap;
+        margin: 6px 0 0; color: var(--ui-text, #111); font-variant-numeric: tabular-nums;
       }
-      #creatureInventory .focus-len {
-        padding: 5px 11px; font: inherit; font-size: 13px; cursor: pointer;
-        background: transparent; color: var(--ui-text, #111);
-        border: 1px solid var(--ui-border, rgba(0,0,0,0.15)); border-radius: 999px;
+      #creatureInventory .focus-pick-value .n { font-size: 46px; font-weight: 700; line-height: 1; letter-spacing: -0.02em; }
+      #creatureInventory .focus-pick-value .u { font-size: 17px; font-weight: 600; color: var(--ui-muted, #666); margin-left: 3px; }
+      #creatureInventory .focus-pick-ends {
+        text-align: center; font-size: 13px; color: var(--ui-muted, #666); margin: 6px 0 18px;
       }
-      #creatureInventory .focus-len.is-active {
-        background: var(--ui-accent, #b06cff); border-color: var(--ui-accent, #b06cff); color: #fff;
+      #creatureInventory .focus-slider {
+        position: relative; height: 34px; margin: 0 15px; cursor: pointer;
+        touch-action: pan-y; user-select: none; -webkit-user-select: none;
+        -webkit-tap-highlight-color: transparent; outline: none;
       }
-      #creatureInventory .focus-estimate {
-        text-align: center; font-size: 12px; color: var(--ui-muted, #666); margin: 0 0 4px;
+      #creatureInventory .focus-slider-track {
+        position: absolute; left: 0; right: 0; top: 50%; height: 10px; margin-top: -5px;
+        border-radius: 999px; background: var(--ui-hover, rgba(0,0,0,0.06));
+        box-shadow: inset 0 0 0 1px var(--ui-hairline, rgba(0,0,0,0.12));
+      }
+      #creatureInventory .focus-slider-fill {
+        position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 999px;
+        background: linear-gradient(90deg,
+          color-mix(in srgb, var(--ui-accent, #b06cff) 45%, var(--ui-bg, #fff)), var(--ui-accent, #b06cff));
+      }
+      #creatureInventory .focus-slider-dot {
+        position: absolute; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%;
+        background: var(--ui-muted, #888); opacity: 0.5;
+      }
+      #creatureInventory .focus-slider-dot.on { background: var(--ui-bg, #fff); opacity: 0.85; }
+      #creatureInventory .focus-slider-thumb {
+        position: absolute; top: 50%; left: 0; width: 28px; height: 28px; margin: -14px 0 0 -14px;
+        border-radius: 50%; box-sizing: border-box;
+        background: var(--ui-bg, #fff); border: 3px solid var(--ui-accent, #b06cff);
+        box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+      }
+      #creatureInventory .focus-slider.dragging .focus-slider-thumb,
+      #creatureInventory .focus-slider:focus-visible .focus-slider-thumb {
+        transform: scale(1.15);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3), 0 0 0 8px color-mix(in srgb, var(--ui-accent, #b06cff) 20%, transparent);
+      }
+      #creatureInventory .focus-slider.glide .focus-slider-thumb { transition: left 0.24s ease, transform 0.15s ease; }
+      #creatureInventory .focus-slider.glide .focus-slider-fill { transition: width 0.24s ease; }
+      #creatureInventory .focus-slider-labels { position: relative; height: 26px; margin: 2px 15px 0; }
+      #creatureInventory .focus-slider-label {
+        position: absolute; top: 0; transform: translateX(-50%); padding: 4px 4px; font: inherit;
+        font-size: 11px; color: var(--ui-muted, #666); background: none; border: none; cursor: pointer;
+        white-space: nowrap; -webkit-tap-highlight-color: transparent;
+      }
+      #creatureInventory .focus-slider-label.is-active { color: var(--ui-accent, #b06cff); font-weight: 700; }
+      #creatureInventory .focus-pick-reward {
+        display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 6px 10px;
+        margin: 10px 0 2px; font-size: 13px; color: var(--ui-text, #111);
+      }
+      /* The bonus badge fills toward ×2 (--b: 0–100%). */
+      #creatureInventory .focus-bonus {
+        padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 700;
+        color: var(--ui-text, #111); border: 1px solid var(--ui-accent, #b06cff);
+        background: linear-gradient(90deg,
+          color-mix(in srgb, var(--ui-accent, #b06cff) 28%, transparent) var(--b, 0%), transparent var(--b, 0%));
       }
       #creatureInventory .focus-progress {
         height: 6px; width: 100%; max-width: 240px; margin: 10px auto 4px; overflow: hidden;
@@ -8266,18 +8316,18 @@
         max-width: 100%; font-size: 10px; color: var(--ui-muted, #666);
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       }
-      /* A tile: the sprite's square, its name in small type under it.
-         Height matches the grid's cardHeight (98) in renderFocusSession. */
+      /* A tile, like a collection card: the sprite and, inside the same
+         box, its name in small type. Height matches the grid's cardHeight
+         (98) in renderFocusSession. */
       #creatureInventory .focus-poke {
-        display: flex; flex-direction: column; align-items: stretch; gap: 2px;
-        height: 98px; padding: 0; box-sizing: border-box; cursor: pointer; font: inherit;
-        background: none; border: none; color: var(--ui-text, #111);
-      }
-      #creatureInventory .focus-poke-art {
-        position: relative; flex: none; height: 70px; padding: 4px; box-sizing: border-box;
-        display: flex; align-items: center; justify-content: center;
+        position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 2px;
+        height: 98px; padding: 4px 4px 5px; box-sizing: border-box; cursor: pointer; font: inherit;
+        color: var(--ui-text, #111);
         background: var(--ui-hover, rgba(0,0,0,0.04));
         border: 1px solid var(--ui-hairline, rgba(0,0,0,0.08)); border-radius: var(--ui-radius, 8px);
+      }
+      #creatureInventory .focus-poke-art {
+        flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
       }
       #creatureInventory .focus-poke-name {
         font-size: 10px; line-height: 12px; text-align: center; overflow-wrap: anywhere;
@@ -8294,7 +8344,7 @@
         max-width: 100%; max-height: 100%; object-fit: contain; image-rendering: pixelated;
       }
       #creatureInventory .focus-poke-img:not([src]) { visibility: hidden; }
-      #creatureInventory .focus-poke-art .shiny-badge {
+      #creatureInventory .focus-poke .shiny-badge {
         position: absolute; top: 3px; right: 3px; width: 14px; height: 14px;
       }
       /* Launcher row at the top of the bag: Craft incense + Focus mode
@@ -20465,7 +20515,18 @@
   const FOCUS_M_PER_ITEM = 2000;
   // The length bonus: ×(1 + length / 1 day), so ×2 at a day, flat after.
   const FOCUS_FULL_BONUS_MS = 24 * 60 * 60 * 1000;
-  const FOCUS_DURATIONS_MIN = [5, 15, 30, 60, 120, 240, 480, 720, 1440, 2880, 4320];
+  // The length slider's stops (minutes), evenly spaced along it: 5-min
+  // steps to 1 h, 15 min to 4 h, 30 min to 12 h, 1 h to a day, 6 h to
+  // 3 days — so short lengths get room and long ones land on round values.
+  const FOCUS_STOPS_MIN = (() => {
+    const out = [];
+    for (const [from, to, step] of [[5, 60, 5], [60, 240, 15], [240, 720, 30], [720, 1440, 60], [1440, 4320, 360]]) {
+      for (let m = from; m <= to; m += step) if (out[out.length - 1] !== m) out.push(m);
+    }
+    return out;
+  })();
+  // Labelled (and tappable) under the slider.
+  const FOCUS_LANDMARKS_MIN = [5, 60, 240, 480, 720, 1440, 4320];
   const FOCUS_DURATION_KEY = 'cc.focusDuration';   // last length picked (minutes)
   const FOCUS_HISTORY_MAX = 50;
   const FOCUS_SETTLE_TICK_MS = 60 * 1000;
@@ -20968,10 +21029,44 @@
     if (m > 0) return m + 'm';
     return Math.floor(Math.max(0, ms) / 1000) + 's';
   }
+  // A length as [number, unit] parts: 35 min · 1 h 30 m · 6 h · 1 day 6 h.
+  function _focusDurParts(min) {
+    const d = Math.floor(min / 1440), h = Math.floor((min % 1440) / 60), m = min % 60;
+    const parts = [];
+    if (d) parts.push([d, d === 1 ? 'day' : 'days']);
+    if (h) parts.push([h, 'h']);
+    if (m || !parts.length) parts.push([m, parts.length ? 'm' : 'min']);
+    return parts;
+  }
   function _focusDurLabel(min) {
-    if (min % 1440 === 0) return (min / 1440) + (min === 1440 ? ' day' : ' days');
-    if (min % 60 === 0) return (min / 60) + ' h';
-    return min + ' min';
+    return _focusDurParts(min).map(([n, u]) => n + ' ' + u).join(' ');
+  }
+  // When a session of `min` started now would end (if it's never
+  // paused), in the clock format from Settings.
+  function _focusEndsText(min, nowMs) {
+    const end = new Date(nowMs + min * 60000);
+    let h12 = false;
+    try { h12 = localStorage.getItem('cc.clockFormat') === '12h'; } catch (e) { /* default 24h */ }
+    const t = end.toLocaleTimeString([], { hour: h12 ? 'numeric' : '2-digit', minute: '2-digit', hour12: h12 });
+    const d0 = new Date(nowMs); d0.setHours(0, 0, 0, 0);
+    const d1 = new Date(end); d1.setHours(0, 0, 0, 0);
+    const days = Math.round((d1 - d0) / 86400000);
+    if (days === 0) return 'ends at ' + t;
+    if (days === 1) return 'ends tomorrow at ' + t;
+    return 'ends ' + end.toLocaleDateString([], { weekday: 'long' }) + ' at ' + t;
+  }
+  // A light tick as the slider snaps: the HapticPattern plugin (Core
+  // Haptics on iPhone, which ignores navigator.vibrate) or vibrate().
+  function _focusTick() {
+    try {
+      const hp = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.HapticPattern;
+      if (hp && hp.play) {
+        Promise.resolve(hp.play({ duration: 0.05, intensity: 0.55, sharpness: 0.9, loop: false,
+          points: [{ t: 0, i: 1 }, { t: 1, i: 0 }] })).catch(() => {});
+      } else if (navigator.vibrate) {
+        navigator.vibrate(4);
+      }
+    } catch (e) { /* no haptics here */ }
   }
   function _focusFmtMult(m) {
     return '×' + (Math.round(m * 100) / 100).toFixed(2).replace(/0$/, '').replace(/\.0$/, '');
@@ -20991,8 +21086,9 @@
     return parts.length ? parts.join(' · ') : 'nothing';
   }
   function _focusReadDuration() {
-    const v = Number(localStorage.getItem(FOCUS_DURATION_KEY));
-    return FOCUS_DURATIONS_MIN.includes(v) ? v : 60;
+    let v = NaN;
+    try { v = Number(localStorage.getItem(FOCUS_DURATION_KEY)); } catch (e) { /* default */ }
+    return FOCUS_STOPS_MIN.includes(v) ? v : 60;
   }
 
   // Hold-to-confirm wiring for the Enter/End buttons — same semantics
@@ -21068,6 +21164,83 @@
     panel.classList.add('show');
   }
 
+  // The length slider in the focus view: drag anywhere along it (or tap a
+  // label, or use the arrow keys) — it snaps to FOCUS_STOPS_MIN, ticks as
+  // it snaps, and the readout above shows the length, when it'd end and
+  // what it pays. The choice is remembered (cc.focusDuration).
+  function _focusWireSlider(body) {
+    const stops = FOCUS_STOPS_MIN;
+    const last = stops.length - 1;
+    const slider = body.querySelector('.focus-slider');
+    if (!slider) return;
+    const thumb = slider.querySelector('.focus-slider-thumb');
+    const fill = slider.querySelector('.focus-slider-fill');
+    const dots = slider.querySelectorAll('.focus-slider-dot');
+    const labels = body.querySelectorAll('.focus-slider-label');
+    const valueEl = body.querySelector('.focus-pick-value');
+    const endsEl = body.querySelector('.focus-pick-ends');
+    const lootEl = body.querySelector('.focus-pick-loot');
+    const bonusEl = body.querySelector('.focus-bonus');
+    let idx = Math.max(0, stops.indexOf(_focusReadDuration()));
+    const paint = () => {
+      const min = stops[idx];
+      const p = (100 * idx / last) + '%';
+      thumb.style.left = p;
+      fill.style.width = p;
+      dots.forEach((d) => d.classList.toggle('on', Number(d.dataset.i) <= idx));
+      labels.forEach((l) => l.classList.toggle('is-active', Number(l.dataset.i) === idx));
+      valueEl.innerHTML = _focusDurParts(min).map(([n, u]) =>
+        `<span class="p"><span class="n">${n}</span><span class="u">${escapeHtml(u)}</span></span>`).join('');
+      endsEl.textContent = _focusEndsText(min, Date.now());
+      const est = _focusGrantsDue(min * 60000, 0, min * 60000);
+      lootEl.textContent = `${est.creatures} pokémon · ${est.items} items`;
+      bonusEl.textContent = _focusFmtMult(est.mult) + ' bonus';
+      bonusEl.style.setProperty('--b', ((est.mult - 1) * 100).toFixed(1) + '%');
+      slider.setAttribute('aria-valuenow', String(idx));
+      slider.setAttribute('aria-valuetext', _focusDurLabel(min));
+    };
+    const set = (i, how) => {
+      i = Math.max(0, Math.min(last, i));
+      if (i === idx) return;
+      idx = i;
+      if (how === 'drag') _focusTick();
+      paint();
+      try { localStorage.setItem(FOCUS_DURATION_KEY, String(stops[idx])); } catch (e) { /* ignore */ }
+    };
+    const fromX = (x) => {
+      const r = slider.querySelector('.focus-slider-track').getBoundingClientRect();
+      return Math.round(Math.max(0, Math.min(1, (x - r.left) / r.width)) * last);
+    };
+    slider.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      slider.classList.add('dragging');
+      try { slider.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+      set(fromX(e.clientX), 'drag');
+    });
+    slider.addEventListener('pointermove', (e) => {
+      if (slider.classList.contains('dragging')) set(fromX(e.clientX), 'drag');
+    });
+    const end = () => slider.classList.remove('dragging');
+    slider.addEventListener('pointerup', end);
+    slider.addEventListener('pointercancel', end);
+    slider.addEventListener('lostpointercapture', end);
+    slider.addEventListener('keydown', (e) => {
+      const step = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1, PageUp: 4, PageDown: -4 }[e.key];
+      if (step) { e.preventDefault(); set(idx + step, 'key'); }
+      else if (e.key === 'Home') { e.preventDefault(); set(0, 'key'); }
+      else if (e.key === 'End') { e.preventDefault(); set(last, 'key'); }
+    });
+    // A label jumps there, gliding (the drag itself follows the finger).
+    labels.forEach((l) => l.addEventListener('click', () => {
+      slider.classList.add('glide');
+      set(Number(l.dataset.i), 'tap');
+      setTimeout(() => slider.classList.remove('glide'), 260);
+    }));
+    paint();
+    // Keep "ends at" current while the view sits open.
+    _focusViewTick = setInterval(() => { endsEl.textContent = _focusEndsText(stops[idx], Date.now()); }, 30000);
+  }
+
   function renderFocus() {
     const panel = document.getElementById('creatureInventory');
     if (!panel) return;
@@ -21131,11 +21304,10 @@
     }
 
     // Inactive: pick a length, hold to start, then past sessions.
-    const pick = _focusReadDuration();
-    const est = _focusGrantsDue(pick * 60000, 0, pick * 60000);
-    const chips = FOCUS_DURATIONS_MIN.map((min) =>
-      `<button class="focus-len${min === pick ? ' is-active' : ''}" type="button" data-min="${min}"`
-      + ` aria-pressed="${min === pick ? 'true' : 'false'}">${escapeHtml(_focusDurLabel(min))}</button>`).join('');
+    const stops = FOCUS_STOPS_MIN;
+    const last = stops.length - 1;
+    const pct = (i) => (100 * i / last);
+    const marks = FOCUS_LANDMARKS_MIN.map((min) => ({ min, i: stops.indexOf(min) })).filter((m) => m.i >= 0);
     const history = s.history.slice().reverse();
     const rows = history.map((sess, i) => {
       const when = new Date(sess.startedAtMs);
@@ -21152,10 +21324,23 @@
       </button>`;
     }).join('');
     body.innerHTML = `
-      <div class="focus-len-title">How long will you focus?</div>
-      <div class="focus-lens">${chips}</div>
-      <div class="focus-estimate">${escapeHtml(`${est.creatures} pokémon + ${est.items} items`)}`
-        + ` · <b>${escapeHtml(_focusFmtMult(est.mult))}</b> · more for walking</div>
+      <div class="focus-pick">
+        <div class="focus-pick-title">How long will you focus?</div>
+        <div class="focus-pick-value" aria-hidden="true"></div>
+        <div class="focus-pick-ends"></div>
+        <div class="focus-slider" role="slider" tabindex="0" aria-label="Focus length"
+             aria-valuemin="0" aria-valuemax="${last}">
+          <div class="focus-slider-track"><div class="focus-slider-fill"></div>
+            ${marks.filter((m) => m.i > 0 && m.i < last).map((m) => `<span class="focus-slider-dot" data-i="${m.i}" style="left:${pct(m.i)}%"></span>`).join('')}
+          </div>
+          <div class="focus-slider-thumb"></div>
+        </div>
+        <div class="focus-slider-labels">
+          ${marks.map((m) => `<button type="button" class="focus-slider-label" data-i="${m.i}" style="left:${pct(m.i)}%">`
+            + `${escapeHtml(_focusDurParts(m.min).map(([n, u]) => n + (u === 'min' || u === 'm' ? 'm' : u[0])).join(''))}</button>`).join('')}
+        </div>
+        <div class="focus-pick-reward"><span class="focus-pick-loot"></span><span class="focus-bonus"></span></div>
+      </div>
       <div class="focus-hold-wrap">
         ${_focusHoldHtml('Enter Focus Mode', '')}
         <div class="focus-hold-hint">Hold to start — you only get rewards if you finish</div>
@@ -21165,10 +21350,7 @@
         ? `<div class="focus-history-list">${rows}</div>`
         : `<div class="focus-empty">No sessions yet. Pick a length and hold the button above to start your first.</div>`}
     `;
-    body.querySelectorAll('.focus-len').forEach((b) => b.addEventListener('click', () => {
-      try { localStorage.setItem(FOCUS_DURATION_KEY, b.dataset.min); } catch (e) { /* ignore */ }
-      renderFocus();
-    }));
+    _focusWireSlider(body);
     _focusWireHold(body.querySelector('.focus-hold'), async () => {
       await _focusStart(_focusReadDuration() * 60000);
       renderFocus();
