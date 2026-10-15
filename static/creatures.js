@@ -9155,6 +9155,7 @@
          (the current behaviour) stay the norm. No cache invalidation is
          needed — the blob is unchanged, only its layout box. */
       html.cc-consistent-icons #battleScreen img.battle-sprite,
+      html.cc-consistent-icons #creatureInventory .creature-card .art img,
       html.cc-consistent-icons #creatureInventory .pokedex-card .pokedex-art img,
       html.cc-consistent-icons #creatureInventory .detail-art img,
       html.cc-consistent-icons #creatureInventory .variant-cell img,
