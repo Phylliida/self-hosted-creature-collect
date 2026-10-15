@@ -6502,6 +6502,7 @@
       #creatureInventory .focusuntil-back,
       #creatureInventory .tags-back,
       #creatureInventory .gifts-back,
+      #creatureInventory .stats-back,
       #creatureInventory .gift-back,
       #creatureInventory .giftcreate-back,
       #creatureInventory .completion-back,
@@ -6561,6 +6562,7 @@
       #creatureInventory .focusuntil-back:hover,
       #creatureInventory .tags-back:hover,
       #creatureInventory .gifts-back:hover,
+      #creatureInventory .stats-back:hover,
       #creatureInventory .gift-back:hover,
       #creatureInventory .giftcreate-back:hover,
       #creatureInventory .completion-back:hover,
@@ -8459,6 +8461,12 @@
         flex-wrap: wrap;
         margin: 0 auto 12px;
       }
+      /* ── Stats (to be filled in) ── */
+      #creatureInventory .stats-view { display: none; }
+      #creatureInventory .stats-view.show { display: flex; flex-direction: column; }
+      #creatureInventory .stats-empty {
+        text-align: center; font-size: 13px; color: var(--ui-muted, #666); margin: 24px 0;
+      }
       /* ── Gifts ── */
       #creatureInventory .gifts-view,
       #creatureInventory .gift-view,
@@ -9450,14 +9458,15 @@
       }
       .pack-pick-close { margin-top: 8px; padding: 8px 18px; cursor: pointer; }
       /* Action icon row — centered on its own line below the
-         "Pokémon" title. Tags / Bag / Candy / Pokédex. */
+         "Pokémon" title. Tags / Bag / Daycare / Eggs / Dex / Stats. */
       #creatureInventory .header-actions {
         display: flex; gap: 6px;
         justify-content: center;
+        flex-wrap: wrap;          /* six buttons overflow a 320 px screen */
         margin: 0 0 8px;
       }
       #creatureInventory .pokedex-link,
-      #creatureInventory .candy-link,
+      #creatureInventory .stats-link,
       #creatureInventory .daycare-link,
       #creatureInventory .eggs-link,
       #creatureInventory .bag-link,
@@ -9475,7 +9484,7 @@
       }
       /* Icon-mode: square-ish padding around the 21×21 SVG. */
       #creatureInventory .header-actions-icons .pokedex-link,
-      #creatureInventory .header-actions-icons .candy-link,
+      #creatureInventory .header-actions-icons .stats-link,
       #creatureInventory .header-actions-icons .daycare-link,
       #creatureInventory .header-actions-icons .eggs-link,
       #creatureInventory .header-actions-icons .bag-link,
@@ -9485,7 +9494,7 @@
       /* Text-mode: text labels need horizontal room and the same
          vertical rhythm as the icon variant. */
       #creatureInventory .header-actions-text .pokedex-link,
-      #creatureInventory .header-actions-text .candy-link,
+      #creatureInventory .header-actions-text .stats-link,
       #creatureInventory .header-actions-text .daycare-link,
       #creatureInventory .header-actions-text .eggs-link,
       #creatureInventory .header-actions-text .bag-link,
@@ -9494,7 +9503,7 @@
         font-size: 12px;
       }
       #creatureInventory .pokedex-link svg,
-      #creatureInventory .candy-link svg,
+      #creatureInventory .stats-link svg,
       #creatureInventory .daycare-link svg,
       #creatureInventory .eggs-link svg,
       #creatureInventory .bag-link svg,
@@ -9504,7 +9513,7 @@
         height: 21px;
       }
       #creatureInventory .pokedex-link:hover,
-      #creatureInventory .candy-link:hover,
+      #creatureInventory .stats-link:hover,
       #creatureInventory .daycare-link:hover,
       #creatureInventory .eggs-link:hover,
       #creatureInventory .bag-link:hover,
@@ -10224,6 +10233,11 @@
           <h3 class="subview-title craft-title"><span class="craft-title-text">Craft</span><button class="cc-info-btn craft-info" type="button" aria-label="How incense works" title="How incense works">i</button></h3>
           <div class="craft-body"></div>
         </div>
+        <div class="stats-view">
+          <button class="stats-back" type="button" aria-label="back">←</button>
+          <h3 class="subview-title">Stats</h3>
+          <div class="stats-body"></div>
+        </div>
         <div class="gifts-view">
           <button class="gifts-back" type="button" aria-label="back">←</button>
           <h3 class="subview-title">Gifts</h3>
@@ -10637,6 +10651,7 @@
     panel.querySelector('.focussession-back').addEventListener('click', popView);
     panel.querySelector('.focusuntil-back').addEventListener('click', popView);
     panel.querySelector('.gifts-back').addEventListener('click', popView);
+    panel.querySelector('.stats-back').addEventListener('click', popView);
     panel.querySelector('.gift-back').addEventListener('click', popView);
     panel.querySelector('.giftcreate-back').addEventListener('click', popView);
     panel.querySelector('.gift-pick-cancel').addEventListener('click', popView);
@@ -10937,6 +10952,7 @@
     panel.querySelector('.focussession-view').classList.remove('show');
     panel.querySelector('.focusuntil-view').classList.remove('show');
     panel.querySelector('.gifts-view').classList.remove('show');
+    panel.querySelector('.stats-view').classList.remove('show');
     panel.querySelector('.gift-view').classList.remove('show');
     panel.querySelector('.giftcreate-view').classList.remove('show');
     // Collection list in pick mode (Send a gift → Choose a pokémon).
@@ -11058,6 +11074,10 @@
         // itself against the visible sheet.
         panel.querySelector('.focussession-view').classList.add('show');
         renderFocusSession(top);
+        return;
+      case 'stats':
+        renderStats();
+        panel.querySelector('.stats-view').classList.add('show');
         return;
       case 'gifts':
         renderGifts();
@@ -12466,11 +12486,13 @@
     if (!panel) return;
     const body = panel.querySelector('.bag-body');
     if (!body) return;
-    // Craft launcher — always available (you craft from eggs, not from
-    // bag contents), so it shows even when the bag is empty. Focus mode
-    // sits beside it (same button style); both open sub-views.
+    // Launchers — always available (you craft from eggs, not from bag
+    // contents), so they show even when the bag is empty: Candy, Craft
+    // incense, Focus mode, Gifts (same button style); each opens a
+    // sub-view.
     const craftBtnHtml = `<div class="bag-launchers">`
-      + `<button class="bag-craft" type="button">Craft incense</button>`
+      + `<button class="bag-craft bag-candy" type="button">Candy</button>`
+      + `<button class="bag-craft bag-incense" type="button">Craft incense</button>`
       + `<button class="bag-craft bag-focus" type="button">Focus mode</button>`
       + `<button class="bag-craft bag-gifts" type="button">Gifts</button>`
       + `</div>`;
@@ -12508,8 +12530,11 @@
         + `</div>`;
     }
     const wire = () => {
-      const cb = body.querySelector('.bag-craft:not(.bag-focus)');
+      const cb = body.querySelector('.bag-incense');
       if (cb) cb.addEventListener('click', showCraft);
+      // Candy pushes onto the stack too (bag → candy), so Back returns here.
+      const cdy = body.querySelector('.bag-candy');
+      if (cdy) cdy.addEventListener('click', showCandy);
       const fb = body.querySelector('.bag-focus');
       // Push onto the current stack (bag → focus) so Back returns to
       // the bag; the map entry points use showFocus's fresh stack.
@@ -13271,6 +13296,13 @@
   let _giftsShown = GIFTS_PAGE;
   let _giftsRenderSeq = 0;
   function showGifts() { _giftsShown = GIFTS_PAGE; pushView({ view: 'gifts' }); }
+  // Stats: the header's last button. A placeholder for now.
+  function showStats() { pushView({ view: 'stats' }); }
+  function renderStats() {
+    const body = document.querySelector('#creatureInventory .stats-body');
+    if (!body) return;
+    body.innerHTML = '<div class="stats-empty">Nothing here yet — stats are on the way.</div>';
+  }
   async function renderGifts() {
     const panel = document.getElementById('creatureInventory');
     const body = panel && panel.querySelector('.gifts-body');
@@ -17282,9 +17314,12 @@
     // a tiny zigzag at the top suggesting the upcoming crack.
     eggs: '<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M12 3c-3.5 0-6.5 4.5-6.5 9 0 4.5 3 7 6.5 7s6.5-2.5 6.5-7c0-4.5-3-9-6.5-9z"/><path d="M9 11l1.5-1.5L12 11l1.5-1.5L15 11"/></svg>',
     dex: '<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8" cy="9" r="2"/><line x1="3" y1="14" x2="21" y2="14"/><line x1="6" y1="17" x2="14" y2="17"/></svg>',
+    // Three bars of a chart on a baseline.
+    stats: '<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 20h16"/><path d="M7 20v-6"/><path d="M12 20V6"/><path d="M17 20v-10"/></svg>',
   };
-  // Renders the inventory header's Tags / Bag / Candy / Pokédex
-  // buttons as either SVG icons or plain text labels, based on the
+  // Renders the inventory header's Tags / Bag / Daycare / Eggs / Dex /
+  // Stats buttons (Candy lives in the Bag's launcher row) as either SVG
+  // icons or plain text labels, based on the
   // 'cc.actionButtonsAsIcons' localStorage flag (default off → text).
   // Re-attaches click handlers each call so toggling at runtime
   // works without losing interactivity.
@@ -17295,10 +17330,10 @@
     const items = [
       { cls: 'tags-link', label: 'Tags', svg: _ACTION_ICON_SVG.tags, onClick: showTags },
       { cls: 'bag-link', label: 'Bag', svg: _ACTION_ICON_SVG.bag, onClick: showBag },
-      { cls: 'candy-link', label: 'Candy', svg: _ACTION_ICON_SVG.candy, onClick: showCandy },
       { cls: 'daycare-link', label: 'Daycare', svg: _ACTION_ICON_SVG.daycare, onClick: showDaycare },
       { cls: 'eggs-link', label: 'Eggs', svg: _ACTION_ICON_SVG.eggs, onClick: showEggs },
       { cls: 'pokedex-link', label: 'Dex', svg: _ACTION_ICON_SVG.dex, onClick: showPokedex },
+      { cls: 'stats-link', label: 'Stats', svg: _ACTION_ICON_SVG.stats, onClick: showStats },
     ];
     container.classList.toggle('header-actions-text', !asIcons);
     container.classList.toggle('header-actions-icons', asIcons);
