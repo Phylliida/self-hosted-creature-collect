@@ -142,6 +142,8 @@ const TILES_CACHE = 'tiles-v1';
 // lat/lng (a gift's "sent from" place links to the map).
 // Shell bump 2026-10-14 (#33): index.html adds Settings → "Show pokémon level
 // and height" (cc.showLevelSize, default off).
+// Shell bump 2026-10-14 (#34): index.html draws pokéstops you can spin above
+// ones on cooldown, and a tap on overlapping stops opens the spinnable one.
 
 const APP_SHELL = [
   '/',

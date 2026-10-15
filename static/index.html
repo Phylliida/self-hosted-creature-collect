@@ -6475,11 +6475,14 @@ function fmtDate(ts) {
             // stop_position / platform / station. Those get key 0 (bottom);
             // every other POI gets 1 (top). Keeps a single layer so the
             // cooldown recolor, fav filter, halo anchoring, and click query
-            // all stay unchanged.
+            // all stay unchanged. Among real POIs, ones on cooldown (just
+            // spun) sit under the rest: refreshCooldownOverlays swaps in
+            // poiSortKeyExpr(), which adds that middle tier (key 1) once
+            // anything is on cooldown.
             'symbol-sort-key': ['case',
               ['in', ['coalesce', ['get', 'subclass'], ['get', 'class'], ''],
                 ['literal', ['stop_position', 'platform', 'station']]],
-              0, 1]
+              0, 2]
           },
           paint: {
             'icon-color': _initTheme.poiIcon,
@@ -10127,6 +10130,18 @@ function fmtDate(ts) {
   // real neighbor that close was already locked and given its own
   // entry, so this can't gray an un-locked POI.
   const COOLDOWN_POLYGON_EPS = 0.00003;
+  // poi-icons draw order (symbol-sort-key; higher = drawn later = on
+  // top): transit infrastructure 0, POIs on cooldown 1, everything else
+  // 2 — so a stop you can spin is never hidden under one you just spun.
+  // Swapped in alongside the cooldown icon-color: it's the same `within`
+  // polygon, and both changes ride one re-layout of the tiles.
+  function poiSortKeyExpr(cooldownPolygon) {
+    const transit = ['in', ['coalesce', ['get', 'subclass'], ['get', 'class'], ''],
+      ['literal', ['stop_position', 'platform', 'station']]];
+    return cooldownPolygon
+      ? ['case', transit, 0, ['within', cooldownPolygon], 1, 2]
+      : ['case', transit, 0, 2];
+  }
   function buildCooldownPolygon(points) {
     if (!points.length) return { type: 'MultiPolygon', coordinates: [] };
     const e = COOLDOWN_POLYGON_EPS;
@@ -10249,12 +10264,14 @@ function fmtDate(ts) {
       }
     }
     // POI layer: within-based recoloring. Only the active/cooldown branch.
-    const poiExpr = poiActivePts.length
-      ? ['case',
-          ['within', buildCooldownPolygon(poiActivePts)], _currentCooldownActiveColor,
-          _currentPoiThemeColor]
+    const poiPoly = poiActivePts.length ? buildCooldownPolygon(poiActivePts) : null;
+    const poiExpr = poiPoly
+      ? ['case', ['within', poiPoly], _currentCooldownActiveColor, _currentPoiThemeColor]
       : _currentPoiThemeColor;
     try { map.setPaintProperty('poi-icons', 'icon-color', poiExpr); } catch {}
+    // …and drop those stops under the spinnable ones (no-op when the
+    // set is unchanged — MapLibre skips equal values).
+    try { map.setLayoutProperty('poi-icons', 'symbol-sort-key', poiSortKeyExpr(poiPoly)); } catch {}
     // Building layer: distance-based recoloring. MultiPoint of all active
     // cooldown centroids; building feature matches when its polygon's
     // distance to the nearest point is below the small threshold (i.e., the
@@ -12408,6 +12425,28 @@ function fmtDate(ts) {
     }
     return Array.isArray(rids) ? rids : [];
   }
+  // When a tap lands on several pokéstops, open the one you'd want:
+  // one you can spin right now (in range, not on cooldown), then any not
+  // on cooldown, then ones you've just spun — nearest the tap first
+  // within each. (The map's own hit order ignores both.)
+  function rankPoiHits(hits, point) {
+    if (hits.length < 2) return hits;
+    const ranked = hits.map((f) => {
+      const c = f.geometry && f.geometry.coordinates;
+      if (!c || !isFinite(c[0]) || !isFinite(c[1])) return { f, tier: 3, d: Infinity };
+      let tier = 1;
+      try {
+        if (poiCooldownStatus(c[0], c[1]) === 'active') tier = 2;
+        else if (lastKnownPos && haversineKm(lastKnownPos.lat, lastKnownPos.lng, c[1], c[0]) * 1000
+          <= POI_COLLECT_MAX_DISTANCE_M) tier = 0;
+      } catch {}
+      let d = Infinity;
+      try { const p = map.project(c); d = Math.hypot(p.x - point.x, p.y - point.y); } catch {}
+      return { f, tier, d };
+    });
+    ranked.sort((a, b) => (a.tier - b.tier) || (a.d - b.d));
+    return ranked.map((r) => r.f);
+  }
   map.on('click', (e) => {
     const poiPad = 8;
     const routePad = 20;
@@ -12429,7 +12468,7 @@ function fmtDate(ts) {
       ? map.queryRenderedFeatures(poiBbox, { layers: ['route-stop-bubbles'] })
       : [];
     const allPoiHits = map.queryRenderedFeatures(poiBbox, { layers: ['poi-icons'] });
-    const realPoiHits = allPoiHits.filter(isRealPoi);
+    const realPoiHits = rankPoiHits(allPoiHits.filter(isRealPoi), e.point);
     const stopPoiHits = allPoiHits.filter(f => !isRealPoi(f));
     const routeHits = map.getLayer('bus-routes')
       ? map.queryRenderedFeatures(routeBbox, { layers: ['bus-routes'] })
