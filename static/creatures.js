@@ -3973,7 +3973,7 @@
       } catch (_) { /* fall back to base art */ }
     }
     if (img._spriteGen !== gen) return;
-    delete img.dataset.spriteCell;   // full-canvas art, not a cropped 96 cell
+    if (img.dataset) delete img.dataset.spriteCell;   // full-canvas art, not a cropped 96 cell
     // Diagnostics: record solo-art load outcomes so the Settings dump
     // can tell "sprite URL 404s/504s" from "image decoded fine"
     // without remote devtools. Small ring of the most recent attempts.
