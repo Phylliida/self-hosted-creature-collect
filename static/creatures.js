@@ -6499,6 +6499,7 @@
       #creatureInventory .craft-back,
       #creatureInventory .focus-back,
       #creatureInventory .focussession-back,
+      #creatureInventory .focusuntil-back,
       #creatureInventory .tags-back,
       #creatureInventory .gifts-back,
       #creatureInventory .gift-back,
@@ -6557,6 +6558,7 @@
       #creatureInventory .craft-back:hover,
       #creatureInventory .focus-back:hover,
       #creatureInventory .focussession-back:hover,
+      #creatureInventory .focusuntil-back:hover,
       #creatureInventory .tags-back:hover,
       #creatureInventory .gifts-back:hover,
       #creatureInventory .gift-back:hover,
@@ -8215,9 +8217,110 @@
       #creatureInventory .craft-view.show { display: flex; flex-direction: column; }
       /* ── Focus mode ── */
       #creatureInventory .focus-view,
+      #creatureInventory .focusuntil-view,
       #creatureInventory .focussession-view { display: none; }
       #creatureInventory .focus-view.show,
+      #creatureInventory .focusuntil-view.show,
       #creatureInventory .focussession-view.show { display: flex; flex-direction: column; }
+      /* For | Until switch over the picker. */
+      #creatureInventory .focus-seg {
+        display: flex; align-self: center; margin: 10px 0 0; padding: 3px; gap: 2px;
+        border-radius: 999px; background: var(--ui-hover, rgba(0,0,0,0.06));
+        box-shadow: inset 0 0 0 1px var(--ui-hairline, rgba(0,0,0,0.1));
+      }
+      #creatureInventory .focus-seg-btn {
+        min-width: 76px; padding: 5px 14px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+        border: none; border-radius: 999px; background: transparent; color: var(--ui-muted, #666);
+        transition: background 0.15s ease, color 0.15s ease;
+      }
+      #creatureInventory .focus-seg-btn.is-active {
+        background: var(--ui-bg, #fff); color: var(--ui-text, #111); box-shadow: 0 1px 3px rgba(0,0,0,0.18);
+      }
+      #creatureInventory .focus-until { display: flex; justify-content: center; margin: 2px 0 6px; }
+      #creatureInventory .focus-until[hidden], #creatureInventory .focus-for[hidden] { display: none; }
+      #creatureInventory .focus-until-btn {
+        display: inline-flex; align-items: center; gap: 7px; padding: 8px 16px; font: inherit; font-size: 13px;
+        font-weight: 600; cursor: pointer; color: var(--ui-text, #111); background: transparent;
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.18)); border-radius: 999px;
+      }
+      /* The Until day planner (renderFocusUntil). */
+      #creatureInventory .fu-hint { text-align: center; font-size: 12px; color: var(--ui-muted, #666); margin: 0 0 10px; }
+      #creatureInventory .fu-timeline { position: relative; margin: 0 2px; user-select: none; -webkit-user-select: none; cursor: pointer; }
+      /* An hour: its time in the left column; the line, a fainter
+         half-hour line and (at night) a tint only to the right of it. */
+      #creatureInventory .fu-hour { position: relative; height: 56px; }
+      #creatureInventory .fu-hour::before {
+        content: ""; position: absolute; left: 50px; right: 0; top: 0; bottom: 0;
+        border-top: 1px solid var(--ui-hairline, rgba(0,0,0,0.12));
+        background: linear-gradient(transparent 27px,
+          color-mix(in srgb, var(--ui-hairline, rgba(0,0,0,0.12)) 50%, transparent) 27px,
+          color-mix(in srgb, var(--ui-hairline, rgba(0,0,0,0.12)) 50%, transparent) 28px, transparent 28px);
+      }
+      #creatureInventory .fu-hour.night::before { background-color: color-mix(in srgb, var(--ui-text, #111) 6%, transparent); }
+      #creatureInventory .fu-hour.midnight::before { border-top: 2px solid var(--ui-border, rgba(0,0,0,0.3)); }
+      #creatureInventory .fu-hour-label {
+        position: absolute; left: 0; top: -7px; width: 44px; text-align: right;
+        font-size: 11px; color: var(--ui-muted, #666); font-variant-numeric: tabular-nums;
+      }
+      #creatureInventory .fu-hour:first-child .fu-hour-label { top: 2px; }
+      #creatureInventory .fu-day {
+        position: absolute; right: 6px; top: 5px; z-index: 2; padding: 1px 8px; border-radius: 999px;
+        font-size: 11px; font-weight: 700; pointer-events: none;
+        color: var(--ui-text, #111); background: var(--ui-bg, #fff); box-shadow: 0 0 0 1px var(--ui-hairline, rgba(0,0,0,0.12));
+      }
+      #creatureInventory .fu-past {
+        position: absolute; left: 50px; right: 0; top: 0; pointer-events: none;
+        background: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--ui-text, #111) 5%, transparent) 6px 7px);
+      }
+      #creatureInventory .fu-beyond {
+        position: absolute; left: 50px; right: 0; bottom: 0; pointer-events: none;
+        border-top: 2px dashed var(--ui-border, rgba(0,0,0,0.3));
+        background: color-mix(in srgb, var(--ui-bg, #fff) 70%, transparent);
+      }
+      #creatureInventory .fu-beyond span { position: absolute; right: 6px; top: 4px; font-size: 11px; color: var(--ui-muted, #666); }
+      #creatureInventory .fu-block {
+        position: absolute; z-index: 1; left: 56px; right: 6px; box-sizing: border-box; padding: 6px 10px; overflow: visible;
+        border-radius: 4px 4px 10px 10px; pointer-events: none; color: var(--ui-text, #111);
+        background: color-mix(in srgb, var(--ui-accent, #b06cff) 22%, transparent);
+        border-left: 4px solid var(--ui-accent, #b06cff);
+      }
+      #creatureInventory .fu-block-title { display: block; font-size: 12px; font-weight: 700; }
+      #creatureInventory .fu-block-end {
+        position: absolute; right: 10px; bottom: 8px; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums;
+      }
+      #creatureInventory .fu-handle {
+        position: absolute; z-index: 3; left: 50%; bottom: -12px; width: 56px; height: 24px; margin-left: -28px;
+        pointer-events: auto; touch-action: none; cursor: ns-resize; outline: none;
+      }
+      #creatureInventory .fu-handle::before {
+        content: ""; position: absolute; left: 12px; right: 12px; top: 9px; height: 6px; border-radius: 999px;
+        background: var(--ui-accent, #b06cff); box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+        transition: transform 0.12s ease;
+      }
+      #creatureInventory .fu-handle.dragging::before,
+      #creatureInventory .fu-handle:focus-visible::before { transform: scaleX(1.25) scaleY(1.3); }
+      #creatureInventory .fu-now {
+        position: absolute; z-index: 2; left: 46px; right: 0; height: 0; border-top: 2px solid #e5484d; pointer-events: none;
+      }
+      #creatureInventory .fu-now::before {
+        content: ""; position: absolute; left: -5px; top: -6px; width: 10px; height: 10px; border-radius: 50%; background: #e5484d;
+      }
+      #creatureInventory .fu-now span {
+        position: absolute; left: 10px; top: -17px; font-size: 10px; font-weight: 700; color: #e5484d;
+        text-transform: uppercase; letter-spacing: 0.06em;
+      }
+      #creatureInventory .fu-bar {
+        position: sticky; bottom: -14px; z-index: 4; display: flex; align-items: center; gap: 12px;
+        margin: 10px -20px -14px; padding: 12px 20px calc(12px + env(safe-area-inset-bottom, 0px));
+        background: var(--ui-bg, #fff); box-shadow: 0 -1px 0 var(--ui-hairline, rgba(0,0,0,0.12)), 0 -6px 16px rgba(0,0,0,0.08);
+      }
+      #creatureInventory .fu-bar-text { flex: 1; min-width: 0; }
+      #creatureInventory .fu-bar-main { font-size: 16px; font-weight: 700; color: var(--ui-text, #111); font-variant-numeric: tabular-nums; }
+      #creatureInventory .fu-bar-sub { font-size: 12px; color: var(--ui-muted, #666); }
+      #creatureInventory .fu-done {
+        flex: none; padding: 9px 20px; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer;
+        color: var(--ui-accent-text, #fff); background: var(--ui-accent, #b06cff); border: none; border-radius: 999px;
+      }
       /* Length picker + live progress (see renderFocus). */
       /* Length picker: big readout over a snapping slider (_focusWireSlider). */
       #creatureInventory .focus-pick { display: flex; flex-direction: column; align-items: stretch; margin: 2px 0 6px; }
@@ -10141,6 +10244,11 @@
           <h3 class="subview-title craft-title"><span class="craft-title-text">Focus mode</span><button class="cc-info-btn focus-info" type="button" aria-label="How focus mode works" title="How focus mode works">i</button></h3>
           <div class="focus-body"></div>
         </div>
+        <div class="focusuntil-view">
+          <button class="focusuntil-back" type="button" aria-label="back">←</button>
+          <h3 class="subview-title">Focus until…</h3>
+          <div class="focusuntil-body"></div>
+        </div>
         <div class="focussession-view">
           <button class="focussession-back" type="button" aria-label="back">←</button>
           <h3 class="subview-title">Focus session</h3>
@@ -10527,6 +10635,7 @@
     panel.querySelector('.craft-back').addEventListener('click', _craftBack);
     panel.querySelector('.focus-back').addEventListener('click', popView);
     panel.querySelector('.focussession-back').addEventListener('click', popView);
+    panel.querySelector('.focusuntil-back').addEventListener('click', popView);
     panel.querySelector('.gifts-back').addEventListener('click', popView);
     panel.querySelector('.gift-back').addEventListener('click', popView);
     panel.querySelector('.giftcreate-back').addEventListener('click', popView);
@@ -10826,6 +10935,7 @@
     panel.querySelector('.craft-view').classList.remove('show');
     panel.querySelector('.focus-view').classList.remove('show');
     panel.querySelector('.focussession-view').classList.remove('show');
+    panel.querySelector('.focusuntil-view').classList.remove('show');
     panel.querySelector('.gifts-view').classList.remove('show');
     panel.querySelector('.gift-view').classList.remove('show');
     panel.querySelector('.giftcreate-view').classList.remove('show');
@@ -10938,6 +11048,10 @@
       case 'focus':
         renderFocus();
         panel.querySelector('.focus-view').classList.add('show');
+        return;
+      case 'focusUntil':
+        panel.querySelector('.focusuntil-view').classList.add('show');
+        renderFocusUntil(top);
         return;
       case 'focusSession':
         // Shown first: its pokémon grid is virtualized and measures
@@ -20530,6 +20644,12 @@
   // Labelled (and tappable) under the slider.
   const FOCUS_LANDMARKS_MIN = [5, 60, 240, 480, 720, 1440, 4320];
   const FOCUS_DURATION_KEY = 'cc.focusDuration';   // last length picked (minutes)
+  // "For" (the length slider) or "Until" (an end time picked on the day
+  // planner, cc.focusUntil, ms) — whichever the picker was left on.
+  const FOCUS_PICK_MODE_KEY = 'cc.focusPickMode';
+  const FOCUS_UNTIL_KEY = 'cc.focusUntil';
+  const FOCUS_MIN_MS = 5 * 60 * 1000;
+  const FOCUS_MAX_MS = 3 * 24 * 60 * 60 * 1000;
   const FOCUS_HISTORY_MAX = 50;
   const FOCUS_SETTLE_TICK_MS = 60 * 1000;
   // Keep in sync with the .focus-hold.holding CSS transition duration.
@@ -21053,19 +21173,44 @@
   function _focusDurLabel(min) {
     return _focusDurParts(min).map(([n, u]) => n + ' ' + u).join(' ');
   }
-  // When a session of `min` started now would end (if it's never
-  // paused), in the clock format from Settings.
-  function _focusEndsText(min, nowMs) {
-    const end = new Date(nowMs + min * 60000);
-    let h12 = false;
-    try { h12 = localStorage.getItem('cc.clockFormat') === '12h'; } catch (e) { /* default 24h */ }
-    const t = end.toLocaleTimeString([], { hour: h12 ? 'numeric' : '2-digit', minute: '2-digit', hour12: h12 });
+  // Times of day in the clock format from Settings (24 h unless set).
+  function _focusH12() {
+    try { return localStorage.getItem('cc.clockFormat') === '12h'; } catch (e) { return false; }
+  }
+  function _focusClockText(ms) {
+    const h12 = _focusH12();
+    return new Date(ms).toLocaleTimeString([], { hour: h12 ? 'numeric' : '2-digit', minute: '2-digit', hour12: h12 });
+  }
+  // 'today' / 'tomorrow' / a weekday, for ms relative to nowMs.
+  function _focusDayWord(ms, nowMs) {
     const d0 = new Date(nowMs); d0.setHours(0, 0, 0, 0);
-    const d1 = new Date(end); d1.setHours(0, 0, 0, 0);
+    const d1 = new Date(ms); d1.setHours(0, 0, 0, 0);
     const days = Math.round((d1 - d0) / 86400000);
-    if (days === 0) return 'ends at ' + t;
-    if (days === 1) return 'ends tomorrow at ' + t;
-    return 'ends ' + end.toLocaleDateString([], { weekday: 'long' }) + ' at ' + t;
+    if (days === 0) return 'today';
+    if (days === 1) return 'tomorrow';
+    return new Date(ms).toLocaleDateString([], { weekday: 'long' });
+  }
+  // When a session of `min` started now would end (if it's never
+  // paused).
+  function _focusEndsText(min, nowMs) {
+    const end = nowMs + min * 60000;
+    const day = _focusDayWord(end, nowMs);
+    return 'ends ' + (day === 'today' ? '' : day + ' ') + 'at ' + _focusClockText(end);
+  }
+  // A picked end time (the Until mode), if it's still 5 min – 3 days away.
+  function _focusReadUntil(nowMs) {
+    let v = NaN;
+    try { v = Number(localStorage.getItem(FOCUS_UNTIL_KEY)); } catch (e) { /* none */ }
+    return Number.isFinite(v) && v - nowMs >= FOCUS_MIN_MS && v - nowMs <= FOCUS_MAX_MS ? v : null;
+  }
+  function _focusPickMode(nowMs) {
+    let m = null;
+    try { m = localStorage.getItem(FOCUS_PICK_MODE_KEY); } catch (e) { /* default */ }
+    return m === 'until' && _focusReadUntil(nowMs) != null ? 'until' : 'for';
+  }
+  // The length (ms) the picker stands for right now.
+  function _focusPickedMs(nowMs) {
+    return _focusPickMode(nowMs) === 'until' ? _focusReadUntil(nowMs) - nowMs : _focusReadDuration() * 60000;
   }
   // A light tick as the slider snaps: the HapticPattern plugin (Core
   // Haptics on iPhone, which ignores navigator.vibrate) or vibrate().
@@ -21193,9 +21338,22 @@
     const endsEl = body.querySelector('.focus-pick-ends');
     const lootEl = body.querySelector('.focus-pick-loot');
     const bonusEl = body.querySelector('.focus-bonus');
+    const forEl = body.querySelector('.focus-for');
+    const untilEl = body.querySelector('.focus-until');
+    const segs = body.querySelectorAll('.focus-seg-btn');
     let idx = Math.max(0, stops.indexOf(_focusReadDuration()));
     const paint = () => {
-      const min = stops[idx];
+      const now = Date.now();
+      const mode = _focusPickMode(now);
+      segs.forEach((b) => {
+        b.classList.toggle('is-active', b.dataset.m === mode);
+        b.setAttribute('aria-pressed', b.dataset.m === mode ? 'true' : 'false');
+      });
+      forEl.hidden = mode !== 'for';
+      untilEl.hidden = mode !== 'until';
+      const until = mode === 'until' ? _focusReadUntil(now) : null;
+      const ms = until != null ? until - now : stops[idx] * 60000;
+      const min = until != null ? Math.max(1, Math.round(ms / 60000)) : stops[idx];
       const p = (100 * idx / last) + '%';
       thumb.style.left = p;
       fill.style.width = p;
@@ -21203,14 +21361,24 @@
       labels.forEach((l) => l.classList.toggle('is-active', Number(l.dataset.i) === idx));
       valueEl.innerHTML = _focusPickParts(min).map(([n, u]) =>
         `<span class="p"><span class="n">${n}</span><span class="u">${escapeHtml(u)}</span></span>`).join('');
-      endsEl.textContent = _focusEndsText(min, Date.now());
-      const est = _focusGrantsDue(min * 60000, 0, min * 60000);
+      endsEl.textContent = until != null
+        ? 'until ' + _focusClockText(until) + ' ' + _focusDayWord(until, now)
+        : _focusEndsText(min, now);
+      const est = _focusGrantsDue(ms, 0, ms);
       lootEl.textContent = `${est.creatures} pokémon · ${est.items} items`;
       bonusEl.textContent = _focusFmtMult(est.mult) + ' bonus';
       bonusEl.style.setProperty('--b', ((est.mult - 1) * 100).toFixed(1) + '%');
       slider.setAttribute('aria-valuenow', String(idx));
       slider.setAttribute('aria-valuetext', _focusDurLabel(min));
     };
+    const setMode = (m) => { try { localStorage.setItem(FOCUS_PICK_MODE_KEY, m); } catch (e) { /* ignore */ } };
+    // Until: straight to the day planner when there's no time picked yet.
+    segs.forEach((b) => b.addEventListener('click', () => {
+      if (b.dataset.m === 'until' && _focusReadUntil(Date.now()) == null) { pushView({ view: 'focusUntil' }); return; }
+      setMode(b.dataset.m);
+      paint();
+    }));
+    body.querySelector('.focus-until-btn').addEventListener('click', () => pushView({ view: 'focusUntil' }));
     const set = (i, how) => {
       i = Math.max(0, Math.min(last, i));
       if (i === idx) return;
@@ -21249,8 +21417,126 @@
       setTimeout(() => slider.classList.remove('glide'), 260);
     }));
     paint();
-    // Keep "ends at" current while the view sits open.
-    _focusViewTick = setInterval(() => { endsEl.textContent = _focusEndsText(stops[idx], Date.now()); }, 30000);
+    // Keep "ends at" (and an Until length) current while the view sits
+    // open; a picked time that's come too close drops back to the slider.
+    _focusViewTick = setInterval(paint, 30000);
+  }
+
+  // ── Until: pick the end on a day planner ({ view: 'focusUntil' }) ──
+  // Hours run down the page from the current hour to 3 days out (night
+  // hours shaded, a divider at each midnight), with a "now" line. The
+  // session shows as a block from now to the end: tap a time to end
+  // there, or drag the block's handle; both snap to the quarter hour.
+  // Done keeps it (Until mode); Back leaves things as they were.
+  const FU_HOUR_PX = 56;
+  const FU_SNAP_MS = 15 * 60 * 1000;
+  function renderFocusUntil(top) {
+    const panel = document.getElementById('creatureInventory');
+    const body = panel && panel.querySelector('.focusuntil-body');
+    if (!body) return;
+    const now = Date.now();
+    const minEnd = now + FOCUS_MIN_MS;
+    const maxEnd = now + FOCUS_MAX_MS;
+    const h0 = new Date(now); h0.setMinutes(0, 0, 0);
+    const T0 = h0.getTime();
+    const hours = Math.ceil((maxEnd - T0) / 3600000) + 1;
+    const yOf = (ms) => (ms - T0) / 3600000 * FU_HOUR_PX;
+    const snap = (ms) => {
+      let t = Math.round(ms / FU_SNAP_MS) * FU_SNAP_MS;
+      if (t < minEnd) t = Math.ceil(minEnd / FU_SNAP_MS) * FU_SNAP_MS;
+      if (t > maxEnd) t = Math.floor(maxEnd / FU_SNAP_MS) * FU_SNAP_MS;
+      return t;
+    };
+    if (!Number.isFinite(top.endMs)) top.endMs = _focusReadUntil(now) || snap(now + 60 * 60 * 1000);
+    const h12 = _focusH12();
+    let rows = '';
+    for (let i = 0; i < hours; i++) {
+      const t = T0 + i * 3600000;
+      const d = new Date(t);
+      const hr = d.getHours();
+      const label = h12 ? d.toLocaleTimeString([], { hour: 'numeric', hour12: true }) : String(hr).padStart(2, '0') + ':00';
+      const day = (hr === 0 && i > 0)
+        ? `<span class="fu-day">${escapeHtml(_focusDayWord(t, now).replace(/^./, (c) => c.toUpperCase()))}`
+          + ` · ${escapeHtml(d.toLocaleDateString([], { weekday: 'short', day: 'numeric' }))}</span>`
+        : '';
+      rows += `<div class="fu-hour${hr >= 22 || hr < 7 ? ' night' : ''}${hr === 0 ? ' midnight' : ''}">`
+        + `<span class="fu-hour-label">${escapeHtml(label)}</span>${day}</div>`;
+    }
+    body.innerHTML = `
+      <div class="fu-hint">Tap when you want to be done — or drag the end of the block.</div>
+      <div class="fu-timeline" style="height:${hours * FU_HOUR_PX}px">
+        ${rows}
+        <div class="fu-past" style="height:${yOf(now)}px"></div>
+        <div class="fu-beyond" style="top:${yOf(maxEnd)}px"><span>3-day limit</span></div>
+        <div class="fu-block" style="top:${yOf(now)}px">
+          <span class="fu-block-title">Focus</span>
+          <span class="fu-block-end"></span>
+          <span class="fu-handle" role="slider" tabindex="0" aria-label="Focus end time"></span>
+        </div>
+        <div class="fu-now" style="top:${yOf(now)}px"><span>now</span></div>
+      </div>
+      <div class="fu-bar">
+        <div class="fu-bar-text"><div class="fu-bar-main"></div><div class="fu-bar-sub"></div></div>
+        <button type="button" class="fu-done">Done</button>
+      </div>`;
+    const tl = body.querySelector('.fu-timeline');
+    const block = body.querySelector('.fu-block');
+    const endEl = body.querySelector('.fu-block-end');
+    const handle = body.querySelector('.fu-handle');
+    const mainEl = body.querySelector('.fu-bar-main');
+    const subEl = body.querySelector('.fu-bar-sub');
+    const paint = () => {
+      const end = top.endMs;
+      block.style.height = Math.max(4, yOf(end) - yOf(now)) + 'px';
+      const day = _focusDayWord(end, now);
+      endEl.textContent = 'until ' + _focusClockText(end);
+      const ms = end - now;
+      const min = Math.max(1, Math.round(ms / 60000));
+      const est = _focusGrantsDue(ms, 0, ms);
+      mainEl.textContent = 'Until ' + _focusClockText(end) + ' ' + day;
+      subEl.textContent = `${_focusPickParts(min).map(([n, u]) => n + ' ' + u).join(' ')} · ${est.creatures} pokémon · ${_focusFmtMult(est.mult)}`;
+      handle.setAttribute('aria-valuetext', mainEl.textContent);
+    };
+    const msAt = (clientY) => T0 + (clientY - tl.getBoundingClientRect().top) / FU_HOUR_PX * 3600000;
+    const setEnd = (ms, tick) => {
+      const t = snap(ms);
+      if (t === top.endMs) return;
+      top.endMs = t;
+      if (tick) _focusTick();
+      paint();
+    };
+    tl.addEventListener('click', (e) => {
+      if (e.target.closest('.fu-handle')) return;
+      setEnd(msAt(e.clientY), true);
+    });
+    handle.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      handle.classList.add('dragging');
+      try { handle.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+    });
+    handle.addEventListener('pointermove', (e) => {
+      if (handle.classList.contains('dragging')) setEnd(msAt(e.clientY), true);
+    });
+    const stop = () => handle.classList.remove('dragging');
+    handle.addEventListener('pointerup', stop);
+    handle.addEventListener('pointercancel', stop);
+    handle.addEventListener('lostpointercapture', stop);
+    handle.addEventListener('click', (e) => e.stopPropagation());
+    handle.addEventListener('keydown', (e) => {
+      const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1, PageDown: 4, PageUp: -4 }[e.key];
+      if (step) { e.preventDefault(); setEnd(top.endMs + step * FU_SNAP_MS, false); }
+    });
+    body.querySelector('.fu-done').addEventListener('click', () => {
+      try {
+        localStorage.setItem(FOCUS_UNTIL_KEY, String(top.endMs));
+        localStorage.setItem(FOCUS_PICK_MODE_KEY, 'until');
+      } catch (e) { /* ignore */ }
+      popView();
+    });
+    paint();
+    // Open with "now" near the top (or where you'd scrolled to).
+    const sheet = panel.querySelector('.sheet');
+    if (sheet) sheet.scrollTop = Number.isFinite(top.scrollY) ? top.scrollY : Math.max(0, tl.offsetTop + yOf(now) - 90);
   }
 
   function renderFocus() {
@@ -21338,8 +21624,13 @@
     body.innerHTML = `
       <div class="focus-pick">
         <div class="focus-pick-title">How long will you focus?</div>
+        <div class="focus-seg" role="group" aria-label="Pick by">
+          <button type="button" class="focus-seg-btn" data-m="for">For</button>
+          <button type="button" class="focus-seg-btn" data-m="until">Until</button>
+        </div>
         <div class="focus-pick-value" aria-hidden="true"></div>
         <div class="focus-pick-ends"></div>
+        <div class="focus-for">
         <div class="focus-slider" role="slider" tabindex="0" aria-label="Focus length"
              aria-valuemin="0" aria-valuemax="${last}">
           <div class="focus-slider-track"><div class="focus-slider-fill"></div>
@@ -21350,6 +21641,13 @@
         <div class="focus-slider-labels">
           ${marks.map((m) => `<button type="button" class="focus-slider-label" data-i="${m.i}" style="left:${pct(m.i)}%">`
             + `${escapeHtml(_focusDurParts(m.min).map(([n, u]) => n + (u === 'min' || u === 'm' ? 'm' : u[0])).join(''))}</button>`).join('')}
+        </div>
+        </div>
+        <div class="focus-until">
+          <button type="button" class="focus-until-btn">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>
+            Pick a different time
+          </button>
         </div>
         <div class="focus-pick-reward"><span class="focus-pick-loot"></span><span class="focus-bonus"></span></div>
       </div>
@@ -21364,7 +21662,9 @@
     `;
     _focusWireSlider(body);
     _focusWireHold(body.querySelector('.focus-hold'), async () => {
-      await _focusStart(_focusReadDuration() * 60000);
+      // Whichever the picker shows: the slider's length, or until the
+      // picked time (its length counted from now).
+      await _focusStart(_focusPickedMs(Date.now()));
       renderFocus();
     });
     body.querySelectorAll('.focus-session-row').forEach((row) => {
