@@ -8133,6 +8133,12 @@
       #creatureInventory .bag-list {
         display: flex; flex-direction: column; gap: 6px;
       }
+      /* Tiny category header above each group of items (see _bagSections). */
+      #creatureInventory .bag-section {
+        font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+        color: var(--ui-muted, #666); margin: 8px 2px -2px;
+      }
+      #creatureInventory .bag-section:first-child { margin-top: 0; }
       #creatureInventory .bag-row {
         display: flex; align-items: flex-start; gap: 10px;
         padding: 10px;
@@ -12176,6 +12182,20 @@
         return na.localeCompare(nb);
       });
   }
+  // The bag list's tiny section headers, one per _bagEntryRank category.
+  const BAG_SECTION_LABELS = ['Passes', 'Berries', 'Incense', 'Evolution items', 'Poké Balls', 'Other'];
+  // Sorted entries split into their categories, in order:
+  // [{ label, entries: [[key, count], …] }, …] — only the ones present.
+  function _bagSections(entries) {
+    const out = [];
+    for (const e of entries) {
+      const label = BAG_SECTION_LABELS[_bagEntryRank(e[0])] || 'Other';
+      const last = out[out.length - 1];
+      if (last && last.label === label) last.entries.push(e);
+      else out.push({ label, entries: [e] });
+    }
+    return out;
+  }
   function renderBag() {
     const panel = document.getElementById('creatureInventory');
     if (!panel) return;
@@ -12256,7 +12276,7 @@
     }
     const total = entries.reduce((sum, [, n]) => sum + n, 0);
     const subtitle = `${total} item${total === 1 ? '' : 's'} across ${entries.length} type${entries.length === 1 ? '' : 's'}`;
-    const rows = entries.map(([key, n]) => {
+    const row = ([key, n]) => {
       const meta = getItemMeta(key) || { name: key, desc: '' };
       const iconHtml = meta.icon
         ? `<img class="bag-icon" src="${escapeHtml(meta.icon)}" alt="">`
@@ -12284,7 +12304,9 @@
           </div>
         </div>
       `;
-    }).join('');
+    };
+    const rows = _bagSections(entries).map((sec) =>
+      `<div class="bag-section">${escapeHtml(sec.label)}</div>` + sec.entries.map(row).join('')).join('');
     body.innerHTML = craftBtnHtml + bannerHtml + `
       <div class="bag-subtitle">${escapeHtml(subtitle)}</div>
       <div class="bag-list">${rows}</div>

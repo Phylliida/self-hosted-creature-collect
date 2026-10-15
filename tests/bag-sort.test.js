@@ -59,6 +59,10 @@ const ctx = { Object, Set, Array, Math, String, Number, ITEMS, getItemMeta };
 vm.createContext(ctx);
 vm.runInContext(extract('function _bagEntryRank('), ctx);
 vm.runInContext(extract('function _sortedBagEntries('), ctx);
+vm.runInContext(src.slice(src.indexOf('const BAG_SECTION_LABELS'), src.indexOf(';', src.indexOf('const BAG_SECTION_LABELS')) + 1)
+  .replace('const ', 'var '), ctx);
+vm.runInContext(extract('function _bagSections('), ctx);
+const sections = (entries) => vm.runInContext('_bagSections(__e)', Object.assign(ctx, { __e: entries }));
 const rank = (k) => vm.runInContext('_bagEntryRank(__k)', Object.assign(ctx, { __k: k }));
 const sorted = (bag) => vm.runInContext('_sortedBagEntries(__bag)', Object.assign(ctx, { __bag: bag }));
 
@@ -96,6 +100,16 @@ ok(rank('totally_unknown_key') === 5, '1: unknown key falls to rank 5');
     'test_orb',                        // other, last
   ]), '2: ordered pass → berries → incense → evo → balls → other, tiebroken by count then name');
   ok(!keys.includes('incense_grass'), '2: zero-count entry filtered out');
+  // The list's section headers: one per category present, in order.
+  const secs = sections(entries);
+  ok(JSON.stringify(secs.map((s) => s.label))
+     === JSON.stringify(['Passes', 'Berries', 'Incense', 'Evolution items', 'Poké Balls', 'Other']),
+     '2: a header per category, in list order (' + secs.map((s) => s.label) + ')');
+  ok(JSON.stringify(secs.map((s) => s.entries.map(([k]) => k)).flat()) === JSON.stringify(keys),
+     '2: the sections hold every entry, in the same order');
+  const few = sections(sorted({ poke_ball: 3, FIRESTONE: 1, neo_paintbrush_red: 2 }));
+  ok(JSON.stringify(few.map((s) => [s.label, s.entries.length])) === JSON.stringify([['Evolution items', 2], ['Poké Balls', 1]]),
+     '2: only categories you have get a header; pack paintbrushes count as evolution items');
 }
 
 // ── 3. Count-desc dominates name within a category ──
