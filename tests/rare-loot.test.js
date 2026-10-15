@@ -102,6 +102,8 @@ function makeWorld(opts = {}) {
     _formatItemName: (k) => k,
     _packItems: new Map(),
   };
+  // Stats-journal hooks (creatures.js "Stats journal") are no-ops here.
+  Object.assign(ctx, { noteStat() {}, _statsNoteCatch() {}, _statsNoteEncounter() {} });
   vm.createContext(ctx);
   // The ITEMS literal (Poké / Great / Candy Ball …) needs its icon builder.
   vm.runInContext(extract('function _candyBallIcon('), ctx);

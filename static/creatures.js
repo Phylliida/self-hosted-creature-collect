@@ -850,6 +850,118 @@
   //
   // No spend mechanism yet — saved against a future evolve / item
   // mechanic.
+  // ── Stats journal ───────────────────────────────────────────────
+  // The Stats page (see "Stats page" further down) charts two kinds of
+  // data. Stores that already keep history (catches, the dex's first
+  // sightings, the walking tracker, focus history) are read when it opens.
+  // Everything nothing else records is counted here, per local day:
+  //   new / fresh    catches by their New / Fresh label (gifts excluded)
+  //   u:<item>       items used          f:<item>   items found
+  //   candy          candy earned        spins      pokéstop spins
+  //   enc            encounters          evolved    evolutions
+  //   gs / go        gifts sent / opened
+  // Kept from the day it shipped (`since`), and carried in the save file:
+  // index.html merges per-day maxima, so re-importing never double-counts.
+  const STATS_KEY = 'cc.stats.v1';
+  // Counts not yet written ({ day: { key: n } }), flushed within a second
+  // and whenever the app hides. Only these deltas live in memory, so
+  // clearing localStorage can't be undone by a stale in-memory copy.
+  let _statsPending = null;
+  let _statsTimer = null;
+  let _statsMuted = 0;   // > 0 while history is replayed (candy migration)
+  function _statsRead() {
+    try {
+      const r = JSON.parse(localStorage.getItem(STATS_KEY) || 'null');
+      if (r && typeof r === 'object' && r.days && typeof r.days === 'object') return r;
+    } catch (e) { /* unreadable: start over */ }
+    return null;
+  }
+  function _statsFlush() {
+    if (_statsTimer) { clearTimeout(_statsTimer); _statsTimer = null; }
+    if (!_statsPending) return;
+    const add = _statsPending;
+    _statsPending = null;
+    const s = _statsRead() || { v: 1, since: Date.now(), days: {} };
+    for (const day of Object.keys(add)) {
+      const d = s.days[day] || (s.days[day] = {});
+      for (const k of Object.keys(add[day])) d[k] = (d[k] || 0) + add[day][k];
+    }
+    try { localStorage.setItem(STATS_KEY, JSON.stringify(s)); }
+    catch (e) { _logCreatureError('stats/flush', e); }
+  }
+  // Count `n` (default 1) of `key` on the local day of `ms` (default now).
+  function noteStat(key, n, ms) {
+    if (_statsMuted || !key) return;
+    const v = n == null ? 1 : Number(n);
+    if (!(v > 0)) return;
+    const day = _localDayKey(ms || Date.now());
+    if (!_statsPending) _statsPending = {};
+    const d = _statsPending[day] || (_statsPending[day] = {});
+    d[key] = (d[key] || 0) + v;
+    if (!_statsTimer) _statsTimer = setTimeout(_statsFlush, 1000);
+  }
+  if (typeof document !== 'undefined' && document.addEventListener) {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') _statsFlush();
+    });
+  }
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('pagehide', _statsFlush);
+  }
+  // Stamps "tracked since" the first time it runs (from install()).
+  function _statsInit() {
+    if (_statsRead()) return;
+    try { localStorage.setItem(STATS_KEY, JSON.stringify({ v: 1, since: Date.now(), days: {} })); }
+    catch (e) { /* storage full: counts start on the first flush */ }
+  }
+  // The journal for the save file (pending counts written first).
+  function exportStats() {
+    _statsFlush();
+    return _statsRead();
+  }
+  // A save's journal into this one: per day and key the larger count
+  // wins (idempotent, and two devices' copies of the same day don't
+  // add up); `since` becomes the earlier of the two.
+  function mergeStats(data) {
+    if (!data || typeof data !== 'object' || !data.days || typeof data.days !== 'object') return;
+    _statsFlush();
+    const cur = _statsRead() || { v: 1, since: Date.now(), days: {} };
+    for (const day of Object.keys(data.days)) {
+      const rec = data.days[day];
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !rec || typeof rec !== 'object') continue;
+      const d = cur.days[day] || (cur.days[day] = {});
+      for (const k of Object.keys(rec)) {
+        const n = Number(rec[k]);
+        if (Number.isFinite(n) && n > (d[k] || 0)) d[k] = n;
+      }
+    }
+    if (Number.isFinite(data.since) && (!Number.isFinite(cur.since) || data.since < cur.since)) cur.since = data.since;
+    try { localStorage.setItem(STATS_KEY, JSON.stringify(cur)); }
+    catch (e) { _logCreatureError('stats/merge', e); }
+  }
+  // New / Fresh for a catch about to join the collection (call before
+  // _capStore.add): the label it earns, like the encounter badge — or
+  // `label` when the caller already worked it out. Gifts don't count.
+  function _statsNoteCatch(entry, label) {
+    try {
+      if (!entry || entry.gift) return;
+      let l = label;
+      if (l === undefined) {
+        l = isSoloCreature(entry) ? '' : newFreshLabelFor(entry.speciesA, entry.speciesB);
+      }
+      if (l === 'New') noteStat('new');
+      else if (l === 'Fresh') noteStat('fresh');
+    } catch (e) { /* stats never get in a catch's way */ }
+  }
+  // Encounters: once per spawn, however often its screen reopens.
+  const _statsEncSeen = new Set();
+  function _statsNoteEncounter(spawn) {
+    if (!spawn || !spawn.id || _statsEncSeen.has(spawn.id)) return;
+    if (_statsEncSeen.size > 5000) _statsEncSeen.clear();
+    _statsEncSeen.add(spawn.id);
+    noteStat('enc');
+  }
+
   function readCandyRaw() {
     try {
       const raw = localStorage.getItem(CANDY_KEY);
@@ -864,6 +976,7 @@
     const k = String(speciesIdx);
     map[k] = (map[k] || 0) + n;
     writeCandy(map);
+    noteStat('candy', n);
   }
   // Walk a species' evolution family and return the index that all
   // members of the family share their candy bucket under: the earliest
@@ -1163,10 +1276,13 @@
     if (!global.Species || !global.Species.familyOf) return;
     writeCandy({});
     const captured = readCapturedCreatures();
-    for (const c of captured) {
-      if (!c) continue;
-      awardCandyForCapture(c.speciesA, c.speciesB, candyTotalForSpawnId(c.spawnId));
-    }
+    _statsMuted++;   // a replay of old catches, not candy earned today
+    try {
+      for (const c of captured) {
+        if (!c) continue;
+        awardCandyForCapture(c.speciesA, c.speciesB, candyTotalForSpawnId(c.spawnId));
+      }
+    } finally { _statsMuted--; }
     localStorage.setItem(CANDY_MIGRATED_KEY, '1');
     // Clean up older schema flags so a stale entry can't quietly
     // resurface if anything ever reads them by name.
@@ -1207,13 +1323,15 @@
   // the POI "Collect items" button in index.html (the start of the
   // pokestop system). Resolves the bag-read first so the lazy starter
   // pack is in place before the bump applies.
-  function grantItem(itemKey, count) {
+  // `opts.quiet`: not a find (a refund), so Stats doesn't count it.
+  function grantItem(itemKey, count, opts) {
     if (!itemKey) return;
     const n = Number(count) || 0;
     if (n <= 0) return;
     const bag = readBag();
     bag[itemKey] = (bag[itemKey] || 0) + n;
     writeBag(bag);
+    if (!(opts && opts.quiet)) noteStat('f:' + itemKey, n);
   }
   // One-time refresh bonus (REFRESH_BONUS). Called from the refresh
   // button's inline onclick in index.html BEFORE the reload, so the
@@ -1257,6 +1375,7 @@
     if (next > 0) bag[itemKey] = next;
     else delete bag[itemKey];
     writeBag(bag);
+    noteStat('u:' + itemKey, n);
     return true;
   }
 
@@ -1742,6 +1861,7 @@
     if (egg.pack) entry.pack = egg.pack;
     else if (!isSoloEgg) entry.pack = 'creature-fusion';
     else if (global.Packs) entry.pack = global.Packs.active();
+    _statsNoteCatch(entry);
     _capStore.add(entry);  // journals just this record
     // Register the hatched fusion (+ its variant) in the Pokédex NOW.
     // Wild catches get marked seen at the encounter (openBattleScreen);
@@ -4356,6 +4476,7 @@
     }
     s.count -= 1;
     _writeCommunityRaw(s);
+    noteStat('u:community_pass');
     if (global.Spawns && global.Spawns.setCommunityDay) global.Spawns.setCommunityDay(s.active);
     _hardRefreshSpawns();
     _scheduleCommunityExpiry();
@@ -4491,6 +4612,7 @@
     bag[key] -= 1;
     if (bag[key] <= 0) delete bag[key];
     writeBag(bag);
+    noteStat('u:' + key);
     const state = { type, startMs: Date.now() };
     try { localStorage.setItem(ACTIVE_INCENSE_KEY, JSON.stringify(state)); } catch (_) {}
     if (global.Spawns && global.Spawns.setActiveIncense) global.Spawns.setActiveIncense(state);
@@ -5518,6 +5640,7 @@
         new Error('capture ' + creatureId + ' vanished mid-evolution'));
       return null;
     }
+    noteStat('evolved');
 
     // Pokédex gets the new fusion (+ its variant) on first evolution.
     try { markFusionSeen(newA, newB, null, newVariant); } catch {}
@@ -5567,6 +5690,7 @@
     const oldSolo = c.solo;
     const updated = { ...c, solo: target };
     if (!_capStore.replaceById(creatureId, updated)) return null;
+    noteStat('evolved');
     // Dex: the new form is seen; the old form's row gets the evolved-away
     // flag (same "Fresh" semantics as fusion caught-away).
     try { markSoloSeen(target, 'auto'); } catch {}
@@ -6526,6 +6650,7 @@
       #creatureInventory .tags-back,
       #creatureInventory .gifts-back,
       #creatureInventory .stats-back,
+      #creatureInventory .statsday-back,
       #creatureInventory .gift-back,
       #creatureInventory .giftcreate-back,
       #creatureInventory .completion-back,
@@ -6586,6 +6711,7 @@
       #creatureInventory .tags-back:hover,
       #creatureInventory .gifts-back:hover,
       #creatureInventory .stats-back:hover,
+      #creatureInventory .statsday-back:hover,
       #creatureInventory .gift-back:hover,
       #creatureInventory .giftcreate-back:hover,
       #creatureInventory .completion-back:hover,
@@ -8484,12 +8610,210 @@
         flex-wrap: wrap;
         margin: 0 auto 12px;
       }
-      /* ── Stats (to be filled in) ── */
-      #creatureInventory .stats-view { display: none; }
-      #creatureInventory .stats-view.show { display: flex; flex-direction: column; }
-      #creatureInventory .stats-empty {
-        text-align: center; font-size: 13px; color: var(--ui-muted, #666); margin: 24px 0;
+      /* ── Stats ── (renderStats / renderStatsDay). Chart colours are set
+         per render on .st-root from the theme (see _stColorVars): --st-bar
+         for single columns, --st-new / --st-fresh / --st-old for the
+         Caught split, --st-h1..4 for calendar shading. */
+      #creatureInventory .stats-view,
+      #creatureInventory .statsday-view { display: none; }
+      #creatureInventory .stats-view.show,
+      #creatureInventory .statsday-view.show { display: flex; flex-direction: column; }
+      #creatureInventory .st-root { display: flex; flex-direction: column; gap: 12px; padding-bottom: 8px; }
+      #creatureInventory .st-seg {
+        display: flex; align-self: center; padding: 3px; gap: 2px; border-radius: 999px;
+        background: var(--ui-hover, rgba(0,0,0,0.06));
+        box-shadow: inset 0 0 0 1px var(--ui-hairline, rgba(0,0,0,0.1));
       }
+      #creatureInventory .st-seg-btn {
+        padding: 6px 13px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+        border: none; border-radius: 999px; background: transparent; color: var(--ui-muted, #666);
+        transition: background 0.15s ease, color 0.15s ease;
+      }
+      #creatureInventory .st-seg-btn.on {
+        background: var(--ui-bg, #fff); color: var(--ui-text, #111); box-shadow: 0 1px 3px rgba(0,0,0,0.18);
+      }
+      #creatureInventory .st-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      #creatureInventory .st-step {
+        width: 38px; height: 38px; flex: none; border-radius: 50%; font: inherit; font-size: 22px; line-height: 1;
+        cursor: pointer; color: var(--ui-text, #111); background: transparent;
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
+      }
+      #creatureInventory .st-step:disabled { opacity: 0.25; cursor: default; }
+      #creatureInventory .st-period { display: flex; flex-direction: column; align-items: center; text-align: center; min-width: 0; }
+      #creatureInventory .st-period b { font-size: 16px; color: var(--ui-text, #111); }
+      #creatureInventory .st-period span { font-size: 12px; color: var(--ui-muted, #666); }
+      #creatureInventory .st-chips {
+        display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 0 -20px; padding: 2px 20px;
+        -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%);
+        mask-image: linear-gradient(90deg, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%);
+      }
+      #creatureInventory .st-chips::-webkit-scrollbar { display: none; }
+      #creatureInventory .st-chip {
+        flex: none; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap;
+        border-radius: 999px; color: var(--ui-text, #111); background: transparent;
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
+      }
+      #creatureInventory .st-chip.on {
+        color: var(--ui-accent-text, #fff); background: var(--ui-accent, #b06cff); border-color: var(--ui-accent, #b06cff); font-weight: 600;
+      }
+      #creatureInventory .st-card {
+        padding: 14px 14px 12px; border-radius: calc(var(--ui-radius, 8px) + 4px);
+        background: var(--ui-bg, #fff); border: 1px solid var(--ui-hairline, rgba(0,0,0,0.1));
+        box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+      }
+      #creatureInventory .st-main-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+      #creatureInventory .st-hero { min-width: 0; }
+      #creatureInventory .st-hero-label {
+        font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ui-muted, #666);
+      }
+      /* The one big number: the app's own face, proportional figures. */
+      #creatureInventory .st-hero-v { font-size: 40px; font-weight: 700; line-height: 1.1; color: var(--ui-text, #111); }
+      #creatureInventory .st-hero-d { font-size: 12px; color: var(--ui-muted, #666); margin-top: 4px; }
+      #creatureInventory .st-modes {
+        display: flex; flex: none; gap: 2px; padding: 2px; border-radius: 10px;
+        background: var(--ui-hover, rgba(0,0,0,0.05));
+      }
+      #creatureInventory .st-mode {
+        width: 34px; height: 30px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+        border: none; border-radius: 8px; background: transparent; color: var(--ui-muted, #666);
+      }
+      #creatureInventory .st-mode.on { background: var(--ui-bg, #fff); color: var(--ui-text, #111); box-shadow: 0 1px 2px rgba(0,0,0,0.16); }
+      #creatureInventory .st-readout {
+        min-height: 38px; margin: 8px 0 6px; font-size: 13px; color: var(--ui-text, #111);
+        display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px;
+      }
+      #creatureInventory .st-ro-main { flex: 1 1 100%; }
+      #creatureInventory .st-ro-split { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; font-size: 12px; color: var(--ui-muted, #666); }
+      #creatureInventory .st-ro-split .k,
+      #creatureInventory .st-key i { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+      #creatureInventory .st-ro-hint { flex: 1 1 100%; font-size: 12px; color: var(--ui-muted, #666); opacity: 0.8; }
+      #creatureInventory .st-open,
+      #creatureInventory .st-link {
+        padding: 5px 12px; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; border-radius: 999px;
+        color: var(--ui-text, #111); background: transparent; border: 1px solid var(--ui-border, rgba(0,0,0,0.18));
+      }
+      #creatureInventory .st-link { align-self: center; margin-top: 8px; }
+      #creatureInventory .st-plot { position: relative; min-height: 60px; }
+      #creatureInventory .st-svg { display: block; overflow: visible; touch-action: manipulation; }
+      #creatureInventory .st-svg .st-grid { stroke: var(--ui-hairline, rgba(0,0,0,0.12)); stroke-opacity: 0.55; stroke-width: 1; shape-rendering: crispEdges; }
+      #creatureInventory .st-svg .st-tick,
+      #creatureInventory .st-svg .st-xl { font-size: 10px; fill: var(--ui-muted, #666); font-family: inherit; }
+      #creatureInventory .st-svg .st-xl.today { fill: var(--ui-text, #111); font-weight: 700; }
+      #creatureInventory .st-svg .st-band { fill: var(--ui-hover, rgba(0,0,0,0.04)); }
+      #creatureInventory .st-svg .st-band-t { font-size: 10px; fill: var(--ui-muted, #666); font-family: inherit; font-style: italic; }
+      #creatureInventory .st-svg .st-col { transition: opacity 0.15s ease; }
+      #creatureInventory .st-svg .st-col.dim { opacity: 0.35; }
+      #creatureInventory .st-svg .st-hit { cursor: pointer; }
+      #creatureInventory .st-legend { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 12px; margin-top: 8px; font-size: 11px; color: var(--ui-muted, #666); }
+      #creatureInventory .st-legend:empty { display: none; }
+      #creatureInventory .st-sws { display: inline-flex; gap: 3px; }
+      #creatureInventory .st-sw { display: inline-block; width: 11px; height: 11px; border-radius: 3px; }
+      #creatureInventory .st-sw.ut { margin-right: 5px; vertical-align: -1px; box-shadow: inset 0 0 0 1px var(--ui-hairline, rgba(0,0,0,0.2)); }
+      #creatureInventory .st-note { margin-top: 6px; font-size: 11px; color: var(--ui-muted, #666); text-align: center; }
+      #creatureInventory .st-note:empty { display: none; }
+      /* Calendar shading: l0 = nothing that day. */
+      #creatureInventory .l0 { background: var(--ui-hover, rgba(0,0,0,0.05)); }
+      #creatureInventory .l1 { background: var(--st-h1); }
+      #creatureInventory .l2 { background: var(--st-h2); }
+      #creatureInventory .l3 { background: var(--st-h3); }
+      #creatureInventory .l4 { background: var(--st-h4); }
+      #creatureInventory .st-day { border: none; padding: 0; font: inherit; cursor: pointer; color: var(--ui-text, #111); position: relative; }
+      #creatureInventory .st-day.future { opacity: 0.35; cursor: default; }
+      #creatureInventory .st-day.ut { background: transparent; box-shadow: inset 0 0 0 1px var(--ui-hairline, rgba(0,0,0,0.12)); }
+      #creatureInventory .st-day.pre { background: transparent; cursor: default; }
+      #creatureInventory .st-day.today { box-shadow: 0 0 0 2px var(--ui-bg, #fff), 0 0 0 3.5px var(--ui-text, #111); z-index: 1; }
+      #creatureInventory .st-day.sel { box-shadow: 0 0 0 2px var(--ui-bg, #fff), 0 0 0 4px var(--st-bar); z-index: 2; }
+      /* Day numbers on the strongest shades: white or ink, per shade. */
+      #creatureInventory .st-day.l3 .dn, #creatureInventory .st-day.l3 .dv,
+      #creatureInventory .st-day.l3 .dw { color: var(--st-ink3, #fff); }
+      #creatureInventory .st-day.l4 .dn, #creatureInventory .st-day.l4 .dv,
+      #creatureInventory .st-day.l4 .dw { color: var(--st-ink4, #fff); }
+      #creatureInventory .st-cal-week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+      #creatureInventory .st-cal-week .st-day {
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+        aspect-ratio: 0.72; border-radius: 10px;
+      }
+      #creatureInventory .st-cal-week .dw { font-size: 10px; color: var(--ui-muted, #666); }
+      #creatureInventory .st-cal-week .dn { font-size: 16px; font-weight: 700; }
+      #creatureInventory .st-cal-week .dv { font-size: 11px; min-height: 13px; }
+      #creatureInventory .st-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+      #creatureInventory .st-dow { text-align: center; font-size: 10px; color: var(--ui-muted, #666); padding-bottom: 2px; }
+      #creatureInventory .st-cal-grid .st-day { aspect-ratio: 1; border-radius: 8px; display: flex; align-items: flex-start; justify-content: flex-start; }
+      #creatureInventory .st-cal-grid .dn { font-size: 11px; padding: 4px 0 0 5px; }
+      #creatureInventory .st-cal-year { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px 10px; }
+      #creatureInventory .st-mini-name { font-size: 11px; font-weight: 600; color: var(--ui-muted, #666); margin-bottom: 3px; }
+      #creatureInventory .st-cal-grid.mini { gap: 2px; }
+      #creatureInventory .st-cal-grid.mini .st-day { border-radius: 2px; }
+      #creatureInventory .st-cal-grid.mini .st-day.today,
+      #creatureInventory .st-cal-grid.mini .st-day.sel { box-shadow: 0 0 0 1.5px var(--ui-text, #111); }
+      #creatureInventory .st-cal-all { display: flex; flex-direction: column; gap: 10px; }
+      #creatureInventory .st-strip-y { font-size: 11px; font-weight: 600; color: var(--ui-muted, #666); margin-bottom: 3px; }
+      #creatureInventory .st-strip-grid { display: grid; grid-template-rows: repeat(7, auto); grid-auto-flow: column; grid-auto-columns: 1fr; gap: 1px; }
+      #creatureInventory .st-strip-grid .st-day,
+      #creatureInventory .st-strip-grid .st-pad { aspect-ratio: 1; border-radius: 1.5px; }
+      #creatureInventory .st-strip-grid .st-day.today,
+      #creatureInventory .st-strip-grid .st-day.sel { box-shadow: 0 0 0 1.5px var(--ui-text, #111); }
+      #creatureInventory .st-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      #creatureInventory .st-table th { text-align: left; font-size: 11px; font-weight: 600; color: var(--ui-muted, #666); padding: 4px 6px; border-bottom: 1px solid var(--ui-hairline, rgba(0,0,0,0.12)); }
+      #creatureInventory .st-table td { padding: 7px 6px; border-bottom: 1px solid var(--ui-hairline, rgba(0,0,0,0.08)); font-variant-numeric: tabular-nums; cursor: pointer; }
+      #creatureInventory .st-table th:not(:first-child),
+      #creatureInventory .st-table td:not(:first-child) { text-align: right; }
+      #creatureInventory .st-table tr.sel td { background: var(--ui-hover, rgba(0,0,0,0.05)); }
+      #creatureInventory .st-h { font-size: 13px; font-weight: 700; color: var(--ui-text, #111); margin: 6px 2px -4px; }
+      #creatureInventory .st-h span { font-weight: 400; color: var(--ui-muted, #666); }
+      #creatureInventory .st-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+      #creatureInventory .st-tile {
+        position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; min-width: 0;
+        padding: 10px 11px; font: inherit; text-align: left; cursor: pointer; color: var(--ui-text, #111);
+        border-radius: var(--ui-radius, 8px); background: var(--ui-bg, #fff);
+        border: 1px solid var(--ui-hairline, rgba(0,0,0,0.1));
+      }
+      #creatureInventory .st-tile.on { border-color: var(--st-bar); box-shadow: inset 0 0 0 1px var(--st-bar); }
+      #creatureInventory .st-tile-l { font-size: 11px; color: var(--ui-muted, #666); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+      #creatureInventory .st-tile-v { font-size: 20px; font-weight: 700; line-height: 1.2; }
+      #creatureInventory .st-tile-d { font-size: 11px; color: var(--ui-muted, #666); min-height: 14px; }
+      #creatureInventory .st-spark { position: absolute; right: 9px; bottom: 9px; }
+      #creatureInventory .st-spark polyline { stroke: var(--ui-muted, #888); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; opacity: 0.7; }
+      #creatureInventory .st-spark circle { fill: var(--st-bar); stroke: var(--ui-bg, #fff); stroke-width: 1.5; }
+      #creatureInventory .st-more { display: flex; flex-direction: column; gap: 12px; }
+      #creatureInventory .st-card-t { font-size: 14px; font-weight: 700; color: var(--ui-text, #111); margin-bottom: 10px; }
+      #creatureInventory .st-card-s { font-size: 12px; color: var(--ui-muted, #666); margin: -6px 0 8px; }
+      #creatureInventory .st-card-n { font-size: 11px; color: var(--ui-muted, #666); margin-top: 8px; }
+      #creatureInventory .st-rows { display: flex; flex-direction: column; gap: 7px; }
+      #creatureInventory .st-row { display: grid; grid-template-columns: minmax(84px, 38%) 1fr auto; align-items: center; gap: 10px; font-size: 13px; }
+      #creatureInventory .st-row-k { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--ui-text, #111); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      #creatureInventory .st-row-k .type-chip { margin: 0; }
+      #creatureInventory .st-track { height: 8px; border-radius: 4px; background: var(--ui-hover, rgba(0,0,0,0.05)); overflow: hidden; }
+      #creatureInventory .st-fill { display: block; height: 100%; border-radius: 0 4px 4px 0; background: var(--st-bar); }
+      #creatureInventory .st-row-n { min-width: 2.5em; text-align: right; font-variant-numeric: tabular-nums; color: var(--ui-text, #111); }
+      #creatureInventory .st-item-ic { width: 20px; height: 20px; object-fit: contain; flex: none; }
+      #creatureInventory .st-hours { margin-top: 2px; }
+      #creatureInventory .st-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+      #creatureInventory .st-fact {
+        display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; padding: 10px;
+        font: inherit; text-align: left; color: var(--ui-text, #111);
+        border-radius: var(--ui-radius, 8px); background: var(--ui-hover, rgba(0,0,0,0.04)); border: none;
+      }
+      #creatureInventory button.st-fact { cursor: pointer; }
+      #creatureInventory .st-fact-v { font-size: 22px; font-weight: 700; line-height: 1.15; }
+      #creatureInventory .st-fact-v.st-fact-place { font-size: 17px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #creatureInventory .st-fact-l { font-size: 11px; color: var(--ui-muted, #666); line-height: 1.3; }
+      #creatureInventory .st-fact-art { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; }
+      #creatureInventory .st-fact-art img { max-width: 100%; max-height: 100%; image-rendering: pixelated; }
+      #creatureInventory .st-empty { text-align: center; font-size: 13px; color: var(--ui-muted, #666); margin: 18px 0; }
+      #creatureInventory .st-daynums { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+      #creatureInventory .st-daynum {
+        display: flex; flex-direction: column; padding: 9px 10px; border-radius: var(--ui-radius, 8px);
+        background: var(--ui-bg, #fff); border: 1px solid var(--ui-hairline, rgba(0,0,0,0.1));
+      }
+      #creatureInventory .st-daynum .v { font-size: 18px; font-weight: 700; color: var(--ui-text, #111); }
+      #creatureInventory .st-daynum .l { font-size: 11px; color: var(--ui-muted, #666); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      #creatureInventory .st-focusrow {
+        display: flex; justify-content: space-between; width: 100%; padding: 10px 12px; font: inherit; font-size: 13px;
+        text-align: left; cursor: pointer; color: var(--ui-text, #111); border-radius: var(--ui-radius, 8px);
+        background: var(--ui-bg, #fff); border: 1px solid var(--ui-hairline, rgba(0,0,0,0.1));
+      }
+      #creatureInventory .st-focusrow span { color: var(--ui-muted, #666); }
       /* ── Gifts ── */
       #creatureInventory .gifts-view,
       #creatureInventory .gift-view,
@@ -10267,6 +10591,11 @@
           <h3 class="subview-title">Stats</h3>
           <div class="stats-body"></div>
         </div>
+        <div class="statsday-view">
+          <button class="statsday-back" type="button" aria-label="back">←</button>
+          <h3 class="subview-title">Day</h3>
+          <div class="statsday-body"></div>
+        </div>
         <div class="gifts-view">
           <button class="gifts-back" type="button" aria-label="back">←</button>
           <h3 class="subview-title">Gifts</h3>
@@ -10681,6 +11010,7 @@
     panel.querySelector('.focusuntil-back').addEventListener('click', popView);
     panel.querySelector('.gifts-back').addEventListener('click', popView);
     panel.querySelector('.stats-back').addEventListener('click', popView);
+    panel.querySelector('.statsday-back').addEventListener('click', popView);
     panel.querySelector('.gift-back').addEventListener('click', popView);
     panel.querySelector('.giftcreate-back').addEventListener('click', popView);
     panel.querySelector('.gift-pick-cancel').addEventListener('click', popView);
@@ -10982,6 +11312,7 @@
     panel.querySelector('.focusuntil-view').classList.remove('show');
     panel.querySelector('.gifts-view').classList.remove('show');
     panel.querySelector('.stats-view').classList.remove('show');
+    panel.querySelector('.statsday-view').classList.remove('show');
     panel.querySelector('.gift-view').classList.remove('show');
     panel.querySelector('.giftcreate-view').classList.remove('show');
     // Collection list in pick mode (Send a gift → Choose a pokémon).
@@ -11105,8 +11436,13 @@
         renderFocusSession(top);
         return;
       case 'stats':
-        renderStats();
+        // Shown first: the charts size themselves to the view's width.
         panel.querySelector('.stats-view').classList.add('show');
+        renderStats(top, true);
+        return;
+      case 'statsDay':
+        panel.querySelector('.statsday-view').classList.add('show');
+        renderStatsDay(top);
         return;
       case 'gifts':
         renderGifts();
@@ -12988,12 +13324,13 @@
     const sent = _readJson(GIFTS_SENT_KEY, {});
     sent[to] = day;
     localStorage.setItem(GIFTS_SENT_KEY, JSON.stringify(sent));
+    noteStat('gs');
     return { gift };
   }
   // Undo a queued gift (cancelled, or refused by the server).
   async function _giftRefund(entry) {
     const r = entry.refund || {};
-    if (r.item) grantItem(r.item.key, r.item.count);
+    if (r.item) grantItem(r.item.key, r.item.count, { quiet: true });
     if (r.creature) {
       await _whenReady();
       if (!_rawCapture(r.creature.id)) {
@@ -13106,6 +13443,7 @@
     // Mark first: a crash mid-way can lose a payout but never repeat one.
     opened.add(id);
     localStorage.setItem(GIFTS_OPENED_KEY, JSON.stringify([...opened]));
+    noteStat('go');
     if (g.item && typeof g.item.key === 'string' && GIFT_COUNTS.includes(g.item.count)
         && !g.item.key.includes('pass')) {
       grantItem(g.item.key, g.item.count);
@@ -13325,12 +13663,1113 @@
   let _giftsShown = GIFTS_PAGE;
   let _giftsRenderSeq = 0;
   function showGifts() { _giftsShown = GIFTS_PAGE; pushView({ view: 'gifts' }); }
-  // Stats: the header's last button. A placeholder for now.
+  // ── Stats page ──────────────────────────────────────────────────
+  // { view: 'stats', range, anchor, metric, mode, sel } and the per-day
+  // { view: 'statsDay', day }. Week / Month / Year / All time, stepped
+  // with ‹ ›; one stat at a time in a graph (columns), a calendar (days
+  // shaded by amount) or a table, plus tiles for every stat, breakdowns
+  // and highlights. Data comes from the collection, the dex, the walking
+  // tracker, focus history and the stats journal (above), gathered by
+  // _stIndex() into one record per local day.
+  //
+  // Drawing follows the usual data-viz rules: one hue (the theme's
+  // accent) at computed lightness steps — _stRamp solves each step's
+  // contrast against the panel, so every theme gets readable shades
+  // (checked across all of them); columns start at zero on one scale;
+  // a single readout instead of a label on every mark; tap targets as
+  // big as their column; and a table view for every chart.
+  const ST_METRICS = [
+    { id: 'caught', label: 'Caught', noun: 'caught' },
+    { id: 'shiny', label: 'Shinies', noun: 'shiny' },
+    { id: 'legend', label: 'Legendaries', noun: 'legendary' },
+    { id: 'dex', label: 'Dex discoveries', noun: 'new in the dex' },
+    { id: 'steps', label: 'Steps', noun: 'steps' },
+    { id: 'dist', label: 'Distance', noun: 'walked', fmt: 'dist' },
+    { id: 'spins', label: 'Pokéstop spins', noun: 'spins', tracked: true },
+    { id: 'enc', label: 'Encounters', noun: 'encounters', tracked: true },
+    { id: 'balls', label: 'Balls thrown', noun: 'thrown', tracked: true },
+    { id: 'used', label: 'Items used', noun: 'used', tracked: true },
+    { id: 'found', label: 'Items found', noun: 'found', tracked: true },
+    { id: 'evolved', label: 'Evolved', noun: 'evolved', tracked: true },
+    { id: 'hatched', label: 'Eggs hatched', noun: 'hatched' },
+    { id: 'candy', label: 'Candy earned', noun: 'candy', tracked: true },
+    { id: 'focus', label: 'Focus time', noun: 'of focus', fmt: 'dur', key: 'focusMs' },
+    { id: 'gifts', label: 'Gifts', noun: 'gifts', tracked: true, keys: ['gs', 'go'] },
+  ];
+  const ST_METRIC = new Map(ST_METRICS.map((m) => [m.id, m]));
+  const ST_RANGES = [['week', 'Week'], ['month', 'Month'], ['year', 'Year'], ['all', 'All time']];
+  const ST_SOURCES = [['wild', 'Out and about'], ['bubble', 'Bubble centres'], ['radar', 'Radar'],
+    ['incense', 'Incense'], ['legend', 'Legendary spawns'], ['focus', 'Focus mode'], ['egg', 'Hatched']];
+  const ST_PREFS_KEY = 'cc.statsPrefs';
+  const ST_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const _stVal = (m, r) => {
+    if (!r) return 0;
+    if (m.keys) return m.keys.reduce((s, k) => s + (r[k] || 0), 0);
+    return r[m.key || m.id] || 0;
+  };
+  const _stInc = (o, k, n) => { o[k] = (o[k] || 0) + (n == null ? 1 : n); };
+
+  function _stSourceOf(c) {
+    const id = typeof c.spawnId === 'string' ? c.spawnId : '';
+    if (c.fromEgg) return 'egg';
+    if (c.fromFocus || id.startsWith('focus:')) return 'focus';
+    if (c.fromIncense || id.startsWith('I:')) return 'incense';
+    if (id.startsWith('L:')) return 'legend';
+    if (id.startsWith('E:B:')) return 'bubble';
+    if (id.startsWith('E:')) return 'radar';
+    return 'wild';
+  }
+  function _stTypesOf(c, cache) {
+    const solo = isSoloCreature(c);
+    const k = solo ? 's:' + c.solo : c.speciesA + '-' + c.speciesB;
+    let t = cache.get(k);
+    if (!t) {
+      if (solo) {
+        const s = global.Specials && global.Specials.get(c.solo);
+        t = (s && Array.isArray(s.types)) ? s.types : [];
+      } else t = fusionTypesFor(c.speciesA, c.speciesB) || [];
+      t = Array.from(new Set(t.filter(Boolean)));
+      cache.set(k, t);
+    }
+    return t;
+  }
+  function _stIsLegendary(c) {
+    if (isSoloCreature(c)) return false;
+    try { return isLegendarySpecies(c.speciesA) || isLegendarySpecies(c.speciesB); }
+    catch (e) { return false; }
+  }
+
+  // Every source, as one record per local day ('YYYY-MM-DD'): numbers
+  // (caught, shiny, steps, …), maps (types, src, usedBy, foundBy) and the
+  // day's catches (caps) and focus sessions.
+  let _stIdx = null;
+  function _stIndex() {
+    const days = new Map();
+    const rec = (k) => {
+      let r = days.get(k);
+      if (!r) { r = { caps: [], types: {}, src: {}, usedBy: {}, foundBy: {}, focus: [] }; days.set(k, r); }
+      return r;
+    };
+    let first = null;
+    const saw = (k) => { if (!first || k < first) first = k; };
+    const tcache = new Map();
+    for (const c of readCapturedCreatures()) {
+      if (!c || !c.caughtAt || c.gift) continue;   // gifts count under Gifts, not Caught
+      const t = c.caughtAt.timestamp;
+      if (!Number.isFinite(t)) continue;
+      const k = _localDayKey(t);
+      saw(k);
+      const r = rec(k);
+      r.caps.push(c);
+      _stInc(r, 'caught');
+      if (typeof c.shinyVariant === 'number' && c.shinyVariant >= 0) _stInc(r, 'shiny');
+      if (_stIsLegendary(c)) _stInc(r, 'legend');
+      const src = _stSourceOf(c);
+      _stInc(r.src, src);
+      if (src === 'egg') _stInc(r, 'hatched');
+      for (const ty of _stTypesOf(c, tcache)) _stInc(r.types, ty);
+    }
+    let seen = {};
+    try { seen = readSeenFusions() || {}; } catch (e) { /* not loaded */ }
+    for (const key of Object.keys(seen)) {
+      const e = seen[key];
+      if (!e || !Number.isFinite(e.firstSeen)) continue;
+      const k = _localDayKey(e.firstSeen);
+      saw(k);
+      _stInc(rec(k), 'dex');
+    }
+    const sum = _summaryCache || {};
+    for (const key of Object.keys(sum)) {
+      const v = Number(sum[key]);
+      if (!(v > 0)) continue;
+      const bar = key.indexOf('|');
+      const k = bar < 0 ? key : key.slice(0, bar);
+      if (!ST_DAY_RE.test(k)) continue;
+      if (bar < 0) { saw(k); _stInc(rec(k), 'dist', v); }
+      else if (key.slice(bar) === _STEPS_KEY_SUFFIX) { saw(k); _stInc(rec(k), 'steps', v); }
+    }
+    let hist = [];
+    try { hist = _focusRead().history || []; } catch (e) { /* none */ }
+    hist.forEach((h, i) => {
+      if (!h || h.outcome === 'cancelled' || !Number.isFinite(h.endedAtMs)) return;
+      const k = _localDayKey(h.endedAtMs);
+      saw(k);
+      const r = rec(k);
+      _stInc(r, 'focusMs', Number(h.qualifyingMs) || 0);
+      r.focus.push({ idx: i, h });
+    });
+    const j = exportStats() || { since: Date.now(), days: {} };
+    for (const k of Object.keys(j.days || {})) {
+      const jd = j.days[k];
+      if (!jd || !ST_DAY_RE.test(k)) continue;
+      let any = false;
+      const r = rec(k);
+      for (const key of Object.keys(jd)) {
+        const n = Number(jd[key]);
+        if (!(n > 0)) continue;
+        any = true;
+        if (key.startsWith('u:')) {
+          const it = key.slice(2);
+          _stInc(r.usedBy, it, n);
+          _stInc(r, 'used', n);
+          const meta = getItemMeta(it);
+          if (meta && meta.catchShakeRate) _stInc(r, 'balls', n);
+        } else if (key.startsWith('f:')) {
+          _stInc(r.foundBy, key.slice(2), n);
+          _stInc(r, 'found', n);
+        } else _stInc(r, key, n);
+      }
+      if (any) saw(k);
+    }
+    const sinceMs = Number.isFinite(j.since) ? j.since : Date.now();
+    const today = _localDayKey();
+    _stIdx = { days, first: first && first < today ? first : today, since: _localDayKey(sinceMs), sinceMs };
+    return _stIdx;
+  }
+
+  // ── Dates ──
+  function _stDay0(ms) { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d; }
+  function _stAddDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+  function _stParseDay(k) { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d); }
+  function _stEachDay(s, e, fn) {
+    for (let d = new Date(s); d < e; d.setDate(d.getDate() + 1)) fn(_localDayKey(d), d);
+  }
+  const _stFmtDate = (d, o) => d.toLocaleDateString(undefined, o);
+  // The period around `anchor` and its buckets (days, or months / years
+  // for the long ranges), plus where ‹ and › lead.
+  function _stPeriod(range, anchorMs, idx) {
+    const a = new Date(anchorMs);
+    const today = _stDay0(Date.now());
+    let start, end, unit, prev = null, next = null;
+    if (range === 'week') {
+      start = _stDay0(anchorMs);
+      start = _stAddDays(start, -((start.getDay() + 6) % 7));   // weeks start on Monday
+      end = _stAddDays(start, 7);
+      unit = 'day';
+      prev = _stAddDays(start, -7); next = end;
+    } else if (range === 'month') {
+      start = new Date(a.getFullYear(), a.getMonth(), 1);
+      end = new Date(a.getFullYear(), a.getMonth() + 1, 1);
+      unit = 'day';
+      prev = new Date(a.getFullYear(), a.getMonth() - 1, 1); next = end;
+    } else if (range === 'year') {
+      start = new Date(a.getFullYear(), 0, 1);
+      end = new Date(a.getFullYear() + 1, 0, 1);
+      unit = 'month';
+      prev = new Date(a.getFullYear() - 1, 0, 1); next = end;
+    } else {
+      const f = _stParseDay(idx.first);
+      start = new Date(f.getFullYear(), f.getMonth(), 1);
+      end = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+      const months = (end.getFullYear() - start.getFullYear()) * 12 + end.getMonth() - start.getMonth();
+      unit = months > 36 ? 'year' : 'month';
+      if (unit === 'year') { start = new Date(f.getFullYear(), 0, 1); end = new Date(today.getFullYear() + 1, 0, 1); }
+    }
+    const buckets = [];
+    for (let t = new Date(start); t < end;) {
+      const s = new Date(t);
+      if (unit === 'day') t.setDate(t.getDate() + 1);
+      else if (unit === 'month') t.setMonth(t.getMonth() + 1);
+      else t.setFullYear(t.getFullYear() + 1);
+      buckets.push({ s, e: new Date(t) });
+    }
+    const first = _stParseDay(idx.first);
+    return {
+      range, unit, start, end, buckets,
+      isCurrent: today >= start && today < end,
+      prevMs: prev && start > first ? prev.getTime() : null,
+      prevStart: prev,
+      nextMs: next && next <= today ? next.getTime() : null,
+    };
+  }
+  function _stPeriodLabel(p) {
+    const s = p.start, e = _stAddDays(p.end, -1), now = new Date();
+    if (p.range === 'week') {
+      const sameY = s.getFullYear() === e.getFullYear();
+      const main = `${_stFmtDate(s, { month: 'short', day: 'numeric' })} – `
+        + (s.getMonth() === e.getMonth() ? e.getDate() : _stFmtDate(e, { month: 'short', day: 'numeric' }))
+        + (sameY && s.getFullYear() === now.getFullYear() ? '' : ', ' + e.getFullYear());
+      const lastWk = _stAddDays(_stDay0(Date.now()), -7);
+      const sub = p.isCurrent ? 'This week' : (lastWk >= s && lastWk < p.end ? 'Last week' : '');
+      return [main, sub];
+    }
+    if (p.range === 'month') {
+      return [_stFmtDate(s, { month: 'long', year: 'numeric' }), p.isCurrent ? 'This month' : ''];
+    }
+    if (p.range === 'year') return [String(s.getFullYear()), p.isCurrent ? 'This year' : ''];
+    return ['All time', 'since ' + _stFmtDate(s, { month: 'short', year: 'numeric' })];
+  }
+  function _stBucketLabel(p, b, long) {
+    if (p.unit === 'day') {
+      return long ? _stFmtDate(b.s, { weekday: 'short', month: 'short', day: 'numeric' })
+        : (p.range === 'week' ? _stFmtDate(b.s, { weekday: 'short' }) : String(b.s.getDate()));
+    }
+    if (p.unit === 'month') {
+      return long ? _stFmtDate(b.s, { month: 'long', year: 'numeric' })
+        : _stFmtDate(b.s, { month: p.buckets.length > 12 ? 'narrow' : 'short' });
+    }
+    return String(b.s.getFullYear());
+  }
+
+  // Sum the day records in [s, e): numbers add, maps merge, lists join.
+  // Also splits Caught at the journal's start (before it, New / Fresh
+  // weren't recorded) and counts catches that took a ball, for the
+  // balls-per-catch highlight.
+  function _stAgg(idx, s, e) {
+    const out = { caps: [], types: {}, src: {}, usedBy: {}, foundBy: {}, focus: [], caughtT: 0, caughtU: 0, wildT: 0 };
+    _stEachDay(s, e, (k) => {
+      const r = idx.days.get(k);
+      if (!r) return;
+      for (const f of Object.keys(r)) {
+        const v = r[f];
+        if (typeof v === 'number') out[f] = (out[f] || 0) + v;
+        else if (Array.isArray(v)) { for (const x of v) out[f].push(x); }
+        else if (v && typeof v === 'object') { for (const kk of Object.keys(v)) _stInc(out[f], kk, v[kk]); }
+      }
+      if (k >= idx.since) {
+        out.caughtT += r.caught || 0;
+        for (const sk of ['wild', 'bubble', 'radar', 'incense', 'legend']) out.wildT += r.src[sk] || 0;
+      } else out.caughtU += r.caught || 0;
+    });
+    return out;
+  }
+  // This period against the one before. A period still running is
+  // compared up to the same point (this week so far vs last week's
+  // first as-many days), so a Wednesday isn't measured against a
+  // whole week.
+  function _stCompare(idx, p) {
+    const today = _stDay0(Date.now());
+    let e = p.end, pe = p.start;
+    if (p.isCurrent) {
+      e = _stAddDays(today, 1);
+      const n = Math.round((e - p.start) / 86400000);
+      pe = p.prevStart ? _stAddDays(p.prevStart, n) : p.start;
+      if (pe > p.start) pe = p.start;
+    }
+    return {
+      cur: _stAgg(idx, p.start, e),
+      prev: p.prevStart ? _stAgg(idx, p.prevStart, pe) : null,
+      days: Math.max(1, Math.round((Math.min(e, _stAddDays(today, 1)) - p.start) / 86400000)),
+    };
+  }
+
+  // ── Numbers ──
+  function _stCompact(v) {
+    const a = Math.abs(v);
+    if (a >= 1e6) return (v / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace(/\.0$/, '') + 'M';
+    if (a >= 1e4) return (v / 1e3).toFixed(a >= 1e5 ? 0 : 1).replace(/\.0$/, '') + 'K';
+    return Math.round(v).toLocaleString();
+  }
+  function _stFmt(m, v, short) {
+    if (m.fmt === 'dist') {
+      if (v < 1000) return Math.round(v) + ' m';
+      const km = v / 1000;
+      return (km < 10 ? km.toFixed(2) : km < 100 ? km.toFixed(1) : Math.round(km).toLocaleString()) + ' km';
+    }
+    if (m.fmt === 'dur') {
+      const min = Math.round(v / 60000);
+      if (min < 60) return min + ' m';
+      const h = Math.floor(min / 60);
+      return h + ' h' + (h < 10 && min % 60 ? ' ' + (min % 60) + ' m' : '');
+    }
+    return short ? _stCompact(v) : Math.round(v).toLocaleString();
+  }
+  function _stTickFmt(m, top) {
+    if (m.fmt === 'dist') return top >= 2000 ? (v) => +(v / 1000).toFixed(1) + ' km' : (v) => Math.round(v) + ' m';
+    if (m.fmt === 'dur') return top >= 2 * 3600000 ? (v) => +(v / 3600000).toFixed(1) + 'h' : (v) => Math.round(v / 60000) + 'm';
+    return (v) => _stCompact(v);
+  }
+  // A clean axis top and ticks (0, step, …) for values up to `max`.
+  function _stNice(max, m) {
+    let unit = 1;
+    if (m.fmt === 'dur') unit = 60000;
+    if (!(max > 0)) return { top: 2 * unit, step: unit };
+    const raw = max / 2;
+    const p = 10 ** Math.floor(Math.log10(raw));
+    const f = raw / p;
+    let step = (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p;
+    if (m.fmt === 'dur') step = Math.max(step, 15 * 60000);
+    else if (m.fmt !== 'dist') step = Math.max(1, Math.round(step));
+    return { top: step * Math.ceil(max / step), step };
+  }
+  function _stDelta(m, cur, prev, p) {
+    if (!prev || p.range === 'all') return '';
+    const what = p.range === 'week' ? 'week' : p.range === 'month' ? 'month' : 'year';
+    const vs = p.isCurrent ? `vs last ${what} at this point` : `vs the ${what} before`;
+    const d = cur - prev;
+    if (!cur && !prev) return '';
+    if (Math.abs(d) < 1e-9) return `No change ${vs}`;
+    const pct = prev ? Math.round(Math.abs(d) / prev * 100) : 0;
+    return `${d > 0 ? '▲' : '▼'} ${_stFmt(m, Math.abs(d), true)}${pct ? ` (${pct}%)` : ''} ${vs}`;
+  }
+
+  // ── Colour: one hue at computed lightness steps ──
+  const _stS2L = (c) => c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  const _stL2S = (c) => c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055;
+  function _stLab(rgb) {
+    const [r, g, b] = rgb.map(_stS2L);
+    const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+    const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+    const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+    return [0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+      1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+      0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s];
+  }
+  function _stLch(L, C, h) {
+    // OKLCH → sRGB, chroma pulled in until it fits the gamut.
+    for (let c = C; ; c *= 0.92) {
+      const A = c * Math.cos(h), B = c * Math.sin(h);
+      const l = (L + 0.3963377774 * A + 0.2158037573 * B) ** 3;
+      const mm = (L - 0.1055613458 * A - 0.0638541728 * B) ** 3;
+      const s = (L - 0.0894841775 * A - 1.2914855480 * B) ** 3;
+      const lin = [4.0767416621 * l - 3.3077115913 * mm + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * mm - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * mm + 1.7076147010 * s];
+      if (lin.every((v) => v >= -0.0005 && v <= 1.0005) || c < 0.002) {
+        return lin.map((v) => Math.min(1, Math.max(0, _stL2S(Math.max(0, v)))));
+      }
+    }
+  }
+  const _stLum = (rgb) => { const [r, g, b] = rgb.map(_stS2L); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+  const _stContrast = (a, b) => { const x = _stLum(a), y = _stLum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  const _stHex = (rgb) => '#' + rgb.map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('');
+  // `n` steps of the accent's hue from contrast `lo` to `hi` against the
+  // panel background — darker than it on light themes, lighter on dark
+  // ones, so "more" always reads as "stronger". Palest first.
+  // `grey`: no hue at all (the de-emphasis colour).
+  function _stRamp(accentRgb, bgRgb, n, lo, hi, grey) {
+    const [, aA, aB] = _stLab(accentRgb);
+    const bgL = _stLab(bgRgb)[0];
+    const C = grey ? 0 : Math.min(0.2, Math.hypot(aA, aB)), h = Math.atan2(aB, aA);
+    const down = bgL > 0.55;
+    const at = (L) => _stLch(L, C, h);
+    const solve = (k) => {
+      let x = bgL, y = down ? 0 : 1;
+      for (let i = 0; i < 40; i++) {
+        const mid = (x + y) / 2;
+        if (_stContrast(at(mid), bgRgb) < k) x = mid; else y = mid;
+      }
+      return y;
+    };
+    const Llo = solve(lo);
+    const Lhi = solve(Math.min(hi, _stContrast(at(down ? 0.02 : 0.98), bgRgb) * 0.97));
+    const out = [];
+    for (let i = 0; i < n; i++) out.push(_stHex(at(Llo + (Lhi - Llo) * (n === 1 ? 1 : i / (n - 1)))));
+    return out;
+  }
+  function _stRgbOf(css) {
+    const m = String(css || '').match(/rgba?\(\s*([\d.]+)[ ,]+([\d.]+)[ ,]+([\d.]+)(?:[ ,/]+([\d.]+%?))?/);
+    if (!m) return null;
+    if (m[4] != null && parseFloat(m[4]) === 0) return null;   // transparent
+    return [m[1], m[2], m[3]].map((x) => Math.min(255, +x) / 255);
+  }
+  // The theme's chart colours, as CSS custom properties for .st-root.
+  function _stColorVars(el) {
+    const probe = document.createElement('span');
+    probe.style.cssText = 'position:absolute;visibility:hidden;color:var(--ui-accent,#b06cff);background-color:var(--ui-bg,#fff)';
+    el.appendChild(probe);
+    const cs = getComputedStyle(probe);
+    const acc = _stRgbOf(cs.color) || [0.69, 0.42, 1];
+    const bg = _stRgbOf(cs.backgroundColor) || [1, 1, 1];
+    probe.remove();
+    const stack = _stRamp(acc, bg, 3, 2.2, 8);    // already caught · Fresh · New
+    const heat = _stRamp(acc, bg, 4, 2.2, 8);
+    const bar = _stRamp(acc, bg, 1, 4, 4)[0];
+    const pre = _stRamp(acc, bg, 1, 2.4, 2.4, true)[0];   // catches before New/Fresh were counted
+    // Day numbers on the two strongest calendar shades: white or ink,
+    // whichever reads better on each.
+    const ink = (hex) => {
+      const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+      return _stContrast(c, [1, 1, 1]) >= _stContrast(c, [0.07, 0.07, 0.07]) ? '#fff' : '#111';
+    };
+    return `--st-bar:${bar};--st-pre:${pre};--st-old:${stack[0]};--st-fresh:${stack[1]};--st-new:${stack[2]};`
+      + `--st-ink3:${ink(heat[2])};--st-ink4:${ink(heat[3])};`
+      + heat.map((c, i) => `--st-h${i + 1}:${c}`).join(';');
+  }
+
+  // ── Columns (SVG) ──
+  // cols: [{ v: [bottom…top segment values], x: axis label, today, key }]
+  // colors: one CSS colour per segment level. `band`: [from, to) column
+  // range shaded as "not tracked yet".
+  function _stColumnsSvg(o) {
+    const W = Math.max(200, Math.round(o.w)), PH = o.ph || 150, T = 8, AX = o.noAxis ? 4 : 20;
+    const L = o.noTicks ? 4 : 36, R = 4, H = T + PH + AX;
+    const n = o.cols.length;
+    const totals = o.cols.map((c) => c.v.reduce((a, b) => a + b, 0));
+    const nice = _stNice(Math.max(0, ...totals), o.metric);
+    const pw = W - L - R, slot = pw / n;
+    const bw = Math.max(2, Math.min(o.maxBar || 24, slot * 0.64));
+    const y = (v) => T + PH - (v / nice.top) * PH;
+    const tick = _stTickFmt(o.metric, nice.top);
+    let s = `<svg class="st-svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${escapeHtml(o.aria || '')}">`;
+    if (o.band && o.band[1] > o.band[0]) {
+      const x0 = L + slot * o.band[0], x1 = L + slot * o.band[1];
+      s += `<rect class="st-band" x="${x0}" y="${T}" width="${x1 - x0}" height="${PH}"/>`;
+      if (x1 - x0 >= 70) s += `<text class="st-band-t" x="${(x0 + x1) / 2}" y="${T + 14}" text-anchor="middle">not tracked yet</text>`;
+    }
+    if (!o.noTicks) {
+      for (let v = 0; v <= nice.top + 1e-9; v += nice.step) {
+        s += `<line class="st-grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>`
+          + `<text class="st-tick" x="${L - 6}" y="${y(v) + 3.5}" text-anchor="end">${escapeHtml(tick(v))}</text>`;
+      }
+    } else s += `<line class="st-grid" x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}"/>`;
+    o.cols.forEach((c, i) => {
+      const cx = L + slot * (i + 0.5), x0 = cx - bw / 2;
+      const dim = o.sel != null && o.sel !== i;
+      let base = T + PH;
+      const segs = c.v.map((v, li) => [v, li]).filter(([v]) => v > 0);
+      let g = '';
+      segs.forEach(([v, li], si) => {
+        let hgt = (v / nice.top) * PH;
+        const top = si === segs.length - 1;
+        const gap = si > 0 ? 2 : 0;                     // surface gap between segments
+        const yb = base - gap;
+        hgt = Math.max(top ? 1.5 : 0, hgt - gap);
+        const yt = yb - hgt;
+        const r = top ? Math.min(4, bw / 2, hgt) : 0;   // 4px rounded data end, square base
+        const fill = (c.colors || o.colors)[li];
+        g += r > 0.3
+          ? `<path d="M${x0},${yb}V${yt + r}Q${x0},${yt} ${x0 + r},${yt}H${x0 + bw - r}Q${x0 + bw},${yt} ${x0 + bw},${yt + r}V${yb}Z" fill="${fill}"/>`
+          : `<rect x="${x0}" y="${yt}" width="${bw}" height="${Math.max(0, hgt)}" fill="${fill}"/>`;
+        base = yt;
+      });
+      s += `<g class="st-col${dim ? ' dim' : ''}${o.sel === i ? ' sel' : ''}">${g}</g>`;
+      if (!o.noAxis && c.x) {
+        s += `<text class="st-xl${c.today ? ' today' : ''}" x="${cx}" y="${H - 5}" text-anchor="middle">${escapeHtml(c.x)}</text>`;
+      }
+      if (o.hits) {
+        s += `<rect class="st-hit" data-i="${i}" x="${L + slot * i}" y="0" width="${slot}" height="${H}" fill="transparent"><title>${escapeHtml(c.title || '')}</title></rect>`;
+      }
+    });
+    return s + '</svg>';
+  }
+  // A small trend line (tiles): de-emphasis ink, the latest point marked.
+  function _stSpark(vals, w, h) {
+    const n = vals.length;
+    if (n < 2) return '';
+    const max = Math.max(...vals);
+    const px = (i) => 2 + (w - 4) * i / (n - 1);
+    const py = (v) => h - 3 - (max > 0 ? (v / max) * (h - 6) : 0);
+    const pts = vals.map((v, i) => `${px(i).toFixed(1)},${py(v).toFixed(1)}`).join(' ');
+    return `<svg class="st-spark" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true">`
+      + `<polyline points="${pts}" fill="none"/>`
+      + `<circle cx="${px(n - 1)}" cy="${py(vals[n - 1])}" r="2.6"/></svg>`;
+  }
+  // Calendar shading: 0 = nothing, 1–4 by quartile of the busy days in
+  // view (or by rank when there are only a few distinct amounts), so one
+  // huge day doesn't wash the rest out.
+  function _stHeatLevels(vals) {
+    const nz = vals.filter((v) => v > 0).sort((a, b) => a - b);
+    if (!nz.length) return () => 0;
+    const uniq = Array.from(new Set(nz));
+    if (uniq.length <= 4) {
+      const rank = new Map(uniq.map((v, i) => [v, 4 - (uniq.length - 1 - i)]));
+      return (v) => (v > 0 ? rank.get(v) || 1 : 0);
+    }
+    const q = (f) => nz[Math.min(nz.length - 1, Math.floor(f * nz.length))];
+    const t1 = q(0.25), t2 = q(0.5), t3 = q(0.75);
+    return (v) => (v <= 0 ? 0 : v <= t1 ? 1 : v <= t2 ? 2 : v <= t3 ? 3 : 4);
+  }
+
+  function _stPrefs() {
+    try { return JSON.parse(localStorage.getItem(ST_PREFS_KEY) || '{}') || {}; } catch (e) { return {}; }
+  }
+  function _stSavePrefs(top) {
+    try { localStorage.setItem(ST_PREFS_KEY, JSON.stringify({ range: top.range, metric: top.metric, mode: top.mode })); }
+    catch (e) { /* not important */ }
+  }
   function showStats() { pushView({ view: 'stats' }); }
-  function renderStats() {
-    const body = document.querySelector('#creatureInventory .stats-body');
+  // `rebuild`: gather the data again (opening the view); interactions
+  // inside it reuse the last gathering.
+  function renderStats(top, rebuild) {
+    const panel = document.getElementById('creatureInventory');
+    const body = panel && panel.querySelector('.stats-body');
     if (!body) return;
-    body.innerHTML = '<div class="stats-empty">Nothing here yet — stats are on the way.</div>';
+    if (!top) top = _viewStack[_viewStack.length - 1] || { view: 'stats' };
+    const pr = _stPrefs();
+    if (!top.range) top.range = ST_RANGES.some(([r]) => r === pr.range) ? pr.range : 'week';
+    if (!Number.isFinite(top.anchor)) top.anchor = Date.now();
+    if (!ST_METRIC.has(top.metric)) top.metric = ST_METRIC.has(pr.metric) ? pr.metric : 'caught';
+    if (!['graph', 'calendar', 'table'].includes(top.mode)) top.mode = ['graph', 'calendar', 'table'].includes(pr.mode) ? pr.mode : 'graph';
+    if (rebuild || !_stIdx) _stIndex();
+    // Walking data loads from IndexedDB; draw now and again once it's in.
+    if (!_summaryCache && !top._waitSummary) {
+      top._waitSummary = true;
+      _ensureSummaryLoaded().then(() => {
+        const t = _viewStack[_viewStack.length - 1];
+        if (t === top) renderStats(top, true);
+      }).catch(() => {});
+    }
+    const idx = _stIdx;
+    const p = _stPeriod(top.range, top.anchor, idx);
+    const cmp = _stCompare(idx, p);
+    const [plabel, psub] = _stPeriodLabel(p);
+    const m = ST_METRIC.get(top.metric);
+    body.innerHTML = `<div class="st-root">
+      <div class="st-seg" role="group" aria-label="Range">${ST_RANGES.map(([r, l]) =>
+        `<button type="button" class="st-seg-btn${r === top.range ? ' on' : ''}" data-range="${r}" aria-pressed="${r === top.range}">${l}</button>`).join('')}</div>
+      <div class="st-nav">
+        <button type="button" class="st-step" data-step="-1" aria-label="earlier"${p.prevMs == null ? ' disabled' : ''}>‹</button>
+        <div class="st-period"><b>${escapeHtml(plabel)}</b>${psub ? `<span>${escapeHtml(psub)}</span>` : ''}</div>
+        <button type="button" class="st-step" data-step="1" aria-label="later"${p.nextMs == null ? ' disabled' : ''}>›</button>
+      </div>
+      <div class="st-chips" role="group" aria-label="Stat">${ST_METRICS.map((mm) =>
+        `<button type="button" class="st-chip${mm.id === top.metric ? ' on' : ''}" data-m="${mm.id}" aria-pressed="${mm.id === top.metric}">${escapeHtml(mm.label)}</button>`).join('')}</div>
+      <section class="st-card st-main"></section>
+      <div class="st-h">At a glance <span>· tap one to chart it</span></div>
+      <div class="st-tiles"></div>
+      <div class="st-more"></div>
+    </div>`;
+    const root = body.querySelector('.st-root');
+    root.setAttribute('style', _stColorVars(root));
+    _stRenderMain(top, p, cmp);
+    _stRenderTiles(top, p, cmp);
+    _stRenderMore(top, p, cmp);
+    // Keep the picked chip in view.
+    const chip = root.querySelector('.st-chip.on');
+    if (chip && chip.scrollIntoView) {
+      const row = chip.parentElement;
+      row.scrollLeft = Math.max(0, chip.offsetLeft - (row.clientWidth - chip.offsetWidth) / 2);
+    }
+    const go = (fn) => { fn(); top.sel = null; _stSavePrefs(top); renderStats(top); };
+    root.querySelectorAll('.st-seg-btn').forEach((b) => b.addEventListener('click', () =>
+      go(() => { top.range = b.dataset.range; top.anchor = Date.now(); })));
+    root.querySelectorAll('.st-step').forEach((b) => b.addEventListener('click', () => {
+      const ms = b.dataset.step === '-1' ? p.prevMs : p.nextMs;
+      if (ms != null) go(() => { top.anchor = ms; });
+    }));
+    root.querySelectorAll('.st-chip').forEach((b) => b.addEventListener('click', () =>
+      go(() => { top.metric = b.dataset.m; })));
+    const sheet = panel.querySelector('.sheet');
+    if (sheet && rebuild && Number.isFinite(top.scrollY)) sheet.scrollTop = top.scrollY;
+  }
+
+  // The main card: the period's total with its change, a readout for
+  // the tapped column / day, and the chart, calendar or table.
+  function _stRenderMain(top, p, cmp) {
+    const root = document.querySelector('#creatureInventory .st-root');
+    const card = root && root.querySelector('.st-main');
+    if (!card) return;
+    const idx = _stIdx;
+    const m = ST_METRIC.get(top.metric);
+    const total = _stVal(m, cmp.cur);
+    const prevTotal = cmp.prev ? _stVal(m, cmp.prev) : 0;
+    const delta = _stDelta(m, total, prevTotal, p);
+    const icon = (k) => ({
+      graph: '<path d="M4 20h16"/><path d="M7 20v-6"/><path d="M12 20V6"/><path d="M17 20v-10"/>',
+      calendar: '<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
+      table: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+    })[k];
+    card.innerHTML = `
+      <div class="st-main-head">
+        <div class="st-hero">
+          <div class="st-hero-label">${escapeHtml(m.label)}</div>
+          <div class="st-hero-v">${escapeHtml(_stFmt(m, total))}</div>
+        </div>
+        <div class="st-modes" role="group" aria-label="View">${['graph', 'calendar', 'table'].map((k) =>
+          `<button type="button" class="st-mode${top.mode === k ? ' on' : ''}" data-mode="${k}" aria-label="${k}" aria-pressed="${top.mode === k}" title="${k[0].toUpperCase() + k.slice(1)}">`
+          + `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon(k)}</svg></button>`).join('')}</div>
+      </div>
+      ${delta ? `<div class="st-hero-d">${escapeHtml(delta)}</div>` : ''}
+      <div class="st-readout"></div>
+      <div class="st-plot"></div>
+      <div class="st-legend"></div>
+      <div class="st-note"></div>`;
+    const plot = card.querySelector('.st-plot');
+    const w = plot.clientWidth || 320;
+    const today = _localDayKey();
+    const stacked = m.id === 'caught';
+    // One value list per bucket: Caught splits into New · Fresh · already
+    // caught on days the journal covers; before that it's one grey column.
+    const buckets = p.buckets.map((b) => {
+      const a = _stAgg(idx, b.s, b.e);
+      const total = _stVal(m, a);
+      let v = [total], colors = null;
+      if (stacked) {
+        const nw = a.new || 0, fr = a.fresh || 0;
+        const old = Math.max(0, a.caughtT - nw - fr);
+        v = [a.caughtU, nw, fr, old];
+      }
+      const key = p.unit === 'day' ? _localDayKey(b.s) : null;
+      return { b, a, total, v, colors, key,
+        today: p.unit === 'day' ? key === today : (new Date() >= b.s && new Date() < b.e),
+        future: b.s > new Date(),
+        untracked: m.tracked && _localDayKey(_stAddDays(b.e, -1)) < idx.since };
+    });
+    const colors = stacked
+      ? ['var(--st-pre)', 'var(--st-new)', 'var(--st-fresh)', 'var(--st-old)']
+      : ['var(--st-bar)'];
+    // Readout: the tapped column / day, else the period at a glance.
+    const readout = card.querySelector('.st-readout');
+    const split = (a) => {
+      if (!stacked) return '';
+      const nw = a.new || 0, fr = a.fresh || 0, old = Math.max(0, a.caughtT - nw - fr);
+      const parts = [];
+      if (a.caughtT) parts.push(`<i class="k" style="background:var(--st-new)"></i>${nw.toLocaleString()} New`,
+        `<i class="k" style="background:var(--st-fresh)"></i>${fr.toLocaleString()} Fresh`,
+        `<i class="k" style="background:var(--st-old)"></i>${old.toLocaleString()} already caught`);
+      if (a.caughtU) parts.push(`<i class="k" style="background:var(--st-pre)"></i>${a.caughtU.toLocaleString()} before tracking`);
+      return parts.length ? `<div class="st-ro-split">${parts.join('<span class="sep"></span>')}</div>` : '';
+    };
+    const sel = top.sel;
+    if (sel && sel.day) {
+      const r = idx.days.get(sel.day);
+      const d = _stParseDay(sel.day);
+      const a = _stAgg(idx, d, _stAddDays(d, 1));
+      readout.innerHTML = `<div class="st-ro-main"><b>${escapeHtml(_stFmtDate(d, { weekday: 'long', month: 'long', day: 'numeric' }))}</b>`
+        + ` · ${escapeHtml(_stFmt(m, _stVal(m, r)))} ${escapeHtml(m.noun)}</div>${split(a)}`
+        + `<button type="button" class="st-open" data-day="${sel.day}">See the day ›</button>`;
+    } else if (sel && Number.isInteger(sel.i) && buckets[sel.i]) {
+      const bk = buckets[sel.i];
+      const lbl = _stBucketLabel(p, bk.b, true);
+      let open = '';
+      if (p.unit === 'day') open = `<button type="button" class="st-open" data-day="${bk.key}">See the day ›</button>`;
+      else open = `<button type="button" class="st-open" data-zoom="${bk.b.s.getTime()}">Open ${escapeHtml(p.unit === 'month' ? _stFmtDate(bk.b.s, { month: 'long' }) : String(bk.b.s.getFullYear()))} ›</button>`;
+      readout.innerHTML = `<div class="st-ro-main"><b>${escapeHtml(lbl)}</b> · ${escapeHtml(_stFmt(m, bk.total))} ${escapeHtml(m.noun)}</div>${split(bk.a)}${open}`;
+    } else {
+      const perDay = total / cmp.days;
+      const avg = total && p.range !== 'week'
+        ? `<div class="st-ro-main">About ${escapeHtml(_stFmt(m, perDay, true))} a day${p.isCurrent ? ' so far' : ''}</div>` : '';
+      readout.innerHTML = avg + split(cmp.cur)
+        + `<div class="st-ro-hint">Tap a ${top.mode === 'calendar' ? 'day' : top.mode === 'table' ? 'row' : 'column'} for details</div>`;
+    }
+    // The plot itself.
+    if (top.mode === 'graph') {
+      let band = null;
+      if (m.tracked) {
+        let k = 0;
+        while (k < buckets.length && buckets[k].untracked) k++;
+        if (k) band = [0, k];
+      }
+      const cols = buckets.map((bk, i) => ({
+        v: bk.v,
+        x: _stAxisLabel(p, i),
+        today: bk.today,
+        title: `${_stBucketLabel(p, bk.b, true)}: ${_stFmt(m, bk.total)}`,
+      }));
+      plot.innerHTML = _stColumnsSvg({ w, cols, colors, metric: m, hits: true, band,
+        sel: sel && Number.isInteger(sel.i) ? sel.i : null,
+        aria: `${m.label}, ${_stPeriodLabel(p)[0]}: ${_stFmt(m, total)} in all` });
+      plot.querySelectorAll('.st-hit').forEach((h) => h.addEventListener('click', () => {
+        const i = +h.dataset.i;
+        top.sel = (sel && sel.i === i) ? null : { i };
+        _stRenderMain(top, p, cmp);
+      }));
+    } else if (top.mode === 'calendar') {
+      plot.innerHTML = _stCalendarHtml(p, m, top, idx);
+      plot.querySelectorAll('[data-day]').forEach((c) => c.addEventListener('click', () => {
+        if (c.classList.contains('future')) return;
+        top.sel = (sel && sel.day === c.dataset.day) ? null : { day: c.dataset.day };
+        _stRenderMain(top, p, cmp);
+      }));
+    } else {
+      plot.innerHTML = `<table class="st-table"><thead><tr><th>${p.unit === 'day' ? 'Day' : p.unit === 'month' ? 'Month' : 'Year'}</th>`
+        + (stacked ? '<th>New</th><th>Fresh</th>' : '') + `<th>${escapeHtml(m.label)}</th></tr></thead><tbody>`
+        + buckets.slice().reverse().filter((bk) => !bk.future).map((bk) => {
+          const i = buckets.indexOf(bk);
+          return `<tr data-i="${i}" class="${sel && sel.i === i ? 'sel' : ''}"><td>${escapeHtml(_stBucketLabel(p, bk.b, true))}</td>`
+            + (stacked ? `<td>${(bk.a.new || 0).toLocaleString()}</td><td>${(bk.a.fresh || 0).toLocaleString()}</td>` : '')
+            + `<td>${bk.untracked ? '—' : escapeHtml(_stFmt(m, bk.total))}</td></tr>`;
+        }).join('') + '</tbody></table>';
+      plot.querySelectorAll('tr[data-i]').forEach((tr) => tr.addEventListener('click', () => {
+        const i = +tr.dataset.i;
+        top.sel = (sel && sel.i === i) ? null : { i };
+        _stRenderMain(top, p, cmp);
+      }));
+    }
+    // Legend + notes.
+    const legend = card.querySelector('.st-legend');
+    if (top.mode === 'calendar') {
+      legend.innerHTML = `<span>Less</span><span class="st-sws">${[0, 1, 2, 3, 4].map((l) => `<i class="st-sw l${l}"></i>`).join('')}</span><span>More</span>`
+        + (m.tracked && _localDayKey(p.start) < idx.since ? '<span class="st-key"><i class="st-sw ut"></i>Not tracked yet</span>' : '');
+    } else if (stacked && top.mode === 'graph') {
+      legend.innerHTML = [['--st-new', 'New'], ['--st-fresh', 'Fresh'], ['--st-old', 'Already caught']]
+        .map(([v, l]) => `<span class="st-key"><i style="background:var(${v})"></i>${l}</span>`).join('')
+        + (buckets.some((bk) => bk.v[0] > 0) ? '<span class="st-key"><i style="background:var(--st-pre)"></i>Before tracking</span>' : '');
+    } else legend.innerHTML = '';
+    const note = card.querySelector('.st-note');
+    const sinceTxt = _stFmtDate(_stParseDay(idx.since), { month: 'short', day: 'numeric', year: 'numeric' });
+    note.textContent = m.tracked ? `Counted since ${sinceTxt}, when Stats began.`
+      : stacked ? `New and Fresh are counted since ${sinceTxt}; catches before that show in grey.`
+      : (m.id === 'dex' ? 'Pokémon you saw for the very first time.'
+        : m.id === 'steps' ? 'Steps come from the pedometer (Settings), on days it ran.' : '');
+    card.querySelectorAll('.st-mode').forEach((b) => b.addEventListener('click', () => {
+      top.mode = b.dataset.mode;
+      top.sel = null;
+      _stSavePrefs(top);
+      _stRenderMain(top, p, cmp);
+    }));
+    card.querySelectorAll('.st-open').forEach((b) => b.addEventListener('click', () => {
+      if (b.dataset.day) pushView({ view: 'statsDay', day: b.dataset.day });
+      else if (b.dataset.zoom) {
+        pushView({ view: 'stats', range: p.unit === 'month' ? 'month' : 'year',
+          anchor: +b.dataset.zoom, metric: top.metric, mode: top.mode });
+      }
+    }));
+  }
+  function _stAxisLabel(p, i) {
+    const b = p.buckets[i].s;
+    if (p.unit === 'day') {
+      if (p.range === 'week') return _stFmtDate(b, { weekday: 'short' }).slice(0, 3);
+      const d = b.getDate();
+      return (d === 1 || d % 7 === 1) && d < 29 ? String(d) : '';
+    }
+    if (p.unit === 'month') {
+      if (p.buckets.length <= 12) return _stFmtDate(b, { month: 'narrow' });
+      if (b.getMonth() === 0) return "'" + String(b.getFullYear()).slice(2);
+      return p.buckets.length <= 24 && b.getMonth() % 3 === 0 ? _stFmtDate(b, { month: 'narrow' }) : '';
+    }
+    return p.buckets.length > 8 && i % 2 ? '' : String(b.getFullYear());
+  }
+  // Calendar per range: a week strip with numbers, a month grid, twelve
+  // small months for a year, or a strip of weeks per year for all time.
+  function _stCalendarHtml(p, m, top, idx) {
+    const today = _localDayKey();
+    const now = new Date();
+    const valOf = (k) => _stVal(m, idx.days.get(k));
+    const s = p.range === 'all' ? new Date(_stParseDay(idx.first).getFullYear(), 0, 1) : p.start;
+    const e = p.range === 'all' ? new Date(now.getFullYear() + 1, 0, 1) : p.end;
+    const vals = [];
+    _stEachDay(s, e, (k) => vals.push(valOf(k)));
+    const lvl = _stHeatLevels(vals);
+    const sel = top.sel && top.sel.day;
+    const cell = (d, tag, inner) => {
+      const k = _localDayKey(d);
+      const v = valOf(k);
+      const future = d > now && k !== today;
+      const untracked = m.tracked && k < idx.since;
+      const pre = k < idx.first;   // before anything was recorded: blank, not "a quiet day"
+      const cls = `st-day l${future || untracked || pre ? 0 : lvl(v)}${k === today ? ' today' : ''}${future ? ' future' : ''}${pre ? ' pre' : ''}`
+        + `${untracked ? ' ut' : ''}${sel === k ? ' sel' : ''}`;
+      const lab = `${_stFmtDate(d, { weekday: 'short', month: 'short', day: 'numeric' })}: ${untracked ? 'not tracked yet' : _stFmt(m, v) + ' ' + m.noun}`;
+      return `<${tag} class="${cls}" data-day="${k}" title="${escapeHtml(lab)}"${tag === 'button' ? ` type="button" aria-label="${escapeHtml(lab)}"` : ''}>${inner || ''}</${tag}>`;
+    };
+    const dows = [1, 2, 3, 4, 5, 6, 0].map((i) => _stFmtDate(new Date(2024, 0, 7 + i), { weekday: 'narrow' }));
+    if (p.range === 'week') {
+      let h = '<div class="st-cal-week">';
+      _stEachDay(p.start, p.end, (k, d) => {
+        const v = valOf(k);
+        const fut = d > now && k !== today;
+        h += cell(new Date(d), 'button', `<span class="dw">${escapeHtml(_stFmtDate(d, { weekday: 'short' }))}</span>`
+          + `<span class="dn">${d.getDate()}</span><span class="dv">${fut ? '' : escapeHtml(_stFmt(m, v, true))}</span>`);
+      });
+      return h + '</div>';
+    }
+    const monthGrid = (y, mo, mini) => {
+      const first = new Date(y, mo, 1);
+      const lead = (first.getDay() + 6) % 7;
+      let h = `<div class="st-cal-grid${mini ? ' mini' : ''}">`;
+      if (!mini) h += dows.map((x) => `<span class="st-dow">${escapeHtml(x)}</span>`).join('');
+      for (let i = 0; i < lead; i++) h += '<span class="st-pad"></span>';
+      for (let d = new Date(first); d.getMonth() === mo; d.setDate(d.getDate() + 1)) {
+        h += cell(new Date(d), mini ? 'span' : 'button', mini ? '' : `<span class="dn">${d.getDate()}</span>`);
+      }
+      return h + '</div>';
+    };
+    if (p.range === 'month') return monthGrid(p.start.getFullYear(), p.start.getMonth(), false);
+    if (p.range === 'year') {
+      let h = '<div class="st-cal-year">';
+      for (let mo = 0; mo < 12; mo++) {
+        const ms = new Date(p.start.getFullYear(), mo, 1);
+        h += `<div class="st-mini"><div class="st-mini-name">${escapeHtml(_stFmtDate(ms, { month: 'short' }))}</div>${monthGrid(ms.getFullYear(), mo, true)}</div>`;
+      }
+      return h + '</div>';
+    }
+    // All time: one strip per year, newest first; columns are weeks.
+    let h = '<div class="st-cal-all">';
+    for (let y = now.getFullYear(); y >= s.getFullYear(); y--) {
+      const jan1 = new Date(y, 0, 1);
+      const lead = (jan1.getDay() + 6) % 7;
+      let g = '';
+      for (let i = 0; i < lead; i++) g += '<span class="st-pad"></span>';
+      for (let d = new Date(jan1); d.getFullYear() === y; d.setDate(d.getDate() + 1)) g += cell(new Date(d), 'span', '');
+      h += `<div class="st-strip"><div class="st-strip-y">${y}</div><div class="st-strip-grid">${g}</div></div>`;
+    }
+    return h + '</div>';
+  }
+
+  // Tiles: every stat for the period, with its change and a trend line;
+  // tapping one charts it above.
+  function _stRenderTiles(top, p, cmp) {
+    const root = document.querySelector('#creatureInventory .st-root');
+    const box = root && root.querySelector('.st-tiles');
+    if (!box) return;
+    const idx = _stIdx;
+    // Trend buckets: the period's own, up to today.
+    const now = new Date();
+    const bks = p.buckets.filter((b) => b.s <= now);
+    const aggs = bks.map((b) => _stAgg(idx, b.s, b.e));
+    box.innerHTML = ST_METRICS.map((m) => {
+      const v = _stVal(m, cmp.cur);
+      const pv = cmp.prev ? _stVal(m, cmp.prev) : null;
+      let d = '';
+      if (pv != null && p.range !== 'all' && (v || pv)) {
+        const diff = v - pv;
+        d = diff === 0 ? 'same' : `${diff > 0 ? '▲' : '▼'} ${_stFmt(m, Math.abs(diff), true)}`;
+      }
+      const series = aggs.map((a) => _stVal(m, a));
+      return `<button type="button" class="st-tile${m.id === top.metric ? ' on' : ''}" data-m="${m.id}">`
+        + `<span class="st-tile-l">${escapeHtml(m.label)}</span>`
+        + `<span class="st-tile-v">${escapeHtml(_stFmt(m, v, true))}</span>`
+        + `<span class="st-tile-d">${escapeHtml(d)}</span>`
+        + (series.some((x) => x > 0) ? _stSpark(series, 64, 24) : '')
+        + `</button>`;
+    }).join('');
+    box.querySelectorAll('.st-tile').forEach((t) => t.addEventListener('click', () => {
+      top.metric = t.dataset.m;
+      top.sel = null;
+      _stSavePrefs(top);
+      renderStats(top);
+      const main = document.querySelector('#creatureInventory .st-main');
+      const sheet = document.querySelector('#creatureInventory .sheet');
+      if (main && sheet) sheet.scrollTo({ top: Math.max(0, main.offsetTop - 60), behavior: 'smooth' });
+    }));
+  }
+
+  // Breakdowns and highlights for the period.
+  function _stRows(rows, max) {
+    return `<div class="st-rows">${rows.map((r) =>
+      `<div class="st-row"><span class="st-row-k">${r.k}</span>`
+      + `<span class="st-track"><span class="st-fill" style="width:${max ? Math.max(1.5, 100 * r.n / max).toFixed(1) : 0}%"></span></span>`
+      + `<span class="st-row-n">${escapeHtml(r.label || r.n.toLocaleString())}</span></div>`).join('')}</div>`;
+  }
+  function _stRenderMore(top, p, cmp) {
+    const root = document.querySelector('#creatureInventory .st-root');
+    const box = root && root.querySelector('.st-more');
+    if (!box) return;
+    const idx = _stIdx;
+    const a = cmp.cur;
+    const sinceTxt = _stFmtDate(_stParseDay(idx.since), { month: 'short', day: 'numeric' });
+    let h = '';
+    // By type.
+    const types = Object.entries(a.types).sort((x, y) => y[1] - x[1]);
+    if (types.length) {
+      const shown = top.allTypes ? types : types.slice(0, 6);
+      h += `<section class="st-card"><div class="st-card-t">Caught by type</div>`
+        + _stRows(shown.map(([t, n]) => ({ k: `<span class="type-chip" style="background:${global.Types.color(t)}">${escapeHtml(global.Types.displayName(t))}</span>`, n })), types[0][1])
+        + (types.length > 6 ? `<button type="button" class="st-link st-alltypes">${top.allTypes ? 'Show fewer' : `Show all ${types.length} types`}</button>` : '')
+        + `<div class="st-card-n">A pokémon counts once for each of its types.</div></section>`;
+    }
+    // How they were caught.
+    const src = ST_SOURCES.map(([k, l]) => ({ k: escapeHtml(l), n: a.src[k] || 0 })).filter((r) => r.n);
+    if (src.length) {
+      h += `<section class="st-card"><div class="st-card-t">How you caught them</div>`
+        + _stRows(src.sort((x, y) => y.n - x.n), Math.max(...src.map((r) => r.n))) + `</section>`;
+    }
+    // Items used / found.
+    for (const [key, title] of [['usedBy', 'Items used'], ['foundBy', 'Items found']]) {
+      const list = Object.entries(a[key]).sort((x, y) => y[1] - x[1]);
+      if (!list.length) continue;
+      h += `<section class="st-card"><div class="st-card-t">${title}</div>`
+        + _stRows(list.slice(0, 10).map(([k, n]) => {
+          const meta = getItemMeta(k) || { name: k };
+          return { k: (meta.icon ? `<img class="st-item-ic" src="${escapeHtml(meta.icon)}" alt="">` : '') + escapeHtml(meta.name), n };
+        }), list[0][1])
+        + `<div class="st-card-n">Counted since ${escapeHtml(sinceTxt)}.</div></section>`;
+    }
+    // When you catch: 24 one-hour columns.
+    if (a.caps.length >= 3) {
+      const hours = new Array(24).fill(0);
+      for (const c of a.caps) hours[new Date(c.caughtAt.timestamp).getHours()]++;
+      const peak = hours.indexOf(Math.max(...hours));
+      const hourTxt = (hh) => new Date(2024, 0, 1, hh).toLocaleTimeString(undefined, { hour: 'numeric' });
+      h += `<section class="st-card"><div class="st-card-t">When you catch</div>`
+        + `<div class="st-card-s">Most often around ${escapeHtml(hourTxt(peak))}</div><div class="st-hours"></div></section>`;
+      box._hours = hours;
+    } else box._hours = null;
+    // Highlights.
+    h += _stHighlights(idx, p, a);
+    box.innerHTML = h || '';
+    if (box._hours) {
+      const el = box.querySelector('.st-hours');
+      const hcount = { id: 'caught', label: 'Caught' };
+      el.innerHTML = _stColumnsSvg({ w: el.clientWidth || 300, ph: 64, noTicks: true, maxBar: 9, metric: hcount,
+        colors: ['var(--st-bar)'],
+        cols: box._hours.map((n, i) => ({ v: [n], x: i % 6 === 0 ? new Date(2024, 0, 1, i).toLocaleTimeString(undefined, { hour: 'numeric' }) : '' })),
+        aria: 'Catches by hour of day' });
+    }
+    const allT = box.querySelector('.st-alltypes');
+    if (allT) allT.addEventListener('click', () => { top.allTypes = !top.allTypes; _stRenderMore(top, p, cmp); });
+    box.querySelectorAll('[data-day]').forEach((b) => b.addEventListener('click', () =>
+      pushView({ view: 'statsDay', day: b.dataset.day })));
+    box.querySelectorAll('[data-cap]').forEach((b) => b.addEventListener('click', () => {
+      const id = b.dataset.cap;
+      if (readCapturedCreatures().some((c) => c && c.id === id)) showDetail(id, [{ id }], 0);
+    }));
+    box.querySelectorAll('img[data-art]').forEach((img) => {
+      const c = readCapturedCreatures().find((x) => x && x.id === img.dataset.art);
+      if (!c) return;
+      try { Promise.resolve(showCreatureArt(img, c, { shinyVariant: c.shinyVariant })).catch(() => {}); }
+      catch (e) { /* no art yet */ }
+    });
+  }
+  function _stHighlights(idx, p, a) {
+    const facts = [];
+    // Best day in the period.
+    let best = null;
+    _stEachDay(p.start, p.end, (k) => {
+      const r = idx.days.get(k);
+      if (r && r.caught && (!best || r.caught > best.n)) best = { k, n: r.caught };
+    });
+    if (best && p.range !== 'week') {
+      facts.push(`<button type="button" class="st-fact" data-day="${best.k}"><span class="st-fact-v">${best.n.toLocaleString()}</span>`
+        + `<span class="st-fact-l">caught on your best day, ${escapeHtml(_stFmtDate(_stParseDay(best.k), { month: 'short', day: 'numeric' }))}</span></button>`);
+    }
+    // Streaks: days in a row with a catch (all time).
+    const caughtDays = Array.from(idx.days.keys()).filter((k) => idx.days.get(k).caught).sort();
+    let longest = 0, run = 0, prev = null;
+    for (const k of caughtDays) {
+      run = prev && _localDayKey(_stAddDays(_stParseDay(prev), 1)) === k ? run + 1 : 1;
+      if (run > longest) longest = run;
+      prev = k;
+    }
+    let current = 0;
+    {
+      let d = _stDay0(Date.now());
+      if (!(idx.days.get(_localDayKey(d)) || {}).caught) d = _stAddDays(d, -1);   // today not over yet
+      while ((idx.days.get(_localDayKey(d)) || {}).caught) { current++; d = _stAddDays(d, -1); }
+    }
+    if (longest > 1) {
+      facts.push(`<div class="st-fact"><span class="st-fact-v">${current}</span><span class="st-fact-l">day${current === 1 ? '' : 's'} in a row with a catch${current ? ' — keep it going!' : ''}</span></div>`);
+      facts.push(`<div class="st-fact"><span class="st-fact-v">${longest}</span><span class="st-fact-l">your longest streak, in days</span></div>`);
+    }
+    // Most caught pokémon.
+    if (a.caps.length) {
+      const counts = new Map();
+      for (const c of a.caps) {
+        const k = isSoloCreature(c) ? 's:' + c.solo : c.speciesA + '-' + c.speciesB;
+        const e = counts.get(k) || { n: 0, c };
+        e.n++;
+        counts.set(k, e);
+      }
+      const top1 = Array.from(counts.values()).sort((x, y) => y.n - x.n)[0];
+      if (top1 && top1.n > 1) {
+        facts.push(`<button type="button" class="st-fact st-fact-poke" data-cap="${escapeHtml(top1.c.id)}">`
+          + `<span class="st-fact-art"><img alt="" data-art="${escapeHtml(top1.c.id)}"></span>`
+          + `<span class="st-fact-v">×${top1.n}</span><span class="st-fact-l">${escapeHtml(creatureName(top1.c))}, your most caught</span></button>`);
+      }
+      // Top place.
+      const places = new Map();
+      for (const c of a.caps) {
+        const pl = c.caughtAt && c.caughtAt.place;
+        const name = pl && (pl.city || pl.country);
+        if (name) places.set(name, (places.get(name) || 0) + 1);
+      }
+      const topPlace = Array.from(places.entries()).sort((x, y) => y[1] - x[1])[0];
+      if (topPlace && places.size > 1) {
+        facts.push(`<div class="st-fact"><span class="st-fact-v st-fact-place">${escapeHtml(topPlace[0])}</span><span class="st-fact-l">where you caught the most (${topPlace[1].toLocaleString()})</span></div>`);
+      }
+    }
+    if (a.balls && a.wildT) {
+      facts.push(`<div class="st-fact"><span class="st-fact-v">${(a.balls / a.wildT).toFixed(1)}</span><span class="st-fact-l">balls thrown per catch</span></div>`);
+    }
+    if (a.shiny && a.caught) {
+      facts.push(`<div class="st-fact"><span class="st-fact-v">1 in ${Math.round(a.caught / a.shiny).toLocaleString()}</span><span class="st-fact-l">of your catches were shiny</span></div>`);
+    }
+    if (a.dist >= 21000) {
+      facts.push(`<div class="st-fact"><span class="st-fact-v">${(a.dist / 42195).toFixed(1)}</span><span class="st-fact-l">marathons walked</span></div>`);
+    } else if (a.steps) {
+      const days = Math.max(1, Math.round((Math.min(p.end, _stAddDays(_stDay0(Date.now()), 1)) - p.start) / 86400000));
+      facts.push(`<div class="st-fact"><span class="st-fact-v">${_stCompact(a.steps / days)}</span><span class="st-fact-l">steps a day on average</span></div>`);
+    }
+    return facts.length ? `<section class="st-card"><div class="st-card-t">Highlights</div><div class="st-facts">${facts.join('')}</div></section>` : '';
+  }
+
+  // { view: 'statsDay', day }: everything from one day — its numbers,
+  // the walk (on the map), focus sessions, items, and the pokémon caught.
+  function renderStatsDay(top) {
+    const panel = document.getElementById('creatureInventory');
+    const body = panel && panel.querySelector('.statsday-body');
+    if (!body || !top || !ST_DAY_RE.test(top.day || '')) return;
+    body.querySelectorAll('.focus-poke-grid').forEach((g) => { if (g._virtCleanup) g._virtCleanup(); });
+    if (!_stIdx) _stIndex();
+    const idx = _stIdx;
+    const d = _stParseDay(top.day);
+    const r = idx.days.get(top.day) || { caps: [], types: {}, src: {}, usedBy: {}, foundBy: {}, focus: [] };
+    const title = panel.querySelector('.statsday-view .subview-title');
+    if (title) title.textContent = _stFmtDate(d, { weekday: 'long', month: 'long', day: 'numeric' });
+    const prevK = _localDayKey(_stAddDays(d, -1)), nextK = _localDayKey(_stAddDays(d, 1));
+    const canNext = nextK <= _localDayKey();
+    const daysAgo = Math.round((_stDay0(Date.now()) - d) / 86400000);
+    const ago = daysAgo === 0 ? 'Today' : daysAgo === 1 ? 'Yesterday'
+      : daysAgo < 60 ? `${daysAgo} days ago` : `${Math.round(daysAgo / 30.4)} months ago`;
+    const nums = ST_METRICS.map((m) => [m, _stVal(m, r)]).filter(([, v]) => v > 0);
+    const caps = r.caps.slice().sort((x, y) => y.caughtAt.timestamp - x.caughtAt.timestamp);
+    let h = `<div class="st-root st-dayroot">
+      <div class="st-nav">
+        <button type="button" class="st-step" data-day="${prevK}" aria-label="previous day">‹</button>
+        <div class="st-period"><b>${escapeHtml(_stFmtDate(d, { month: 'short', day: 'numeric', year: 'numeric' }))}</b><span>${escapeHtml(ago)}</span></div>
+        <button type="button" class="st-step" data-day="${nextK}" aria-label="next day"${canNext ? '' : ' disabled'}>›</button>
+      </div>`;
+    if (!nums.length) h += `<div class="st-empty">Nothing recorded on this day.</div>`;
+    else {
+      h += `<div class="st-daynums">${nums.map(([m, v]) =>
+        `<div class="st-daynum"><span class="v">${escapeHtml(_stFmt(m, v, true))}</span><span class="l">${escapeHtml(m.label)}</span></div>`).join('')}</div>`;
+    }
+    if (r.dist > 0) h += `<button type="button" class="st-link st-walk">Show this day's walk on the map ›</button>`;
+    if (r.focus.length) {
+      h += `<div class="st-h">Focus sessions</div>` + r.focus.map(({ idx: i, h: fh }) =>
+        `<button type="button" class="st-focusrow" data-focus="${i}">${escapeHtml(_focusFmtDur(fh.qualifyingMs))} of focus`
+        + ` · ${(fh.creatures || []).length} pokémon · ${_focusItemCount(fh.items || {})} items <span>›</span></button>`).join('');
+    }
+    for (const [key, t] of [['usedBy', 'Items used'], ['foundBy', 'Items found']]) {
+      const list = Object.entries(r[key] || {}).sort((x, y) => y[1] - x[1]);
+      if (!list.length) continue;
+      h += `<div class="st-h">${t}</div><div class="focus-items">` + list.map(([k, n]) => {
+        const meta = getItemMeta(k) || { name: k };
+        return `<div class="focus-item" title="${escapeHtml(meta.name)}">`
+          + (meta.icon ? `<img src="${escapeHtml(meta.icon)}" alt="">` : '')
+          + `<span class="focus-item-n">×${n}</span><span class="focus-item-name">${escapeHtml(meta.name)}</span></div>`;
+      }).join('') + `</div>`;
+    }
+    if (caps.length) h += `<div class="st-h">${caps.length} pokémon caught <span>· tap one to see it</span></div><div class="focus-poke-grid st-daygrid"></div>`;
+    body.innerHTML = h + '</div>';
+    const root = body.querySelector('.st-root');
+    root.setAttribute('style', _stColorVars(root));
+    body.querySelectorAll('.st-step[data-day]').forEach((b) => b.addEventListener('click', () => {
+      if (b.disabled) return;
+      top.day = b.dataset.day;
+      top.scrollY = 0;
+      renderStatsDay(top);
+    }));
+    const walk = body.querySelector('.st-walk');
+    if (walk) walk.addEventListener('click', () => {
+      showDaycarePathOnMap(top.day).catch((e) => _logCreatureError('stats/walk', e));
+    });
+    body.querySelectorAll('[data-focus]').forEach((b) => b.addEventListener('click', () =>
+      pushView({ view: 'focusSession', idx: +b.dataset.focus })));
+    const grid = body.querySelector('.st-daygrid');
+    if (grid) {
+      const list = caps.map((c) => ({ id: c.id }));
+      const at = new Map(list.map((c, i) => [c.id, i]));
+      virtualizeGrid({
+        scrollEl: panel.querySelector('.sheet'),
+        gridEl: grid,
+        items: caps,
+        cols: 4,
+        rowGap: 6,
+        cardHeight: 98,   // .focus-poke's height
+        initialScrollTop: top.scrollY || 0,
+        makeCardEl(c) {
+          const el = document.createElement('button');
+          el.type = 'button';
+          el.className = 'focus-poke';
+          const name = readNicknames()[c.id] || creatureName(c);
+          el.innerHTML = `<span class="focus-poke-art"><img class="focus-poke-img" alt="">`
+            + (c.shinyVariant != null ? '<svg class="shiny-badge" aria-label="shiny"><use href="#shinyIcon"/></svg>' : '')
+            + `</span><span class="focus-poke-name">${escapeHtml(name)}</span>`;
+          el.title = name;
+          el.addEventListener('click', () => showDetail(c.id, list, at.get(c.id)));
+          return el;
+        },
+        loadSpriteFor(el, c) {
+          const img = el.querySelector('.focus-poke-img');
+          try {
+            Promise.resolve(showCreatureArt(img, c, { shinyVariant: typeof c.shinyVariant === 'number' ? c.shinyVariant : null })).catch(() => {});
+          } catch (e) { /* no art store yet */ }
+        },
+      });
+    }
   }
   async function renderGifts() {
     const panel = document.getElementById('creatureInventory');
@@ -18589,6 +20028,7 @@
   }
 
   function openBattleScreen(spawn) {
+    _statsNoteEncounter(spawn);
     const el = ensureBattleScreen();
     _currentBattleSpawn = spawn;
     // "New" badge on the info bubble's top-left corner:
@@ -18931,6 +20371,9 @@
     // Tag focus-mode grants so the detail view / future tooling can
     // tell them apart from wild catches.
     if (spawn.focus) entry.fromFocus = true;
+    // Stats: New / Fresh, decided before it joins (focus grants pass the
+    // label they already worked out).
+    _statsNoteCatch(entry, opts && 'freshLabel' in opts ? opts.freshLabel : undefined);
     // Journals just this record (localStorage, synchronous) — durable
     // even if IndexedDB is unavailable right now; the collection blob is
     // checkpointed lazily. See CollectionStore.
@@ -21042,7 +22485,7 @@
     // results view groups by it.
     const fresh = enc.solo ? '' : newFreshLabelFor(enc.speciesA, enc.speciesB, seenF);
     try {
-      const entry = await recordCaptureFromSpawn(spawn, { where });
+      const entry = await recordCaptureFromSpawn(spawn, { where, freshLabel: fresh });
       // Register it in the Pokédex now, art included. Wild catches are
       // marked at the encounter screen and hatches in hatchEgg; a grant has
       // neither, so it only reached the dex at the next boot's backfill
@@ -21853,6 +23296,7 @@
 
   function install(map) {
     injectStyles();
+    _statsInit();
     // Resume any incense still within its 30-min window from a previous
     // session (state lives in localStorage / the save file).
     _pushActiveIncenseToSpawns();
@@ -22117,6 +23561,9 @@
     giftsOutbox, giftsCursor, giftsSyncResult, showNewGifts,
     createGift, openGift, cancelGift, showGifts, showGiftCreate,
     grantItem, consumeItem, rollCollectibleItem, getItemMeta,
+    // Stats journal: index.html counts pokéstop spins and carries the
+    // journal in the save file.
+    noteStat, exportStats, mergeStats,
     // One-time refresh-button bonus; also mirrors the claim flag into
     // the save (index.html exports it) so a save round-trip can't
     // re-grant. See grantRefreshBonus.

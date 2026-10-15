@@ -70,6 +70,8 @@ const ctx = {
   writeSeenFusions: (m) => { seen = m; writes++; },
   isFusionOwned: (a, b) => captures.some((c) => c.speciesA === a && c.speciesB === b),
 };
+// Stats-journal hooks (creatures.js "Stats journal") are no-ops here.
+Object.assign(ctx, { noteStat() {}, _statsNoteCatch() {}, _statsNoteEncounter() {} });
 vm.createContext(ctx);
 for (const m of ['function _keepCaptureArt', 'function markFusionCaughtAway',
                  'function _distinctArt',
@@ -125,6 +127,8 @@ const cap = (id, a, b, variant, ts) => ({ id, speciesA: a, speciesB: b, variant,
       markFusionSeen: (a, b, sp, v) => { marked.push([a, b, v]); },
       markFusionShinySeen: () => {},
     };
+    // Stats-journal hooks (creatures.js "Stats journal") are no-ops here.
+    Object.assign(evoCtx, { noteStat() {}, _statsNoteCatch() {}, _statsNoteEncounter() {} });
     vm.createContext(evoCtx);
     for (const m of ['function _keepCaptureArt', 'function markFusionCaughtAway', 'async function performEvolution']) {
       vm.runInContext(extract(m), evoCtx);

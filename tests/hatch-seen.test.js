@@ -73,6 +73,8 @@ function extract(marker) {
     // Stub markFusionSeen to record how it was invoked.
     markFusionSeen: (a, b, spawn, variant) => { seenCalls.push({ a, b, variant }); },
   };
+  // Stats-journal hooks (creatures.js "Stats journal") are no-ops here.
+  Object.assign(ctx, { noteStat() {}, _statsNoteCatch() {}, _statsNoteEncounter() {} });
   vm.createContext(ctx);
   vm.runInContext(extract('async function hatchEgg'), ctx);
 

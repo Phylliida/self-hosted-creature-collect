@@ -143,6 +143,8 @@ function makeCtx(extra) {
       removeItem(k) { delete this._m[k]; },
     },
   }, extra || {});
+  // Stats-journal hooks (creatures.js "Stats journal") are no-ops here.
+  Object.assign(ctx, { noteStat() {}, _statsNoteCatch() {}, _statsNoteEncounter() {} });
   vm.createContext(ctx);
   return ctx;
 }

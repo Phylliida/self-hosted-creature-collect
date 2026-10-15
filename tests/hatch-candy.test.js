@@ -40,6 +40,8 @@ function awardWith(rng) {
     candyRootFor: (idx) => idx,                       // identity: root == species here
     bumpCandy: (idx, n) => { candy[String(idx)] = (candy[String(idx)] || 0) + n; },
   };
+  // Stats-journal hooks (creatures.js "Stats journal") are no-ops here.
+  Object.assign(ctx, { noteStat() {}, _statsNoteCatch() {}, _statsNoteEncounter() {} });
   vm.createContext(ctx);
   vm.runInContext(extract('function awardCandyForCapture'), ctx);
   return { candy, call: (a, b, total) => vm.runInContext(`awardCandyForCapture(${a},${b},${JSON.stringify(total)})`, ctx) };
@@ -115,6 +117,8 @@ function awardWith(rng) {
     _updateEggBubble: () => {},
     awardCandyForCapture: (a, b, total) => { candyCalls.push({ a, b, total }); },
   };
+  // Stats-journal hooks (creatures.js "Stats journal") are no-ops here.
+  Object.assign(ctx, { noteStat() {}, _statsNoteCatch() {}, _statsNoteEncounter() {} });
   vm.createContext(ctx);
   vm.runInContext(extract('async function hatchEgg'), ctx);
   await vm.runInContext('hatchEgg("e1")', ctx);

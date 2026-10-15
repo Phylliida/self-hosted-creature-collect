@@ -98,6 +98,8 @@ function makeCtx(extra) {
   // creatures.js looks item names up through getItemMeta; read this
   // context's ITEMS stub (tests reassign it after creation).
   if (!ctx.getItemMeta) ctx.getItemMeta = (k) => (ctx.ITEMS || {})[k] || null;
+  // Stats-journal hooks (creatures.js "Stats journal") are no-ops here.
+  Object.assign(ctx, { noteStat() {}, _statsNoteCatch() {}, _statsNoteEncounter() {} });
   vm.createContext(ctx);
   return ctx;
 }

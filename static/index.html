@@ -8737,6 +8737,9 @@ function fmtDate(ts) {
         && window.Creatures.isRefreshBonusClaimed()),
       // Focus-mode state: active session (if any) + past-session history.
       focus: JSON.parse(localStorage.getItem('cc.focus.v1') || 'null'),
+      // Stats journal: per-day counts nothing else keeps (items used,
+      // spins, candy earned, …) — see creatures.js "Stats journal".
+      stats: (window.Creatures && window.Creatures.exportStats) ? window.Creatures.exportStats() : null,
       tags: JSON.parse(localStorage.getItem('cc.tags.v1') || '[]'),
       // Daycare slots (capture-id references). Only valid when paired
       // with the captures payload above — IDs that don't match any
@@ -9476,6 +9479,12 @@ function fmtDate(ts) {
       cur.history.sort((a, b) => a.startedAtMs - b.startedAtMs);
       if (!cur.active && data.focus.active) cur.active = data.focus.active;
       localStorage.setItem('cc.focus.v1', JSON.stringify(cur));
+    }
+    // Stats journal: per day and count the larger wins, so re-importing
+    // (or a save from another device) never double-counts.
+    if (data.stats && typeof data.stats === 'object'
+        && window.Creatures && window.Creatures.mergeStats) {
+      window.Creatures.mergeStats(data.stats);
     }
     // Tags: union merge that keeps existing order and appends any new
     // tags from the import. Per-creature tag membership rides along
@@ -12232,6 +12241,8 @@ function fmtDate(ts) {
       ? haversineKm(lastKnownPos.lat, lastKnownPos.lng, stored.lat, stored.lng) * 1000
       : Infinity;
     if (distM > POI_COLLECT_MAX_DISTANCE_M) return;
+    // Stats: one pokéstop spin (the items count as found via grantItem).
+    try { if (window.Creatures.noteStat) window.Creatures.noteStat('spins'); } catch {}
     // Sample 1-6 items.
     const count = 1 + Math.floor(Math.random() * 6);
     const granted = [];

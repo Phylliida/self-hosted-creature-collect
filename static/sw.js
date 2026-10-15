@@ -150,6 +150,8 @@ const TILES_CACHE = 'tiles-v1';
 // tooltip describes the box-relative sizing.
 // Shell bump 2026-10-14 (#37): index.html cancels native drags (Android
 // froze after a long press on a pokémon page's picture).
+// Shell bump 2026-10-14 (#38): index.html counts pokéstop spins for Stats
+// and carries the stats journal in saves.
 
 const APP_SHELL = [
   '/',
