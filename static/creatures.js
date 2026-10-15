@@ -19976,7 +19976,12 @@
       if (_bubbleDrawn) _clearBubbleOverlay();
       return;
     }
-    if (map.isStyleLoaded && !map.isStyleLoaded()) return;
+    // Only the style itself has to be there (adding the source/layers
+    // throws until it is; _bubbleDrawn stays null, so the next tick tries
+    // again). Not map.isStyleLoaded(): that's false while ANY tile on the
+    // map is still loading, so one stuck tile request (seen on phones)
+    // kept the bubbles from coming back after the radar was switched off
+    // and on, or from following you, until the app restarted.
     try { _ensureBubbleLayers(map); } catch (e) { return; }
     const list = global.Spawns.bubblesNear(_userLat, _userLng, BUBBLE_SHOW_RADIUS_M);
     const sig = list.map((b) => b.id + '@' + (b.centerLat ?? b.lat).toFixed(6) + ',' + (b.centerLng ?? b.lng).toFixed(6)).join('|');
