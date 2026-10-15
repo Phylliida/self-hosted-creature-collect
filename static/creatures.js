@@ -8605,8 +8605,9 @@
       }
       /* Launcher row at the top of the bag: Craft incense + Focus mode
          side by side (both reuse .bag-craft styling). */
+      #creatureInventory .bag-launchers .bag-craft { padding-left: 8px; padding-right: 8px; }
       #creatureInventory .bag-launchers {
-        display: flex; justify-content: center; gap: 8px;
+        display: flex; justify-content: center; gap: 6px;
         flex-wrap: wrap;
         margin: 0 auto 12px;
       }
@@ -9813,9 +9814,11 @@
       /* Action icon row — centered on its own line below the
          "Pokémon" title. Tags / Bag / Daycare / Eggs / Dex / Stats. */
       #creatureInventory .header-actions {
-        display: flex; gap: 6px;
+        /* Six buttons: kept tight enough to fit one line on a 360 px
+           phone in every theme (wraps below that, never overflows). */
+        display: flex; gap: 4px;
         justify-content: center;
-        flex-wrap: wrap;          /* six buttons overflow a 320 px screen */
+        flex-wrap: wrap;
         margin: 0 0 8px;
       }
       #creatureInventory .pokedex-link,
@@ -9852,7 +9855,7 @@
       #creatureInventory .header-actions-text .eggs-link,
       #creatureInventory .header-actions-text .bag-link,
       #creatureInventory .header-actions-text .tags-link {
-        padding: 5px 10px;
+        padding: 5px 8px;
         font-size: 12px;
       }
       #creatureInventory .pokedex-link svg,
