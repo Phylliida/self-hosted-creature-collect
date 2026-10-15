@@ -206,5 +206,29 @@ const K = (d) => prun('_localDayKey(__d)', { __d: d });
   ok(!bad.length, '5: every theme gets ordered, readable shades' + (bad.length ? ' — ' + bad.slice(0, 6).join('; ') : ''));
 }
 
+// ── 6. Line view: a monotone curve; calendar cell numbers ──
+{
+  const lctx = { Object, Array, Math, Number, String };
+  vm.createContext(lctx);
+  vm.runInContext(extract('function _stSmoothPath('), lctx);
+  vm.runInContext(extract('function _stCellFmt('), lctx);
+  // Spiky data (SVG y grows downward; 150 = the zero line).
+  const pts = [[0, 150], [10, 20], [20, 150], [30, 150], [40, 140], [50, 30], [60, 31], [70, 150]];
+  const d = vm.runInContext('_stSmoothPath(__p)', Object.assign(lctx, { __p: pts }));
+  const segs = d.split('C').slice(1).map((c) => c.trim().split(/[ ,]+/).map(Number));
+  ok(segs.length === pts.length - 1, '6: one cubic per gap between days');
+  let within = true;
+  segs.forEach((c, i) => {
+    const lo = Math.min(pts[i][1], pts[i + 1][1]) - 1e-6, hi = Math.max(pts[i][1], pts[i + 1][1]) + 1e-6;
+    if (c[1] < lo || c[1] > hi || c[3] < lo || c[3] > hi) within = false;
+  });
+  ok(within, '6: control points stay between neighbouring days (no dips below zero, no invented peaks)');
+  ok(/^M0,150L10,20$/.test(vm.runInContext('_stSmoothPath(__p)', Object.assign(lctx, { __p: pts.slice(0, 2) }))), '6: two days → a straight segment');
+  const cf = (m, v) => vm.runInContext('_stCellFmt(__m, __v)', Object.assign(lctx, { __m: m, __v: v }));
+  ok(cf({}, 7) === '7' && cf({}, 1234) === '1.2K' && cf({}, 23456) === '23K', '6: counts fit a cell (7, 1.2K, 23K)');
+  ok(cf({ fmt: 'dist' }, 5230) === '5.2' && cf({ fmt: 'dist' }, 12400) === '12', '6: distance in km (5.2, 12)');
+  ok(cf({ fmt: 'dur' }, 45 * 60000) === '45m' && cf({ fmt: 'dur' }, 150 * 60000) === '2.5h', '6: focus time (45m, 2.5h)');
+}
+
 console.log(`stats: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

@@ -8705,6 +8705,19 @@
       #creatureInventory .st-svg .st-col { transition: opacity 0.15s ease; }
       #creatureInventory .st-svg .st-col.dim { opacity: 0.35; }
       #creatureInventory .st-svg .st-hit { cursor: pointer; }
+      /* Line view: area wash ~12%, 2.5px line, faint daily line under the
+         average, a crosshair + ringed dot for the day being read. */
+      #creatureInventory .st-linesvg { touch-action: pan-y; }
+      #creatureInventory .st-svg .st-area { fill: var(--st-bar); fill-opacity: 0.12; stroke: none; }
+      #creatureInventory .st-svg .st-line { fill: none; stroke: var(--st-bar); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
+      #creatureInventory .st-svg .st-daily { fill: none; stroke: var(--ui-muted, #888); stroke-width: 0.75; stroke-opacity: 0.3; stroke-linejoin: round; }
+      #creatureInventory .st-svg .st-pt { fill: var(--st-bar); stroke: var(--ui-bg, #fff); stroke-width: 1.5; }
+      #creatureInventory .st-svg .st-cross { stroke: var(--ui-text, #111); stroke-opacity: 0.35; stroke-width: 1; }
+      #creatureInventory .st-svg .st-seldot { fill: var(--st-bar); stroke: var(--ui-bg, #fff); stroke-width: 2; }
+      #creatureInventory .st-svg .st-scrub { cursor: crosshair; }
+      #creatureInventory .st-lk { display: inline-block; width: 14px; height: 2.5px; margin-right: 5px; vertical-align: middle; background: var(--st-bar); border-radius: 2px; }
+      #creatureInventory .st-lk.faint { height: 1px; background: var(--ui-muted, #888); opacity: 0.7; }
+      #creatureInventory .st-ro-avg { color: var(--ui-muted, #666); }
       #creatureInventory .st-legend { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 12px; margin-top: 8px; font-size: 11px; color: var(--ui-muted, #666); }
       #creatureInventory .st-legend:empty { display: none; }
       #creatureInventory .st-sws { display: inline-flex; gap: 3px; }
@@ -8736,11 +8749,12 @@
       }
       #creatureInventory .st-cal-week .dw { font-size: 10px; color: var(--ui-muted, #666); }
       #creatureInventory .st-cal-week .dn { font-size: 16px; font-weight: 700; }
-      #creatureInventory .st-cal-week .dv { font-size: 11px; min-height: 13px; }
+      #creatureInventory .st-cal-week .dv { font-size: 12px; font-weight: 700; min-height: 14px; }
       #creatureInventory .st-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
       #creatureInventory .st-dow { text-align: center; font-size: 10px; color: var(--ui-muted, #666); padding-bottom: 2px; }
-      #creatureInventory .st-cal-grid .st-day { aspect-ratio: 1; border-radius: 8px; display: flex; align-items: flex-start; justify-content: flex-start; }
-      #creatureInventory .st-cal-grid .dn { font-size: 11px; padding: 4px 0 0 5px; }
+      #creatureInventory .st-cal-grid .st-day { aspect-ratio: 1; border-radius: 8px; display: flex; flex-direction: column; align-items: stretch; justify-content: space-between; }
+      #creatureInventory .st-cal-grid .dn { font-size: 10px; padding: 3px 0 0 5px; text-align: left; opacity: 0.8; }
+      #creatureInventory .st-cal-grid .dv { font-size: 13px; font-weight: 700; text-align: center; padding-bottom: 5px; line-height: 1; }
       #creatureInventory .st-cal-year { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px 10px; }
       #creatureInventory .st-mini-name { font-size: 11px; font-weight: 600; color: var(--ui-muted, #666); margin-bottom: 3px; }
       #creatureInventory .st-cal-grid.mini { gap: 2px; }
@@ -13704,6 +13718,10 @@
   const ST_SOURCES = [['wild', 'Out and about'], ['bubble', 'Bubble centres'], ['radar', 'Radar'],
     ['incense', 'Incense'], ['legend', 'Legendary spawns'], ['focus', 'Focus mode'], ['egg', 'Hatched']];
   const ST_PREFS_KEY = 'cc.statsPrefs';
+  // Views of the main card: 'graph' = columns, 'line' = a smooth line per
+  // day, then the calendar and the table.
+  const ST_MODES = ['graph', 'line', 'calendar', 'table'];
+  const ST_MODE_NAMES = { graph: 'Columns', line: 'Line', calendar: 'Calendar', table: 'Table' };
   const ST_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
   const _stVal = (m, r) => {
     if (!r) return 0;
@@ -13977,6 +13995,14 @@
     }
     return short ? _stCompact(v) : Math.round(v).toLocaleString();
   }
+  // A day's amount short enough for a calendar cell (unit in the legend).
+  function _stCellFmt(m, v) {
+    if (m.fmt === 'dist') return (v / 1000).toFixed(v >= 10000 ? 0 : 1);
+    if (m.fmt === 'dur') { const min = Math.round(v / 60000); return min < 60 ? min + 'm' : +(min / 60).toFixed(1) + 'h'; }
+    if (v >= 10000) return Math.round(v / 1000) + 'K';
+    if (v >= 1000) return +(v / 1000).toFixed(1) + 'K';
+    return String(Math.round(v));
+  }
   function _stTickFmt(m, top) {
     if (m.fmt === 'dist') return top >= 2000 ? (v) => +(v / 1000).toFixed(1) + ' km' : (v) => Math.round(v) + ' m';
     if (m.fmt === 'dur') return top >= 2 * 3600000 ? (v) => +(v / 3600000).toFixed(1) + 'h' : (v) => Math.round(v / 60000) + 'm';
@@ -14146,6 +14172,156 @@
     });
     return s + '</svg>';
   }
+  // A smooth path through points: monotone cubic (Fritsch–Carlson), so
+  // the curve never swings past its neighbours — no dips below zero, no
+  // invented peaks between days.
+  function _stSmoothPath(pts) {
+    const n = pts.length;
+    if (!n) return '';
+    if (n === 1) return `M${pts[0][0]},${pts[0][1]}`;
+    const f = (v) => +v.toFixed(2);
+    if (n === 2) return `M${f(pts[0][0])},${f(pts[0][1])}L${f(pts[1][0])},${f(pts[1][1])}`;
+    const sl = [];
+    for (let i = 0; i < n - 1; i++) sl.push((pts[i + 1][1] - pts[i][1]) / (pts[i + 1][0] - pts[i][0]));
+    const t = new Array(n);
+    t[0] = sl[0]; t[n - 1] = sl[n - 2];
+    for (let i = 1; i < n - 1; i++) t[i] = sl[i - 1] * sl[i] <= 0 ? 0 : (sl[i - 1] + sl[i]) / 2;
+    for (let i = 0; i < n - 1; i++) {
+      if (sl[i] === 0) { t[i] = 0; t[i + 1] = 0; continue; }
+      const a = t[i] / sl[i], b = t[i + 1] / sl[i], q = a * a + b * b;
+      if (q > 9) { const k = 3 / Math.sqrt(q); t[i] = k * a * sl[i]; t[i + 1] = k * b * sl[i]; }
+    }
+    let d = `M${f(pts[0][0])},${f(pts[0][1])}`;
+    for (let i = 0; i < n - 1; i++) {
+      const h = (pts[i + 1][0] - pts[i][0]) / 3;
+      d += `C${f(pts[i][0] + h)},${f(pts[i][1] + t[i] * h)} ${f(pts[i + 1][0] - h)},${f(pts[i + 1][1] - t[i + 1] * h)} ${f(pts[i + 1][0])},${f(pts[i + 1][1])}`;
+    }
+    return d;
+  }
+  // The line view: a point per day across the period. Short periods draw
+  // that line itself (dots on each day); a year or all time draws each day
+  // faintly with a bold 7-day average on top, since hundreds of raw days
+  // read as noise. Touch and slide to read any day (fills the readout via
+  // `onSel`). Returns the averages by day (or null) for the readout.
+  function _stRenderLine(plot, w, top, p, m, idx, onSel) {
+    const now = new Date();
+    const today = _localDayKey();
+    const start = p.range === 'all' ? _stParseDay(idx.first) : p.start;
+    const end = p.range === 'all' ? _stAddDays(_stDay0(Date.now()), 1) : p.end;
+    const keys = [];
+    _stEachDay(start, end, (k) => keys.push(k));
+    const N = keys.length;
+    const vals = keys.map((k) => {
+      if (k > today) return null;                       // the future
+      if (m.tracked && k < idx.since) return null;      // not tracked yet
+      return _stVal(m, idx.days.get(k));
+    });
+    const long = N > 45;
+    let avg = null;
+    if (long) {
+      avg = vals.map((v, i) => {
+        if (v == null) return null;
+        let s = 0, c = 0;
+        for (let j = Math.max(0, i - 3); j <= Math.min(N - 1, i + 3); j++) if (vals[j] != null) { s += vals[j]; c++; }
+        return c ? s / c : null;
+      });
+    }
+    const W = Math.max(200, Math.round(w)), PH = 150, T = 8, AX = 20, L = 36, R = 6, H = T + PH + AX;
+    const nice = _stNice(Math.max(0, ...vals.filter((v) => v != null)), m);
+    const tick = _stTickFmt(m, nice.top);
+    const x = (i) => L + (W - L - R) * (N === 1 ? 0.5 : i / (N - 1));
+    const y = (v) => T + PH - (v / nice.top) * PH;
+    // Runs of known days (gaps for the future / untracked stretch).
+    const runs = (arr) => {
+      const out = []; let cur = [];
+      arr.forEach((v, i) => { if (v == null) { if (cur.length) out.push(cur); cur = []; } else cur.push([x(i), y(v)]); });
+      if (cur.length) out.push(cur);
+      return out;
+    };
+    let s = `<svg class="st-svg st-linesvg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${escapeHtml(`${m.label} by day`)}">`;
+    if (m.tracked) {
+      let k = 0;
+      while (k < N && keys[k] < idx.since) k++;
+      if (k > 0) {
+        const x1 = k >= N ? W - R : x(k);
+        s += `<rect class="st-band" x="${L}" y="${T}" width="${Math.max(0, x1 - L)}" height="${PH}"/>`;
+        if (x1 - L >= 70) s += `<text class="st-band-t" x="${(L + x1) / 2}" y="${T + 14}" text-anchor="middle">not tracked yet</text>`;
+      }
+    }
+    for (let v = 0; v <= nice.top + 1e-9; v += nice.step) {
+      s += `<line class="st-grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>`
+        + `<text class="st-tick" x="${L - 6}" y="${y(v) + 3.5}" text-anchor="end">${escapeHtml(tick(v))}</text>`;
+    }
+    // X labels: day names / dates / months / years, as the span allows.
+    keys.forEach((k, i) => {
+      const d = _stParseDay(k);
+      let lab = '';
+      if (p.range === 'week') lab = _stFmtDate(d, { weekday: 'short' }).slice(0, 3);
+      else if (p.range === 'month') lab = (d.getDate() === 1 || d.getDate() % 7 === 1) && d.getDate() < 29 ? String(d.getDate()) : '';
+      else if (N <= 400) lab = d.getDate() === 1 ? _stFmtDate(d, { month: 'narrow' }) : '';
+      else if (i === 0) lab = `${_stFmtDate(d, { month: 'short' })} '${String(d.getFullYear()).slice(2)}`;
+      else if (d.getDate() === 1 && d.getMonth() === 0 && i > 30) lab = String(d.getFullYear());
+      else if (d.getDate() === 1 && d.getMonth() === 6 && i > 30) lab = _stFmtDate(d, { month: 'short' });
+      if (lab) {
+        s += `<text class="st-xl${k === today ? ' today' : ''}" x="${x(i)}" y="${H - 5}" text-anchor="${i === 0 && N > 400 ? 'start' : 'middle'}">${escapeHtml(lab)}</text>`;
+      }
+    });
+    const main = long ? avg : vals;
+    for (const run of runs(main)) {
+      const d = _stSmoothPath(run);
+      if (run.length > 1) s += `<path class="st-area" d="${d}L${run[run.length - 1][0]},${y(0)}L${run[0][0]},${y(0)}Z"/>`;
+    }
+    if (long) for (const run of runs(vals)) s += `<polyline class="st-daily" points="${run.map((q) => q.map((v) => v.toFixed(1)).join(',')).join(' ')}"/>`;
+    for (const run of runs(main)) s += `<path class="st-line" d="${_stSmoothPath(run)}"/>`;
+    if (!long) vals.forEach((v, i) => { if (v != null) s += `<circle class="st-pt" cx="${x(i)}" cy="${y(v)}" r="3"/>`; });
+    s += `<line class="st-cross" x1="0" x2="0" y1="${T}" y2="${T + PH}" style="display:none"/>`
+      + `<circle class="st-seldot" r="5" cx="0" cy="0" style="display:none"/>`
+      + `<rect class="st-scrub" x="${L - 4}" y="0" width="${W - L - R + 8}" height="${H}" fill="transparent"/></svg>`;
+    plot.innerHTML = s;
+    const svg = plot.querySelector('svg');
+    const cross = svg.querySelector('.st-cross'), dot = svg.querySelector('.st-seldot');
+    const show = (i) => {
+      const v = main[i];
+      cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i));
+      cross.style.display = '';
+      dot.setAttribute('cx', x(i)); dot.setAttribute('cy', y(v));
+      dot.style.display = '';
+    };
+    const pick = (clientX) => {
+      const r = svg.getBoundingClientRect();
+      const px = (clientX - r.left) * (W / r.width);
+      let i = Math.round((px - L) / ((W - L - R) / Math.max(1, N - 1)));
+      i = Math.max(0, Math.min(N - 1, i));
+      // Nearest day that has a value.
+      for (let dI = 0; dI < N; dI++) {
+        if (main[i - dI] != null) { i -= dI; break; }
+        if (main[i + dI] != null) { i += dI; break; }
+      }
+      if (main[i] == null) return;
+      if (top.sel && top.sel.day === keys[i]) return;
+      top.sel = { day: keys[i] };
+      show(i);
+      onSel();
+    };
+    const sel0 = top.sel && top.sel.day ? keys.indexOf(top.sel.day) : -1;
+    if (sel0 >= 0 && main[sel0] != null) show(sel0);
+    let down = false;
+    const scrub = svg.querySelector('.st-scrub');
+    scrub.addEventListener('pointerdown', (e) => {
+      down = true;
+      try { scrub.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+      pick(e.clientX);
+    });
+    scrub.addEventListener('pointermove', (e) => { if (down) pick(e.clientX); });
+    const stop = () => { down = false; };
+    scrub.addEventListener('pointerup', stop);
+    scrub.addEventListener('pointercancel', stop);
+    scrub.addEventListener('lostpointercapture', stop);
+    if (!long) return null;
+    const byDay = new Map();
+    keys.forEach((k, i) => { if (avg[i] != null) byDay.set(k, avg[i]); });
+    return byDay;
+  }
   // A small trend line (tiles): de-emphasis ink, the latest point marked.
   function _stSpark(vals, w, h) {
     const n = vals.length;
@@ -14193,7 +14369,7 @@
     if (!top.range) top.range = ST_RANGES.some(([r]) => r === pr.range) ? pr.range : 'week';
     if (!Number.isFinite(top.anchor)) top.anchor = Date.now();
     if (!ST_METRIC.has(top.metric)) top.metric = ST_METRIC.has(pr.metric) ? pr.metric : 'caught';
-    if (!['graph', 'calendar', 'table'].includes(top.mode)) top.mode = ['graph', 'calendar', 'table'].includes(pr.mode) ? pr.mode : 'graph';
+    if (!ST_MODES.includes(top.mode)) top.mode = ST_MODES.includes(pr.mode) ? pr.mode : 'graph';
     if (rebuild || !_stIdx) _stIndex();
     // Walking data loads from IndexedDB; draw now and again once it's in.
     if (!_summaryCache && !top._waitSummary) {
@@ -14260,6 +14436,7 @@
     const delta = _stDelta(m, total, prevTotal, p);
     const icon = (k) => ({
       graph: '<path d="M4 20h16"/><path d="M7 20v-6"/><path d="M12 20V6"/><path d="M17 20v-10"/>',
+      line: '<path d="M4 20h16"/><path d="M4 16c3-1 4-7 7-7s3 4 6 3 3-6 3-6"/>',
       calendar: '<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
       table: '<path d="M4 6h16M4 12h16M4 18h16"/>',
     })[k];
@@ -14269,8 +14446,8 @@
           <div class="st-hero-label">${escapeHtml(m.label)}</div>
           <div class="st-hero-v">${escapeHtml(_stFmt(m, total))}</div>
         </div>
-        <div class="st-modes" role="group" aria-label="View">${['graph', 'calendar', 'table'].map((k) =>
-          `<button type="button" class="st-mode${top.mode === k ? ' on' : ''}" data-mode="${k}" aria-label="${k}" aria-pressed="${top.mode === k}" title="${k[0].toUpperCase() + k.slice(1)}">`
+        <div class="st-modes" role="group" aria-label="View">${ST_MODES.map((k) =>
+          `<button type="button" class="st-mode${top.mode === k ? ' on' : ''}" data-mode="${k}" aria-label="${ST_MODE_NAMES[k]}" aria-pressed="${top.mode === k}" title="${ST_MODE_NAMES[k]}">`
           + `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon(k)}</svg></button>`).join('')}</div>
       </div>
       ${delta ? `<div class="st-hero-d">${escapeHtml(delta)}</div>` : ''}
@@ -14314,13 +14491,21 @@
       if (a.caughtU) parts.push(`<i class="k" style="background:var(--st-pre)"></i>${a.caughtU.toLocaleString()} before tracking`);
       return parts.length ? `<div class="st-ro-split">${parts.join('<span class="sep"></span>')}</div>` : '';
     };
+    // The tapped column / day as of this render (the line view's
+    // scrubbing updates top.sel and repaints only the readout).
+    const sel = top.sel;
+    // Rolling averages by day (the line view's bold curve), when drawn.
+    let avgByDay = null;
+    const paintReadout = () => {
     const sel = top.sel;
     if (sel && sel.day) {
       const r = idx.days.get(sel.day);
       const d = _stParseDay(sel.day);
       const a = _stAgg(idx, d, _stAddDays(d, 1));
+      const avg = avgByDay && avgByDay.has(sel.day)
+        ? ` <span class="st-ro-avg">· 7-day average ${escapeHtml(_stFmt(m, avgByDay.get(sel.day), true))}</span>` : '';
       readout.innerHTML = `<div class="st-ro-main"><b>${escapeHtml(_stFmtDate(d, { weekday: 'long', month: 'long', day: 'numeric' }))}</b>`
-        + ` · ${escapeHtml(_stFmt(m, _stVal(m, r)))} ${escapeHtml(m.noun)}</div>${split(a)}`
+        + ` · ${escapeHtml(_stFmt(m, _stVal(m, r)))} ${escapeHtml(m.noun)}${avg}</div>${split(a)}`
         + `<button type="button" class="st-open" data-day="${sel.day}">See the day ›</button>`;
     } else if (sel && Number.isInteger(sel.i) && buckets[sel.i]) {
       const bk = buckets[sel.i];
@@ -14334,8 +14519,19 @@
       const avg = total && p.range !== 'week'
         ? `<div class="st-ro-main">About ${escapeHtml(_stFmt(m, perDay, true))} a day${p.isCurrent ? ' so far' : ''}</div>` : '';
       readout.innerHTML = avg + split(cmp.cur)
-        + `<div class="st-ro-hint">Tap a ${top.mode === 'calendar' ? 'day' : top.mode === 'table' ? 'row' : 'column'} for details</div>`;
+        + `<div class="st-ro-hint">${top.mode === 'line' ? 'Touch and slide along the line for each day'
+          : `Tap a ${top.mode === 'calendar' ? 'day' : top.mode === 'table' ? 'row' : 'column'} for details`}</div>`;
     }
+    };
+    readout.addEventListener('click', (e) => {
+      const b = e.target.closest('.st-open');
+      if (!b) return;
+      if (b.dataset.day) pushView({ view: 'statsDay', day: b.dataset.day });
+      else if (b.dataset.zoom) {
+        pushView({ view: 'stats', range: p.unit === 'month' ? 'month' : 'year',
+          anchor: +b.dataset.zoom, metric: top.metric, mode: top.mode });
+      }
+    });
     // The plot itself.
     if (top.mode === 'graph') {
       let band = null;
@@ -14358,6 +14554,8 @@
         top.sel = (sel && sel.i === i) ? null : { i };
         _stRenderMain(top, p, cmp);
       }));
+    } else if (top.mode === 'line') {
+      avgByDay = _stRenderLine(plot, w, top, p, m, idx, paintReadout);
     } else if (top.mode === 'calendar') {
       plot.innerHTML = _stCalendarHtml(p, m, top, idx);
       plot.querySelectorAll('[data-day]').forEach((c) => c.addEventListener('click', () => {
@@ -14380,10 +14578,15 @@
         _stRenderMain(top, p, cmp);
       }));
     }
+    paintReadout();
     // Legend + notes.
     const legend = card.querySelector('.st-legend');
-    if (top.mode === 'calendar') {
+    if (top.mode === 'line' && avgByDay) {
+      legend.innerHTML = '<span class="st-key"><i class="st-lk faint"></i>Each day</span>'
+        + '<span class="st-key"><i class="st-lk"></i>7-day average</span>';
+    } else if (top.mode === 'calendar') {
       legend.innerHTML = `<span>Less</span><span class="st-sws">${[0, 1, 2, 3, 4].map((l) => `<i class="st-sw l${l}"></i>`).join('')}</span><span>More</span>`
+        + (m.fmt === 'dist' && (p.range === 'week' || p.range === 'month') ? '<span>· in km</span>' : '')
         + (m.tracked && _localDayKey(p.start) < idx.since ? '<span class="st-key"><i class="st-sw ut"></i>Not tracked yet</span>' : '');
     } else if (stacked && top.mode === 'graph') {
       legend.innerHTML = [['--st-new', 'New'], ['--st-fresh', 'Fresh'], ['--st-old', 'Already caught']]
@@ -14401,13 +14604,6 @@
       top.sel = null;
       _stSavePrefs(top);
       _stRenderMain(top, p, cmp);
-    }));
-    card.querySelectorAll('.st-open').forEach((b) => b.addEventListener('click', () => {
-      if (b.dataset.day) pushView({ view: 'statsDay', day: b.dataset.day });
-      else if (b.dataset.zoom) {
-        pushView({ view: 'stats', range: p.unit === 'month' ? 'month' : 'year',
-          anchor: +b.dataset.zoom, metric: top.metric, mode: top.mode });
-      }
     }));
   }
   function _stAxisLabel(p, i) {
@@ -14454,7 +14650,7 @@
         const v = valOf(k);
         const fut = d > now && k !== today;
         h += cell(new Date(d), 'button', `<span class="dw">${escapeHtml(_stFmtDate(d, { weekday: 'short' }))}</span>`
-          + `<span class="dn">${d.getDate()}</span><span class="dv">${fut ? '' : escapeHtml(_stFmt(m, v, true))}</span>`);
+          + `<span class="dn">${d.getDate()}</span><span class="dv">${fut || (m.tracked && k < idx.since) ? '' : escapeHtml(_stCellFmt(m, v))}</span>`);
       });
       return h + '</div>';
     }
@@ -14465,7 +14661,14 @@
       if (!mini) h += dows.map((x) => `<span class="st-dow">${escapeHtml(x)}</span>`).join('');
       for (let i = 0; i < lead; i++) h += '<span class="st-pad"></span>';
       for (let d = new Date(first); d.getMonth() === mo; d.setDate(d.getDate() + 1)) {
-        h += cell(new Date(d), mini ? 'span' : 'button', mini ? '' : `<span class="dn">${d.getDate()}</span>`);
+        let inner = '';
+        if (!mini) {
+          const k = _localDayKey(d);
+          const v = valOf(k);
+          const shown = v > 0 && !(m.tracked && k < idx.since) && !(d > now && k !== today);
+          inner = `<span class="dn">${d.getDate()}</span>${shown ? `<span class="dv">${escapeHtml(_stCellFmt(m, v))}</span>` : ''}`;
+        }
+        h += cell(new Date(d), mini ? 'span' : 'button', inner);
       }
       return h + '</div>';
     };
