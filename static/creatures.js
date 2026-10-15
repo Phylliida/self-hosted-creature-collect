@@ -8227,7 +8227,9 @@
       }
       #creatureInventory .focus-pick-value {
         display: flex; justify-content: center; align-items: baseline; gap: 2px 8px; flex-wrap: wrap;
-        margin: 6px 0 0; color: var(--ui-text, #111); font-variant-numeric: tabular-nums;
+        margin: 6px 0 0; color: var(--ui-text, #111);
+        /* Equal-width lining digits: the readout mustn't shift as they change. */
+        font-variant-numeric: tabular-nums lining-nums; font-feature-settings: "tnum" 1, "lnum" 1;
       }
       #creatureInventory .focus-pick-value .n { font-size: 46px; font-weight: 700; line-height: 1; letter-spacing: -0.02em; }
       #creatureInventory .focus-pick-value .u { font-size: 17px; font-weight: 600; color: var(--ui-muted, #666); margin-left: 3px; }
@@ -21038,6 +21040,16 @@
     if (m || !parts.length) parts.push([m, parts.length ? 'm' : 'min']);
     return parts;
   }
+  // The slider's big readout: always "H hr MM m" under a day and
+  // "D day(s) HH hr" from a day up, zero-padded, so its width (and so its
+  // centring) holds still while you drag instead of jumping as parts
+  // come and go.
+  function _focusPickParts(min) {
+    const pad = (n) => String(n).padStart(2, '0');
+    if (min < 1440) return [[Math.floor(min / 60), 'hr'], [pad(min % 60), 'm']];
+    const d = Math.floor(min / 1440);
+    return [[d, d === 1 ? 'day' : 'days'], [pad(Math.floor((min % 1440) / 60)), 'hr']];
+  }
   function _focusDurLabel(min) {
     return _focusDurParts(min).map(([n, u]) => n + ' ' + u).join(' ');
   }
@@ -21189,7 +21201,7 @@
       fill.style.width = p;
       dots.forEach((d) => d.classList.toggle('on', Number(d.dataset.i) <= idx));
       labels.forEach((l) => l.classList.toggle('is-active', Number(l.dataset.i) === idx));
-      valueEl.innerHTML = _focusDurParts(min).map(([n, u]) =>
+      valueEl.innerHTML = _focusPickParts(min).map(([n, u]) =>
         `<span class="p"><span class="n">${n}</span><span class="u">${escapeHtml(u)}</span></span>`).join('');
       endsEl.textContent = _focusEndsText(min, Date.now());
       const est = _focusGrantsDue(min * 60000, 0, min * 60000);
