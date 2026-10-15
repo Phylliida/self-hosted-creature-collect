@@ -17443,10 +17443,11 @@
   // show up at once instead of after the OS's first fix (0.8–35 s on a
   // Pixel 4a). They're normal, catchable markers (catches stamp the
   // spawn's own location). Only spawning reads this position — _userLat
-  // stays null until a live fix, so hatch place stamps, daycare distance
-  // and the radar keep waiting for real GPS. The first live fix drops any
+  // stays null until a live fix, so hatch place stamps and daycare
+  // distance keep waiting for real GPS. The first live fix drops any
   // provisional marker it doesn't also want (no display-time protection)
-  // and keeps the rest.
+  // and keeps the rest. The radar (blips + spawn bubbles) uses it too, via
+  // _spawnCenter, and rescans at the first live fix.
   const LAST_FIX_KEY = 'cc.lastFix.v1';
   const LAST_FIX_MAX_AGE_MS = 12 * 60 * 60 * 1000;
   const LAST_FIX_MAX_ACC_M = 100;
@@ -19523,6 +19524,9 @@
         _provFix = null;
         _lastRefreshLat = _lastRefreshLng = null;
         _lastRefreshAt = 0;
+        // The radar's nearest set was picked around the last-known spot:
+        // rescan around the real one now (not up to RADAR_RESCAN_MS later).
+        _radarLastScanAt = 0;
       }
     }
     _userLat = pos.coords.latitude;
@@ -19845,7 +19849,10 @@
   function refreshRadarMarkers(force) {
     if (!_overlayMap) return;
     refreshBubbleOverlay(force);
-    if (!_radarActive || _userLat == null || _userLng == null
+    // Around the live fix, else the last-known one (like the spawns), so
+    // the radar is up at once instead of after the first GPS fix.
+    const center = _spawnCenter();
+    if (!_radarActive || !center
         || !global.Spawns || !global.Spawns.nearestRadar) {
       if (_radarMarkers.size) _radarClearMarkers();
       return;
@@ -19854,7 +19861,7 @@
     const caught = (typeof readCaughtSpawnIds === 'function') ? readCaughtSpawnIds() : new Set();
     if (force || now - _radarLastScanAt > RADAR_RESCAN_MS) {
       _radarLastScanAt = now;
-      const near = global.Spawns.nearestRadar(_userLat, _userLng, RADAR_COUNT);
+      const near = global.Spawns.nearestRadar(center.lat, center.lng, RADAR_COUNT);
       const desired = new Set();
       for (const sp of near) {
         if (caught.has(sp.id) || sp.expireMs <= now) continue;
@@ -19994,7 +20001,9 @@
   function refreshBubbleOverlay(force) {
     const map = _overlayMap;
     if (!map || !global.Spawns || !global.Spawns.bubblesNear) return;
-    if (!_radarActive || _userLat == null || _userLng == null) {
+    // Same position as the radar blips: the live fix, else the last-known.
+    const center = _spawnCenter();
+    if (!_radarActive || !center) {
       if (_bubbleDrawn) _clearBubbleOverlay();
       return;
     }
@@ -20005,7 +20014,7 @@
     // kept the bubbles from coming back after the radar was switched off
     // and on, or from following you, until the app restarted.
     try { _ensureBubbleLayers(map); } catch (e) { return; }
-    const list = global.Spawns.bubblesNear(_userLat, _userLng, BUBBLE_SHOW_RADIUS_M);
+    const list = global.Spawns.bubblesNear(center.lat, center.lng, BUBBLE_SHOW_RADIUS_M);
     const sig = list.map((b) => b.id + '@' + (b.centerLat ?? b.lat).toFixed(6) + ',' + (b.centerLng ?? b.lng).toFixed(6)).join('|');
     if (!force && _bubbleDrawn && _bubbleDrawn.sig === sig) return;
     try { map.getSource(BUBBLE_SOURCE_ID).setData(_bubbleCollection(list)); } catch (e) { return; }
