@@ -4920,7 +4920,10 @@
       // gridEl.offsetTop gives the grid's offset within its nearest
       // positioned ancestor (the .sheet, which is position:relative).
       const gridTop = gridEl.offsetTop;
-      const localTop = Math.max(0, scrollTop - gridTop);
+      // Negative while the grid starts below the top of the view: then
+      // only the rows that reach into it are drawn (none if the grid is
+      // still below the bottom) — a page can stack several grids.
+      const localTop = scrollTop - gridTop;
       const buffer = rowPitch * 2;
       const startRow = Math.max(0, Math.floor((localTop - buffer) / rowPitch));
       const endRow = Math.min(
@@ -8270,6 +8273,12 @@
         border: 1px solid var(--ui-hairline, rgba(0,0,0,0.08)); border-radius: var(--ui-radius, 8px);
       }
       #creatureInventory .focus-poke.gone { opacity: 0.4; cursor: default; }
+      #creatureInventory .focus-poke-group {
+        font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+        color: var(--ui-muted, #666); margin: 10px 2px 6px;
+      }
+      #creatureInventory .focus-poke-group:first-child { margin-top: 2px; }
+      #creatureInventory .focus-poke-group span { font-weight: 400; letter-spacing: 0; text-transform: none; }
       #creatureInventory .focus-poke-img {
         max-width: 100%; max-height: 100%; object-fit: contain; image-rendering: pixelated;
       }
@@ -20416,8 +20425,8 @@
   //   - When the qualifying time reaches the chosen length the session
   //     completes and pays out everything at once. Giving up before that
   //     pays nothing (the session is filed as given up).
-  //   - Rates: 1 pokémon per 5 min and 1 item per minute of focus, plus
-  //     walking bounties (1 pokémon per 0.25 km, 1 item per km). Longer
+  //   - Rates: 1 pokémon per 10 min and 1 item per 2 min of focus, plus
+  //     walking bounties (1 pokémon per 0.5 km, 1 item per 2 km). Longer
   //     sessions pay more per minute and per km: ×1 scaling straight up
   //     to ×2 for a 1-day session, flat beyond (_focusMult).
   //   - Earnings stay hidden until the session is over; then a results
@@ -20439,10 +20448,10 @@
   // Sessions started before lengths existed (no targetMs) run until
   // ended and are paid at the current rates for the time they ran.
   const FOCUS_KEY = 'cc.focus.v1';
-  const FOCUS_CREATURE_MS = 5 * 60 * 1000;
-  const FOCUS_ITEM_MS = 60 * 1000;
-  const FOCUS_M_PER_CREATURE = 250;
-  const FOCUS_M_PER_ITEM = 1000;
+  const FOCUS_CREATURE_MS = 10 * 60 * 1000;
+  const FOCUS_ITEM_MS = 2 * 60 * 1000;
+  const FOCUS_M_PER_CREATURE = 500;
+  const FOCUS_M_PER_ITEM = 2000;
   // The length bonus: ×(1 + length / 1 day), so ×2 at a day, flat after.
   const FOCUS_FULL_BONUS_MS = 24 * 60 * 60 * 1000;
   const FOCUS_DURATIONS_MIN = [5, 15, 30, 60, 120, 240, 480, 720, 1440, 2880, 4320];
@@ -20683,9 +20692,12 @@
       }
       let n = 0;
       const where = a.earned.creatures.length < due.creatures ? await _focusWhere() : null;
+      // One snapshot of the dex for the New/Fresh labels: a fusion this
+      // payout already granted is owned by then, which decides first.
+      const seenF = readSeenFusions();
       while (a.earned.creatures.length < due.creatures) {
         _focusPayingOut = { done: a.earned.creatures.length, of: due.creatures };
-        if (!(await _focusGrantCreature(a, where))) { _focusWrite(s); _focusPayingOut = null; return null; }
+        if (!(await _focusGrantCreature(a, where, seenF))) { _focusWrite(s); _focusPayingOut = null; return null; }
         if (++n % 25 === 0) {
           _focusWrite(s);
           _focusPaintPayout();
@@ -20742,7 +20754,7 @@
   // Roll a base-pool encounter and record it as a capture through the
   // normal path (candy, dex, backup all flow). Returns false when the
   // species data isn't loaded so the grant stays pending.
-  async function _focusGrantCreature(a, where) {
+  async function _focusGrantCreature(a, where, seenF) {
     const enc = (global.Spawns && global.Spawns.rollWildEncounter)
       ? global.Spawns.rollWildEncounter() : null;
     if (!enc) return false;
@@ -20759,6 +20771,10 @@
       variantSeed: enc.variantSeed,
       focus: true,
     };
+    // "New" (never caught) / "Fresh" (caught before, evolved away) /
+    // '' — like the encounter badge, decided before it joins you; the
+    // results view groups by it.
+    const fresh = enc.solo ? '' : newFreshLabelFor(enc.speciesA, enc.speciesB, seenF);
     try {
       const entry = await recordCaptureFromSpawn(spawn, { where });
       // Register it in the Pokédex now, art included. Wild catches are
@@ -20778,6 +20794,7 @@
         shinyVariant: entry.shinyVariant,
         level: enc.level,
         shiny: entry.shinyVariant != null,
+        fresh,
       });
       return true;
     } catch (e) {
@@ -21009,10 +21026,10 @@
     h += '<div class="cc-info-section">';
     h += '<div class="cc-info-section-title">What you earn</div>';
     h += '<div class="cc-info-row"><span class="cc-info-k">Pokémon</span>'
-      + '<span class="cc-info-v">One per <b>5 minutes</b> of focus, and one per '
-      + '<b>0.25 km</b> walked during it.</span></div>';
+      + '<span class="cc-info-v">One per <b>10 minutes</b> of focus, and one per '
+      + '<b>0.5 km</b> walked during it.</span></div>';
     h += '<div class="cc-info-row"><span class="cc-info-k">Items</span>'
-      + '<span class="cc-info-v">One per <b>minute</b> of focus, and one per <b>km</b> '
+      + '<span class="cc-info-v">One per <b>2 minutes</b> of focus, and one per <b>2 km</b> '
       + 'walked. (Walking needs the pedometer on in Settings.)</span></div>';
     h += '<div class="cc-info-row"><span class="cc-info-k">Longer pays more</span>'
       + '<span class="cc-info-v">Everything is multiplied by the session\'s length: '
@@ -21162,8 +21179,7 @@
     const panel = document.getElementById('creatureInventory');
     const body = panel && panel.querySelector('.focussession-body');
     if (!body) return;
-    const grid0 = body.querySelector('.focus-pokes');
-    if (grid0 && grid0._virtCleanup) grid0._virtCleanup();
+    body.querySelectorAll('.focus-poke-grid').forEach((g) => { if (g._virtCleanup) g._virtCleanup(); });
     const sess = _focusRead().history[top.idx];
     if (!sess) { body.innerHTML = '<div class="focus-empty">This session is no longer in your history.</div>'; return; }
     const title = panel.querySelector('.focussession-view .subview-title');
@@ -21198,15 +21214,29 @@
       + (creatures.length ? '<div class="focus-pokes"></div>' : '<div class="focus-empty">No pokémon this time.</div>');
     if (!creatures.length) return;
     // Pokémon still in the collection open on tap (and page through each
-    // other); ones evolved keep their id, ones gifted away show dimmed.
+    // other, in the order shown); ones evolved keep their id, ones gifted
+    // away show dimmed. Grouped New / Fresh / Already caught by the label
+    // each got when granted (sessions from before the labels: one grid).
     const owned = new Map(readCapturedCreatures().filter(Boolean).map((c) => [c.id, c]));
-    const here = creatures.filter((c) => owned.has(c.id)).map((c) => ({ id: c.id }));
+    const labelled = creatures.some((c) => typeof c.fresh === 'string');
+    const groups = labelled
+      ? [['New', creatures.filter((c) => c.fresh === 'New')],
+         ['Fresh', creatures.filter((c) => c.fresh === 'Fresh')],
+         ['Already caught', creatures.filter((c) => c.fresh !== 'New' && c.fresh !== 'Fresh')]]
+        .filter(([, list]) => list.length)
+      : [[null, creatures]];
+    const ordered = groups.flatMap(([, list]) => list);
+    const here = ordered.filter((c) => owned.has(c.id)).map((c) => ({ id: c.id }));
     const hereIdx = new Map(here.map((c, i) => [c.id, i]));
+    const pokesEl = body.querySelector('.focus-pokes');
+    pokesEl.innerHTML = groups.map(([label, list], gi) =>
+      (label ? `<div class="focus-poke-group">${escapeHtml(label)} <span>· ${list.length}</span></div>` : '')
+      + `<div class="focus-poke-grid" data-g="${gi}"></div>`).join('');
     const sheet = panel.querySelector('.sheet');
-    virtualizeGrid({
+    groups.forEach(([, list], gi) => virtualizeGrid({
       scrollEl: sheet,
-      gridEl: body.querySelector('.focus-pokes'),
-      items: creatures,
+      gridEl: pokesEl.querySelector(`.focus-poke-grid[data-g="${gi}"]`),
+      items: list,
       cols: 4,
       rowGap: 6,
       cardHeight: 78,
@@ -21234,7 +21264,7 @@
             { shinyVariant: typeof sv === 'number' ? sv : null })).catch(() => {});
         } catch (e) { /* no art store yet */ }
       },
-    });
+    }));
   }
 
   // (Deliberately no on-map focus button: during a session the creature
