@@ -37,7 +37,7 @@ function extract(marker) {
 }
 
 function setup(enc, opts = {}) {
-  const calls = { fusion: [], solo: [], errors: [] };
+  const calls = { fusion: [], solo: [], errors: [], label: null };
   const ctx = {
     Date, Math,
     _userLat: 45.5, _userLng: -73.6,
@@ -51,6 +51,8 @@ function setup(enc, opts = {}) {
       calls.fusion.push({ a, b, lat: spawn && spawn.lat, variant });
     },
     markSoloSeen: (id, variant) => { calls.solo.push({ id, variant }); },
+    // New/Fresh label for the results view, decided before the capture.
+    newFreshLabelFor: (a, b, seenF) => { calls.label = { a, b, seenF }; return opts.label === undefined ? 'New' : opts.label; },
     _logCreatureError: (where) => { calls.errors.push(where); },
   };
   vm.createContext(ctx);
@@ -67,6 +69,14 @@ function setup(enc, opts = {}) {
     ok(r === true && a.earned.creatures.length === 1, 'sanity: grant recorded');
     ok(eq(calls.fusion, [{ a: 325, b: 1, lat: 45.5, variant: 2 }]),
       'fusion marked seen once, with the art it was granted at and where');
+    ok(a.earned.creatures[0].fresh === 'New', 'the New/Fresh label rides on the earned entry');
+  }
+  {
+    const { ctx, calls, a } = setup({ speciesA: 9, speciesB: 8, level: 3, sizeM: 1 }, { variant: 0, label: 'Fresh' });
+    ctx.__a = a; ctx.__seen = { '9-8': { caught: true } };
+    await vm.runInContext('_focusGrantCreature(__a, null, __seen)', ctx);
+    ok(a.earned.creatures[0].fresh === 'Fresh' && calls.label && calls.label.a === 9 && calls.label.b === 8
+       && calls.label.seenF === ctx.__seen, 'the label uses the payout\'s dex snapshot');
   }
   {
     const { ctx, calls, a } = setup({ speciesA: 4, speciesB: 7, level: 3, sizeM: 1 }, { variant: 'auto' });
@@ -80,6 +90,7 @@ function setup(enc, opts = {}) {
     await vm.runInContext('_focusGrantCreature(__a)', ctx);
     ok(eq(calls.solo, [{ id: 'missingno', variant: 'auto' }]) && calls.fusion.length === 0,
       'solo grant marks its solo dex row');
+    ok(a.earned.creatures[0].fresh === '' && calls.label === null, 'solos get no New/Fresh label');
   }
   {
     const { ctx, calls, a } = setup({ speciesA: 1, speciesB: 2, level: 3, sizeM: 1 }, { variant: 0, throwOnMark: true });
