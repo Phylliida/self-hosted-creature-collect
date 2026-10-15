@@ -1,8 +1,8 @@
 // Tests focus-mode accrual logic (_focusReplay / _focusGrantsDue /
 // _focusMult in static/creatures.js): the event-timeline replay that
 // measures qualifying time (screen off OR app foreground) and stops at
-// the session's chosen length, and the payout (1 pokémon per 10 min, 1
-// item per 2 min; walking: +1 pokémon per 0.5 km, +1 item per 2 km;
+// the session's chosen length, and the payout (9 pokémon and 45 items
+// per hour; walking: +3 pokémon per km, +3 items per 4 km;
 // all × the length bonus, ×1 → ×2 at a 1-day session, flat after).
 //
 // Run: node tests/focus-mode.test.js
@@ -38,10 +38,10 @@ function extract(marker) {
 const MIN = 60 * 1000;
 const ctx = {
   Object, Array, Math, Number, JSON,
-  FOCUS_CREATURE_MS: 10 * MIN,
-  FOCUS_ITEM_MS: 2 * MIN,
-  FOCUS_M_PER_CREATURE: 500,
-  FOCUS_M_PER_ITEM: 2000,
+  FOCUS_CREATURE_MS: 5 * MIN / 0.75,
+  FOCUS_ITEM_MS: MIN / 0.75,
+  FOCUS_M_PER_CREATURE: 250 / 0.75,
+  FOCUS_M_PER_ITEM: 1000 / 0.75,
   FOCUS_FULL_BONUS_MS: 24 * 60 * MIN,
 };
 vm.createContext(ctx);
@@ -169,38 +169,40 @@ const BG_AWAKE = { screenOff: false, appFg: false };
   ok(mult(-5) === 1 && mult(NaN) === 1, '10: junk lengths are ×1');
 }
 
-// ── 11. Time payout: 1 pokémon / 10 min, 1 item / 2 min, × bonus ──
+// ── 11. Time payout: 9 pokémon + 45 items an hour, × bonus ──
 {
   const a = due(0, 0);
   ok(a.creatures === 0 && a.items === 0, '11: nothing at 0');
-  const b = due(9 * MIN, 0);
-  ok(b.creatures === 0 && b.items === 4, `11: no pokémon at 9 min, 4 items (got ${b.creatures}/${b.items})`);
-  const c = due(10 * MIN, 0);
-  ok(c.creatures === 1 && c.items === 5, '11: 10 min = 1 pokémon + 5 items');
+  const b = due(6 * MIN, 0);
+  ok(b.creatures === 0 && b.items === 4, `11: no pokémon yet at 6 min, 4 items (got ${b.creatures}/${b.items})`);
+  const c = due(7 * MIN, 0);
+  ok(c.creatures === 1 && c.items === 5, `11: 7 min = 1 pokémon + 5 items (got ${c.creatures}/${c.items})`);
   const d = due(60 * MIN, 0);
-  ok(d.creatures === 6 && d.items === 31, `11: 1 h = 6 pokémon + 31 items at ×1.04 (got ${d.creatures}/${d.items})`);
+  ok(d.creatures === 9 && d.items === 46, `11: 1 h = 9 pokémon + 46 items at ×1.04 (got ${d.creatures}/${d.items})`);
   const e = due(8 * 60 * MIN, 0);
-  ok(e.creatures === 64 && e.items === 320, `11: 8 h = 64 pokémon + 320 items at ×1.33 (got ${e.creatures}/${e.items})`);
+  ok(e.creatures === 96 && e.items === 480, `11: 8 h = 96 pokémon + 480 items at ×1.33 (got ${e.creatures}/${e.items})`);
   const f = due(24 * 60 * MIN, 0);
-  ok(f.creatures === 288 && f.items === 1440, `11: a day = 288 pokémon + 1440 items at ×2 (got ${f.creatures}/${f.items})`);
+  ok(f.creatures === 432 && f.items === 2160, `11: a day = 432 pokémon + 2160 items at ×2 (got ${f.creatures}/${f.items})`);
   const g = due(48 * 60 * MIN, 0);
-  ok(g.creatures === 576 && g.items === 2880, '11: two days, still ×2: twice a day');
+  ok(g.creatures === 864 && g.items === 4320, '11: two days, still ×2: twice a day');
 }
 
-// ── 12. Walking: +1 pokémon / 0.5 km, +1 item / 2 km, × the same bonus ──
+// ── 12. Walking: +3 pokémon / km, +3 items / 4 km, × the same bonus ──
 {
-  const a = due(0, 499, 0);
-  ok(a.creatures === 0 && a.items === 0, '12: nothing under 0.5 km');
-  const b = due(0, 500, 0);
-  ok(b.creatures === 1 && b.items === 0, '12: first pokémon at 0.5 km');
-  const c = due(0, 2000, 0);
-  ok(c.creatures === 4 && c.items === 1, '12: 2 km = 4 pokémon + 1 item');
+  const a = due(0, 333, 0);
+  ok(a.creatures === 0 && a.items === 0, '12: nothing under ⅓ km');
+  const b = due(0, 334, 0);
+  ok(b.creatures === 1 && b.items === 0, '12: first pokémon at ⅓ km');
+  const c = due(0, 1000, 0);
+  ok(c.creatures === 3 && c.items === 0, `12: 1 km = 3 pokémon, no item yet (got ${c.creatures}/${c.items})`);
+  const c2 = due(0, 4000, 0);
+  ok(c2.creatures === 12 && c2.items === 3, `12: 4 km = 12 pokémon + 3 items (got ${c2.creatures}/${c2.items})`);
   const d = due(60 * MIN, NaN);
-  ok(d.creatures === 6 && d.items === 31, '12: NaN distance falls back to the time rate');
-  // 12 h with 5 km at ×1.5: (72 + 10) × 1.5 pokémon, (360 + 2.5) × 1.5 items.
+  ok(d.creatures === 9 && d.items === 46, '12: NaN distance falls back to the time rate');
+  // 12 h with 5 km at ×1.5: (108 + 15) × 1.5 pokémon, (540 + 3.75) × 1.5 items.
   const e = due(12 * 60 * MIN, 5000);
-  ok(e.creatures === 123 && e.items === 543, `12: time + walking stack, both × the bonus (got ${e.creatures}/${e.items})`);
-  ok(due(60 * MIN, 0, 24 * 60 * MIN).creatures === 12, '12: the bonus follows the session length, not the time so far');
+  ok(e.creatures === 184 && e.items === 815, `12: time + walking stack, both × the bonus (got ${e.creatures}/${e.items})`);
+  ok(due(60 * MIN, 0, 24 * 60 * MIN).creatures === 18, '12: the bonus follows the session length, not the time so far');
 }
 
 // ── 13. Replay stops at the session's length ──

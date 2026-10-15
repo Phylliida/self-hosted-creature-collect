@@ -20602,8 +20602,8 @@
   //   - When the qualifying time reaches the chosen length the session
   //     completes and pays out everything at once. Giving up before that
   //     pays nothing (the session is filed as given up).
-  //   - Rates: 1 pokémon per 10 min and 1 item per 2 min of focus, plus
-  //     walking bounties (1 pokémon per 0.5 km, 1 item per 2 km). Longer
+  //   - Rates: 9 pokémon and 45 items per hour of focus, plus walking
+  //     bounties (3 pokémon per km, 3 items per 4 km). Longer
   //     sessions pay more per minute and per km: ×1 scaling straight up
   //     to ×2 for a 1-day session, flat beyond (_focusMult).
   //   - Earnings stay hidden until the session is over; then a results
@@ -20625,10 +20625,12 @@
   // Sessions started before lengths existed (no targetMs) run until
   // ended and are paid at the current rates for the time they ran.
   const FOCUS_KEY = 'cc.focus.v1';
-  const FOCUS_CREATURE_MS = 10 * 60 * 1000;
-  const FOCUS_ITEM_MS = 2 * 60 * 1000;
-  const FOCUS_M_PER_CREATURE = 500;
-  const FOCUS_M_PER_ITEM = 2000;
+  // ¾ of the first v2 rates (1 pokémon / 5 min, 1 / 0.25 km; 1 item / min,
+  // 1 / km), which the group found too many; halving them was too few.
+  const FOCUS_CREATURE_MS = 5 * 60 * 1000 / 0.75;   // 6 min 40 s
+  const FOCUS_ITEM_MS = 60 * 1000 / 0.75;           // 80 s
+  const FOCUS_M_PER_CREATURE = 250 / 0.75;          // ⅓ km
+  const FOCUS_M_PER_ITEM = 1000 / 0.75;             // 1⅓ km
   // The length bonus: ×(1 + length / 1 day), so ×2 at a day, flat after.
   const FOCUS_FULL_BONUS_MS = 24 * 60 * 60 * 1000;
   // The length slider's stops (minutes), evenly spaced along it: 5-min
@@ -21290,10 +21292,10 @@
     h += '<div class="cc-info-section">';
     h += '<div class="cc-info-section-title">What you earn</div>';
     h += '<div class="cc-info-row"><span class="cc-info-k">Pokémon</span>'
-      + '<span class="cc-info-v">One per <b>10 minutes</b> of focus, and one per '
-      + '<b>0.5 km</b> walked during it.</span></div>';
+      + '<span class="cc-info-v"><b>9 per hour</b> of focus, and <b>3 per km</b> '
+      + 'walked during it.</span></div>';
     h += '<div class="cc-info-row"><span class="cc-info-k">Items</span>'
-      + '<span class="cc-info-v">One per <b>2 minutes</b> of focus, and one per <b>2 km</b> '
+      + '<span class="cc-info-v"><b>45 per hour</b> of focus, and <b>3 for every 4 km</b> '
       + 'walked. (Walking needs the pedometer on in Settings.)</span></div>';
     h += '<div class="cc-info-row"><span class="cc-info-k">Longer pays more</span>'
       + '<span class="cc-info-v">Everything is multiplied by the session\'s length: '
