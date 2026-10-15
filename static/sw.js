@@ -148,6 +148,8 @@ const TILES_CACHE = 'tiles-v1';
 // 54 m lock radius of a spin, not only the ones that were on screen.
 // Shell bump 2026-10-14 (#36): index.html's "Consistent poké icon size"
 // tooltip describes the box-relative sizing.
+// Shell bump 2026-10-14 (#37): index.html cancels native drags (Android
+// froze after a long press on a pokémon page's picture).
 
 const APP_SHELL = [
   '/',

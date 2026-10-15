@@ -21,6 +21,13 @@
      differ from what's currently cached in localStorage / IDB. -->
 <meta name="cc-bundle-id" content="__BUNDLE_ID__">
 <script>
+// Nothing in the app uses native drag-and-drop (egg moves etc. are
+// pointer-event drags), but on Android holding a finger on an image
+// starts a system drag of it — and after one was abandoned on a
+// pokémon page the web view stopped taking touches until the app was
+// restarted (Oct 2026). Cancel every native drag before it starts.
+document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
+
 // Cache-bust bundle-derived state on build change.
 //
 // The runtime caches bundle JSON files in two stores:
@@ -449,6 +456,9 @@
 </script>
 <link href="/static/vendor/maplibre-gl.css" rel="stylesheet">
 <style>
+  /* No native image dragging anywhere in the app (see the dragstart
+     guard at the top of the page's first script). */
+  img { -webkit-user-drag: none; }
   html, body {
     margin: 0; width: 100%; font-family: system-ui, sans-serif;
     height: 100vh; height: -webkit-fill-available; height: 100dvh;
