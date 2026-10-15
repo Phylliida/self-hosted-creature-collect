@@ -6495,6 +6495,7 @@
       #creatureInventory .bag-back,
       #creatureInventory .craft-back,
       #creatureInventory .focus-back,
+      #creatureInventory .focussession-back,
       #creatureInventory .tags-back,
       #creatureInventory .gifts-back,
       #creatureInventory .gift-back,
@@ -6552,6 +6553,7 @@
       #creatureInventory .bag-back:hover,
       #creatureInventory .craft-back:hover,
       #creatureInventory .focus-back:hover,
+      #creatureInventory .focussession-back:hover,
       #creatureInventory .tags-back:hover,
       #creatureInventory .gifts-back:hover,
       #creatureInventory .gift-back:hover,
@@ -8209,8 +8211,72 @@
       #creatureInventory .craft-view { display: none; }
       #creatureInventory .craft-view.show { display: flex; flex-direction: column; }
       /* ── Focus mode ── */
-      #creatureInventory .focus-view { display: none; }
-      #creatureInventory .focus-view.show { display: flex; flex-direction: column; }
+      #creatureInventory .focus-view,
+      #creatureInventory .focussession-view { display: none; }
+      #creatureInventory .focus-view.show,
+      #creatureInventory .focussession-view.show { display: flex; flex-direction: column; }
+      /* Length picker + live progress (see renderFocus). */
+      #creatureInventory .focus-len-title {
+        text-align: center; font-size: 13px; font-weight: 600; margin: 4px 0 8px;
+      }
+      #creatureInventory .focus-lens {
+        display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin: 0 0 8px;
+      }
+      #creatureInventory .focus-len {
+        padding: 5px 11px; font: inherit; font-size: 13px; cursor: pointer;
+        background: transparent; color: var(--ui-text, #111);
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.15)); border-radius: 999px;
+      }
+      #creatureInventory .focus-len.is-active {
+        background: var(--ui-accent, #b06cff); border-color: var(--ui-accent, #b06cff); color: #fff;
+      }
+      #creatureInventory .focus-estimate {
+        text-align: center; font-size: 12px; color: var(--ui-muted, #666); margin: 0 0 4px;
+      }
+      #creatureInventory .focus-progress {
+        height: 6px; width: 100%; max-width: 240px; margin: 10px auto 4px; overflow: hidden;
+        border-radius: 3px; background: var(--ui-hover, rgba(0,0,0,0.06));
+        box-shadow: inset 0 0 0 1px var(--ui-hairline, rgba(0,0,0,0.12));
+      }
+      #creatureInventory .focus-progress-fill { height: 100%; width: 0; background: var(--ui-accent, #b06cff); }
+      #creatureInventory .focus-status-goal { font-size: 12px; color: var(--ui-muted, #666); }
+      #creatureInventory .focus-session-row.gave-up { opacity: 0.6; }
+      /* A session's results (renderFocusSession). */
+      #creatureInventory .focus-result-head { text-align: center; margin: 0 0 6px; }
+      #creatureInventory .focus-result-when { font-size: 13px; }
+      #creatureInventory .focus-result-note { font-size: 12px; color: var(--ui-muted, #666); margin-top: 2px; }
+      #creatureInventory .focus-result-section {
+        font-size: 12px; font-weight: 600; color: var(--ui-muted, #666); margin: 12px 2px 6px;
+      }
+      #creatureInventory .focus-result-hint { font-weight: 400; }
+      #creatureInventory .focus-items {
+        display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px;
+      }
+      #creatureInventory .focus-item {
+        display: flex; flex-direction: column; align-items: center; gap: 1px; min-width: 0;
+        padding: 6px 4px; background: var(--ui-hover, rgba(0,0,0,0.04));
+        border: 1px solid var(--ui-hairline, rgba(0,0,0,0.08)); border-radius: var(--ui-radius, 8px);
+      }
+      #creatureInventory .focus-item img { width: 32px; height: 32px; object-fit: contain; }
+      #creatureInventory .focus-item-n { font-size: 13px; font-weight: 700; color: var(--ui-text, #111); }
+      #creatureInventory .focus-item-name {
+        max-width: 100%; font-size: 10px; color: var(--ui-muted, #666);
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      #creatureInventory .focus-poke {
+        position: relative; display: flex; align-items: center; justify-content: center;
+        height: 78px; padding: 4px; box-sizing: border-box; cursor: pointer; font: inherit;
+        background: var(--ui-hover, rgba(0,0,0,0.04));
+        border: 1px solid var(--ui-hairline, rgba(0,0,0,0.08)); border-radius: var(--ui-radius, 8px);
+      }
+      #creatureInventory .focus-poke.gone { opacity: 0.4; cursor: default; }
+      #creatureInventory .focus-poke-img {
+        max-width: 100%; max-height: 100%; object-fit: contain; image-rendering: pixelated;
+      }
+      #creatureInventory .focus-poke-img:not([src]) { visibility: hidden; }
+      #creatureInventory .focus-poke .shiny-badge {
+        position: absolute; top: 3px; right: 3px; width: 14px; height: 14px;
+      }
       /* Launcher row at the top of the bag: Craft incense + Focus mode
          side by side (both reuse .bag-craft styling). */
       #creatureInventory .bag-launchers {
@@ -10003,6 +10069,11 @@
           <h3 class="subview-title craft-title"><span class="craft-title-text">Focus mode</span><button class="cc-info-btn focus-info" type="button" aria-label="How focus mode works" title="How focus mode works">i</button></h3>
           <div class="focus-body"></div>
         </div>
+        <div class="focussession-view">
+          <button class="focussession-back" type="button" aria-label="back">←</button>
+          <h3 class="subview-title">Focus session</h3>
+          <div class="focussession-body"></div>
+        </div>
         <div class="tags-view">
           <button class="tags-back" type="button" aria-label="back">←</button>
           <h3 class="subview-title">Tags</h3>
@@ -10383,6 +10454,7 @@
     panel.querySelector('.bag-back').addEventListener('click', popView);
     panel.querySelector('.craft-back').addEventListener('click', _craftBack);
     panel.querySelector('.focus-back').addEventListener('click', popView);
+    panel.querySelector('.focussession-back').addEventListener('click', popView);
     panel.querySelector('.gifts-back').addEventListener('click', popView);
     panel.querySelector('.gift-back').addEventListener('click', popView);
     panel.querySelector('.giftcreate-back').addEventListener('click', popView);
@@ -10681,6 +10753,7 @@
     panel.querySelector('.bag-view').classList.remove('show');
     panel.querySelector('.craft-view').classList.remove('show');
     panel.querySelector('.focus-view').classList.remove('show');
+    panel.querySelector('.focussession-view').classList.remove('show');
     panel.querySelector('.gifts-view').classList.remove('show');
     panel.querySelector('.gift-view').classList.remove('show');
     panel.querySelector('.giftcreate-view').classList.remove('show');
@@ -10793,6 +10866,12 @@
       case 'focus':
         renderFocus();
         panel.querySelector('.focus-view').classList.add('show');
+        return;
+      case 'focusSession':
+        // Shown first: its pokémon grid is virtualized and measures
+        // itself against the visible sheet.
+        panel.querySelector('.focussession-view').classList.add('show');
+        renderFocusSession(top);
         return;
       case 'gifts':
         renderGifts();
@@ -18541,17 +18620,20 @@
     await _whenReady();
     const poiApi = global.CreatureCollectAPI;
     // Focus-mode grants have no real location — skip the POI/place
-    // lookups when the synthetic spawn carries no coordinates.
+    // lookups when the synthetic spawn carries no coordinates. A focus
+    // payout (hundreds at one spot) passes them looked up once, as
+    // opts.where = { poi, place }.
+    const where = opts && opts.where;
     const hasLoc = spawn.lat != null && spawn.lng != null;
-    if (hasLoc) await _whenPoisReady(5000);
-    const poi = (hasLoc && poiApi && poiApi.findNearestNamedPoi)
+    if (hasLoc && !where) await _whenPoisReady(5000);
+    const poi = where ? (where.poi || null) : ((hasLoc && poiApi && poiApi.findNearestNamedPoi)
       ? poiApi.findNearestNamedPoi(spawn.lat, spawn.lng)
-      : null;
+      : null);
     // City + country at capture time, same source as the encounter
     // info (POI address tags first, vector-tile place layer second).
-    const place = (hasLoc && poiApi && poiApi.findNearestPlace)
+    const place = where ? (where.place || null) : ((hasLoc && poiApi && poiApi.findNearestPlace)
       ? poiApi.findNearestPlace(spawn.lat, spawn.lng)
-      : null;
+      : null);
     // Capture the variant the player saw at the moment of catching,
     // so the inventory always shows that exact sprite even if the
     // per-cell variant table later changes (e.g., new artist sheets).
@@ -20326,24 +20408,25 @@
 
   // ══ Focus mode ═══════════════════════════════════════════════════
   // Put the phone down (or just leave this app open) and earn creatures
-  // + items at a deliberately slow rate. Semantics:
-  //   - A session accrues "qualifying time" while the app is foreground
-  //     OR the device is asleep/locked. Backgrounding the app while the
-  //     screen is on PAUSES accrual; re-foregrounding resumes it — the
-  //     session never breaks, it just stops counting.
-  //   - Rates: 1 creature per hour, 1 item per MINUTE of
-  //     qualifying time, plus flat distance bounties (1 creature per
-  //     0.5 km, 1 item per 1 km walked). No cap. (The item rate was
-  //     30 min originally — deliberately slow — but a ball a
-  //     half-hour read as "focus mode is pointless", so it's 1/min
-  //     now; bump FOCUS_ITEM_MS if that turns out too generous.)
-  //   - Earnings are granted silently as they accrue but only REVEALED
-  //     when the session ends (checking your loot would defeat the
-  //     point). Ended sessions land in a history list (most recent
-  //     first); tapping one shows what it earned.
-  //   - While a session is active the map shows no creature markers and
-  //     the POI "Collect items" button is disabled (index.html checks
-  //     Creatures.isFocusActive()).
+  // + items. Semantics:
+  //   - You pick the session's length up front (FOCUS_DURATIONS). It
+  //     accrues "qualifying time" while the app is foreground OR the
+  //     device is asleep/locked; backgrounding the app while the screen
+  //     is on PAUSES accrual, re-foregrounding resumes it.
+  //   - When the qualifying time reaches the chosen length the session
+  //     completes and pays out everything at once. Giving up before that
+  //     pays nothing (the session is filed as given up).
+  //   - Rates: 1 pokémon per 5 min and 1 item per minute of focus, plus
+  //     walking bounties (1 pokémon per 0.25 km, 1 item per km). Longer
+  //     sessions pay more per minute and per km: ×1 scaling straight up
+  //     to ×2 for a 1-day session, flat beyond (_focusMult).
+  //   - Earnings stay hidden until the session is over; then a results
+  //     view shows the item icons and every pokémon, each tappable (and
+  //     the pokémon pages step through the session's catch). Past
+  //     sessions are listed in the focus view.
+  //   - While a session is active the map shows no ordinary creature
+  //     markers and the POI "Collect items" button is disabled
+  //     (index.html checks Creatures.isFocusActive()).
   //
   // Qualifying-time bookkeeping: the native FocusMonitor plugin
   // (android-overrides/ ios-overrides/) records a timestamped event
@@ -20352,15 +20435,18 @@
   // settle and replay them through _focusReplay. On plain web (no
   // plugin) we synthesize app_fg/app_bg from visibilitychange and treat
   // the screen as always on — so any tab switch pauses accrual there.
+  //
+  // Sessions started before lengths existed (no targetMs) run until
+  // ended and are paid at the current rates for the time they ran.
   const FOCUS_KEY = 'cc.focus.v1';
-  const FOCUS_CREATURE_MS = 60 * 60 * 1000;
+  const FOCUS_CREATURE_MS = 5 * 60 * 1000;
   const FOCUS_ITEM_MS = 60 * 1000;
-  // Distance bounties (flat per-km grants, independent of the base
-  // rate): 1 creature per 0.5 km, 1 item per 1 km walked during the
-  // session. Uncapped — even a 15 km walk (30 creatures + 15 items)
-  // is far below what actively playing that walk would sweep.
-  const FOCUS_M_PER_CREATURE = 500;
+  const FOCUS_M_PER_CREATURE = 250;
   const FOCUS_M_PER_ITEM = 1000;
+  // The length bonus: ×(1 + length / 1 day), so ×2 at a day, flat after.
+  const FOCUS_FULL_BONUS_MS = 24 * 60 * 60 * 1000;
+  const FOCUS_DURATIONS_MIN = [5, 15, 30, 60, 120, 240, 480, 720, 1440, 2880, 4320];
+  const FOCUS_DURATION_KEY = 'cc.focusDuration';   // last length picked (minutes)
   const FOCUS_HISTORY_MAX = 50;
   const FOCUS_SETTLE_TICK_MS = 60 * 1000;
   // Keep in sync with the .focus-hold.holding CSS transition duration.
@@ -20387,17 +20473,27 @@
   // [fromMs, toMs) and measures how much of it was qualifying
   // (screen off/locked OR app foreground). `state` is the known
   // {screenOff, appFg} at fromMs; returns the qualifying milliseconds
-  // and the state at toMs so the next replay can chain. Extracted
-  // untouched by tests/focus-mode.test.js — keep it dependency-free.
-  function _focusReplay(events, fromMs, toMs, state) {
+  // and the state at toMs so the next replay can chain. With `needMs`,
+  // counting stops once that much has qualified and reachedAtMs is the
+  // moment it did (null if it didn't). Extracted untouched by
+  // tests/focus-mode.test.js — keep it dependency-free.
+  function _focusReplay(events, fromMs, toMs, state, needMs) {
     const st = { screenOff: !!(state && state.screenOff), appFg: !!(state && state.appFg) };
+    const cap = Number.isFinite(needMs) ? Math.max(0, needMs) : Infinity;
     let qual = 0;
     let cur = fromMs;
+    let reachedAtMs = null;
+    const count = (until) => {
+      if (reachedAtMs != null || !(st.screenOff || st.appFg)) return;
+      const span = until - cur;
+      if (qual + span >= cap) { reachedAtMs = cur + (cap - qual); qual = cap; }
+      else qual += span;
+    };
     const evs = (events || [])
       .filter((e) => e && Number.isFinite(e.t) && e.t > fromMs && e.t < toMs)
       .sort((a, b) => a.t - b.t);
     for (const e of evs) {
-      if (st.screenOff || st.appFg) qual += e.t - cur;
+      count(e.t);
       cur = e.t;
       switch (e.type) {
         case 'screen_off': case 'locked': st.screenOff = true; break;
@@ -20406,25 +20502,33 @@
         case 'app_bg': st.appFg = false; break;
       }
     }
-    if (st.screenOff || st.appFg) qual += toMs - cur;
-    return { qualifyingMs: qual, state: st };
+    count(toMs);
+    return { qualifyingMs: qual, state: st, reachedAtMs };
   }
 
-  // Pure grant schedule: base rate from qualifying time plus flat
-  // distance bounties. Also extracted by the test.
-  function _focusGrantsDue(qualifyingMs, distanceM) {
+  // The length bonus for a session of targetMs: ×1 → ×2 at a day.
+  function _focusMult(targetMs) {
+    const t = Math.max(0, Number(targetMs) || 0);
+    return 1 + Math.min(t, FOCUS_FULL_BONUS_MS) / FOCUS_FULL_BONUS_MS;
+  }
+  // Pure payout: time + walking, times the length bonus. Also extracted
+  // by the test.
+  function _focusGrantsDue(qualifyingMs, distanceM, targetMs) {
     const q = Math.max(0, Number(qualifyingMs) || 0);
     const d = Math.max(0, Number(distanceM) || 0);
+    const mult = _focusMult(targetMs == null ? q : targetMs);
+    // (the tiny epsilon keeps e.g. 1.25 × 8 from flooring to 9.999… → 9)
     return {
-      creatures: Math.floor(q / FOCUS_CREATURE_MS) + Math.floor(d / FOCUS_M_PER_CREATURE),
-      items: Math.floor(q / FOCUS_ITEM_MS) + Math.floor(d / FOCUS_M_PER_ITEM),
+      creatures: Math.floor(mult * (q / FOCUS_CREATURE_MS + d / FOCUS_M_PER_CREATURE) + 1e-9),
+      items: Math.floor(mult * (q / FOCUS_ITEM_MS + d / FOCUS_M_PER_ITEM) + 1e-9),
+      mult,
     };
   }
 
   // Pedometer bridge for the distance bonus — same plugin + opt-in
   // toggle the daycare sync uses (iOS CMPedometer / Android Health
   // Connect share the "MotionPedometer" jsName). Null when unavailable
-  // or not enabled → sessions accrue at the base rate.
+  // or not enabled → sessions pay the time rate only.
   function _focusPedometer() {
     try {
       if (localStorage.getItem('cc.pedometerEnabled') !== '1') return null;
@@ -20443,8 +20547,12 @@
   // Web-fallback event log (only consulted when no native plugin).
   let _focusWebEvents = [];
   let _focusSettleTimer = null;
+  let _focusDueTimer = null;
   let _focusSettleInFlight = false;
   let _focusViewTick = null;
+  // A session that finished while the page was hidden: its results open
+  // when the app comes back (_focusShowResults).
+  let _focusPendingResults = null;
 
   // Plugin calls cross the native bridge; on iOS the WebView can
   // suspend mid-call (lock arrives between the JS request and the
@@ -20469,7 +20577,8 @@
     }
     // Settle on BOTH transitions: on hide it promptly records the app_bg
     // (so a process kill mid-background can't misattribute the span);
-    // on show it catches up whatever accrued while suspended (sleep).
+    // on show it catches up whatever accrued while suspended (sleep) —
+    // which may finish the session.
     _focusSettle(now).catch(() => {}).finally(() => {
       // iOS can kill WebView timers across a long suspend — re-render
       // the focus view (which re-arms its 1s clock) if it's on screen
@@ -20483,75 +20592,157 @@
   }
 
   // Settle accrual up to nowMs: replay events since the last settle,
-  // advance qualifyingMs, grant whatever thresholds were crossed, and
-  // persist. Idempotent and safe to call spuriously.
+  // advance qualifyingMs (stopping at the session's length) and the
+  // walked distance, and once the length is reached pay the session out
+  // (_focusFinish). Idempotent and safe to call spuriously. Returns the
+  // finished { rec, idx } when this call completed the session.
   async function _focusSettle(nowMs) {
-    if (_focusSettleInFlight) return;
+    if (_focusSettleInFlight) return null;
     const s = _focusRead();
     const a = s.active;
-    if (!a) return;
+    if (!a) return null;
     _focusSettleInFlight = true;
+    let finished = null;
     try {
-      let events = [];
-      const p = _focusPlugin();
-      if (p) {
-        try {
-          const r = await _focusPluginCall(p.getEvents({ sinceMs: a.lastSettleMs }));
-          events = (r && Array.isArray(r.events)) ? r.events : [];
-        } catch (e) { /* plugin hiccup — replay with no events (state holds) */ }
-      } else {
-        events = _focusWebEvents
-          .filter((e) => e.t > a.lastSettleMs && e.t <= nowMs);
-        _focusWebEvents = _focusWebEvents.filter((e) => e.t > nowMs);
-      }
-      const r = _focusReplay(events, a.lastSettleMs, nowMs, a.lastState);
-      a.qualifyingMs += r.qualifyingMs;
-      a.lastState = r.state;
-      // Ground truth beats the event log: if this JS is running and the
-      // page is visible, the app IS foreground — an app_fg event lost in
-      // a suspend race (or a plugin that never registered) must not
-      // leave the session reading "backgrounded" forever.
-      a.lastState.appFg = (document.visibilityState === 'visible');
-      a.lastSettleMs = nowMs;
-      // Distance bonus: fold in whatever the pedometer recorded since
-      // the last sync. Reads are independent of the daycare's own
-      // pedometer marker — both query the same native history.
-      const Ped = _focusPedometer();
-      if (Ped) {
-        try {
-          const fromMs = a.lastDistanceSyncMs || a.startedAtMs;
-          // Skip trivially-short windows (same rationale as the
-          // daycare sync's MIN_SYNC_WINDOW_MS).
-          if (nowMs - fromMs >= 20000) {
-            const dr = await _focusPluginCall(Ped.getDistanceMeters({ fromMs, toMs: nowMs }));
-            if (dr && dr.ok) {
-              a.distanceM = (a.distanceM || 0) + (Number(dr.meters) || 0);
-              a.lastDistanceSyncMs = nowMs;
+      if (a.doneAtMs == null) {
+        let events = [];
+        const p = _focusPlugin();
+        if (p) {
+          try {
+            const r = await _focusPluginCall(p.getEvents({ sinceMs: a.lastSettleMs }));
+            events = (r && Array.isArray(r.events)) ? r.events : [];
+          } catch (e) { /* plugin hiccup — replay with no events (state holds) */ }
+        } else {
+          events = _focusWebEvents
+            .filter((e) => e.t > a.lastSettleMs && e.t <= nowMs);
+          _focusWebEvents = _focusWebEvents.filter((e) => e.t > nowMs);
+        }
+        const need = Number.isFinite(a.targetMs) ? Math.max(0, a.targetMs - a.qualifyingMs) : undefined;
+        const r = _focusReplay(events, a.lastSettleMs, nowMs, a.lastState, need);
+        a.qualifyingMs += r.qualifyingMs;
+        a.lastState = r.state;
+        // Ground truth beats the event log: if this JS is running and the
+        // page is visible, the app IS foreground — an app_fg event lost in
+        // a suspend race (or a plugin that never registered) must not
+        // leave the session reading "backgrounded" forever.
+        a.lastState.appFg = (document.visibilityState === 'visible');
+        a.lastSettleMs = nowMs;
+        // Walking only counts until the session's length was reached.
+        const upTo = r.reachedAtMs != null ? r.reachedAtMs : nowMs;
+        const Ped = _focusPedometer();
+        if (Ped) {
+          try {
+            const fromMs = a.lastDistanceSyncMs || a.startedAtMs;
+            // Skip trivially-short windows (same rationale as the
+            // daycare sync's MIN_SYNC_WINDOW_MS).
+            if (upTo - fromMs >= 20000) {
+              const dr = await _focusPluginCall(Ped.getDistanceMeters({ fromMs, toMs: upTo }));
+              if (dr && dr.ok) {
+                a.distanceM = (a.distanceM || 0) + (Number(dr.meters) || 0);
+                a.lastDistanceSyncMs = upTo;
+              }
+              // Not ok (auth lost, transient error) → leave the marker so
+              // the window is retried on the next settle.
             }
-            // Not ok (auth lost, transient error) → leave the marker so
-            // the window is retried on the next settle.
-          }
-        } catch (e) { /* pedometer hiccup — base rate stands */ }
+          } catch (e) { /* pedometer hiccup — time rate stands */ }
+        }
+        if (r.reachedAtMs != null) {
+          a.qualifyingMs = a.targetMs;
+          a.doneAtMs = r.reachedAtMs;
+        }
+        _focusWrite(s);
       }
-      const due = _focusGrantsDue(a.qualifyingMs, a.distanceM || 0);
-      while (a.earned.creatures.length < due.creatures) {
-        // Species data not loaded yet → leave the grant pending; the
-        // count check retries on the next settle.
-        if (!(await _focusGrantCreature(a))) break;
-      }
-      let itemCount = 0;
-      for (const k in a.earned.items) itemCount += a.earned.items[k];
-      while (itemCount < due.items) { _focusGrantItem(a); itemCount++; }
-      _focusWrite(s);
+      if (a.doneAtMs != null) finished = await _focusFinish(s, 'done');
     } finally {
       _focusSettleInFlight = false;
     }
+    if (finished) _focusShowResults(finished.idx);
+    else _focusScheduleDue();
+    return finished;
   }
 
+  // Pay out a finished session ('done') or file a given-up one
+  // ('cancelled', nothing paid), move it into history and lift the map
+  // gating. Payouts are resumable: what's been granted is tallied on
+  // a.earned and persisted as it goes, so an app kill part way picks up
+  // where it stopped rather than granting twice. Returns { rec, idx },
+  // or null when pokémon can't be rolled yet (species data still
+  // loading) — the session stays done-but-unpaid and the next settle
+  // carries on.
+  async function _focusFinish(s, outcome) {
+    const a = s.active;
+    const target = Number.isFinite(a.targetMs) ? a.targetMs : a.qualifyingMs;
+    let mult = null;
+    if (outcome === 'done') {
+      const due = _focusGrantsDue(a.qualifyingMs, a.distanceM || 0, target);
+      mult = due.mult;
+      const haveItems = _focusItemCount(a.earned.items);
+      if (haveItems < due.items) {
+        _focusGrantItems(a, due.items - haveItems);
+        _focusWrite(s);
+      }
+      let n = 0;
+      const where = a.earned.creatures.length < due.creatures ? await _focusWhere() : null;
+      while (a.earned.creatures.length < due.creatures) {
+        _focusPayingOut = { done: a.earned.creatures.length, of: due.creatures };
+        if (!(await _focusGrantCreature(a, where))) { _focusWrite(s); _focusPayingOut = null; return null; }
+        if (++n % 25 === 0) {
+          _focusWrite(s);
+          _focusPaintPayout();
+          await new Promise((r) => setTimeout(r, 0));   // let the UI breathe
+        }
+      }
+      _focusPayingOut = null;
+    }
+    const p = _focusPlugin();
+    if (p) { try { await _focusPluginCall(p.endSession()); } catch (e) { /* ignore */ } }
+    const rec = {
+      startedAtMs: a.startedAtMs,
+      endedAtMs: outcome === 'done' && a.doneAtMs ? a.doneAtMs : Date.now(),
+      qualifyingMs: a.qualifyingMs,
+      distanceM: a.distanceM || 0,
+      targetMs: Number.isFinite(a.targetMs) ? a.targetMs : null,
+      mult,
+      outcome,
+      creatures: outcome === 'done' ? a.earned.creatures : [],
+      items: outcome === 'done' ? a.earned.items : {},
+    };
+    s.active = null;
+    s.history.push(rec);
+    if (s.history.length > FOCUS_HISTORY_MAX) {
+      s.history.splice(0, s.history.length - FOCUS_HISTORY_MAX);
+    }
+    _focusWrite(s);
+    _focusDisarm();
+    _focusNotifyMap();
+    _updateEggBubble();      // restore the hatch bubble if an egg is ready
+    refreshSpawnOverlay();   // ungated again → markers repopulate
+    return { rec, idx: s.history.length - 1 };
+  }
+  // Payout progress for a big session ({ done, of }), shown on the focus
+  // view while the pokémon are being added.
+  let _focusPayingOut = null;
+  function _focusPaintPayout() {
+    const el = document.querySelector('#creatureInventory .focus-view.show .focus-status-sub');
+    if (el && _focusPayingOut) el.textContent = `Adding your pokémon… ${_focusPayingOut.done} / ${_focusPayingOut.of}`;
+  }
+
+  // Where a payout's pokémon count as caught: where you are when it pays
+  // out, looked up once (a long session adds hundreds; each lookup scans
+  // every POI).
+  async function _focusWhere() {
+    if (_userLat == null || _userLng == null) return { poi: null, place: null };
+    try { await _whenPoisReady(5000); } catch (e) { /* no POIs: no names */ }
+    const api = global.CreatureCollectAPI;
+    let poi = null, place = null;
+    try { poi = api && api.findNearestNamedPoi ? api.findNearestNamedPoi(_userLat, _userLng) : null; } catch (e) { /* ignore */ }
+    try { place = api && api.findNearestPlace ? api.findNearestPlace(_userLat, _userLng) : null; } catch (e) { /* ignore */ }
+    return { poi, place };
+  }
   // Roll a base-pool encounter and record it as a capture through the
   // normal path (candy, dex, backup all flow). Returns false when the
   // species data isn't loaded so the grant stays pending.
-  async function _focusGrantCreature(a) {
+  async function _focusGrantCreature(a, where) {
     const enc = (global.Spawns && global.Spawns.rollWildEncounter)
       ? global.Spawns.rollWildEncounter() : null;
     if (!enc) return false;
@@ -20569,7 +20760,7 @@
       focus: true,
     };
     try {
-      const entry = await recordCaptureFromSpawn(spawn);
+      const entry = await recordCaptureFromSpawn(spawn, { where });
       // Register it in the Pokédex now, art included. Wild catches are
       // marked at the encounter screen and hatches in hatchEgg; a grant has
       // neither, so it only reached the dex at the next boot's backfill
@@ -20583,6 +20774,8 @@
         solo: enc.solo || undefined,
         speciesA: enc.solo ? null : enc.speciesA,
         speciesB: enc.solo ? null : enc.speciesB,
+        variant: entry.variant,
+        shinyVariant: entry.shinyVariant,
         level: enc.level,
         shiny: entry.shinyVariant != null,
       });
@@ -20592,14 +20785,20 @@
       return false;
     }
   }
-  function _focusGrantItem(a) {
-    const key = rollCollectibleItem();
-    if (!key) return;
-    grantItem(key, 1);
-    a.earned.items[key] = (a.earned.items[key] || 0) + 1;
+  // Roll and grant n items, one bag write per kind.
+  function _focusGrantItems(a, n) {
+    const tally = {};
+    for (let i = 0; i < n; i++) {
+      const key = rollCollectibleItem();
+      if (key) tally[key] = (tally[key] || 0) + 1;
+    }
+    for (const key in tally) {
+      grantItem(key, tally[key]);
+      a.earned.items[key] = (a.earned.items[key] || 0) + tally[key];
+    }
   }
 
-  async function _focusStart() {
+  async function _focusStart(targetMs) {
     const s = _focusRead();
     if (s.active) return;
     const now = Date.now();
@@ -20618,6 +20817,7 @@
     }
     s.active = {
       startedAtMs: now,
+      targetMs,
       lastSettleMs: now,
       lastState: init,
       qualifyingMs: 0,
@@ -20632,34 +20832,23 @@
     refreshSpawnOverlay();   // gated while active → clears the map
   }
 
-  // End the session: settle up to now, move the earnings into history,
-  // and return the finished record (null when no session was active).
+  // Hold-to-end: settle first (the time may in fact be up, which
+  // finishes and pays the session); otherwise a session with a length
+  // is given up — nothing paid — and an old open-ended one is paid for
+  // the time it ran. Returns the filed { rec, idx } (null if none).
   async function _focusEnd() {
-    await _focusSettle(Date.now());
+    const done = await _focusSettle(Date.now());
+    if (done) return done;
+    if (_focusSettleInFlight) return null;   // a payout is running; it'll show itself
     const s = _focusRead();
-    const a = s.active;
-    if (!a) return null;
-    const p = _focusPlugin();
-    if (p) { try { await _focusPluginCall(p.endSession()); } catch (e) { /* ignore */ } }
-    s.active = null;
-    const rec = {
-      startedAtMs: a.startedAtMs,
-      endedAtMs: Date.now(),
-      qualifyingMs: a.qualifyingMs,
-      distanceM: a.distanceM || 0,
-      creatures: a.earned.creatures,
-      items: a.earned.items,
-    };
-    s.history.push(rec);
-    if (s.history.length > FOCUS_HISTORY_MAX) {
-      s.history.splice(0, s.history.length - FOCUS_HISTORY_MAX);
+    if (!s.active) return null;
+    _focusSettleInFlight = true;
+    try {
+      const legacy = !Number.isFinite(s.active.targetMs);
+      return await _focusFinish(s, legacy ? 'done' : 'cancelled');
+    } finally {
+      _focusSettleInFlight = false;
     }
-    _focusWrite(s);
-    _focusDisarm();
-    _focusNotifyMap();
-    _updateEggBubble();      // restore the hatch bubble if an egg is ready
-    refreshSpawnOverlay();   // ungated again → markers repopulate
-    return rec;
   }
 
   // Tell index.html the focus state flipped so it can refresh POI
@@ -20674,11 +20863,57 @@
       _focusSettle(Date.now()).catch(() => {});
     }, FOCUS_SETTLE_TICK_MS);
     document.addEventListener('visibilitychange', _focusOnVisibility);
+    _focusScheduleDue();
   }
   function _focusDisarm() {
     if (_focusSettleTimer) { clearInterval(_focusSettleTimer); _focusSettleTimer = null; }
+    if (_focusDueTimer) { clearTimeout(_focusDueTimer); _focusDueTimer = null; }
     document.removeEventListener('visibilitychange', _focusOnVisibility);
     _focusWebEvents = [];
+  }
+  // Settle right when the session should complete (if the clock keeps
+  // running until then), rather than up to a settle tick late.
+  function _focusScheduleDue() {
+    if (_focusDueTimer) { clearTimeout(_focusDueTimer); _focusDueTimer = null; }
+    const a = _focusRead().active;
+    if (!a || !Number.isFinite(a.targetMs) || a.doneAtMs != null) return;
+    const left = a.targetMs - _focusProjectedQualifyingMs(a, Date.now());
+    if (left > FOCUS_SETTLE_TICK_MS) return;   // the tick will get closer first
+    _focusDueTimer = setTimeout(() => {
+      _focusDueTimer = null;
+      _focusSettle(Date.now()).catch(() => {});
+    }, Math.max(0, left) + 250);
+  }
+
+  // A finished session's results: on top of where you are if the panel
+  // is open, else the panel opens on them (collection → focus → results,
+  // so Back walks up). Waits for the app to be on screen.
+  function _focusShowResults(idx) {
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+      if (_focusPendingResults == null) {
+        document.addEventListener('visibilitychange', _focusResultsOnVisible);
+      }
+      _focusPendingResults = idx;
+      return;
+    }
+    const panel = ensurePanel();
+    const frame = { view: 'focusSession', idx, fresh: true };
+    if (panel.classList.contains('show')) {
+      const top = _viewStack[_viewStack.length - 1];
+      if (top && top.view === 'focusSession' && top.idx === idx) { applyTopView(); return; }
+      pushView(frame);
+    } else {
+      _viewStack = [{ view: 'browse' }, { view: 'focus' }, frame];
+      applyTopView();
+      panel.classList.add('show');
+    }
+  }
+  function _focusResultsOnVisible() {
+    if (document.visibilityState !== 'visible' || _focusPendingResults == null) return;
+    document.removeEventListener('visibilitychange', _focusResultsOnVisible);
+    const idx = _focusPendingResults;
+    _focusPendingResults = null;
+    _focusShowResults(idx);
   }
 
   // 1s ticker that keeps the active-session clock fresh while the focus
@@ -20689,38 +20924,47 @@
   // Projected qualifying time for the live display: between settles the
   // clock keeps running whenever the last settled state was qualifying
   // (which it always is while this view is on screen — the app is
-  // foreground by definition).
+  // foreground by definition). Never past the session's length.
   function _focusProjectedQualifyingMs(a, nowMs) {
     let q = a.qualifyingMs;
-    if (a.lastState && (a.lastState.screenOff || a.lastState.appFg)) {
+    if (a.doneAtMs == null && a.lastState && (a.lastState.screenOff || a.lastState.appFg)) {
       q += Math.max(0, nowMs - a.lastSettleMs);
     }
-    return q;
+    return Number.isFinite(a.targetMs) ? Math.min(q, a.targetMs) : q;
   }
-
   function _focusFmtDur(ms) {
     const mins = Math.floor(Math.max(0, ms) / 60000);
-    const h = Math.floor(mins / 60), m = mins % 60;
-    if (h > 0) return h + 'h ' + m + 'm';
+    const d = Math.floor(mins / 1440), h = Math.floor((mins % 1440) / 60), m = mins % 60;
+    if (d > 0) return d + 'd' + (h ? ' ' + h + 'h' : '');
+    if (h > 0) return h + 'h' + (m ? ' ' + m + 'm' : '');
     if (m > 0) return m + 'm';
     return Math.floor(Math.max(0, ms) / 1000) + 's';
+  }
+  function _focusDurLabel(min) {
+    if (min % 1440 === 0) return (min / 1440) + (min === 1440 ? ' day' : ' days');
+    if (min % 60 === 0) return (min / 60) + ' h';
+    return min + ' min';
+  }
+  function _focusFmtMult(m) {
+    return '×' + (Math.round(m * 100) / 100).toFixed(2).replace(/0$/, '').replace(/\.0$/, '');
   }
   function _focusItemCount(items) {
     let n = 0;
     for (const k in (items || {})) n += items[k];
     return n;
   }
-  function _focusCreatureName(c) {
-    if (c.solo) return String(c.solo);
-    return speciesNameFor(c.speciesA) + ' × ' + speciesNameFor(c.speciesB);
-  }
   function _focusLootSummary(sess) {
+    if (sess.outcome === 'cancelled') return 'gave up · no rewards';
     const c = (sess.creatures || []).length;
     const i = _focusItemCount(sess.items);
     const parts = [];
     if (c) parts.push(c + ' pokémon');
     if (i) parts.push(i + ' item' + (i === 1 ? '' : 's'));
-    return parts.length ? parts.join(' · ') : 'nothing yet';
+    return parts.length ? parts.join(' · ') : 'nothing';
+  }
+  function _focusReadDuration() {
+    const v = Number(localStorage.getItem(FOCUS_DURATION_KEY));
+    return FOCUS_DURATIONS_MIN.includes(v) ? v : 60;
   }
 
   // Hold-to-confirm wiring for the Enter/End buttons — same semantics
@@ -20754,81 +20998,37 @@
     </button>`;
   }
 
-  // Session detail — opened via the generic info modal when a history
-  // row is tapped (and right after a session ends).
-  function _focusSessionHtml(sess) {
-    const when = new Date(sess.startedAtMs);
-    let h = '<p class="cc-info-p">'
-      + escapeHtml(when.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }))
-      + ' · focused for <b>' + escapeHtml(_focusFmtDur(sess.qualifyingMs)) + '</b>';
-    const distM = Number(sess.distanceM) || 0;
-    if (distM >= 50) {
-      const km = distM / 1000;
-      h += '<br>Walked <b>' + escapeHtml(km.toFixed(1)) + ' km</b> during the session'
-        + ' (+' + Math.floor(distM / FOCUS_M_PER_CREATURE) + ' pokémon, +'
-        + Math.floor(distM / FOCUS_M_PER_ITEM) + ' items from distance)';
-    }
-    h += '</p>';
-    const creatures = sess.creatures || [];
-    h += '<div class="cc-info-section">';
-    h += '<div class="cc-info-section-title">' + creatures.length + ' pokémon</div>';
-    if (creatures.length) {
-      h += creatures.map((c) =>
-        '<div class="cc-info-row"><span class="cc-info-v">'
-        + escapeHtml(_focusCreatureName(c))
-        + (c.shiny ? ' ★' : '')
-        + (_showLevelSize() ? ' · lvl ' + escapeHtml(String(c.level)) : '')
-        + '</span></div>').join('');
-    } else {
-      h += '<p class="cc-info-p">None — the first pokémon arrives after 1 hour of focus.</p>';
-    }
-    h += '</div>';
-    const items = sess.items || {};
-    const keys = Object.keys(items);
-    h += '<div class="cc-info-section">';
-    h += '<div class="cc-info-section-title">' + _focusItemCount(items) + ' items</div>';
-    if (keys.length) {
-      h += keys.map((k) => {
-        const meta = getItemMeta(k) || { name: k };
-        return '<div class="cc-info-row"><span class="cc-info-v">'
-          + escapeHtml(meta.name) + ' ×' + items[k] + '</span></div>';
-      }).join('');
-    } else {
-      h += '<p class="cc-info-p">None — the first item arrives after a minute of focus.</p>';
-    }
-    h += '</div>';
-    return h;
-  }
-
   function _focusInfoHtml() {
     let h = '';
-    h += '<p class="cc-info-p">Focus mode rewards you for <b>not</b> playing. While it\'s on, '
-      + 'the map keeps working but ordinary wild spawns and item pickups are hidden '
-      + '(<b>legendary and poké-radar pokémon still appear</b> — rare finds stay catchable) — '
-      + 'and time only '
-      + 'counts while this app is open or your phone is asleep. Switching to another app '
-      + '<b>pauses</b> the session (never ends it); coming back resumes it.</p>';
+    h += '<p class="cc-info-p">Focus mode rewards you for <b>not</b> playing. Pick how long '
+      + 'you\'ll focus, then put the phone down. While it\'s on, the map keeps working but '
+      + 'ordinary wild spawns and item pickups are hidden (<b>legendary and poké-radar '
+      + 'pokémon still appear</b>), and time only counts while this app is open or your '
+      + 'phone is asleep. Switching to another app <b>pauses</b> the clock; coming back '
+      + 'resumes it.</p>';
     h += '<div class="cc-info-section">';
     h += '<div class="cc-info-section-title">What you earn</div>';
     h += '<div class="cc-info-row"><span class="cc-info-k">Pokémon</span>'
-      + '<span class="cc-info-v">One per <b>hour</b> of focus — a trickle, so exploring '
-      + 'is always better.</span></div>';
+      + '<span class="cc-info-v">One per <b>5 minutes</b> of focus, and one per '
+      + '<b>0.25 km</b> walked during it.</span></div>';
     h += '<div class="cc-info-row"><span class="cc-info-k">Items</span>'
-      + '<span class="cc-info-v">One poké ball per <b>minute</b> of focus.</span></div>';
-    h += '<div class="cc-info-row"><span class="cc-info-k">Walking</span>'
-      + '<span class="cc-info-v">Distance walked during a session earns flat bonuses on top: '
-      + '<b>+1 pokémon per 0.5 km</b> and <b>+1 ball per 1 km</b>. (Needs the pedometer '
-      + 'enabled in Settings; daycare and eggs still track distance as usual.)</span></div>';
+      + '<span class="cc-info-v">One per <b>minute</b> of focus, and one per <b>km</b> '
+      + 'walked. (Walking needs the pedometer on in Settings.)</span></div>';
+    h += '<div class="cc-info-row"><span class="cc-info-k">Longer pays more</span>'
+      + '<span class="cc-info-v">Everything is multiplied by the session\'s length: '
+      + '×1.04 for an hour, ×1.33 for 8 hours, up to <b>×2 for a whole day</b> '
+      + '(and ×2 beyond).</span></div>';
     h += '<div class="cc-info-row"><span class="cc-info-k">The catch</span>'
-      + '<span class="cc-info-v">You don\'t see what you\'ve earned until you end the '
-      + 'session. No peeking.</span></div>';
+      + '<span class="cc-info-v">You only get rewards if you <b>finish</b>. Giving up '
+      + 'early gets you nothing — and you don\'t see what you\'ve earned until it\'s '
+      + 'over.</span></div>';
     h += '</div>';
     h += '<div class="cc-info-section">';
     h += '<div class="cc-info-section-title">Fine print</div>';
     h += '<p class="cc-info-p">Sleep counts fully — overnight sessions are legit. '
       + 'Focus pokémon come from the ordinary wild pool (no legendaries or radar '
       + 'targets) and still earn candy. Past sessions are listed below; tap one to '
-      + 'see what it earned.</p>';
+      + 'see everything it earned.</p>';
     h += '</div>';
     return h;
   }
@@ -20849,24 +21049,45 @@
     const s = _focusRead();
 
     if (s.active) {
-      // Active session: big clock only — earnings stay hidden until the
+      const a = s.active;
+      const hasTarget = Number.isFinite(a.targetMs);
+      // Active session: the clock only — earnings stay hidden until the
       // session ends (that's the whole point).
       body.innerHTML = `
         <div class="focus-status">
           <div class="focus-status-title">Currently in focus mode</div>
           <div class="focus-status-time"></div>
+          ${hasTarget ? `<div class="focus-progress"><div class="focus-progress-fill"></div></div>
+          <div class="focus-status-goal"></div>` : ''}
           <div class="focus-status-sub">Map is distraction-free · switching apps pauses the clock</div>
         </div>
         <div class="focus-hold-wrap">
-          ${_focusHoldHtml('End Focus Mode', 'end')}
-          <div class="focus-hold-hint">Hold to end — you'll see what you earned</div>
+          ${_focusHoldHtml(hasTarget ? 'Give Up' : 'End Focus Mode', 'end')}
+          <div class="focus-hold-hint">${hasTarget
+            ? 'Hold to give up — you’ll get nothing. Finish for every reward.'
+            : 'Hold to end — you’ll see what you earned'}</div>
         </div>
       `;
       const timeEl = body.querySelector('.focus-status-time');
+      const fillEl = body.querySelector('.focus-progress-fill');
+      const goalEl = body.querySelector('.focus-status-goal');
+      let settling = false;
       const paint = () => {
         const cur = _focusRead().active;
         if (!cur) { _focusClearViewTick(); renderFocus(); return; }
-        timeEl.textContent = _fmtCountdownHMS(_focusProjectedQualifyingMs(cur, Date.now()));
+        if (_focusPayingOut) { _focusPaintPayout(); return; }
+        const q = _focusProjectedQualifyingMs(cur, Date.now());
+        if (!hasTarget) { timeEl.textContent = _fmtCountdownHMS(q); return; }
+        const left = Math.max(0, cur.targetMs - q);
+        timeEl.textContent = _fmtCountdownHMS(left);
+        if (fillEl) fillEl.style.width = (100 * q / cur.targetMs).toFixed(2) + '%';
+        if (goalEl) goalEl.textContent = `left of ${_focusDurLabel(Math.round(cur.targetMs / 60000))} · `
+          + `${_focusFmtMult(_focusMult(cur.targetMs))} rewards`;
+        // Time's up on screen: settle now so it finishes and pays out.
+        if (left <= 0 && !settling) {
+          settling = true;
+          _focusSettle(Date.now()).catch(() => {}).finally(() => { settling = false; });
+        }
       };
       paint();
       _focusViewTick = setInterval(paint, 1000);
@@ -20874,48 +21095,145 @@
       // from settled state (e.g. view opened right after a long sleep).
       _focusSettle(Date.now()).catch(() => {});
       _focusWireHold(body.querySelector('.focus-hold'), async () => {
-        const rec = await _focusEnd();
+        const res = await _focusEnd();
         renderFocus();
-        if (rec) {
-          _openInfoModal({ title: 'Focus session', html: () => _focusSessionHtml(rec) });
-        }
+        if (res) _focusShowResults(res.idx);
       });
       return;
     }
 
-    // Inactive: enter button + past sessions (most recent first).
+    // Inactive: pick a length, hold to start, then past sessions.
+    const pick = _focusReadDuration();
+    const est = _focusGrantsDue(pick * 60000, 0, pick * 60000);
+    const chips = FOCUS_DURATIONS_MIN.map((min) =>
+      `<button class="focus-len${min === pick ? ' is-active' : ''}" type="button" data-min="${min}"`
+      + ` aria-pressed="${min === pick ? 'true' : 'false'}">${escapeHtml(_focusDurLabel(min))}</button>`).join('');
     const history = s.history.slice().reverse();
     const rows = history.map((sess, i) => {
       const when = new Date(sess.startedAtMs);
       const dateStr = when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
       const idx = history.length - 1 - i;   // index into s.history
-      return `<button class="focus-session-row" type="button" data-idx="${idx}">
+      const len = sess.outcome === 'cancelled' && Number.isFinite(sess.targetMs)
+        ? `${_focusFmtDur(sess.qualifyingMs)} of ${_focusFmtDur(sess.targetMs)}`
+        : _focusFmtDur(sess.qualifyingMs);
+      return `<button class="focus-session-row${sess.outcome === 'cancelled' ? ' gave-up' : ''}" type="button" data-idx="${idx}">
         <div class="focus-session-info">
-          <div class="focus-session-when">${escapeHtml(dateStr)} · ${escapeHtml(_focusFmtDur(sess.qualifyingMs))}</div>
+          <div class="focus-session-when">${escapeHtml(dateStr)} · ${escapeHtml(len)}</div>
           <div class="focus-session-len">${escapeHtml(_focusLootSummary(sess))}</div>
         </div>
       </button>`;
     }).join('');
     body.innerHTML = `
+      <div class="focus-len-title">How long will you focus?</div>
+      <div class="focus-lens">${chips}</div>
+      <div class="focus-estimate">${escapeHtml(`${est.creatures} pokémon + ${est.items} items`)}`
+        + ` · <b>${escapeHtml(_focusFmtMult(est.mult))}</b> · more for walking</div>
       <div class="focus-hold-wrap">
         ${_focusHoldHtml('Enter Focus Mode', '')}
-        <div class="focus-hold-hint">Hold to start</div>
+        <div class="focus-hold-hint">Hold to start — you only get rewards if you finish</div>
       </div>
       <div class="focus-history-title">Past sessions</div>
       ${history.length
         ? `<div class="focus-history-list">${rows}</div>`
-        : `<div class="focus-empty">No sessions yet. Hold the button above to start your first.</div>`}
+        : `<div class="focus-empty">No sessions yet. Pick a length and hold the button above to start your first.</div>`}
     `;
+    body.querySelectorAll('.focus-len').forEach((b) => b.addEventListener('click', () => {
+      try { localStorage.setItem(FOCUS_DURATION_KEY, b.dataset.min); } catch (e) { /* ignore */ }
+      renderFocus();
+    }));
     _focusWireHold(body.querySelector('.focus-hold'), async () => {
-      await _focusStart();
+      await _focusStart(_focusReadDuration() * 60000);
       renderFocus();
     });
     body.querySelectorAll('.focus-session-row').forEach((row) => {
       row.addEventListener('click', () => {
-        const sess = _focusRead().history[Number(row.dataset.idx)];
-        if (!sess) return;
-        _openInfoModal({ title: 'Focus session', html: () => _focusSessionHtml(sess) });
+        if (!_focusRead().history[Number(row.dataset.idx)]) return;
+        pushView({ view: 'focusSession', idx: Number(row.dataset.idx) });
       });
+    });
+  }
+
+  // One session's results ({ view: 'focusSession', idx } into history):
+  // how long and how far, the length bonus, every item as an icon, and
+  // every pokémon as a sprite — tap one for its page, whose arrows then
+  // step through the rest of the session's pokémon. Big sessions can
+  // hold hundreds, so the sprite grid is virtualized like the collection.
+  function renderFocusSession(top) {
+    const panel = document.getElementById('creatureInventory');
+    const body = panel && panel.querySelector('.focussession-body');
+    if (!body) return;
+    const grid0 = body.querySelector('.focus-pokes');
+    if (grid0 && grid0._virtCleanup) grid0._virtCleanup();
+    const sess = _focusRead().history[top.idx];
+    if (!sess) { body.innerHTML = '<div class="focus-empty">This session is no longer in your history.</div>'; return; }
+    const title = panel.querySelector('.focussession-view .subview-title');
+    if (title) {
+      title.textContent = sess.outcome === 'cancelled' ? 'Gave up'
+        : (top.fresh ? 'Focus complete!' : 'Focus session');
+    }
+    const when = new Date(sess.startedAtMs).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    const distM = Number(sess.distanceM) || 0;
+    let head = `<div class="focus-result-when">${escapeHtml(when)} · ${escapeHtml(_focusFmtDur(sess.qualifyingMs))} of focus`
+      + (distM >= 50 ? ` · walked ${escapeHtml((distM / 1000).toFixed(2))} km` : '') + `</div>`;
+    if (sess.outcome === 'cancelled') {
+      head += `<div class="focus-result-note">Gave up${Number.isFinite(sess.targetMs) ? ' before the ' + escapeHtml(_focusDurLabel(Math.round(sess.targetMs / 60000))) + ' were up' : ''} — no rewards.</div>`;
+      body.innerHTML = `<div class="focus-result-head">${head}</div>`;
+      return;
+    }
+    if (sess.mult) head += `<div class="focus-result-note">${escapeHtml(_focusFmtMult(sess.mult))} rewards for a ${escapeHtml(_focusDurLabel(Math.round((sess.targetMs || sess.qualifyingMs) / 60000)))} session</div>`;
+    const items = sess.items || {};
+    const itemKeys = Object.keys(items).sort((x, y) => (_bagEntryRank(x) - _bagEntryRank(y)) || (items[y] - items[x]));
+    const itemsHtml = itemKeys.map((k) => {
+      const meta = getItemMeta(k) || { name: k };
+      return `<div class="focus-item" title="${escapeHtml(meta.name)}">`
+        + (meta.icon ? `<img src="${escapeHtml(meta.icon)}" alt="">` : '')
+        + `<span class="focus-item-n">×${items[k]}</span>`
+        + `<span class="focus-item-name">${escapeHtml(meta.name)}</span></div>`;
+    }).join('');
+    const creatures = sess.creatures || [];
+    body.innerHTML = `<div class="focus-result-head">${head}</div>`
+      + `<div class="focus-result-section">${_focusItemCount(items)} item${_focusItemCount(items) === 1 ? '' : 's'}</div>`
+      + (itemKeys.length ? `<div class="focus-items">${itemsHtml}</div>` : '<div class="focus-empty">No items this time.</div>')
+      + `<div class="focus-result-section">${creatures.length} pokémon${creatures.length ? ' <span class="focus-result-hint">· tap one to see it</span>' : ''}</div>`
+      + (creatures.length ? '<div class="focus-pokes"></div>' : '<div class="focus-empty">No pokémon this time.</div>');
+    if (!creatures.length) return;
+    // Pokémon still in the collection open on tap (and page through each
+    // other); ones evolved keep their id, ones gifted away show dimmed.
+    const owned = new Map(readCapturedCreatures().filter(Boolean).map((c) => [c.id, c]));
+    const here = creatures.filter((c) => owned.has(c.id)).map((c) => ({ id: c.id }));
+    const hereIdx = new Map(here.map((c, i) => [c.id, i]));
+    const sheet = panel.querySelector('.sheet');
+    virtualizeGrid({
+      scrollEl: sheet,
+      gridEl: body.querySelector('.focus-pokes'),
+      items: creatures,
+      cols: 4,
+      rowGap: 6,
+      cardHeight: 78,
+      initialScrollTop: top.scrollY || 0,
+      makeCardEl(c) {
+        const cur = owned.get(c.id);
+        const el = document.createElement('button');
+        el.type = 'button';
+        el.className = 'focus-poke' + (cur ? '' : ' gone');
+        const shiny = cur ? cur.shinyVariant != null : !!c.shiny;
+        el.innerHTML = `<img class="focus-poke-img" alt="">`
+          + (shiny ? '<svg class="shiny-badge" aria-label="shiny"><use href="#shinyIcon"/></svg>' : '');
+        el.title = cur ? (readNicknames()[c.id] || creatureName(cur)) : 'no longer in your collection';
+        if (cur) el.addEventListener('click', () => showDetail(c.id, here, hereIdx.get(c.id)));
+        return el;
+      },
+      loadSpriteFor(el, c) {
+        const cur = owned.get(c.id);
+        const src = cur || c;
+        const img = el.querySelector('.focus-poke-img');
+        const v = (typeof src.variant === 'number') ? src.variant : (src.variant === 'auto' ? 'auto' : undefined);
+        const sv = cur ? cur.shinyVariant : c.shinyVariant;
+        try {
+          Promise.resolve(showCreatureArt(img, Object.assign({}, src, { variant: v }),
+            { shinyVariant: typeof sv === 'number' ? sv : null })).catch(() => {});
+        } catch (e) { /* no art store yet */ }
+      },
     });
   }
 

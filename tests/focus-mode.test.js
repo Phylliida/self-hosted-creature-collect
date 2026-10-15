@@ -1,8 +1,9 @@
-// Tests focus-mode accrual logic (_focusReplay / _focusGrantsDue in
-// static/creatures.js): the event-timeline replay that measures
-// qualifying time (screen off OR app foreground), and the grant
-// schedule (base: 1 creature per hour, 1 item per minute; distance
-// bounties: +1 creature per 0.5 km, +1 item per 1 km).
+// Tests focus-mode accrual logic (_focusReplay / _focusGrantsDue /
+// _focusMult in static/creatures.js): the event-timeline replay that
+// measures qualifying time (screen off OR app foreground) and stops at
+// the session's chosen length, and the payout (1 pokémon per 5 min, 1
+// item per minute; walking: +1 pokémon per 0.25 km, +1 item per km;
+// all × the length bonus, ×1 → ×2 at a 1-day session, flat after).
 //
 // Run: node tests/focus-mode.test.js
 'use strict';
@@ -37,19 +38,24 @@ function extract(marker) {
 const MIN = 60 * 1000;
 const ctx = {
   Object, Array, Math, Number, JSON,
-  FOCUS_CREATURE_MS: 60 * MIN,
+  FOCUS_CREATURE_MS: 5 * MIN,
   FOCUS_ITEM_MS: 1 * MIN,
-  FOCUS_M_PER_CREATURE: 500,
+  FOCUS_M_PER_CREATURE: 250,
   FOCUS_M_PER_ITEM: 1000,
+  FOCUS_FULL_BONUS_MS: 24 * 60 * MIN,
 };
 vm.createContext(ctx);
 vm.runInContext(extract('function _focusReplay('), ctx);
+vm.runInContext(extract('function _focusMult('), ctx);
 vm.runInContext(extract('function _focusGrantsDue('), ctx);
-const replay = (events, from, to, state) =>
-  vm.runInContext('_focusReplay(__e, __f, __t, __s)',
-    Object.assign(ctx, { __e: events, __f: from, __t: to, __s: state }));
-const due = (q, d) =>
-  vm.runInContext('_focusGrantsDue(__q, __d)', Object.assign(ctx, { __q: q, __d: d }));
+const replay = (events, from, to, state, need) =>
+  vm.runInContext('_focusReplay(__e, __f, __t, __s, __n)',
+    Object.assign(ctx, { __e: events, __f: from, __t: to, __s: state, __n: need }));
+// Payout for q ms of focus + d metres, in a session of length t (default:
+// a session exactly q long — the usual case, since you must finish).
+const due = (q, d, t) =>
+  vm.runInContext('_focusGrantsDue(__q, __d, __t)', Object.assign(ctx, { __q: q, __d: d, __t: t === undefined ? q : t }));
+const mult = (t) => vm.runInContext('_focusMult(__t)', Object.assign(ctx, { __t: t }));
 
 const FG = { screenOff: false, appFg: true };
 const BG_AWAKE = { screenOff: false, appFg: false };
@@ -142,43 +148,81 @@ const BG_AWAKE = { screenOff: false, appFg: false };
   ok(r.qualifyingMs === 0, '8: hidden tab accrues nothing on web');
 }
 
-// ── 9. Base schedule: 1 creature / hour, 1 item / minute ──
+// ── 9. The sandbox constants mirror creatures.js ──
 {
-  // The sandbox constants above mirror creatures.js — assert the mirror
-  // still matches the real source, so a rate change there can't leave
-  // this test validating a schedule the game no longer runs.
-  const m = /const FOCUS_ITEM_MS\s*=\s*([^;]+);/.exec(src);
-  ok(!!m && vm.runInNewContext(m[1]) === ctx.FOCUS_ITEM_MS,
-     '9: sandbox FOCUS_ITEM_MS mirrors creatures.js');
-
-  const a = due(0, 0);
-  ok(a.creatures === 0 && a.items === 0, '9: nothing at 0');
-  const b = due(59000, 0);
-  ok(b.creatures === 0 && b.items === 0, '9: nothing just before 1 min');
-  const c = due(1 * MIN, 0);
-  ok(c.creatures === 0 && c.items === 1, '9: first item at 1 min');
-  const d = due(60 * MIN, 0);
-  ok(d.creatures === 1 && d.items === 60, '9: first creature at 1 hour, 60 items');
-  const e = due(8 * 60 * MIN, 0);
-  ok(e.creatures === 8 && e.items === 480, '9: overnight sleep = 8 creatures + 480 items');
+  // So a rate change there can't leave this test validating a schedule
+  // the game no longer runs.
+  for (const k of ['FOCUS_CREATURE_MS', 'FOCUS_ITEM_MS', 'FOCUS_M_PER_CREATURE', 'FOCUS_M_PER_ITEM', 'FOCUS_FULL_BONUS_MS']) {
+    const m = new RegExp('const ' + k + '\\s*=\\s*([^;]+);').exec(src);
+    ok(!!m && vm.runInNewContext(m[1]) === ctx[k], `9: sandbox ${k} mirrors creatures.js`);
+  }
 }
 
-// ── 10. Distance bounties: +1 creature / 0.5 km, +1 item / 1 km ──
+// ── 10. The length bonus: ×1 → ×2 at a day, flat after ──
 {
-  const a = due(0, 499);
-  ok(a.creatures === 0 && a.items === 0, '10: nothing under 0.5 km');
-  const b = due(0, 500);
-  ok(b.creatures === 1 && b.items === 0, '10: first creature at 0.5 km');
-  const c = due(0, 1000);
-  ok(c.creatures === 2 && c.items === 1, '10: 1 km = 2 creatures + 1 item');
-  const d = due(0, 15000);
-  ok(d.creatures === 30 && d.items === 15, '10: 15 km = 30 creatures + 15 items');
-  // Garbage distance → base rate only.
-  const e = due(60 * MIN, NaN);
-  ok(e.creatures === 1 && e.items === 60, '10: NaN distance falls back to base rate');
-  // Combined: 2 hours + 5 km.
-  const f = due(2 * 60 * MIN, 5000);
-  ok(f.creatures === 2 + 10 && f.items === 120 + 5, '10: time + distance stack');
+  ok(mult(0) === 1, '10: ×1 at zero length');
+  ok(Math.abs(mult(60 * MIN) - (1 + 1 / 24)) < 1e-12, '10: ×1.04 for an hour');
+  ok(Math.abs(mult(8 * 60 * MIN) - 4 / 3) < 1e-12, '10: ×1.33 for 8 hours');
+  ok(mult(12 * 60 * MIN) === 1.5, '10: ×1.5 for 12 hours');
+  ok(mult(24 * 60 * MIN) === 2, '10: ×2 for a day');
+  ok(mult(3 * 24 * 60 * MIN) === 2, '10: still ×2 for 3 days');
+  ok(mult(-5) === 1 && mult(NaN) === 1, '10: junk lengths are ×1');
+}
+
+// ── 11. Time payout: 1 pokémon / 5 min, 1 item / minute, × bonus ──
+{
+  const a = due(0, 0);
+  ok(a.creatures === 0 && a.items === 0, '11: nothing at 0');
+  const b = due(4 * MIN, 0);
+  ok(b.creatures === 0 && b.items === 4, '11: no pokémon at 4 min');
+  const c = due(5 * MIN, 0);
+  ok(c.creatures === 1 && c.items === 5, '11: 5 min = 1 pokémon + 5 items');
+  const d = due(60 * MIN, 0);
+  ok(d.creatures === 12 && d.items === 62, `11: 1 h = 12 pokémon (12.5 × ×1.04 rounds down) + 62 items (got ${d.creatures}/${d.items})`);
+  const e = due(8 * 60 * MIN, 0);
+  ok(e.creatures === 128 && e.items === 640, `11: 8 h = 128 pokémon + 640 items at ×1.33 (got ${e.creatures}/${e.items})`);
+  const f = due(24 * 60 * MIN, 0);
+  ok(f.creatures === 576 && f.items === 2880, `11: a day = 576 pokémon + 2880 items at ×2 (got ${f.creatures}/${f.items})`);
+  const g = due(48 * 60 * MIN, 0);
+  ok(g.creatures === 1152 && g.items === 5760, '11: two days, still ×2: twice a day');
+}
+
+// ── 12. Walking: +1 pokémon / 0.25 km, +1 item / km, × the same bonus ──
+{
+  const a = due(0, 249, 0);
+  ok(a.creatures === 0 && a.items === 0, '12: nothing under 0.25 km');
+  const b = due(0, 250, 0);
+  ok(b.creatures === 1 && b.items === 0, '12: first pokémon at 0.25 km');
+  const c = due(0, 1000, 0);
+  ok(c.creatures === 4 && c.items === 1, '12: 1 km = 4 pokémon + 1 item');
+  const d = due(60 * MIN, NaN);
+  ok(d.creatures === 12 && d.items === 62, '12: NaN distance falls back to the time rate');
+  // 12 h with 5 km at ×1.5: (144 + 20) × 1.5 pokémon, (720 + 5) × 1.5 items.
+  const e = due(12 * 60 * MIN, 5000);
+  ok(e.creatures === 246 && e.items === 1087, `12: time + walking stack, both × the bonus (got ${e.creatures}/${e.items})`);
+  ok(due(60 * MIN, 0, 24 * 60 * MIN).creatures === 24, '12: the bonus follows the session length, not the time so far');
+}
+
+// ── 13. Replay stops at the session's length ──
+{
+  // All foreground, need 30 min of a 60-min window: reached at +30 min.
+  const r = replay([], 0, 60 * MIN, FG, 30 * MIN);
+  ok(r.qualifyingMs === 30 * MIN && r.reachedAtMs === 30 * MIN, '13: stops at the need, reached mid-window');
+  // Backgrounded (awake) from 10 to 40 min: 10 min before + 20 after →
+  // the 30 min are done at 60.
+  const ev = [{ t: 10 * MIN, type: 'app_bg' }, { t: 40 * MIN, type: 'app_fg' }];
+  const r2 = replay(ev, 0, 70 * MIN, FG, 30 * MIN);
+  ok(r2.qualifyingMs === 30 * MIN && r2.reachedAtMs === 60 * MIN, `13: a paused stretch pushes completion later (${r2.reachedAtMs / MIN} min)`);
+  ok(r2.state.appFg === true, '13: state still tracks events after completion');
+  // Not enough time yet: no reachedAt, everything counted.
+  const r3 = replay(ev, 0, 60 * MIN, FG, 45 * MIN);   // 10 + 20 = 30 < 45
+  ok(r3.qualifyingMs === 30 * MIN && r3.reachedAtMs === null, '13: short of the need → not reached');
+  // No need given (open-ended old sessions): counts everything.
+  const r4 = replay([], 0, 60 * MIN, FG);
+  ok(r4.qualifyingMs === 60 * MIN && r4.reachedAtMs === null, '13: no need → plain replay');
+  // Sleeping counts toward it too.
+  const r5 = replay([{ t: 5 * MIN, type: 'screen_off' }, { t: 6 * MIN, type: 'app_bg' }], 0, 60 * MIN, FG, 20 * MIN);
+  ok(r5.reachedAtMs === 20 * MIN, '13: asleep (screen off) keeps counting toward the length');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
