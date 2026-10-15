@@ -67,7 +67,7 @@
       // Revoking an evicted URL is harmless to <img>s that already
       // loaded from it — the browser keeps the decoded bitmap. The URL
       // handle simply becomes unresolvable for fresh assignments.
-      old.then((u) => u && URL.revokeObjectURL(u)).catch(() => {});
+      old.then(_revoke).catch(() => {});
     }
   }
 
@@ -110,6 +110,50 @@
   //   - status='transient' → Promise rejected, entry removed from cache,
   //                          caller (showSprite) registers the img for
   //                          retryPoll to revisit with backoff.
+  // Each sprite URL's pixel size, read from its PNG header as the URL is
+  // made (no decode — width/height are bytes 16–23), so showSprite can
+  // size an img before it is ever drawn: the "Consistent poké icon size"
+  // setting scales each sprite by its share of the 96×96 cell (see the
+  // load listener in creatures.js, the fallback for anything unknown).
+  const dimsByUrl = new Map();
+  async function _pngDims(blob) {
+    try {
+      const v = new DataView(await blob.slice(0, 24).arrayBuffer());
+      if (v.byteLength >= 24 && v.getUint32(0) === 0x89504E47) {
+        return { w: v.getUint32(16), h: v.getUint32(20) };
+      }
+    } catch { /* unreadable — the load listener sizes it instead */ }
+    return null;
+  }
+  // A sprite blob's URL (shiny-transformed when asked; the base sprite if
+  // that fails), its size noted on the way. The header read gets 500 ms;
+  // a stuck blob read must not hold the sprite back.
+  async function _urlFor(blob, a, b, shinyVariant) {
+    let timer = null;
+    const dimsP = Promise.race([
+      _pngDims(blob),
+      new Promise((r) => { timer = setTimeout(() => r(null), 500); }),
+    ]).finally(() => clearTimeout(timer));
+    let url = null;
+    if (typeof shinyVariant === 'number' && shinyVariant >= 0 && global.ShinyStore) {
+      // Apply the shiny transform on a cache miss. On failure (palette
+      // bundle not loaded, family pair not in the bake, canvas decode
+      // error) fall back to the base sprite — the user still sees the
+      // creature, just non-shiny. Same size either way.
+      try { url = await global.ShinyStore.transformBlob(blob, a, b, shinyVariant); }
+      catch { /* fall through */ }
+    }
+    if (!url) url = URL.createObjectURL(blob);
+    const d = await dimsP;
+    if (d) dimsByUrl.set(url, d);
+    return url;
+  }
+  function _revoke(u) {
+    if (!u) return;
+    dimsByUrl.delete(u);
+    URL.revokeObjectURL(u);
+  }
+
   function spriteUrl(a, b, variant, shinyVariant) {
     const key = keyOf(a, b, variant, shinyVariant);
     if (cache.has(key)) {
@@ -123,18 +167,7 @@
         ATTEMPT_TIMEOUT_MS, 'sprite fetch ' + key);
       if (r.status === 'missing') return null;
       if (r.status !== 'ok') throw new Error('sprite fetch transient: ' + key);
-      const isShiny = typeof shinyVariant === 'number' && shinyVariant >= 0;
-      if (!isShiny || !global.ShinyStore) return URL.createObjectURL(r.blob);
-      // Apply the shiny transform on a cache miss. On failure
-      // (palette bundle not loaded, family pair not in the bake,
-      // canvas decode error) fall back to the base sprite — the user
-      // still sees the creature, just non-shiny.
-      try {
-        const shinyUrl = await global.ShinyStore.transformBlob(
-          r.blob, a, b, shinyVariant);
-        if (shinyUrl) return shinyUrl;
-      } catch { /* fall through */ }
-      return URL.createObjectURL(r.blob);
+      return _urlFor(r.blob, a, b, shinyVariant);
     })();
     cache.set(key, p);
     // On rejection, evict so the next call kicks off a fresh fetch.
@@ -188,14 +221,7 @@
           if (!r || !r.blob) {
             throw new Error('sprite preload transient: ' + m.key);
           }
-          const isShiny = typeof m.shinyVariant === 'number' && m.shinyVariant >= 0;
-          if (!isShiny || !global.ShinyStore) return URL.createObjectURL(r.blob);
-          try {
-            const shinyUrl = await global.ShinyStore.transformBlob(
-              r.blob, m.a, m.b, m.shinyVariant);
-            if (shinyUrl) return shinyUrl;
-          } catch { /* fall through */ }
-          return URL.createObjectURL(r.blob);
+          return _urlFor(r.blob, m.a, m.b, m.shinyVariant);
         },
         () => { throw new Error('sprite preload rejected: ' + m.key); },
       );
@@ -317,6 +343,12 @@
     // SPRITE_SIZE); the "Consistent poké icon size" setting scales each
     // one by that cell, not by its crop (creatures.js reads this).
     if (img.dataset) img.dataset.spriteCell = '96';
+    // Sized before it's drawn (else the load listener sizes it a frame
+    // late and it pops in at full size).
+    const d = dimsByUrl.get(url);
+    if (d && img.style && img.style.setProperty) {
+      img.style.setProperty('--sprite-f', Math.min(1, Math.max(d.w, d.h) / 96).toFixed(4));
+    }
     img.src = url;
     if (opts.readyClass) img.classList.add(opts.readyClass);
     if (typeof opts.onReady === 'function') {
@@ -402,12 +434,12 @@
     if (!p) return;
     cache.delete(key);
     missAt.delete(key);
-    p.then((u) => u && URL.revokeObjectURL(u)).catch(() => {});
+    p.then(_revoke).catch(() => {});
   }
 
   function clearAll() {
     for (const p of cache.values()) {
-      p.then((u) => u && URL.revokeObjectURL(u)).catch(() => {});
+      p.then(_revoke).catch(() => {});
     }
     cache.clear();
     missAt.clear();

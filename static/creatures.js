@@ -3973,7 +3973,10 @@
       } catch (_) { /* fall back to base art */ }
     }
     if (img._spriteGen !== gen) return;
-    if (img.dataset) delete img.dataset.spriteCell;   // full-canvas art, not a cropped 96 cell
+    // Full-canvas art, not a cropped 96 cell: fills its box — clear any
+    // fusion scale this img had so it doesn't draw at that for a frame.
+    if (img.dataset) delete img.dataset.spriteCell;
+    if (img.style) img.style.removeProperty('--sprite-f');
     // Diagnostics: record solo-art load outcomes so the Settings dump
     // can tell "sprite URL 404s/504s" from "image decoded fine"
     // without remote devtools. Small ring of the most recent attempts.
@@ -19117,6 +19120,8 @@
     if (sprite.src) {
       if (sprite.dataset.spriteCell) flash.dataset.spriteCell = sprite.dataset.spriteCell;
       else delete flash.dataset.spriteCell;
+      const f = sprite.style.getPropertyValue('--sprite-f');
+      if (f) flash.style.setProperty('--sprite-f', f); else flash.style.removeProperty('--sprite-f');
       flash.src = sprite.src;
     }
 
