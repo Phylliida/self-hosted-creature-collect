@@ -8266,11 +8266,22 @@
         max-width: 100%; font-size: 10px; color: var(--ui-muted, #666);
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       }
+      /* A tile: the sprite's square, its name in small type under it.
+         Height matches the grid's cardHeight (98) in renderFocusSession. */
       #creatureInventory .focus-poke {
-        position: relative; display: flex; align-items: center; justify-content: center;
-        height: 78px; padding: 4px; box-sizing: border-box; cursor: pointer; font: inherit;
+        display: flex; flex-direction: column; align-items: stretch; gap: 2px;
+        height: 98px; padding: 0; box-sizing: border-box; cursor: pointer; font: inherit;
+        background: none; border: none; color: var(--ui-text, #111);
+      }
+      #creatureInventory .focus-poke-art {
+        position: relative; flex: none; height: 70px; padding: 4px; box-sizing: border-box;
+        display: flex; align-items: center; justify-content: center;
         background: var(--ui-hover, rgba(0,0,0,0.04));
         border: 1px solid var(--ui-hairline, rgba(0,0,0,0.08)); border-radius: var(--ui-radius, 8px);
+      }
+      #creatureInventory .focus-poke-name {
+        font-size: 10px; line-height: 12px; text-align: center; overflow-wrap: anywhere;
+        display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
       }
       #creatureInventory .focus-poke.gone { opacity: 0.4; cursor: default; }
       #creatureInventory .focus-poke-group {
@@ -8283,7 +8294,7 @@
         max-width: 100%; max-height: 100%; object-fit: contain; image-rendering: pixelated;
       }
       #creatureInventory .focus-poke-img:not([src]) { visibility: hidden; }
-      #creatureInventory .focus-poke .shiny-badge {
+      #creatureInventory .focus-poke-art .shiny-badge {
         position: absolute; top: 3px; right: 3px; width: 14px; height: 14px;
       }
       /* Launcher row at the top of the bag: Craft incense + Focus mode
@@ -21239,7 +21250,7 @@
       items: list,
       cols: 4,
       rowGap: 6,
-      cardHeight: 78,
+      cardHeight: 98,   // keep in sync with .focus-poke's CSS height
       initialScrollTop: top.scrollY || 0,
       makeCardEl(c) {
         const cur = owned.get(c.id);
@@ -21247,9 +21258,12 @@
         el.type = 'button';
         el.className = 'focus-poke' + (cur ? '' : ' gone');
         const shiny = cur ? cur.shinyVariant != null : !!c.shiny;
-        el.innerHTML = `<img class="focus-poke-img" alt="">`
-          + (shiny ? '<svg class="shiny-badge" aria-label="shiny"><use href="#shinyIcon"/></svg>' : '');
-        el.title = cur ? (readNicknames()[c.id] || creatureName(cur)) : 'no longer in your collection';
+        // Its name (nickname if it has one) in small type under the square.
+        const name = cur ? (readNicknames()[c.id] || creatureName(cur)) : creatureName(c);
+        el.innerHTML = `<span class="focus-poke-art"><img class="focus-poke-img" alt="">`
+          + (shiny ? '<svg class="shiny-badge" aria-label="shiny"><use href="#shinyIcon"/></svg>' : '')
+          + `</span><span class="focus-poke-name">${escapeHtml(name)}</span>`;
+        el.title = cur ? name : name + ' (no longer in your collection)';
         if (cur) el.addEventListener('click', () => showDetail(c.id, here, hereIdx.get(c.id)));
         return el;
       },
