@@ -10121,15 +10121,15 @@ function fmtDate(ts) {
   // fixed values so the visual stays sane until applyTheme runs.
   let _currentCooldownActiveColor = '#888';
   let _currentCooldownReadyColor  = '#f088b0';
-  // Half-edge (in degrees) for the polygon around each cooldown POI.
-  // ~3.3m — sized to still contain the POI's centroid when it renders
-  // at a slightly different tile-quantized coordinate after a zoom
-  // change (the `local` source's z12/z13 grid can move a POI a couple
-  // of meters vs. its z14 position), so the gray/pink overlay survives
-  // zooming out. Still far smaller than POI_COOLDOWN_RADIUS_M, and any
-  // real neighbor that close was already locked and given its own
-  // entry, so this can't gray an un-locked POI.
+  // Half-edge (in degrees) of the small box around a legacy cooldown
+  // entry (one stored before entries carried x/y — those only ever lock
+  // their own spot). ~3.3m, so the overlay survives the couple of
+  // meters a POI shifts between the `local` source's z12/z13/z14 grids.
   const COOLDOWN_POLYGON_EPS = 0.00003;
+  // Corners of the polygon standing in for each cooldown entry's lock
+  // circle (POI_COOLDOWN_RADIUS_M — what poiCooldownStatus checks). 32
+  // keeps it within ~0.3 m of the true circle.
+  const COOLDOWN_DISC_SIDES = 32;
   // poi-icons draw order (symbol-sort-key; higher = drawn later = on
   // top): transit infrastructure 0, POIs on cooldown 1, everything else
   // 2 — so a stop you can spin is never hidden under one you just spun.
@@ -10142,16 +10142,31 @@ function fmtDate(ts) {
       ? ['case', transit, 0, ['within', cooldownPolygon], 1, 2]
       : ['case', transit, 0, 2];
   }
-  function buildCooldownPolygon(points) {
-    if (!points.length) return { type: 'MultiPolygon', coordinates: [] };
+  // Everything a pokéstop counts as locked within: a POI_COOLDOWN_RADIUS_M
+  // circle around each cooldown entry (`discPts`, the same rule
+  // poiCooldownStatus applies, so a stop is grey exactly when it can't be
+  // spun — including neighbours that weren't on screen to get their own
+  // entry when you spun), plus the small legacy box (`points`).
+  function buildCooldownPolygon(points, discPts) {
+    const discs = (discPts || []).map(([lng, lat]) => {
+      const dLat = POI_COOLDOWN_RADIUS_M / 111320;
+      const dLng = POI_COOLDOWN_RADIUS_M / (111320 * Math.max(0.05, Math.cos(lat * Math.PI / 180)));
+      const ring = [];
+      for (let k = 0; k <= COOLDOWN_DISC_SIDES; k++) {
+        const a = (k % COOLDOWN_DISC_SIDES) / COOLDOWN_DISC_SIDES * 2 * Math.PI;
+        ring.push([lng + dLng * Math.cos(a), lat + dLat * Math.sin(a)]);
+      }
+      return [ring];
+    });
+    if (!points.length) return { type: 'MultiPolygon', coordinates: discs };
     const e = COOLDOWN_POLYGON_EPS;
-    const coords = points.map(([lng, lat]) => [[
+    const coords = discs.concat(points.map(([lng, lat]) => [[
       [lng - e, lat - e],
       [lng + e, lat - e],
       [lng + e, lat + e],
       [lng - e, lat + e],
       [lng - e, lat - e],
-    ]]);
+    ]]));
     return { type: 'MultiPolygon', coordinates: coords };
   }
   // Threshold (meters) used by the building-pokestops `distance`
@@ -10240,16 +10255,20 @@ function fmtDate(ts) {
     // geometries for the building-pokestops layer's `distance`-based
     // icon-color — `within` doesn't work for polygon features but `distance`
     // does, returning 0 when the cooldown point is inside the building polygon.
+    // POIs: grey (and drawn under the rest) within POI_COOLDOWN_RADIUS_M of
+    // any active entry — a building's too, as poiCooldownStatus counts
+    // those — and on a legacy entry's own spot.
     const poiActivePts = [];
+    const poiDiscPts = [];
     const buildingActivePts = [];
     if (inCreatureMode) {
       const cooldowns = readPoiCooldowns();
       const now = Date.now();
       for (const key of Object.keys(cooldowns)) {
         const raw = cooldowns[key];
-        let lng, lat;
+        let lng, lat, exact = false;
         if (raw && typeof raw === 'object' && isFinite(raw.x) && isFinite(raw.y)) {
-          lng = raw.x; lat = raw.y;
+          lng = raw.x; lat = raw.y; exact = true;
         } else {
           const dot = key.indexOf(',');
           if (dot < 0) continue;
@@ -10260,11 +10279,14 @@ function fmtDate(ts) {
         const t = entryTimestamp(raw);
         const cat = (raw && typeof raw === 'object') ? (raw.c || '') : '';
         if (now - t >= POI_COOLDOWN_MS) continue; // "ready" → no special colour
-        (cat === 'building' ? buildingActivePts : poiActivePts).push([lng, lat]);
+        if (exact) poiDiscPts.push([lng, lat]);
+        if (cat === 'building') buildingActivePts.push([lng, lat]);
+        else if (!exact) poiActivePts.push([lng, lat]);
       }
     }
     // POI layer: within-based recoloring. Only the active/cooldown branch.
-    const poiPoly = poiActivePts.length ? buildCooldownPolygon(poiActivePts) : null;
+    const poiPoly = (poiActivePts.length || poiDiscPts.length)
+      ? buildCooldownPolygon(poiActivePts, poiDiscPts) : null;
     const poiExpr = poiPoly
       ? ['case', ['within', poiPoly], _currentCooldownActiveColor, _currentPoiThemeColor]
       : _currentPoiThemeColor;
@@ -10291,7 +10313,7 @@ function fmtDate(ts) {
     // Force both updates to land on the very next frame so the just-
     // collected POI/building turns gray immediately.
     try { map.triggerRepaint(); } catch {}
-    const anyActive = poiActivePts.length > 0 || buildingActivePts.length > 0;
+    const anyActive = poiActivePts.length > 0 || poiDiscPts.length > 0 || buildingActivePts.length > 0;
     if (anyActive && _cooldownOverlayPoll == null) {
       _cooldownOverlayPoll = setInterval(refreshCooldownOverlays, 30000);
     } else if (!anyActive && _cooldownOverlayPoll != null) {

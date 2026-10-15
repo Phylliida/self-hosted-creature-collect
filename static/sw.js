@@ -144,6 +144,8 @@ const TILES_CACHE = 'tiles-v1';
 // and height" (cc.showLevelSize, default off).
 // Shell bump 2026-10-14 (#34): index.html draws pokéstops you can spin above
 // ones on cooldown, and a tap on overlapping stops opens the spinnable one.
+// Shell bump 2026-10-14 (#35): index.html greys every pokéstop within the
+// 54 m lock radius of a spin, not only the ones that were on screen.
 
 const APP_SHELL = [
   '/',
