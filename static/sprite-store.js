@@ -313,6 +313,10 @@
       return;
     }
     pendingMisses.delete(img);
+    // Fusion sprites are cropped out of 96×96 cells (sprites.js
+    // SPRITE_SIZE); the "Consistent poké icon size" setting scales each
+    // one by that cell, not by its crop (creatures.js reads this).
+    img.dataset.spriteCell = '96';
     img.src = url;
     if (opts.readyClass) img.classList.add(opts.readyClass);
     if (typeof opts.onReady === 'function') {

@@ -3932,6 +3932,25 @@
   // Art routing: solos render the bundled full-PNG (optional shiny
   // transform via the solo palette table); pairs go through SpriteStore.
   // Mirrors showSprite's generation guard + readyClass/onReady opts.
+  // "Consistent poké icon size": every sprite img records, as it loads,
+  // how much of its original cell its cropped image covers (--sprite-f,
+  // largest side ÷ the cell in data-sprite-cell). The setting's CSS
+  // insets the drawing by that much, so a sprite that fills its 96×96
+  // cell fills its box and a small one stays small, in every view. Art
+  // that isn't a cropped cell (solo / pack) counts as filling its own.
+  if (typeof document !== 'undefined' && document.addEventListener) {
+    document.addEventListener('load', (e) => {
+      const img = e.target;
+      if (!img || img.tagName !== 'IMG') return;
+      const cell = Number(img.dataset && img.dataset.spriteCell);
+      if (cell > 0 && img.naturalWidth) {
+        const f = Math.min(1, Math.max(img.naturalWidth, img.naturalHeight) / cell);
+        img.style.setProperty('--sprite-f', f.toFixed(4));
+      } else if (img.style.getPropertyValue('--sprite-f')) {
+        img.style.removeProperty('--sprite-f');
+      }
+    }, true);
+  }
   async function showCreatureArt(img, c, opts) {
     if (!img) return;
     if (!isSoloCreature(c)) {
@@ -3954,6 +3973,7 @@
       } catch (_) { /* fall back to base art */ }
     }
     if (img._spriteGen !== gen) return;
+    delete img.dataset.spriteCell;   // full-canvas art, not a cropped 96 cell
     // Diagnostics: record solo-art load outcomes so the Settings dump
     // can tell "sprite URL 404s/504s" from "image decoded fine"
     // without remote devtools. Small ring of the most recent attempts.
@@ -9143,29 +9163,34 @@
         image-rendering: pixelated; image-rendering: crisp-edges; display: none;
       }
       #creatureInventory .completion-row.ready .completion-icon img { display: block; }
-      /* "Consistent pixel width" setting (cc.consistentIconWidth). Sprite
-         blobs are cropped to their opaque bbox; the rules above scale each
-         crop up to fill its box (object-fit: contain on a width/height of
-         100%), which makes small creatures look zoomed and inconsistent from
-         view to view. When the setting is on we add cc-consistent-icons to
-         <html> and render every sprite at its intrinsic resolution instead:
-         capped to the box but never upscaled, exactly like the map marker
-         (max-width/max-height: 100%). One sprite pixel is then the same
-         physical size in every view. Off by default, so the rules above
-         (the current behaviour) stay the norm. No cache invalidation is
-         needed — the blob is unchanged, only its layout box. */
+      /* "Consistent poké icon size" setting (cc.consistentIconWidth).
+         Sprite blobs are cropped to their opaque bbox, so the rules above
+         (object-fit: contain in each view's box) blow every crop up to
+         fill the box: a tiny creature comes out as big as a huge one.
+         With the setting on (cc-consistent-icons on <html>) each sprite
+         keeps its size relative to the 96×96 cell it was cropped from:
+         the img's box stays exactly as above, and padding insets the
+         drawing to --sprite-f of it (set per img on load, see
+         showCreatureArt) — so a creature that fills its cell fills the
+         box and a small one stays small, the same in every view. Padding
+         percentages resolve against the containing block's width, so each
+         rule uses its img's share of that (100%, 90%, or 72 px fixed). */
       html.cc-consistent-icons #battleScreen img.battle-sprite,
+      html.cc-consistent-icons #battleScreen .battle-flash,
       html.cc-consistent-icons #creatureInventory .creature-card .art img,
-      html.cc-consistent-icons #creatureInventory .pokedex-card .pokedex-art img,
       html.cc-consistent-icons #creatureInventory .detail-art img,
-      html.cc-consistent-icons #creatureInventory .variant-cell img,
-      html.cc-consistent-icons #creatureInventory .family-cell img,
       html.cc-consistent-icons #creatureInventory .evo-row .evo-art img {
-        width: auto; height: auto;
-        max-width: 100%; max-height: 100%;
-        object-fit: contain;
-        image-rendering: pixelated;
-        image-rendering: crisp-edges;
+        box-sizing: border-box;
+        padding: calc((1 - var(--sprite-f, 1)) * 50%);
+      }
+      html.cc-consistent-icons #creatureInventory .pokedex-card .pokedex-art img,
+      html.cc-consistent-icons #creatureInventory .family-cell img {
+        box-sizing: border-box;
+        padding: calc((1 - var(--sprite-f, 1)) * 45%);
+      }
+      html.cc-consistent-icons #creatureInventory .variant-cell img {
+        box-sizing: border-box;
+        padding: calc((1 - var(--sprite-f, 1)) * 36px);
       }
       #creatureInventory .completion-info { flex: 1 1 auto; min-width: 0; }
       #creatureInventory .completion-name {
@@ -19089,7 +19114,11 @@
     }
     // Silhouette flash mirrors the sprite's image (white-tinted via
     // CSS filter) so the flash takes the creature's outline.
-    if (sprite.src) flash.src = sprite.src;
+    if (sprite.src) {
+      if (sprite.dataset.spriteCell) flash.dataset.spriteCell = sprite.dataset.spriteCell;
+      else delete flash.dataset.spriteCell;
+      flash.src = sprite.src;
+    }
 
     // Outcome decision — BEFORE any animation plays. The ball is
     // already durably consumed, so the roll (and, on a catch, the

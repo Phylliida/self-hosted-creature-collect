@@ -146,6 +146,8 @@ const TILES_CACHE = 'tiles-v1';
 // ones on cooldown, and a tap on overlapping stops opens the spinnable one.
 // Shell bump 2026-10-14 (#35): index.html greys every pokéstop within the
 // 54 m lock radius of a spin, not only the ones that were on screen.
+// Shell bump 2026-10-14 (#36): index.html's "Consistent poké icon size"
+// tooltip describes the box-relative sizing.
 
 const APP_SHELL = [
   '/',
