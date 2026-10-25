@@ -10609,11 +10609,27 @@
         -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
         transition: transform 120ms ease, box-shadow 120ms ease;
       }
-      @H button.close.cc-x-btn { font-size: 22px; padding: 0 0 2px; }
+      /* The × and ↑ glyphs sit off-centre in most fonts; like the ←, draw
+         them as masks in currentColor so they're dead centre. */
+      @H button.close.cc-x-btn { font-size: 0; padding: 0; }
+      @A .scroll-top-btn { font-size: 0; padding: 0; }
+      @H button.close.cc-x-btn::before,
+      @A .scroll-top-btn::before {
+        content: ''; width: 14px; height: 14px;
+        background: currentColor;
+        -webkit-mask: var(--au-glyph) center / contain no-repeat;
+                mask: var(--au-glyph) center / contain no-repeat;
+      }
+      @H button.close.cc-x-btn {
+        --au-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M3 3l8 8M11 3l-8 8'/%3E%3C/svg%3E");
+      }
+      @A .scroll-top-btn {
+        --au-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 13V3.5M3.5 7.5L8 3l4.5 4.5'/%3E%3C/svg%3E");
+      }
+      @A .scroll-top-btn::before { width: 16px; height: 16px; }
       /* Same for the X, which sits 1px high: nudge it down. */
       @H .inventory-x { transform: translateY(1px); }
       @H .inventory-x:active { transform: translateY(1px) scale(0.9); }
-      @A .scroll-top-btn { font-size: 17px; }
       @A :is(.detail-back, .pokedex-back, .fusion-back, .candy-back, .daycare-back,
              .eggs-back, .bag-back, .craft-back, .focus-back, .focussession-back,
              .focusuntil-back, .tags-back, .gifts-back, .stats-back, .statsday-back,
@@ -10623,6 +10639,9 @@
         font-size: 0; text-align: center; margin: 0 0 -32px -2px;
         transform: translateY(-1px);
       }
+      /* The detail + fusion views clip overflow (swipe carousel), so a
+         back circle hanging 2px past their edge got its left side cut. */
+      @A :is(.detail-view > .detail-back, .fusion-view > .fusion-back) { margin-left: 2px; }
       /* The ← glyph sits low in most fonts; draw the arrow as a mask in
          currentColor so it's dead centre in the circle. */
       @A :is(.detail-back, .pokedex-back, .fusion-back, .candy-back, .daycare-back,
@@ -11336,15 +11355,17 @@
 
     // Back-to-top button — appears in the corner cluster (left of
     // the X) when the sheet is scrolled past 200px AND the current
-    // view is the inventory list or pokédex grid. Other views are
-    // either short (candy/bag/tags) or have their own navigation
+    // view is one of the long lists: the inventory, the pokédex grid,
+    // the completion dex or a species dex. Other views are either
+    // short (candy/bag/tags) or have their own navigation
     // (detail/fusion).
+    const SCROLL_TOP_VIEWS = new Set(['browse', 'pokedex', 'completion', 'speciesdex']);
     const scrollTopBtn = panel.querySelector('.scroll-top-btn');
     const sheetEl = panel.querySelector('.sheet');
     if (scrollTopBtn && sheetEl) {
       const updateBtn = () => {
         const top = _viewStack[_viewStack.length - 1];
-        const scrollableView = top && (top.view === 'browse' || top.view === 'pokedex');
+        const scrollableView = top && SCROLL_TOP_VIEWS.has(top.view);
         const shouldShow = scrollableView && sheetEl.scrollTop > 200;
         scrollTopBtn.classList.toggle('show', shouldShow);
       };
