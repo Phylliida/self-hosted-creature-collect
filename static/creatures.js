@@ -10433,6 +10433,508 @@
       }
     `;
     document.head.appendChild(s);
+    injectAuroraStyles();
+  }
+
+  // Aurora theme (experimental) — the creature panel dressed up like a
+  // polished mobile game: lavender sheet with an aurora glow at the top,
+  // raised white cards, gradient "candy" buttons with a pressable 3D lip,
+  // colour-coded menu tiles. Every rule is scoped to
+  // html[data-theme="aurora"], so the other themes are untouched.
+  //
+  // Selectors are written with two prefixes, expanded below:
+  //   @A  → :where(html[data-theme="aurora"]) #creatureInventory
+  //        The :where() adds no specificity, so a rule here ties the base
+  //        rule it restyles and wins on source order (this sheet comes
+  //        after creature-styles) — while the base state rules (.applied,
+  //        .current, .favorited, .drop-active…) stay stronger and keep
+  //        working unchanged.
+  //   @H  → html[data-theme="aurora"] #creatureInventory
+  //        Full specificity, for the few spots that need to beat a rule
+  //        that's already stronger (the shared close-X in index.html).
+  function injectAuroraStyles() {
+    if (document.getElementById('creature-styles-aurora')) return;
+    const s = document.createElement('style');
+    s.id = 'creature-styles-aurora';
+    s.textContent = `
+      /* ---------- Tokens ---------- */
+      @A {
+        --au-ink: #2b2357;
+        --au-sub: #7d76a3;
+        --au-violet: #7c5cff;
+        --au-violet-deep: #5b3ce0;
+        --au-pink: #ff5fa2;
+        --au-line: rgba(124, 92, 255, 0.14);
+        --au-cta: linear-gradient(180deg, #9d82ff 0%, #7c5cff 55%, #6a45f5 100%);
+        --au-cta-lip: #4a2bc9;
+        --au-candy: linear-gradient(135deg, #8f6bff 0%, #c160ff 50%, #ff5fa2 100%);
+        --au-card-shadow: 0 1px 0 rgba(255,255,255,0.9) inset, 0 6px 16px -6px rgba(76,52,170,0.28), 0 1px 3px rgba(76,52,170,0.10);
+        --au-card-shadow-hi: 0 1px 0 rgba(255,255,255,0.9) inset, 0 12px 24px -8px rgba(76,52,170,0.38), 0 2px 5px rgba(76,52,170,0.12);
+        --au-font: ui-rounded, "SF Pro Rounded", "Nunito", "Quicksand", "Varela Round", system-ui, -apple-system, "Segoe UI", sans-serif;
+        background:
+          radial-gradient(120% 90% at 50% 0%, rgba(124, 92, 255, 0.28), transparent 60%),
+          rgba(20, 12, 54, 0.55);
+        font-family: var(--au-font);
+      }
+      @A button, @A input, @A select { font-family: var(--au-font); }
+
+      /* ---------- The sheet ---------- */
+      @A .sheet {
+        border-radius: 30px;
+        border: 1px solid rgba(255, 255, 255, 0.75);
+        padding: 18px 18px 14px;
+        background:
+          radial-gradient(90% 150px at 0% 0%, rgba(255, 143, 199, 0.42), transparent 70%),
+          radial-gradient(90% 160px at 100% 0%, rgba(110, 196, 255, 0.45), transparent 70%),
+          radial-gradient(70% 140px at 50% 0%, rgba(157, 123, 255, 0.40), transparent 75%),
+          linear-gradient(180deg, #efe9ff 0px, #f6f3ff 240px, #f6f3ff 100%);
+        box-shadow:
+          0 40px 80px -20px rgba(28, 12, 90, 0.65),
+          0 0 0 1px rgba(124, 92, 255, 0.10),
+          inset 0 1px 0 rgba(255, 255, 255, 0.95);
+        color: var(--au-ink);
+        -webkit-font-smoothing: antialiased;
+      }
+      /* Floating round "glass" buttons: close X, scroll-to-top, every ←. */
+      @H button.close.cc-x-btn,
+      @A .scroll-top-btn,
+      @A :is(.detail-back, .pokedex-back, .fusion-back, .candy-back, .daycare-back,
+             .eggs-back, .bag-back, .craft-back, .focus-back, .focussession-back,
+             .focusuntil-back, .tags-back, .gifts-back, .stats-back, .statsday-back,
+             .gift-back, .giftcreate-back, .completion-back, .speciesdex-back) {
+        width: 32px !important; height: 32px !important; min-height: 32px !important;
+        border-radius: 50% !important;
+        background: rgba(255, 255, 255, 0.88) !important;
+        border: 1px solid rgba(124, 92, 255, 0.14) !important;
+        box-shadow: 0 4px 12px -2px rgba(76, 52, 170, 0.28), inset 0 1px 0 #fff !important;
+        color: var(--au-ink) !important;
+        text-shadow: none !important;
+        font-weight: 700;
+        -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+        transition: transform 120ms ease, box-shadow 120ms ease;
+      }
+      @H button.close.cc-x-btn { font-size: 22px; padding: 0 0 2px; }
+      @A .scroll-top-btn { font-size: 17px; }
+      @A :is(.detail-back, .pokedex-back, .fusion-back, .candy-back, .daycare-back,
+             .eggs-back, .bag-back, .craft-back, .focus-back, .focussession-back,
+             .focusuntil-back, .tags-back, .gifts-back, .stats-back, .statsday-back,
+             .gift-back, .giftcreate-back, .completion-back, .speciesdex-back) {
+        font-size: 18px; text-align: center; margin: 0 0 -32px -2px;
+      }
+      @H button.close.cc-x-btn:active,
+      @A .scroll-top-btn:active,
+      @A [class$="-back"]:active { transform: scale(0.9); }
+
+      /* ---------- Headings ---------- */
+      @A h3 { font-size: 22px; font-weight: 800; letter-spacing: -0.01em; }
+      @A .pack-name,
+      @A .pokedex-title,
+      @A .subview-title,
+      @A .detail-name,
+      @A .detail-fused-name {
+        background: linear-gradient(100deg, #5b3ce0 0%, #9b4dff 45%, #ff4f9a 100%);
+        -webkit-background-clip: text; background-clip: text;
+        -webkit-text-fill-color: transparent; color: transparent;
+        font-weight: 800;
+      }
+      @A .pokedex-title, @A .subview-title { font-size: 22px; }
+      @A .detail-name, @A .detail-fused-name { font-size: 22px; line-height: 1.15; padding: 0 34px; }
+      @A .detail-name.detail-name-sub {
+        font-size: 13px; font-weight: 700; padding: 0;
+        background: none; -webkit-text-fill-color: var(--au-sub); color: var(--au-sub);
+      }
+      @A .pack-swap-btn {
+        width: 30px; height: 30px; padding: 0; margin-left: 10px;
+        border: none; border-radius: 50%;
+        background: rgba(255, 255, 255, 0.85);
+        box-shadow: 0 3px 8px -2px rgba(76, 52, 170, 0.3), inset 0 1px 0 #fff;
+        color: var(--au-violet); font-size: 14px; font-weight: 800;
+      }
+      @A :is(.pokedex-stats, .eggs-stats, .bag-subtitle, .candy-subtitle, .tags-subtitle,
+             .glitch-stats, .packdex-stats, .completion-stats, .speciesdex-stats) {
+        color: var(--au-sub); font-weight: 600;
+      }
+      @A :is(.pokedex-stats, .eggs-stats) b { color: var(--au-violet); font-weight: 800; }
+
+      /* ---------- Menu tiles (Tags / Bag / Daycare / Eggs / Dex / Stats) ---------- */
+      @A .header-actions { gap: 6px; margin: 4px 0 12px; flex-wrap: nowrap; }
+      @A .header-actions > button {
+        --tile: linear-gradient(160deg, #b9a6ff, #7c5cff);
+        --tile-lip: #5b3ce0;
+        --tile-glow: rgba(124, 92, 255, 0.45);
+        border: none; color: #fff; font-weight: 800;
+        background: var(--tile);
+        box-shadow: 0 3px 0 var(--tile-lip), 0 8px 14px -6px var(--tile-glow), inset 0 1px 0 rgba(255,255,255,0.55);
+        text-shadow: 0 1px 1px rgba(0, 0, 0, 0.18);
+        border-radius: 14px;
+        transition: transform 90ms ease, box-shadow 90ms ease;
+      }
+      @A .header-actions > button:hover { background: var(--tile); filter: brightness(1.05); }
+      @A .header-actions > button:active {
+        transform: translateY(2px);
+        box-shadow: 0 1px 0 var(--tile-lip), 0 3px 6px -3px var(--tile-glow), inset 0 1px 0 rgba(255,255,255,0.55);
+      }
+      @A .header-actions .tags-link    { --tile: linear-gradient(160deg, #5eead4, #14b8a6); --tile-lip: #0d8f84; --tile-glow: rgba(20,184,166,0.5); }
+      @A .header-actions .bag-link     { --tile: linear-gradient(160deg, #ffc46b, #ff8a3d); --tile-lip: #d9621c; --tile-glow: rgba(255,138,61,0.5); }
+      @A .header-actions .daycare-link { --tile: linear-gradient(160deg, #86efac, #22c55e); --tile-lip: #15964a; --tile-glow: rgba(34,197,94,0.5); }
+      @A .header-actions .eggs-link    { --tile: linear-gradient(160deg, #fde68a, #f5b301); --tile-lip: #c98a00; --tile-glow: rgba(245,179,1,0.5); }
+      @A .header-actions .pokedex-link { --tile: linear-gradient(160deg, #ff9db0, #f43f5e); --tile-lip: #c42443; --tile-glow: rgba(244,63,94,0.5); }
+      @A .header-actions .stats-link   { --tile: linear-gradient(160deg, #c4b5fd, #8b5cf6); --tile-lip: #6a3be0; --tile-glow: rgba(139,92,246,0.5); }
+      /* Aurora renders each action as icon + label (see renderHeaderActions). */
+      @A .header-actions.au-tiles > button {
+        flex: 1 1 0; min-width: 0;
+        flex-direction: column; gap: 3px;
+        padding: 7px 2px 6px;
+        font-size: 10.5px; letter-spacing: 0.01em;
+      }
+      @A .header-actions.au-tiles > button svg {
+        width: 22px; height: 22px; stroke-width: 2.3;
+        filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.18));
+      }
+      @A .header-actions.au-tiles .au-lb { display: block; line-height: 1; }
+      @A .header-actions-text > button { padding: 7px 10px; font-size: 12.5px; }
+
+      /* ---------- Weather / spawn-odds bar ---------- */
+      @A .weather-row {
+        background: rgba(255, 255, 255, 0.75);
+        box-shadow: 0 4px 12px -6px rgba(76, 52, 170, 0.3), inset 0 0 0 1px rgba(124, 92, 255, 0.10);
+        padding: 6px 12px; gap: 8px;
+        font-weight: 700; color: var(--au-sub);
+      }
+      @A .weather-row:hover { background: #fff; }
+      @A .type-chip {
+        padding: 3px 10px; font-weight: 800; letter-spacing: 0.01em;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.45), inset 0 -2px 0 rgba(0,0,0,0.12), 0 3px 8px -3px rgba(0,0,0,0.35);
+        text-shadow: 0 1px 1px rgba(0, 0, 0, 0.3);
+      }
+      @A .save-reminder {
+        border: none; border-radius: 18px;
+        background: linear-gradient(120deg, #fff1df 0%, #ffe5f1 100%);
+        box-shadow: var(--au-card-shadow);
+        color: #5a3a2a; padding: 10px 14px; font-weight: 600;
+      }
+      @A .save-reminder b { color: #f0623a; }
+      @A .save-reminder:hover { background: linear-gradient(120deg, #ffeccf 0%, #ffdbec 100%); border-color: transparent; }
+      @A .weather-warning { border-radius: 16px; border: none; background: #fff3dc; box-shadow: var(--au-card-shadow); }
+
+      /* ---------- Inputs, selects, search ---------- */
+      @A :is(.search-row input, .rename-form input, .gift-field input, .gift-field textarea, .tags-create input) {
+        height: 38px; padding: 0 14px;
+        font-size: 14px; font-weight: 600; color: var(--au-ink);
+        background: #fff;
+        border: 1.5px solid var(--au-line);
+        border-radius: 14px;
+        box-shadow: inset 0 1px 2px rgba(43, 35, 87, 0.06), 0 2px 6px -4px rgba(76, 52, 170, 0.2);
+        transition: border-color 120ms ease, box-shadow 120ms ease;
+      }
+      @A .search-row input[type="search"] {
+        padding-left: 36px;
+        background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239a8fd0' stroke-width='2.6' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-4-4'/%3E%3C/svg%3E") no-repeat 13px 50%;
+      }
+      @A :is(.search-row input, .rename-form input, .gift-field input, .gift-field textarea, .tags-create input)::placeholder {
+        color: #aaa3c9; font-weight: 600;
+      }
+      @A :is(.search-row input, .rename-form input, .gift-field input, .gift-field textarea, .tags-create input):focus {
+        outline: none;
+        border-color: var(--au-violet);
+        box-shadow: 0 0 0 4px rgba(124, 92, 255, 0.16);
+      }
+      @A :is(.sort-row select, .type-filter-select, .st-chips select) {
+        -webkit-appearance: none; appearance: none;
+        height: 34px; padding: 0 26px 0 12px;
+        font-size: 13px; font-weight: 700; color: var(--au-ink);
+        border: 1.5px solid var(--au-line); border-radius: 12px;
+        background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M1.5 3.5L5 7l3.5-3.5' fill='none' stroke='%237c5cff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 10px center;
+        box-shadow: 0 2px 6px -4px rgba(76, 52, 170, 0.25);
+      }
+      /* Three label+select pairs must still fit one line on a phone. */
+      @A .type-filter-select { height: 30px; padding: 0 18px 0 7px; font-size: 12px; border-radius: 10px; background-position: right 6px center; }
+      @A .type-filter-row { gap: 4px 6px; flex-wrap: nowrap; justify-content: space-between; }
+      @A .type-filter-row .type-pair { font-weight: 700; color: var(--au-sub); gap: 3px; font-size: 11.5px; min-width: 0; }
+      @A .type-filter-row .type-pair .type-filter-select { min-width: 0; max-width: 72px; }
+      @A .sort-row label {
+        font-size: 11px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;
+        color: var(--au-sub);
+      }
+      @A input.filter-active, @A select.filter-active {
+        border-color: var(--au-violet);
+        box-shadow: 0 0 0 3px rgba(124, 92, 255, 0.18);
+      }
+      @A .ac-list {
+        border: none; border-radius: 16px; padding: 6px; margin-top: 6px;
+        box-shadow: 0 18px 40px -10px rgba(40, 20, 110, 0.4), 0 0 0 1px rgba(124, 92, 255, 0.10);
+      }
+      @A .ac-item { border-radius: 10px; font-weight: 600; padding: 8px 10px; }
+      @A .ac-item:hover, @A .ac-item.active { background: #f1ecff; }
+      @A .ac-item mark { background: rgba(255, 95, 162, 0.22); border-radius: 4px; }
+
+      /* ---------- Secondary buttons: white pills with a soft lip ---------- */
+      @A :is(.sort-row button.dir, .pokedex-swap-btn, .bag-craft, .family-toggle, .icon-btn,
+             .daycare-show-on-map, .daycare-show-all-on-map, .completion-summary-btn,
+             .speciesdex-summary-btn, .completion-egg-btn, .gift-cancel, .rename-reset) {
+        background: #fff;
+        color: var(--au-violet-deep);
+        border: 1.5px solid var(--au-line);
+        border-radius: 12px;
+        font-weight: 800;
+        box-shadow: 0 2px 0 rgba(124, 92, 255, 0.16), 0 6px 12px -8px rgba(76, 52, 170, 0.45);
+        transition: transform 90ms ease, box-shadow 90ms ease;
+      }
+      @A :is(.sort-row button.dir, .pokedex-swap-btn, .bag-craft, .family-toggle, .icon-btn,
+             .daycare-show-on-map, .daycare-show-all-on-map, .completion-summary-btn,
+             .speciesdex-summary-btn, .completion-egg-btn, .gift-cancel, .rename-reset):hover {
+        background: #fbfaff;
+      }
+      @A :is(.sort-row button.dir, .pokedex-swap-btn, .bag-craft, .family-toggle, .icon-btn,
+             .daycare-show-on-map, .daycare-show-all-on-map, .completion-summary-btn,
+             .speciesdex-summary-btn, .completion-egg-btn, .gift-cancel, .rename-reset):active {
+        transform: translateY(2px);
+        box-shadow: 0 0 0 rgba(124, 92, 255, 0.16), 0 2px 4px -2px rgba(76, 52, 170, 0.35);
+      }
+      @A .sort-row button.dir { height: 34px; min-width: 38px; font-size: 15px; }
+      @A .bag-craft { padding: 8px 14px; font-size: 12.5px; }
+      @A .family-toggle { padding: 9px 12px; font-size: 13px; }
+
+      /* ---------- Primary CTAs: violet candy with a 3D lip ---------- */
+      @A :is(.bag-use, .daycare-convert-btn, .gift-send, .detail-gift-btn, .actions button.close,
+             .craft-confirm-actions button, .tags-create button, .rename-form button[type="submit"]) {
+        background: var(--au-cta) !important;
+        color: #fff !important;
+        border: none !important;
+        border-radius: 14px;
+        font-weight: 800;
+        letter-spacing: 0.01em;
+        text-shadow: 0 1px 1px rgba(40, 20, 120, 0.35);
+        box-shadow: 0 3px 0 var(--au-cta-lip), 0 10px 18px -8px rgba(109, 74, 255, 0.75), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+        transition: transform 90ms ease, box-shadow 90ms ease;
+      }
+      @A :is(.bag-use, .daycare-convert-btn, .gift-send, .detail-gift-btn, .actions button.close,
+             .craft-confirm-actions button, .tags-create button, .rename-form button[type="submit"]):active {
+        transform: translateY(2px);
+        box-shadow: 0 1px 0 var(--au-cta-lip), 0 4px 8px -4px rgba(109, 74, 255, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+      }
+      @A .bag-use { padding: 6px 14px; font-size: 12.5px; }
+      @A .detail-gift-btn { padding: 9px 18px; }
+      @A :is(.bag-use, .daycare-convert-btn, .gift-send):disabled {
+        background: #e7e2f7 !important; color: #a49dc4 !important; text-shadow: none;
+        box-shadow: 0 2px 0 #d5cdef !important;
+      }
+
+      /* ---------- Chips (tag filters + detail tags) ---------- */
+      @A :is(.inv-tag-chip, .detail-tag-chip) {
+        padding: 5px 12px;
+        font-size: 12.5px; font-weight: 700;
+        color: #5e5788;
+        background: rgba(255, 255, 255, 0.9);
+        border: 1.5px solid var(--au-line);
+        box-shadow: 0 2px 6px -4px rgba(76, 52, 170, 0.35);
+      }
+      @A :is(.inv-tag-chip, .detail-tag-chip).applied {
+        color: #fff;
+        background: var(--au-candy);
+        border-color: transparent;
+        box-shadow: 0 6px 14px -6px rgba(193, 96, 255, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+        text-shadow: 0 1px 1px rgba(60, 20, 120, 0.3);
+      }
+      @A :is(.inv-tag-filter-row, .pokedex-tag-filter-row, .eggs-tag-filter-row) { gap: 7px; }
+
+      /* ---------- Creature + pokédex cards ---------- */
+      @A :is(.creature-list, .pokedex-grid) { gap: 10px; }
+      @A :is(.creature-card, .pokedex-card) {
+        background: #fff;
+        border: none;
+        border-radius: 20px;
+        padding: 6px 6px 7px;
+        box-shadow: var(--au-card-shadow);
+        transition: transform 120ms ease, box-shadow 120ms ease;
+      }
+      @A :is(.creature-card, .pokedex-card):hover {
+        transform: translateY(-2px);
+        box-shadow: var(--au-card-shadow-hi);
+        border-color: transparent;
+      }
+      @A :is(.creature-card, .pokedex-card):active { transform: scale(0.96); }
+      /* The art "stage": a soft spotlight with a little floor shadow. */
+      @A :is(.creature-card .art, .pokedex-card .pokedex-art) {
+        position: relative;
+        border: none;
+        border-radius: 15px;
+        background:
+          radial-gradient(60% 14% at 50% 86%, rgba(76, 52, 170, 0.20), transparent 100%),
+          radial-gradient(circle at 50% 40%, #ffffff 0%, #f3efff 55%, #e7defe 100%);
+        box-shadow: inset 0 0 0 1px rgba(124, 92, 255, 0.08);
+      }
+      @A :is(.creature-card .art img.art-img, .pokedex-card .pokedex-art img) {
+        position: relative;
+        filter: drop-shadow(0 3px 2px rgba(43, 35, 87, 0.18));
+      }
+      @A .creature-card .art .art-placeholder { color: #cfc5f5; }
+      @A .creature-card .name,
+      @A .pokedex-card .name {
+        font-size: 12.5px; font-weight: 800; color: var(--au-ink);
+        letter-spacing: -0.005em;
+      }
+      @A .creature-card .stats {
+        font-weight: 800; color: var(--au-violet);
+      }
+
+      /* ---------- Raised card rows (bag, candy, eggs, daycare, evo…) ---------- */
+      @A :is(.bag-row, .candy-row, .egg-tile, .incubator-slot, .daycare-slot, .evo-row,
+             .tags-row, .gift-row, .completion-row, .focus-session-row, .glitch-card,
+             .variant-cell, .family-cell, .st-card, .st-tile, .craft-orb, .craft-egg,
+             .speciesdex-row, .packdex-mon, .daycare-today, .bag-incense-banner) {
+        background-color: #fff;
+        border-radius: 18px;
+        box-shadow: var(--au-card-shadow);
+      }
+      @A :is(.bag-row, .candy-row, .tags-row, .gift-row, .completion-row, .focus-session-row) {
+        border-color: transparent;
+      }
+      @A :is(.bag-row, .candy-row) { padding: 12px 12px; gap: 12px; }
+      @A :is(.bag-list, .candy-list) { gap: 10px; }
+      @A .bag-row .bag-icon,
+      @A .bag-incense-banner .bag-icon {
+        width: 44px; height: 44px; padding: 7px; box-sizing: border-box;
+        border-radius: 14px;
+        background: radial-gradient(circle at 50% 35%, #ffffff, #efe9ff 70%, #e2d7ff);
+        box-shadow: inset 0 0 0 1px rgba(124, 92, 255, 0.10);
+      }
+      @A .bag-row .bag-name, @A .candy-row .candy-name { font-weight: 800; color: var(--au-ink); }
+      @A .bag-row .bag-desc { color: var(--au-sub); line-height: 1.35; }
+      @A .bag-row .bag-count, @A .candy-row .candy-count {
+        font-weight: 800; font-size: 13px; color: var(--au-violet-deep);
+        background: #f1ecff; padding: 3px 9px; border-radius: 999px;
+      }
+      @A :is(.bag-section, .fusion-section-label, .detail-evos-label) {
+        font-size: 11px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase;
+        color: var(--au-violet);
+      }
+      @A .bag-section { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+      @A .bag-section::after {
+        content: ''; flex: 1; height: 2px; border-radius: 2px;
+        background: linear-gradient(90deg, rgba(124, 92, 255, 0.25), transparent);
+      }
+      @A .bag-incense-banner {
+        border: 2px solid transparent;
+        background: linear-gradient(#fff, #fff) padding-box, var(--au-candy) border-box;
+      }
+      @A .egg-tile { border-color: transparent; }
+      @A .incubator-slot { border: 2px dashed rgba(124, 92, 255, 0.22); }
+      @A .egg-new-badge {
+        background: var(--au-candy);
+        box-shadow: 0 4px 10px -3px rgba(193, 96, 255, 0.8);
+        font-weight: 800;
+      }
+      @A .evo-row { padding: 8px 10px; border: 1px solid transparent; }
+      @A .evo-row .evo-art {
+        width: 42px; height: 42px; border-radius: 12px;
+        background: radial-gradient(circle at 50% 40%, #fff, #efe9ff 70%, #e2d7ff);
+      }
+      @A .evo-row .evo-name { font-weight: 700; }
+      @A .evo-row.evo-ready {
+        border: 2px solid transparent;
+        background: linear-gradient(#fff, #fff) padding-box, var(--au-candy) border-box;
+        box-shadow: 0 10px 20px -10px rgba(193, 96, 255, 0.9);
+      }
+      @A .evo-row.evo-ready::after { color: var(--au-pink); }
+      @A .family-cell { border-radius: 14px; }
+      @A .variant-cell { border-color: transparent; border-radius: 16px; }
+      @A .st-card { border-color: transparent; border-radius: 22px; }
+
+      /* ---------- Detail view: the hero stage ---------- */
+      @A .detail-art {
+        width: 172px; height: 172px;
+        margin: 8px auto 14px;
+        border: none;
+        border-radius: 40px;
+        position: relative;
+        background:
+          radial-gradient(55% 12% at 50% 88%, rgba(76, 52, 170, 0.25), transparent 100%),
+          radial-gradient(circle at 50% 38%, #ffffff 0%, #f1ebff 45%, #d9ccff 100%);
+        box-shadow:
+          inset 0 0 0 1px rgba(255, 255, 255, 0.9),
+          inset 0 -14px 30px -10px rgba(124, 92, 255, 0.25),
+          0 18px 36px -14px rgba(76, 52, 170, 0.55),
+          0 0 0 6px rgba(255, 255, 255, 0.55);
+      }
+      @A .detail-art img.detail-art-img {
+        padding: 12px; box-sizing: border-box;
+        filter: drop-shadow(0 6px 4px rgba(43, 35, 87, 0.22));
+      }
+      /* Arrows sit on the stage's vertical middle (title row 36 + 8 + 86). */
+      @A .nav-arrow {
+        top: 130px;
+        width: 34px; height: 34px;
+        border: none;
+        background: rgba(255, 255, 255, 0.9);
+        color: var(--au-violet);
+        font-weight: 800;
+        box-shadow: 0 6px 14px -4px rgba(76, 52, 170, 0.35), inset 0 1px 0 #fff;
+      }
+      @A .detail-stats {
+        width: fit-content; margin: 8px auto 8px; padding: 6px 14px;
+        border-radius: 999px; background: #fff;
+        box-shadow: var(--au-card-shadow);
+        font-weight: 800; color: var(--au-ink);
+      }
+      @A .detail-caught {
+        width: fit-content; max-width: 100%; box-sizing: border-box;
+        margin: 8px auto 10px; padding: 8px 14px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.72);
+        box-shadow: 0 4px 12px -6px rgba(76, 52, 170, 0.3), inset 0 0 0 1px rgba(124, 92, 255, 0.08);
+        color: var(--au-sub); font-weight: 600;
+      }
+      @A .detail-pokedex-link {
+        width: fit-content; margin: 0 auto 10px; padding: 5px 12px;
+        border-radius: 999px;
+        background: rgba(124, 92, 255, 0.10);
+        color: var(--au-violet-deep);
+        font-weight: 800; text-decoration: none;
+      }
+      @A .detail-pokedex-link:hover { opacity: 1; background: rgba(124, 92, 255, 0.16); }
+      @A .detail-species { color: var(--au-sub); font-weight: 600; }
+
+      /* ---------- Segmented controls (stats, focus) ---------- */
+      @A :is(.st-seg, .focus-seg, .st-modes) {
+        background: rgba(124, 92, 255, 0.10);
+        box-shadow: inset 0 1px 2px rgba(43, 35, 87, 0.08);
+        border-radius: 14px;
+      }
+      @A :is(.st-seg-btn, .focus-seg-btn, .st-mode) { border-radius: 11px; font-weight: 800; }
+      @A .st-hero-v { font-weight: 800; letter-spacing: -0.02em; }
+      @A .st-hero-label, @A .st-card-t { color: var(--au-violet); font-weight: 800; }
+      @A .st-chip { border-radius: 999px; font-weight: 700; }
+      @A .st-chip.on { background: var(--au-candy); border-color: transparent; }
+
+      @A .creature-empty, @A .bag-empty, @A .candy-empty, @A .eggs-empty, @A .tags-empty {
+        color: var(--au-sub); font-weight: 600;
+      }
+
+      /* ---------- The map's creature-ball button: a glossy orb ---------- */
+      :where(html[data-theme="aurora"]) .maplibregl-ctrl-group:has(> button[title="creatures"]) {
+        border-radius: 50%;
+        border: none;
+        background: radial-gradient(circle at 34% 28%, #d6c9ff 0%, #9b7bff 32%, #6a45f5 70%, #4a2bc9 100%);
+        box-shadow: 0 6px 16px -4px rgba(91, 60, 224, 0.75), inset 0 -3px 6px rgba(40, 10, 120, 0.35), inset 0 2px 3px rgba(255, 255, 255, 0.55);
+        overflow: hidden;
+      }
+      :where(html[data-theme="aurora"]) .maplibregl-ctrl-group > button[title="creatures"] {
+        background: transparent;
+        color: #fff;
+        --ui-bg: #6a45f5;
+      }
+      :where(html[data-theme="aurora"]) .maplibregl-ctrl-group > button[title="creatures"]:active { transform: scale(0.92); }
+      :where(html[data-theme="aurora"]) .maplibregl-ctrl-group > button[title="creatures"] svg {
+        filter: drop-shadow(0 1px 1px rgba(30, 10, 90, 0.45));
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        @A * { transition: none !important; }
+      }
+    `.replace(/@A/g, ':where(html[data-theme="aurora"]) #creatureInventory')
+     .replace(/@H/g, 'html[data-theme="aurora"] #creatureInventory');
+    document.head.appendChild(s);
   }
 
   function ensurePanel() {
@@ -11132,6 +11634,14 @@
     window.addEventListener('cc-action-buttons-style-changed', () => {
       renderHeaderActions(panel);
     });
+    // Aurora draws the actions as icon+label tiles, so a theme switch
+    // to or from it re-renders them too.
+    let _headerTheme = document.documentElement.getAttribute('data-theme');
+    new MutationObserver(() => {
+      const t = document.documentElement.getAttribute('data-theme');
+      if ((t === 'aurora') !== (_headerTheme === 'aurora')) renderHeaderActions(panel);
+      _headerTheme = t;
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     panel.querySelector('.save-reminder').addEventListener('click', openSettingsFromInventory);
 
     // Pokédex card → fusion sub-view (delegated; cards are re-rendered).
@@ -19009,11 +19519,15 @@
       { cls: 'pokedex-link', label: 'Dex', svg: _ACTION_ICON_SVG.dex, onClick: showPokedex },
       { cls: 'stats-link', label: 'Stats', svg: _ACTION_ICON_SVG.stats, onClick: showStats },
     ];
-    container.classList.toggle('header-actions-text', !asIcons);
-    container.classList.toggle('header-actions-icons', asIcons);
+    // Aurora theme: game-menu tiles with both the icon and the label.
+    const tiles = document.documentElement.getAttribute('data-theme') === 'aurora';
+    container.classList.toggle('header-actions-text', !asIcons && !tiles);
+    container.classList.toggle('header-actions-icons', asIcons && !tiles);
+    container.classList.toggle('au-tiles', tiles);
     container.innerHTML = items.map((it) =>
       `<button class="${it.cls}" type="button" aria-label="${it.label.toLowerCase()}" title="${it.label}">`
-      + (asIcons ? it.svg : escapeHtml(it.label))
+      + (tiles ? it.svg + `<span class="au-lb">${escapeHtml(it.label)}</span>`
+         : asIcons ? it.svg : escapeHtml(it.label))
       + `</button>`
     ).join('');
     items.forEach((it) => {

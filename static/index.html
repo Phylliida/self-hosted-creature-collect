@@ -3158,7 +3158,14 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
     // Parking garage at 3am — cold concrete with the sickly warm glow of
     // sodium-vapor lights. Your footsteps are the only sound.
     garage: { bg: '#4a4a48', landcover: '#4a4a48', landuse: '#444442', water: '#1a1a18', building: '#606060', road: '#8a7a5a', roadLabel: '#ffcc88', roadHalo: '#2a2a28', placeLabel: '#ffcc88', placeHalo: '#2a2a28', poiLabel: '#ffcc88', poiHalo: '#2a2a28', poiIcon: '#ff8a30',
-              ui: { panelBg: '#3a3a38', panelText: '#e8d8b8', muted: '#8a8a88', border: '#1a1a18', hairline: '#4a4a48', hover: '#484846', inputBg: '#1a1a18', radius: '1px', shadow: '0 0 40px rgba(255,180,100,0.2), 0 4px 12px rgba(0,0,0,0.8)', accent: '#ff8a30', accentText: '#1a1a18', accentBorder: '#c04a10', accent2: '#e8d8b8', danger: '#ff3030' } }
+              ui: { panelBg: '#3a3a38', panelText: '#e8d8b8', muted: '#8a8a88', border: '#1a1a18', hairline: '#4a4a48', hover: '#484846', inputBg: '#1a1a18', radius: '1px', shadow: '0 0 40px rgba(255,180,100,0.2), 0 4px 12px rgba(0,0,0,0.8)', accent: '#ff8a30', accentText: '#1a1a18', accentBorder: '#c04a10', accent2: '#e8d8b8', danger: '#ff3030' } },
+    // Aurora (experimental) — a polished mobile-game look: dreamy mint
+    // map, lavender panels with white raised cards, violet→pink CTAs.
+    // hover is pure white on purpose: the panel's card rows take their
+    // fill from --ui-hover, so they read as white cards on lavender.
+    // The heavy decoration lives in creatures.js (injectAuroraStyles).
+    aurora: { bg: '#dcf2e2', landcover: '#dcf2e2', landuse: '#c9ead2', water: '#9fd8f6', building: '#e4dcf6', road: '#ffffff', roadLabel: '#5a5280', roadHalo: '#ffffff', placeLabel: '#2b2357', placeHalo: '#ffffff', poiLabel: '#2b2357', poiHalo: '#ffffff', poiIcon: '#7c5cff',
+              ui: { panelBg: '#f6f3ff', panelText: '#2b2357', muted: '#7d76a3', border: 'transparent', hairline: '#ebe5fb', hover: '#ffffff', inputBg: '#ffffff', radius: '16px', shadow: '0 10px 30px rgba(76,52,170,0.18), 0 2px 6px rgba(76,52,170,0.08)', accent: '#7c5cff', accentText: '#ffffff', accentBorder: '#5b3ce0', accent2: '#e8358a', danger: '#e5395f' } }
   };
   // Perceived-luminance test on a theme's panel background so chrome that
   // can't read the --ui-* vars (e.g. the radar silhouette blips, whose CSS
@@ -3637,6 +3644,7 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
         <option value="poolrooms">Poolrooms</option>
         <option value="deadmall">Dead mall</option>
         <option value="garage">3am parking garage</option>
+        <option value="aurora">Aurora</option>
         <option value="custom">Custom</option>
       </select>
     </div>
@@ -8398,7 +8406,7 @@ function fmtDate(ts) {
     bloodmoon: 'Bloodmoon 🩸', haunted: 'Haunted 🕯', fogbank: 'Fogbank 🌫',
     abyss: 'Abyss 🐙', vhs: 'VHS 📼',
     backrooms: 'Backrooms', poolrooms: 'Poolrooms', deadmall: 'Dead mall',
-    garage: '3am garage', custom: 'Custom…'
+    garage: '3am garage', aurora: 'Aurora ✨', custom: 'Custom…'
   };
   function themePreviewSVG(t) {
     const accent = t.ui?.accent || '#3b7fdf';
