@@ -2554,6 +2554,11 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
     font-size: 13px; cursor: pointer;
     width: 100%; font-weight: 600;
   }
+  /* The pokéstop's main action: ~1.4x the Directions button's height
+     (and close to the loot animation's, so it barely grows). */
+  #poiCardCollect { min-height: 46px; }
+  #poiCard.links-last #poiCardDirections,
+  #poiCard.links-last #poiCardCollect { margin-top: 20px; }
   /* Bottom button swap: Directions outside creature mode,
      Collect items inside creature mode. Exactly one is ever visible. */
   #poiCardCollect { display: none; }
@@ -10673,6 +10678,10 @@ function fmtDate(ts) {
 
     const p = poi.props || {};
     const rows = [];
+    // Tappable links (phone / website / wiki) go first, so a link is
+    // never the last row right above the Collect / Directions button —
+    // a slightly-high tap there opened the browser instead.
+    const linkRows = [];
     const telHref = (s) => 'tel:' + s.replace(/[^\d+]/g, '');
     const webHref = (s) => s.startsWith('http') ? s : 'https://' + s;
 
@@ -10684,10 +10693,10 @@ function fmtDate(ts) {
     if (p.opening_hours) rows.push(`<div class="row"><span class="lbl">🕐</span><span class="val">${esc(p.opening_hours)}</span></div>`);
 
     const phone = p.phone || p['contact:phone'];
-    if (phone) rows.push(`<div class="row"><span class="lbl">📞</span><span class="val"><a href="${esc(telHref(phone))}">${esc(phone)}</a></span></div>`);
+    if (phone) linkRows.push(`<div class="row"><span class="lbl">📞</span><span class="val"><a href="${esc(telHref(phone))}">${esc(phone)}</a></span></div>`);
 
     const website = p.website || p['contact:website'];
-    if (website) rows.push(`<div class="row"><span class="lbl">🌐</span><span class="val"><a href="${esc(webHref(website))}" target="_blank" rel="noopener">${esc(website)}</a></span></div>`);
+    if (website) linkRows.push(`<div class="row"><span class="lbl">🌐</span><span class="val"><a href="${esc(webHref(website))}" target="_blank" rel="noopener">${esc(website)}</a></span></div>`);
 
     if (p.wheelchair) {
       const mark = p.wheelchair === 'yes' ? '♿' : p.wheelchair === 'limited' ? '◐' : '✕';
@@ -10714,12 +10723,14 @@ function fmtDate(ts) {
         const lang = parts[0];
         const article = parts.slice(1).join(':');
         const url = `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(article.replace(/ /g, '_'))}`;
-        rows.push(`<div class="row"><span class="lbl">📚</span><span class="val"><a href="${esc(url)}" target="_blank" rel="noopener">Wikipedia: ${esc(article)}</a></span></div>`);
+        linkRows.push(`<div class="row"><span class="lbl">📚</span><span class="val"><a href="${esc(url)}" target="_blank" rel="noopener">Wikipedia: ${esc(article)}</a></span></div>`);
       }
     } else if (p.wikidata) {
       const url = `https://www.wikidata.org/wiki/${encodeURIComponent(p.wikidata)}`;
-      rows.push(`<div class="row"><span class="lbl">📚</span><span class="val"><a href="${esc(url)}" target="_blank" rel="noopener">Wikidata: ${esc(p.wikidata)}</a></span></div>`);
+      linkRows.push(`<div class="row"><span class="lbl">📚</span><span class="val"><a href="${esc(url)}" target="_blank" rel="noopener">Wikidata: ${esc(p.wikidata)}</a></span></div>`);
     }
+    const linksLast = linkRows.length > 0 && rows.length === 0;
+    rows.unshift(...linkRows);
 
     // If this POI is a transit stop/station/platform and we know its schedule,
     // append a "lines at this stop" list. Each row opens the full schedule
@@ -10808,6 +10819,9 @@ function fmtDate(ts) {
       const scheduleSection = body.querySelector('.route-popup');
       if (scheduleSection) body.insertBefore(collectBtn, scheduleSection);
     }
+    // Only links to show: they can't move off the button, so the
+    // button sits further down instead.
+    card.classList.toggle('links-last', linksLast);
     card.classList.add('show');
     // Pokéstop cooldown: if creature mode is on, sync the Collect
     // button against this POI's stored cooldown (and start a live
@@ -12273,6 +12287,10 @@ function fmtDate(ts) {
       window.Creatures.grantItem(key, 1);
       granted.push(key);
     }
+    // Special drops (berries, evolution items) lead the loot
+    // animation, then the balls best-first.
+    const BALL_RANK = { candy_ball: 1, great_ball: 2, poke_ball: 3 };
+    granted.sort((a, b) => (BALL_RANK[a] || 0) - (BALL_RANK[b] || 0));
     // Mark cooldowns: this POI + every other rendered POI within
     // POI_COOLDOWN_RADIUS_M of it.
     markPoiCollected(stored.lng, stored.lat, stored.category);
