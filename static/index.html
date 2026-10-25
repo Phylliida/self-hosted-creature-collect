@@ -10575,8 +10575,8 @@ function fmtDate(ts) {
   }
 
   // Live countdown for the Collect button while the POI card is open.
-  // One interval at a time; self-stops when the card hides or the
-  // cooldown reaches zero.
+  // One interval at a time; self-stops when the card hides (it keeps
+  // ticking while ready so the distance label stays live).
   let _poiCooldownTimer = null;
   function stopPoiCollectCountdown() {
     if (_poiCooldownTimer != null) {
@@ -10620,8 +10620,11 @@ function fmtDate(ts) {
     const remain = poiCooldownRemainingMs(stored.lng, stored.lat);
     if (remain <= 0) {
       collectBtn.disabled = false;
-      collectBtn.innerHTML = 'Collect items';
-      return false;
+      if (collectBtn.textContent !== 'Collect items') collectBtn.textContent = 'Collect items';
+      // Keep polling even when ready: walking out of range must flip
+      // the button back to "Too far" instead of leaving a stale,
+      // silently-failing "Collect items".
+      return true;
     }
     collectBtn.disabled = true;
     const sec = Math.ceil(remain / 1000);
@@ -12254,7 +12257,11 @@ function fmtDate(ts) {
     const distM = lastKnownPos
       ? haversineKm(lastKnownPos.lat, lastKnownPos.lng, stored.lat, stored.lng) * 1000
       : Infinity;
-    if (distM > POI_COLLECT_MAX_DISTANCE_M) return;
+    if (distM > POI_COLLECT_MAX_DISTANCE_M) {
+      // Re-label right away so the tap visibly explains itself.
+      try { syncPoiCollectButton(); } catch {}
+      return;
+    }
     // Stats: one pokéstop spin (the items count as found via grantItem).
     try { if (window.Creatures.noteStat) window.Creatures.noteStat('spins'); } catch {}
     // Sample 1-6 items.
