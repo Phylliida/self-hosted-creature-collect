@@ -10440,22 +10440,25 @@
   // Aurora theme (experimental) — the creature panel dressed up like a
   // polished mobile game: lavender sheet with an aurora glow at the top,
   // raised white cards, gradient "candy" buttons with a pressable 3D lip,
-  // colour-coded menu tiles. Aurora Night ("auroranight") shares every
-  // rule and only swaps the --au-* tokens (@N block). Every rule is
-  // scoped to those two themes, so the other themes are untouched.
+  // colour-coded menu tiles. Aurora Night ("auroranight") and Aurora Blue
+  // ("aurorablue") share every rule and only swap the --au-* tokens (@N,
+  // then @B on top for blue). Every rule is scoped to those three themes,
+  // so the other themes are untouched.
   //
   // Selectors are written with prefixes, expanded below:
-  //   @A  → :where(aurora, auroranight) #creatureInventory
+  //   @A  → :where(aurora, auroranight, aurorablue) #creatureInventory
   //        The :where() adds no specificity, so a rule here ties the base
   //        rule it restyles and wins on source order (this sheet comes
   //        after creature-styles) — while the base state rules (.applied,
   //        .current, .favorited, .drop-active…) stay stronger and keep
   //        working unchanged.
-  //   @N  → :where(auroranight) #creatureInventory — the night tokens.
-  //   @H  → :is(aurora, auroranight) #creatureInventory
+  //   @N  → :where(auroranight) #creatureInventory — the night tokens
+  //        (written "@N, @B" so Aurora Blue starts from them too).
+  //   @B  → :where(aurorablue) #creatureInventory — the blue tokens.
+  //   @H  → :is(aurora, auroranight, aurorablue) #creatureInventory
   //        Full specificity, for the few spots that need to beat a rule
   //        that's already stronger (the shared close-X in index.html).
-  function _isAuroraTheme(t) { return t === 'aurora' || t === 'auroranight'; }
+  function _isAuroraTheme(t) { return t === 'aurora' || t === 'auroranight' || t === 'aurorablue'; }
   function injectAuroraStyles() {
     if (document.getElementById('creature-styles-aurora')) return;
     const s = document.createElement('style');
@@ -10468,12 +10471,20 @@
         --au-violet: #7c5cff;
         --au-violet-deep: #5b3ce0;
         --au-pink: #ff5fa2;
-        --au-line: rgba(124, 92, 255, 0.14);
+        --au-line: rgba(var(--au-accent-rgb), 0.14);
         --au-cta: linear-gradient(180deg, #9d82ff 0%, #7c5cff 55%, #6a45f5 100%);
         --au-cta-lip: #4a2bc9;
         --au-candy: linear-gradient(135deg, #8f6bff 0%, #c160ff 50%, #ff5fa2 100%);
-        --au-card-shadow: 0 1px 0 rgba(255,255,255,0.9) inset, 0 6px 16px -6px rgba(76,52,170,0.28), 0 1px 3px rgba(76,52,170,0.10);
-        --au-card-shadow-hi: 0 1px 0 rgba(255,255,255,0.9) inset, 0 12px 24px -8px rgba(76,52,170,0.38), 0 2px 5px rgba(76,52,170,0.12);
+        --au-card-shadow: 0 1px 0 rgba(255,255,255,0.9) inset, 0 6px 16px -6px rgba(var(--au-shadow-rgb),0.28), 0 1px 3px rgba(var(--au-shadow-rgb),0.10);
+        --au-card-shadow-hi: 0 1px 0 rgba(255,255,255,0.9) inset, 0 12px 24px -8px rgba(var(--au-shadow-rgb),0.38), 0 2px 5px rgba(var(--au-shadow-rgb),0.12);
+        --au-accent-rgb: 124, 92, 255;
+        --au-cta-glow-rgb: 109, 74, 255;
+        --au-shadow-rgb: 76, 52, 170;
+        --au-glow-rgb: 193, 96, 255;
+        --au-ink-shadow-rgb: 60, 20, 120;
+        --au-inset-rgb: 43, 35, 87;
+        --au-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M1.5 3.5L5 7l3.5-3.5' fill='none' stroke='%237c5cff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+        --au-magnifier: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239a8fd0' stroke-width='2.6' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-4-4'/%3E%3C/svg%3E");
         --au-surface: #ffffff;
         --au-surface-hover: #fbfaff;
         --au-tint: #f1ecff;
@@ -10483,13 +10494,13 @@
         --au-chip-ink: #5e5788;
         --au-placeholder: #aaa3c9;
         --au-art-ph: #cfc5f5;
-        --au-stage: radial-gradient(60% 14% at 50% 86%, rgba(76, 52, 170, 0.20), transparent 100%),
+        --au-stage: radial-gradient(60% 14% at 50% 86%, rgba(var(--au-shadow-rgb), 0.20), transparent 100%),
                     radial-gradient(circle at 50% 40%, #ffffff 0%, #f3efff 55%, #e7defe 100%);
-        --au-hero: radial-gradient(55% 12% at 50% 88%, rgba(76, 52, 170, 0.25), transparent 100%),
+        --au-hero: radial-gradient(55% 12% at 50% 88%, rgba(var(--au-shadow-rgb), 0.25), transparent 100%),
                    radial-gradient(circle at 50% 38%, #ffffff 0%, #f1ebff 45%, #d9ccff 100%);
         --au-hero-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.9),
-                          inset 0 -14px 30px -10px rgba(124, 92, 255, 0.25),
-                          0 18px 36px -14px rgba(76, 52, 170, 0.55),
+                          inset 0 -14px 30px -10px rgba(var(--au-accent-rgb), 0.25),
+                          0 18px 36px -14px rgba(var(--au-shadow-rgb), 0.55),
                           0 0 0 6px rgba(255, 255, 255, 0.55);
         --au-icon-bg: radial-gradient(circle at 50% 35%, #ffffff, #efe9ff 70%, #e2d7ff);
         --au-warm: linear-gradient(120deg, #fff1df 0%, #ffe5f1 100%);
@@ -10508,10 +10519,10 @@
           linear-gradient(180deg, #efe9ff 0px, #f6f3ff 240px, #f6f3ff 100%);
         --au-sheet-shadow:
           0 40px 80px -20px rgba(28, 12, 90, 0.65),
-          0 0 0 1px rgba(124, 92, 255, 0.10),
+          0 0 0 1px rgba(var(--au-accent-rgb), 0.10),
           inset 0 1px 0 rgba(255, 255, 255, 0.95);
         --au-backdrop:
-          radial-gradient(120% 90% at 50% 0%, rgba(124, 92, 255, 0.28), transparent 60%),
+          radial-gradient(120% 90% at 50% 0%, rgba(var(--au-accent-rgb), 0.28), transparent 60%),
           rgba(20, 12, 54, 0.55);
         --au-font: ui-rounded, "SF Pro Rounded", "Nunito", "Quicksand", "Varela Round", system-ui, -apple-system, "Segoe UI", sans-serif;
         background: var(--au-backdrop);
@@ -10523,7 +10534,7 @@
          A deep indigo sky with real northern-lights glows (teal, green,
          violet) and a sprinkle of stars at the top of the sheet; cards
          are lit-from-above indigo slabs instead of white. */
-      @N {
+      @N, @B {
         --au-ink: #efeaff;
         --au-sub: #a59ed4;
         --au-violet: #a68eff;
@@ -10547,7 +10558,7 @@
                    radial-gradient(circle at 50% 36%, #5141b0 0%, #33297a 48%, #1e1849 100%);
         --au-hero-shadow: inset 0 0 0 1px rgba(166, 142, 255, 0.28),
                           inset 0 -14px 30px -10px rgba(0, 0, 0, 0.45),
-                          0 0 44px -6px rgba(124, 92, 255, 0.55),
+                          0 0 44px -6px rgba(var(--au-accent-rgb), 0.55),
                           0 0 0 6px rgba(166, 142, 255, 0.10);
         --au-icon-bg: radial-gradient(circle at 50% 35%, #3d3388, #2b2466 70%, #231d52);
         --au-warm: linear-gradient(120deg, #3b2346 0%, #432140 100%);
@@ -10574,12 +10585,81 @@
         --au-sheet-shadow:
           0 40px 80px -20px rgba(0, 0, 0, 0.85),
           0 0 0 1px rgba(166, 142, 255, 0.14),
-          0 0 60px -20px rgba(124, 92, 255, 0.45),
+          0 0 60px -20px rgba(var(--au-accent-rgb), 0.45),
           inset 0 1px 0 rgba(255, 255, 255, 0.10);
         --au-backdrop:
           radial-gradient(120% 90% at 50% 0%, rgba(80, 200, 180, 0.16), transparent 55%),
-          radial-gradient(120% 90% at 50% 0%, rgba(124, 92, 255, 0.24), transparent 65%),
+          radial-gradient(120% 90% at 50% 0%, rgba(var(--au-accent-rgb), 0.24), transparent 65%),
           rgba(4, 3, 18, 0.72);
+      }
+
+      /* ---------- Aurora Blue: the night look, blue instead of violet ----------
+         Navy sky with cyan / teal / green northern lights; sky-blue CTAs and a
+         cyan→teal candy gradient. Builds on the night tokens above. */
+      @B {
+        --au-accent-rgb: 77, 163, 255;
+        --au-cta-glow-rgb: 59, 130, 246;
+        --au-shadow-rgb: 0, 12, 40;
+        --au-glow-rgb: 34, 184, 232;
+        --au-ink-shadow-rgb: 8, 30, 80;
+        --au-inset-rgb: 0, 0, 0;
+        --au-ink: #e8f2ff;
+        --au-sub: #93abd0;
+        --au-violet: #5aaeff;
+        --au-violet-deep: #acd4ff;
+        --au-pink: #5eead4;
+        --au-line: rgba(90, 174, 255, 0.24);
+        --au-cta: linear-gradient(180deg, #5cabff 0%, #3b82f6 55%, #2f6fe0 100%);
+        --au-cta-lip: #1d4fb8;
+        --au-candy: linear-gradient(135deg, #3b82f6 0%, #22b8e8 55%, #2dd4bf 100%);
+        --au-surface: #12264a;
+        --au-surface-hover: #172f5a;
+        --au-tint: rgba(90, 174, 255, 0.16);
+        --au-glass: rgba(20, 44, 86, 0.86);
+        --au-frost: rgba(18, 38, 76, 0.78);
+        --au-chip-ink: #c4d9f6;
+        --au-placeholder: #6f89b2;
+        --au-art-ph: #2f4f82;
+        --au-card-shadow: 0 1px 0 rgba(255,255,255,0.07) inset, 0 8px 18px -8px rgba(0,0,0,0.65), 0 1px 3px rgba(0,0,0,0.35);
+        --au-card-shadow-hi: 0 1px 0 rgba(255,255,255,0.09) inset, 0 14px 26px -8px rgba(0,0,0,0.75), 0 0 0 1px rgba(90,174,255,0.28);
+        --au-stage: radial-gradient(60% 14% at 50% 86%, rgba(0, 0, 0, 0.38), transparent 100%),
+                    radial-gradient(circle at 50% 40%, #234a82 0%, #193766 55%, #11274b 100%);
+        --au-hero: radial-gradient(55% 12% at 50% 88%, rgba(0, 0, 0, 0.42), transparent 100%),
+                   radial-gradient(circle at 50% 36%, #2d5fae 0%, #1d407c 48%, #102449 100%);
+        --au-hero-shadow: inset 0 0 0 1px rgba(90, 174, 255, 0.30),
+                          inset 0 -14px 30px -10px rgba(0, 0, 0, 0.45),
+                          0 0 44px -6px rgba(59, 130, 246, 0.55),
+                          0 0 0 6px rgba(90, 174, 255, 0.10);
+        --au-icon-bg: radial-gradient(circle at 50% 35%, #234a82, #193766 70%, #142c55);
+        --au-warm: linear-gradient(120deg, #2d2a44 0%, #3a2638 100%);
+        --au-warm-hover: linear-gradient(120deg, #36324f 0%, #452c42 100%);
+        --au-disabled: #1b3157;
+        --au-disabled-ink: #5f7aa3;
+        --au-disabled-lip: #0d1d3a;
+        --au-sheet-edge: rgba(90, 174, 255, 0.16);
+        --au-sheet-bg:
+          radial-gradient(1.2px 1.2px at 14% 22px, rgba(255,255,255,0.9), transparent),
+          radial-gradient(1px 1px at 31% 64px, rgba(255,255,255,0.7), transparent),
+          radial-gradient(1.4px 1.4px at 58% 14px, rgba(255,255,255,0.85), transparent),
+          radial-gradient(1px 1px at 76% 52px, rgba(255,255,255,0.65), transparent),
+          radial-gradient(1.2px 1.2px at 89% 96px, rgba(255,255,255,0.7), transparent),
+          radial-gradient(1px 1px at 6% 118px, rgba(255,255,255,0.55), transparent),
+          radial-gradient(1px 1px at 45% 110px, rgba(255,255,255,0.5), transparent),
+          radial-gradient(90% 180px at 0% 0%, rgba(45, 212, 191, 0.30), transparent 70%),
+          radial-gradient(90% 190px at 100% 0%, rgba(56, 160, 248, 0.42), transparent 70%),
+          radial-gradient(70% 150px at 55% 0%, rgba(74, 222, 128, 0.16), transparent 75%),
+          linear-gradient(180deg, #0f2147 0px, #0b1a3a 260px, #091631 100%);
+        --au-sheet-shadow:
+          0 40px 80px -20px rgba(0, 0, 0, 0.85),
+          0 0 0 1px rgba(90, 174, 255, 0.14),
+          0 0 60px -20px rgba(59, 130, 246, 0.45),
+          inset 0 1px 0 rgba(255, 255, 255, 0.10);
+        --au-backdrop:
+          radial-gradient(120% 90% at 50% 0%, rgba(45, 212, 191, 0.14), transparent 55%),
+          radial-gradient(120% 90% at 50% 0%, rgba(59, 130, 246, 0.24), transparent 65%),
+          rgba(2, 6, 20, 0.72);
+        --au-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M1.5 3.5L5 7l3.5-3.5' fill='none' stroke='%235aaeff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+        --au-magnifier: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%237f9fcf' stroke-width='2.6' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-4-4'/%3E%3C/svg%3E");
       }
 
       /* ---------- The sheet ---------- */
@@ -10603,7 +10683,7 @@
         border-radius: 50% !important;
         background: var(--au-glass) !important;
         border: 1px solid var(--au-line) !important;
-        box-shadow: 0 4px 12px -2px rgba(76, 52, 170, 0.28), inset 0 1px 0 var(--au-glass-hi) !important;
+        box-shadow: 0 4px 12px -2px rgba(var(--au-shadow-rgb), 0.28), inset 0 1px 0 var(--au-glass-hi) !important;
         color: var(--au-ink) !important;
         text-shadow: none !important;
         font-weight: 700;
@@ -10678,7 +10758,7 @@
         width: 30px; height: 30px; padding: 0; margin-left: 10px;
         border: none; border-radius: 50%;
         background: var(--au-glass);
-        box-shadow: 0 3px 8px -2px rgba(76, 52, 170, 0.3), inset 0 1px 0 var(--au-glass-hi);
+        box-shadow: 0 3px 8px -2px rgba(var(--au-shadow-rgb), 0.3), inset 0 1px 0 var(--au-glass-hi);
         color: var(--au-violet); font-size: 14px; font-weight: 800;
       }
       @A :is(.pokedex-stats, .eggs-stats, .bag-subtitle, .candy-subtitle, .tags-subtitle,
@@ -10692,7 +10772,7 @@
       @A .header-actions > button {
         --tile: linear-gradient(160deg, #b9a6ff, #7c5cff);
         --tile-lip: #5b3ce0;
-        --tile-glow: rgba(124, 92, 255, 0.45);
+        --tile-glow: rgba(var(--au-accent-rgb), 0.45);
         border: none; color: #fff; font-weight: 800;
         background: var(--tile);
         box-shadow: 0 3px 0 var(--tile-lip), 0 8px 14px -6px var(--tile-glow), inset 0 1px 0 rgba(255,255,255,0.55);
@@ -10728,7 +10808,7 @@
       /* ---------- Weather / spawn-odds bar ---------- */
       @A .weather-row {
         background: var(--au-frost);
-        box-shadow: 0 4px 12px -6px rgba(76, 52, 170, 0.3), inset 0 0 0 1px rgba(124, 92, 255, 0.10);
+        box-shadow: 0 4px 12px -6px rgba(var(--au-shadow-rgb), 0.3), inset 0 0 0 1px rgba(var(--au-accent-rgb), 0.10);
         padding: 6px 12px; gap: 8px;
         font-weight: 700; color: var(--au-sub);
       }
@@ -10755,12 +10835,12 @@
         background: var(--au-surface);
         border: 1.5px solid var(--au-line);
         border-radius: 14px;
-        box-shadow: inset 0 1px 2px rgba(43, 35, 87, 0.06), 0 2px 6px -4px rgba(76, 52, 170, 0.2);
+        box-shadow: inset 0 1px 2px rgba(var(--au-inset-rgb), 0.06), 0 2px 6px -4px rgba(var(--au-shadow-rgb), 0.2);
         transition: border-color 120ms ease, box-shadow 120ms ease;
       }
       @A .search-row input[type="search"] {
         padding-left: 36px;
-        background: var(--au-surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239a8fd0' stroke-width='2.6' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-4-4'/%3E%3C/svg%3E") no-repeat 13px 50%;
+        background: var(--au-surface) var(--au-magnifier) no-repeat 13px 50%;
       }
       @A :is(.search-row input, .rename-form input, .gift-field input, .gift-field textarea, .tags-create input)::placeholder {
         color: var(--au-placeholder); font-weight: 600;
@@ -10768,15 +10848,15 @@
       @A :is(.search-row input, .rename-form input, .gift-field input, .gift-field textarea, .tags-create input):focus {
         outline: none;
         border-color: var(--au-violet);
-        box-shadow: 0 0 0 4px rgba(124, 92, 255, 0.16);
+        box-shadow: 0 0 0 4px rgba(var(--au-accent-rgb), 0.16);
       }
       @A :is(.sort-row select, .type-filter-select, .st-chips select) {
         -webkit-appearance: none; appearance: none;
         height: 34px; padding: 0 26px 0 12px;
         font-size: 13px; font-weight: 700; color: var(--au-ink);
         border: 1.5px solid var(--au-line); border-radius: 12px;
-        background: var(--au-surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M1.5 3.5L5 7l3.5-3.5' fill='none' stroke='%237c5cff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 10px center;
-        box-shadow: 0 2px 6px -4px rgba(76, 52, 170, 0.25);
+        background: var(--au-surface) var(--au-chevron) no-repeat right 10px center;
+        box-shadow: 0 2px 6px -4px rgba(var(--au-shadow-rgb), 0.25);
       }
       /* Three label+select pairs must still fit one line on a phone. */
       @A .type-filter-select { height: 30px; padding: 0 18px 0 7px; font-size: 12px; border-radius: 10px; background-position: right 6px center; }
@@ -10789,11 +10869,11 @@
       }
       @A input.filter-active, @A select.filter-active {
         border-color: var(--au-violet);
-        box-shadow: 0 0 0 3px rgba(124, 92, 255, 0.18);
+        box-shadow: 0 0 0 3px rgba(var(--au-accent-rgb), 0.18);
       }
       @A .ac-list {
         border: none; border-radius: 16px; padding: 6px; margin-top: 6px;
-        box-shadow: 0 18px 40px -10px rgba(40, 20, 110, 0.4), 0 0 0 1px rgba(124, 92, 255, 0.10);
+        box-shadow: 0 18px 40px -10px rgba(40, 20, 110, 0.4), 0 0 0 1px rgba(var(--au-accent-rgb), 0.10);
       }
       @A .ac-item { border-radius: 10px; font-weight: 600; padding: 8px 10px; }
       @A .ac-item:hover, @A .ac-item.active { background: var(--au-tint); }
@@ -10808,7 +10888,7 @@
         border: 1.5px solid var(--au-line);
         border-radius: 12px;
         font-weight: 800;
-        box-shadow: 0 2px 0 rgba(124, 92, 255, 0.16), 0 6px 12px -8px rgba(76, 52, 170, 0.45);
+        box-shadow: 0 2px 0 rgba(var(--au-accent-rgb), 0.16), 0 6px 12px -8px rgba(var(--au-shadow-rgb), 0.45);
         transition: transform 90ms ease, box-shadow 90ms ease;
       }
       @A :is(.sort-row button.dir, .pokedex-swap-btn, .bag-craft, .family-toggle, .icon-btn,
@@ -10820,7 +10900,7 @@
              .daycare-show-on-map, .daycare-show-all-on-map, .completion-summary-btn,
              .speciesdex-summary-btn, .completion-egg-btn, .gift-cancel, .rename-reset):active {
         transform: translateY(2px);
-        box-shadow: 0 0 0 rgba(124, 92, 255, 0.16), 0 2px 4px -2px rgba(76, 52, 170, 0.35);
+        box-shadow: 0 0 0 rgba(var(--au-accent-rgb), 0.16), 0 2px 4px -2px rgba(var(--au-shadow-rgb), 0.35);
       }
       @A .sort-row button.dir { height: 34px; min-width: 38px; font-size: 15px; }
       @A .bag-craft { padding: 8px 14px; font-size: 12.5px; }
@@ -10836,13 +10916,13 @@
         font-weight: 800;
         letter-spacing: 0.01em;
         text-shadow: 0 1px 1px rgba(40, 20, 120, 0.35);
-        box-shadow: 0 3px 0 var(--au-cta-lip), 0 10px 18px -8px rgba(109, 74, 255, 0.75), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+        box-shadow: 0 3px 0 var(--au-cta-lip), 0 10px 18px -8px rgba(var(--au-cta-glow-rgb), 0.75), inset 0 1px 0 rgba(255, 255, 255, 0.45);
         transition: transform 90ms ease, box-shadow 90ms ease;
       }
       @A :is(.bag-use, .daycare-convert-btn, .gift-send, .detail-gift-btn, .actions button.close,
              .craft-confirm-actions button, .tags-create button, .rename-form button[type="submit"]):active {
         transform: translateY(2px);
-        box-shadow: 0 1px 0 var(--au-cta-lip), 0 4px 8px -4px rgba(109, 74, 255, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+        box-shadow: 0 1px 0 var(--au-cta-lip), 0 4px 8px -4px rgba(var(--au-cta-glow-rgb), 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.45);
       }
       @A .bag-use { padding: 6px 14px; font-size: 12.5px; }
       /* Post-catch Done: the detail view clips overflow, so leave room for
@@ -10862,14 +10942,14 @@
         color: var(--au-chip-ink);
         background: var(--au-glass);
         border: 1.5px solid var(--au-line);
-        box-shadow: 0 2px 6px -4px rgba(76, 52, 170, 0.35);
+        box-shadow: 0 2px 6px -4px rgba(var(--au-shadow-rgb), 0.35);
       }
       @A :is(.inv-tag-chip, .detail-tag-chip).applied {
         color: #fff;
         background: var(--au-candy);
         border-color: transparent;
-        box-shadow: 0 6px 14px -6px rgba(193, 96, 255, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.4);
-        text-shadow: 0 1px 1px rgba(60, 20, 120, 0.3);
+        box-shadow: 0 6px 14px -6px rgba(var(--au-glow-rgb), 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+        text-shadow: 0 1px 1px rgba(var(--au-ink-shadow-rgb), 0.3);
       }
       @A :is(.inv-tag-filter-row, .pokedex-tag-filter-row, .eggs-tag-filter-row) { gap: 7px; }
       /* Non-Evolved Only / Incomplete Only: the same pills as the tag chips. */
@@ -10880,15 +10960,15 @@
         background: var(--au-glass);
         border: 1.5px solid var(--au-line);
         border-radius: 999px;
-        box-shadow: 0 2px 6px -4px rgba(76, 52, 170, 0.35);
+        box-shadow: 0 2px 6px -4px rgba(var(--au-shadow-rgb), 0.35);
       }
       @A :is(.completion-filter, .speciesdex-filter, .speciesdex-incomplete):hover { background: var(--au-glass); }
       @A :is(.completion-filter, .speciesdex-filter, .speciesdex-incomplete).is-active {
         color: #fff;
         background: var(--au-candy);
         border-color: transparent;
-        box-shadow: 0 6px 14px -6px rgba(193, 96, 255, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.4);
-        text-shadow: 0 1px 1px rgba(60, 20, 120, 0.3);
+        box-shadow: 0 6px 14px -6px rgba(var(--au-glow-rgb), 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+        text-shadow: 0 1px 1px rgba(var(--au-ink-shadow-rgb), 0.3);
       }
 
       /* ---------- Creature + pokédex cards ---------- */
@@ -10913,11 +10993,11 @@
         border: none;
         border-radius: 15px;
         background: var(--au-stage);
-        box-shadow: inset 0 0 0 1px rgba(124, 92, 255, 0.08);
+        box-shadow: inset 0 0 0 1px rgba(var(--au-accent-rgb), 0.08);
       }
       @A :is(.creature-card .art img.art-img, .pokedex-card .pokedex-art img) {
         position: relative;
-        filter: drop-shadow(0 3px 2px rgba(43, 35, 87, 0.18));
+        filter: drop-shadow(0 3px 2px rgba(var(--au-inset-rgb), 0.18));
       }
       @A .creature-card .art .art-placeholder { color: var(--au-art-ph); }
       @A .creature-card .name,
@@ -10948,7 +11028,7 @@
         width: 44px; height: 44px; padding: 7px; box-sizing: border-box;
         border-radius: 14px;
         background: var(--au-icon-bg);
-        box-shadow: inset 0 0 0 1px rgba(124, 92, 255, 0.10);
+        box-shadow: inset 0 0 0 1px rgba(var(--au-accent-rgb), 0.10);
       }
       @A .bag-row .bag-name, @A .candy-row .candy-name { font-weight: 800; color: var(--au-ink); }
       @A .bag-row .bag-desc { color: var(--au-sub); line-height: 1.35; }
@@ -10963,17 +11043,17 @@
       @A .bag-section { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
       @A .bag-section::after {
         content: ''; flex: 1; height: 2px; border-radius: 2px;
-        background: linear-gradient(90deg, rgba(124, 92, 255, 0.25), transparent);
+        background: linear-gradient(90deg, rgba(var(--au-accent-rgb), 0.25), transparent);
       }
       @A .bag-incense-banner {
         border: 2px solid transparent;
         background: linear-gradient(var(--au-surface), var(--au-surface)) padding-box, var(--au-candy) border-box;
       }
       @A .egg-tile { border-color: transparent; }
-      @A .incubator-slot { border: 2px dashed rgba(124, 92, 255, 0.22); }
+      @A .incubator-slot { border: 2px dashed rgba(var(--au-accent-rgb), 0.22); }
       @A .egg-new-badge {
         background: var(--au-candy);
-        box-shadow: 0 4px 10px -3px rgba(193, 96, 255, 0.8);
+        box-shadow: 0 4px 10px -3px rgba(var(--au-glow-rgb), 0.8);
         font-weight: 800;
       }
       @A .evo-row { padding: 8px 10px; border: 1px solid transparent; }
@@ -10985,7 +11065,7 @@
       @A .evo-row.evo-ready {
         border: 2px solid transparent;
         background: linear-gradient(var(--au-surface), var(--au-surface)) padding-box, var(--au-candy) border-box;
-        box-shadow: 0 10px 20px -10px rgba(193, 96, 255, 0.9);
+        box-shadow: 0 10px 20px -10px rgba(var(--au-glow-rgb), 0.9);
       }
       @A .evo-row.evo-ready::after { color: var(--au-pink); }
       @A .family-cell { border-radius: 14px; }
@@ -11004,7 +11084,7 @@
       }
       @A .detail-art img.detail-art-img {
         padding: 12px; box-sizing: border-box;
-        filter: drop-shadow(0 6px 4px rgba(43, 35, 87, 0.22));
+        filter: drop-shadow(0 6px 4px rgba(var(--au-inset-rgb), 0.22));
       }
       /* Arrows sit on the stage's vertical middle (title row 36 + 8 + 86). */
       @A .nav-arrow {
@@ -11014,7 +11094,7 @@
         background: var(--au-glass);
         color: var(--au-violet);
         font-weight: 800;
-        box-shadow: 0 6px 14px -4px rgba(76, 52, 170, 0.35), inset 0 1px 0 var(--au-glass-hi);
+        box-shadow: 0 6px 14px -4px rgba(var(--au-shadow-rgb), 0.35), inset 0 1px 0 var(--au-glass-hi);
       }
       @A .detail-stats {
         width: fit-content; margin: 8px auto 8px; padding: 6px 14px;
@@ -11027,23 +11107,23 @@
         margin: 8px auto 10px; padding: 8px 14px;
         border-radius: 16px;
         background: var(--au-frost);
-        box-shadow: 0 4px 12px -6px rgba(76, 52, 170, 0.3), inset 0 0 0 1px rgba(124, 92, 255, 0.08);
+        box-shadow: 0 4px 12px -6px rgba(var(--au-shadow-rgb), 0.3), inset 0 0 0 1px rgba(var(--au-accent-rgb), 0.08);
         color: var(--au-sub); font-weight: 600;
       }
       @A .detail-pokedex-link {
         width: fit-content; margin: 0 auto 10px; padding: 5px 12px;
         border-radius: 999px;
-        background: rgba(124, 92, 255, 0.10);
+        background: rgba(var(--au-accent-rgb), 0.10);
         color: var(--au-violet-deep);
         font-weight: 800; text-decoration: none;
       }
-      @A .detail-pokedex-link:hover { opacity: 1; background: rgba(124, 92, 255, 0.16); }
+      @A .detail-pokedex-link:hover { opacity: 1; background: rgba(var(--au-accent-rgb), 0.16); }
       @A .detail-species { color: var(--au-sub); font-weight: 600; }
 
       /* ---------- Segmented controls (stats, focus) ---------- */
       @A :is(.st-seg, .focus-seg, .st-modes) {
-        background: rgba(124, 92, 255, 0.10);
-        box-shadow: inset 0 1px 2px rgba(43, 35, 87, 0.08);
+        background: rgba(var(--au-accent-rgb), 0.10);
+        box-shadow: inset 0 1px 2px rgba(var(--au-inset-rgb), 0.08);
         border-radius: 14px;
       }
       @A :is(.st-seg-btn, .focus-seg-btn, .st-mode) { border-radius: 11px; font-weight: 800; }
@@ -11059,9 +11139,10 @@
       @media (prefers-reduced-motion: reduce) {
         @A * { transition: none !important; }
       }
-    `.replace(/@A/g, ':where(html[data-theme="aurora"], html[data-theme="auroranight"]) #creatureInventory')
+    `.replace(/@A/g, ':where(html[data-theme="aurora"], html[data-theme="auroranight"], html[data-theme="aurorablue"]) #creatureInventory')
      .replace(/@N/g, ':where(html[data-theme="auroranight"]) #creatureInventory')
-     .replace(/@H/g, ':is(html[data-theme="aurora"], html[data-theme="auroranight"]) #creatureInventory');
+     .replace(/@B/g, ':where(html[data-theme="aurorablue"]) #creatureInventory')
+     .replace(/@H/g, ':is(html[data-theme="aurora"], html[data-theme="auroranight"], html[data-theme="aurorablue"]) #creatureInventory');
     document.head.appendChild(s);
   }
 

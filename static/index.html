@@ -3175,7 +3175,11 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
     // a northern-lights glow. Shares Aurora's creatures.js styling (only
     // the --au-* tokens differ); hover is the raised-card indigo.
     auroranight: { bg: '#121530', landcover: '#121530', landuse: '#161a3a', water: '#0b2240', building: '#262150', road: '#363a6e', roadLabel: '#b9b3e6', roadHalo: '#121530', placeLabel: '#e6e1ff', placeHalo: '#121530', poiLabel: '#d6d0fa', poiHalo: '#121530', poiIcon: '#a68eff',
-              ui: { panelBg: '#17133c', panelText: '#efeaff', muted: '#a59ed4', border: 'transparent', hairline: '#2c2560', hover: '#241d50', inputBg: '#241d50', radius: '16px', shadow: '0 10px 30px rgba(0,0,0,0.55), 0 0 0 1px rgba(166,142,255,0.14)', accent: '#8f72ff', accentText: '#ffffff', accentBorder: '#6a4cf0', accent2: '#ff7ab8', danger: '#ff6b8a' } }
+              ui: { panelBg: '#17133c', panelText: '#efeaff', muted: '#a59ed4', border: 'transparent', hairline: '#2c2560', hover: '#241d50', inputBg: '#241d50', radius: '16px', shadow: '0 10px 30px rgba(0,0,0,0.55), 0 0 0 1px rgba(166,142,255,0.14)', accent: '#8f72ff', accentText: '#ffffff', accentBorder: '#6a4cf0', accent2: '#ff7ab8', danger: '#ff6b8a' } },
+    // Aurora Blue — Aurora Night with blue as the main colour: a navy map
+    // and panels under cyan / teal northern lights, sky-blue CTAs.
+    aurorablue: { bg: '#0d1a30', landcover: '#0d1a30', landuse: '#10203a', water: '#08284a', building: '#1b2f52', road: '#2b4470', roadLabel: '#b3c8e8', roadHalo: '#0d1a30', placeLabel: '#e2eeff', placeHalo: '#0d1a30', poiLabel: '#cfe0f8', poiHalo: '#0d1a30', poiIcon: '#5aaeff',
+              ui: { panelBg: '#0c1b38', panelText: '#e8f2ff', muted: '#93abd0', border: 'transparent', hairline: '#1d3560', hover: '#12264a', inputBg: '#12264a', radius: '16px', shadow: '0 10px 30px rgba(0,0,0,0.55), 0 0 0 1px rgba(90,174,255,0.14)', accent: '#3b82f6', accentText: '#ffffff', accentBorder: '#2563eb', accent2: '#2dd4bf', danger: '#ff6b8a' } }
   };
   // Perceived-luminance test on a theme's panel background so chrome that
   // can't read the --ui-* vars (e.g. the radar silhouette blips, whose CSS
@@ -3656,6 +3660,7 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
         <option value="garage">3am parking garage</option>
         <option value="aurora">Aurora</option>
         <option value="auroranight">Aurora Night</option>
+        <option value="aurorablue">Aurora Blue</option>
         <option value="custom">Custom</option>
       </select>
     </div>
@@ -8417,7 +8422,7 @@ function fmtDate(ts) {
     bloodmoon: 'Bloodmoon 🩸', haunted: 'Haunted 🕯', fogbank: 'Fogbank 🌫',
     abyss: 'Abyss 🐙', vhs: 'VHS 📼',
     backrooms: 'Backrooms', poolrooms: 'Poolrooms', deadmall: 'Dead mall',
-    garage: '3am garage', aurora: 'Aurora ✨', auroranight: 'Aurora Night 🌌', custom: 'Custom…'
+    garage: '3am garage', aurora: 'Aurora ✨', auroranight: 'Aurora Night 🌌', aurorablue: 'Aurora Blue 🌊', custom: 'Custom…'
   };
   function themePreviewSVG(t) {
     const accent = t.ui?.accent || '#3b7fdf';
