@@ -3165,7 +3165,12 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
     // fill from --ui-hover, so they read as white cards on lavender.
     // The heavy decoration lives in creatures.js (injectAuroraStyles).
     aurora: { bg: '#dcf2e2', landcover: '#dcf2e2', landuse: '#c9ead2', water: '#9fd8f6', building: '#e4dcf6', road: '#ffffff', roadLabel: '#5a5280', roadHalo: '#ffffff', placeLabel: '#2b2357', placeHalo: '#ffffff', poiLabel: '#2b2357', poiHalo: '#ffffff', poiIcon: '#7c5cff',
-              ui: { panelBg: '#f6f3ff', panelText: '#2b2357', muted: '#7d76a3', border: 'transparent', hairline: '#ebe5fb', hover: '#ffffff', inputBg: '#ffffff', radius: '16px', shadow: '0 10px 30px rgba(76,52,170,0.18), 0 2px 6px rgba(76,52,170,0.08)', accent: '#7c5cff', accentText: '#ffffff', accentBorder: '#5b3ce0', accent2: '#e8358a', danger: '#e5395f' } }
+              ui: { panelBg: '#f6f3ff', panelText: '#2b2357', muted: '#7d76a3', border: 'transparent', hairline: '#ebe5fb', hover: '#ffffff', inputBg: '#ffffff', radius: '16px', shadow: '0 10px 30px rgba(76,52,170,0.18), 0 2px 6px rgba(76,52,170,0.08)', accent: '#7c5cff', accentText: '#ffffff', accentBorder: '#5b3ce0', accent2: '#e8358a', danger: '#e5395f' } },
+    // Aurora Night — the dark twin: midnight-indigo map and panels under
+    // a northern-lights glow. Shares Aurora's creatures.js styling (only
+    // the --au-* tokens differ); hover is the raised-card indigo.
+    auroranight: { bg: '#121530', landcover: '#121530', landuse: '#161a3a', water: '#0b2240', building: '#262150', road: '#363a6e', roadLabel: '#b9b3e6', roadHalo: '#121530', placeLabel: '#e6e1ff', placeHalo: '#121530', poiLabel: '#d6d0fa', poiHalo: '#121530', poiIcon: '#a68eff',
+              ui: { panelBg: '#17133c', panelText: '#efeaff', muted: '#a59ed4', border: 'transparent', hairline: '#2c2560', hover: '#241d50', inputBg: '#241d50', radius: '16px', shadow: '0 10px 30px rgba(0,0,0,0.55), 0 0 0 1px rgba(166,142,255,0.14)', accent: '#8f72ff', accentText: '#ffffff', accentBorder: '#6a4cf0', accent2: '#ff7ab8', danger: '#ff6b8a' } }
   };
   // Perceived-luminance test on a theme's panel background so chrome that
   // can't read the --ui-* vars (e.g. the radar silhouette blips, whose CSS
@@ -3645,6 +3650,7 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
         <option value="deadmall">Dead mall</option>
         <option value="garage">3am parking garage</option>
         <option value="aurora">Aurora</option>
+        <option value="auroranight">Aurora Night</option>
         <option value="custom">Custom</option>
       </select>
     </div>
@@ -8406,7 +8412,7 @@ function fmtDate(ts) {
     bloodmoon: 'Bloodmoon 🩸', haunted: 'Haunted 🕯', fogbank: 'Fogbank 🌫',
     abyss: 'Abyss 🐙', vhs: 'VHS 📼',
     backrooms: 'Backrooms', poolrooms: 'Poolrooms', deadmall: 'Dead mall',
-    garage: '3am garage', aurora: 'Aurora ✨', custom: 'Custom…'
+    garage: '3am garage', aurora: 'Aurora ✨', auroranight: 'Aurora Night 🌌', custom: 'Custom…'
   };
   function themePreviewSVG(t) {
     const accent = t.ui?.accent || '#3b7fdf';
