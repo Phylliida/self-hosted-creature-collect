@@ -10454,7 +10454,6 @@
   //   @H  → :is(aurora, auroranight) #creatureInventory
   //        Full specificity, for the few spots that need to beat a rule
   //        that's already stronger (the shared close-X in index.html).
-  //   @T  → :where(aurora, auroranight) — outside the panel (map orb).
   function _isAuroraTheme(t) { return t === 'aurora' || t === 'auroranight'; }
   function injectAuroraStyles() {
     if (document.getElementById('creature-styles-aurora')) return;
@@ -10483,7 +10482,6 @@
         --au-chip-ink: #5e5788;
         --au-placeholder: #aaa3c9;
         --au-art-ph: #cfc5f5;
-        --au-title: linear-gradient(100deg, #5b3ce0 0%, #9b4dff 45%, #ff4f9a 100%);
         --au-stage: radial-gradient(60% 14% at 50% 86%, rgba(76, 52, 170, 0.20), transparent 100%),
                     radial-gradient(circle at 50% 40%, #ffffff 0%, #f3efff 55%, #e7defe 100%);
         --au-hero: radial-gradient(55% 12% at 50% 88%, rgba(76, 52, 170, 0.25), transparent 100%),
@@ -10540,7 +10538,6 @@
         --au-chip-ink: #cbc4f2;
         --au-placeholder: #7a72aa;
         --au-art-ph: #4d4488;
-        --au-title: linear-gradient(100deg, #7ff0d8 0%, #b7a4ff 48%, #ff8cc8 100%);
         --au-card-shadow: 0 1px 0 rgba(255,255,255,0.07) inset, 0 8px 18px -8px rgba(0,0,0,0.65), 0 1px 3px rgba(0,0,0,0.35);
         --au-card-shadow-hi: 0 1px 0 rgba(255,255,255,0.09) inset, 0 14px 26px -8px rgba(0,0,0,0.75), 0 0 0 1px rgba(166,142,255,0.25);
         --au-stage: radial-gradient(60% 14% at 50% 86%, rgba(0, 0, 0, 0.38), transparent 100%),
@@ -10613,16 +10610,33 @@
         transition: transform 120ms ease, box-shadow 120ms ease;
       }
       @H button.close.cc-x-btn { font-size: 22px; padding: 0 0 2px; }
+      /* Same for the X, which sits 1px high: nudge it down. */
+      @H .inventory-x { transform: translateY(1px); }
+      @H .inventory-x:active { transform: translateY(1px) scale(0.9); }
       @A .scroll-top-btn { font-size: 17px; }
       @A :is(.detail-back, .pokedex-back, .fusion-back, .candy-back, .daycare-back,
              .eggs-back, .bag-back, .craft-back, .focus-back, .focussession-back,
              .focusuntil-back, .tags-back, .gifts-back, .stats-back, .statsday-back,
              .gift-back, .giftcreate-back, .completion-back, .speciesdex-back) {
-        font-size: 18px; text-align: center; margin: 0 0 -32px -2px;
+        /* The 32px circle on the 30px title row: nudge it 1px up (transform,
+           so the title below doesn't move) to share the title's centre. */
+        font-size: 0; text-align: center; margin: 0 0 -32px -2px;
+        transform: translateY(-1px);
+      }
+      /* The ← glyph sits low in most fonts; draw the arrow as a mask in
+         currentColor so it's dead centre in the circle. */
+      @A :is(.detail-back, .pokedex-back, .fusion-back, .candy-back, .daycare-back,
+             .eggs-back, .bag-back, .craft-back, .focus-back, .focussession-back,
+             .focusuntil-back, .tags-back, .gifts-back, .stats-back, .statsday-back,
+             .gift-back, .giftcreate-back, .completion-back, .speciesdex-back)::before {
+        content: ''; width: 16px; height: 16px;
+        background: currentColor;
+        -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M13 8H3.5M7.5 3.5L3 8l4.5 4.5'/%3E%3C/svg%3E") center / contain no-repeat;
+                mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M13 8H3.5M7.5 3.5L3 8l4.5 4.5'/%3E%3C/svg%3E") center / contain no-repeat;
       }
       @H button.close.cc-x-btn:active,
-      @A .scroll-top-btn:active,
-      @A [class$="-back"]:active { transform: scale(0.9); }
+      @A .scroll-top-btn:active { transform: scale(0.9); }
+      @A [class$="-back"]:active { transform: translateY(-1px) scale(0.9); }
 
       /* ---------- Headings ---------- */
       @A h3 { font-size: 22px; font-weight: 800; letter-spacing: -0.01em; }
@@ -10631,16 +10645,14 @@
       @A .subview-title,
       @A .detail-name,
       @A .detail-fused-name {
-        background: var(--au-title);
-        -webkit-background-clip: text; background-clip: text;
-        -webkit-text-fill-color: transparent; color: transparent;
+        color: var(--au-ink);
         font-weight: 800;
       }
       @A .pokedex-title, @A .subview-title { font-size: 22px; }
       @A .detail-name, @A .detail-fused-name { font-size: 22px; line-height: 1.15; padding: 0 34px; }
       @A .detail-name.detail-name-sub {
         font-size: 13px; font-weight: 700; padding: 0;
-        background: none; -webkit-text-fill-color: var(--au-sub); color: var(--au-sub);
+        color: var(--au-sub);
       }
       @A .pack-swap-btn {
         width: 30px; height: 30px; padding: 0; margin-left: 10px;
@@ -10813,6 +10825,10 @@
         box-shadow: 0 1px 0 var(--au-cta-lip), 0 4px 8px -4px rgba(109, 74, 255, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.45);
       }
       @A .bag-use { padding: 6px 14px; font-size: 12.5px; }
+      /* Post-catch Done: the detail view clips overflow, so leave room for
+         the button's 3D lip + shadow below it. */
+      @A .detail-view .actions { padding: 0 2px 10px; }
+      @A .actions button.close { padding: 12px 14px; font-size: 15px; }
       @A .detail-gift-btn { padding: 9px 18px; }
       @A :is(.bag-use, .daycare-convert-btn, .gift-send):disabled {
         background: var(--au-disabled) !important; color: var(--au-disabled-ink) !important; text-shadow: none;
@@ -10836,6 +10852,24 @@
         text-shadow: 0 1px 1px rgba(60, 20, 120, 0.3);
       }
       @A :is(.inv-tag-filter-row, .pokedex-tag-filter-row, .eggs-tag-filter-row) { gap: 7px; }
+      /* Non-Evolved Only / Incomplete Only: the same pills as the tag chips. */
+      @A :is(.completion-filter, .speciesdex-filter, .speciesdex-incomplete) {
+        padding: 5px 12px;
+        font-size: 12.5px; font-weight: 700;
+        color: var(--au-chip-ink);
+        background: var(--au-glass);
+        border: 1.5px solid var(--au-line);
+        border-radius: 999px;
+        box-shadow: 0 2px 6px -4px rgba(76, 52, 170, 0.35);
+      }
+      @A :is(.completion-filter, .speciesdex-filter, .speciesdex-incomplete):hover { background: var(--au-glass); }
+      @A :is(.completion-filter, .speciesdex-filter, .speciesdex-incomplete).is-active {
+        color: #fff;
+        background: var(--au-candy);
+        border-color: transparent;
+        box-shadow: 0 6px 14px -6px rgba(193, 96, 255, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+        text-shadow: 0 1px 1px rgba(60, 20, 120, 0.3);
+      }
 
       /* ---------- Creature + pokédex cards ---------- */
       @A :is(.creature-list, .pokedex-grid) { gap: 10px; }
@@ -11002,31 +11036,12 @@
         color: var(--au-sub); font-weight: 600;
       }
 
-      /* ---------- The map's creature-ball button: a glossy orb ---------- */
-      @T .maplibregl-ctrl-group:has(> button[title="creatures"]) {
-        border-radius: 50%;
-        border: none;
-        background: radial-gradient(circle at 34% 28%, #d6c9ff 0%, #9b7bff 32%, #6a45f5 70%, #4a2bc9 100%);
-        box-shadow: 0 6px 16px -4px rgba(91, 60, 224, 0.75), inset 0 -3px 6px rgba(40, 10, 120, 0.35), inset 0 2px 3px rgba(255, 255, 255, 0.55);
-        overflow: hidden;
-      }
-      @T .maplibregl-ctrl-group > button[title="creatures"] {
-        background: transparent;
-        color: #fff;
-        --ui-bg: #6a45f5;
-      }
-      @T .maplibregl-ctrl-group > button[title="creatures"]:active { transform: scale(0.92); }
-      @T .maplibregl-ctrl-group > button[title="creatures"] svg {
-        filter: drop-shadow(0 1px 1px rgba(30, 10, 90, 0.45));
-      }
-
       @media (prefers-reduced-motion: reduce) {
         @A * { transition: none !important; }
       }
     `.replace(/@A/g, ':where(html[data-theme="aurora"], html[data-theme="auroranight"]) #creatureInventory')
      .replace(/@N/g, ':where(html[data-theme="auroranight"]) #creatureInventory')
-     .replace(/@H/g, ':is(html[data-theme="aurora"], html[data-theme="auroranight"]) #creatureInventory')
-     .replace(/@T/g, ':where(html[data-theme="aurora"], html[data-theme="auroranight"])');
+     .replace(/@H/g, ':is(html[data-theme="aurora"], html[data-theme="auroranight"]) #creatureInventory');
     document.head.appendChild(s);
   }
 
