@@ -1,7 +1,7 @@
 // Rare pokéstop loot: the Candy Ball and the bonus-incense berries.
 //
-//   A. rollCollectibleItem — each rare kind from 1% of pokéstop spins
-//      (2 berries + half an evo item per 50 spins); balls
+//   A. rollCollectibleItem — each berry from 0.75% of pokéstop spins, an
+//      evo item from 1% (1.5 berries + half an evo item per 50 spins); balls
 //      Poké : Great : Candy = 2 : 2 : 1 for the rest
 //   B. _rollEvoItem — the data set's evo items, weighted 1 / (1 + held)
 //   C. catalog — Candy Ball throwable at ~80% (between Poké and Great),
@@ -139,12 +139,14 @@ function makeWorld(opts = {}) {
     // (weights 2:2:1 of 5).
     const seq = (xs) => { let i = 0; return () => xs[i++]; };
     const roll = (xs) => w.run('rollCollectibleItem(__a[0])', [seq(xs)]);
-    ok(roll([0]) === 'candy_berry' && roll([c * 0.99]) === 'candy_berry', 'A: band 1 → Candy Berry');
-    ok(roll([c * 1.01]) === 'calm_berry', 'A: band 2 → Calm Berry');
-    ok(roll([c * 2.5]) === 'hawkeye_berry', 'A: band 3 → Hawk-Eye Berry');
-    ok(roll([c * 3.99]) === 'owleye_berry', 'A: band 4 → Owl-Eye Berry');
-    ok(['FIRESTONE', 'WATERSTONE', 'METALCOAT'].includes(roll([c * 4.5, 0.5])), 'A: band 5 → an evolution item');
-    ok(roll([c * 5.01, 0.00]) === 'poke_ball', 'A: past the rare bands → balls, Poké first');
+    // Berry bands are 0.75 c wide, the evo band a full c.
+    ok(roll([0]) === 'candy_berry' && roll([c * 0.74]) === 'candy_berry', 'A: band 1 → Candy Berry');
+    ok(roll([c * 0.76]) === 'calm_berry', 'A: band 2 → Calm Berry');
+    ok(roll([c * 1.8]) === 'hawkeye_berry', 'A: band 3 → Hawk-Eye Berry');
+    ok(roll([c * 2.99]) === 'owleye_berry', 'A: band 4 → Owl-Eye Berry');
+    ok(['FIRESTONE', 'WATERSTONE', 'METALCOAT'].includes(roll([c * 3.01, 0.5]))
+      && ['FIRESTONE', 'WATERSTONE', 'METALCOAT'].includes(roll([c * 3.99, 0.5])), 'A: band 5 → an evolution item');
+    ok(roll([c * 4.01, 0.00]) === 'poke_ball', 'A: past the rare bands → balls, Poké first');
     ok(roll([0.5, 0.39]) === 'poke_ball' && roll([0.5, 0.41]) === 'great_ball', 'A: Poké 0–40% of the ball draw, then Great');
     ok(roll([0.99, 0.79]) === 'great_ball' && roll([0.99, 0.81]) === 'candy_ball', 'A: Candy Ball the last 20%');
 
@@ -166,11 +168,12 @@ function makeWorld(opts = {}) {
       return c;
     })()`, [rngFrom(7), SPINS]);
     const perSpin = (k) => (counts[k] || 0) / SPINS;
-    for (const k of ['candy_berry', 'calm_berry', 'hawkeye_berry', 'owleye_berry', 'evo']) {
-      ok(near(perSpin(k), 0.01, 0.0007), `A: ${k} from ≈1% of spins (got ${(perSpin(k) * 100).toFixed(2)}%)`);
+    for (const k of ['candy_berry', 'calm_berry', 'hawkeye_berry', 'owleye_berry']) {
+      ok(near(perSpin(k), 0.0075, 0.0006), `A: ${k} from ≈0.75% of spins (got ${(perSpin(k) * 100).toFixed(2)}%)`);
     }
+    ok(near(perSpin('evo'), 0.01, 0.0007), `A: evo item from ≈1% of spins (got ${(perSpin('evo') * 100).toFixed(2)}%)`);
     const berries50 = 50 * ['candy_berry', 'calm_berry', 'hawkeye_berry', 'owleye_berry'].reduce((a, k) => a + perSpin(k), 0);
-    ok(near(berries50, 2, 0.12), `A: 50 spins ≈ 2 berries (got ${berries50.toFixed(2)})`);
+    ok(near(berries50, 1.5, 0.1), `A: 50 spins ≈ 1.5 berries (got ${berries50.toFixed(2)})`);
     ok(near(50 * perSpin('evo'), 0.5, 0.05), `A: …and ≈ half an evolution item (got ${(50 * perSpin('evo')).toFixed(2)})`);
     const f = (k) => (counts[k] || 0) / counts.__items;
     ok(near(f('poke_ball'), 0.3943, 0.003) && near(f('great_ball'), 0.3943, 0.003),

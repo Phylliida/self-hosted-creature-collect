@@ -589,16 +589,17 @@
   // Pokéstop loot (and focus mode's item grants), rolled once per item a
   // press hands out (rollCollectibleItem). The rare kinds — the four
   // bonus-incense berries (BONUS_INCENSE) and an evolution item
-  // (_rollEvoItem) — are tuned per SPIN: each comes from 1% of spins, so
-  // 50 spins average 2 berries and half an evolution item. A spin hands
-  // out 1–6 items (index.html's Collect handler), 3.5 on average, so each
-  // item rolls a rare kind at 1% / 3.5; focus mode's per-minute items use
-  // the same per-item odds. Everything else is balls, Poké : Great :
+  // (_rollEvoItem) — are tuned per SPIN: an evolution item comes from 1%
+  // of spins and each berry from 0.75% (RARE_LOOT's weights), so 50 spins
+  // average 1.5 berries and half an evolution item. A spin hands out 1–6
+  // items (index.html's Collect handler), 3.5 on average, so each item
+  // rolls a rare kind at weight × 1% / 3.5; focus mode's per-minute items
+  // use the same per-item odds. Everything else is balls, Poké : Great :
   // Candy = 2 : 2 : 1 — a Candy Ball comes half as often as a Great Ball.
   const RARE_PER_SPIN = 0.01;
   const POKESTOP_ITEMS_PER_SPIN = 3.5;
   const RARE_LOOT_CHANCE = RARE_PER_SPIN / POKESTOP_ITEMS_PER_SPIN;
-  const RARE_LOOT = ['candy_berry', 'calm_berry', 'hawkeye_berry', 'owleye_berry', 'evo_item'];
+  const RARE_LOOT = [['candy_berry', 0.75], ['calm_berry', 0.75], ['hawkeye_berry', 0.75], ['owleye_berry', 0.75], ['evo_item', 1]];
   const BALL_LOOT = [['poke_ball', 2], ['great_ball', 2], ['candy_ball', 1]];
   // Items the player can throw at a wild creature. Order here drives
   // the order they appear in the battle screen's ball list.
@@ -24277,11 +24278,14 @@
   // tests.
   function rollCollectibleItem(rng) {
     rng = rng || Math.random;
-    const rare = Math.floor(rng() / RARE_LOOT_CHANCE);
-    if (rare < RARE_LOOT.length) {
-      if (RARE_LOOT[rare] !== 'evo_item') return RARE_LOOT[rare];
+    let r = rng();
+    for (const [k, w] of RARE_LOOT) {
+      r -= RARE_LOOT_CHANCE * w;
+      if (r >= 0) continue;
+      if (k !== 'evo_item') return k;
       const evo = _rollEvoItem(rng);
       if (evo) return evo;
+      break;
     }
     let total = 0;
     for (const [, w] of BALL_LOOT) total += w;
