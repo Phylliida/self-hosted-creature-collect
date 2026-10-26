@@ -10479,25 +10479,26 @@
   // Aurora theme (experimental) — the creature panel dressed up like a
   // polished mobile game: lavender sheet with an aurora glow at the top,
   // raised white cards, gradient "candy" buttons with a pressable 3D lip,
-  // colour-coded menu tiles. Aurora Night ("auroranight") and Aurora Blue
-  // ("aurorablue") share every rule and only swap the --au-* tokens (@N,
-  // then @B on top for blue). Every rule is scoped to those three themes,
-  // so the other themes are untouched.
+  // colour-coded menu tiles. Aurora Night ("auroranight"), Aurora Blue
+  // ("aurorablue") and Aurora OLED ("auroraoled") share every rule and only
+  // swap the --au-* tokens (@N, then @B / @O on top). Every rule is scoped
+  // to those four themes, so the other themes are untouched.
   //
   // Selectors are written with prefixes, expanded below:
-  //   @A  → :where(aurora, auroranight, aurorablue) #creatureInventory
+  //   @A  → :where(every Aurora theme) #creatureInventory
   //        The :where() adds no specificity, so a rule here ties the base
   //        rule it restyles and wins on source order (this sheet comes
   //        after creature-styles) — while the base state rules (.applied,
   //        .current, .favorited, .drop-active…) stay stronger and keep
   //        working unchanged.
   //   @N  → :where(auroranight) #creatureInventory — the night tokens
-  //        (written "@N, @B" so Aurora Blue starts from them too).
+  //        (written "@N, @B, @O" so Blue and OLED start from them too).
   //   @B  → :where(aurorablue) #creatureInventory — the blue tokens.
-  //   @H  → :is(aurora, auroranight, aurorablue) #creatureInventory
+  //   @O  → :where(auroraoled) #creatureInventory — the true-black tokens.
+  //   @H  → :is(every Aurora theme) #creatureInventory
   //        Full specificity, for the few spots that need to beat a rule
   //        that's already stronger (the shared close-X in index.html).
-  function _isAuroraTheme(t) { return t === 'aurora' || t === 'auroranight' || t === 'aurorablue'; }
+  function _isAuroraTheme(t) { return t === 'aurora' || t === 'auroranight' || t === 'aurorablue' || t === 'auroraoled'; }
   function injectAuroraStyles() {
     if (document.getElementById('creature-styles-aurora')) return;
     const s = document.createElement('style');
@@ -10573,7 +10574,7 @@
          A deep indigo sky with real northern-lights glows (teal, green,
          violet) and a sprinkle of stars at the top of the sheet; cards
          are lit-from-above indigo slabs instead of white. */
-      @N, @B {
+      @N, @B, @O {
         --au-ink: #efeaff;
         --au-sub: #a59ed4;
         --au-violet: #a68eff;
@@ -10630,6 +10631,47 @@
           radial-gradient(120% 90% at 50% 0%, rgba(80, 200, 180, 0.16), transparent 55%),
           radial-gradient(120% 90% at 50% 0%, rgba(var(--au-accent-rgb), 0.24), transparent 65%),
           rgba(4, 3, 18, 0.72);
+      }
+
+      /* ---------- Aurora OLED: the night look on true black ----------
+         For OLED screens, where a black pixel is switched off: black sheet,
+         map and backdrop, near-black cards separated by a hairline instead
+         of blurred shadows, no glows except on the small buttons/chips,
+         and text a little dimmer than white. Builds on the night tokens. */
+      @O {
+        --au-shadow-rgb: 0, 0, 0;
+        --au-cta-glow-rgb: 0, 0, 0;
+        --au-glow-rgb: 0, 0, 0;
+        --au-inset-rgb: 0, 0, 0;
+        --au-ink: #d8d3ee;
+        --au-sub: #8e88b0;
+        --au-line: rgba(166, 142, 255, 0.20);
+        --au-surface: #0c0b16;
+        --au-surface-hover: #12101f;
+        --au-tint: rgba(166, 142, 255, 0.12);
+        --au-glass: #0c0b16;
+        --au-glass-hi: rgba(255, 255, 255, 0.06);
+        --au-frost: #0c0b16;
+        --au-chip-ink: #bdb6e0;
+        --au-placeholder: #5f5888;
+        --au-art-ph: #2c2850;
+        --au-card-shadow: 0 0 0 1px rgba(166, 142, 255, 0.14);
+        --au-card-shadow-hi: 0 0 0 1px rgba(166, 142, 255, 0.32);
+        --au-stage: #09080f;
+        --au-hero: #0b0a14;
+        --au-hero-shadow: inset 0 0 0 1px rgba(166, 142, 255, 0.24);
+        --au-icon-bg: #12101f;
+        --au-warm: #1a1210;
+        --au-warm-hover: #22171a;
+        --au-warm-ink: #e2cfc4;
+        --au-warn: #1a1408;
+        --au-disabled: #14121f;
+        --au-disabled-ink: #5a5480;
+        --au-disabled-lip: #0a0912;
+        --au-sheet-edge: rgba(166, 142, 255, 0.18);
+        --au-sheet-bg: #000000;
+        --au-sheet-shadow: 0 0 0 1px rgba(166, 142, 255, 0.14);
+        --au-backdrop: rgba(0, 0, 0, 0.82);
       }
 
       /* ---------- Aurora Blue: the night look, blue instead of violet ----------
@@ -10726,7 +10768,6 @@
         color: var(--au-ink) !important;
         text-shadow: none !important;
         font-weight: 700;
-        -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
         transition: transform 120ms ease, box-shadow 120ms ease;
       }
       /* The × and ↑ glyphs sit off-centre in most fonts; like the ←, draw
@@ -11175,13 +11216,22 @@
         color: var(--au-sub); font-weight: 600;
       }
 
+      /* OLED: black silhouettes (unseen pokémon) vanish on near-black
+         stages, so draw them as a dim grey shape instead. */
+      @O :is(.silhouette img, .evo-row.silhouette .evo-art img, .family-cell.silhouette img,
+             .speciesdex-cell.silhouette img, .glitch-art img.silhouette, .packdex-mon img.silhouette) {
+        filter: brightness(0) invert(1) opacity(0.3);
+      }
+      @O .variant-cell.silhouette img { filter: brightness(0) invert(1) opacity(0.26); }
+
       @media (prefers-reduced-motion: reduce) {
         @A * { transition: none !important; }
       }
-    `.replace(/@A/g, ':where(html[data-theme="aurora"], html[data-theme="auroranight"], html[data-theme="aurorablue"]) #creatureInventory')
+    `.replace(/@A/g, ':where(html[data-theme="aurora"], html[data-theme="auroranight"], html[data-theme="aurorablue"], html[data-theme="auroraoled"]) #creatureInventory')
      .replace(/@N/g, ':where(html[data-theme="auroranight"]) #creatureInventory')
      .replace(/@B/g, ':where(html[data-theme="aurorablue"]) #creatureInventory')
-     .replace(/@H/g, ':is(html[data-theme="aurora"], html[data-theme="auroranight"], html[data-theme="aurorablue"]) #creatureInventory');
+     .replace(/@O/g, ':where(html[data-theme="auroraoled"]) #creatureInventory')
+     .replace(/@H/g, ':is(html[data-theme="aurora"], html[data-theme="auroranight"], html[data-theme="aurorablue"], html[data-theme="auroraoled"]) #creatureInventory');
     document.head.appendChild(s);
   }
 
