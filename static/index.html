@@ -2547,11 +2547,70 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
   #themeEditor .te-pick-title { font-size: 15px; font-weight: 700; }
   #themeEditor .te-pick-cmp { display: inline-flex; border-radius: 999px; overflow: hidden; box-shadow: 0 0 0 1px var(--ui-hairline); }
   #themeEditor .te-pick-cmp i { width: 30px; height: 22px; }
+  /* Perceptual (OKLCH) square: vividness → right, lightness ↑. Colours
+     a screen can't show are left out, so the edge of the shape is the
+     edge of what's possible at this hue. */
   #themeEditor .te-sv {
     position: relative; height: 170px; border-radius: 14px; cursor: crosshair;
-    background-image: linear-gradient(to top, #000, rgba(0, 0, 0, 0)), linear-gradient(to right, #fff, rgba(255, 255, 255, 0));
+    background:
+      repeating-linear-gradient(45deg, transparent 0 6px, rgba(127, 127, 127, 0.08) 6px 12px),
+      var(--ui-hover);
     touch-action: none; user-select: none; -webkit-user-select: none;
   }
+  #themeEditor .te-sv-canvas, #themeEditor .te-hue-canvas {
+    position: absolute; inset: 0; width: 100%; height: 100%; border-radius: inherit;
+  }
+  #themeEditor .te-pick-aa {
+    margin-left: auto; margin-right: 8px; padding: 3px 9px; border-radius: 999px;
+    font-size: 12px; font-weight: 700; box-shadow: 0 0 0 1px var(--ui-hairline);
+  }
+  #themeEditor .te-pick-aa:empty { display: none; }
+  #themeEditor .te-from-poke {
+    display: block; width: 100%; height: 40px; margin: -4px 0 14px;
+    font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+    color: var(--ui-text); background: var(--ui-hover);
+    border: 1px dashed var(--ui-muted); border-radius: 12px;
+  }
+  #themeEditor .te-poke {
+    position: fixed; inset: 0; z-index: 46;
+    display: flex; align-items: flex-end; justify-content: center;
+    padding: 0 0 max(14px, env(safe-area-inset-bottom));
+    background: rgba(0, 0, 0, 0.25);
+  }
+  #themeEditor .te-poke[hidden] { display: none; }
+  #themeEditor .te-poke-card {
+    box-sizing: border-box; width: calc(100% - 28px); max-width: 360px;
+    padding: 14px; border-radius: 22px;
+    background: var(--ui-bg); color: var(--ui-text);
+    box-shadow: 0 20px 50px -12px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--ui-hairline);
+  }
+  #themeEditor .te-poke-x {
+    width: 30px; height: 30px; border-radius: 50%; border: none; cursor: pointer;
+    background: var(--ui-hover); color: var(--ui-text); font-size: 18px; line-height: 1; padding: 0 0 2px;
+  }
+  #themeEditor .te-poke-search {
+    width: 100%; height: 38px; box-sizing: border-box; padding: 0 12px; margin: 0 0 10px;
+    font: inherit; font-size: 14px; color: var(--ui-text); background: var(--ui-input-bg);
+    border: 1px solid var(--ui-hairline); border-radius: 12px;
+  }
+  #themeEditor .te-poke-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+    max-height: 300px; overflow-y: auto; padding: 2px;
+  }
+  #themeEditor .te-poke-cell {
+    display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0;
+    padding: 6px 4px; border: none; border-radius: 14px; cursor: pointer;
+    font: inherit; font-size: 10.5px; color: var(--ui-muted); background: var(--ui-hover);
+  }
+  #themeEditor .te-poke-cell img {
+    width: 56px; height: 56px; object-fit: contain;
+    image-rendering: pixelated; image-rendering: crisp-edges;
+  }
+  /* No art yet (not downloaded): an empty slot, not a broken-image box. */
+  #themeEditor .te-poke-cell img:not([src]) { visibility: hidden; }
+  #themeEditor .te-poke-cell span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #themeEditor .te-poke-cell:active { transform: scale(0.95); }
+  #themeEditor .te-poke-note { margin: 10px 2px 0; font-size: 12px; color: var(--ui-muted); text-align: center; }
   #themeEditor .te-sv-cursor, #themeEditor .te-hue-thumb {
     position: absolute; width: 22px; height: 22px; border-radius: 50%;
     transform: translate(-50%, -50%); pointer-events: none;
@@ -2559,7 +2618,6 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
   }
   #themeEditor .te-hue {
     position: relative; height: 22px; margin: 14px 11px 12px; border-radius: 11px; cursor: pointer;
-    background: linear-gradient(to right, #f00, #ff0 16.67%, #0f0 33.33%, #0ff 50%, #00f 66.67%, #f0f 83.33%, #f00);
     touch-action: none; user-select: none; -webkit-user-select: none;
   }
   #themeEditor .te-hue-thumb { top: 50%; }
@@ -4380,6 +4438,7 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
       <label class="te-from">Start from
         <select class="te-from-select"><option value="">a theme…</option></select>
       </label>
+      <button class="te-from-poke" type="button">🐾 New theme from a pokémon</button>
       <button class="te-use" type="button">Use this theme</button>
       <div class="te-actions">
         <button class="te-export" type="button">Export</button>
@@ -4393,14 +4452,26 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
     </div>
     <input type="file" class="te-import-file" accept=".json,application/json" hidden>
   </div>
+  <div class="te-poke" hidden>
+    <div class="te-poke-card" role="dialog" aria-label="Theme from a pokémon">
+      <div class="te-pick-head">
+        <span class="te-pick-title">Theme from a pokémon</span>
+        <button class="te-poke-x" type="button" aria-label="close">×</button>
+      </div>
+      <input class="te-poke-search" type="search" placeholder="Search your pokémon" autocomplete="off">
+      <div class="te-poke-grid"></div>
+      <div class="te-poke-note">Its colours become the panel, text, accents and map.</div>
+    </div>
+  </div>
   <div class="te-pick" hidden>
     <div class="te-pick-card" role="dialog" aria-label="Pick a colour">
       <div class="te-pick-head">
         <span class="te-pick-title"></span>
+        <span class="te-pick-aa" title="text contrast"></span>
         <span class="te-pick-cmp"><i class="te-pick-was" title="before"></i><i class="te-pick-now" title="now"></i></span>
       </div>
-      <div class="te-sv" aria-label="saturation and brightness"><div class="te-sv-cursor"></div></div>
-      <div class="te-hue" aria-label="hue"><div class="te-hue-thumb"></div></div>
+      <div class="te-sv" aria-label="lightness and vividness"><canvas class="te-sv-canvas" width="240" height="150"></canvas><div class="te-sv-cursor"></div></div>
+      <div class="te-hue" aria-label="hue"><canvas class="te-hue-canvas" width="360" height="1"></canvas><div class="te-hue-thumb"></div></div>
       <div class="te-pick-sugg"></div>
       <div class="te-pick-row">
         <input class="te-hex" type="text" maxlength="7" spellcheck="false" autocomplete="off" aria-label="hex colour">
@@ -9092,66 +9163,154 @@ function fmtDate(ts) {
   }
   function closeThemeEditor() {
     if (!tePickEl.hidden) teClosePicker(false);
+    tePokeEl.hidden = true;
     if (teSaveTimer) teCommit(false);
     teEl.classList.remove('show');
     teEl.setAttribute('aria-hidden', 'true');
   }
 
+  // ── Colour toolkit (OKLCH) ──
+  // OKLCH is a perceptual colour space (Björn Ottosson's OKLab, in polar
+  // form): L = lightness as you see it, C = vividness, h = hue. Sliding
+  // the hue keeps the lightness you perceive, unlike HSV, where pure
+  // yellow and pure blue at "full brightness" look nothing alike.
+  const teLin = (c) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+  const teGam = (c) => (c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055);
+  function teHexToOklch(hex) {
+    const [r, g, b] = [1, 3, 5].map(i => teLin(parseInt(hex.substr(i, 2), 16) / 255));
+    const l = Math.cbrt(0.4122214708 * r + 0.5363329318 * g + 0.0514459929 * b);
+    const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+    const q = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+    const L = 0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * q;
+    const A = 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * q;
+    const B = 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * q;
+    return { L, C: Math.hypot(A, B), h: (Math.atan2(B, A) * 180 / Math.PI + 360) % 360 };
+  }
+  // → linear-light sRGB triple (may fall outside 0..1 = not displayable).
+  function teOklchRgb(L, C, h) {
+    const A = C * Math.cos(h * Math.PI / 180), B = C * Math.sin(h * Math.PI / 180);
+    const l = (L + 0.3963377774 * A + 0.2158037573 * B) ** 3;
+    const m = (L - 0.1055613458 * A - 0.0638541728 * B) ** 3;
+    const q = (L - 0.0894841775 * A - 1.2914855480 * B) ** 3;
+    return [4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * q,
+      -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * q,
+      -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * q];
+  }
+  // A tight tolerance: near black every channel is tiny, and a loose one
+  // lets wildly vivid "colours" through (a smear along the bottom).
+  const teInGamut = (rgb) => rgb.every(v => v >= -1e-6 && v <= 1 + 1e-6);
+  // Most vivid C a screen can show at this L and h (binary search).
+  function teMaxC(L, h) {
+    let lo = 0, hi = 0.4;
+    for (let i = 0; i < 18; i++) {
+      const mid = (lo + hi) / 2;
+      if (teInGamut(teOklchRgb(L, mid, h))) lo = mid; else hi = mid;
+    }
+    return lo;
+  }
+  function teOklchToHex(L, C, h) {
+    L = Math.max(0, Math.min(1, L));
+    // Already displayable (allowing rounding noise)? Keep it exact;
+    // otherwise pull the vividness in to the edge.
+    let rgb = teOklchRgb(L, C, h);
+    if (!rgb.every(v => v >= -0.0005 && v <= 1.0005)) rgb = teOklchRgb(L, Math.min(C, teMaxC(L, h)), h);
+    return '#' + rgb.map(v => Math.round(Math.max(0, Math.min(1, teGam(Math.max(0, v)))) * 255)
+      .toString(16).padStart(2, '0')).join('');
+  }
+  // WCAG contrast ratio of two hex colours.
+  function teContrast(x, y) {
+    const lum = (h) => { const [r, g, b] = [1, 3, 5].map(i => teLin(parseInt(h.substr(i, 2), 16) / 255)); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+    const p = lum(x), q = lum(y);
+    return (Math.max(p, q) + 0.05) / (Math.min(p, q) + 0.05);
+  }
+
   // ── Colour picker ──
   // Our own (the native <input type=color> was unreliable in phone
-  // webviews): drag in the saturation/brightness square and the hue bar,
-  // tap a quick pick, or type a hex. Edits apply live; Cancel restores.
-  function teHsvToHex(h, s, v) {
-    const f = (n) => {
-      const k = (n + h / 60) % 6;
-      return v - v * s * Math.max(0, Math.min(k, 4 - k, 1));
-    };
-    return '#' + [f(5), f(3), f(1)].map(x => Math.round(x * 255).toString(16).padStart(2, '0')).join('');
-  }
-  function teHexToHsv(hex) {
-    const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.substr(i, 2), 16) / 255);
-    const max = Math.max(r, g, b), d = max - Math.min(r, g, b);
-    let h = 0;
-    if (d) h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
-    return { h: (h * 60 + 360) % 360, s: max ? d / max : 0, v: max };
-  }
+  // webviews), in OKLCH: drag lightness (up) × vividness (right) in the
+  // square and the hue along the bar; tap a quick pick or type a hex.
+  // Edits apply live; Cancel restores. The "Aa" chip shows the text
+  // contrast for the colours that carry text (panel / text / accent).
+  const TE_C_MAX = 0.33;   // the most vivid sRGB colours sit around 0.32
   const tePickEl = teEl.querySelector('.te-pick');
   const teSv = tePickEl.querySelector('.te-sv');
+  const teSvCanvas = teSv.querySelector('canvas');
   const teHue = tePickEl.querySelector('.te-hue');
   const teHex = tePickEl.querySelector('.te-hex');
-  const tePick = { k: null, orig: null, h: 0, s: 0, v: 0 };
+  const tePick = { k: null, orig: null, L: 0.5, C: 0, h: 0, hex: '#808080', drawnH: null };
+  // The hue bar: every hue at one comfortable lightness (drawn once).
+  (function drawHueBar() {
+    const cv = teHue.querySelector('canvas'), ctx = cv.getContext('2d');
+    const img = ctx.createImageData(360, 1);
+    for (let x = 0; x < 360; x++) {
+      const hex = teOklchToHex(0.75, 0.15, x);
+      for (let i = 0; i < 3; i++) img.data[x * 4 + i] = parseInt(hex.substr(1 + i * 2, 2), 16);
+      img.data[x * 4 + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+  })();
+  // The square for the current hue; only displayable colours are drawn.
+  // The edge of what's displayable is found once per row (teMaxC) and
+  // anti-aliased over one pixel, so it's a smooth curve, not a staircase.
+  function teDrawSquare(h) {
+    if (tePick.drawnH === h) return;
+    tePick.drawnH = h;
+    const W = teSvCanvas.width, H = teSvCanvas.height, ctx = teSvCanvas.getContext('2d');
+    const img = ctx.createImageData(W, H);
+    const step = TE_C_MAX / (W - 1);
+    for (let y = 0; y < H; y++) {
+      const L = 1 - y / (H - 1);
+      const edge = teMaxC(L, h) / step;   // the edge, in pixels
+      for (let x = 0; x < W && x <= edge + 1; x++) {
+        const alpha = Math.max(0, Math.min(1, edge - x + 0.5));
+        if (!alpha) continue;
+        const rgb = teOklchRgb(L, Math.min(x * step, edge * step), h);
+        const o = (y * W + x) * 4;
+        for (let i = 0; i < 3; i++) img.data[o + i] = Math.round(teGam(Math.max(0, Math.min(1, rgb[i]))) * 255);
+        img.data[o + 3] = Math.round(alpha * 255);
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+  function tePickAa() {
+    const u = teCur(), aa = tePickEl.querySelector('.te-pick-aa');
+    if (!u || !['panel', 'text', 'accent'].includes(tePick.k)) { aa.textContent = ''; return; }
+    const fg = tePick.k === 'accent' ? window.CCUserThemes.readable(u.c.accent) : u.c.text;
+    const bg = tePick.k === 'accent' ? u.c.accent : u.c.panel;
+    const r = teContrast(fg, bg);
+    aa.textContent = `Aa ${r.toFixed(1)}${r >= 4.5 ? ' ✓' : ' ⚠'}`;
+    aa.style.color = fg;
+    aa.style.background = bg;
+  }
   function tePickPaint(fromHexInput) {
-    const hex = teHsvToHex(tePick.h, tePick.s, tePick.v);
-    teSv.style.backgroundColor = teHsvToHex(tePick.h, 1, 1);
+    teDrawSquare(Math.round(tePick.h));
     const cur = teSv.querySelector('.te-sv-cursor');
-    cur.style.left = (tePick.s * 100) + '%';
-    cur.style.top = ((1 - tePick.v) * 100) + '%';
-    cur.style.background = hex;
+    cur.style.left = (Math.min(tePick.C, TE_C_MAX) / TE_C_MAX * 100) + '%';
+    cur.style.top = ((1 - tePick.L) * 100) + '%';
+    cur.style.background = tePick.hex;
     const thumb = teHue.querySelector('.te-hue-thumb');
     thumb.style.left = (tePick.h / 360 * 100) + '%';
-    thumb.style.background = teHsvToHex(tePick.h, 1, 1);
-    tePickEl.querySelector('.te-pick-now').style.background = hex;
-    if (!fromHexInput) teHex.value = hex;
-    return hex;
+    thumb.style.background = teOklchToHex(0.75, 0.15, tePick.h);
+    tePickEl.querySelector('.te-pick-now').style.background = tePick.hex;
+    if (!fromHexInput) teHex.value = tePick.hex;
+    tePickAa();
   }
   function tePickSet(fromHexInput) {
-    const hex = tePickPaint(fromHexInput);
-    const k = tePick.k;
+    const k = tePick.k, hex = tePick.hex;
     teEdit(u => { u.c[k] = hex; });
+    tePickPaint(fromHexInput);
   }
-  // Keep the hue when a hex has none (greys), so dragging back out of
-  // black / white doesn't snap the hue to red.
+  // From a hex: keep the hue for greys (they have none), so dragging
+  // back out of black / white / grey doesn't snap the hue to pink.
   function tePickFromHex(hex) {
-    const hsv = teHexToHsv(hex);
-    tePick.s = hsv.s; tePick.v = hsv.v;
-    if (hsv.s > 0 && hsv.v > 0) tePick.h = hsv.h;
+    const o = teHexToOklch(hex);
+    tePick.L = o.L; tePick.C = o.C; tePick.hex = hex;
+    if (o.C > 0.01) tePick.h = o.h;
   }
   function teOpenPicker(sw) {
     const u = teCur();
     if (!u) return;
     tePick.k = sw.k;
     tePick.orig = u.c[sw.k];
-    tePick.h = 0;
     tePickFromHex(tePick.orig);
     tePickEl.querySelector('.te-pick-title').textContent = sw.label;
     tePickEl.querySelector('.te-pick-was').style.background = tePick.orig;
@@ -9183,13 +9342,17 @@ function fmtDate(ts) {
   const teClamp = (x) => Math.max(0, Math.min(1, x));
   teDrag(teSv, (e) => {
     const r = teSv.getBoundingClientRect();
-    tePick.s = teClamp((e.clientX - r.left) / r.width);
-    tePick.v = 1 - teClamp((e.clientY - r.top) / r.height);
+    tePick.L = 1 - teClamp((e.clientY - r.top) / r.height);
+    // Past the edge of the shape = the most vivid colour that exists there.
+    tePick.C = Math.min(teClamp((e.clientX - r.left) / r.width) * TE_C_MAX, teMaxC(tePick.L, tePick.h));
+    tePick.hex = teOklchToHex(tePick.L, tePick.C, tePick.h);
     tePickSet(false);
   });
   teDrag(teHue, (e) => {
     const r = teHue.getBoundingClientRect();
     tePick.h = teClamp((e.clientX - r.left) / r.width) * 359.9;
+    tePick.C = Math.min(tePick.C, teMaxC(tePick.L, tePick.h));
+    tePick.hex = teOklchToHex(tePick.L, tePick.C, tePick.h);
     tePickSet(false);
   });
   teHex.addEventListener('input', () => {
@@ -9208,6 +9371,153 @@ function fmtDate(ts) {
   tePickEl.querySelector('.te-pick-cancel').onclick = () => teClosePicker(true);
   tePickEl.querySelector('.te-pick-done').onclick = () => teClosePicker(false);
   tePickEl.addEventListener('click', (e) => { if (e.target === tePickEl) teClosePicker(false); });
+
+  // ── New theme from a pokémon ──
+  // Samples a capture's sprite: clusters its opaque pixels in OKLab
+  // (k-means), then maps them onto the 8 colours — a pale (or deep, for
+  // a dark theme) tint of its body for the panel and land, its outline
+  // hue for the text, its most vivid colour for Accent and a second,
+  // different-hued one for Accent 2 (water borrows a blue if it has one).
+  function teSpritePalette(img) {
+    const n = Math.max(img.naturalWidth, img.naturalHeight) || 1;
+    const sc = Math.min(1, 128 / n);
+    const W = Math.max(1, Math.round(img.naturalWidth * sc)), H = Math.max(1, Math.round(img.naturalHeight * sc));
+    const cv = document.createElement('canvas');
+    cv.width = W; cv.height = H;
+    const ctx = cv.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(img, 0, 0, W, H);
+    const d = ctx.getImageData(0, 0, W, H).data;
+    const pts = [];
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] < 200) continue;
+      const hex = '#' + [d[i], d[i + 1], d[i + 2]].map(v => v.toString(16).padStart(2, '0')).join('');
+      const o = teHexToOklch(hex);
+      const A = o.C * Math.cos(o.h * Math.PI / 180), B = o.C * Math.sin(o.h * Math.PI / 180);
+      pts.push([o.L, A, B]);
+    }
+    if (pts.length < 8) return null;
+    // k-means, seeded by lightness quantiles so dark outlines and bright
+    // highlights each get a cluster.
+    const K = Math.min(6, pts.length);
+    const sorted = pts.slice().sort((p, q) => p[0] - q[0]);
+    let cent = Array.from({ length: K }, (_, i) => sorted[Math.floor((i + 0.5) / K * sorted.length)].slice());
+    const asg = new Array(pts.length).fill(0);
+    for (let it = 0; it < 10; it++) {
+      for (let i = 0; i < pts.length; i++) {
+        let best = 0, bd = Infinity;
+        for (let k = 0; k < K; k++) {
+          const dl = pts[i][0] - cent[k][0], da = pts[i][1] - cent[k][1], db = pts[i][2] - cent[k][2];
+          const dist = dl * dl + da * da + db * db;
+          if (dist < bd) { bd = dist; best = k; }
+        }
+        asg[i] = best;
+      }
+      const sum = Array.from({ length: K }, () => [0, 0, 0, 0]);
+      for (let i = 0; i < pts.length; i++) {
+        const s = sum[asg[i]];
+        s[0] += pts[i][0]; s[1] += pts[i][1]; s[2] += pts[i][2]; s[3]++;
+      }
+      cent = cent.map((c, k) => (sum[k][3] ? [sum[k][0] / sum[k][3], sum[k][1] / sum[k][3], sum[k][2] / sum[k][3]] : c));
+    }
+    const count = new Array(K).fill(0);
+    for (const a of asg) count[a]++;
+    return cent.map((c, k) => ({
+      L: c[0], C: Math.hypot(c[1], c[2]), h: (Math.atan2(c[2], c[1]) * 180 / Math.PI + 360) % 360,
+      w: count[k] / pts.length,
+    })).filter(c => c.w > 0.02);
+  }
+  const teHueDist = (a, b) => { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d; };
+  function teColorsFromPalette(pal, dark) {
+    const ok = (L, C, h) => teOklchToHex(L, C, h);
+    // Body: the biggest cluster that isn't outline-dark or highlight-white.
+    const body = pal.filter(c => c.L > 0.3 && c.L < 0.95).sort((a, b) => b.w - a.w)[0]
+      || pal.slice().sort((a, b) => b.w - a.w)[0];
+    const outline = pal.slice().sort((a, b) => a.L - b.L)[0];
+    const vivid = pal.slice().sort((a, b) => (b.C * Math.sqrt(b.w)) - (a.C * Math.sqrt(a.w)));
+    const acc = vivid[0].C > 0.04 ? vivid[0] : { L: body.L, C: 0.12, h: body.h };
+    const acc2c = vivid.find(c => c !== acc && c.C > 0.04 && teHueDist(c.h, acc.h) > 35);
+    const acc2 = acc2c || { L: acc.L, C: acc.C, h: (acc.h + 150) % 360 };
+    const blue = pal.find(c => c.C > 0.04 && c.h > 195 && c.h < 265);
+    const wh = blue ? blue.h : 230;
+    const bh = body.h, bc = body.C;
+    // Accents keep their hue + vividness at a lightness that reads.
+    const accL = (c) => Math.max(dark ? 0.66 : 0.52, Math.min(dark ? 0.8 : 0.66, c.L));
+    const c = dark ? {
+      panel: ok(0.21, Math.min(bc, 0.035), bh), text: ok(0.94, 0.02, outline.h),
+      land: ok(0.23, Math.min(bc * 0.5, 0.03), bh), water: ok(0.32, 0.07, wh),
+      road: ok(0.37, Math.min(bc * 0.4, 0.025), bh), building: ok(0.31, Math.min(bc * 0.5, 0.035), bh),
+      accent: ok(accL(acc), Math.max(acc.C, 0.1), acc.h), accent2: ok(accL(acc2), Math.max(acc2.C, 0.1), acc2.h),
+    } : {
+      panel: ok(0.975, Math.min(bc * 0.25, 0.02), bh), text: ok(0.28, Math.min(outline.C, 0.05), outline.h),
+      land: ok(0.94, Math.min(bc * 0.35, 0.035), bh), water: ok(0.82, 0.08, wh),
+      road: ok(0.995, 0.004, bh), building: ok(0.87, Math.min(bc * 0.5, 0.05), bh),
+      accent: ok(accL(acc), Math.max(acc.C, 0.1), acc.h), accent2: ok(accL(acc2), Math.max(acc2.C, 0.1), acc2.h),
+    };
+    // Make sure body text reads on the panel.
+    for (let i = 0; i < 12 && teContrast(c.text, c.panel) < 7; i++) {
+      const o = teHexToOklch(c.text);
+      c.text = ok(dark ? Math.min(1, o.L + 0.04) : Math.max(0, o.L - 0.04), o.C, o.h);
+    }
+    return c;
+  }
+
+  const tePokeEl = teEl.querySelector('.te-poke');
+  const tePokeGrid = tePokeEl.querySelector('.te-poke-grid');
+  let tePokeAll = [];
+  function teRenderPokeGrid() {
+    const q = tePokeEl.querySelector('.te-poke-search').value.trim().toLowerCase();
+    const C = window.Creatures;
+    const list = (q ? tePokeAll.filter(x => x.name.toLowerCase().includes(q)) : tePokeAll).slice(0, 48);
+    tePokeGrid.innerHTML = list.length
+      ? list.map((x, i) => `<button type="button" class="te-poke-cell" data-i="${tePokeAll.indexOf(x)}"><img alt=""><span>${_teEsc(x.name)}</span></button>`).join('')
+      : '<div class="te-poke-note" style="grid-column:1/-1">No pokémon found.</div>';
+    tePokeGrid.querySelectorAll('.te-poke-cell').forEach(cell => {
+      const x = tePokeAll[+cell.dataset.i];
+      try { C.showCaptureArt(cell.querySelector('img'), x.c); } catch (_) { /* no art yet */ }
+    });
+  }
+  async function teOpenPoke() {
+    const C = window.Creatures;
+    if (!C || !(C.getInventory || C.getAllCaptured)) return;
+    try { if (C.ready) await C.ready(); } catch (_) {}
+    // Newest catches first; one entry per name so the grid isn't a wall of duplicates.
+    const seen = new Set();
+    tePokeAll = ((C.getInventory && C.getInventory()) || C.getAllCaptured() || []).slice()
+      .sort((a, b) => ((b.caughtAt && b.caughtAt.timestamp) || 0) - ((a.caughtAt && a.caughtAt.timestamp) || 0))
+      .map(c => ({ c, name: C.captureName(c) || '' }))
+      .filter(x => x.name && (seen.has(x.name) ? false : (seen.add(x.name), true)));
+    tePokeEl.querySelector('.te-poke-search').value = '';
+    teRenderPokeGrid();
+    tePokeEl.hidden = false;
+  }
+  async function tePickPoke(x, img) {
+    try {
+      if (!img.complete || !img.naturalWidth) await new Promise((res, rej) => { img.onload = res; img.onerror = rej; setTimeout(rej, 4000); });
+      const pal = teSpritePalette(img);
+      if (!pal || !pal.length) throw new Error('no colours');
+      // Follow the current theme: dark stays dark, light stays light.
+      const cur = teCur();
+      const dark = cur ? window.CCUserThemes.isDark(cur.c.panel) : window._themeIsDark(THEMES[localStorage.getItem('cc.theme')] || THEMES.default);
+      tePokeEl.hidden = true;
+      if (teSaveTimer) teCommit(false);
+      const u = { id: window.CCUserThemes.newId(), name: x.name, style: 'aurora',
+        c: teColorsFromPalette(pal, dark), updated: Date.now() };
+      teList.push(u);
+      teSel = u.id;
+      teCommit(true);
+    } catch (e) {
+      alert("Couldn't read that pokémon's colours — its art may not be downloaded yet.");
+    }
+  }
+  teEl.querySelector('.te-from-poke').addEventListener('click', teOpenPoke);
+  tePokeEl.querySelector('.te-poke-x').onclick = () => { tePokeEl.hidden = true; };
+  tePokeEl.addEventListener('click', (e) => { if (e.target === tePokeEl) tePokeEl.hidden = true; });
+  tePokeEl.querySelector('.te-poke-search').addEventListener('input', teRenderPokeGrid);
+  tePokeGrid.addEventListener('click', (e) => {
+    const cell = e.target.closest('.te-poke-cell');
+    if (cell) tePickPoke(tePokeAll[+cell.dataset.i], cell.querySelector('img'));
+  });
 
   // Swatches (built once): a colour dot that opens the picker.
   for (const sw of TE_SWATCHES) {

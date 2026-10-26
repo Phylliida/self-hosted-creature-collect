@@ -24679,6 +24679,14 @@
     ready: _whenReady,
     getAllCaptured: () => readCapturedCreatures(),
     replaceAllCaptured: (arr) => writeCapturedCreatures(arr),
+    // Theme editor → "From a pokémon": draw a capture's art (same variant /
+    // shiny as its card) into an <img>, and its display name.
+    showCaptureArt: (img, c, opts) => showCreatureArt(img,
+      Object.assign({}, c, { variant: (typeof c.variant === 'number') ? c.variant : undefined }),
+      Object.assign({ shinyVariant: c.shinyVariant }, opts)),
+    captureName: (c) => displayName(c),
+    // The inventory list (captures decorated with their display names).
+    getInventory: () => getInventoryCreatures(),
     getSeenFusions: () => readSeenFusions(),
     setSeenFusions: (map) => { _seenStore.set(map); },
     mergeSeenFusions: (current, incoming) => mergeSeenFusions(current, incoming),
