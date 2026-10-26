@@ -2914,6 +2914,13 @@
       predicate: (c) => c && typeof c.shinyVariant === 'number',
     },
     {
+      name: 'Art',
+      description: 'Has hand-drawn art, not an auto-generated fusion sprite.',
+      // variant is canonical 'auto' | <custom slot number>. Glitch
+      // pokémon store 'auto' but their sprites are hand-made.
+      predicate: (c) => c && (typeof c.variant === 'number' || isSoloCreature(c)),
+    },
+    {
       name: 'Hatched',
       description: 'Hatched from an egg rather than caught in the wild.',
       predicate: (c) => c && c.fromEgg === true,
