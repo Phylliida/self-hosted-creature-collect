@@ -4117,6 +4117,10 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
     </div>
     <div id="themeGrid" aria-label="Theme picker"></div>
     <button id="themeEditorBtn" type="button">🎨 Theme editor</button>
+    <div class="row" title="Give unseen pokémon (the black silhouettes in the Pokédex, family trees, evolutions and on the radar) a dark grey outline so their shape is easier to make out. Works with every theme.">
+      <label for="silhouetteOutlineToggle">Outline silhouettes</label>
+      <input type="checkbox" id="silhouetteOutlineToggle">
+    </div>
     <div id="customThemeControls">
       <div class="row"><label for="cBg">Background</label><input type="color" id="cBg"></div>
       <div class="row"><label for="cLand">Land</label><input type="color" id="cLand"></div>
@@ -9728,6 +9732,8 @@ function fmtDate(ts) {
     // Default-OFF: only '1' snaps bubble centres.
     { key: 'cc.bubbleSnap',           values: _ONOFF },
     { key: 'cc.consistentIconWidth',  values: _ONOFF },
+    // Default-OFF: only '1' outlines the black silhouettes (creatures.js).
+    { key: 'cc.silhouetteOutline',    values: _ONOFF },
     // Default-OFF: only '1' shows level and height (creatures.js).
     { key: 'cc.showLevelSize',        values: _ONOFF },
     { key: 'cc.buildingPois',         values: _ONOFF },
@@ -21213,6 +21219,23 @@ function fmtDate(ts) {
     });
   }
 
+  // "Outline silhouettes" — pure CSS: cc-sil-outline on <html> adds a dark
+  // grey outline to the black unseen-pokémon silhouettes (rules in
+  // creatures.js). Default off.
+  window._applySilhouetteOutline = function (on) {
+    document.documentElement.classList.toggle('cc-sil-outline', !!on);
+  };
+  const silhouetteOutlineToggle = document.getElementById('silhouetteOutlineToggle');
+  if (silhouetteOutlineToggle) {
+    const on0 = localStorage.getItem('cc.silhouetteOutline') === '1';
+    silhouetteOutlineToggle.checked = on0;
+    window._applySilhouetteOutline(on0);
+    silhouetteOutlineToggle.addEventListener('change', () => {
+      localStorage.setItem('cc.silhouetteOutline', silhouetteOutlineToggle.checked ? '1' : '0');
+      window._applySilhouetteOutline(silhouetteOutlineToggle.checked);
+    });
+  }
+
   // "Show pokémon level and height" — default off (unset = hidden).
   // creatures.js reads cc.showLevelSize at render time; a change redraws
   // whatever's open and fixes up the collection's sort menu.
@@ -21553,6 +21576,13 @@ function fmtDate(ts) {
     try {
       if (typeof window._applyConsistentIcons === 'function') {
         window._applyConsistentIcons(on('cc.consistentIconWidth'));
+      }
+    } catch (e) { console.error(e); }
+
+    setChecked('silhouetteOutlineToggle', on('cc.silhouetteOutline'));
+    try {
+      if (typeof window._applySilhouetteOutline === 'function') {
+        window._applySilhouetteOutline(on('cc.silhouetteOutline'));
       }
     } catch (e) { console.error(e); }
 

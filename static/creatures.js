@@ -9600,6 +9600,31 @@
         image-rendering: pixelated; image-rendering: crisp-edges; display: none;
       }
       #creatureInventory .completion-row.ready .completion-icon img { display: block; }
+      /* "Outline silhouettes" setting (cc.silhouetteOutline → cc-sil-outline
+         on <html>): the black unseen-pokémon silhouettes get a dark grey
+         outline (four 1px-ish offset drop-shadows, the radar-blip idiom) so
+         their shape reads on dark panels too. Each rule keeps its base
+         filter and adds the outline; dark-theme radar blips keep their
+         white outline and legendaries their gold one. Default off. */
+      html.cc-sil-outline {
+        --cc-sil-outline: drop-shadow(1.3px 0 0 #555) drop-shadow(-1.3px 0 0 #555)
+          drop-shadow(0 1.3px 0 #555) drop-shadow(0 -1.3px 0 #555);
+      }
+      html.cc-sil-outline #creatureInventory .silhouette img,
+      html.cc-sil-outline #creatureInventory .evo-row.silhouette .evo-art img,
+      html.cc-sil-outline #creatureInventory .family-cell.silhouette img,
+      html.cc-sil-outline #creatureInventory .speciesdex-cell.silhouette img,
+      html.cc-sil-outline #creatureInventory .glitch-art img.silhouette,
+      html.cc-sil-outline #creatureInventory .packdex-mon img.silhouette,
+      html.cc-sil-outline #ccDaycareOdds .dc-egg-icon.silhouette img {
+        filter: brightness(0) var(--cc-sil-outline);
+      }
+      html.cc-sil-outline #creatureInventory .variant-cell.silhouette img {
+        filter: brightness(0) var(--cc-sil-outline) opacity(0.85);
+      }
+      html.cc-sil-outline:not([data-ui-dark="1"]) .radar-marker.silhouette:not(.radar-legendary) .radar-marker-img {
+        filter: brightness(0) var(--cc-sil-outline);
+      }
       /* "Consistent poké icon size" setting (cc.consistentIconWidth).
          Sprite blobs are cropped to their opaque bbox, so the rules above
          (object-fit: contain in each view's box) blow every crop up to
