@@ -17559,7 +17559,10 @@
       cards.push({
         cls: `variant-cell autogen ${!fusionSeen ? 'silhouette' : ''}`,
         variant: null,
-        label: !fusionSeen ? '???' : 'autogen',
+        // 'autogen' even while unseen (still a silhouette): that it has no
+        // hand-drawn art isn't a spoiler, and it shows at a glance which
+        // fusions (e.g. evolutions you're browsing to) are autogen-only.
+        label: 'autogen',
         selectable: fusionSeen,   // can favorite the autogen art once seen
       });
     }
