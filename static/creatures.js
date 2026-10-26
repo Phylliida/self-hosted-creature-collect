@@ -1091,17 +1091,18 @@
 
   // Completion-dex shiny bonus. Each species' seen count (head + body
   // fusions seen — the N/2N fraction on its dex row) maps to a threshold
-  // multiplier: 1× per full 30, so 1× at 0–29, 2× at 30–59, 3× at 60–89,
-  // etc. Reaching 100% (seen === total) rounds UP to the next tier when
-  // the count isn't evenly divisible by 30 — completing a species always
-  // moves it past its last threshold. The two morphs' bonuses add on one
-  // shared base (bonusA + bonusB − 1): a pair of fresh species rolls at
-  // the base rate, and every 30-fusion milestone on either side adds
-  // another 1×.
+  // multiplier: 1× per full SHINY_BONUS_STEP (50), so 1× at 0–49, 2× at
+  // 50–99, 3× at 100–149, etc. Reaching 100% (seen === total) rounds UP
+  // to the next tier when the count isn't evenly divisible by the step —
+  // completing a species always moves it past its last threshold. The
+  // two morphs' bonuses add on one shared base (bonusA + bonusB − 1): a
+  // pair of fresh species rolls at the base rate, and every 50-fusion
+  // milestone on either side adds another 1×. (Was 30 until 2026-10-25.)
+  const SHINY_BONUS_STEP = 50;
   function _speciesShinyBonus(seen, total) {
     seen = seen || 0;
-    if (total && seen >= total) return Math.ceil(seen / 30) + 1;
-    return Math.floor(seen / 30) + 1;
+    if (total && seen >= total) return Math.ceil(seen / SHINY_BONUS_STEP) + 1;
+    return Math.floor(seen / SHINY_BONUS_STEP) + 1;
   }
   function _fusionShinyBonusSum(speciesA, speciesB) {
     const byId = new Map(computeSpeciesCompletion().map((r) => [r.id, r]));

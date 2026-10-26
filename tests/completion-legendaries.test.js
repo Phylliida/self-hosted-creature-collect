@@ -41,6 +41,12 @@ function extract(marker) {
   }
   return src.slice(start, i + 1);
 }
+// A one-line `const NAME = …;` as a `var` (so vm contexts can see it).
+function constLine(name) {
+  const m = new RegExp('^\\s*const ' + name + ' = [^\\n]*;$', 'm').exec(src);
+  if (!m) throw new Error('const not found: ' + name);
+  return m[0].replace(/^\s*const /, 'var ');
+}
 
 // Stub species pool: 4 non-legendaries {1,2,3,4} + 2 legendaries {144,150}
 // (the real GEN1 legendaries Mewtwo/Articuno both live in the supported pool).
@@ -130,43 +136,45 @@ const rows = () => vm.runInContext('computeSpeciesCompletion()', ctx);
   ok(Math.round(seenAll / totalAll * 100) === 13, 'overall % is computed over non-legendaries only');
 }
 
-// ── Shiny bonus: 1× per full 30 seen (thresholds, not percent) ──────────
+// ── Shiny bonus: 1× per full 50 seen (thresholds, not percent) ──────────
 {
   const ctx2 = { Object, Set, Map, Array, Math, Number, String, JSON };
   vm.createContext(ctx2);
+  vm.runInContext(constLine('SHINY_BONUS_STEP'), ctx2);
   vm.runInContext(extract('function _speciesShinyBonus('), ctx2);
   const bonus = (seen, total) => vm.runInContext(
     `_speciesShinyBonus(${seen}, ${total === undefined ? 'undefined' : total})`, ctx2);
-  ok(bonus(0) === 1 && bonus(29) === 1, 'shiny bonus: 1× below 30 seen');
-  ok(bonus(30) === 2 && bonus(59) === 2, 'shiny bonus: 2× at 30–59 seen');
-  ok(bonus(60) === 3 && bonus(89) === 3, 'shiny bonus: 3× at 60–89 seen');
-  ok(bonus(90) === 4, 'shiny bonus: 4× at 90 seen');
-  // 100% completion rounds up to the next tier when not divisible by 30.
-  ok(bonus(388, 388) === 14, 'shiny bonus: 100% at 388/388 → next tier (14×, not 13×)');
-  ok(bonus(387, 388) === 13, 'shiny bonus: 387/388 (not complete) stays at floor tier');
-  ok(bonus(390, 390) === 14, 'shiny bonus: 100% exactly on a threshold is unchanged');
+  ok(bonus(0) === 1 && bonus(49) === 1, 'shiny bonus: 1× below 50 seen');
+  ok(bonus(50) === 2 && bonus(99) === 2, 'shiny bonus: 2× at 50–99 seen');
+  ok(bonus(100) === 3 && bonus(149) === 3, 'shiny bonus: 3× at 100–149 seen');
+  ok(bonus(150) === 4, 'shiny bonus: 4× at 150 seen');
+  // 100% completion rounds up to the next tier when not divisible by 50.
+  ok(bonus(388, 388) === 9, 'shiny bonus: 100% at 388/388 → next tier (9×, not 8×)');
+  ok(bonus(387, 388) === 8, 'shiny bonus: 387/388 (not complete) stays at floor tier');
+  ok(bonus(400, 400) === 9, 'shiny bonus: 100% exactly on a threshold is unchanged');
 
   // Fusion sum: both morphs add on one shared base (bonusA + bonusB − 1),
   // so two fresh species stay at the base rate.
   const completionRows = [
-    { id: 1, seen: 30, total: 388 }, { id: 2, seen: 0, total: 388 },
-    { id: 3, seen: 60, total: 388 }, { id: 4, seen: 388, total: 388 },
+    { id: 1, seen: 50, total: 388 }, { id: 2, seen: 0, total: 388 },
+    { id: 3, seen: 100, total: 388 }, { id: 4, seen: 388, total: 388 },
   ];
   const ctx3 = {
     Object, Set, Map, Array, Math, Number, String, JSON,
     computeSpeciesCompletion: () => completionRows,
   };
   vm.createContext(ctx3);
+  vm.runInContext(constLine('SHINY_BONUS_STEP'), ctx3);
   vm.runInContext(extract('function _speciesShinyBonus('), ctx3);
   vm.runInContext(extract('function _fusionShinyBonusSum('), ctx3);
   const sum = (a, b) => vm.runInContext(`_fusionShinyBonusSum(${a}, ${b})`, ctx3);
   ok(sum(2, 2) === 1, 'shiny sum: two fresh species → base rate');
-  ok(sum(1, 2) === 2, 'shiny sum: 30-seen + fresh → 2×');
-  ok(sum(1, 1) === 3, 'shiny sum: two 30-seen → 3×');
-  ok(sum(3, 2) === 3, 'shiny sum: 60-seen + fresh → 3×');
-  ok(sum(1, 3) === 4, 'shiny sum: 30-seen + 60-seen → 4×');
-  ok(sum(4, 2) === 14, 'shiny sum: completed + fresh → 14× (completion bump)');
-  ok(sum(4, 4) === 27, 'shiny sum: two completed → 27×');
+  ok(sum(1, 2) === 2, 'shiny sum: 50-seen + fresh → 2×');
+  ok(sum(1, 1) === 3, 'shiny sum: two 50-seen → 3×');
+  ok(sum(3, 2) === 3, 'shiny sum: 100-seen + fresh → 3×');
+  ok(sum(1, 3) === 4, 'shiny sum: 50-seen + 100-seen → 4×');
+  ok(sum(4, 2) === 9, 'shiny sum: completed + fresh → 9× (completion bump)');
+  ok(sum(4, 4) === 17, 'shiny sum: two completed → 17×');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
