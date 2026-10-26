@@ -10565,12 +10565,6 @@
         --au-art-ph: #cfc5f5;
         --au-stage: radial-gradient(60% 14% at 50% 86%, rgba(var(--au-shadow-rgb), 0.20), transparent 100%),
                     radial-gradient(circle at 50% 40%, #ffffff 0%, #f3efff 55%, #e7defe 100%);
-        --au-hero: radial-gradient(55% 12% at 50% 88%, rgba(var(--au-shadow-rgb), 0.25), transparent 100%),
-                   radial-gradient(circle at 50% 38%, #ffffff 0%, #f1ebff 45%, #d9ccff 100%);
-        --au-hero-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.9),
-                          inset 0 -14px 30px -10px rgba(var(--au-accent-rgb), 0.25),
-                          0 18px 36px -14px rgba(var(--au-shadow-rgb), 0.55),
-                          0 0 0 6px rgba(255, 255, 255, 0.55);
         --au-icon-bg: radial-gradient(circle at 50% 35%, #ffffff, #efe9ff 70%, #e2d7ff);
         --au-warm: linear-gradient(120deg, #fff1df 0%, #ffe5f1 100%);
         --au-warm-hover: linear-gradient(120deg, #ffeccf 0%, #ffdbec 100%);
@@ -10629,12 +10623,6 @@
         --au-card-shadow-hi: 0 1px 0 rgba(255,255,255,0.09) inset, 0 14px 26px -8px rgba(0,0,0,0.75), 0 0 0 1px rgba(166,142,255,0.25);
         --au-stage: radial-gradient(60% 14% at 50% 86%, rgba(0, 0, 0, 0.38), transparent 100%),
                     radial-gradient(circle at 50% 40%, #3d3388 0%, #2b2466 55%, #1f1a4c 100%);
-        --au-hero: radial-gradient(55% 12% at 50% 88%, rgba(0, 0, 0, 0.42), transparent 100%),
-                   radial-gradient(circle at 50% 36%, #5141b0 0%, #33297a 48%, #1e1849 100%);
-        --au-hero-shadow: inset 0 0 0 1px rgba(166, 142, 255, 0.28),
-                          inset 0 -14px 30px -10px rgba(0, 0, 0, 0.45),
-                          0 0 44px -6px rgba(var(--au-accent-rgb), 0.55),
-                          0 0 0 6px rgba(166, 142, 255, 0.10);
         --au-icon-bg: radial-gradient(circle at 50% 35%, #3d3388, #2b2466 70%, #231d52);
         --au-warm: linear-gradient(120deg, #3b2346 0%, #432140 100%);
         --au-warm-hover: linear-gradient(120deg, #452950 0%, #4d2649 100%);
@@ -10690,8 +10678,6 @@
         --au-card-shadow: 0 0 0 1px rgba(166, 142, 255, 0.14);
         --au-card-shadow-hi: 0 0 0 1px rgba(166, 142, 255, 0.32);
         --au-stage: #09080f;
-        --au-hero: #0b0a14;
-        --au-hero-shadow: inset 0 0 0 1px rgba(166, 142, 255, 0.24);
         --au-icon-bg: #12101f;
         --au-warm: #1a1210;
         --au-warm-hover: #22171a;
@@ -10737,12 +10723,6 @@
         --au-card-shadow-hi: 0 1px 0 rgba(255,255,255,0.09) inset, 0 14px 26px -8px rgba(0,0,0,0.75), 0 0 0 1px rgba(90,174,255,0.28);
         --au-stage: radial-gradient(60% 14% at 50% 86%, rgba(0, 0, 0, 0.38), transparent 100%),
                     radial-gradient(circle at 50% 40%, #234a82 0%, #193766 55%, #11274b 100%);
-        --au-hero: radial-gradient(55% 12% at 50% 88%, rgba(0, 0, 0, 0.42), transparent 100%),
-                   radial-gradient(circle at 50% 36%, #2d5fae 0%, #1d407c 48%, #102449 100%);
-        --au-hero-shadow: inset 0 0 0 1px rgba(90, 174, 255, 0.30),
-                          inset 0 -14px 30px -10px rgba(0, 0, 0, 0.45),
-                          0 0 44px -6px rgba(59, 130, 246, 0.55),
-                          0 0 0 6px rgba(90, 174, 255, 0.10);
         --au-icon-bg: radial-gradient(circle at 50% 35%, #234a82, #193766 70%, #142c55);
         --au-warm: linear-gradient(120deg, #2d2a44 0%, #3a2638 100%);
         --au-warm-hover: linear-gradient(120deg, #36324f 0%, #452c42 100%);
@@ -10798,8 +10778,6 @@
         --au-card-shadow: 0 0 0 1px rgba(90, 174, 255, 0.14);
         --au-card-shadow-hi: 0 0 0 1px rgba(90, 174, 255, 0.32);
         --au-stage: #070b12;
-        --au-hero: #090e17;
-        --au-hero-shadow: inset 0 0 0 1px rgba(90, 174, 255, 0.24);
         --au-icon-bg: #0f1624;
         --au-disabled: #0f1522;
         --au-disabled-ink: #4f6386;
@@ -11230,15 +11208,15 @@
       @A .variant-cell { border-color: transparent; border-radius: 16px; }
       @A .st-card { border-color: transparent; border-radius: 22px; }
 
-      /* ---------- Detail view: the hero stage ---------- */
+      /* ---------- Detail view: the pokémon, big, straight on the panel ----------
+         (no stage / ring / glow behind it — the user prefers it plain). */
       @A .detail-art {
         width: 172px; height: 172px;
         margin: 8px auto 14px;
         border: none;
-        border-radius: 40px;
         position: relative;
-        background: var(--au-hero);
-        box-shadow: var(--au-hero-shadow);
+        background: none;
+        box-shadow: none;
       }
       @A .detail-art img.detail-art-img {
         padding: 12px; box-sizing: border-box;

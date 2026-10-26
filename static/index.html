@@ -3560,11 +3560,6 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
           : '0 1px 0 rgba(255,255,255,0.9) inset, 0 12px 24px -8px ' + rgba(shadow, 0.38) + ', 0 2px 5px ' + rgba(shadow, 0.12),
         stage: 'radial-gradient(60% 14% at 50% 86%, rgba(0, 0, 0, ' + (d ? 0.38 : 0.12) + '), transparent 100%), '
           + 'radial-gradient(circle at 50% 40%, ' + mix(s, d ? a : '#ffffff', d ? 0.16 : 0.6) + ' 0%, ' + s + ' 55%, ' + mix(s, a, d ? 0.06 : 0.12) + ' 100%)',
-        hero: 'radial-gradient(55% 12% at 50% 88%, rgba(0, 0, 0, ' + (d ? 0.42 : 0.14) + '), transparent 100%), '
-          + 'radial-gradient(circle at 50% 36%, ' + mix(s, d ? a : '#ffffff', d ? 0.28 : 0.7) + ' 0%, ' + s + ' 50%, ' + mix(s, a, d ? 0.1 : 0.2) + ' 100%)',
-        'hero-shadow': d
-          ? 'inset 0 0 0 1px ' + rgba(a, 0.28) + ', inset 0 -14px 30px -10px rgba(0, 0, 0, 0.45), 0 0 44px -6px ' + rgba(a, 0.5) + ', 0 0 0 6px ' + rgba(a, 0.1)
-          : 'inset 0 0 0 1px rgba(255, 255, 255, 0.9), inset 0 -14px 30px -10px ' + rgba(a, 0.25) + ', 0 18px 36px -14px ' + rgba(shadow, 0.55) + ', 0 0 0 6px rgba(255, 255, 255, 0.55)',
         'icon-bg': 'radial-gradient(circle at 50% 35%, ' + mix(s, '#ffffff', d ? 0.08 : 0.5) + ', ' + s + ' 70%, ' + mix(s, a, 0.1) + ')',
         warm: d ? mix(c.panel, '#ff8a5c', 0.14) : mix('#ffffff', '#ffb38a', 0.2),
         'warm-hover': d ? mix(c.panel, '#ff8a5c', 0.2) : mix('#ffffff', '#ffb38a', 0.28),
