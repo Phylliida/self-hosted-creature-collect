@@ -3184,7 +3184,11 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
     // pixel is switched off): black map + panels, dim labels, glow only on
     // small accents. Text a touch dimmer than white.
     auroraoled: { bg: '#000000', landcover: '#000000', landuse: '#07060d', water: '#050915', building: '#100e1c', road: '#1d1b30', roadLabel: '#8f89b3', roadHalo: '#000000', placeLabel: '#b9b3d8', placeHalo: '#000000', poiLabel: '#a39dc6', poiHalo: '#000000', poiIcon: '#8f72ff',
-              ui: { panelBg: '#000000', panelText: '#d8d3ee', muted: '#8e88b0', border: 'transparent', hairline: '#1a1830', hover: '#0c0b16', inputBg: '#0c0b16', radius: '16px', shadow: '0 0 0 1px rgba(166,142,255,0.18)', accent: '#8f72ff', accentText: '#ffffff', accentBorder: '#6a4cf0', accent2: '#ff7ab8', danger: '#ff6b8a' } }
+              ui: { panelBg: '#000000', panelText: '#d8d3ee', muted: '#8e88b0', border: 'transparent', hairline: '#1a1830', hover: '#0c0b16', inputBg: '#0c0b16', radius: '16px', shadow: '0 0 0 1px rgba(166,142,255,0.18)', accent: '#8f72ff', accentText: '#ffffff', accentBorder: '#6a4cf0', accent2: '#ff7ab8', danger: '#ff6b8a' } },
+    // Aurora OLED Blue — Aurora OLED in Aurora Blue's colours: true black,
+    // blue / teal accents instead of violet (easier on some people's eyes).
+    auroraoledblue: { bg: '#000000', landcover: '#000000', landuse: '#05080e', water: '#040b16', building: '#0c1320', road: '#16233a', roadLabel: '#8499b8', roadHalo: '#000000', placeLabel: '#b3c5de', placeHalo: '#000000', poiLabel: '#9fb3d0', poiHalo: '#000000', poiIcon: '#5aaeff',
+              ui: { panelBg: '#000000', panelText: '#d3e0f2', muted: '#869ab8', border: 'transparent', hairline: '#142238', hover: '#0a0f18', inputBg: '#0a0f18', radius: '16px', shadow: '0 0 0 1px rgba(90,174,255,0.18)', accent: '#3b82f6', accentText: '#ffffff', accentBorder: '#2563eb', accent2: '#2dd4bf', danger: '#ff6b8a' } }
   };
   // Perceived-luminance test on a theme's panel background so chrome that
   // can't read the --ui-* vars (e.g. the radar silhouette blips, whose CSS
@@ -3667,6 +3671,7 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
         <option value="auroranight">Aurora Night</option>
         <option value="aurorablue">Aurora Blue</option>
         <option value="auroraoled">Aurora OLED</option>
+        <option value="auroraoledblue">Aurora OLED Blue</option>
         <option value="custom">Custom</option>
       </select>
     </div>
@@ -8428,7 +8433,7 @@ function fmtDate(ts) {
     bloodmoon: 'Bloodmoon 🩸', haunted: 'Haunted 🕯', fogbank: 'Fogbank 🌫',
     abyss: 'Abyss 🐙', vhs: 'VHS 📼',
     backrooms: 'Backrooms', poolrooms: 'Poolrooms', deadmall: 'Dead mall',
-    garage: '3am garage', aurora: 'Aurora ✨', auroranight: 'Aurora Night 🌌', aurorablue: 'Aurora Blue 🌊', auroraoled: 'Aurora OLED 🔋', custom: 'Custom…'
+    garage: '3am garage', aurora: 'Aurora ✨', auroranight: 'Aurora Night 🌌', aurorablue: 'Aurora Blue 🌊', auroraoled: 'Aurora OLED 🔋', auroraoledblue: 'Aurora OLED Blue 🔋', custom: 'Custom…'
   };
   function themePreviewSVG(t) {
     const accent = t.ui?.accent || '#3b7fdf';

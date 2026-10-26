@@ -10480,9 +10480,10 @@
   // polished mobile game: lavender sheet with an aurora glow at the top,
   // raised white cards, gradient "candy" buttons with a pressable 3D lip,
   // colour-coded menu tiles. Aurora Night ("auroranight"), Aurora Blue
-  // ("aurorablue") and Aurora OLED ("auroraoled") share every rule and only
-  // swap the --au-* tokens (@N, then @B / @O on top). Every rule is scoped
-  // to those four themes, so the other themes are untouched.
+  // ("aurorablue"), Aurora OLED ("auroraoled") and Aurora OLED Blue
+  // ("auroraoledblue") share every rule and only swap the --au-* tokens
+  // (@N, then @B / @O / @P on top). Every rule is scoped to those themes,
+  // so the other themes are untouched.
   //
   // Selectors are written with prefixes, expanded below:
   //   @A  → :where(every Aurora theme) #creatureInventory
@@ -10494,11 +10495,12 @@
   //   @N  → :where(auroranight) #creatureInventory — the night tokens
   //        (written "@N, @B, @O" so Blue and OLED start from them too).
   //   @B  → :where(aurorablue) #creatureInventory — the blue tokens.
-  //   @O  → :where(auroraoled) #creatureInventory — the true-black tokens.
+  //   @O  → :where(auroraoled, auroraoledblue) #creatureInventory — true black.
+  //   @P  → :where(auroraoledblue) #creatureInventory — OLED in blue (last).
   //   @H  → :is(every Aurora theme) #creatureInventory
   //        Full specificity, for the few spots that need to beat a rule
   //        that's already stronger (the shared close-X in index.html).
-  function _isAuroraTheme(t) { return t === 'aurora' || t === 'auroranight' || t === 'aurorablue' || t === 'auroraoled'; }
+  function _isAuroraTheme(t) { return t === 'aurora' || t === 'auroranight' || t === 'aurorablue' || t === 'auroraoled' || t === 'auroraoledblue'; }
   function injectAuroraStyles() {
     if (document.getElementById('creature-styles-aurora')) return;
     const s = document.createElement('style');
@@ -10739,6 +10741,44 @@
           radial-gradient(120% 90% at 50% 0%, rgba(45, 212, 191, 0.14), transparent 55%),
           radial-gradient(120% 90% at 50% 0%, rgba(59, 130, 246, 0.24), transparent 65%),
           rgba(2, 6, 20, 0.72);
+        --au-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M1.5 3.5L5 7l3.5-3.5' fill='none' stroke='%235aaeff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+        --au-magnifier: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%237f9fcf' stroke-width='2.6' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-4-4'/%3E%3C/svg%3E");
+      }
+
+      /* ---------- Aurora OLED Blue: Aurora OLED in Aurora Blue's colours ----------
+         Same true-black, hairline-card OLED build (it matches @O too), with
+         the blue / teal accents instead of violet — easier on the eyes for
+         people bothered by purple. Comes last so it overrides both. */
+      @P {
+        --au-accent-rgb: 77, 163, 255;
+        --au-ink: #d3e0f2;
+        --au-sub: #869ab8;
+        --au-violet: #5aaeff;
+        --au-violet-deep: #acd4ff;
+        --au-pink: #5eead4;
+        --au-line: rgba(90, 174, 255, 0.20);
+        --au-cta: linear-gradient(180deg, #5cabff 0%, #3b82f6 55%, #2f6fe0 100%);
+        --au-cta-lip: #1d4fb8;
+        --au-candy: linear-gradient(135deg, #3b82f6 0%, #22b8e8 55%, #2dd4bf 100%);
+        --au-surface: #0a0f18;
+        --au-surface-hover: #0f1624;
+        --au-tint: rgba(90, 174, 255, 0.12);
+        --au-glass: #0a0f18;
+        --au-frost: #0a0f18;
+        --au-chip-ink: #b6c8e2;
+        --au-placeholder: #566c8e;
+        --au-art-ph: #22344f;
+        --au-card-shadow: 0 0 0 1px rgba(90, 174, 255, 0.14);
+        --au-card-shadow-hi: 0 0 0 1px rgba(90, 174, 255, 0.32);
+        --au-stage: #070b12;
+        --au-hero: #090e17;
+        --au-hero-shadow: inset 0 0 0 1px rgba(90, 174, 255, 0.24);
+        --au-icon-bg: #0f1624;
+        --au-disabled: #0f1522;
+        --au-disabled-ink: #4f6386;
+        --au-disabled-lip: #070a10;
+        --au-sheet-edge: rgba(90, 174, 255, 0.18);
+        --au-sheet-shadow: 0 0 0 1px rgba(90, 174, 255, 0.14);
         --au-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M1.5 3.5L5 7l3.5-3.5' fill='none' stroke='%235aaeff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
         --au-magnifier: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%237f9fcf' stroke-width='2.6' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-4-4'/%3E%3C/svg%3E");
       }
@@ -11227,11 +11267,12 @@
       @media (prefers-reduced-motion: reduce) {
         @A * { transition: none !important; }
       }
-    `.replace(/@A/g, ':where(html[data-theme="aurora"], html[data-theme="auroranight"], html[data-theme="aurorablue"], html[data-theme="auroraoled"]) #creatureInventory')
+    `.replace(/@A/g, ':where(html[data-theme="aurora"], html[data-theme="auroranight"], html[data-theme="aurorablue"], html[data-theme="auroraoled"], html[data-theme="auroraoledblue"]) #creatureInventory')
      .replace(/@N/g, ':where(html[data-theme="auroranight"]) #creatureInventory')
      .replace(/@B/g, ':where(html[data-theme="aurorablue"]) #creatureInventory')
-     .replace(/@O/g, ':where(html[data-theme="auroraoled"]) #creatureInventory')
-     .replace(/@H/g, ':is(html[data-theme="aurora"], html[data-theme="auroranight"], html[data-theme="aurorablue"], html[data-theme="auroraoled"]) #creatureInventory');
+     .replace(/@O/g, ':where(html[data-theme="auroraoled"], html[data-theme="auroraoledblue"]) #creatureInventory')
+     .replace(/@P/g, ':where(html[data-theme="auroraoledblue"]) #creatureInventory')
+     .replace(/@H/g, ':is(html[data-theme="aurora"], html[data-theme="auroranight"], html[data-theme="aurorablue"], html[data-theme="auroraoled"], html[data-theme="auroraoledblue"]) #creatureInventory');
     document.head.appendChild(s);
   }
 
