@@ -587,11 +587,11 @@
   }
   for (const key of EVO_ITEM_KEYS) _addEvoItem(key);
   // Pokéstop loot (and focus mode's item grants), rolled once per item a
-  // press hands out (rollCollectibleItem). The rare kinds — the four
+  // press hands out (rollCollectibleItem). The rare kinds — the six
   // bonus-incense berries (BONUS_INCENSE) and an evolution item
   // (_rollEvoItem) — are tuned per SPIN: an evolution item comes from 1%
   // of spins and each berry from 0.75% (RARE_LOOT's weights), so 50 spins
-  // average 1.5 berries and half an evolution item. A spin hands out 1–6
+  // average 2.25 berries and half an evolution item. A spin hands out 1–6
   // items (index.html's Collect handler), 3.5 on average, so each item
   // rolls a rare kind at weight × 1% / 3.5; focus mode's per-minute items
   // use the same per-item odds. Everything else is balls, Poké : Great :
@@ -599,7 +599,7 @@
   const RARE_PER_SPIN = 0.01;
   const POKESTOP_ITEMS_PER_SPIN = 3.5;
   const RARE_LOOT_CHANCE = RARE_PER_SPIN / POKESTOP_ITEMS_PER_SPIN;
-  const RARE_LOOT = [['candy_berry', 0.75], ['calm_berry', 0.75], ['hawkeye_berry', 0.75], ['owleye_berry', 0.75], ['evo_item', 1]];
+  const RARE_LOOT = [['candy_berry', 0.75], ['calm_berry', 0.75], ['hawkeye_berry', 0.75], ['owleye_berry', 0.75], ['care_berry', 0.75], ['warm_berry', 0.75], ['evo_item', 1]];
   const BALL_LOOT = [['poke_ball', 2], ['great_ball', 2], ['candy_ball', 1]];
   // Items the player can throw at a wild creature. Order here drives
   // the order they appear in the battle screen's ball list.
@@ -4640,6 +4640,8 @@
   //   candyMult  catch + hatch candy multiplier (_candyMultiplier)
   //   calm       throws fail half as often (_catchShakeRate)
   //   sightMult  visibility-radius multiplier (_visibilityRadiusM)
+  //   daycareMult / eggMult  meters walked count that many times for the
+  //              daycare / the incubator (_creditMeters)
   const BONUS_INCENSE = {
     candy_berry: {
       name: 'Candy Berry', minutes: 15, candyMult: 2,
@@ -4708,6 +4710,35 @@
         "<circle cx='15.8' cy='20.6' r='0.75' fill='#ffffff'/>" +
         "<circle cx='26' cy='20.6' r='0.75' fill='#ffffff'/>" +
         "<path d='M18.4 26L21.6 26L20 29Z' fill='#ffb300' stroke='#8a5a00' stroke-width='0.7' stroke-linejoin='round'/>" +
+        "</svg>",
+    },
+    care_berry: {
+      name: 'Care Berry', minutes: 30, daycareMult: 2,
+      effect: 'your daycare counts every step twice (twice the drops and candy conversions)',
+      svg:
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'>" +
+        "<defs><radialGradient id='g' cx='38%' cy='32%' r='72%'><stop offset='0' stop-color='#ffe3dc'/><stop offset='0.45' stop-color='#ff8a80'/><stop offset='1' stop-color='#d84343'/></radialGradient></defs>" +
+        "<path d='M19 10.5C16.5 7.5 12.8 7.2 10.5 8.6C12.4 11.1 15.8 11.8 19 10.5Z' fill='#5cbf60' stroke='#2e7d32' stroke-width='0.8' stroke-linejoin='round'/>" +
+        "<path d='M19.5 10.5C20.4 7.2 22.9 5.6 25.4 5.9C24.9 8.8 22.6 10.6 19.5 10.5Z' fill='#7dd17f' stroke='#2e7d32' stroke-width='0.8' stroke-linejoin='round'/>" +
+        "<circle cx='19' cy='23' r='12.5' fill='url(#g)' stroke='#8e2424' stroke-width='1.2'/>" +
+        "<ellipse cx='13.8' cy='17' rx='2.8' ry='1.6' fill='#ffffff' opacity='0.6' transform='rotate(-30 13.8 17)'/>" +
+        "<path d='M19 30C13.4 26.2 12.2 23.4 12.8 21.3C13.6 18.6 17.2 18.2 19 20.9C20.8 18.2 24.4 18.6 25.2 21.3C25.8 23.4 24.6 26.2 19 30Z' fill='#ffffff' stroke='#a32b2b' stroke-width='1.1' stroke-linejoin='round'/>" +
+        "<path d='M31.5 8.5V13.5M29 11H34' stroke='#ff8a80' stroke-width='1.5' stroke-linecap='round'/>" +
+        "<path d='M34.5 16V18.6M33.2 17.3H35.8' stroke='#ffb3ab' stroke-width='1.1' stroke-linecap='round'/>" +
+        "</svg>",
+    },
+    warm_berry: {
+      name: 'Warm Berry', minutes: 30, eggMult: 2,
+      effect: 'eggs in your incubator hatch twice as fast',
+      svg:
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'>" +
+        "<defs><radialGradient id='g' cx='38%' cy='32%' r='72%'><stop offset='0' stop-color='#fff1c4'/><stop offset='0.45' stop-color='#ff7a1a'/><stop offset='1' stop-color='#b8340a'/></radialGradient></defs>" +
+        "<path d='M19.5 10.4C19.8 7.2 22 5.2 25 4.9C24.8 7.9 22.6 10 19.5 10.4Z' fill='#5cbf60' stroke='#2e7d32' stroke-width='0.8' stroke-linejoin='round'/>" +
+        "<circle cx='19' cy='23' r='12.5' fill='url(#g)' stroke='#7a2200' stroke-width='1.2'/>" +
+        "<ellipse cx='13.8' cy='17' rx='2.8' ry='1.6' fill='#ffffff' opacity='0.6' transform='rotate(-30 13.8 17)'/>" +
+        "<path d='M19 31C14.6 31 12.6 28 13.4 24.8C14 22.4 16 21.4 16.2 18.4C18.6 19.6 19.6 21.8 19.4 23.4C20.4 22.6 21 21.4 21 20.2C23.8 22 25.4 24.8 24.8 27.4C24.2 29.6 22.2 31 19 31Z' fill='#ffd23f' stroke='#a33a00' stroke-width='1.1' stroke-linejoin='round'/>" +
+        "<path d='M19 30C17.2 30 16.2 28.8 16.6 27.2C16.9 26 18 25.4 18.4 24C20 25 21.4 26.6 21.2 28.2C21 29.4 20.2 30 19 30Z' fill='#fff6d6'/>" +
+        "<path d='M31 7.5Q29.4 9.5 31 11.5Q32.6 13.5 31 15.5M35 10Q33.6 11.8 35 13.6Q36.4 15.4 35 17.2' fill='none' stroke='#ff9a4a' stroke-width='1.4' stroke-linecap='round' opacity='0.85'/>" +
         "</svg>",
     },
   };
@@ -20673,12 +20704,16 @@
         }));
       } catch { /* best-effort */ }
     }
+    // Care / Warm Berry: the daycare / incubator count each meter twice.
+    const bonus = _activeBonus();
+    const daycareD = d * ((bonus && bonus.daycareMult) || 1);
+    const eggD = d * ((bonus && bonus.eggMult) || 1);
     const slots = readDaycareSlots();
     if (slots.length) {
       const ticks = [];
       for (const s of slots) {
         const before = Math.floor((s.distM || 0) / DAYCARE_LOOT_MILESTONE_M);
-        s.distM += d;
+        s.distM += daycareD;
         if (stepN > 0) s.steps = (s.steps || 0) + stepN;
         const after = Math.floor(s.distM / DAYCARE_LOOT_MILESTONE_M);
         if (after > before) {
@@ -20714,7 +20749,7 @@
         const before = eggIncubatedM(eggs[i]);
         const need = eggHatchM(eggs[i]);   // 10 km for legendary eggs
         if (before >= need) continue;
-        const after = Math.min(before + d, need);
+        const after = Math.min(before + eggD, need);
         if (after !== before) {
           eggs[i] = { ...eggs[i], incubatedM: after };
           eggsChanged = true;
