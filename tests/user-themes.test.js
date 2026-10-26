@@ -159,6 +159,17 @@ const good = {
 ok(/\.replace\(\/@A\/g, '[^']*html\[data-ui-style="aurora"\][^']*'\)/.test(creatures), '@A matches html[data-ui-style="aurora"]');
 ok(/\.replace\(\/@H\/g, '[^']*html\[data-ui-style="aurora"\][^']*'\)/.test(creatures), '@H matches html[data-ui-style="aurora"]');
 ok(/function _isAuroraTheme[\s\S]{0,300}data-ui-style/.test(creatures), '_isAuroraTheme honours data-ui-style');
+// The Aurora stylesheet must never set `filter`: an element has one, so a
+// theme filter replaces the app's functional ones (the unowned-pokémon
+// silhouettes' brightness(0) went missing that way), and filtered sprites
+// glitch on iOS WebKit.
+{
+  const s0 = creatures.indexOf("s.id = 'creature-styles-aurora';");
+  const s1 = creatures.indexOf('`.replace(/@A/g', s0);
+  const css = creatures.slice(s0, s1).replace(/\/\*[\s\S]*?\*\//g, '');
+  ok(s0 > 0 && s1 > s0, 'found the Aurora stylesheet');
+  ok(!/(^|[;{\s])filter\s*:/.test(css), 'the Aurora stylesheet sets no filter');
+}
 // index.html wiring
 ok(src.includes("window.CCUserThemes.applyAttrs(r, t)"), 'boot script sets data-ui-style');
 ok(src.includes("window.CCUserThemes.applyAttrs(document.documentElement, t)"), 'applyTheme sets data-ui-style');
