@@ -6117,8 +6117,10 @@
     if (trimmed) map[id] = trimmed; else delete map[id];
     localStorage.setItem('cc.creatureNicknames', JSON.stringify(map));
   }
-  function displayName(c) {
-    return readNicknames()[c.id] || c.name;
+  // `nicks`: a readNicknames() map read once by a caller looping over
+  // many creatures (each read is a localStorage get + JSON.parse).
+  function displayName(c, nicks) {
+    return (nicks || readNicknames())[c.id] || c.name;
   }
   function findCreature(id) {
     return getInventoryCreatures().find((c) => c.id === id) || null;
@@ -6301,19 +6303,27 @@
     return SORT_DIRS.has(v) ? v : 'desc';
   }
 
+  // Same ordering as String#localeCompare, without building a collator
+  // per comparison.
+  const _NAME_COLLATOR = new Intl.Collator();
   function sortedCreatures() {
     const t0 = performance.now();
     const key = readSortKey();
     const dir = readSortDir();
     const sign = dir === 'asc' ? 1 : -1;
-    const copy = getInventoryCreatures();
+    let copy = getInventoryCreatures();
+    if (key === 'name' || key === 'species') {
+      // Each name once, not per comparison: big collections (thousands of
+      // captures) re-read + re-parsed the nickname map ~70k times a sort,
+      // which made flipping the sort direction lag.
+      const nicks = key === 'name' ? readNicknames() : null;
+      const keyed = copy.map((c) => ({ c, k: nicks ? displayName(c, nicks) : c.name }));
+      keyed.sort((x, y) => sign * _NAME_COLLATOR.compare(x.k, y.k));
+      copy = keyed.map((e) => e.c);
+      _perfMark(_invPerf.fn.sortedCreatures, t0, { lastSize: copy.length });
+      return copy;
+    }
     copy.sort((a, b) => {
-      if (key === 'name') {
-        return sign * displayName(a).localeCompare(displayName(b));
-      }
-      if (key === 'species') {
-        return sign * a.name.localeCompare(b.name);
-      }
       if (key === 'recent') {
         const at = (a.caughtAt && a.caughtAt.timestamp) || 0;
         const bt = (b.caughtAt && b.caughtAt.timestamp) || 0;
@@ -20103,8 +20113,9 @@
     if (q) {
       // Match against both nickname (what the user sees) and species name,
       // so a renamed creature can still be found by its original name.
+      const nicks = readNicknames();
       items = items.filter((c) =>
-        displayName(c).toLowerCase().includes(q) ||
+        displayName(c, nicks).toLowerCase().includes(q) ||
         c.name.toLowerCase().includes(q));
     }
     // Type filters (mirror Pokédex). "Either" → any of the fusion's
@@ -20193,6 +20204,7 @@
     // live value is already correct on re-entry from a sub-view.
     _lastInventoryItems = items;
     const showLv = _showLevelSize();
+    const cardNicks = readNicknames();   // once per render, not per card
     const _tVirt = performance.now();
     virtualizeGrid({
       scrollEl: sheet,
@@ -20226,7 +20238,7 @@
           + `<img class="art-img" alt="">`
           + `</div>`
           + shinyBadgeHtml
-          + `<div class="name">${escapeHtml(displayName(c))}</div>`
+          + `<div class="name">${escapeHtml(displayName(c, cardNicks))}</div>`
           + statsHtml;
         return card;
       },
