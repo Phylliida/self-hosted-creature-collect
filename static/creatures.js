@@ -12838,6 +12838,8 @@
   }
 
   function showEggs() {
+    // Re-read art counts each visit (custom art can land mid-session).
+    _eggArtCounts.clear();
     pushView({ view: 'eggs' });
   }
 
@@ -12950,7 +12952,25 @@
     }
     return out;
   }
-  const EGG_FILTER_TAGS = ['New', 'Fresh'];
+  const EGG_FILTER_TAGS = ['New', 'Fresh', 'New Art?'];
+  // 'New Art?' chip: eggs that MIGHT hatch an art you don't own. A hatch
+  // picks one of the fusion's custom slots (_pickHatchVariant; autogen
+  // only when it has none), so an owned fusion qualifies while any slot
+  // is unowned, and New / Fresh eggs always do. Per-fusion art counts
+  // load async (Sprites.getCellVariantCountsBatch) into this map, which
+  // renderEggs fills and re-renders on; unknown counts pass meanwhile.
+  // (Byte-identical dupe sheets aren't folded in — hence the "?".)
+  const _eggArtCounts = new Map();   // 'a-b' → custom-art slot count
+  function _eggMayHatchNewArt(e, label) {
+    if (_isBadEgg(e) || _isSoloEgg(e)) return false;
+    if (label) return true;   // New / Fresh: every art is new
+    const count = _eggArtCounts.get(`${e.speciesA}-${e.speciesB}`);
+    if (count === undefined) return true;
+    const owned = _capStore.variantKeysForFusion(e.speciesA, e.speciesB);
+    if (!count) return !owned.has('auto');
+    for (let i = 0; i < count; i++) if (!owned.has(String(i))) return true;
+    return false;
+  }
   const EGGS_FILTER_SELECTORS = [
     '#eggsSearch', '#eggsSearchA', '#eggsSearchB',
     '#eggsFilterType', '#eggsFilterTypeA', '#eggsFilterTypeB',
@@ -13012,7 +13032,9 @@
     if (opts.tags && opts.tags.length) {
       // OR semantics — see readEggsTagFilter.
       const want = new Set(opts.tags);
-      out = out.filter((e) => want.has(labelOf(e)));
+      const newArt = want.has('New Art?');
+      out = out.filter((e) => want.has(labelOf(e))
+        || (newArt && _eggMayHatchNewArt(e, labelOf(e))));
     }
     const recent = (x, y) => (y.createdAt || 0) - (x.createdAt || 0);
     if (opts.sort === 'species') {
@@ -13255,6 +13277,23 @@
     // grid only; incubator occupants always show.
     updateFilterIndicators(panel, EGGS_FILTER_SELECTORS);
     _renderEggsTagFilterRow(panel);
+    const eggTags = readEggsTagFilter();
+    if (eggTags.includes('New Art?') && global.Sprites && global.Sprites.getCellVariantCountsBatch) {
+      // Fetch the art counts the 'New Art?' chip needs, then re-render.
+      const need = new Map();
+      for (const e of remainingEggs) {
+        if (_isBadEgg(e) || _isSoloEgg(e)) continue;
+        const k = `${e.speciesA}-${e.speciesB}`;
+        if (!_eggArtCounts.has(k)) need.set(k, [e.speciesA, e.speciesB]);
+      }
+      if (need.size) {
+        global.Sprites.getCellVariantCountsBatch([...need.values()]).then((counts) => {
+          for (const k of need.keys()) _eggArtCounts.set(k, counts.get(k) || 0);
+          const view = panel.querySelector('.eggs-view');
+          if (view && view.classList.contains('show')) renderEggs();
+        }, (e) => _logCreatureError('eggs/newArtCounts', e));
+      }
+    }
     const visibleEggs = _filterSortEggs(remainingEggs, {
       name: (panel.querySelector('#eggsSearch') || {}).value || '',
       qA: (panel.querySelector('#eggsSearchA') || {}).value || '',
@@ -13262,7 +13301,7 @@
       type: readEggsFilterType(),
       typeA: readEggsFilterTypeA(),
       typeB: readEggsFilterTypeB(),
-      tags: readEggsTagFilter(),
+      tags: eggTags,
       sort: readEggsSortKey(),
       dir: readEggsSortDir(),
       seenF,

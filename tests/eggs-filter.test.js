@@ -1,6 +1,6 @@
 // Tests the eggs-view toolbar logic (static/creatures.js):
 //   _filterSortEggs — name search, first/second species search, Either/
-//   First/Second type filters, New/Fresh tag chips (OR semantics), and
+//   First/Second type filters, New/Fresh/New Art? tag chips (OR semantics), and
 //   the "New" / "Species" sort orders.
 //
 // Run: node tests/eggs-filter.test.js
@@ -45,7 +45,12 @@ const ctx = {
   },
   // isFusionOwned now routes through the captures store's O(1) index —
   // stub it against the fixture array.
-  _capStore: { ownsFusion: (a, b) => captures.some((c) => c.speciesA === a && c.speciesB === b) },
+  _capStore: {
+    ownsFusion: (a, b) => captures.some((c) => c.speciesA === a && c.speciesB === b),
+    variantKeysForFusion: (a, b) => new Set(captures
+      .filter((c) => c.speciesA === a && c.speciesB === b)
+      .map((c) => (typeof c.variant === 'number' ? String(c.variant) : 'auto'))),
+  },
   readCapturedCreatures: () => captures,
   readSeenFusions: () => seen,
   fusionName: (a, b) => `F${a}x${b}`,
@@ -53,9 +58,10 @@ const ctx = {
   creatureTypes: () => ['PLAIN'],
 };
 vm.createContext(ctx);
+vm.runInContext('var _eggArtCounts = new Map();', ctx);
 for (const m of ['function caughtFusionsSet', 'function isFusionOwned',
                  'function newFreshLabelFor', 'function _isSoloEgg',
-                 'function _isBadEgg',
+                 'function _isBadEgg', 'function _eggMayHatchNewArt',
                  'function _eggName', 'function _eggTypes',
                  'function _filterSortEggs']) {
   vm.runInContext(extract(m), ctx);
@@ -105,6 +111,29 @@ ok(ids(run(withOpts({ tags: ['Fresh'] }))) === 'e2', 'C: Fresh chip → only cau
   ok(both.includes('e1') && both.includes('e2') && !both.includes('e3') && !both.includes('e4'),
     'C: both chips → OR (every unowned pair egg), not the empty AND');
 }
+
+// ── C2. New Art? chip ───────────────────────────────────────────
+// e3 (3-6) is owned on art slot 0. Unknown count → shown while it loads.
+reset();
+captures = [{ speciesA: 3, speciesB: 6, variant: 0 }];
+{
+  const r = ids(run(withOpts({ tags: ['New Art?'] })));
+  ok(r.includes('e1') && r.includes('e2') && r.includes('e3') && !r.includes('e4'),
+    'C2: New / Fresh always count; an unknown art count passes until it loads; solo never');
+}
+ctx._eggArtCounts.set('3-6', 1);
+ok(!ids(run(withOpts({ tags: ['New Art?'] }))).includes('e3'), 'C2: owning the only art → no new art');
+ctx._eggArtCounts.set('3-6', 3);
+ok(ids(run(withOpts({ tags: ['New Art?'] }))).includes('e3'), 'C2: 3 arts, own 1 → may hatch new art');
+captures.push({ speciesA: 3, speciesB: 6, variant: 1 }, { speciesA: 3, speciesB: 6, variant: 2 });
+ok(!ids(run(withOpts({ tags: ['New Art?'] }))).includes('e3'), 'C2: own all 3 → no new art');
+captures = [{ speciesA: 3, speciesB: 6, variant: 'auto' }];
+ctx._eggArtCounts.set('3-6', 0);
+ok(!ids(run(withOpts({ tags: ['New Art?'] }))).includes('e3'), 'C2: no custom art + own the autogen → no new art');
+ctx._eggArtCounts.set('3-6', 2);
+ok(ids(run(withOpts({ tags: ['New Art?'] }))).includes('e3'), 'C2: custom art you only own as autogen → new art');
+ok(ids(run(withOpts({ tags: ['New'] }))) === 'e1', 'C2: the New chip alone is unchanged');
+ctx._eggArtCounts.clear();
 
 // ── D. sort orders ──────────────────────────────────────────────
 reset();
