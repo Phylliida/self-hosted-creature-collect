@@ -249,24 +249,70 @@
     return arr;
   }
 
+  // Weekly type cycles through a deterministic shuffled permutation
+  // of TYPES — every TYPES.length weeks we exhaust the list, then
+  // re-shuffle (cycleIdx bumps, new permutation). Guarantees every
+  // type comes up once per cycle without back-to-back-week
+  // repetition skew that pure hashing produces.
+  function _weeklyTypeForWeek(weekIdx) {
+    const cycleLen = _weatherTypes().length;
+    const cycleIdx = Math.floor(weekIdx / cycleLen);
+    return shuffledTypesForCycle(cycleIdx)[goodMod(weekIdx, cycleLen)];
+  }
+  // The daily type before DAILY_BIAS_FROM_DAY: a plain per-day hash
+  // (could repeat soon, could equal the weekly).
+  function _hashedDailyType(dayIdx) {
+    const types = _weatherTypes();
+    return types[Math.floor(getxor4069((dayIdx ^ DAILY_SALT) | 0)() * types.length)];
+  }
+  // From DAILY_BIAS_FROM_DAY (a UTC day boundary, so no day changed
+  // type mid-day) each day's type is a weighted draw: weight = days
+  // since that type was last the daily type, and 0 for this week's
+  // weekly type (the daily never repeats the weekly). The longer a type
+  // hasn't come up, the likelier it gets. Still seeded per day, so every
+  // player sees the same chain: "last seen" starts from the hashed days
+  // before the cut-over and is replayed day by day from there, memoized
+  // (currentWeather runs per spawn tick).
+  const DAILY_BIAS_FROM_DAY = Math.floor(Date.UTC(2026, 9, 27) / DAY_MS);
+  const DAILY_BIAS_SEED_DAYS = 60;   // hashed days the history starts from
+  let _dailyMemo = null;             // { types, byDay: Map, lastSeen, next }
+  function _biasedDailyType(dayIdx) {
+    const types = _weatherTypes();
+    const hit = _dailyMemo && _dailyMemo.types === types && _dailyMemo.byDay.get(dayIdx);
+    if (hit) return hit;
+    if (!_dailyMemo || _dailyMemo.types !== types) {
+      const lastSeen = new Map(types.map((t) => [t, DAILY_BIAS_FROM_DAY - DAILY_BIAS_SEED_DAYS - 1]));
+      for (let d = DAILY_BIAS_FROM_DAY - DAILY_BIAS_SEED_DAYS; d < DAILY_BIAS_FROM_DAY; d++) {
+        lastSeen.set(_hashedDailyType(d), d);
+      }
+      _dailyMemo = { types, byDay: new Map(), lastSeen, next: DAILY_BIAS_FROM_DAY };
+    }
+    const m = _dailyMemo;
+    while (m.next <= dayIdx) {
+      const d = m.next;
+      const weekly = _weeklyTypeForWeek(Math.floor(d * DAY_MS / WEEK_MS));
+      let total = 0;
+      const w = types.map((t) => { const x = t === weekly ? 0 : d - m.lastSeen.get(t); total += x; return x; });
+      let r = getxor4069((d ^ DAILY_SALT) | 0)() * total;
+      let pick = types.find((t) => t !== weekly);
+      for (let i = 0; i < types.length; i++) {
+        if (!w[i]) continue;
+        r -= w[i];
+        if (r < 0) { pick = types[i]; break; }
+      }
+      m.lastSeen.set(pick, d);
+      m.byDay.set(d, pick);
+      m.next = d + 1;
+    }
+    return m.byDay.get(dayIdx);
+  }
+
   function currentWeather(nowMs) {
     const now = nowMs == null ? Date.now() : nowMs;
-    const types = _weatherTypes();
     const dayIdx = Math.floor(now / DAY_MS);
-    const weekIdx = Math.floor(now / WEEK_MS);
-    const dailyRng = getxor4069((dayIdx ^ DAILY_SALT) | 0);
-    // Weekly type cycles through a deterministic shuffled permutation
-    // of TYPES — every TYPES.length weeks we exhaust the list, then
-    // re-shuffle (cycleIdx bumps, new permutation). Guarantees every
-    // type comes up once per cycle without back-to-back-week
-    // repetition skew that pure hashing produces.
-    const cycleLen = types.length;
-    const cycleIdx = Math.floor(weekIdx / cycleLen);
-    const weekInCycle = goodMod(weekIdx, cycleLen);
-    const weeklyPerm = shuffledTypesForCycle(cycleIdx);
     return {
-      daily: types[Math.floor(dailyRng() * types.length)],
-      weekly: weeklyPerm[weekInCycle],
+      daily: dayIdx < DAILY_BIAS_FROM_DAY ? _hashedDailyType(dayIdx) : _biasedDailyType(dayIdx),
+      weekly: _weeklyTypeForWeek(Math.floor(now / WEEK_MS)),
     };
   }
 
@@ -2026,7 +2072,7 @@
 
   global.Spawns = {
     spawnsInBbox, generateCellAtTick, currentTick, isSpawnIdStale,
-    currentWeather, typeOdds, typePairOdds,
+    currentWeather, typeOdds, typePairOdds, DAILY_BIAS_FROM_DAY,
     // Legendary stream (folded into spawnsInBbox; exposed for tests +
     // any future legendary-specific UI).
     legendariesInBbox, generateLegendaryAtTick, currentLegTick,
