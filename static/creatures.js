@@ -11061,7 +11061,7 @@
       @A .family-toggle { padding: 9px 12px; font-size: 13px; }
 
       /* ---------- Primary CTAs: violet candy with a 3D lip ---------- */
-      @A :is(.bag-use, .daycare-convert-btn, .gift-send, .detail-gift-btn, .actions button.close,
+      @A :is(.bag-use, .daycare-convert-btn, .gift-send, .actions button.close,
              .craft-confirm-actions button, .tags-create button, .rename-form button[type="submit"]) {
         background: var(--au-cta) !important;
         color: #fff !important;
@@ -11073,7 +11073,7 @@
         box-shadow: 0 3px 0 var(--au-cta-lip), 0 10px 18px -8px rgba(var(--au-cta-glow-rgb), 0.75);
         transition: transform 90ms ease, box-shadow 90ms ease;
       }
-      @A :is(.bag-use, .daycare-convert-btn, .gift-send, .detail-gift-btn, .actions button.close,
+      @A :is(.bag-use, .daycare-convert-btn, .gift-send, .actions button.close,
              .craft-confirm-actions button, .tags-create button, .rename-form button[type="submit"]):active {
         transform: translateY(2px);
         box-shadow: 0 1px 0 var(--au-cta-lip), 0 4px 8px -4px rgba(var(--au-cta-glow-rgb), 0.6);
@@ -11083,7 +11083,17 @@
          the button's 3D lip + shadow below it. */
       @A .detail-view .actions { padding: 0 2px 10px; }
       @A .actions button.close { padding: 12px 14px; font-size: 15px; }
-      @A .detail-gift-btn { padding: 9px 18px; }
+      /* Send as a gift: the soft accent pill of "View dex entry", not a CTA. */
+      @A .detail-gift-btn {
+        padding: 7px 16px;
+        border: none; border-radius: 999px;
+        background: rgba(var(--au-accent-rgb), 0.10);
+        color: var(--au-violet-deep);
+        font-weight: 800;
+        box-shadow: none; text-shadow: none;
+      }
+      @A .detail-gift-btn:hover { background: rgba(var(--au-accent-rgb), 0.16); }
+      @A .detail-gift-btn:active { transform: scale(0.96); }
       @A :is(.bag-use, .daycare-convert-btn, .gift-send):disabled {
         background: var(--au-disabled) !important; color: var(--au-disabled-ink) !important; text-shadow: none;
         box-shadow: 0 2px 0 var(--au-disabled-lip) !important;
