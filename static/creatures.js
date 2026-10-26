@@ -10514,9 +10514,16 @@
         --au-violet-deep: #5b3ce0;
         --au-pink: #ff5fa2;
         --au-line: rgba(var(--au-accent-rgb), 0.14);
-        --au-cta: linear-gradient(180deg, #9d82ff 0%, #7c5cff 55%, #6a45f5 100%);
+        --au-cta: #7c5cff;
         --au-cta-lip: #4a2bc9;
-        --au-candy: linear-gradient(135deg, #8f6bff 0%, #c160ff 50%, #ff5fa2 100%);
+        --au-candy: #7c5cff;
+        /* Menu tile colours (outline + icon + label), deep enough for a light sheet. */
+        --au-t-tags: #0d9488;
+        --au-t-bag: #e8641e;
+        --au-t-daycare: #16a34a;
+        --au-t-eggs: #c08400;
+        --au-t-dex: #e11d48;
+        --au-t-stats: #7c3aed;
         --au-card-shadow: 0 1px 0 rgba(255,255,255,0.9) inset, 0 6px 16px -6px rgba(var(--au-shadow-rgb),0.28), 0 1px 3px rgba(var(--au-shadow-rgb),0.10);
         --au-card-shadow-hi: 0 1px 0 rgba(255,255,255,0.9) inset, 0 12px 24px -8px rgba(var(--au-shadow-rgb),0.38), 0 2px 5px rgba(var(--au-shadow-rgb),0.12);
         --au-accent-rgb: 124, 92, 255;
@@ -10577,6 +10584,12 @@
          violet) and a sprinkle of stars at the top of the sheet; cards
          are lit-from-above indigo slabs instead of white. */
       @N, @B, @O {
+        --au-t-tags: #2dd4bf;
+        --au-t-bag: #ff9a4d;
+        --au-t-daycare: #4ade80;
+        --au-t-eggs: #facc15;
+        --au-t-dex: #fb7185;
+        --au-t-stats: #a78bfa;
         --au-ink: #efeaff;
         --au-sub: #a59ed4;
         --au-violet: #a68eff;
@@ -10692,9 +10705,9 @@
         --au-violet-deep: #acd4ff;
         --au-pink: #5eead4;
         --au-line: rgba(90, 174, 255, 0.24);
-        --au-cta: linear-gradient(180deg, #5cabff 0%, #3b82f6 55%, #2f6fe0 100%);
+        --au-cta: #3b82f6;
         --au-cta-lip: #1d4fb8;
-        --au-candy: linear-gradient(135deg, #3b82f6 0%, #22b8e8 55%, #2dd4bf 100%);
+        --au-candy: #3b82f6;
         --au-surface: #12264a;
         --au-surface-hover: #172f5a;
         --au-tint: rgba(90, 174, 255, 0.16);
@@ -10757,9 +10770,9 @@
         --au-violet-deep: #acd4ff;
         --au-pink: #5eead4;
         --au-line: rgba(90, 174, 255, 0.20);
-        --au-cta: linear-gradient(180deg, #5cabff 0%, #3b82f6 55%, #2f6fe0 100%);
+        --au-cta: #3b82f6;
         --au-cta-lip: #1d4fb8;
-        --au-candy: linear-gradient(135deg, #3b82f6 0%, #22b8e8 55%, #2dd4bf 100%);
+        --au-candy: #3b82f6;
         --au-surface: #0a0f18;
         --au-surface-hover: #0f1624;
         --au-tint: rgba(90, 174, 255, 0.12);
@@ -10889,28 +10902,27 @@
 
       /* ---------- Menu tiles (Tags / Bag / Daycare / Eggs / Dex / Stats) ---------- */
       @A .header-actions { gap: 6px; margin: 4px 0 12px; flex-wrap: nowrap; }
+      /* Each tile: an outline, icon and label in its own colour, on the
+         background (six filled colours at once was too much). */
       @A .header-actions > button {
-        --tile: linear-gradient(160deg, #b9a6ff, #7c5cff);
-        --tile-lip: #5b3ce0;
-        --tile-glow: rgba(var(--au-accent-rgb), 0.45);
-        border: none; color: #fff; font-weight: 800;
-        background: var(--tile);
-        box-shadow: 0 3px 0 var(--tile-lip), 0 8px 14px -6px var(--tile-glow), inset 0 1px 0 rgba(255,255,255,0.55);
-        text-shadow: 0 1px 1px rgba(0, 0, 0, 0.18);
+        --tile-c: var(--au-violet);
+        border: 2px solid var(--tile-c); color: var(--tile-c); font-weight: 800;
+        background: transparent;
+        box-shadow: none; text-shadow: none;
         border-radius: 14px;
-        transition: transform 90ms ease, box-shadow 90ms ease;
+        transition: transform 90ms ease, background 90ms ease;
       }
-      @A .header-actions > button:hover { background: var(--tile); filter: brightness(1.05); }
+      @A .header-actions > button:hover { background: color-mix(in srgb, var(--tile-c) 10%, transparent); }
       @A .header-actions > button:active {
-        transform: translateY(2px);
-        box-shadow: 0 1px 0 var(--tile-lip), 0 3px 6px -3px var(--tile-glow), inset 0 1px 0 rgba(255,255,255,0.55);
+        transform: scale(0.96);
+        background: color-mix(in srgb, var(--tile-c) 16%, transparent);
       }
-      @A .header-actions .tags-link    { --tile: linear-gradient(160deg, #5eead4, #14b8a6); --tile-lip: #0d8f84; --tile-glow: rgba(20,184,166,0.5); }
-      @A .header-actions .bag-link     { --tile: linear-gradient(160deg, #ffc46b, #ff8a3d); --tile-lip: #d9621c; --tile-glow: rgba(255,138,61,0.5); }
-      @A .header-actions .daycare-link { --tile: linear-gradient(160deg, #86efac, #22c55e); --tile-lip: #15964a; --tile-glow: rgba(34,197,94,0.5); }
-      @A .header-actions .eggs-link    { --tile: linear-gradient(160deg, #fde68a, #f5b301); --tile-lip: #c98a00; --tile-glow: rgba(245,179,1,0.5); }
-      @A .header-actions .pokedex-link { --tile: linear-gradient(160deg, #ff9db0, #f43f5e); --tile-lip: #c42443; --tile-glow: rgba(244,63,94,0.5); }
-      @A .header-actions .stats-link   { --tile: linear-gradient(160deg, #c4b5fd, #8b5cf6); --tile-lip: #6a3be0; --tile-glow: rgba(139,92,246,0.5); }
+      @A .header-actions .tags-link    { --tile-c: var(--au-t-tags); }
+      @A .header-actions .bag-link     { --tile-c: var(--au-t-bag); }
+      @A .header-actions .daycare-link { --tile-c: var(--au-t-daycare); }
+      @A .header-actions .eggs-link    { --tile-c: var(--au-t-eggs); }
+      @A .header-actions .pokedex-link { --tile-c: var(--au-t-dex); }
+      @A .header-actions .stats-link   { --tile-c: var(--au-t-stats); }
       /* Aurora renders each action as icon + label (see renderHeaderActions). */
       @A .header-actions.au-tiles > button {
         flex: 1 1 0; min-width: 0;
@@ -10920,7 +10932,6 @@
       }
       @A .header-actions.au-tiles > button svg {
         width: 22px; height: 22px; stroke-width: 2.3;
-        filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.18));
       }
       @A .header-actions.au-tiles .au-lb { display: block; line-height: 1; }
       @A .header-actions-text > button { padding: 7px 10px; font-size: 12.5px; }
@@ -11036,13 +11047,13 @@
         font-weight: 800;
         letter-spacing: 0.01em;
         text-shadow: 0 1px 1px rgba(40, 20, 120, 0.35);
-        box-shadow: 0 3px 0 var(--au-cta-lip), 0 10px 18px -8px rgba(var(--au-cta-glow-rgb), 0.75), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+        box-shadow: 0 3px 0 var(--au-cta-lip), 0 10px 18px -8px rgba(var(--au-cta-glow-rgb), 0.75);
         transition: transform 90ms ease, box-shadow 90ms ease;
       }
       @A :is(.bag-use, .daycare-convert-btn, .gift-send, .detail-gift-btn, .actions button.close,
              .craft-confirm-actions button, .tags-create button, .rename-form button[type="submit"]):active {
         transform: translateY(2px);
-        box-shadow: 0 1px 0 var(--au-cta-lip), 0 4px 8px -4px rgba(var(--au-cta-glow-rgb), 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+        box-shadow: 0 1px 0 var(--au-cta-lip), 0 4px 8px -4px rgba(var(--au-cta-glow-rgb), 0.6);
       }
       @A .bag-use { padding: 6px 14px; font-size: 12.5px; }
       /* Post-catch Done: the detail view clips overflow, so leave room for
@@ -11166,8 +11177,8 @@
         background: linear-gradient(90deg, rgba(var(--au-accent-rgb), 0.25), transparent);
       }
       @A .bag-incense-banner {
-        border: 2px solid transparent;
-        background: linear-gradient(var(--au-surface), var(--au-surface)) padding-box, var(--au-candy) border-box;
+        border: 2px solid var(--au-violet);
+        background: var(--au-surface);
       }
       @A .egg-tile { border-color: transparent; }
       @A .incubator-slot { border: 2px dashed rgba(var(--au-accent-rgb), 0.22); }
@@ -11183,11 +11194,11 @@
       }
       @A .evo-row .evo-name { font-weight: 700; }
       @A .evo-row.evo-ready {
-        border: 2px solid transparent;
-        background: linear-gradient(var(--au-surface), var(--au-surface)) padding-box, var(--au-candy) border-box;
-        box-shadow: 0 10px 20px -10px rgba(var(--au-glow-rgb), 0.9);
+        border: 2px solid var(--au-violet);
+        background: var(--au-surface);
+        box-shadow: var(--au-card-shadow);
       }
-      @A .evo-row.evo-ready::after { color: var(--au-pink); }
+      @A .evo-row.evo-ready::after { color: var(--au-violet); }
       @A .family-cell { border-radius: 14px; }
       @A .variant-cell { border-color: transparent; border-radius: 16px; }
       @A .st-card { border-color: transparent; border-radius: 22px; }
@@ -11256,13 +11267,6 @@
         color: var(--au-sub); font-weight: 600;
       }
 
-      /* OLED: black silhouettes (unseen pokémon) vanish on near-black
-         stages, so draw them as a dim grey shape instead. */
-      @O :is(.silhouette img, .evo-row.silhouette .evo-art img, .family-cell.silhouette img,
-             .speciesdex-cell.silhouette img, .glitch-art img.silhouette, .packdex-mon img.silhouette) {
-        filter: brightness(0) invert(1) opacity(0.3);
-      }
-      @O .variant-cell.silhouette img { filter: brightness(0) invert(1) opacity(0.26); }
 
       @media (prefers-reduced-motion: reduce) {
         @A * { transition: none !important; }
