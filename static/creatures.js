@@ -10581,17 +10581,17 @@
         --au-disabled-ink: #a49dc4;
         --au-disabled-lip: #d5cdef;
         --au-sheet-edge: rgba(255, 255, 255, 0.75);
+        /* One glow, in the theme's second colour, fading down from the top
+           (never the accent / POI colour). */
         --au-sheet-bg:
-          radial-gradient(90% 150px at 0% 0%, rgba(255, 143, 199, 0.42), transparent 70%),
-          radial-gradient(90% 160px at 100% 0%, rgba(110, 196, 255, 0.45), transparent 70%),
-          radial-gradient(70% 140px at 50% 0%, rgba(157, 123, 255, 0.40), transparent 75%),
-          linear-gradient(180deg, #efe9ff 0px, #f6f3ff 240px, #f6f3ff 100%);
+          linear-gradient(180deg, rgba(232, 53, 138, 0.22) 0px, rgba(232, 53, 138, 0) 230px),
+          #f6f3ff;
         --au-sheet-shadow:
           0 40px 80px -20px rgba(28, 12, 90, 0.65),
           0 0 0 1px rgba(var(--au-accent-rgb), 0.10),
           inset 0 1px 0 rgba(255, 255, 255, 0.95);
         --au-backdrop:
-          radial-gradient(120% 90% at 50% 0%, rgba(var(--au-accent-rgb), 0.28), transparent 60%),
+          radial-gradient(120% 90% at 50% 0%, rgba(232, 53, 138, 0.22), transparent 60%),
           rgba(20, 12, 54, 0.55);
         --au-font: ui-rounded, "SF Pro Rounded", "Nunito", "Quicksand", "Varela Round", system-ui, -apple-system, "Segoe UI", sans-serif;
         background: var(--au-backdrop);
@@ -10653,9 +10653,7 @@
           radial-gradient(1.2px 1.2px at 89% 96px, rgba(255,255,255,0.7), transparent),
           radial-gradient(1px 1px at 6% 118px, rgba(255,255,255,0.55), transparent),
           radial-gradient(1px 1px at 45% 110px, rgba(255,255,255,0.5), transparent),
-          radial-gradient(90% 180px at 0% 0%, rgba(45, 212, 191, 0.30), transparent 70%),
-          radial-gradient(90% 190px at 100% 0%, rgba(167, 139, 250, 0.42), transparent 70%),
-          radial-gradient(70% 150px at 55% 0%, rgba(74, 222, 128, 0.18), transparent 75%),
+          linear-gradient(180deg, rgba(255, 122, 184, 0.22) 0px, rgba(255, 122, 184, 0) 230px),
           linear-gradient(180deg, #1e1849 0px, #16123c 260px, #130f33 100%);
         --au-sheet-shadow:
           0 40px 80px -20px rgba(0, 0, 0, 0.85),
@@ -10663,8 +10661,7 @@
           0 0 60px -20px rgba(var(--au-accent-rgb), 0.45),
           inset 0 1px 0 rgba(255, 255, 255, 0.10);
         --au-backdrop:
-          radial-gradient(120% 90% at 50% 0%, rgba(80, 200, 180, 0.16), transparent 55%),
-          radial-gradient(120% 90% at 50% 0%, rgba(var(--au-accent-rgb), 0.24), transparent 65%),
+          radial-gradient(120% 90% at 50% 0%, rgba(255, 122, 184, 0.16), transparent 60%),
           rgba(4, 3, 18, 0.72);
       }
 
@@ -10761,9 +10758,7 @@
           radial-gradient(1.2px 1.2px at 89% 96px, rgba(255,255,255,0.7), transparent),
           radial-gradient(1px 1px at 6% 118px, rgba(255,255,255,0.55), transparent),
           radial-gradient(1px 1px at 45% 110px, rgba(255,255,255,0.5), transparent),
-          radial-gradient(90% 180px at 0% 0%, rgba(45, 212, 191, 0.30), transparent 70%),
-          radial-gradient(90% 190px at 100% 0%, rgba(56, 160, 248, 0.42), transparent 70%),
-          radial-gradient(70% 150px at 55% 0%, rgba(74, 222, 128, 0.16), transparent 75%),
+          linear-gradient(180deg, rgba(45, 212, 191, 0.22) 0px, rgba(45, 212, 191, 0) 230px),
           linear-gradient(180deg, #0f2147 0px, #0b1a3a 260px, #091631 100%);
         --au-sheet-shadow:
           0 40px 80px -20px rgba(0, 0, 0, 0.85),
@@ -10771,8 +10766,7 @@
           0 0 60px -20px rgba(59, 130, 246, 0.45),
           inset 0 1px 0 rgba(255, 255, 255, 0.10);
         --au-backdrop:
-          radial-gradient(120% 90% at 50% 0%, rgba(45, 212, 191, 0.14), transparent 55%),
-          radial-gradient(120% 90% at 50% 0%, rgba(59, 130, 246, 0.24), transparent 65%),
+          radial-gradient(120% 90% at 50% 0%, rgba(45, 212, 191, 0.16), transparent 60%),
           rgba(2, 6, 20, 0.72);
         --au-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M1.5 3.5L5 7l3.5-3.5' fill='none' stroke='%235aaeff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
         --au-magnifier: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%237f9fcf' stroke-width='2.6' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-4-4'/%3E%3C/svg%3E");

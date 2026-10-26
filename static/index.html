@@ -3464,13 +3464,13 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
         warn: d ? mix(c.panel, '#ffb020', 0.12) : '#fff3dc',
         disabled: mix(c.text, c.panel, 0.86), 'disabled-ink': mix(c.text, c.panel, 0.55), 'disabled-lip': mix(c.text, c.panel, 0.8),
         'sheet-edge': d ? rgba(a, 0.16) : 'rgba(255, 255, 255, 0.75)',
-        'sheet-bg': 'radial-gradient(90% 170px at 0% 0%, ' + rgba(c.accent2, d ? 0.26 : 0.3) + ', transparent 70%), '
-          + 'radial-gradient(90% 180px at 100% 0%, ' + rgba(a, d ? 0.32 : 0.3) + ', transparent 70%), '
-          + 'linear-gradient(180deg, ' + mix(c.panel, a, d ? 0.1 : 0.06) + ' 0px, ' + c.panel + ' 240px, ' + c.panel + ' 100%)',
+        // One glow in Accent 2 fading down from the top (never the accent /
+        // POI colour), over the flat panel colour.
+        'sheet-bg': 'linear-gradient(180deg, ' + rgba(c.accent2, d ? 0.22 : 0.24) + ' 0px, ' + rgba(c.accent2, 0) + ' 230px), ' + c.panel,
         'sheet-shadow': d
           ? '0 40px 80px -20px rgba(0, 0, 0, 0.85), 0 0 0 1px ' + rgba(a, 0.14) + ', inset 0 1px 0 rgba(255, 255, 255, 0.08)'
           : '0 40px 80px -20px ' + rgba(shadow, 0.6) + ', 0 0 0 1px ' + rgba(a, 0.1) + ', inset 0 1px 0 rgba(255, 255, 255, 0.95)',
-        backdrop: d ? 'rgba(0, 0, 0, 0.65)' : rgba(mix(a, '#000000', 0.8), 0.5),
+        backdrop: d ? 'rgba(0, 0, 0, 0.65)' : rgba(mix(c.accent2, '#000000', 0.8), 0.5),
         chevron: svg("<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'><path d='M1.5 3.5L5 7l3.5-3.5' fill='none' stroke='" + a + "' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/></svg>"),
         magnifier: svg("<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='" + mix(c.text, c.panel, 0.45) + "' stroke-width='2.6' stroke-linecap='round'><circle cx='11' cy='11' r='7'/><path d='M20 20l-4-4'/></svg>"),
       };
