@@ -8983,7 +8983,7 @@ function fmtDate(ts) {
       const v = u.c[sw.dataset.k];
       sw.querySelector('.te-dot').style.background = v;
       const input = sw.querySelector('input');
-      if (document.activeElement !== input) input.value = v;
+      if (document.activeElement !== input) teSetPicker(input, v);
     });
     const slot = teEl.querySelector(`.te-slot[data-id="${u.id}"] .te-dots`);
     if (slot) slot.innerHTML = ['panel', 'accent', 'land', 'water'].map(k => `<i style="background:${u.c[k]}"></i>`).join('');
@@ -9033,15 +9033,27 @@ function fmtDate(ts) {
     teEl.setAttribute('aria-hidden', 'true');
   }
 
+  // Some phone webviews open the native picker from the input's default
+  // value (the attribute), not .value — set both, or it starts at black.
+  function teSetPicker(input, v) {
+    input.defaultValue = v;
+    input.value = v;
+  }
   // Swatches (built once): a dot with the native picker laid over it.
   for (const sw of TE_SWATCHES) {
     const el = document.createElement('label');
     el.className = 'te-sw';
     el.dataset.k = sw.k;
     el.innerHTML = `<span class="te-dot"></span><input type="color" aria-label="${sw.label}"><span>${sw.label}</span>`;
-    el.querySelector('input').addEventListener('input', (e) => {
+    const input = el.querySelector('input');
+    input.addEventListener('input', (e) => {
       const v = e.target.value;
       teEdit(u => { u.c[sw.k] = v; });
+    });
+    // Re-sync right before the picker opens so it starts on the swatch's colour.
+    input.addEventListener('pointerdown', () => {
+      const u = teCur();
+      if (u) teSetPicker(input, u.c[sw.k]);
     });
     teEl.querySelector(`.te-swatches[data-group="${sw.group}"]`).appendChild(el);
   }
