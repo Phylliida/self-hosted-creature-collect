@@ -63,7 +63,9 @@
      in index.html; only positioning lives here. */
   #extrasPanel button.close.cc-x-btn { position: absolute; top: 8px; }
   #extrasPanel #extrasXClose { right: 8px; }
-  #extrasPanel #extrasBack { left: 8px; font-size: 22px; }
+  /* The back arrow matches the creature panel's: the same glyph and size.
+     It always shows: from the bubble grid it goes back to Settings. */
+  #extrasPanel #extrasBack { left: 8px; font-size: 22px; padding: 0; }
   /* Input/select theming. Restated here rather than joining the
      shared index.html rule because that one only covers text/number
      inputs and we also have type="time" / type="date". */
@@ -508,7 +510,7 @@
   // ────────────────────────────────────────────────────────────
   const PANEL_HTML = `
   <div class="sheet">
-    <button class="close cc-x-btn" id="extrasBack" type="button" aria-label="back" hidden>&lsaquo;</button>
+    <button class="close cc-x-btn" id="extrasBack" type="button" aria-label="back">&larr;</button>
     <button class="close cc-x-btn" id="extrasXClose" type="button" aria-label="close">&times;</button>
     <h3 id="extrasTitle">Extras</h3>
     <div id="extrasBubbles">
@@ -1159,7 +1161,6 @@
   function showBubbles() {
     curTool = null;
     title.textContent = 'Extras';
-    backBtn.hidden = true;
     bubbles.hidden = false;
     panel.classList.remove('extras-tall');
     for (const t of Object.values(tools)) { if (t.el) t.el.hidden = true; }
@@ -1169,7 +1170,6 @@
     if (!t) return;
     curTool = id;
     title.textContent = t.name;
-    backBtn.hidden = false;
     bubbles.hidden = true;
     panel.classList.toggle('extras-tall', !!t.tall);
     for (const [tid, tt] of Object.entries(tools)) { if (tt.el) tt.el.hidden = (tid !== id); }
@@ -1181,10 +1181,12 @@
   };
   const closeExtras = () => panel.classList.remove('show');
   $('extrasXClose').onclick = closeExtras;
-  // back steps up one level: game -> Games list -> bubble grid
+  // back steps up one level: game -> Games list -> bubble grid -> Settings
+  // (Settings sits underneath, so closing Extras is the step back).
   backBtn.onclick = () => {
     if (curTool && toolParent[curTool]) showTool(toolParent[curTool]);
-    else showBubbles();
+    else if (curTool) showBubbles();
+    else closeExtras();
   };
   panel.addEventListener('click', (e) => {
     if (e.target === panel) closeExtras();
