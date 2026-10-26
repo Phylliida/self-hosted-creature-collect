@@ -10917,12 +10917,15 @@
         transform: scale(0.96);
         background: color-mix(in srgb, var(--tile-c) 16%, transparent);
       }
-      @A .header-actions .tags-link    { --tile-c: var(--au-t-tags); }
-      @A .header-actions .bag-link     { --tile-c: var(--au-t-bag); }
-      @A .header-actions .daycare-link { --tile-c: var(--au-t-daycare); }
-      @A .header-actions .eggs-link    { --tile-c: var(--au-t-eggs); }
-      @A .header-actions .pokedex-link { --tile-c: var(--au-t-dex); }
-      @A .header-actions .stats-link   { --tile-c: var(--au-t-stats); }
+      /* --au-t-mix softens all six evenly: each colour is blended toward
+         the card surface (lower = calmer). */
+      @A .header-actions { --au-t-mix: 80%; }
+      @A .header-actions .tags-link    { --tile-c: color-mix(in srgb, var(--au-t-tags) var(--au-t-mix), var(--au-surface)); }
+      @A .header-actions .bag-link     { --tile-c: color-mix(in srgb, var(--au-t-bag) var(--au-t-mix), var(--au-surface)); }
+      @A .header-actions .daycare-link { --tile-c: color-mix(in srgb, var(--au-t-daycare) var(--au-t-mix), var(--au-surface)); }
+      @A .header-actions .eggs-link    { --tile-c: color-mix(in srgb, var(--au-t-eggs) var(--au-t-mix), var(--au-surface)); }
+      @A .header-actions .pokedex-link { --tile-c: color-mix(in srgb, var(--au-t-dex) var(--au-t-mix), var(--au-surface)); }
+      @A .header-actions .stats-link   { --tile-c: color-mix(in srgb, var(--au-t-stats) var(--au-t-mix), var(--au-surface)); }
       /* Aurora renders each action as icon + label (see renderHeaderActions). */
       @A .header-actions.au-tiles > button {
         flex: 1 1 0; min-width: 0;
