@@ -58,10 +58,10 @@ const ctx = {
   creatureTypes: () => ['PLAIN'],
 };
 vm.createContext(ctx);
-vm.runInContext('var _eggArtCounts = new Map();', ctx);
+vm.runInContext('var _eggArtCounts = new Map(); var _eggArtCanon = null;', ctx);
 for (const m of ['function caughtFusionsSet', 'function isFusionOwned',
                  'function newFreshLabelFor', 'function _isSoloEgg',
-                 'function _isBadEgg', 'function _eggMayHatchNewArt',
+                 'function _isBadEgg', 'function _distinctArt', 'function _eggMayHatchNewArt',
                  'function _eggName', 'function _eggTypes',
                  'function _filterSortEggs']) {
   vm.runInContext(extract(m), ctx);
@@ -119,7 +119,7 @@ captures = [{ speciesA: 3, speciesB: 6, variant: 0 }];
 {
   const r = ids(run(withOpts({ tags: ['New Art?'] })));
   ok(r.includes('e1') && r.includes('e2') && r.includes('e3') && !r.includes('e4'),
-    'C2: New / Fresh always count; an unknown art count passes until it loads; solo never');
+    'C2: unknown art counts pass until they load; solo never');
 }
 ctx._eggArtCounts.set('3-6', 1);
 ok(!ids(run(withOpts({ tags: ['New Art?'] }))).includes('e3'), 'C2: owning the only art → no new art');
@@ -133,6 +133,25 @@ ok(!ids(run(withOpts({ tags: ['New Art?'] }))).includes('e3'), 'C2: no custom ar
 ctx._eggArtCounts.set('3-6', 2);
 ok(ids(run(withOpts({ tags: ['New Art?'] }))).includes('e3'), 'C2: custom art you only own as autogen → new art');
 ok(ids(run(withOpts({ tags: ['New'] }))) === 'e1', 'C2: the New chip alone is unchanged');
+// Fresh (e2, 2-5: caught once, none owned now) only counts with custom art;
+// autogen-only never counts unless the egg is New (e1, 1-4).
+ctx._eggArtCounts.set('2-5', 0);
+ctx._eggArtCounts.set('1-4', 0);
+{
+  const r = ids(run(withOpts({ tags: ['New Art?'] })));
+  ok(!r.includes('e2'), 'C2: Fresh + autogen only → no new art');
+  ok(r.includes('e1'), 'C2: New always counts, even autogen only');
+}
+ctx._eggArtCounts.set('2-5', 2);
+ok(ids(run(withOpts({ tags: ['New Art?'] }))).includes('e2'), 'C2: Fresh with custom art → may hatch new art');
+// Copies: slots 0 and 2 are the same picture. Own slots 0 and 1 → every
+// distinct picture owned.
+captures = [{ speciesA: 3, speciesB: 6, variant: 0 }, { speciesA: 3, speciesB: 6, variant: 1 }];
+ctx._eggArtCounts.set('3-6', 3);
+ok(ids(run(withOpts({ tags: ['New Art?'] }))).includes('e3'), 'C2: without the copy table, slot 2 still looks new');
+vm.runInContext("_eggArtCanon = (a, b) => (a === 3 && b === 6 ? [0, 1, 0] : null);", ctx);
+ok(!ids(run(withOpts({ tags: ['New Art?'] }))).includes('e3'), 'C2: a copy of an owned picture isn\'t new art');
+vm.runInContext('_eggArtCanon = null;', ctx);
 ctx._eggArtCounts.clear();
 
 // ── D. sort orders ──────────────────────────────────────────────

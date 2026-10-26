@@ -13059,23 +13059,25 @@
     return out;
   }
   const EGG_FILTER_TAGS = ['New', 'Fresh', 'New Art?'];
-  // 'New Art?' chip: eggs that MIGHT hatch an art you don't own. A hatch
-  // picks one of the fusion's custom slots (_pickHatchVariant; autogen
-  // only when it has none), so an owned fusion qualifies while any slot
-  // is unowned, and New / Fresh eggs always do. Per-fusion art counts
-  // load async (Sprites.getCellVariantCountsBatch) into this map, which
+  // 'New Art?' chip: eggs that MIGHT hatch a hand-drawn art you don't
+  // own. A hatch picks one of the fusion's custom slots (_pickHatchVariant),
+  // so an egg qualifies while one of its pictures isn't in your
+  // collection — copies of one picture under several slots count once
+  // (_distinctArt, via Sprites.getArtCanon). Autogen-only fusions and ones
+  // whose every picture you own don't; New eggs (never caught) always do.
+  // Per-fusion art counts + the copy table load async into these, which
   // renderEggs fills and re-renders on; unknown counts pass meanwhile.
-  // (Byte-identical dupe sheets aren't folded in — hence the "?".)
   const _eggArtCounts = new Map();   // 'a-b' → custom-art slot count
+  let _eggArtCanon = null;           // Sprites.getArtCanon's lookup, once loaded
   function _eggMayHatchNewArt(e, label) {
     if (_isBadEgg(e) || _isSoloEgg(e)) return false;
-    if (label) return true;   // New / Fresh: every art is new
+    if (label === 'New') return true;
     const count = _eggArtCounts.get(`${e.speciesA}-${e.speciesB}`);
     if (count === undefined) return true;
+    if (!count) return false;   // autogen only
     const owned = _capStore.variantKeysForFusion(e.speciesA, e.speciesB);
-    if (!count) return !owned.has('auto');
-    for (let i = 0; i < count; i++) if (!owned.has(String(i))) return true;
-    return false;
+    const d = _distinctArt(count, _eggArtCanon && _eggArtCanon(e.speciesA, e.speciesB), owned);
+    return d.seen < d.total;
   }
   const EGGS_FILTER_SELECTORS = [
     '#eggsSearch', '#eggsSearchA', '#eggsSearchB',
@@ -13392,11 +13394,18 @@
         const k = `${e.speciesA}-${e.speciesB}`;
         if (!_eggArtCounts.has(k)) need.set(k, [e.speciesA, e.speciesB]);
       }
-      if (need.size) {
-        global.Sprites.getCellVariantCountsBatch([...need.values()]).then((counts) => {
-          for (const k of need.keys()) _eggArtCounts.set(k, counts.get(k) || 0);
+      const needCanon = !_eggArtCanon && global.Sprites.getArtCanon;
+      if (need.size || needCanon) {
+        Promise.all([
+          need.size ? global.Sprites.getCellVariantCountsBatch([...need.values()]) : null,
+          needCanon ? global.Sprites.getArtCanon().catch(() => null) : null,
+        ]).then(([counts, canon]) => {
+          for (const k of need.keys()) _eggArtCounts.set(k, (counts && counts.get(k)) || 0);
+          if (canon) _eggArtCanon = canon;
+          // Re-render only if something new arrived (a null canon stays
+          // null — don't loop on it).
           const view = panel.querySelector('.eggs-view');
-          if (view && view.classList.contains('show')) renderEggs();
+          if ((need.size || canon) && view && view.classList.contains('show')) renderEggs();
         }, (e) => _logCreatureError('eggs/newArtCounts', e));
       }
     }
