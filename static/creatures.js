@@ -2455,9 +2455,12 @@
     const slotEl = pill.closest('.daycare-slot[data-id]');
     if (!slotEl) return;
     const slotId = slotEl.dataset.id;
-    const n = parseInt(pill.dataset.n, 10);
-    if (!Number.isFinite(n)) return;
-    const granted = claimDaycareLoot(slotId, n);
+    // A stacked pill (see _daycareLootStacks) claims all its milestones.
+    const ns = (pill.dataset.ns || pill.dataset.n || '').split(',')
+      .map((x) => parseInt(x, 10)).filter(Number.isFinite);
+    if (!ns.length) return;
+    let granted = 0;
+    for (const n of ns) if (claimDaycareLoot(slotId, n)) granted++;
     if (!granted) return;
     pill.classList.add('claimed');
     let removed = false;
@@ -2486,15 +2489,45 @@
     if (!visible.length) {
       return `<div class="daycare-slot-loot" aria-label="no daycare loot ready"></div>`;
     }
-    const pills = visible.map(({ n, loot }) => {
-      const style = _lootIconStyle(loot);
-      const cls = `daycare-loot-pill loot-kind-${loot.kind}${loot.bad ? ' loot-bad' : ''}`;
-      return `<button class="${cls}" type="button" data-n="${n}" `
-        + `style="${style}" `
-        + `title="${escapeHtml(loot.label)}" `
-        + `aria-label="claim ${escapeHtml(loot.label)}"></button>`;
-    }).join('');
+    const pills = _daycareLootStacks(visible)
+      .map(({ ns, loot }) => _daycareLootPillHtml(ns, loot)).join('');
     return `<div class="daycare-slot-loot">${pills}</div>`;
+  }
+  // Identical rewards share one pill with a ×N badge (the same candy, the
+  // same evolution item); eggs never stack (each has its own size).
+  function _daycareLootStackKey(loot) {
+    if (!loot || loot.kind === 'egg') return null;
+    if (loot.kind === 'candy') return 'candy:' + (loot.solo ? 'solo:' + loot.solo : loot.species);
+    if (loot.kind === 'evo_item') return 'evo:' + loot.itemKey;
+    return loot.kind + ':' + loot.label;
+  }
+  // [{ n, loot }] → [{ ns, loot }] in first-earned order.
+  function _daycareLootStacks(visible) {
+    const out = [];
+    const byKey = new Map();
+    for (const { n, loot } of visible) {
+      const key = _daycareLootStackKey(loot);
+      const stack = key && byKey.get(key);
+      if (stack) { stack.ns.push(n); continue; }
+      const fresh = { ns: [n], loot };
+      out.push(fresh);
+      if (key) byKey.set(key, fresh);
+    }
+    return out;
+  }
+  function _daycareLootCountHtml(count) {
+    return count > 1 ? `<span class="daycare-loot-count" aria-hidden="true">${count}&times;</span>` : '';
+  }
+  function _daycareLootPillHtml(ns, loot) {
+    const style = _lootIconStyle(loot);
+    const cls = `daycare-loot-pill loot-kind-${loot.kind}${loot.bad ? ' loot-bad' : ''}`;
+    const key = _daycareLootStackKey(loot);
+    return `<button class="${cls}" type="button" data-n="${ns[0]}" data-ns="${ns.join(',')}" `
+      + (key ? `data-key="${escapeHtml(key)}" ` : '')
+      + `style="${style}" `
+      + `title="${escapeHtml(loot.label)}" `
+      + `aria-label="claim ${escapeHtml((ns.length > 1 ? ns.length + '× ' : '') + loot.label)}">`
+      + _daycareLootCountHtml(ns.length) + `</button>`;
   }
 
 
@@ -7834,6 +7867,18 @@
          are clipped by the row's overflow:hidden. */
       #creatureInventory .daycare-loot-pill.appearing {
         animation: daycare-loot-slide-in 320ms ease forwards;
+      }
+      /* ×N on a stacked pill (same candy / item earned more than once).
+         Inside the pill's corner: the pill clips its overflow so the
+         claim animation can collapse it. */
+      #creatureInventory .daycare-loot-pill { position: relative; }
+      #creatureInventory .daycare-loot-count {
+        position: absolute; top: 0; right: 0;
+        padding: 0 2px; border-radius: 4px;
+        font-size: 9px; font-weight: 700; line-height: 11px; color: #fff;
+        background: var(--ui-accent, #888);
+        box-shadow: 0 0 0 1px rgba(255,255,255,0.9);
+        pointer-events: none;
       }
       /* Bad Egg pills: same monochrome treatment as the egg grid. */
       #creatureInventory .daycare-loot-pill.loot-bad {
@@ -17400,16 +17445,22 @@
           if ((slot.claimed || []).includes(n)) continue;
           const loot = _daycareLootAt(slot, n);
           if (!loot) continue;
-          if (row.querySelector(`.daycare-loot-pill[data-n="${n}"]`)) continue;
-          const pill = document.createElement('button');
-          pill.type = 'button';
-          pill.className = `daycare-loot-pill loot-kind-${loot.kind}${loot.bad ? ' loot-bad' : ''} appearing`;
-          pill.dataset.n = String(n);
-          pill.title = loot.label;
-          pill.setAttribute('aria-label', `claim ${loot.label}`);
-          // Inline background style mirrors what _daycareLootRowHtml
-          // emits for cells that already exist at render time.
-          pill.style.cssText = _lootIconStyle(loot);
+          const pills = Array.from(row.querySelectorAll('.daycare-loot-pill:not(.claimed)'));
+          if (pills.some((p) => (p.dataset.ns || p.dataset.n || '').split(',').includes(String(n)))) continue;
+          // Same reward as a pill already showing: bump its ×N badge.
+          const key = _daycareLootStackKey(loot);
+          const stack = key && pills.find((p) => p.dataset.key === key);
+          if (stack) {
+            const ns = stack.dataset.ns.split(',').concat(String(n));
+            stack.dataset.ns = ns.join(',');
+            stack.setAttribute('aria-label', `claim ${ns.length}× ${loot.label}`);
+            stack.innerHTML = _daycareLootCountHtml(ns.length);
+            continue;
+          }
+          const tmp = document.createElement('div');
+          tmp.innerHTML = _daycareLootPillHtml([n], loot);
+          const pill = tmp.firstChild;
+          pill.classList.add('appearing');
           pill.addEventListener('animationend', () => {
             pill.classList.remove('appearing');
           }, { once: true });
