@@ -1,5 +1,5 @@
 // Tests the spawn bubbles ("nests") in static/spawns.js: ~1.7 km squares
-// with one 500 m bubble each per UTC day; inside, the normal stream's density
+// with one 350 m bubble each per UTC day; inside, the normal stream's density
 // ramps from 1× (edge) to 2× (centre) and every spawn has one half that is
 // the bubble's primary (2/3) or secondary (1/3) pokémon, the other half the
 // usual weather draw; the centre holds a radar spawn ('E:B:' id) of their
@@ -40,6 +40,7 @@ global.Species = {
 require(path.join(root, 'static', 'spawns.js'));
 const S = global.Spawns;
 const T = S._bubbleTest;
+const R = S.BUBBLE_RADIUS_M;   // bubble radius (350 m since 2026-10-25; was 500)
 
 const SCALE = 10000;
 const DAY_MS = 86400000;
@@ -79,7 +80,7 @@ const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
     + ` inside a bubble ${(inside / N * 100).toFixed(0)}%, overlap ${(overlap / N * 100).toFixed(1)}%`);
   ok(median > 600 && median < 850, '1: nearest bubble centre ~720 m away on median (a 5–10 min walk)');
   ok(within800 > 0.5 && within800 < 0.7, '1: centre within 800 m for ~60% of spots');
-  ok(inside / N > 0.2 && inside / N < 0.32, '1: about a quarter of the ground is inside a bubble');
+  ok(inside / N > 0.09 && inside / N < 0.17, '1: about an eighth of the ground is inside a bubble (π·350² per 1.7 km square)');
   ok(overlap / N < 0.04, '1: overlaps are rare');
 }
 
@@ -92,7 +93,7 @@ const today = S.bubblesNear(MTL[0], MTL[1], 3000, NOW);
   const tomorrow = S.bubblesNear(MTL[0], MTL[1], 3000, NOW + DAY_MS);
   ok(JSON.stringify(tomorrow.map((b) => [b.lat, b.lng])) !== JSON.stringify(today.map((b) => [b.lat, b.lng])),
     '2: new bubbles the next UTC day');
-  ok(today.every((b) => b.radiusM === 500 && b.distM <= 3000), '2: 500 m radius, within the asked radius');
+  ok(R === 350 && today.every((b) => b.radiusM === R && b.distM <= 3000), '2: 350 m radius, within the asked radius');
   ok(today.every((b, k) => k === 0 || today[k - 1].distM <= b.distM), '2: nearest first');
 }
 
@@ -111,7 +112,7 @@ function scan(fn) {
   for (let cx = cx0; cx <= cx1; cx += 3) {
     for (let cy = cy0; cy <= cy1; cy += 3) {
       const cLat = (cx + 0.5) / SCALE - 90, cLng = (cy + 0.5) / SCALE - 180;
-      const r = distM(cLat, cLng, B.lat, B.lng) / 500;
+      const r = distM(cLat, cLng, B.lat, B.lng) / R;
       for (let t = tick0; t < tick0 + TICKS; t += 1) fn(cx, cy, t, r);
     }
   }
@@ -326,7 +327,7 @@ const halvesFrom = (c, pr) => {
   for (let cx = cx0; cx <= cx1; cx += 4) {
     for (let cy = cy0; cy <= cy1; cy += 4) {
       const lat = (cx + 0.5) / SCALE - 90, lng = (cy + 0.5) / SCALE - 180;
-      if (distM(lat, lng, B.lat, B.lng) / 500 >= 0.95) continue;
+      if (distM(lat, lng, B.lat, B.lng) / R >= 0.95) continue;
       if (!onlyB(lat, lng)) continue;
       cells.push([cx, cy]);
     }
@@ -353,7 +354,7 @@ const halvesFrom = (c, pr) => {
   const plainInc = run(NONE, false), bubInc = run(NONE, true);
   const same = (p, q) => q && q.lat === p.lat && q.lng === p.lng && q.level === p.level
     && q.sizeM === p.sizeM && q.startMs === p.startMs && q.variantSeed === p.variantSeed;
-  ok(plainInc.size > 100 && bubInc.size === plainInc.size
+  ok(plainInc.size > 50 && bubInc.size === plainInc.size
     && Array.from(plainInc.values()).every((p) => same(p, bubInc.get(p.id))),
     `10: incense density unchanged inside a bubble (${bubInc.size} ${NONE} spawns, same spots/levels/births)`);
   const partnered = Array.from(bubInc.values()).filter((p) =>
@@ -478,8 +479,9 @@ const halvesFrom = (c, pr) => {
   ok(JSON.stringify(at(B.lat, B.lng)) === JSON.stringify(raw), '13: off → the centre is back at the bubble centre');
   // The whole bubble moves with it: its area (density ramp, which spawns
   // carry its pair) centres on the snapped spot, and the overlay draws it
-  // there. Every bubble is moved 0.004° north (~445 m) from here on.
-  const N4 = 0.004;
+  // there. Every bubble is moved 0.002° north (~223 m, inside the radius)
+  // from here on.
+  const N4 = 0.002;
   const north4 = (lat, lng) => ({ lat: lat + N4, lng, kind: 'road' });
   S.setBubbleSnapProvider(north4);
   const near = S.bubblesNear(MTL[0], MTL[1], 3000, NOW);
@@ -489,7 +491,7 @@ const halvesFrom = (c, pr) => {
     '13: snapping on → drawn around the snapped spot');
   const fB = (lat, lng) => (T.around(lat, lng, NOW).find((e) => e.id === B.id) || { f: 0 }).f;
   ok(fB(B.lat + N4, B.lng) > 0.99, '13: its area is centred on the snapped spot');
-  ok(Math.abs(fB(B.lat, B.lng) - (1 - N4 * M_PER_DEG / 500)) < 0.01, '13: and the rolled spot is ~445 m off-centre now');
+  ok(Math.abs(fB(B.lat, B.lng) - (1 - N4 * M_PER_DEG / R)) < 0.01, '13: and the rolled spot is ~223 m off-centre now');
   // Cells near the new centre that only B covers, and cells no bubble
   // covers with snapping on or off.
   const nLat = B.lat + N4;
@@ -498,7 +500,7 @@ const halvesFrom = (c, pr) => {
     for (let cy = Math.floor((B.lng - 0.008 + 180) * SCALE); cy <= Math.floor((B.lng + 0.008 + 180) * SCALE); cy += 3) {
       const lat = (cx + 0.5) / SCALE - 90, lng = (cy + 0.5) / SCALE - 180;
       const on = T.around(lat, lng, NOW);
-      if (distM(lat, lng, nLat, B.lng) < 400 && on.length === 1 && on[0].id === B.id) nearCells.push([cx, cy]);
+      if (distM(lat, lng, nLat, B.lng) < 0.8 * R && on.length === 1 && on[0].id === B.id) nearCells.push([cx, cy]);
       else if (!on.length) freeCells.push([cx, cy]);
     }
   }
@@ -514,7 +516,7 @@ const halvesFrom = (c, pr) => {
   const nearOn = gen(nearCells, 400), freeOn = gen(freeBoth, 300);
   const carries = (p) => [p.speciesA, p.speciesB].some((sp) => sp === P || sp === SEC);
   ok(nearOn.size > 50 && Array.from(nearOn.values()).every(carries),
-    `13: every spawn within 400 m of the snapped centre carries the pair (${nearOn.size})`);
+    `13: every spawn within 0.8 R of the snapped centre carries the pair (${nearOn.size})`);
   ok(freeBoth.length > 50 && freeOff.size > 20 && JSON.stringify([...freeOff]) === JSON.stringify([...freeOn]),
     `13: spawns away from every bubble (snapped or not) are untouched (${freeOn.size})`);
   // Pack mode follows the same moved areas, so its spawns still co-locate.
