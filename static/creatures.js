@@ -10138,6 +10138,20 @@
       .creature-marker.creature-marker-ready img.creature-sprite {
         display: block;
       }
+      /* A radar-tracked spawn keeps its blip's outline once the real
+         sprite takes over (in range), so it's easy to pick out among the
+         other spawns: gold for legendaries, white (plus the usual shadow,
+         which keeps it readable on light maps) for the rest. */
+      .creature-marker.radar-target img.creature-sprite {
+        filter: drop-shadow(1.5px 0 0 #fff) drop-shadow(-1.5px 0 0 #fff)
+          drop-shadow(0 1.5px 0 #fff) drop-shadow(0 -1.5px 0 #fff)
+          drop-shadow(0 2px 3px rgba(0,0,0,0.55));
+      }
+      .creature-marker.radar-target.radar-target-legendary img.creature-sprite {
+        filter: drop-shadow(1.5px 0 0 #ffcb2e) drop-shadow(-1.5px 0 0 #ffcb2e)
+          drop-shadow(0 1.5px 0 #ffcb2e) drop-shadow(0 -1.5px 0 #ffcb2e)
+          drop-shadow(0 2px 3px rgba(0,0,0,0.45));
+      }
       .creature-marker.creature-marker-ready .creature-placeholder {
         display: none;
       }
@@ -22070,6 +22084,7 @@
       // wakes those once the web build's sprite download lands.
       loaded: false,
     };
+    if (_radarActive && _radarMarkers.has(spawn.id)) _markRadarTarget(record, true);
     // If this spawn's shininess was already decided before a refresh rebuilt
     // its marker, carry it onto the new record so every reader stays consistent.
     if (_shinyBySpawn.has(spawn.id)) record.shinyVariant = _shinyBySpawn.get(spawn.id);
@@ -22728,6 +22743,16 @@
   function _radarRemoveMarker(id) {
     const rec = _radarMarkers.get(id);
     if (rec) { try { rec.marker.remove(); } catch (e) { /* ignore */ } _radarMarkers.delete(id); }
+    const real = _markers.get(id);
+    if (real) _markRadarTarget(real, false);
+  }
+  // Outline a real (in-range) marker whose spawn the radar is tracking, so
+  // it keeps the blip's highlight (.radar-target CSS).
+  function _markRadarTarget(rec, on) {
+    const el = rec && rec.marker && rec.marker.getElement();
+    if (!el) return;
+    el.classList.toggle('radar-target', on);
+    el.classList.toggle('radar-target-legendary', on && !!(rec.spawn && rec.spawn.legendary));
   }
   function _radarClearMarkers() {
     for (const id of Array.from(_radarMarkers.keys())) _radarRemoveMarker(id);
@@ -22770,8 +22795,11 @@
       if (left <= 0 || caught.has(id)) { _radarRemoveMarker(id); continue; }
       const label = rec.el.querySelector('.radar-marker-label');
       if (label) label.textContent = fmtRemain(left);
-      // Hide the blip while the real (in-range, catchable) marker is present.
-      rec.el.style.display = _markers.has(id) ? 'none' : '';
+      // Hide the blip while the real (in-range, catchable) marker is
+      // present; the real one takes over its highlight.
+      const real = _markers.get(id);
+      rec.el.style.display = real ? 'none' : '';
+      if (real) _markRadarTarget(real, true);
     }
   }
 
