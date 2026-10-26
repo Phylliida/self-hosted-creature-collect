@@ -2519,18 +2519,68 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
   #themeEditor .te-swatches { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 0 0 12px; }
   #themeEditor .te-sw {
     position: relative; display: flex; flex-direction: column; align-items: center; gap: 5px;
-    font-size: 11.5px; color: var(--ui-muted); cursor: pointer;
+    padding: 0; border: none; background: none;
+    font: inherit; font-size: 11.5px; color: var(--ui-muted); cursor: pointer;
   }
   #themeEditor .te-sw .te-dot {
     width: 44px; height: 44px; border-radius: 50%;
     box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12), 0 0 0 3px var(--ui-bg), 0 0 0 4px var(--ui-hairline);
   }
-  /* The real picker sits invisibly on top of the dot, so a tap opens it
-     natively on every platform. */
-  #themeEditor .te-sw input[type="color"] {
-    position: absolute; top: 0; left: 50%; width: 44px; height: 44px; transform: translateX(-50%);
-    opacity: 0; border: none; padding: 0; cursor: pointer;
+  #themeEditor .te-sw:active .te-dot { transform: scale(0.94); }
+  /* Our own colour picker (the native one was unreliable in phone
+     webviews): a saturation/brightness square, a hue slider, quick picks
+     and a hex field. */
+  #themeEditor .te-pick {
+    position: fixed; inset: 0; z-index: 46;
+    display: flex; align-items: flex-end; justify-content: center;
+    padding: 0 0 max(14px, env(safe-area-inset-bottom));
+    background: rgba(0, 0, 0, 0.25);
   }
+  #themeEditor .te-pick[hidden] { display: none; }
+  #themeEditor .te-pick-card {
+    box-sizing: border-box; width: calc(100% - 28px); max-width: 360px;
+    padding: 14px; border-radius: 22px;
+    background: var(--ui-bg); color: var(--ui-text);
+    box-shadow: 0 20px 50px -12px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--ui-hairline);
+  }
+  #themeEditor .te-pick-head { display: flex; align-items: center; justify-content: space-between; margin: 0 0 10px; }
+  #themeEditor .te-pick-title { font-size: 15px; font-weight: 700; }
+  #themeEditor .te-pick-cmp { display: inline-flex; border-radius: 999px; overflow: hidden; box-shadow: 0 0 0 1px var(--ui-hairline); }
+  #themeEditor .te-pick-cmp i { width: 30px; height: 22px; }
+  #themeEditor .te-sv {
+    position: relative; height: 170px; border-radius: 14px; cursor: crosshair;
+    background-image: linear-gradient(to top, #000, rgba(0, 0, 0, 0)), linear-gradient(to right, #fff, rgba(255, 255, 255, 0));
+    touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  #themeEditor .te-sv-cursor, #themeEditor .te-hue-thumb {
+    position: absolute; width: 22px; height: 22px; border-radius: 50%;
+    transform: translate(-50%, -50%); pointer-events: none;
+    box-shadow: 0 0 0 3px #fff, 0 0 0 4px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.35);
+  }
+  #themeEditor .te-hue {
+    position: relative; height: 22px; margin: 14px 11px 12px; border-radius: 11px; cursor: pointer;
+    background: linear-gradient(to right, #f00, #ff0 16.67%, #0f0 33.33%, #0ff 50%, #00f 66.67%, #f0f 83.33%, #f00);
+    touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  #themeEditor .te-hue-thumb { top: 50%; }
+  #themeEditor .te-pick-sugg { display: flex; justify-content: space-between; gap: 4px; margin: 0 0 12px; }
+  #themeEditor .te-pick-sugg button {
+    width: 28px; height: 28px; padding: 0; border: none; border-radius: 50%; cursor: pointer;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+  }
+  #themeEditor .te-pick-row { display: flex; gap: 8px; align-items: center; }
+  #themeEditor .te-hex {
+    flex: 1; min-width: 0; height: 38px; box-sizing: border-box; padding: 0 10px;
+    font: inherit; font-size: 15px; font-variant-numeric: tabular-nums; text-transform: lowercase;
+    color: var(--ui-text); background: var(--ui-input-bg);
+    border: 1px solid var(--ui-hairline); border-radius: 12px;
+  }
+  #themeEditor .te-pick-cancel, #themeEditor .te-pick-done {
+    height: 38px; padding: 0 14px; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer;
+    border: none; border-radius: 12px;
+  }
+  #themeEditor .te-pick-cancel { color: var(--ui-muted); background: var(--ui-hover); }
+  #themeEditor .te-pick-done { color: var(--ui-accent-text); background: var(--ui-accent); }
   #themeEditor .te-from {
     display: flex; align-items: center; justify-content: space-between; gap: 10px;
     margin: 2px 0 14px; font-size: 13px; color: var(--ui-muted);
@@ -4342,6 +4392,22 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
       <button class="te-import" type="button">Import a theme</button>
     </div>
     <input type="file" class="te-import-file" accept=".json,application/json" hidden>
+  </div>
+  <div class="te-pick" hidden>
+    <div class="te-pick-card" role="dialog" aria-label="Pick a colour">
+      <div class="te-pick-head">
+        <span class="te-pick-title"></span>
+        <span class="te-pick-cmp"><i class="te-pick-was" title="before"></i><i class="te-pick-now" title="now"></i></span>
+      </div>
+      <div class="te-sv" aria-label="saturation and brightness"><div class="te-sv-cursor"></div></div>
+      <div class="te-hue" aria-label="hue"><div class="te-hue-thumb"></div></div>
+      <div class="te-pick-sugg"></div>
+      <div class="te-pick-row">
+        <input class="te-hex" type="text" maxlength="7" spellcheck="false" autocomplete="off" aria-label="hex colour">
+        <button class="te-pick-cancel" type="button">Cancel</button>
+        <button class="te-pick-done" type="button">Done</button>
+      </div>
+    </div>
   </div>
 </div>
 <div id="welcome">
@@ -8980,10 +9046,7 @@ function fmtDate(ts) {
     teEl.querySelector('.te-map').innerHTML = themePreviewSVG(window.CCUserThemes.toTheme(u));
     teEl.querySelector('.te-panel').innerHTML = tePanelHtml(u);
     teEl.querySelectorAll('.te-sw').forEach(sw => {
-      const v = u.c[sw.dataset.k];
-      sw.querySelector('.te-dot').style.background = v;
-      const input = sw.querySelector('input');
-      if (document.activeElement !== input) teSetPicker(input, v);
+      sw.querySelector('.te-dot').style.background = u.c[sw.dataset.k];
     });
     const slot = teEl.querySelector(`.te-slot[data-id="${u.id}"] .te-dots`);
     if (slot) slot.innerHTML = ['panel', 'accent', 'land', 'water'].map(k => `<i style="background:${u.c[k]}"></i>`).join('');
@@ -9028,33 +9091,132 @@ function fmtDate(ts) {
     teEl.setAttribute('aria-hidden', 'false');
   }
   function closeThemeEditor() {
+    if (!tePickEl.hidden) teClosePicker(false);
     if (teSaveTimer) teCommit(false);
     teEl.classList.remove('show');
     teEl.setAttribute('aria-hidden', 'true');
   }
 
-  // Some phone webviews open the native picker from the input's default
-  // value (the attribute), not .value — set both, or it starts at black.
-  function teSetPicker(input, v) {
-    input.defaultValue = v;
-    input.value = v;
+  // ── Colour picker ──
+  // Our own (the native <input type=color> was unreliable in phone
+  // webviews): drag in the saturation/brightness square and the hue bar,
+  // tap a quick pick, or type a hex. Edits apply live; Cancel restores.
+  function teHsvToHex(h, s, v) {
+    const f = (n) => {
+      const k = (n + h / 60) % 6;
+      return v - v * s * Math.max(0, Math.min(k, 4 - k, 1));
+    };
+    return '#' + [f(5), f(3), f(1)].map(x => Math.round(x * 255).toString(16).padStart(2, '0')).join('');
   }
-  // Swatches (built once): a dot with the native picker laid over it.
+  function teHexToHsv(hex) {
+    const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.substr(i, 2), 16) / 255);
+    const max = Math.max(r, g, b), d = max - Math.min(r, g, b);
+    let h = 0;
+    if (d) h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return { h: (h * 60 + 360) % 360, s: max ? d / max : 0, v: max };
+  }
+  const tePickEl = teEl.querySelector('.te-pick');
+  const teSv = tePickEl.querySelector('.te-sv');
+  const teHue = tePickEl.querySelector('.te-hue');
+  const teHex = tePickEl.querySelector('.te-hex');
+  const tePick = { k: null, orig: null, h: 0, s: 0, v: 0 };
+  function tePickPaint(fromHexInput) {
+    const hex = teHsvToHex(tePick.h, tePick.s, tePick.v);
+    teSv.style.backgroundColor = teHsvToHex(tePick.h, 1, 1);
+    const cur = teSv.querySelector('.te-sv-cursor');
+    cur.style.left = (tePick.s * 100) + '%';
+    cur.style.top = ((1 - tePick.v) * 100) + '%';
+    cur.style.background = hex;
+    const thumb = teHue.querySelector('.te-hue-thumb');
+    thumb.style.left = (tePick.h / 360 * 100) + '%';
+    thumb.style.background = teHsvToHex(tePick.h, 1, 1);
+    tePickEl.querySelector('.te-pick-now').style.background = hex;
+    if (!fromHexInput) teHex.value = hex;
+    return hex;
+  }
+  function tePickSet(fromHexInput) {
+    const hex = tePickPaint(fromHexInput);
+    const k = tePick.k;
+    teEdit(u => { u.c[k] = hex; });
+  }
+  // Keep the hue when a hex has none (greys), so dragging back out of
+  // black / white doesn't snap the hue to red.
+  function tePickFromHex(hex) {
+    const hsv = teHexToHsv(hex);
+    tePick.s = hsv.s; tePick.v = hsv.v;
+    if (hsv.s > 0 && hsv.v > 0) tePick.h = hsv.h;
+  }
+  function teOpenPicker(sw) {
+    const u = teCur();
+    if (!u) return;
+    tePick.k = sw.k;
+    tePick.orig = u.c[sw.k];
+    tePick.h = 0;
+    tePickFromHex(tePick.orig);
+    tePickEl.querySelector('.te-pick-title').textContent = sw.label;
+    tePickEl.querySelector('.te-pick-was').style.background = tePick.orig;
+    // Quick picks: the theme's other colours, then white and black.
+    const picks = [...new Set(TE_SWATCHES.filter(x => x.k !== sw.k).map(x => u.c[x.k]).concat(['#ffffff', '#000000']))];
+    tePickEl.querySelector('.te-pick-sugg').innerHTML = picks.map(c =>
+      `<button type="button" data-c="${c}" style="background:${c}" aria-label="${c}"></button>`).join('');
+    tePickPaint(false);
+    tePickEl.hidden = false;
+  }
+  function teClosePicker(revert) {
+    if (revert && tePick.k && tePick.orig) {
+      const k = tePick.k, v = tePick.orig;
+      teEdit(u => { u.c[k] = v; });
+    }
+    tePickEl.hidden = true;
+    tePick.k = null;
+  }
+  // Drag handling for the square and the hue bar (pointer capture keeps
+  // the drag alive when the finger leaves the element).
+  function teDrag(el, onMove) {
+    el.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      el.setPointerCapture(e.pointerId);
+      onMove(e);
+    });
+    el.addEventListener('pointermove', (e) => { if (el.hasPointerCapture(e.pointerId)) onMove(e); });
+  }
+  const teClamp = (x) => Math.max(0, Math.min(1, x));
+  teDrag(teSv, (e) => {
+    const r = teSv.getBoundingClientRect();
+    tePick.s = teClamp((e.clientX - r.left) / r.width);
+    tePick.v = 1 - teClamp((e.clientY - r.top) / r.height);
+    tePickSet(false);
+  });
+  teDrag(teHue, (e) => {
+    const r = teHue.getBoundingClientRect();
+    tePick.h = teClamp((e.clientX - r.left) / r.width) * 359.9;
+    tePickSet(false);
+  });
+  teHex.addEventListener('input', () => {
+    let v = teHex.value.trim().toLowerCase();
+    if (!v.startsWith('#')) v = '#' + v;
+    if (!/^#[0-9a-f]{6}$/.test(v)) return;
+    tePickFromHex(v);
+    tePickSet(true);
+  });
+  tePickEl.querySelector('.te-pick-sugg').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-c]');
+    if (!b) return;
+    tePickFromHex(b.dataset.c);
+    tePickSet(false);
+  });
+  tePickEl.querySelector('.te-pick-cancel').onclick = () => teClosePicker(true);
+  tePickEl.querySelector('.te-pick-done').onclick = () => teClosePicker(false);
+  tePickEl.addEventListener('click', (e) => { if (e.target === tePickEl) teClosePicker(false); });
+
+  // Swatches (built once): a colour dot that opens the picker.
   for (const sw of TE_SWATCHES) {
-    const el = document.createElement('label');
+    const el = document.createElement('button');
+    el.type = 'button';
     el.className = 'te-sw';
     el.dataset.k = sw.k;
-    el.innerHTML = `<span class="te-dot"></span><input type="color" aria-label="${sw.label}"><span>${sw.label}</span>`;
-    const input = el.querySelector('input');
-    input.addEventListener('input', (e) => {
-      const v = e.target.value;
-      teEdit(u => { u.c[sw.k] = v; });
-    });
-    // Re-sync right before the picker opens so it starts on the swatch's colour.
-    input.addEventListener('pointerdown', () => {
-      const u = teCur();
-      if (u) teSetPicker(input, u.c[sw.k]);
-    });
+    el.innerHTML = `<span class="te-dot"></span><span>${sw.label}</span>`;
+    el.addEventListener('click', () => teOpenPicker(sw));
     teEl.querySelector(`.te-swatches[data-group="${sw.group}"]`).appendChild(el);
   }
   document.getElementById('themeEditorBtn').onclick = openThemeEditor;
