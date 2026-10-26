@@ -2,6 +2,19 @@
 <html>
 <head>
 <meta charset="utf-8">
+<script>
+  // First thing on the page: paint the last-used theme's map colour (cached
+  // in cc.themeMapBg by the theme code below) so a dark theme never flashes
+  // white / beige before the theme script further down <head> has run.
+  (function () {
+    try {
+      var s = document.documentElement.style;
+      var b = localStorage.getItem('cc.themeMapBg');
+      if (b && /^#[0-9a-f]{6}$/i.test(b)) s.setProperty('--ui-map-bg', b);
+      s.backgroundColor = 'var(--ui-map-bg, #f5f5dc)';
+    } catch (e) {}
+  })();
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>creature collect</title>
 <link rel="manifest" href="/manifest.webmanifest">
@@ -464,6 +477,11 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
     height: 100vh; height: -webkit-fill-available; height: 100dvh;
     overscroll-behavior: none;
   }
+  /* The page itself carries the theme's map colour too: the early theme
+     script sets --ui-map-bg in <head>, but #map comes far down the body,
+     so until it's parsed the screen showed the default white canvas — a
+     white flash on every load / refresh with a dark theme. */
+  html { background-color: var(--ui-map-bg, #f5f5dc); }
   #map { position: absolute; inset: 0; background: var(--ui-map-bg, #f5f5dc); }
   /* Push the MapLibre bottom-right control stack up to make room for
      the static refresh button below it. ~40px = one control button
@@ -3645,6 +3663,7 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
   window.CCUserThemes.applyAttrs(r, t);
   var s = r.style;
   s.setProperty('--ui-map-bg', t.landcover);
+  try { if (localStorage.getItem('cc.themeMapBg') !== t.landcover) localStorage.setItem('cc.themeMapBg', t.landcover); } catch (e) {}
   if (t.ui) {
     s.setProperty('--ui-bg',            t.ui.panelBg);
     s.setProperty('--ui-text',          t.ui.panelText);
@@ -7505,6 +7524,7 @@ function fmtDate(ts) {
     localStorage.setItem('cc.theme', name);
     document.getElementById('map').style.background = t.landcover;
     document.documentElement.style.setProperty('--ui-map-bg', t.landcover);
+    try { if (localStorage.getItem('cc.themeMapBg') !== t.landcover) localStorage.setItem('cc.themeMapBg', t.landcover); } catch (e) {}
     document.documentElement.style.setProperty('--cc-label-color', t.poiLabel);
     document.documentElement.style.setProperty('--cc-label-halo', t.poiHalo);
     // Browser chrome (iOS address-bar tint) tracks the panel color.
