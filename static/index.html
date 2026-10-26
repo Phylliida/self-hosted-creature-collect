@@ -2437,6 +2437,126 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
   }
 
   #customThemeControls { margin: 8px 0; padding: 8px 10px; border-left: 3px solid var(--ui-hairline); }
+
+  /* ── Theme editor ─────────────────────────────────────────────────
+     A calm sheet: your themes along the top, a live preview, then just
+     the name, the Aurora / Classic switch and 8 colour swatches. */
+  #themeEditorBtn {
+    display: block; width: 100%; margin: 0 0 10px; padding: 9px 12px;
+    font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+    color: var(--ui-text); background: var(--ui-hover);
+    border: 1px solid var(--ui-border); border-radius: var(--ui-radius);
+  }
+  #themeEditor {
+    position: fixed; inset: 0; z-index: 45;
+    display: none; align-items: center; justify-content: center;
+    background: rgba(0, 0, 0, 0.5);
+    -webkit-tap-highlight-color: transparent;
+  }
+  #themeEditor.show { display: flex; }
+  #themeEditor .te-sheet {
+    position: relative; box-sizing: border-box;
+    width: calc(100% - 28px); max-width: 380px; max-height: 90vh; overflow-y: auto;
+    padding: 16px 16px 14px;
+    background: var(--ui-bg); color: var(--ui-text);
+    border-radius: 24px;
+    box-shadow: 0 30px 70px -20px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--ui-hairline);
+  }
+  #themeEditor .te-head { display: flex; align-items: center; justify-content: space-between; margin: 0 0 10px; }
+  #themeEditor h3 { margin: 0; font-size: 18px; font-weight: 700; }
+  #themeEditor .te-x {
+    width: 32px; height: 32px; border-radius: 50%; border: none; cursor: pointer;
+    background: var(--ui-hover); color: var(--ui-text); font-size: 20px; line-height: 1; padding: 0 0 2px;
+  }
+  #themeEditor .te-slots {
+    display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 8px; margin: 0 -2px 4px;
+    scrollbar-width: none;
+  }
+  #themeEditor .te-slots::-webkit-scrollbar { display: none; }
+  #themeEditor .te-slot {
+    flex: none; display: inline-flex; align-items: center; gap: 7px;
+    max-width: 160px; padding: 6px 12px 6px 8px;
+    font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+    color: var(--ui-text); background: var(--ui-hover);
+    border: 1.5px solid transparent; border-radius: 999px;
+  }
+  #themeEditor .te-slot.active { border-color: var(--ui-accent); background: var(--ui-bg); }
+  #themeEditor .te-slot .te-dots { display: inline-flex; }
+  #themeEditor .te-slot .te-dots i {
+    width: 12px; height: 12px; border-radius: 50%; margin-left: -4px;
+    box-shadow: 0 0 0 1.5px var(--ui-bg);
+  }
+  #themeEditor .te-slot .te-dots i:first-child { margin-left: 0; }
+  #themeEditor .te-slot .te-slot-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #themeEditor .te-slot.te-new { border-style: dashed; border-color: var(--ui-muted); background: transparent; padding: 6px 12px; }
+  #themeEditor .te-preview {
+    display: grid; grid-template-columns: 1fr 1.15fr; gap: 8px;
+    height: 168px; margin: 4px 0 14px;
+  }
+  #themeEditor .te-map, #themeEditor .te-panel {
+    border-radius: 16px; overflow: hidden;
+    box-shadow: 0 0 0 1px var(--ui-hairline);
+  }
+  #themeEditor .te-map svg { display: block; width: 100%; height: 100%; }
+  #themeEditor .te-panel { position: relative; box-sizing: border-box; padding: 9px; font-size: 10px; }
+  #themeEditor .te-row { display: flex; gap: 8px; align-items: center; margin: 0 0 12px; }
+  #themeEditor .te-name {
+    flex: 1; min-width: 0; height: 36px; box-sizing: border-box; padding: 0 12px;
+    font: inherit; font-size: 15px; font-weight: 600;
+    color: var(--ui-text); background: var(--ui-input-bg);
+    border: 1px solid var(--ui-hairline); border-radius: 12px;
+  }
+  #themeEditor .te-seg { display: flex; flex: none; padding: 3px; gap: 2px; border-radius: 12px; background: var(--ui-hover); }
+  #themeEditor .te-seg button {
+    padding: 6px 10px; font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+    color: var(--ui-muted); background: transparent; border: none; border-radius: 9px;
+  }
+  #themeEditor .te-seg button.on { color: var(--ui-text); background: var(--ui-bg); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18); }
+  #themeEditor .te-group-label {
+    margin: 0 0 6px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--ui-muted);
+  }
+  #themeEditor .te-swatches { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 0 0 12px; }
+  #themeEditor .te-sw {
+    position: relative; display: flex; flex-direction: column; align-items: center; gap: 5px;
+    font-size: 11.5px; color: var(--ui-muted); cursor: pointer;
+  }
+  #themeEditor .te-sw .te-dot {
+    width: 44px; height: 44px; border-radius: 50%;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12), 0 0 0 3px var(--ui-bg), 0 0 0 4px var(--ui-hairline);
+  }
+  /* The real picker sits invisibly on top of the dot, so a tap opens it
+     natively on every platform. */
+  #themeEditor .te-sw input[type="color"] {
+    position: absolute; top: 0; left: 50%; width: 44px; height: 44px; transform: translateX(-50%);
+    opacity: 0; border: none; padding: 0; cursor: pointer;
+  }
+  #themeEditor .te-from {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    margin: 2px 0 14px; font-size: 13px; color: var(--ui-muted);
+  }
+  #themeEditor .te-from-select {
+    max-width: 58%; height: 32px; padding: 0 8px; font: inherit; font-size: 13px;
+    color: var(--ui-text); background: var(--ui-input-bg);
+    border: 1px solid var(--ui-hairline); border-radius: 10px;
+  }
+  #themeEditor .te-use {
+    display: block; width: 100%; height: 44px; margin: 0 0 8px;
+    font: inherit; font-size: 15px; font-weight: 700; cursor: pointer;
+    color: var(--ui-accent-text); background: var(--ui-accent);
+    border: none; border-radius: 14px;
+  }
+  #themeEditor .te-use:disabled { opacity: 0.6; cursor: default; }
+  #themeEditor .te-actions { display: flex; justify-content: center; gap: 4px; }
+  #themeEditor .te-actions button, #themeEditor .te-empty button {
+    padding: 6px 12px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+    color: var(--ui-muted); background: transparent; border: none; border-radius: 10px;
+  }
+  #themeEditor .te-actions .te-delete { color: var(--ui-danger); }
+  #themeEditor .te-empty { display: none; text-align: center; color: var(--ui-muted); font-size: 14px; padding: 6px 4px 4px; }
+  #themeEditor .te-empty p { margin: 4px 0 10px; }
+  #themeEditor.is-empty .te-body { display: none; }
+  #themeEditor.is-empty .te-empty { display: block; }
   #customThemeControls .row { margin: 6px 0; }
   #customThemeControls input[type="color"] { width: 36px; height: 26px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius); cursor: pointer; padding: 0; background: none; }
   #settingsPanel h3 { margin: 0 0 14px; font-size: 16px; }
@@ -3206,6 +3326,203 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
       return (0.299 * r + 0.587 * g + 0.114 * b) / 255 < 0.5;
     } catch (e) { return false; }
   };
+  // ── User themes (Settings → Theme editor) ─────────────────────────────
+  // A user theme is 8 key colours + a name + a style ('aurora' | 'classic'):
+  //   { id: 'u-…', name, style, c: { land, water, road, building,
+  //                                  panel, text, accent, accent2 }, updated }
+  // stored in localStorage cc.userThemes.v1 (and carried in saves). Every
+  // other colour is derived here, and each one is registered into
+  // window.THEMES under its id, so the map, the theme grid and applyTheme
+  // treat it like a built-in theme. Aurora-style ones also get their
+  // --au-* tokens from a generated <style> (the Aurora rules in
+  // creatures.js key off html[data-ui-style="aurora"] for user themes).
+  // Lives in this early script so a custom theme paints on the first frame.
+  // [user-themes-core begin]
+  (function () {
+    var KEY = 'cc.userThemes.v1';
+    var COLOR_KEYS = ['land', 'water', 'road', 'building', 'panel', 'text', 'accent', 'accent2'];
+    function isHex(s) { return typeof s === 'string' && /^#[0-9a-f]{6}$/i.test(s); }
+    function rgb(h) { return [1, 3, 5].map(function (i) { return parseInt(h.substr(i, 2), 16); }); }
+    function hex(c) {
+      return '#' + c.map(function (v) {
+        return ('0' + Math.max(0, Math.min(255, Math.round(v))).toString(16)).slice(-2);
+      }).join('');
+    }
+    // mix(a, b, t): t is how much of b (0 → a, 1 → b).
+    function mix(a, b, t) {
+      var x = rgb(a), y = rgb(b);
+      return hex([0, 1, 2].map(function (i) { return x[i] + (y[i] - x[i]) * t; }));
+    }
+    function trip(h) { return rgb(h).join(', '); }
+    function rgba(h, a) { return 'rgba(' + trip(h) + ', ' + a + ')'; }
+    // Same perceived-luminance test as _themeIsDark.
+    function dark(h) { var c = rgb(h); return (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) / 255 < 0.5; }
+    function lin(v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }
+    function lum(h) { var c = rgb(h); return 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]); }
+    function contrast(a, b) { var x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); }
+    // Text colour for a filled accent: whichever of white / near-black reads better.
+    function readable(bg) { return contrast(bg, '#ffffff') >= contrast(bg, '#16131f') ? '#ffffff' : '#16131f'; }
+
+    // Coerce anything (storage, a save file, an imported .json) into a
+    // valid theme, or null.
+    function clean(u) {
+      if (!u || typeof u !== 'object' || !u.c || typeof u.c !== 'object') return null;
+      var c = {};
+      for (var i = 0; i < COLOR_KEYS.length; i++) {
+        var k = COLOR_KEYS[i];
+        if (!isHex(u.c[k])) return null;
+        c[k] = u.c[k].toLowerCase();
+      }
+      var id = typeof u.id === 'string' && /^u-[a-z0-9-]{1,40}$/.test(u.id) ? u.id : null;
+      return {
+        id: id,
+        name: String(u.name || 'My theme').slice(0, 40),
+        style: u.style === 'classic' ? 'classic' : 'aurora',
+        c: c,
+        updated: typeof u.updated === 'number' ? u.updated : 0,
+      };
+    }
+    function load() {
+      try {
+        var list = JSON.parse(localStorage.getItem(KEY) || '[]');
+        return Array.isArray(list) ? list.map(clean).filter(function (u) { return u && u.id; }) : [];
+      } catch (e) { return []; }
+    }
+    function newId() { return 'u-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+    // The 8 key colours of any THEMES entry ("Start from…").
+    function fromTheme(t) {
+      var ui = (t && t.ui) || window.THEMES.default.ui;
+      var pick = function (v, d) { return isHex(v) ? v.toLowerCase() : d; };
+      return {
+        land: pick(t && t.landcover, '#e6e6d6'), water: pick(t && t.water, '#a0c8f0'),
+        road: pick(t && t.road, '#ffffff'), building: pick(t && t.building, '#d9d0c9'),
+        panel: pick(ui.panelBg, '#ffffff'), text: pick(ui.panelText, '#333333'),
+        accent: pick(ui.accent, '#3b7fdf'), accent2: pick(ui.accent2, '#5b3cc4'),
+      };
+    }
+
+    // The card surface the Aurora look draws on.
+    function surface(c) { return dark(c.panel) ? mix(c.panel, '#ffffff', 0.07) : mix(c.panel, '#ffffff', 0.75); }
+
+    // 8 colours → a full THEMES entry (map palette + ui palette).
+    function toTheme(u) {
+      var c = u.c, d = dark(c.panel), landDark = dark(c.land), aurora = u.style === 'aurora';
+      var label = landDark ? mix(c.land, '#ffffff', 0.78) : mix(c.land, '#1b1b22', 0.85);
+      return {
+        user: true, label: u.name, style: u.style,
+        bg: c.land, landcover: c.land, landuse: mix(c.land, landDark ? '#ffffff' : '#000000', 0.05),
+        water: c.water, building: c.building, road: c.road,
+        roadLabel: label, roadHalo: c.land, placeLabel: label, placeHalo: c.land,
+        poiLabel: label, poiHalo: c.land, poiIcon: c.accent,
+        ui: {
+          panelBg: c.panel, panelText: c.text, muted: mix(c.text, c.panel, 0.42),
+          border: aurora ? 'transparent' : mix(c.text, c.panel, 0.78),
+          hairline: mix(c.text, c.panel, 0.88),
+          hover: aurora ? surface(c) : mix(c.text, c.panel, 0.93),
+          inputBg: d ? mix(c.panel, '#ffffff', 0.05) : mix(c.panel, '#ffffff', 0.6),
+          radius: aurora ? '16px' : '8px',
+          shadow: d ? '0 4px 18px rgba(0,0,0,0.55)' : '0 4px 16px ' + rgba(mix(c.accent, '#000000', 0.5), 0.18),
+          accent: c.accent, accentText: readable(c.accent), accentBorder: mix(c.accent, '#000000', 0.2),
+          accent2: c.accent2, danger: d ? '#ff6b8a' : '#d6334f',
+        },
+      };
+    }
+
+    // 8 colours → the Aurora --au-* tokens (see injectAuroraStyles).
+    function auroraTokens(u) {
+      var c = u.c, d = dark(c.panel), s = surface(c), a = c.accent;
+      var shadow = d ? '#000000' : mix(a, '#000000', 0.45);
+      var svg = function (body) { return 'url("data:image/svg+xml,' + body.replace(/#/g, '%23').replace(/</g, '%3C').replace(/>/g, '%3E') + '")'; };
+      var t = {
+        'accent-rgb': trip(a), 'cta-glow-rgb': d ? '0, 0, 0' : trip(a), 'shadow-rgb': trip(shadow),
+        'glow-rgb': trip(a), 'ink-shadow-rgb': trip(mix(a, '#000000', 0.6)), 'inset-rgb': d ? '0, 0, 0' : trip(c.text),
+        ink: c.text, sub: mix(c.text, c.panel, 0.42),
+        violet: a, 'violet-deep': d ? mix(a, '#ffffff', 0.45) : mix(a, '#000000', 0.2), pink: c.accent2,
+        line: rgba(a, 0.2), cta: a, 'cta-lip': mix(a, '#000000', 0.3), candy: a,
+        surface: s, 'surface-hover': d ? mix(c.panel, '#ffffff', 0.11) : mix(c.panel, '#ffffff', 0.55),
+        tint: rgba(a, 0.14), glass: d ? rgba(s, 0.9) : 'rgba(255, 255, 255, 0.88)',
+        'glass-hi': d ? 'rgba(255, 255, 255, 0.10)' : '#ffffff', frost: rgba(s, d ? 0.8 : 0.74),
+        'chip-ink': mix(c.text, c.panel, 0.25), placeholder: mix(c.text, c.panel, 0.55), 'art-ph': mix(a, c.panel, 0.65),
+        'card-shadow': d
+          ? '0 1px 0 rgba(255,255,255,0.07) inset, 0 8px 18px -8px rgba(0,0,0,0.65), 0 1px 3px rgba(0,0,0,0.35)'
+          : '0 1px 0 rgba(255,255,255,0.9) inset, 0 6px 16px -6px ' + rgba(shadow, 0.28) + ', 0 1px 3px ' + rgba(shadow, 0.1),
+        'card-shadow-hi': d
+          ? '0 1px 0 rgba(255,255,255,0.09) inset, 0 14px 26px -8px rgba(0,0,0,0.75), 0 0 0 1px ' + rgba(a, 0.28)
+          : '0 1px 0 rgba(255,255,255,0.9) inset, 0 12px 24px -8px ' + rgba(shadow, 0.38) + ', 0 2px 5px ' + rgba(shadow, 0.12),
+        stage: 'radial-gradient(60% 14% at 50% 86%, rgba(0, 0, 0, ' + (d ? 0.38 : 0.12) + '), transparent 100%), '
+          + 'radial-gradient(circle at 50% 40%, ' + mix(s, d ? a : '#ffffff', d ? 0.16 : 0.6) + ' 0%, ' + s + ' 55%, ' + mix(s, a, d ? 0.06 : 0.12) + ' 100%)',
+        hero: 'radial-gradient(55% 12% at 50% 88%, rgba(0, 0, 0, ' + (d ? 0.42 : 0.14) + '), transparent 100%), '
+          + 'radial-gradient(circle at 50% 36%, ' + mix(s, d ? a : '#ffffff', d ? 0.28 : 0.7) + ' 0%, ' + s + ' 50%, ' + mix(s, a, d ? 0.1 : 0.2) + ' 100%)',
+        'hero-shadow': d
+          ? 'inset 0 0 0 1px ' + rgba(a, 0.28) + ', inset 0 -14px 30px -10px rgba(0, 0, 0, 0.45), 0 0 44px -6px ' + rgba(a, 0.5) + ', 0 0 0 6px ' + rgba(a, 0.1)
+          : 'inset 0 0 0 1px rgba(255, 255, 255, 0.9), inset 0 -14px 30px -10px ' + rgba(a, 0.25) + ', 0 18px 36px -14px ' + rgba(shadow, 0.55) + ', 0 0 0 6px rgba(255, 255, 255, 0.55)',
+        'icon-bg': 'radial-gradient(circle at 50% 35%, ' + mix(s, '#ffffff', d ? 0.08 : 0.5) + ', ' + s + ' 70%, ' + mix(s, a, 0.1) + ')',
+        warm: d ? mix(c.panel, '#ff8a5c', 0.14) : mix('#ffffff', '#ffb38a', 0.2),
+        'warm-hover': d ? mix(c.panel, '#ff8a5c', 0.2) : mix('#ffffff', '#ffb38a', 0.28),
+        'warm-ink': d ? '#f3dccf' : '#5a3a2a', 'warm-b': d ? '#ff9a6b' : '#f0623a',
+        warn: d ? mix(c.panel, '#ffb020', 0.12) : '#fff3dc',
+        disabled: mix(c.text, c.panel, 0.86), 'disabled-ink': mix(c.text, c.panel, 0.55), 'disabled-lip': mix(c.text, c.panel, 0.8),
+        'sheet-edge': d ? rgba(a, 0.16) : 'rgba(255, 255, 255, 0.75)',
+        'sheet-bg': 'radial-gradient(90% 170px at 0% 0%, ' + rgba(c.accent2, d ? 0.26 : 0.3) + ', transparent 70%), '
+          + 'radial-gradient(90% 180px at 100% 0%, ' + rgba(a, d ? 0.32 : 0.3) + ', transparent 70%), '
+          + 'linear-gradient(180deg, ' + mix(c.panel, a, d ? 0.1 : 0.06) + ' 0px, ' + c.panel + ' 240px, ' + c.panel + ' 100%)',
+        'sheet-shadow': d
+          ? '0 40px 80px -20px rgba(0, 0, 0, 0.85), 0 0 0 1px ' + rgba(a, 0.14) + ', inset 0 1px 0 rgba(255, 255, 255, 0.08)'
+          : '0 40px 80px -20px ' + rgba(shadow, 0.6) + ', 0 0 0 1px ' + rgba(a, 0.1) + ', inset 0 1px 0 rgba(255, 255, 255, 0.95)',
+        backdrop: d ? 'rgba(0, 0, 0, 0.65)' : rgba(mix(a, '#000000', 0.8), 0.5),
+        chevron: svg("<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'><path d='M1.5 3.5L5 7l3.5-3.5' fill='none' stroke='" + a + "' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/></svg>"),
+        magnifier: svg("<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='" + mix(c.text, c.panel, 0.45) + "' stroke-width='2.6' stroke-linecap='round'><circle cx='11' cy='11' r='7'/><path d='M20 20l-4-4'/></svg>"),
+      };
+      // Menu tiles: the light sheet's deep colours, or the dark sheet's bright ones.
+      var tiles = d
+        ? { tags: '#2dd4bf', bag: '#ff9a4d', daycare: '#4ade80', eggs: '#facc15', dex: '#fb7185', stats: '#a78bfa' }
+        : { tags: '#0d9488', bag: '#e8641e', daycare: '#16a34a', eggs: '#c08400', dex: '#e11d48', stats: '#7c3aed' };
+      for (var k in tiles) t['t-' + k] = tiles[k];
+      return t;
+    }
+
+    function css(list) {
+      return list.filter(function (u) { return u.style === 'aurora'; }).map(function (u) {
+        var t = auroraTokens(u), body = '';
+        for (var k in t) body += '  --au-' + k + ': ' + t[k] + ';\n';
+        return 'html[data-theme="' + u.id + '"] #creatureInventory {\n' + body + '}';
+      }).join('\n');
+    }
+
+    // (Re)register every user theme into window.THEMES + the token sheet.
+    function register(list) {
+      for (var k in window.THEMES) if (window.THEMES[k] && window.THEMES[k].user) delete window.THEMES[k];
+      list.forEach(function (u) { window.THEMES[u.id] = toTheme(u); });
+      var st = document.getElementById('cc-user-themes-css');
+      if (!st) {
+        st = document.createElement('style');
+        st.id = 'cc-user-themes-css';
+        (document.head || document.documentElement).appendChild(st);
+      }
+      st.textContent = css(list);
+    }
+    function store(list) {
+      var cleaned = list.map(clean).filter(function (u) { return u && u.id; });
+      localStorage.setItem(KEY, JSON.stringify(cleaned));
+      register(cleaned);
+      return cleaned;
+    }
+    // data-ui-style="aurora" switches the Aurora look on for a user theme.
+    function applyAttrs(root, t) {
+      if (t && t.user && t.style === 'aurora') root.setAttribute('data-ui-style', 'aurora');
+      else root.removeAttribute('data-ui-style');
+    }
+
+    window.CCUserThemes = {
+      KEY: KEY, COLOR_KEYS: COLOR_KEYS, clean: clean, load: load, store: store,
+      register: register, newId: newId, fromTheme: fromTheme, toTheme: toTheme,
+      auroraTokens: auroraTokens, applyAttrs: applyAttrs, mix: mix, readable: readable,
+      isDark: dark, surface: surface,
+    };
+    register(load());
+  })();
+  // [user-themes-core end]
   function resolve(name) {
     if (name === 'custom') {
       try {
@@ -3222,6 +3539,7 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
   var r = document.documentElement;
   r.setAttribute('data-theme', name);
   r.setAttribute('data-ui-dark', window._themeIsDark(t) ? '1' : '0');
+  window.CCUserThemes.applyAttrs(r, t);
   var s = r.style;
   s.setProperty('--ui-map-bg', t.landcover);
   if (t.ui) {
@@ -3676,6 +3994,7 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
       </select>
     </div>
     <div id="themeGrid" aria-label="Theme picker"></div>
+    <button id="themeEditorBtn" type="button">🎨 Theme editor</button>
     <div id="customThemeControls">
       <div class="row"><label for="cBg">Background</label><input type="color" id="cBg"></div>
       <div class="row"><label for="cLand">Land</label><input type="color" id="cLand"></div>
@@ -3987,6 +4306,43 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
 <div id="appDataMissing" style="display:none">
   <div class="msg"><b>App data missing.</b> Map labels and POI icons need a one-time download (~5&nbsp;MB).</div>
   <button id="appDataMissingFetch">↓ download</button>
+</div>
+<div id="themeEditor" aria-hidden="true">
+  <div class="te-sheet" role="dialog" aria-label="Theme editor">
+    <div class="te-head">
+      <h3>Theme editor</h3>
+      <button class="te-x" type="button" aria-label="close">×</button>
+    </div>
+    <div class="te-slots" aria-label="Your themes"></div>
+    <div class="te-body">
+      <div class="te-preview"><div class="te-map"></div><div class="te-panel"></div></div>
+      <div class="te-row">
+        <input class="te-name" type="text" maxlength="40" placeholder="Theme name" autocomplete="off">
+        <div class="te-seg" role="radiogroup" aria-label="Style">
+          <button type="button" data-style="aurora" role="radio">Aurora</button>
+          <button type="button" data-style="classic" role="radio">Classic</button>
+        </div>
+      </div>
+      <div class="te-group-label">Map</div>
+      <div class="te-swatches" data-group="map"></div>
+      <div class="te-group-label">Panels</div>
+      <div class="te-swatches" data-group="ui"></div>
+      <label class="te-from">Start from
+        <select class="te-from-select"><option value="">a theme…</option></select>
+      </label>
+      <button class="te-use" type="button">Use this theme</button>
+      <div class="te-actions">
+        <button class="te-export" type="button">Export</button>
+        <button class="te-import" type="button">Import</button>
+        <button class="te-delete" type="button">Delete</button>
+      </div>
+    </div>
+    <div class="te-empty">
+      <p>Make a theme of your own: pick 8 colours and everything else follows.</p>
+      <button class="te-import" type="button">Import a theme</button>
+    </div>
+    <input type="file" class="te-import-file" accept=".json,application/json" hidden>
+  </div>
 </div>
 <div id="welcome">
   <div class="card">
@@ -7028,6 +7384,7 @@ function fmtDate(ts) {
     // theme-specific chrome (e.g. the medieval parchment palette).
     document.documentElement.setAttribute('data-theme', name);
     document.documentElement.setAttribute('data-ui-dark', window._themeIsDark(t) ? '1' : '0');
+    window.CCUserThemes.applyAttrs(document.documentElement, t);
     // Generic UI palette → CSS variables so every panel / modal / CTA
     // follows the selected theme. Each theme's `ui` dict maps to the
     // `--ui-*` variables that the shared CSS reads; unset values fall
@@ -8391,6 +8748,7 @@ function fmtDate(ts) {
   function updateCustomVisibility() {
     customControls.style.display = themeSelect.value === 'custom' ? '' : 'none';
   }
+  syncUserThemeOptions();
   themeSelect.value = localStorage.getItem('cc.theme') || 'medieval';
   syncCustomInputs(loadCustomTheme());
   updateCustomVisibility();
@@ -8465,7 +8823,7 @@ function fmtDate(ts) {
     grid.innerHTML = keys.map(k => {
       const t = (k === 'custom') ? customToTheme(loadCustomTheme()) : THEMES[k];
       const preview = themePreviewSVG(t);
-      const label = THEME_LABELS[k] || k;
+      const label = THEME_LABELS[k] || (t && t.user ? _teEsc(t.label) : k);
       return `<button type="button" class="theme-card${k === current ? ' active' : ''}" data-theme="${k}" title="${label}">
         <div class="preview">${preview}</div>
         <div class="name">${label}</div>
@@ -8497,6 +8855,297 @@ function fmtDate(ts) {
     if (!grid) return;
     grid.querySelectorAll('.theme-card').forEach(c =>
       c.classList.toggle('active', c.dataset.theme === themeSelect.value));
+  });
+
+  // ── Theme editor ─────────────────────────────────────────────────────
+  // User themes = 8 key colours + name + style (see window.CCUserThemes in
+  // the early <head> script, which derives everything else). As many as
+  // you like; each is a card in the theme grid, travels in the save file,
+  // and can be exported / imported as a small .json.
+  // A function declaration (hoisted): renderThemeGrid runs before this point.
+  function _teEsc(s) {
+    return String(s).replace(/[&<>"']/g,
+      c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+  const TE_SWATCHES = [
+    { k: 'land', label: 'Land', group: 'map' },
+    { k: 'water', label: 'Water', group: 'map' },
+    { k: 'road', label: 'Roads', group: 'map' },
+    { k: 'building', label: 'Buildings', group: 'map' },
+    { k: 'panel', label: 'Panel', group: 'ui' },
+    { k: 'text', label: 'Text', group: 'ui' },
+    { k: 'accent', label: 'Accent', group: 'ui' },
+    { k: 'accent2', label: 'Accent 2', group: 'ui' },
+  ];
+  // The built-in Aurora family starts new themes in the Aurora style.
+  const TE_AURORA_BUILTINS = new Set(['aurora', 'auroranight', 'aurorablue', 'auroraoled', 'auroraoledblue']);
+
+  function syncUserThemeOptions() {
+    themeSelect.querySelectorAll('option[data-user]').forEach(o => o.remove());
+    const custom = themeSelect.querySelector('option[value="custom"]');
+    for (const u of window.CCUserThemes.load()) {
+      const o = document.createElement('option');
+      o.value = u.id; o.textContent = u.name; o.dataset.user = '1';
+      themeSelect.insertBefore(o, custom);
+    }
+  }
+
+  const teEl = document.getElementById('themeEditor');
+  let teList = [];
+  let teSel = null;
+  let teSaveTimer = 0;
+  const teCur = () => teList.find(u => u.id === teSel) || null;
+
+  // A theme's 8 colours + style, from whatever is in use right now.
+  function teForkCurrent() {
+    const name = localStorage.getItem('cc.theme') || 'medieval';
+    const t = name === 'custom' ? customToTheme(loadCustomTheme()) : (THEMES[name] || THEMES.default);
+    const u = THEMES[name] && THEMES[name].user ? teList.find(x => x.id === name) : null;
+    return {
+      c: u ? Object.assign({}, u.c) : window.CCUserThemes.fromTheme(t),
+      style: u ? u.style : (TE_AURORA_BUILTINS.has(name) ? 'aurora' : 'classic'),
+    };
+  }
+  function teNew(from) {
+    const n = teList.length + 1;
+    const u = { id: window.CCUserThemes.newId(), name: n === 1 ? 'My theme' : 'My theme ' + n,
+      style: from.style, c: from.c, updated: Date.now() };
+    teList.push(u);
+    teSel = u.id;
+    teCommit(true);
+  }
+
+  // Write to storage, re-register, and live-update the theme if it's the
+  // one in use. Colour pickers fire `input` continuously, so callers
+  // debounce through teScheduleSave.
+  function teCommit(rerenderSlots) {
+    clearTimeout(teSaveTimer);
+    teList = window.CCUserThemes.store(teList);
+    syncUserThemeOptions();
+    if (localStorage.getItem('cc.theme') === teSel) applyTheme(teSel);
+    themeSelect.value = localStorage.getItem('cc.theme') || 'medieval';
+    renderThemeGrid();
+    if (rerenderSlots) teRender();
+    else teRenderSlots();
+  }
+  function teScheduleSave() {
+    clearTimeout(teSaveTimer);
+    teSaveTimer = setTimeout(() => teCommit(false), 220);
+  }
+  function teEdit(fn) {
+    const u = teCur();
+    if (!u) return;
+    fn(u);
+    u.updated = Date.now();
+    tePaintPreview();
+    teScheduleSave();
+  }
+
+  function teRenderSlots() {
+    const box = teEl.querySelector('.te-slots');
+    box.innerHTML = teList.map(u => `<button type="button" class="te-slot${u.id === teSel ? ' active' : ''}" data-id="${u.id}">`
+      + `<span class="te-dots">${['panel', 'accent', 'land', 'water'].map(k => `<i style="background:${u.c[k]}"></i>`).join('')}</span>`
+      + `<span class="te-slot-name">${_teEsc(u.name)}</span></button>`).join('')
+      + `<button type="button" class="te-slot te-new">+ New</button>`;
+  }
+
+  // The mini panel: painted with inline styles straight from the derived
+  // palette, so it previews Aurora vs Classic without touching the page.
+  function tePanelHtml(u) {
+    const UT = window.CCUserThemes;
+    const t = UT.toTheme(u), ui = t.ui, c = u.c, aur = u.style === 'aurora';
+    const tok = aur ? UT.auroraTokens(u) : null;
+    const surface = aur ? tok.surface : ui.hover;
+    const tile = (label, color) => aur
+      ? `<span style="flex:1;padding:4px 0;border:1.5px solid ${UT.mix(color, surface, 0.2)};color:${UT.mix(color, surface, 0.2)};border-radius:8px;font-weight:800;text-align:center">${label}</span>`
+      : `<span style="flex:1;padding:4px 0;border:1px solid ${ui.border};color:${ui.panelText};border-radius:4px;text-align:center">${label}</span>`;
+    const card = (name) => `<div style="flex:1;padding:4px;border-radius:${aur ? 10 : 6}px;background:${aur ? surface : ui.hover};${aur ? 'box-shadow:' + tok['card-shadow'] : ''}">`
+      + `<div style="height:34px;border-radius:${aur ? 7 : 4}px;background:${aur ? tok.stage : ui.panelBg};display:flex;align-items:center;justify-content:center">`
+      + `<svg width="26" height="22" viewBox="0 0 26 22"><ellipse cx="13" cy="13" rx="10" ry="8" fill="${c.accent2}"/><circle cx="9.5" cy="11" r="1.6" fill="#fff"/><circle cx="16.5" cy="11" r="1.6" fill="#fff"/><circle cx="9.5" cy="11" r="0.8" fill="#222"/><circle cx="16.5" cy="11" r="0.8" fill="#222"/><path d="M5 7 L3 2 L8 5 Z M21 7 L23 2 L18 5 Z" fill="${c.accent2}"/></svg></div>`
+      + `<div style="margin-top:3px;text-align:center;font-weight:${aur ? 800 : 600};color:${ui.panelText}">${name}</div></div>`;
+    return `<div style="position:absolute;inset:0;padding:9px;background:${aur ? tok['sheet-bg'] : ui.panelBg};color:${ui.panelText}">`
+      + `<div style="text-align:center;font-size:12px;font-weight:${aur ? 800 : 700};margin:0 0 6px">Pokémon</div>`
+      + `<div style="display:flex;gap:4px;margin:0 0 6px">${aur
+          ? tile('Bag', tok['t-bag']) + tile('Eggs', tok['t-eggs']) + tile('Dex', tok['t-dex'])
+          : tile('Bag') + tile('Eggs') + tile('Dex')}</div>`
+      + `<div style="display:flex;gap:4px;margin:0 0 6px">`
+      + `<span style="padding:2px 7px;border-radius:999px;background:${c.accent};color:${ui.accentText};font-weight:700">Shiny</span>`
+      + `<span style="padding:2px 7px;border-radius:999px;border:1px solid ${aur ? tok.line : ui.border};color:${ui.muted};font-weight:600">Favs</span></div>`
+      + `<div style="display:flex;gap:5px">${card('Pikabun')}${card('Fluffle')}</div>`
+      + `</div>`;
+  }
+  function tePaintPreview() {
+    const u = teCur();
+    if (!u) return;
+    teEl.querySelector('.te-map').innerHTML = themePreviewSVG(window.CCUserThemes.toTheme(u));
+    teEl.querySelector('.te-panel').innerHTML = tePanelHtml(u);
+    teEl.querySelectorAll('.te-sw').forEach(sw => {
+      const v = u.c[sw.dataset.k];
+      sw.querySelector('.te-dot').style.background = v;
+      const input = sw.querySelector('input');
+      if (document.activeElement !== input) input.value = v;
+    });
+    const slot = teEl.querySelector(`.te-slot[data-id="${u.id}"] .te-dots`);
+    if (slot) slot.innerHTML = ['panel', 'accent', 'land', 'water'].map(k => `<i style="background:${u.c[k]}"></i>`).join('');
+  }
+  function teRender() {
+    teEl.classList.toggle('is-empty', !teList.length);
+    teRenderSlots();
+    const u = teCur();
+    if (!u) return;
+    const name = teEl.querySelector('.te-name');
+    if (document.activeElement !== name) name.value = u.name;
+    teEl.querySelectorAll('.te-seg button').forEach(b => {
+      const on = b.dataset.style === u.style;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    const inUse = localStorage.getItem('cc.theme') === u.id;
+    const use = teEl.querySelector('.te-use');
+    use.textContent = inUse ? 'In use ✓' : 'Use this theme';
+    use.disabled = inUse;
+    tePaintPreview();
+  }
+
+  function openThemeEditor() {
+    teList = window.CCUserThemes.load();
+    const current = localStorage.getItem('cc.theme');
+    if (teList.some(u => u.id === current)) teSel = current;
+    else if (!teList.some(u => u.id === teSel)) {
+      teSel = teList.length ? teList.slice().sort((a, b) => b.updated - a.updated)[0].id : null;
+    }
+    // "Start from" lists every built-in theme plus your own.
+    const from = teEl.querySelector('.te-from-select');
+    from.innerHTML = '<option value="">a theme…</option>'
+      + Object.keys(THEMES).map(k => `<option value="${k}">${_teEsc(THEME_LABELS[k] || (THEMES[k].label || k))}</option>`).join('');
+    if (!teList.length) {
+      // First visit: start from whatever theme is in use.
+      teList = [];
+      teNew(teForkCurrent());
+    }
+    teRender();
+    teEl.classList.add('show');
+    teEl.setAttribute('aria-hidden', 'false');
+  }
+  function closeThemeEditor() {
+    if (teSaveTimer) teCommit(false);
+    teEl.classList.remove('show');
+    teEl.setAttribute('aria-hidden', 'true');
+  }
+
+  // Swatches (built once): a dot with the native picker laid over it.
+  for (const sw of TE_SWATCHES) {
+    const el = document.createElement('label');
+    el.className = 'te-sw';
+    el.dataset.k = sw.k;
+    el.innerHTML = `<span class="te-dot"></span><input type="color" aria-label="${sw.label}"><span>${sw.label}</span>`;
+    el.querySelector('input').addEventListener('input', (e) => {
+      const v = e.target.value;
+      teEdit(u => { u.c[sw.k] = v; });
+    });
+    teEl.querySelector(`.te-swatches[data-group="${sw.group}"]`).appendChild(el);
+  }
+  document.getElementById('themeEditorBtn').onclick = openThemeEditor;
+  teEl.querySelector('.te-x').onclick = closeThemeEditor;
+  teEl.addEventListener('click', (e) => { if (e.target === teEl) closeThemeEditor(); });
+  teEl.querySelector('.te-slots').addEventListener('click', (e) => {
+    const b = e.target.closest('.te-slot');
+    if (!b) return;
+    if (teSaveTimer) teCommit(false);
+    if (b.classList.contains('te-new')) teNew(teForkCurrent());
+    else { teSel = b.dataset.id; teRender(); }
+  });
+  teEl.querySelector('.te-name').addEventListener('input', (e) => {
+    const v = e.target.value;
+    teEdit(u => { u.name = v.trim() || 'My theme'; });
+  });
+  teEl.querySelectorAll('.te-seg button').forEach(b => b.addEventListener('click', () => {
+    teEdit(u => { u.style = b.dataset.style; });
+    teRender();
+  }));
+  teEl.querySelector('.te-from-select').addEventListener('change', (e) => {
+    const k = e.target.value;
+    e.target.value = '';
+    const src = k && THEMES[k];
+    if (!src) return;
+    teEdit(u => {
+      u.c = src.user ? Object.assign({}, (teList.find(x => x.id === k) || {}).c || window.CCUserThemes.fromTheme(src))
+        : window.CCUserThemes.fromTheme(src);
+      u.style = src.user ? src.style : (TE_AURORA_BUILTINS.has(k) ? 'aurora' : 'classic');
+    });
+    teRender();
+  });
+  teEl.querySelector('.te-use').addEventListener('click', () => {
+    const u = teCur();
+    if (!u) return;
+    if (teSaveTimer) teCommit(false);
+    themeSelect.value = u.id;
+    themeSelect.dispatchEvent(new Event('change'));
+    teRender();
+  });
+  teEl.querySelector('.te-delete').addEventListener('click', () => {
+    const u = teCur();
+    if (!u || !confirm(`Delete “${u.name}”?`)) return;
+    teList = teList.filter(x => x.id !== u.id);
+    teSel = teList.length ? teList[teList.length - 1].id : null;
+    if (localStorage.getItem('cc.theme') === u.id) {
+      // The theme in use is gone: fall back to the default theme.
+      themeSelect.value = 'medieval';
+      themeSelect.dispatchEvent(new Event('change'));
+    }
+    teCommit(true);
+  });
+
+  // Export / import: one theme per small .json file.
+  async function teShareJson(filename, text) {
+    const cap = window.Capacitor;
+    if (cap && cap.isNativePlatform && cap.isNativePlatform()) {
+      const Fs = cap.Plugins && cap.Plugins.Filesystem;
+      const Share = cap.Plugins && cap.Plugins.Share;
+      if (!Fs || !Share) throw new Error('Filesystem/Share plugin unavailable');
+      const { uri } = await Fs.writeFile({ path: filename, data: text, directory: 'CACHE', encoding: 'utf8' });
+      await Share.share({ title: filename, files: [uri], dialogTitle: 'Export theme' });
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  teEl.querySelector('.te-export').addEventListener('click', async () => {
+    const u = teCur();
+    if (!u) return;
+    const slug = u.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'theme';
+    const text = JSON.stringify({ format: 'creature-collect-theme', version: 1,
+      theme: { name: u.name, style: u.style, c: u.c } }, null, 2);
+    try { await teShareJson(`theme-${slug}.json`, text); }
+    catch (e) {
+      if (/cancel/i.test(String(e && e.message || e))) return;
+      alert('Export failed: ' + (e && e.message ? e.message : e));
+    }
+  });
+  const teFile = teEl.querySelector('.te-import-file');
+  teEl.querySelectorAll('.te-import').forEach(b => b.addEventListener('click', () => teFile.click()));
+  teFile.addEventListener('change', async () => {
+    const f = teFile.files && teFile.files[0];
+    teFile.value = '';
+    if (!f) return;
+    try {
+      const data = JSON.parse(await f.text());
+      const raw = Array.isArray(data && data.themes) ? data.themes : [data && data.theme ? data.theme : data];
+      const got = raw.map(window.CCUserThemes.clean).filter(Boolean);
+      if (!got.length) throw new Error('no theme found in that file');
+      for (const u of got) {
+        u.id = window.CCUserThemes.newId();
+        u.updated = Date.now();
+        teList.push(u);
+      }
+      teSel = got[0].id;
+      teCommit(true);
+    } catch (e) {
+      alert('Import failed: ' + (e && e.message ? e.message : e));
+    }
   });
 
   const unitsSelect = document.getElementById('unitsSelect');
@@ -8734,6 +9383,8 @@ function fmtDate(ts) {
       staticRegions: JSON.parse(localStorage.getItem('cc.staticRegions.v1') || '[]'),
       theme: localStorage.getItem('cc.theme'),
       themeCustom: JSON.parse(localStorage.getItem('cc.themeCustom') || 'null'),
+      // Theme-editor themes (8 colours + name + style each).
+      userThemes: window.CCUserThemes.load(),
       units: localStorage.getItem('cc.units'),
       view: JSON.parse(localStorage.getItem('cc.view.v1') || 'null'),
       // Bookmarked route plans (Routing → Saved). Plain localStorage
@@ -9382,6 +10033,20 @@ function fmtDate(ts) {
     // only applied when the local device had no theme set, which meant
     // re-loading on the same device (or a device that had been opened
     // first) never picked up the saved theme. Now the save wins.
+    // Theme-editor themes: merged by id (the newer edit wins), before the
+    // saved theme is applied below — it may be one of them.
+    if (Array.isArray(data.userThemes)) {
+      const UT = window.CCUserThemes;
+      const byId = new Map(UT.load().map(u => [u.id, u]));
+      for (const raw of data.userThemes) {
+        const u = UT.clean(raw);
+        if (!u || !u.id) continue;
+        const have = byId.get(u.id);
+        if (!have || u.updated >= have.updated) byId.set(u.id, u);
+      }
+      UT.store([...byId.values()]);
+      try { syncUserThemeOptions(); renderThemeGrid(); } catch {}
+    }
     if (data.themeCustom) {
       localStorage.setItem('cc.themeCustom', JSON.stringify(data.themeCustom));
       try { syncCustomInputs(loadCustomTheme()); } catch {}

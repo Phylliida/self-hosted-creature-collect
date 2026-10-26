@@ -10500,7 +10500,8 @@
   // so the other themes are untouched.
   //
   // Selectors are written with prefixes, expanded below:
-  //   @A  → :where(every Aurora theme) #creatureInventory
+  //   @A  → :where(every Aurora theme, + html[data-ui-style="aurora"] for
+  //        Theme-editor themes, whose tokens come from index.html) #creatureInventory
   //        The :where() adds no specificity, so a rule here ties the base
   //        rule it restyles and wins on source order (this sheet comes
   //        after creature-styles) — while the base state rules (.applied,
@@ -10514,7 +10515,12 @@
   //   @H  → :is(every Aurora theme) #creatureInventory
   //        Full specificity, for the few spots that need to beat a rule
   //        that's already stronger (the shared close-X in index.html).
-  function _isAuroraTheme(t) { return t === 'aurora' || t === 'auroranight' || t === 'aurorablue' || t === 'auroraoled' || t === 'auroraoledblue'; }
+  // Built-in Aurora themes by name; custom (Theme editor) themes in the
+  // Aurora style are flagged with html[data-ui-style="aurora"].
+  function _isAuroraTheme(t) {
+    return t === 'aurora' || t === 'auroranight' || t === 'aurorablue' || t === 'auroraoled' || t === 'auroraoledblue'
+      || document.documentElement.getAttribute('data-ui-style') === 'aurora';
+  }
   function injectAuroraStyles() {
     if (document.getElementById('creature-styles-aurora')) return;
     const s = document.createElement('style');
@@ -11288,12 +11294,12 @@
       @media (prefers-reduced-motion: reduce) {
         @A * { transition: none !important; }
       }
-    `.replace(/@A/g, ':where(html[data-theme="aurora"], html[data-theme="auroranight"], html[data-theme="aurorablue"], html[data-theme="auroraoled"], html[data-theme="auroraoledblue"]) #creatureInventory')
+    `.replace(/@A/g, ':where(html[data-theme="aurora"], html[data-theme="auroranight"], html[data-theme="aurorablue"], html[data-theme="auroraoled"], html[data-theme="auroraoledblue"], html[data-ui-style="aurora"]) #creatureInventory')
      .replace(/@N/g, ':where(html[data-theme="auroranight"]) #creatureInventory')
      .replace(/@B/g, ':where(html[data-theme="aurorablue"]) #creatureInventory')
      .replace(/@O/g, ':where(html[data-theme="auroraoled"], html[data-theme="auroraoledblue"]) #creatureInventory')
      .replace(/@P/g, ':where(html[data-theme="auroraoledblue"]) #creatureInventory')
-     .replace(/@H/g, ':is(html[data-theme="aurora"], html[data-theme="auroranight"], html[data-theme="aurorablue"], html[data-theme="auroraoled"], html[data-theme="auroraoledblue"]) #creatureInventory');
+     .replace(/@H/g, ':is(html[data-theme="aurora"], html[data-theme="auroranight"], html[data-theme="aurorablue"], html[data-theme="auroraoled"], html[data-theme="auroraoledblue"], html[data-ui-style="aurora"]) #creatureInventory');
     document.head.appendChild(s);
   }
 
@@ -11998,12 +12004,12 @@
     });
     // Aurora draws the actions as icon+label tiles, so a theme switch
     // to or from it re-renders them too.
-    let _headerTheme = document.documentElement.getAttribute('data-theme');
+    let _headerAurora = _isAuroraTheme(document.documentElement.getAttribute('data-theme'));
     new MutationObserver(() => {
-      const t = document.documentElement.getAttribute('data-theme');
-      if (_isAuroraTheme(t) !== _isAuroraTheme(_headerTheme)) renderHeaderActions(panel);
-      _headerTheme = t;
-    }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+      const now = _isAuroraTheme(document.documentElement.getAttribute('data-theme'));
+      if (now !== _headerAurora) renderHeaderActions(panel);
+      _headerAurora = now;
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-ui-style'] });
     panel.querySelector('.save-reminder').addEventListener('click', openSettingsFromInventory);
 
     // Pokédex card → fusion sub-view (delegated; cards are re-rendered).
