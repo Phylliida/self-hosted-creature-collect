@@ -11131,9 +11131,11 @@
         background: var(--au-stage);
         box-shadow: inset 0 0 0 1px rgba(var(--au-accent-rgb), 0.08);
       }
+      /* No CSS filter on sprites: iOS WebKit drops pixelated scaling on
+         filtered images and re-rasterises them lazily while a virtualised
+         grid scrolls, so pictures looked smeared / popped in late. */
       @A :is(.creature-card .art img.art-img, .pokedex-card .pokedex-art img) {
         position: relative;
-        filter: drop-shadow(0 3px 2px rgba(var(--au-inset-rgb), 0.18));
       }
       @A .creature-card .art .art-placeholder { color: var(--au-art-ph); }
       @A .creature-card .name,
@@ -11220,7 +11222,6 @@
       }
       @A .detail-art img.detail-art-img {
         padding: 12px; box-sizing: border-box;
-        filter: drop-shadow(0 6px 4px rgba(var(--au-inset-rgb), 0.22));
       }
       /* Arrows sit on the stage's vertical middle (title row 36 + 8 + 86). */
       @A .nav-arrow {
