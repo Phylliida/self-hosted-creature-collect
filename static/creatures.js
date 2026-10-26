@@ -11164,8 +11164,9 @@
         color: #fff;
         background: var(--au-candy);
         border-color: transparent;
-        box-shadow: 0 6px 14px -6px rgba(var(--au-glow-rgb), 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.4);
-        text-shadow: 0 1px 1px rgba(var(--au-ink-shadow-rgb), 0.3);
+        /* Flat: no top shine, glow or text shadow (too loud). */
+        box-shadow: none;
+        text-shadow: none;
       }
       @A :is(.inv-tag-filter-row, .pokedex-tag-filter-row, .eggs-tag-filter-row) { gap: 7px; }
       /* Non-Evolved Only / Incomplete Only: the same pills as the tag chips. */
@@ -11183,8 +11184,9 @@
         color: #fff;
         background: var(--au-candy);
         border-color: transparent;
-        box-shadow: 0 6px 14px -6px rgba(var(--au-glow-rgb), 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.4);
-        text-shadow: 0 1px 1px rgba(var(--au-ink-shadow-rgb), 0.3);
+        /* Flat: no top shine, glow or text shadow (too loud). */
+        box-shadow: none;
+        text-shadow: none;
       }
 
       /* ---------- Creature + pokédex cards ---------- */
