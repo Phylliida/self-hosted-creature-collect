@@ -309,6 +309,77 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
 })();
 </script>
 <script>
+// ── Resume trace (iOS white-screen hunt, Oct 2026) ─────────────
+// Players saw the app come back from the background as a pure white,
+// untappable screen until a manual reload. This keeps a small ring in
+// localStorage (survives the reload) of boots, background/foreground
+// switches, a heartbeat while visible, and — just after each return to
+// the foreground — whether the page paints (rAF frames in 1 s) and what
+// sits at the centre of the screen. On boot it flags a previous page
+// whose heartbeat stopped while it was visible (a freeze). Shown in the
+// Settings dump as [resume trace]. Zero network.
+(function () {
+  var KEY = 'cc.resumeTrace.v1', HB = 'cc.resumeHb.v1', MAX = 60;
+  function load() { try { var a = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
+  var ring = load();
+  function add(ev, info) {
+    ring.push([Date.now(), ev, info || '']);
+    if (ring.length > MAX) ring = ring.slice(-MAX);
+    try { localStorage.setItem(KEY, JSON.stringify(ring)); } catch (e) {}
+  }
+  var nav = '?';
+  try { var n = performance.getEntriesByType('navigation')[0]; if (n) nav = n.type; } catch (e) {}
+  // The previous page's last heartbeat: visible + no later 'hidden' →
+  // it stopped while on screen.
+  try {
+    var hb = JSON.parse(localStorage.getItem(HB) || 'null');
+    if (hb && hb.v) add('prev-stopped-visible', Math.round((Date.now() - hb.t) / 1000) + 's ago, ' + (hb.w || ''));
+  } catch (e) {}
+  add('boot', nav);
+  var where = '';
+  window._ccResumeWhere = function (w) { where = String(w).slice(0, 40); };
+  function beat() {
+    try { localStorage.setItem(HB, JSON.stringify({ t: Date.now(), v: !document.hidden, w: where })); } catch (e) {}
+  }
+  beat();
+  setInterval(function () { if (!document.hidden) beat(); }, 2000);
+  function describe(el) {
+    if (!el) return 'none';
+    var d = el.tagName.toLowerCase();
+    if (el.id) d += '#' + el.id;
+    var c = (typeof el.className === 'string' ? el.className : '').trim().split(/\s+/).slice(0, 2).join('.');
+    if (c) d += '.' + c;
+    return d;
+  }
+  function probe() {
+    var frames = 0, t0 = Date.now();
+    function f() { frames++; if (Date.now() - t0 < 1000) requestAnimationFrame(f); }
+    requestAnimationFrame(f);
+    setTimeout(function () {
+      var info = 'frames/1s=' + frames;
+      try {
+        var el = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
+        info += ' centre=' + describe(el);
+        if (el) info += ' bg=' + getComputedStyle(el).backgroundColor;
+        info += ' html=' + getComputedStyle(document.documentElement).backgroundColor;
+        info += ' vp=' + innerWidth + 'x' + innerHeight;
+      } catch (e) { info += ' err=' + e.message; }
+      add('after-visible', info);
+    }, 1100);
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) {
+      add('hidden');
+      try { localStorage.setItem(HB, JSON.stringify({ t: Date.now(), v: false, w: where })); } catch (e) {}
+    } else { add('visible'); beat(); probe(); }
+  });
+  window.addEventListener('pageshow', function (e) { if (e.persisted) { add('pageshow-bfcache'); probe(); } });
+  window.addEventListener('pagehide', function (e) { add('pagehide', e.persisted ? 'bfcache' : ''); });
+  window.addEventListener('load', function () { setTimeout(probe, 0); });
+  window._ccResumeTrace = function () { return ring.slice(); };
+})();
+</script>
+<script>
 // ── Main-thread stall tracer ──────────────────────────────────
 // Records UI-thread freezes into window._ccStalls so "the app
 // hiccupped a minute ago" is answerable from the Settings
@@ -17704,6 +17775,16 @@ function fmtDate(ts) {
       // waited ≥250ms before the page could handle it. Sync marks are true
       // blocking time; '~wall' marks include awaited IO and only
       // prove a freeze when a lag/task entry has the same age.
+      if (window._ccResumeTrace) {
+        const rt = window._ccResumeTrace().slice(-30).reverse();
+        lines.push(`[resume trace]  newest first (white-screen hunt)`);
+        const nowRt = Date.now();
+        for (const [t, ev, info] of rt) {
+          const ago = Math.round((nowRt - t) / 1000);
+          const when = ago < 3600 ? `-${ago}s` : new Date(t).toLocaleString();
+          lines.push(`  ${when.padEnd(20)} ${ev}${info ? '  ' + info : ''}`);
+        }
+      }
       const stalls = window._ccStalls;
       if (stalls) {
         lines.push(`[main-thread stalls]`);

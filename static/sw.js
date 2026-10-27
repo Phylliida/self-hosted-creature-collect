@@ -330,6 +330,10 @@ self.addEventListener('fetch', (e) => {
   // even when something does briefly fail. Legit user-initiated
   // network requests with X-Download still bypass the SW via the
   // explicit-branch handlers.
+  if (IS_CAPACITOR && e.request.mode === 'navigate') {
+    e.respondWith(_navigateWithRetry(e.request));
+    return;
+  }
   e.respondWith(
     caches.match(e.request)
       .then((hit) => {
@@ -339,6 +343,36 @@ self.addEventListener('fetch', (e) => {
       .catch(_swFetchFailed)
   );
 });
+
+// iOS white screen (Oct 2026): iOS often kills LocalServer's socket while
+// the app is suspended, and LocalServer only notices + rebinds ~2 s after
+// the app comes back. If the WebView reloads the page in that window
+// (iOS discarded the page while backgrounded), the page fetch failed and
+// the default branch answered an EMPTY 504 — a blank white page that
+// nothing ever retried, until the user reloaded by hand. Page loads now
+// retry for a few seconds, then fall back to a tiny self-reloading page
+// so the app always comes back on its own.
+const NAV_RETRY_MS = [0, 300, 700, 1200, 2000, 3000];
+async function _navigateWithRetry(req) {
+  for (const wait of NAV_RETRY_MS) {
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    try {
+      const res = await fetch(req);
+      if (res && res.status < 500) return res;
+    } catch { /* server not back yet */ }
+  }
+  return new Response(_NAV_RETRY_PAGE, {
+    status: 503,
+    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-CC-SW': 'nav-retry' },
+  });
+}
+const _NAV_RETRY_PAGE = '<!doctype html><html><head><meta charset="utf-8">'
+  + '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">'
+  + '<script>(function(){try{var b=localStorage.getItem("cc.themeMapBg");'
+  + 'if(b&&/^#[0-9a-f]{6}$/i.test(b))document.documentElement.style.background=b;}catch(e){}'
+  + 'setTimeout(function(){location.reload();},1000);})();</script></head>'
+  + '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;'
+  + 'font:15px -apple-system,system-ui,sans-serif;color:#888">Loading…</body></html>';
 
 self.addEventListener('message', (e) => {
   const msg = e.data || {};

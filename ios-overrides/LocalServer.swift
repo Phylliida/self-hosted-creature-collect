@@ -163,7 +163,8 @@ import UIKit
         }
     }
 
-    private func recordLifecycle(_ type: String) {
+    // Not private: AppBridgeViewController's resume watchdog logs here too.
+    func recordLifecycle(_ type: String) {
         diagQueue.sync {
             _lifecycleEvents.append(LifecycleEvent(type: type, at: Date()))
             if _lifecycleEvents.count > 10 { _lifecycleEvents.removeFirst() }

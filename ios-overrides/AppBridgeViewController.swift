@@ -11,6 +11,7 @@
 import UIKit
 import AVFoundation
 import Capacitor
+import WebKit
 
 @objc(AppBridgeViewController)
 class AppBridgeViewController: CAPBridgeViewController {
@@ -55,5 +56,55 @@ class AppBridgeViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(SensorProbePlugin())
         bridge?.registerPluginInstance(SaveImagePlugin())
         bridge?.registerPluginInstance(FocusMonitorPlugin())
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(appDidBecomeActive),
+            name: UIApplication.didBecomeActiveNotification, object: nil)
+    }
+
+    // ── Resume watchdog (Oct 2026 white screen) ────────────────────
+    // Players saw the app come back from the background as a pure white
+    // screen that ignored taps until they reloaded by hand. Whatever wedges
+    // the page, the WebView recovers when reloaded — so do it for them: a
+    // few seconds after every return to the foreground, ask the page for a
+    // trivial value. No answer in time (the page is frozen) or no page at
+    // all → reload from the local server. LocalServer's own foreground
+    // check restarts the listener ~2 s after resume, so we probe after it.
+    private var resumeProbeToken = 0
+
+    @objc private func appDidBecomeActive() {
+        resumeProbeToken += 1
+        let token = resumeProbeToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
+            self?.probePage(token: token)
+        }
+    }
+
+    private func probePage(token: Int) {
+        guard token == resumeProbeToken, let webView = webView else { return }
+        guard UIApplication.shared.applicationState == .active else { return }
+        var answered = false
+        webView.evaluateJavaScript("document.readyState") { result, error in
+            answered = true
+            let state = result as? String
+            if error != nil || state == nil {
+                self.recoverPage(webView, reason: "no page (\(error?.localizedDescription ?? "nil"))")
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
+            guard let self = self, token == self.resumeProbeToken, !answered else { return }
+            self.recoverPage(webView, reason: "page frozen (no answer in 4 s)")
+        }
+    }
+
+    private func recoverPage(_ webView: WKWebView, reason: String) {
+        NSLog("[AppBridgeVC] resume watchdog: \(reason); reloading")
+        LocalServer.shared.recordLifecycle("watchdog-reload: \(reason)")
+        // A frozen page may never yield its main thread to a plain reload;
+        // loading the app URL afresh is the strongest in-process reset.
+        if let s = bridge?.config.serverURL {
+            webView.load(URLRequest(url: s))
+        } else {
+            webView.reload()
+        }
     }
 }
