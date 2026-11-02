@@ -17248,9 +17248,9 @@
     return h;
   }
   // "Daily forecast" sub-view: the chance each type becomes tomorrow's daily
-  // type, straight from Spawns.dailyForecast() (the same weights tomorrow's
-  // draw uses). Bars scale to the likeliest type; the weekly type is named
-  // in the note since it can't be the daily.
+  // type, straight from Spawns.dailyForecast() (its share of what's left in
+  // the urn). Bars scale to the likeliest type; types the urn has run out of
+  // are listed under it.
   function _dailyForecastHtml(nowMs) {
     const now = nowMs == null ? Date.now() : nowMs;
     const fc = (global.Spawns && global.Spawns.dailyForecast)
@@ -17276,11 +17276,20 @@
         + '<span class="cc-sum-pct">' + fmt(o.p) + '</span>';
     }
     h += '</div></div>';
-    h += '<p class="cc-info-note">A type gets likelier every day it isn\'t the daily type, '
-      + 'so none stays away for long. One that just had its day is unlikely to come straight back.</p>';
-    h += '<p class="cc-info-p" style="margin:8px 0 0">' + _ccTypeChip(fc.weekly)
-      + (fc.newWeek ? ' becomes the weekly type tomorrow' : ' is this week\'s type')
-      + ', so it can\'t also be the daily.</p>';
+    const urn = fc.urn;
+    if (urn) {
+      const per = urn.copies;
+      h += '<p class="cc-info-note">Daily types are drawn from an urn that holds ' + per
+        + ' of every type, one a day until it\'s empty, and then it refills. Every type comes up '
+        + per + ' times per ' + urn.size + ' days.</p>';
+      h += urn.fresh
+        ? '<p class="cc-info-p" style="margin:8px 0 0">Tomorrow starts a fresh urn, so every type is equally likely.</p>'
+        : '<p class="cc-info-p" style="margin:8px 0 0"><b>' + urn.left + '</b> left in the urn, tomorrow\'s included.</p>';
+      if (urn.gone && urn.gone.length) {
+        h += '<div class="cc-info-section" style="margin-top:8px"><div class="cc-info-section-title">Used up until the refill</div>'
+          + _ccTypeChips(urn.gone) + '</div>';
+      }
+    }
     return h;
   }
   function _showThemeOdds() {

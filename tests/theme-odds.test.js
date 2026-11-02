@@ -194,6 +194,7 @@ for (const m of [
   'function _ccOddsGrid(',
   'function _themeOddsHtml(',
   'function _ccTypeChip(',
+  'function _ccTypeChips(',
   'function _fmtExpiryDh(',
   'function _dailyForecastHtml(',
 ]) vm.runInContext(extract(m), ctx);
@@ -349,14 +350,29 @@ const call = (expr) => vm.runInContext(expr, ctx);
   ok(/width:100\.0%;background:/.test(h) && /width:60\.0%;background:/.test(h), 'P3: bars scale to the likeliest type');
   ok(h.indexOf(globalThis.Types.color('STEEL')) >= 0, 'P3: bars and chips use the type colors');
   ok(h.indexOf('6h 0m') >= 0, 'P3: says how long until the change');
-  ok(/Water<\/span> is this week/.test(h), 'P3: names this week\'s type as excluded');
+  ok(h.indexOf('urn') < 0, 'P3: no urn ⇒ no urn notes');
+}
+{
+  // Mid-urn: 3 balls left, some types used up.
+  ctx.global.Spawns.dailyForecast = () => ({
+    startMs: 21 * 86400000, weekly: 'ICE', newWeek: false,
+    odds: [{ type: 'FIRE', p: 2 / 3, left: 2 }, { type: 'ROCK', p: 1 / 3, left: 1 }],
+    urn: { left: 3, size: 54, copies: 3, fresh: false, gone: ['WATER', 'GRASS'] },
+  });
+  const h = call('_dailyForecastHtml(' + 20.5 * 86400000 + ')');
+  ok(/holds 3 of every type/.test(h) && /3 times per 54 days/.test(h), 'P3: explains the urn (3 of each, 54 days)');
+  ok(/<b>3<\/b> left in the urn/.test(h), 'P3: says how many are left');
+  ok(/Used up until the refill/.test(h) && h.indexOf('Water') >= 0 && h.indexOf('Grass') >= 0, 'P3: lists the used-up types');
+  ok(h.indexOf('67%') >= 0 && h.indexOf('33%') >= 0, 'P3: shares of what\'s left');
 }
 {
   ctx.global.Spawns.dailyForecast = () => ({
-    startMs: 21 * 86400000, weekly: 'ICE', newWeek: true, odds: [{ type: 'STEEL', p: 1 }],
+    startMs: 21 * 86400000, weekly: 'ICE', newWeek: true,
+    odds: [{ type: 'FIRE', p: 0.5, left: 3 }, { type: 'ROCK', p: 0.5, left: 3 }],
+    urn: { left: 6, size: 6, copies: 3, fresh: true, gone: [] },
   });
   const h = call('_dailyForecastHtml(' + 20.5 * 86400000 + ')');
-  ok(/Ice<\/span> becomes the weekly type tomorrow/.test(h), 'P3: new week ⇒ names tomorrow\'s weekly type');
+  ok(/fresh urn/.test(h) && !/Used up/.test(h), 'P3: a fresh urn says so, nothing used up');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

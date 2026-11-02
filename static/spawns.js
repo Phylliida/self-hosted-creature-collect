@@ -266,34 +266,20 @@
     return types[Math.floor(getxor4069((dayIdx ^ DAILY_SALT) | 0)() * types.length)];
   }
   // From DAILY_BIAS_FROM_DAY (a UTC day boundary, so no day changed
-  // type mid-day) each day's type is a weighted draw from how long each
-  // type has gone without being the daily type (_dailyWeight), and 0 for
-  // this week's weekly type (the daily never repeats the weekly). Still
+  // type mid-day) until DAILY_URN_FROM_DAY, each day's type was a weighted
+  // draw from how long each type had gone without being the daily type
+  // (_dailyWeights), and 0 for that week's weekly type. Still
   // seeded per day, so every player sees the same chain: "last seen"
   // starts from the hashed days before the cut-over and is replayed day
   // by day from there, memoized (currentWeather runs per spawn tick).
   const DAILY_BIAS_FROM_DAY = Math.floor(Date.UTC(2026, 9, 27) / DAY_MS);
   const DAILY_BIAS_SEED_DAYS = 60;   // hashed days the history starts from
-  // Weight of a type that was last the daily type `gap` days before day d
-  // (gap ≥ 1), with n weather types. Until DAILY_RAMP_FROM_DAY: plain days
-  // since. From then on, points that refill: 1 the day after its turn, +1
-  // a day up to n ("as likely as everyone else"), flat until day n + 2,
-  // then +DAILY_OVERDUE_STEP for every further day it's still missing — so
-  // long droughts are pulled back, gently (18 types: the worst gap in a
-  // typical year is ~44 days, vs ~56 under days-since and ~81 with no
-  // pull at all; +18/day gave ~35 but felt too forced). The switch is a
-  // later UTC day boundary, so no day already shown changed.
-  const DAILY_RAMP_FROM_DAY = Math.floor(Date.UTC(2026, 10, 3) / DAY_MS);
-  const DAILY_OVERDUE_STEP = 4;
-  function _dailyWeight(d, gap, n) {
-    if (d < DAILY_RAMP_FROM_DAY) return gap;
-    const flatUntil = n + 2;
-    return gap <= flatUntil ? Math.min(n, gap) : n + DAILY_OVERDUE_STEP * (gap - flatUntil);
-  }
-  // Every type's weight for day d, in `types` order (weekly → 0).
+  // Every type's weight for day d (DAILY_BIAS_FROM_DAY ≤ d <
+  // DAILY_URN_FROM_DAY), in `types` order: days since it was last the daily
+  // type, 0 for that week's weekly.
   function _dailyWeights(d, types, lastSeen) {
     const weekly = _weeklyTypeForWeek(Math.floor(d * DAY_MS / WEEK_MS));
-    return types.map((t) => (t === weekly ? 0 : _dailyWeight(d, d - lastSeen.get(t), types.length)));
+    return types.map((t) => (t === weekly ? 0 : d - lastSeen.get(t)));
   }
   let _dailyMemo = null;             // { types, byDay: Map, seed, lastSeen, next }
   function _biasedDailyType(dayIdx) {
@@ -327,41 +313,93 @@
     return m.byDay.get(dayIdx);
   }
 
+  // From DAILY_URN_FROM_DAY (a later UTC day boundary, so no day already
+  // shown changed): an urn. It holds DAILY_URN_COPIES of every type and
+  // gives up one a day, in a seeded order, until it's empty; then it's
+  // refilled. Every type comes up exactly 3 times per 3n days (back-to-back
+  // repeats can happen; the daily can match the weekly). A day's type is
+  // just (which urn, which position), so nothing is replayed, and every
+  // player draws the same order.
+  const DAILY_URN_FROM_DAY = Math.floor(Date.UTC(2026, 10, 3) / DAY_MS);
+  const DAILY_URN_COPIES = 3;
+  const DAILY_URN_SALT = 0x0A2E;
+  const _dailyUrnCache = new WeakMap();   // type list -> Map(urn index -> draw order)
+  function _dailyUrnSlot(dayIdx) {
+    const size = DAILY_URN_COPIES * _weatherTypes().length;
+    const k = dayIdx - DAILY_URN_FROM_DAY;
+    return { urn: Math.floor(k / size), pos: goodMod(k, size), size };
+  }
+  function _dailyUrn(urnIdx) {
+    const types = _weatherTypes();
+    let byUrn = _dailyUrnCache.get(types);
+    if (!byUrn) { byUrn = new Map(); _dailyUrnCache.set(types, byUrn); }
+    let order = byUrn.get(urnIdx);
+    if (!order) {
+      order = [];
+      for (let c = 0; c < DAILY_URN_COPIES; c++) order.push(...types);
+      const rng = getxor4069((urnIdx ^ DAILY_URN_SALT) | 0);
+      for (let i = order.length - 1; i > 0; i--) {
+        const j = Math.floor(rng() * (i + 1));
+        const tmp = order[i]; order[i] = order[j]; order[j] = tmp;
+      }
+      if (byUrn.size > 8) byUrn.clear();
+      byUrn.set(urnIdx, order);
+    }
+    return order;
+  }
+  function _urnDailyType(dayIdx) {
+    const { urn, pos } = _dailyUrnSlot(dayIdx);
+    return _dailyUrn(urn)[pos];
+  }
+
   function currentWeather(nowMs) {
     const now = nowMs == null ? Date.now() : nowMs;
     const dayIdx = Math.floor(now / DAY_MS);
     return {
-      daily: dayIdx < DAILY_BIAS_FROM_DAY ? _hashedDailyType(dayIdx) : _biasedDailyType(dayIdx),
+      daily: dayIdx < DAILY_BIAS_FROM_DAY ? _hashedDailyType(dayIdx)
+        : (dayIdx < DAILY_URN_FROM_DAY ? _biasedDailyType(dayIdx) : _urnDailyType(dayIdx)),
       weekly: _weeklyTypeForWeek(Math.floor(now / WEEK_MS)),
     };
   }
 
-  // Tomorrow's daily-type odds, for the weather explainer's forecast: the
-  // exact weights tomorrow's draw will use, normalized. Tomorrow's weekly
-  // type is left out (it can't be the daily). Returns
-  //   { startMs, weekly, newWeek, odds: [{ type, p }] }  most likely first,
-  // or null when tomorrow isn't on the weighted chain yet.
+  // Tomorrow's daily-type odds, for the weather explainer's forecast. In
+  // the urn era: each type's share of what's still in the urn (a fresh urn:
+  // all equal). Returns
+  //   { startMs, weekly, newWeek, odds: [{ type, p, left }],
+  //     urn: { left, size, copies, fresh, gone: [types with none left] } | null }
+  // with odds most likely first, or null before the weighted chain.
   function dailyForecast(nowMs) {
     const now = nowMs == null ? Date.now() : nowMs;
     const day = Math.floor(now / DAY_MS) + 1;
     if (day < DAILY_BIAS_FROM_DAY) return null;
     const types = _weatherTypes();
-    _biasedDailyType(day - 1);   // make sure the chain covers every day before tomorrow
-    const lastSeen = new Map(_dailyMemo.seed);
-    for (let d = DAILY_BIAS_FROM_DAY; d < day; d++) lastSeen.set(_dailyMemo.byDay.get(d), d);
-    const w = _dailyWeights(day, types, lastSeen);
-    let total = 0;
-    for (const x of w) total += x;
-    if (!(total > 0)) return null;
     const odds = [];
-    types.forEach((t, i) => { if (w[i] > 0) odds.push({ type: t, p: w[i] / total }); });
-    odds.sort((a, b) => b.p - a.p);   // stable: ties keep the type-list order
+    let urn = null;
+    if (day >= DAILY_URN_FROM_DAY) {
+      const slot = _dailyUrnSlot(day);
+      const rest = _dailyUrn(slot.urn).slice(slot.pos);   // tomorrow's ball and every one after it
+      const left = new Map();
+      for (const t of rest) left.set(t, (left.get(t) || 0) + 1);
+      for (const t of types) if (left.get(t)) odds.push({ type: t, p: left.get(t) / rest.length, left: left.get(t) });
+      urn = { left: rest.length, size: slot.size, copies: DAILY_URN_COPIES, fresh: slot.pos === 0, gone: types.filter((t) => !left.get(t)) };
+    } else {
+      _biasedDailyType(day - 1);   // make sure the chain covers every day before tomorrow
+      const lastSeen = new Map(_dailyMemo.seed);
+      for (let d = DAILY_BIAS_FROM_DAY; d < day; d++) lastSeen.set(_dailyMemo.byDay.get(d), d);
+      const w = _dailyWeights(day, types, lastSeen);
+      let total = 0;
+      for (const x of w) total += x;
+      if (!(total > 0)) return null;
+      types.forEach((t, i) => { if (w[i] > 0) odds.push({ type: t, p: w[i] / total }); });
+    }
+    odds.sort((x, y) => y.p - x.p);   // stable: ties keep the type-list order
     const week = Math.floor(day * DAY_MS / WEEK_MS);
     return {
       startMs: day * DAY_MS,
       weekly: _weeklyTypeForWeek(week),
       newWeek: week !== Math.floor(now / WEEK_MS),
       odds,
+      urn,
     };
   }
 
@@ -2129,7 +2167,7 @@
 
   global.Spawns = {
     spawnsInBbox, generateCellAtTick, currentTick, isSpawnIdStale,
-    currentWeather, dailyForecast, typeOdds, typePairOdds, DAILY_BIAS_FROM_DAY, DAILY_RAMP_FROM_DAY,
+    currentWeather, dailyForecast, typeOdds, typePairOdds, DAILY_BIAS_FROM_DAY, DAILY_URN_FROM_DAY,
     // Legendary stream (folded into spawnsInBbox; exposed for tests +
     // any future legendary-specific UI).
     legendariesInBbox, generateLegendaryAtTick, currentLegTick,
