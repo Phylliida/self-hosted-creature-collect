@@ -14067,13 +14067,13 @@
     const body = panel.querySelector('.bag-body');
     if (!body) return;
     // Launchers — always available (you craft from eggs, not from bag
-    // contents), so they show even when the bag is empty: Candy, Craft
-    // incense, Focus mode, Gifts (same button style); each opens a
-    // sub-view.
+    // contents), so they show even when the bag is empty: Candy, Incense
+    // (crafting), Focus (focus mode), Gifts (same button style, short
+    // labels; each sub-view keeps its full title).
     const craftBtnHtml = `<div class="bag-launchers">`
       + `<button class="bag-craft bag-candy" type="button">Candy</button>`
-      + `<button class="bag-craft bag-incense" type="button">Craft incense</button>`
-      + `<button class="bag-craft bag-focus" type="button">Focus mode</button>`
+      + `<button class="bag-craft bag-incense" type="button">Incense</button>`
+      + `<button class="bag-craft bag-focus" type="button">Focus</button>`
       + `<button class="bag-craft bag-gifts" type="button">Gifts</button>`
       + `</div>`;
     // Active-incense banner (if one is burning).
