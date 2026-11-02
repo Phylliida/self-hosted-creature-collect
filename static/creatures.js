@@ -11121,6 +11121,19 @@
       }
       @A :is(.pokedex-stats, .eggs-stats) b { color: var(--au-violet); font-weight: 800; }
 
+      /* ---------- POI card: Collect items (index.html, outside the panel) ---------- */
+      /* An outline button rather than a solid fill: less loud on the map. */
+      @G #poiCardCollect {
+        background: transparent; color: var(--ui-accent);
+        border: 2px solid var(--ui-accent); font-weight: 800;
+      }
+      @G #poiCardCollect:hover:not(:disabled) { background: color-mix(in srgb, var(--ui-accent) 10%, transparent); }
+      @G #poiCardCollect:disabled,
+      @G #poiCardCollect:disabled:hover {
+        background: transparent; color: var(--ui-muted);
+        border-color: color-mix(in srgb, var(--ui-muted) 45%, transparent);
+      }
+
       /* ---------- Menu tiles (Tags / Bag / Daycare / Eggs / Dex / Stats) ---------- */
       @A .header-actions { gap: 6px; margin: 4px 0 12px; flex-wrap: nowrap; }
       /* Each tile: an outline, icon and label in its own colour, on the
@@ -11513,7 +11526,9 @@
      .replace(/@B/g, ':where(html[data-theme="aurorablue"]) #creatureInventory')
      .replace(/@O/g, ':where(html[data-theme="auroraoled"], html[data-theme="auroraoledblue"]) #creatureInventory')
      .replace(/@P/g, ':where(html[data-theme="auroraoledblue"]) #creatureInventory')
-     .replace(/@H/g, ':is(html[data-theme="aurora"], html[data-theme="auroranight"], html[data-theme="aurorablue"], html[data-theme="auroraoled"], html[data-theme="auroraoledblue"], html[data-ui-style="aurora"]) #creatureInventory');
+     .replace(/@H/g, ':is(html[data-theme="aurora"], html[data-theme="auroranight"], html[data-theme="aurorablue"], html[data-theme="auroraoled"], html[data-theme="auroraoledblue"], html[data-ui-style="aurora"]) #creatureInventory')
+     // @G: page-level (index.html chrome outside the panel), zero added specificity.
+     .replace(/@G/g, ':where(html[data-theme="aurora"], html[data-theme="auroranight"], html[data-theme="aurorablue"], html[data-theme="auroraoled"], html[data-theme="auroraoledblue"], html[data-ui-style="aurora"])');
     document.head.appendChild(s);
   }
 
