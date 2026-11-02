@@ -11122,12 +11122,20 @@
       @A :is(.pokedex-stats, .eggs-stats) b { color: var(--au-violet); font-weight: 800; }
 
       /* ---------- POI card: Collect items (index.html, outside the panel) ---------- */
-      /* An outline button rather than a solid fill: less loud on the map. */
+      /* An outline button rather than a solid fill: less loud on the map.
+         No browser tap-flash (bright on the see-through button); a press
+         is a faint tint and a small shrink, like the menu tiles. */
       @G #poiCardCollect {
         background: transparent; color: var(--ui-accent);
         border: 2px solid var(--ui-accent); font-weight: 800;
+        -webkit-tap-highlight-color: transparent;
+        transition: transform 90ms ease, background 90ms ease;
       }
       @G #poiCardCollect:hover:not(:disabled) { background: color-mix(in srgb, var(--ui-accent) 10%, transparent); }
+      @G #poiCardCollect:active:not(:disabled) {
+        transform: scale(0.98);
+        background: color-mix(in srgb, var(--ui-accent) 16%, transparent);
+      }
       @G #poiCardCollect:disabled,
       @G #poiCardCollect:disabled:hover {
         background: transparent; color: var(--ui-muted);
