@@ -7793,6 +7793,9 @@
            min-width: 0 lets the slot ignore its children's natural
            widths so the pill row's overflow:hidden actually clips. */
         min-width: 0;
+        /* Holding a candy converter must not start selecting the
+           slot's text (the pokémon's name sits right under it). */
+        -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
       }
       #creatureInventory .daycare-slot {
         display: flex;
@@ -7891,7 +7894,10 @@
       #creatureInventory .daycare-convert-btn.holding { opacity: 1; }
       #creatureInventory .daycare-convert-btn .convert-trail {
         position: absolute; left: -4px; top: -4px; overflow: visible; pointer-events: none;
+        /* Only while held: at zero length the round cap still draws a dot. */
+        visibility: hidden;
       }
+      #creatureInventory .daycare-convert-btn.holding .convert-trail { visibility: visible; }
       #creatureInventory .daycare-convert-btn .convert-trail rect {
         fill: none; stroke: var(--ui-accent, #2a8); stroke-width: 2.5; stroke-linecap: round;
         stroke-dasharray: 100; stroke-dashoffset: 100;
@@ -17748,6 +17754,8 @@
           e.stopPropagation();          // never open the pokémon underneath
           if (e.detail === 0) toggle(); // keyboard activation
         });
+        // A long press is the gesture here: no context menu / callout.
+        btn.addEventListener('contextmenu', (e) => e.preventDefault());
         _focusWireHold(btn, () => toggle(), { ms: DAYCARE_CONVERT_HOLD_MS, beforeStart: _convertTrail });
         function toggle() {
           const side = btn.dataset.convertSide;
