@@ -1284,12 +1284,12 @@
   // turns up different ones. Each UTC day (rotating with the daily type)
   // the world is cut into ~BUBBLE_GRID_M squares with one bubble at a
   // seeded spot inside each: the nearest centre is ~720 m away on median
-  // (a 5–10 minute walk), ~7% of the ground is inside a bubble, and
+  // (a 5–10 minute walk), ~3% of the ground is inside a bubble, and
   // overlaps are rare.
   //
   // Each bubble draws a primary and a secondary pokémon from its day's
   // natural wild mix (so they follow the daily/weekly types; they can be
-  // the same one). Inside it (BUBBLE_RADIUS_M, 2.6× the 100 m view radius):
+  // the same one). Inside it (BUBBLE_RADIUS_M, 1.6× the 100 m view radius):
   //  - Density ramps from 1× at the edge to BUBBLE_MAX_DENSITY× at the
   //    centre (generateCellAtTick scales its spawn chance).
   //  - Every spawn has one half (head or body, a coin flip) that is the
@@ -1316,7 +1316,7 @@
   // spawns still stand exactly where fusion-mode spawns do, but no centre
   // spawn (packs have no radar stream). Focus mode's rollWildEncounter has
   // no location.
-  const BUBBLE_RADIUS_M = 262.5;   // 500 until 2026-10-25, 350 until 2026-11-02 (too strong)
+  const BUBBLE_RADIUS_M = 157.5;   // 500 until 2026-10-25, 350 → 262.5 → 157.5 on 2026-11-02 (too strong)
   const BUBBLE_GRID_M = 1700;
   const BUBBLE_PRIMARY_SHARE = 2 / 3;
   const BUBBLE_MAX_DENSITY = 2;
@@ -1428,7 +1428,7 @@
     return out;
   }
   // generateCellAtTick's view: the bubbles over a spawn cell's centre on the
-  // day of its birth tick (a cell is ~11 m, invisible on a 262.5 m circle).
+  // day of its birth tick (a cell is ~11 m, invisible on a 157.5 m circle).
   function _bubblesForCell(cellX, cellY, tick) {
     return _bubblesAround((cellX + 0.5) / SCALE - 90, (cellY + 0.5) / SCALE - 180,
       Math.floor(tick * TICK_MS / DAY_MS));

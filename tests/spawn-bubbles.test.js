@@ -1,5 +1,5 @@
 // Tests the spawn bubbles ("nests") in static/spawns.js: ~1.7 km squares
-// with one 262.5 m bubble each per UTC day; inside, the normal stream's density
+// with one 157.5 m bubble each per UTC day; inside, the normal stream's density
 // ramps from 1× (edge) to 2× (centre) and every spawn has one half that is
 // the bubble's primary (2/3) or secondary (1/3) pokémon, the other half the
 // usual weather draw; the centre holds a radar spawn ('E:B:' id) of their
@@ -40,7 +40,7 @@ global.Species = {
 require(path.join(root, 'static', 'spawns.js'));
 const S = global.Spawns;
 const T = S._bubbleTest;
-const R = S.BUBBLE_RADIUS_M;   // bubble radius (262.5 m since 2026-11-02; 350 before, 500 before 2026-10-25)
+const R = S.BUBBLE_RADIUS_M;   // bubble radius (157.5 m since 2026-11-02; was 500 → 350 → 262.5)
 
 const SCALE = 10000;
 const DAY_MS = 86400000;
@@ -80,7 +80,7 @@ const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
     + ` inside a bubble ${(inside / N * 100).toFixed(0)}%, overlap ${(overlap / N * 100).toFixed(1)}%`);
   ok(median > 600 && median < 850, '1: nearest bubble centre ~720 m away on median (a 5–10 min walk)');
   ok(within800 > 0.5 && within800 < 0.7, '1: centre within 800 m for ~60% of spots');
-  ok(inside / N > 0.05 && inside / N < 0.10, '1: about 7% of the ground is inside a bubble (π·262.5² per 1.7 km square)');
+  ok(inside / N > 0.015 && inside / N < 0.045, '1: about 3% of the ground is inside a bubble (π·157.5² per 1.7 km square)');
   ok(overlap / N < 0.04, '1: overlaps are rare');
 }
 
@@ -93,7 +93,7 @@ const today = S.bubblesNear(MTL[0], MTL[1], 3000, NOW);
   const tomorrow = S.bubblesNear(MTL[0], MTL[1], 3000, NOW + DAY_MS);
   ok(JSON.stringify(tomorrow.map((b) => [b.lat, b.lng])) !== JSON.stringify(today.map((b) => [b.lat, b.lng])),
     '2: new bubbles the next UTC day');
-  ok(R === 262.5 && today.every((b) => b.radiusM === R && b.distM <= 3000), '2: 262.5 m radius, within the asked radius');
+  ok(R === 157.5 && today.every((b) => b.radiusM === R && b.distM <= 3000), '2: 157.5 m radius, within the asked radius');
   ok(today.every((b, k) => k === 0 || today[k - 1].distM <= b.distM), '2: nearest first');
 }
 
@@ -101,16 +101,18 @@ const today = S.bubblesNear(MTL[0], MTL[1], 3000, NOW);
 const B = today[0];
 const cosB = Math.cos(B.lat * Math.PI / 180);
 
-// Every 3rd cell of the box around B (cells are ~11 m; a sparse sample keeps
-// this fast while still covering every ring), over most of the day's ticks.
+// A sample of the cells in a 1.5R box around B (the rings reach 1.4R), over
+// most of the day's ticks. Cells are ~11 m: every 3rd at a 350 m radius,
+// every one at ~150 m, so the sample size holds whatever the radius.
 const tick0 = DAY * 1440;
 const TICKS = 1300;
+const STEP = Math.max(1, Math.round(R / 120));
 function scan(fn) {
-  const latPad = 700 / M_PER_DEG, lngPad = 700 / (M_PER_DEG * cosB);
+  const latPad = 1.5 * R / M_PER_DEG, lngPad = 1.5 * R / (M_PER_DEG * cosB);
   const cx0 = Math.floor((B.lat - latPad + 90) * SCALE), cx1 = Math.ceil((B.lat + latPad + 90) * SCALE);
   const cy0 = Math.floor((B.lng - lngPad + 180) * SCALE), cy1 = Math.ceil((B.lng + lngPad + 180) * SCALE);
-  for (let cx = cx0; cx <= cx1; cx += 3) {
-    for (let cy = cy0; cy <= cy1; cy += 3) {
+  for (let cx = cx0; cx <= cx1; cx += STEP) {
+    for (let cy = cy0; cy <= cy1; cy += STEP) {
       const cLat = (cx + 0.5) / SCALE - 90, cLng = (cy + 0.5) / SCALE - 180;
       const r = distM(cLat, cLng, B.lat, B.lng) / R;
       for (let t = tick0; t < tick0 + TICKS; t += 1) fn(cx, cy, t, r);
@@ -324,8 +326,9 @@ const halvesFrom = (c, pr) => {
   // Cells well inside B and no other bubble (picked with bubbles on).
   T.setEnabled(true);
   const cells = [];
-  for (let cx = cx0; cx <= cx1; cx += 4) {
-    for (let cy = cy0; cy <= cy1; cy += 4) {
+  const iStep = Math.max(1, Math.round(R / 90));
+  for (let cx = cx0; cx <= cx1; cx += iStep) {
+    for (let cy = cy0; cy <= cy1; cy += iStep) {
       const lat = (cx + 0.5) / SCALE - 90, lng = (cy + 0.5) / SCALE - 180;
       if (distM(lat, lng, B.lat, B.lng) / R >= 0.95) continue;
       if (!onlyB(lat, lng)) continue;
@@ -384,8 +387,10 @@ const halvesFrom = (c, pr) => {
   const monsters = [];
   for (let k = 0; k < 24; k++) monsters.push({ key: 'neo:' + k, types: [types[k % 3]] });
   const cells = [];
-  for (let cx = Math.floor((B.lat + 90) * SCALE) - 30; cx <= Math.floor((B.lat + 90) * SCALE) + 30; cx += 3) {
-    for (let cy = Math.floor((B.lng + 180) * SCALE) - 30; cy <= Math.floor((B.lng + 180) * SCALE) + 30; cy += 3) cells.push([cx, cy]);
+  const half = Math.floor(0.6 * R / 11.1);   // cells (~11 m) — well inside B
+  const pStep = Math.max(1, Math.round(R / 120));
+  for (let cx = Math.floor((B.lat + 90) * SCALE) - half; cx <= Math.floor((B.lat + 90) * SCALE) + half; cx += pStep) {
+    for (let cy = Math.floor((B.lng + 180) * SCALE) - half; cy <= Math.floor((B.lng + 180) * SCALE) + half; cy += pStep) cells.push([cx, cy]);
   }
   const gen = () => {
     const out = new Map();
@@ -479,9 +484,9 @@ const halvesFrom = (c, pr) => {
   ok(JSON.stringify(at(B.lat, B.lng)) === JSON.stringify(raw), '13: off → the centre is back at the bubble centre');
   // The whole bubble moves with it: its area (density ramp, which spawns
   // carry its pair) centres on the snapped spot, and the overlay draws it
-  // there. Every bubble is moved 0.002° north (~223 m, inside the radius)
-  // from here on.
-  const N4 = 0.002;
+  // there. Every bubble is moved 0.6 R north (inside the radius) from here
+  // on.
+  const N4 = 0.6 * R / M_PER_DEG;
   const north4 = (lat, lng) => ({ lat: lat + N4, lng, kind: 'road' });
   S.setBubbleSnapProvider(north4);
   const near = S.bubblesNear(MTL[0], MTL[1], 3000, NOW);
@@ -491,17 +496,22 @@ const halvesFrom = (c, pr) => {
     '13: snapping on → drawn around the snapped spot');
   const fB = (lat, lng) => (T.around(lat, lng, NOW).find((e) => e.id === B.id) || { f: 0 }).f;
   ok(fB(B.lat + N4, B.lng) > 0.99, '13: its area is centred on the snapped spot');
-  ok(Math.abs(fB(B.lat, B.lng) - (1 - N4 * M_PER_DEG / R)) < 0.01, '13: and the rolled spot is ~223 m off-centre now');
+  ok(Math.abs(fB(B.lat, B.lng) - (1 - N4 * M_PER_DEG / R)) < 0.01, '13: and the rolled spot is 0.6 R off-centre now');
   // Cells near the new centre that only B covers, and cells no bubble
   // covers with snapping on or off.
   const nLat = B.lat + N4;
   const nearCells = [], freeCells = [];
-  for (let cx = Math.floor((nLat - 0.006 + 90) * SCALE); cx <= Math.floor((nLat + 0.006 + 90) * SCALE); cx += 3) {
-    for (let cy = Math.floor((B.lng - 0.008 + 180) * SCALE); cy <= Math.floor((B.lng + 0.008 + 180) * SCALE); cy += 3) {
+  // Near cells: all of them (a small bubble has few); free cells: every 3rd.
+  const nStep = Math.max(1, Math.round(R / 120));
+  for (let cx = Math.floor((nLat - 0.006 + 90) * SCALE); cx <= Math.floor((nLat + 0.006 + 90) * SCALE); cx++) {
+    for (let cy = Math.floor((B.lng - 0.008 + 180) * SCALE); cy <= Math.floor((B.lng + 0.008 + 180) * SCALE); cy++) {
       const lat = (cx + 0.5) / SCALE - 90, lng = (cy + 0.5) / SCALE - 180;
+      const nearB = distM(lat, lng, nLat, B.lng) < 0.8 * R;
+      if (!nearB && (cx % 3 || cy % 3)) continue;
+      if (nearB && (cx % nStep || cy % nStep)) continue;
       const on = T.around(lat, lng, NOW);
-      if (distM(lat, lng, nLat, B.lng) < 0.8 * R && on.length === 1 && on[0].id === B.id) nearCells.push([cx, cy]);
-      else if (!on.length) freeCells.push([cx, cy]);
+      if (nearB && on.length === 1 && on[0].id === B.id) nearCells.push([cx, cy]);
+      else if (!nearB && !on.length) freeCells.push([cx, cy]);
     }
   }
   S.setBubbleSnapProvider(null);
