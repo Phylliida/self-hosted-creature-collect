@@ -227,9 +227,9 @@ function makeWorld(opts = {}) {
       ok(items[k].bonusIncense === true && /^Bonus incense: for \d+ min, /.test(items[k].desc), `C: ${k} is a bonus incense`);
     }
     const B = w.run('BONUS_INCENSE');
-    ok(B.candy_berry.minutes === 15 && B.calm_berry.minutes === 15 && B.hawkeye_berry.minutes === 5
-      && B.owleye_berry.minutes === 15, 'C: 15 / 15 / 5 / 15 minutes');
-    ok(B.hawkeye_berry.sightMult === 3 && B.owleye_berry.sightMult === 2, 'C: Hawk-Eye 3×, Owl-Eye 2×');
+    ok(B.candy_berry.minutes === 15 && B.calm_berry.minutes === 15 && B.hawkeye_berry.minutes === 1
+      && B.owleye_berry.minutes === 15, 'C: 15 / 15 / 1 / 15 minutes');
+    ok(B.hawkeye_berry.sightMult === 3 && B.owleye_berry.sightMult === 1.5, 'C: Hawk-Eye 3×, Owl-Eye 1.5×');
     ok(B.care_berry.minutes === 30 && B.warm_berry.minutes === 30, 'C: Care / Warm Berry last 30 minutes');
     ok(B.care_berry.daycareMult === 2 && B.warm_berry.eggMult === 2, 'C: Care Berry 2× daycare, Warm Berry 2× eggs');
   }
@@ -245,8 +245,8 @@ function makeWorld(opts = {}) {
     ok(w.run('activateBonusIncense("hawkeye_berry")') === true, 'D: another replaces it');
     ok(w.run('readActiveBonusIncense()').key === 'hawkeye_berry' && w.bag.calm_berry === 1, 'D: only one burns; the replaced one is gone');
     ok(w.refreshes.length === 2, 'D: each start refreshes the spawn view (sight may change)');
-    ok(near(w.run('bonusIncenseRemainingMs()'), 5 * 60000, 1), 'D: Hawk-Eye has 5 min');
-    w.tick(5 * 60000 - 1);
+    ok(near(w.run('bonusIncenseRemainingMs()'), 60000, 1), 'D: Hawk-Eye has 1 min');
+    w.tick(60000 - 1);
     ok(w.run('readActiveBonusIncense()') !== null, 'D: still burning just before the end');
     w.tick(1);
     ok(w.run('readActiveBonusIncense()') === null && !w.ls.has('cc.activeBonusIncense.v1'), 'D: expires on the wall clock and clears its key');
@@ -284,7 +284,7 @@ function makeWorld(opts = {}) {
     w.run('activateBonusIncense("hawkeye_berry")');
     ok(w.run('_visibilityRadiusM()') === 300, 'E: Hawk-Eye: 300 m');
     w.run('activateBonusIncense("owleye_berry")');
-    ok(w.run('_visibilityRadiusM()') === 200, 'E: Owl-Eye: 200 m');
+    ok(w.run('_visibilityRadiusM()') === 150, 'E: Owl-Eye: 150 m');
     w.tick(15 * 60000);
     ok(w.run('_visibilityRadiusM()') === 100, 'E: back to 100 m when it runs out');
 

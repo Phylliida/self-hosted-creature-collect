@@ -4823,7 +4823,7 @@
         "</svg>",
     },
     hawkeye_berry: {
-      name: 'Hawk-Eye Berry', minutes: 5, sightMult: 3,
+      name: 'Hawk-Eye Berry', minutes: 1, sightMult: 3,
       effect: 'you see (and can catch) pokémon 3× as far away',
       svg:
         "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'>" +
@@ -4839,8 +4839,8 @@
         "</svg>",
     },
     owleye_berry: {
-      name: 'Owl-Eye Berry', minutes: 15, sightMult: 2,
-      effect: 'you see (and can catch) pokémon 2× as far away',
+      name: 'Owl-Eye Berry', minutes: 15, sightMult: 1.5,
+      effect: 'you see (and can catch) pokémon 1.5× as far away',
       svg:
         "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'>" +
         "<defs><radialGradient id='g' cx='38%' cy='32%' r='72%'><stop offset='0' stop-color='#d4fbe9'/><stop offset='0.45' stop-color='#2fc9a2'/><stop offset='1' stop-color='#00796b'/></radialGradient></defs>" +
