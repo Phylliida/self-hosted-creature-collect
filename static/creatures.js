@@ -7416,7 +7416,9 @@
       }
       #ccEvolveConfirm .evolve-yes .ring-progress {
         fill: none;
-        stroke: var(--ui-accent, #3b7fdf);
+        /* The ring sits on the button's own accent fill, so it's drawn in
+           the second accent (an accent stroke there was invisible). */
+        stroke: var(--ui-accent2, #5b3cc4);
         stroke-width: 4;
         stroke-linecap: round;
         /* circumference of r=40 → 2πr ≈ 251.33; full = no progress */
@@ -9248,7 +9250,9 @@
       }
       #creatureInventory .focus-hold .ring-progress {
         fill: none;
-        stroke: var(--ui-accent, #3b7fdf);
+        /* The ring sits on the button's own accent fill, so it's drawn in
+           the second accent (an accent stroke there was invisible). */
+        stroke: var(--ui-accent2, #5b3cc4);
         stroke-width: 4;
         stroke-linecap: round;
         /* circumference of r=40 → 2πr ≈ 251.33; full = no progress */
