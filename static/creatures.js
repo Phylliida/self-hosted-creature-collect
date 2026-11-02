@@ -6836,7 +6836,7 @@
       #creatureInventory .focussession-back,
       #creatureInventory .community-back,
       #creatureInventory .communitypass-back,
-      #creatureInventory .weather-back,
+      #creatureInventory .xtool-back,
       #creatureInventory .focusuntil-back,
       #creatureInventory .tags-back,
       #creatureInventory .gifts-back,
@@ -6900,7 +6900,7 @@
       #creatureInventory .focussession-back:hover,
       #creatureInventory .community-back:hover,
       #creatureInventory .communitypass-back:hover,
-      #creatureInventory .weather-back:hover,
+      #creatureInventory .xtool-back:hover,
       #creatureInventory .focusuntil-back:hover,
       #creatureInventory .tags-back:hover,
       #creatureInventory .gifts-back:hover,
@@ -8586,14 +8586,14 @@
       #creatureInventory .focussession-view,
       #creatureInventory .community-view,
       #creatureInventory .communitypass-view,
-      #creatureInventory .weather-view { display: none; }
+      #creatureInventory .xtool-view { display: none; }
       #creatureInventory .focus-view.show,
       #creatureInventory .focusuntil-view.show,
       #creatureInventory .focussession-view.show,
       #creatureInventory .community-view.show,
       #creatureInventory .communitypass-view.show,
-      #creatureInventory .weather-view.show { display: flex; flex-direction: column; }
-      #creatureInventory .weather-loading { padding: 24px 0; text-align: center; color: var(--ui-muted); }
+      #creatureInventory .xtool-view.show { display: flex; flex-direction: column; }
+      #creatureInventory .xtool-loading { padding: 24px 0; text-align: center; color: var(--ui-muted); }
       /* Community Day pass report: four totals in a row. */
       #creatureInventory .community-stats {
         display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 4px 0 10px;
@@ -11032,7 +11032,7 @@
       @A .scroll-top-btn,
       @A :is(.detail-back, .pokedex-back, .fusion-back, .candy-back, .daycare-back,
              .eggs-back, .bag-back, .craft-back, .focus-back, .focussession-back,
-             .community-back, .communitypass-back, .weather-back, .focusuntil-back, .tags-back, .gifts-back, .stats-back, .statsday-back,
+             .community-back, .communitypass-back, .xtool-back, .focusuntil-back, .tags-back, .gifts-back, .stats-back, .statsday-back,
              .gift-back, .giftcreate-back, .completion-back, .speciesdex-back) {
         width: 32px !important; height: 32px !important; min-height: 32px !important;
         border-radius: 50% !important;
@@ -11067,7 +11067,7 @@
       @H .inventory-x:active { transform: translateY(1px) scale(0.9); }
       @A :is(.detail-back, .pokedex-back, .fusion-back, .candy-back, .daycare-back,
              .eggs-back, .bag-back, .craft-back, .focus-back, .focussession-back,
-             .community-back, .communitypass-back, .weather-back, .focusuntil-back, .tags-back, .gifts-back, .stats-back, .statsday-back,
+             .community-back, .communitypass-back, .xtool-back, .focusuntil-back, .tags-back, .gifts-back, .stats-back, .statsday-back,
              .gift-back, .giftcreate-back, .completion-back, .speciesdex-back) {
         /* The 32px circle on the 30px title row: nudge it 1px up (transform,
            so the title below doesn't move) to share the title's centre. */
@@ -11081,7 +11081,7 @@
          currentColor so it's dead centre in the circle. */
       @A :is(.detail-back, .pokedex-back, .fusion-back, .candy-back, .daycare-back,
              .eggs-back, .bag-back, .craft-back, .focus-back, .focussession-back,
-             .community-back, .communitypass-back, .weather-back, .focusuntil-back, .tags-back, .gifts-back, .stats-back, .statsday-back,
+             .community-back, .communitypass-back, .xtool-back, .focusuntil-back, .tags-back, .gifts-back, .stats-back, .statsday-back,
              .gift-back, .giftcreate-back, .completion-back, .speciesdex-back)::before {
         content: ''; width: 16px; height: 16px;
         background: currentColor;
@@ -11758,10 +11758,10 @@
           <h3 class="subview-title">Community Day Pass</h3>
           <div class="communitypass-body"></div>
         </div>
-        <div class="weather-view">
-          <button class="weather-back" type="button" aria-label="back">←</button>
-          <h3 class="subview-title">Weather</h3>
-          <div class="weather-body"></div>
+        <div class="xtool-view">
+          <button class="xtool-back" type="button" aria-label="back">←</button>
+          <h3 class="subview-title xtool-title"></h3>
+          <div class="xtool-bodies"></div>
         </div>
         <div class="tags-view">
           <button class="tags-back" type="button" aria-label="back">←</button>
@@ -12148,7 +12148,7 @@
     panel.querySelector('.focussession-back').addEventListener('click', popView);
     panel.querySelector('.community-back').addEventListener('click', popView);
     panel.querySelector('.communitypass-back').addEventListener('click', popView);
-    panel.querySelector('.weather-back').addEventListener('click', popView);
+    panel.querySelector('.xtool-back').addEventListener('click', popView);
     panel.querySelector('.focusuntil-back').addEventListener('click', popView);
     panel.querySelector('.gifts-back').addEventListener('click', popView);
     panel.querySelector('.stats-back').addEventListener('click', popView);
@@ -12461,7 +12461,7 @@
     panel.querySelector('.focussession-view').classList.remove('show');
     panel.querySelector('.community-view').classList.remove('show');
     panel.querySelector('.communitypass-view').classList.remove('show');
-    panel.querySelector('.weather-view').classList.remove('show');
+    panel.querySelector('.xtool-view').classList.remove('show');
     panel.querySelector('.focusuntil-view').classList.remove('show');
     panel.querySelector('.gifts-view').classList.remove('show');
     panel.querySelector('.stats-view').classList.remove('show');
@@ -12598,9 +12598,11 @@
         renderCommunityPass(top);
         return;
       case 'weather':
-        // Shown first: the forecast card sizes itself to the view's width.
-        panel.querySelector('.weather-view').classList.add('show');
-        renderWeatherView();
+      case 'sun':
+      case 'astro':
+        // Shown first: the tools size their art to the view's width.
+        panel.querySelector('.xtool-view').classList.add('show');
+        renderXTool(top.view);
         return;
       case 'stats':
         // Shown first: the charts size themselves to the view's width.
@@ -15584,12 +15586,14 @@
     const cmp = _stCompare(idx, p);
     const [plabel, psub] = _stPeriodLabel(p);
     const m = ST_METRIC.get(top.metric);
-    // Reports that live under Stats, as buttons along the top (the Bag's
-    // launcher style — Candy, Craft incense, …): Community Day (in a
-    // community week, or once a pass is logged) and Weather (always).
+    // Reports and tools that live under Stats, as buttons along the top (the
+    // Bag's launcher style — Candy, Craft incense, …): Community Day (in a
+    // community week, or once a pass is logged), then the Extras tools
+    // Weather, Sun and Space (the Astronomy tool) — always.
     const links = `<div class="bag-launchers st-toplinks">`
       + (_communityLauncherVisible() ? `<button type="button" class="bag-craft st-community">Community Day</button>` : '')
-      + `<button type="button" class="bag-craft st-weather">Weather</button></div>`;
+      + Object.keys(_XTOOLS).map((id) => `<button type="button" class="bag-craft st-xtool" data-tool="${id}">${_XTOOLS[id].title}</button>`).join('')
+      + `</div>`;
     body.innerHTML = `<div class="st-root">${links}
       <div class="st-seg" role="group" aria-label="Range">${ST_RANGES.map(([r, l]) =>
         `<button type="button" class="st-seg-btn${r === top.range ? ' on' : ''}" data-range="${r}" aria-pressed="${r === top.range}">${l}</button>`).join('')}</div>
@@ -15627,8 +15631,7 @@
       go(() => { top.metric = b.dataset.m; })));
     const cdb = root.querySelector('.st-community');
     if (cdb) cdb.addEventListener('click', () => pushView({ view: 'community' }));
-    const wxb = root.querySelector('.st-weather');
-    if (wxb) wxb.addEventListener('click', () => pushView({ view: 'weather' }));
+    root.querySelectorAll('.st-xtool').forEach((b) => b.addEventListener('click', () => pushView({ view: b.dataset.tool })));
     const sheet = panel.querySelector('.sheet');
     if (sheet && rebuild && Number.isFinite(top.scrollY)) sheet.scrollTop = top.scrollY;
   }
@@ -24834,23 +24837,42 @@
     }));
   }
 
-  // ── Weather ({ view: 'weather' }, from Stats) ──
-  // Hosts the Extras weather tool (extras-weather.js) on the panel's view
-  // stack. The extras scripts load after boot; a tap that beats them loads
-  // them first (static app files only — the forecast itself still waits for
-  // the tool's own Load button).
-  let _weatherMount = null;
-  function renderWeatherView() {
+  // ── Extras tools on the stack ({ view: 'weather' | 'sun' | 'astro' }, from Stats) ──
+  // ('astro' is the Astronomy tool, titled "Space" here.)
+  // One page hosts any of them: each tool mounts once into its own body (the
+  // Extras panel keeps its own separate copy) and re-renders when reshown.
+  // The extras scripts load after boot; a tap that beats them loads them
+  // first (static app files only — the weather forecast itself still waits
+  // for that tool's own Load button).
+  const _XTOOLS = {
+    weather: { title: 'Weather', mount: (el) => global.ExtrasWeather && global.ExtrasWeather.mount(el) },
+    sun: { title: 'Sun', mount: (el) => global.ExtrasAlmanac && global.ExtrasAlmanac.mount('sun', el) },
+    astro: { title: 'Space', mount: (el) => global.ExtrasAlmanac && global.ExtrasAlmanac.mount('astro', el) },
+  };
+  const _xtoolMounts = {};
+  function renderXTool(id) {
     const panel = document.getElementById('creatureInventory');
-    const body = panel && panel.querySelector('.weather-body');
-    if (!body) return;
-    if (_weatherMount) { _weatherMount.render(); return; }
-    if (global.ExtrasWeather) { _weatherMount = global.ExtrasWeather.mount(body); return; }
-    body.innerHTML = '<div class="weather-loading">Loading…</div>';
+    const view = panel && panel.querySelector('.xtool-view');
+    const tool = _XTOOLS[id];
+    if (!view || !tool) return;
+    view.querySelector('.xtool-title').textContent = tool.title;
+    const bodies = view.querySelector('.xtool-bodies');
+    let body = bodies.querySelector(`.xtool-body[data-tool="${id}"]`);
+    if (!body) {
+      body = document.createElement('div');
+      body.className = 'xtool-body';
+      body.dataset.tool = id;
+      bodies.appendChild(body);
+    }
+    bodies.querySelectorAll('.xtool-body').forEach((b) => { b.hidden = b !== body; });
+    if (_xtoolMounts[id]) { _xtoolMounts[id].render(); return; }
+    const m = tool.mount(body);
+    if (m) { _xtoolMounts[id] = m; m.render(); return; }
+    body.innerHTML = '<div class="xtool-loading">Loading…</div>';
     if (typeof global._ccLoadDeferredScripts !== 'function') return;
     global._ccLoadDeferredScripts().then(() => {
       const top = _viewStack[_viewStack.length - 1];
-      if (global.ExtrasWeather && top && top.view === 'weather') renderWeatherView();
+      if (top && top.view === id && !_xtoolMounts[id]) { body.innerHTML = ''; renderXTool(id); }
     }).catch(() => {});
   }
 

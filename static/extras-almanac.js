@@ -1087,6 +1087,309 @@
   global.Almanac = A;
 
   // ════════════════════════════════════════════════════════════════════
+  // ART  (SVG strings, no DOM)  ->  global.AlmanacArt
+  // ════════════════════════════════════════════════════════════════════
+  // The Sun and Astronomy heroes, drawn in the app's item-art style (soft
+  // gradients, darker outlines, a white shine, faces). Each SVG gets its own
+  // id prefix so gradients never collide. Motion is CSS (.alm-anim scopes it;
+  // reduced motion turns it off) and only ever decorative.
+  const ART = {};
+  let artUid = 0;
+  const f2 = (n) => Math.round(n * 100) / 100;
+  function artRng(seed) {
+    let s = (seed >>> 0) || 1;
+    return () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296);
+  }
+  const hexRgb = (h) => { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+  const mixHex = (a, b, t) => { const x = hexRgb(a), y = hexRgb(b); return '#' + x.map((v, i) => Math.round(v + (y[i] - v) * t).toString(16).padStart(2, '0')).join(''); };
+  function ramp(stops, x) {
+    if (x <= stops[0][0]) return stops[0][1];
+    for (let i = 1; i < stops.length; i++) {
+      if (x <= stops[i][0]) return mixHex(stops[i - 1][1], stops[i][1], (x - stops[i - 1][0]) / (stops[i][0] - stops[i - 1][0]));
+    }
+    return stops[stops.length - 1][1];
+  }
+  // Sky and ground colour for a sun altitude: night, the twilight purples,
+  // pink and gold at the horizon, then day blue.
+  const SKY_RAMP = [[-18, '#0a1030'], [-12, '#151d48'], [-8, '#28306a'], [-4, '#4f4682'], [-1, '#a2637f'],
+    [1.5, '#e49a6d'], [5, '#eec58e'], [10, '#a8d3ef'], [25, '#78bdf0'], [60, '#4ba2ec']];
+  const GROUND_RAMP = [[-12, '#141c33'], [-5, '#262b4c'], [0, '#5b5468'], [4, '#7c8f5a'], [12, '#69a65a'], [60, '#5a9c51']];
+  ART.skyColor = (alt) => ramp(SKY_RAMP, alt);
+  ART.groundColor = (alt) => ramp(GROUND_RAMP, alt);
+  const PLANET_COL = { Mercury: '#c9c1b2', Venus: '#f3dc96', Mars: '#e2704a', Jupiter: '#e8bd8c', Saturn: '#ecd9a0', Uranus: '#9fe0e4', Neptune: '#7d8cf0' };
+  const PLANET_GLYPH = { Mercury: '☿', Venus: '♀', Mars: '♂', Jupiter: '♃', Saturn: '♄', Uranus: '♅', Neptune: '♆' };
+  const PLANET_R = { Mercury: 2.2, Venus: 3.4, Mars: 2.8, Jupiter: 4, Saturn: 3.4, Uranus: 2.4, Neptune: 2.4 };
+  ART.PLANET_COL = PLANET_COL;
+
+  function stop(o, c, a) { return '<stop offset="' + o + '" stop-color="' + c + '"' + (a != null ? ' stop-opacity="' + a + '"' : '') + '/>'; }
+  function face(kind, ink, cx, cy, k) {
+    const sw = f2(1.6 * k), P = (x, y) => f2(cx + x * k) + ' ' + f2(cy + y * k);
+    const line = (d) => '<path d="' + d + '" fill="none" stroke="' + ink + '" stroke-width="' + sw + '" stroke-linecap="round"/>';
+    const blush = [-11, 11].map((dx) => '<ellipse cx="' + f2(cx + dx * k) + '" cy="' + f2(cy + 4 * k) + '" rx="' + f2(3.2 * k)
+      + '" ry="' + f2(1.9 * k) + '" fill="#ff7d9c" opacity="0.5"/>').join('');
+    const eyes = kind === 'sleepy'
+      ? line('M' + P(-9, 0) + ' Q' + P(-6, 2.6) + ' ' + P(-3, 0)) + line('M' + P(3, 0) + ' Q' + P(6, 2.6) + ' ' + P(9, 0))
+      : line('M' + P(-9, 1) + ' Q' + P(-6, -3) + ' ' + P(-3, 1)) + line('M' + P(3, 1) + ' Q' + P(6, -3) + ' ' + P(9, 1));
+    return blush + eyes + line('M' + P(-2.6, 4.4) + ' Q' + P(0, 7) + ' ' + P(2.6, 4.4));
+  }
+  // A little sun with rays and a face (sleepy and dimmed when it's set).
+  function sunGlyph(P, x, y, r, up, motion) {
+    let s = '<circle cx="' + f2(x) + '" cy="' + f2(y) + '" r="' + f2(r * 2.4) + '" fill="url(#' + P + 'sglow)"/>';
+    if (up) {
+      let d = '';
+      for (let i = 0; i < 12; i++) {
+        const a = i / 12 * Math.PI * 2, a0 = r * 1.3, a1 = r * (i % 2 ? 1.55 : 1.75);
+        d += 'M' + f2(Math.cos(a) * a0) + ' ' + f2(Math.sin(a) * a0) + ' L' + f2(Math.cos(a) * a1) + ' ' + f2(Math.sin(a) * a1);
+      }
+      const rays = '<path d="' + d + '" stroke="#e59a1c" stroke-width="' + f2(r * 0.3) + '" stroke-linecap="round"/>'
+        + '<path d="' + d + '" stroke="#ffcf3d" stroke-width="' + f2(r * 0.17) + '" stroke-linecap="round"/>';
+      s += '<g transform="translate(' + f2(x) + ' ' + f2(y) + ')">' + (motion ? '<g class="alm-spin">' + rays + '</g>' : rays) + '</g>';
+    }
+    s += '<circle cx="' + f2(x) + '" cy="' + f2(y) + '" r="' + f2(r) + '" fill="url(#' + P + 'sun)" stroke="#e58f17" stroke-width="' + f2(r * 0.09) + '"/>'
+      + '<ellipse cx="' + f2(x - r * 0.36) + '" cy="' + f2(y - r * 0.42) + '" rx="' + f2(r * 0.3) + '" ry="' + f2(r * 0.16)
+      + '" transform="rotate(-32 ' + f2(x - r * 0.36) + ' ' + f2(y - r * 0.42) + ')" fill="#fff" opacity="0.75"/>'
+      + face(up ? 'happy' : 'sleepy', '#8a4b10', x, y + r * 0.08, r / 16);
+    return up ? s : '<g opacity="0.8">' + s + '</g>';
+  }
+  function sunDefs(P) {
+    return '<radialGradient id="' + P + 'sun" cx="0.38" cy="0.33" r="0.78">' + stop(0, '#fffbd6') + stop(0.5, '#ffdc4e') + stop(1, '#ffb529') + '</radialGradient>'
+      + '<radialGradient id="' + P + 'sglow" cx="0.5" cy="0.5" r="0.5">' + stop(0, '#ffe27a', 0.55) + stop(0.45, '#ffe27a', 0.2) + stop(1, '#ffe27a', 0) + '</radialGradient>';
+  }
+  // Find when alt(t) crosses `level` between t0 and t1 (bisection, ~1 s).
+  function crossing(f, t0, t1, level) {
+    let a = t0, b = t1;
+    const sa = f(a) > level;
+    for (let i = 0; i < 14; i++) { const m = (a + b) / 2; if ((f(m) > level) === sa) a = m; else b = m; }
+    return Math.round((a + b) / 2);
+  }
+
+  // Sun path for a local day: x = clock time (midnight to midnight), y = the
+  // sun's altitude, over a sky coloured by where the sun is at each moment,
+  // with sunrise / sunset / solar noon marked and the sun at `nowMs`.
+  //   o = { lat, lon, day0 (local midnight ms), nowMs, fmt(ms) -> clock label,
+  //         hourLabel(h) -> axis label, motion }
+  // Returns { svg, rise, set, noon, noonAlt } (times in ms, or null).
+  ART.sunPath = function (o) {
+    const P = 'alm' + (++artUid).toString(36) + '-';
+    const W = 320, H = 190, HZ = 128, TOP = 16, N = 144, STEP = 86400000 / N;
+    const altAt = (ms) => A.sunAltAz(ms, o.lat, o.lon).alt;
+    const alt = [];
+    for (let i = 0; i <= N; i++) alt.push(altAt(o.day0 + i * STEP));
+    const xOf = (ms) => (ms - o.day0) / 86400000 * W;
+    const yOf = (a) => (a >= 0 ? HZ - a / 90 * (HZ - TOP) : Math.min(H - 3, HZ - a / 90 * (H - HZ) * 2.2));
+    // events from the samples, refined
+    let rise = null, set = null;
+    for (let i = 1; i <= N; i++) {
+      const a = alt[i - 1] + 0.833, b = alt[i] + 0.833;
+      if (a <= 0 && b > 0 && rise == null) rise = crossing(altAt, o.day0 + (i - 1) * STEP, o.day0 + i * STEP, -0.833);
+      if (a > 0 && b <= 0 && set == null) set = crossing(altAt, o.day0 + (i - 1) * STEP, o.day0 + i * STEP, -0.833);
+    }
+    let iMax = 0;
+    for (let i = 1; i <= N; i++) if (alt[i] > alt[iMax]) iMax = i;
+    let lo = o.day0 + Math.max(0, iMax - 1) * STEP, hi = o.day0 + Math.min(N, iMax + 1) * STEP;
+    for (let k = 0; k < 20; k++) {  // ternary search for the peak
+      const m1 = lo + (hi - lo) / 3, m2 = hi - (hi - lo) / 3;
+      if (altAt(m1) < altAt(m2)) lo = m1; else hi = m2;
+    }
+    const noon = Math.round((lo + hi) / 2), noonAlt = altAt(noon);
+
+    let skyStops = '', groundStops = '';
+    for (let i = 0; i <= N; i++) {  // every 10 minutes, so twilight blends smoothly
+      skyStops += stop(f2(i / N * 1000) / 1000, ART.skyColor(alt[i]));
+      groundStops += stop(f2(i / N * 1000) / 1000, ART.groundColor(alt[i]));
+    }
+    let defs = '<linearGradient id="' + P + 'sky" x1="0" y1="0" x2="1" y2="0">' + skyStops + '</linearGradient>'
+      + '<linearGradient id="' + P + 'gnd" x1="0" y1="0" x2="1" y2="0">' + groundStops + '</linearGradient>'
+      + '<linearGradient id="' + P + 'shade" x1="0" y1="0" x2="0" y2="1">' + stop(0, '#000', 0.3) + stop(0.75, '#000', 0) + stop(1, '#fff', 0.14) + '</linearGradient>'
+      + '<linearGradient id="' + P + 'gshade" x1="0" y1="0" x2="0" y2="1">' + stop(0, '#fff', 0.1) + stop(0.25, '#000', 0) + stop(1, '#000', 0.35) + '</linearGradient>'
+      + '<clipPath id="' + P + 'up"><rect width="' + W + '" height="' + HZ + '"/></clipPath>'
+      + '<clipPath id="' + P + 'dn"><rect y="' + HZ + '" width="' + W + '" height="' + (H - HZ) + '"/></clipPath>'
+      + sunDefs(P);
+    let s = '<rect width="' + W + '" height="' + HZ + '" fill="url(#' + P + 'sky)"/>'
+      + '<rect width="' + W + '" height="' + HZ + '" fill="url(#' + P + 'shade)"/>';
+    // stars wherever that column of sky is properly dark
+    const rnd = artRng(7);
+    for (let i = 0; i < 70; i++) {
+      const x = rnd() * W, y = 6 + rnd() * (HZ - 30), r = 0.5 + rnd() * 0.9, tw = rnd();
+      const a = alt[Math.round(x / W * N)];
+      if (a > -9) continue;
+      const op = f2(Math.min(1, (-9 - a) / 8) * (0.5 + rnd() * 0.5));
+      s += '<circle cx="' + f2(x) + '" cy="' + f2(y) + '" r="' + f2(r) + '" fill="#fff" opacity="' + op + '"'
+        + (o.motion && tw < 0.25 ? ' class="alm-twinkle" style="animation-delay:' + f2(-tw * 12) + 's"' : '') + '/>';
+    }
+    // the ground: flat at the horizon so altitudes read true, with a few trees
+    s += '<rect y="' + HZ + '" width="' + W + '" height="' + (H - HZ) + '" fill="url(#' + P + 'gnd)" opacity="0.92"/>'
+      + '<rect y="' + HZ + '" width="' + W + '" height="' + (H - HZ) + '" fill="url(#' + P + 'gshade)"/>'
+      + '<path d="M0 ' + HZ + ' H' + W + '" stroke="#ffffff" stroke-opacity="0.35" stroke-width="1.2"/>';
+    [[18, 1], [30, 0.75], [92, 0.9], [232, 0.8], [246, 1.05], [300, 0.85]].forEach(([x, k]) => {
+      const c = mixHex(ART.groundColor(alt[Math.round(x / W * N)]), '#0b1020', 0.35);
+      s += '<rect x="' + f2(x - 0.9 * k) + '" y="' + f2(HZ - 5 * k) + '" width="' + f2(1.8 * k) + '" height="' + f2(5 * k) + '" fill="' + mixHex(c, '#3a2614', 0.4) + '"/>'
+        + '<circle cx="' + x + '" cy="' + f2(HZ - 8 * k) + '" r="' + f2(5 * k) + '" fill="' + c + '"/>';
+    });
+    // the path: solid gold above the horizon, a faint dashed line below it
+    let d = '';
+    for (let i = 0; i <= N; i++) d += (i ? ' L' : 'M') + f2(i / N * W) + ' ' + f2(yOf(alt[i]));
+    s += '<g clip-path="url(#' + P + 'dn)"><path d="' + d + '" fill="none" stroke="#ffffff" stroke-opacity="0.4" stroke-width="1.6" stroke-dasharray="3 4"/></g>'
+      + '<g clip-path="url(#' + P + 'up)"><path d="' + d + '" fill="none" stroke="#b9770f" stroke-width="5" stroke-linejoin="round" stroke-linecap="round" opacity="0.85"/>'
+      + '<path d="' + d + '" fill="none" stroke="#ffe58a" stroke-width="2.8" stroke-linejoin="round" stroke-linecap="round"/></g>';
+    // labels (white text with a dark outline so they read on any sky)
+    const label = (x, y, t, anchor) => '<text x="' + f2(x) + '" y="' + f2(y) + '" text-anchor="' + (anchor || 'middle') + '" class="alm-svg-label">' + t + '</text>';
+    const clampX = (x) => Math.max(26, Math.min(W - 26, x));
+    // a rise/set label drops lower when the sun itself is sitting on it
+    const nowX = o.nowMs != null ? xOf(o.nowMs) : -999;
+    const lblY = (t) => (Math.abs(nowX - xOf(t)) < 30 && Math.abs(altAt(o.nowMs) + 0.833) < 12 ? HZ + 33 : HZ + 15);
+    if (rise != null) {
+      s += '<circle cx="' + f2(xOf(rise)) + '" cy="' + HZ + '" r="3.4" fill="#fff4c8" stroke="#c98a1a" stroke-width="1.4"/>'
+        + label(clampX(xOf(rise)), lblY(rise), '↑ ' + o.fmt(rise));
+    }
+    if (set != null) {
+      s += '<circle cx="' + f2(xOf(set)) + '" cy="' + HZ + '" r="3.4" fill="#fff4c8" stroke="#c98a1a" stroke-width="1.4"/>'
+        + label(clampX(xOf(set)), lblY(set), '↓ ' + o.fmt(set));
+    }
+    if (noonAlt > -0.833) {
+      // lift the label clear of the sun when "now" is around noon
+      const sunNear = o.nowMs != null && Math.abs(xOf(o.nowMs) - xOf(noon)) < 34;
+      const nx = clampX(xOf(noon)), ny = Math.max(10, yOf(noonAlt) - (sunNear ? 30 : 12));
+      s += label(nx, ny, o.fmt(noon) + ' · ' + Math.round(noonAlt) + '°');
+    }
+    for (const h of [6, 12, 18]) {
+      const x = xOf(o.day0 + h * 3600000);
+      s += '<path d="M' + f2(x) + ' ' + (H - 14) + ' v4" stroke="#ffffff" stroke-opacity="0.45" stroke-width="1"/>'
+        + '<text x="' + f2(x) + '" y="' + (H - 3) + '" text-anchor="middle" class="alm-svg-tick">' + o.hourLabel(h) + '</text>';
+    }
+    // the sun, now
+    if (o.nowMs != null && o.nowMs >= o.day0 && o.nowMs <= o.day0 + 86400000) {
+      const a = altAt(o.nowMs), x = xOf(o.nowMs);
+      s += '<path d="M' + f2(x) + ' ' + TOP + ' V' + (H - 16) + '" stroke="#ffffff" stroke-opacity="0.22" stroke-width="1" stroke-dasharray="2 3"/>';
+      s += sunGlyph(P, x, yOf(a), a > -0.833 ? 11 : 9, a > -0.833, o.motion);
+    }
+    const svg = '<svg class="alm-scene' + (o.motion ? ' alm-anim' : '') + '" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="The sun\'s path today" xmlns="http://www.w3.org/2000/svg"><defs>'
+      + defs + '</defs>' + s + '</svg>';
+    return { svg, rise, set, noon, noonAlt };
+  };
+
+  // The lit part of the moon's disc for a phase (0 new, 0.5 full); waxing is
+  // lit on the right (the northern-hemisphere view).
+  function litPath(cx, cy, r, cycle) {
+    const cosp = Math.cos(2 * Math.PI * cycle), rx = Math.abs(cosp) * r, waxing = cycle < 0.5;
+    const semiSweep = waxing ? 1 : 0, termSweep = waxing ? (cosp > 0 ? 0 : 1) : (cosp > 0 ? 1 : 0);
+    return 'M ' + f2(cx) + ' ' + f2(cy - r) + ' A ' + f2(r) + ' ' + f2(r) + ' 0 0 ' + semiSweep + ' ' + f2(cx) + ' ' + f2(cy + r)
+      + ' A ' + f2(rx) + ' ' + f2(r) + ' 0 0 ' + termSweep + ' ' + f2(cx) + ' ' + f2(cy - r) + ' Z';
+  }
+  const CRATERS = [[-0.36, -0.3, 0.17], [0.26, -0.44, 0.1], [0.4, 0.1, 0.19], [-0.08, 0.38, 0.13], [-0.5, 0.24, 0.09], [0.08, -0.06, 0.08], [0.62, -0.18, 0.07]];
+  // A moon in its real phase: earthshine on the dark side, craters, a shine,
+  // and a sleepy face once there's enough moon to wear one.
+  function moonPortrait(P, cx, cy, r, cycle, illum, mirror) {
+    const defs = '<radialGradient id="' + P + 'mdark" cx="0.4" cy="0.35" r="0.8">' + stop(0, '#4a5478') + stop(1, '#262c48') + '</radialGradient>'
+      + '<radialGradient id="' + P + 'mlit" cx="0.38" cy="0.35" r="0.85">' + stop(0, '#fffef4') + stop(0.55, '#f9ecbf') + stop(1, '#e6cb82') + '</radialGradient>'
+      + '<radialGradient id="' + P + 'mglow" cx="0.5" cy="0.5" r="0.5">' + stop(0, '#fff3c4', f2(0.12 + 0.45 * illum)) + stop(0.5, '#fff3c4', f2(0.04 + 0.12 * illum)) + stop(1, '#fff3c4', 0) + '</radialGradient>'
+      + '<clipPath id="' + P + 'mclip"><path d="' + litPath(cx, cy, r, cycle) + '"/></clipPath>';
+    const waxing = cycle < 0.5;
+    let g = '<circle cx="' + cx + '" cy="' + cy + '" r="' + f2(r * 2.5) + '" fill="url(#' + P + 'mglow)"/>'
+      + '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="url(#' + P + 'mdark)"/>';
+    for (const c of CRATERS) g += '<circle cx="' + f2(cx + c[0] * r) + '" cy="' + f2(cy + c[1] * r) + '" r="' + f2(c[2] * r) + '" fill="#323a5a" opacity="0.8"/>';
+    g += '<path d="' + litPath(cx, cy, r, cycle) + '" fill="url(#' + P + 'mlit)"/>'
+      + '<g clip-path="url(#' + P + 'mclip)">';
+    for (const c of CRATERS) {
+      g += '<circle cx="' + f2(cx + c[0] * r) + '" cy="' + f2(cy + c[1] * r) + '" r="' + f2(c[2] * r) + '" fill="#e9d394" stroke="#d2b46a" stroke-width="' + f2(r * 0.025) + '"/>';
+    }
+    g += '<ellipse cx="' + f2(cx - r * 0.35) + '" cy="' + f2(cy - r * 0.55) + '" rx="' + f2(r * 0.28) + '" ry="' + f2(r * 0.12) + '" transform="rotate(-25 '
+      + f2(cx - r * 0.35) + ' ' + f2(cy - r * 0.55) + ')" fill="#fff" opacity="0.7"/>';
+    if (illum >= 0.45) {
+      const fx = cx + (waxing ? 1 : -1) * r * (1 - illum) * 0.8;
+      g += face('sleepy', '#7a5a26', fx, cy + r * 0.12, r / 24);
+    }
+    g += '</g><circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="none" stroke="#5b6390" stroke-width="1.4"/>'
+      + '<path d="' + litPath(cx, cy, r, cycle) + '" fill="none" stroke="#c9a54e" stroke-width="1.4" stroke-linejoin="round"/>';
+    if (mirror) g = '<g transform="translate(' + (2 * cx) + ' 0) scale(-1 1)">' + g + '</g>';
+    return { defs, g };
+  }
+
+  // Tonight's sky: the moon in its phase, the planets above the horizon at
+  // `skyMs` placed by direction (facing south up north, north down south) and
+  // height, over dark hills with a little observatory.
+  //   o = { lat, lon, skyMs, cycle, illum, motion }
+  // Returns { svg, planets: [{ name, alt, az }] } (the ones drawn).
+  ART.nightSky = function (o) {
+    const P = 'alm' + (++artUid).toString(36) + '-';
+    const W = 320, H = 190, HZ = 152;
+    const south = o.lat >= 0;  // which way you face to see the planets
+    const center = south ? 180 : 0;
+    let defs = '<linearGradient id="' + P + 'nsky" x1="0" y1="0" x2="0" y2="1">' + stop(0, '#050918') + stop(0.55, '#0f1641') + stop(0.88, '#262e66') + stop(1, '#3b3b78') + '</linearGradient>'
+      + '<radialGradient id="' + P + 'band" cx="0.5" cy="0.5" r="0.5">' + stop(0, '#c9d2ff', 0.13) + stop(1, '#c9d2ff', 0) + '</radialGradient>'
+      + '<linearGradient id="' + P + 'hill" x1="0" y1="0" x2="0" y2="1">' + stop(0, '#1a2247') + stop(1, '#090d1f') + '</linearGradient>';
+    let s = '<rect width="' + W + '" height="' + H + '" fill="url(#' + P + 'nsky)"/>'
+      + '<ellipse cx="140" cy="70" rx="190" ry="34" transform="rotate(-24 140 70)" fill="url(#' + P + 'band)"/>';
+    const day = Math.floor(o.skyMs / 86400000);
+    const rnd = artRng(31 + (day % 997));
+    for (let i = 0; i < 90; i++) {
+      const x = rnd() * W, y = rnd() * (HZ - 8), r = 0.4 + rnd() * rnd() * 1.4, tw = rnd();
+      s += '<circle cx="' + f2(x) + '" cy="' + f2(y) + '" r="' + f2(r) + '" fill="' + (tw > 0.9 ? '#ffe7c4' : tw > 0.8 ? '#cfe0ff' : '#ffffff') + '" opacity="' + f2(0.35 + rnd() * 0.65) + '"'
+        + (o.motion && tw < 0.2 ? ' class="alm-twinkle" style="animation-delay:' + f2(-tw * 15) + 's"' : '') + '/>';
+    }
+    // the moon
+    const mp = moonPortrait(P, 248, 64, 38, o.cycle, o.illum, o.lat < 0);
+    defs += mp.defs;
+    s += mp.g;
+    // the planets that are up
+    const drawn = [];
+    const labels = [];
+    for (const name of A.PLANET_ORDER) {
+      const pa = A.planetAltAz(name, o.skyMs, o.lat, o.lon);
+      if (pa.alt < 1) continue;
+      const dAz = norm180(pa.az - center);
+      if (Math.abs(dAz) > 115) continue;  // behind you
+      const x = 160 + dAz / 115 * 146, y = HZ - 6 - Math.min(pa.alt, 80) / 80 * (HZ - 22);
+      const col = PLANET_COL[name], pr = PLANET_R[name];
+      defs += '<radialGradient id="' + P + 'p' + name + '" cx="0.5" cy="0.5" r="0.5">' + stop(0, col, 0.7) + stop(1, col, 0) + '</radialGradient>';
+      s += '<circle cx="' + f2(x) + '" cy="' + f2(y) + '" r="' + f2(pr * 3.4) + '" fill="url(#' + P + 'p' + name + ')"/>';
+      if (name === 'Saturn') {
+        s += '<ellipse cx="' + f2(x) + '" cy="' + f2(y) + '" rx="' + f2(pr * 2.1) + '" ry="' + f2(pr * 0.75) + '" transform="rotate(-18 ' + f2(x) + ' ' + f2(y) + ')" fill="none" stroke="' + col + '" stroke-width="1.1"/>';
+      }
+      s += '<circle cx="' + f2(x) + '" cy="' + f2(y) + '" r="' + f2(pr) + '" fill="' + col + '" stroke="' + mixHex(col, '#000000', 0.35) + '" stroke-width="0.8"/>'
+        + '<circle cx="' + f2(x - pr * 0.35) + '" cy="' + f2(y - pr * 0.35) + '" r="' + f2(pr * 0.35) + '" fill="#fff" opacity="0.7"/>';
+      labels.push({ x, y: y + pr + 10, text: PLANET_GLYPH[name] + ' ' + name, col });
+      drawn.push({ name, alt: pa.alt, az: pa.az });
+    }
+    // hills, pines and an observatory
+    let hill = 'M0 ' + (HZ + 2);
+    for (let x = 0; x <= W; x += 20) hill += ' L' + x + ' ' + f2(HZ - 3 + 4 * Math.sin(x / 37 + 1.3) + 2.5 * Math.sin(x / 13));
+    hill += ' L' + W + ' ' + H + ' L0 ' + H + 'Z';
+    s += '<path d="' + hill + '" fill="url(#' + P + 'hill)" stroke="#2e3870" stroke-width="1.2"/>';
+    for (const [x, k] of [[188, 1], [200, 0.75], [286, 0.9], [300, 1.1], [312, 0.8]]) {
+      const b = HZ - 1;
+      s += '<path d="M' + x + ' ' + f2(b - 15 * k) + ' L' + f2(x + 5 * k) + ' ' + f2(b) + ' L' + f2(x - 5 * k) + ' ' + f2(b) + 'Z" fill="#0c1128" stroke="#2a3366" stroke-width="0.8"/>';
+    }
+    const ox = 104, oy = HZ - 2;
+    s += '<rect x="' + (ox - 9) + '" y="' + (oy - 9) + '" width="18" height="10" rx="1.5" fill="#cfd6ea" stroke="#6b7398" stroke-width="1"/>'
+      + '<path d="M' + (ox - 10) + ' ' + (oy - 9) + ' A10 10 0 0 1 ' + (ox + 10) + ' ' + (oy - 9) + 'Z" fill="#e6ebf7" stroke="#6b7398" stroke-width="1"/>'
+      + '<path d="M' + (ox + 1) + ' ' + (oy - 18.5) + ' L' + (ox + 4) + ' ' + (oy - 9.5) + ' L' + (ox + 1) + ' ' + (oy - 9.5) + 'Z" fill="#3b4270"/>'
+      + '<rect x="' + (ox + 2) + '" y="' + (oy - 25) + '" width="3" height="10" rx="1" transform="rotate(28 ' + (ox + 3) + ' ' + (oy - 16) + ')" fill="#9aa3c4" stroke="#5b6390" stroke-width="0.8"/>'
+      + '<rect x="' + (ox - 5) + '" y="' + (oy - 6) + '" width="4" height="5" rx="1" fill="#ffd27a"/>';
+    // compass along the horizon
+    const dirs = south ? [['E', 90], ['SE', 135], ['S', 180], ['SW', 225], ['W', 270]] : [['W', 270], ['NW', 315], ['N', 0], ['NE', 45], ['E', 90]];
+    for (const [t, az] of dirs) {
+      const x = 160 + norm180(az - center) / 115 * 146;
+      s += '<text x="' + f2(x) + '" y="' + (H - 6) + '" text-anchor="middle" class="alm-svg-tick">' + t + '</text>';
+    }
+    // labels under their planets, nudged apart when planets crowd together
+    const placed = [];
+    labels.sort((a, b) => a.y - b.y);
+    for (const l of labels) {
+      let x = Math.max(28, Math.min(W - 28, l.x)), y = Math.min(HZ - 4, l.y);
+      for (let k = 0; k < 6 && placed.some((q) => Math.abs(q.x - x) < 54 && Math.abs(q.y - y) < 11); k++) {
+        y = y + 11 > HZ - 4 ? y - 22 : y + 11;
+      }
+      placed.push({ x, y });
+      s += '<text x="' + f2(x) + '" y="' + f2(y) + '" text-anchor="middle" class="alm-svg-label" style="fill:' + l.col + '">' + l.text + '</text>';
+    }
+    const svg = '<svg class="alm-scene' + (o.motion ? ' alm-anim' : '') + '" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Tonight\'s sky" xmlns="http://www.w3.org/2000/svg"><defs>'
+      + defs + '</defs>' + s + '</svg>';
+    return { svg, planets: drawn };
+  };
+  global.AlmanacArt = ART;
+
+  // ════════════════════════════════════════════════════════════════════
   // UI  (browser only — bail out cleanly under Node / before the hook loads)
   // ════════════════════════════════════════════════════════════════════
   if (typeof document === 'undefined' || typeof global.ExtrasRegisterTool !== 'function') return;
@@ -1098,7 +1401,7 @@
   // ── CSS (no backticks inside this template literal!) ──
   const style = document.createElement('style');
   style.textContent = `
-  #extras_sun input, #extras_astro input, #extras_cal input {
+  .alm-tool input {
     padding: 8px; font-size: 14px; border-radius: var(--ui-radius);
     border: 1px solid var(--ui-border); background: var(--ui-input-bg);
     color: var(--ui-text); font-family: inherit; min-width: 0; flex: 1;
@@ -1109,7 +1412,6 @@
   .alm-note { text-align: center; font-size: 12.5px; margin: 4px 0; color: var(--ui-muted); }
   .alm-flag { text-align: center; font-size: 13px; margin: 7px 0; padding: 7px 9px; border-radius: 9px;
     background: var(--ui-accent-soft, rgba(120,140,255,0.13)); line-height: 1.45; }
-  .alm-art { display: flex; justify-content: center; margin: 10px 0 4px; }
   .alm-name { text-align: center; font-size: 17px; font-weight: 700; }
   .alm-planets { width: 100%; border-collapse: collapse; font-size: 13px; margin: 4px 0; }
   .alm-planets th, .alm-planets td { padding: 3px 4px; text-align: right; font-variant-numeric: tabular-nums; }
@@ -1123,6 +1425,28 @@
   .orr-slider { width: 100%; margin: 2px 0 8px; }
   .orr-legend { display: flex; flex-wrap: wrap; gap: 3px 12px; justify-content: center; font-size: 12px; margin: 4px 0 2px; }
   .orr-leg { white-space: nowrap; }
+  /* hand-drawn heroes (Sun: the day's path; Astronomy: tonight's sky) */
+  .alm-hero {
+    position: relative; overflow: hidden; height: 0; padding-top: 59.375%;
+    border-radius: 18px; margin: 2px 0 10px; box-shadow: var(--ui-shadow); background: #151d48;
+  }
+  .alm-hero .alm-scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .alm-hero-text {
+    position: absolute; left: 12px; top: 9px; right: 42%; pointer-events: none;
+    color: #ffffff; text-shadow: 0 1px 3px rgba(5, 10, 30, 0.6); line-height: 1.2;
+  }
+  .alm-hero-text b { display: block; font-size: 17px; font-weight: 700; }
+  .alm-hero-text span { display: block; font-size: 12px; opacity: 0.92; margin-top: 2px; }
+  .alm-svg-label {
+    font: 600 9.5px system-ui, -apple-system, sans-serif; fill: #ffffff;
+    paint-order: stroke; stroke: rgba(8, 12, 32, 0.75); stroke-width: 2.6px; stroke-linejoin: round;
+  }
+  .alm-svg-tick { font: 600 8.5px system-ui, -apple-system, sans-serif; fill: rgba(255, 255, 255, 0.72); }
+  .alm-anim .alm-spin { transform-box: fill-box; transform-origin: center; animation: alm-spin 48s linear infinite; }
+  .alm-anim .alm-twinkle { animation: alm-twinkle 3.2s ease-in-out infinite; }
+  @keyframes alm-spin { to { transform: rotate(360deg); } }
+  @keyframes alm-twinkle { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .alm-anim, .alm-anim * { animation: none !important; } }
   `;
   document.head.appendChild(style);
 
@@ -1186,17 +1510,6 @@
   }
   const LOC_HINT = '<span class="xt-muted">pan the map to your spot and tap 📍 — or type a lat/lon</span>';
 
-  // moon terminator SVG (ported from the old moon tool)
-  function moonSvg(cycle, size, mirror) {
-    const c = size / 2, r = c - 3, cosp = Math.cos(2 * Math.PI * cycle), rx = Math.abs(cosp) * r, waxing = cycle < 0.5;
-    const semiSweep = waxing ? 1 : 0, termSweep = waxing ? (cosp > 0 ? 0 : 1) : (cosp > 0 ? 1 : 0);
-    const d = 'M ' + c + ' ' + (c - r) + ' A ' + r + ' ' + r + ' 0 0 ' + semiSweep + ' ' + c + ' ' + (c + r)
-      + ' A ' + rx.toFixed(2) + ' ' + r + ' 0 0 ' + termSweep + ' ' + c + ' ' + (c - r) + ' Z';
-    return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '"'
-      + (mirror ? ' style="transform:scaleX(-1)"' : '') + '>'
-      + '<circle cx="' + c + '" cy="' + c + '" r="' + r + '" fill="#39404e" stroke="#5a6273" stroke-width="1.5"/>'
-      + '<path d="' + d + '" fill="#f2e3ae"/></svg>';
-  }
   const PHASE_NAMES = [[0.02, '🌑', 'New moon'], [0.23, '🌒', 'Waxing crescent'], [0.27, '🌓', 'First quarter'],
     [0.48, '🌔', 'Waxing gibbous'], [0.52, '🌕', 'Full moon'], [0.73, '🌖', 'Waning gibbous'],
     [0.77, '🌗', 'Last quarter'], [0.98, '🌘', 'Waning crescent'], [1.01, '🌑', 'New moon']];
@@ -1274,15 +1587,62 @@
     return null;
   }
 
+  // ── heroes ──
+  const motionOK = () => !(global.matchMedia && global.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const hourLabel = (h) => (U.clock12 && U.clock12() ? ((h % 12) || 12) + (h < 12 ? ' AM' : ' PM') : String(h).padStart(2, '0') + ':00');
+  // Local midnight of the chosen date, and "now" moved onto that date.
+  function dayFrame(dt, now) {
+    const zone = tz();
+    const day0 = U.epochFromWall(zone, dt.y, dt.mo, dt.d, 0, 0);
+    const w = U.wallParts(now, zone);
+    return { day0, at: U.epochFromWall(zone, dt.y, dt.mo, dt.d, w.h, w.mi), today: w.y === dt.y && w.mo === dt.mo && w.d === dt.d };
+  }
+  function renderSunHero(hero, dt, lat, lon, now) {
+    const f = dayFrame(dt, now);
+    const r = ART.sunPath({ lat, lon, day0: f.day0, nowMs: f.at, fmt: fmtMs, hourLabel, motion: motionOK() });
+    let big, small;
+    if (r.rise != null && r.set != null) big = hm((r.set - r.rise) / 60000) + ' of daylight';
+    else big = r.noonAlt > 0 ? 'Midnight sun' : 'Polar night';
+    const aa = A.sunAltAz(f.at, lat, lon);
+    if (!f.today) small = 'Sun at ' + fmtMs(f.at) + ': ' + Math.round(aa.alt) + '°';
+    else if (aa.alt > -0.833) small = 'Sun ' + Math.round(aa.alt) + '° up in the ' + compass(aa.az);
+    else if (r.rise != null && r.rise > now) small = 'Sunrise in ' + hm((r.rise - now) / 60000);
+    else small = 'The sun has set';
+    hero.innerHTML = r.svg + '<div class="alm-hero-text"><b>' + big + '</b><span>' + small + '</span></div>';
+    hero.hidden = false;
+  }
+  // The sky "tonight": right now if it's dark, else an hour after the evening's
+  // nautical dusk (10 pm local when the sun never gets that low).
+  function skyTime(dt, lat, lon, now) {
+    const f = dayFrame(dt, now);
+    if (f.today && A.sunAltAz(now, lat, lon).alt < -6) return { ms: now, now: true };
+    const base = Date.UTC(dt.y, dt.mo - 1, dt.d);
+    const nau = A.sunEventsUTC(dt.y, dt.mo, dt.d, lat, lon, -12);
+    let ms = !nau.polar && nau.set != null ? base + nau.set * 60000 + 3600000 : f.day0 + 22 * 3600000;
+    if (ms < f.day0 + 12 * 3600000) ms += 86400000;  // west of Greenwich the UT date's dusk can land early
+    return { ms, now: false };
+  }
+  function renderSkyHero(hero, dt, lat, lon, now, ph, pn) {
+    const st = skyTime(dt, lat, lon, now);
+    const r = ART.nightSky({ lat, lon, skyMs: st.ms, cycle: ph.cycle, illum: ph.illum, motion: motionOK() });
+    const up = r.planets.map((p) => p.name);
+    hero.innerHTML = r.svg + '<div class="alm-hero-text"><b>' + pn[1] + '</b><span>' + Math.round(ph.illum * 100) + '% lit</span>'
+      + '<span>' + (st.now ? 'The sky now' : 'Sky at ' + fmtMs(st.ms)) + (up.length ? ' · ' + up.length + ' planet' + (up.length > 1 ? 's' : '') + ' up' : '') + '</span></div>';
+    hero.hidden = false;
+  }
+
   // ════════════════════════════════ SUN TOOL ════════════════════════════════
   function buildSun(view) {
-    view.innerHTML = DATE_ROW + LOC_ROW + '<div class="xt-card alm-out">' + LOC_HINT + '</div>';
+    view.classList.add('alm-tool');
+    view.innerHTML = '<div class="alm-hero" hidden></div>' + DATE_ROW + LOC_ROW + '<div class="xt-card alm-out">' + LOC_HINT + '</div>';
     const out = view.querySelector('.alm-out'), dateEl = view.querySelector('.alm-date');
+    const hero = view.querySelector('.alm-hero');
     dateEl.value = U.todayStr();
     function compute() {
       const dt = U.parseDateInput(dateEl.value), loc = readLoc(view);
-      if (!dt || !loc) { out.innerHTML = LOC_HINT; return; }
+      if (!dt || !loc) { out.innerHTML = LOC_HINT; hero.hidden = true; return; }
       const lat = loc.lat, lon = loc.lon, now = Date.now();
+      renderSunHero(hero, dt, lat, lon, now);
       const E = (alt) => A.sunEventsUTC(dt.y, dt.mo, dt.d, lat, lon, alt);
       const off = E(-0.833), civ = E(-6), nau = E(-12), ast = E(-18), g6 = E(6), gm4 = E(-4);
       let h = '';
@@ -1386,7 +1746,8 @@
 
   // ════════════════════════════ ASTRONOMY TOOL ═══════════════════════════════
   function buildAstro(view) {
-    view.innerHTML = DATE_ROW + LOC_ROW + '<div class="xt-card alm-out">' + LOC_HINT + '</div>'
+    view.classList.add('alm-tool');
+    view.innerHTML = '<div class="alm-hero" hidden></div>' + DATE_ROW + LOC_ROW + '<div class="xt-card alm-out">' + LOC_HINT + '</div>'
       + '<div class="xt-divider"></div>'
       + subH('🪐 Solar-system map — top-down, Sun at centre')
       + noteH('where every planet sits in its orbit · distances on a log scale so all are visible')
@@ -1400,6 +1761,7 @@
       + '<div class="xt-row"><input type="date" class="alm-bday" aria-label="birth date"><input type="number" class="alm-wt" step="any" min="0" inputmode="decimal" placeholder="your weight"></div>'
       + '<div class="xt-card alm-worlds"></div>';
     const out = view.querySelector('.alm-out'), dateEl = view.querySelector('.alm-date');
+    const hero = view.querySelector('.alm-hero');
     const bEl = view.querySelector('.alm-bday'), wEl = view.querySelector('.alm-wt'), worlds = view.querySelector('.alm-worlds');
     dateEl.value = U.todayStr();
     try { const saved = JSON.parse(localStorage.getItem('cc.almanac') || '{}'); if (saved.bday) bEl.value = saved.bday; if (saved.wt) wEl.value = saved.wt; } catch (e) { /* ignore */ }
@@ -1438,13 +1800,13 @@
 
     function compute() {
       const dt = U.parseDateInput(dateEl.value), loc = readLoc(view);
-      if (!dt || !loc) { out.innerHTML = LOC_HINT; return; }
+      if (!dt || !loc) { out.innerHTML = LOC_HINT; hero.hidden = true; return; }
       const lat = loc.lat, lon = loc.lon, now = Date.now();
       const noonMs = Date.UTC(dt.y, dt.mo - 1, dt.d, 12), jde = A.jde(A.jdFromMs(noonMs));
       let h = '';
-      // moon
+      // moon (pictured in the hero)
       const ph = A.moonPhase(jde), pn = phaseName(ph.cycle);
-      h += '<div class="alm-art">' + moonSvg(ph.cycle, 116, lat < 0) + '</div>';
+      renderSkyHero(hero, dt, lat, lon, now, ph, pn);
       h += '<div class="alm-name">' + pn[0] + ' ' + pn[1] + '</div>';
       h += noteH(Math.round(ph.illum * 100) + '% illuminated' + (lat < 0 ? ' · southern-sky view' : ''));
       h += rowH('moon age', (ph.cycle * 29.53).toFixed(1) + ' days');
@@ -1538,6 +1900,7 @@
 
   // ════════════════════════════ CALENDAR TOOL ════════════════════════════════
   function buildCal(view) {
+    view.classList.add('alm-tool');
     view.innerHTML = DATE_ROW + '<div class="xt-card alm-out"></div>';
     const out = view.querySelector('.alm-out'), dateEl = view.querySelector('.alm-date');
     dateEl.value = U.todayStr();
@@ -1590,6 +1953,15 @@
     dateEl.addEventListener('input', debounce(compute, 150));
     return { compute, view };
   }
+
+  // The Sun / Astronomy tools mounted somewhere else (Stats, on the panel's
+  // view stack). Each mount is an independent view; render() redraws it.
+  global.ExtrasAlmanac = {
+    mount(kind, container) {
+      const t = kind === 'astro' ? buildAstro(container) : buildSun(container);
+      return { render() { ensureLoc(t.view); t.compute(); } };
+    },
+  };
 
   // register the three tools
   const C = {};

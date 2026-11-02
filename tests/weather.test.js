@@ -459,16 +459,21 @@ ok(!!W, 'WeatherCore exported under Node');
   ok(/_SCRIPT_VERSION_FILES = \[[\s\S]*?"extras-weather\.js"/.test(runPy), 'run.py: _SCRIPT_VERSION_FILES');
   ok(buildCap.includes('"extras-weather.js"'), 'build-capacitor.sh: stamp list');
 
-  // Stats → Weather: the same tool on the collection panel's view stack.
+  // Stats → Weather / Sun / Astronomy: the Extras tools on the collection
+  // panel's view stack, all hosted by one page.
   const cr = read('static', 'creatures.js');
   ok(/global\.ExtrasWeather = \{\s*mount\(container\)/.test(src), 'extras-weather.js exposes ExtrasWeather.mount');
-  ok(/class="bag-craft st-weather">Weather<\/button>/.test(cr), 'Stats: Weather button at the top');
-  ok(/\.st-weather'\);\s*if \(wxb\) wxb\.addEventListener\('click', \(\) => pushView\(\{ view: 'weather' \}\)\)/.test(cr), 'Stats: Weather pushes a view (Back returns to Stats)');
-  ok(/<div class="weather-view">[\s\S]*?class="weather-back"[\s\S]*?class="weather-body"/.test(cr), 'creatures.js: weather view markup');
-  ok(/case 'weather':[\s\S]{0,200}weather-view'\)\.classList\.add\('show'\);\s*renderWeatherView\(\);/.test(cr), 'creatures.js: applyTopView shows + renders the weather view');
-  ok(cr.includes(".querySelector('.weather-view').classList.remove('show')"), 'creatures.js: weather view hidden on navigation');
-  ok(cr.includes(".querySelector('.weather-back').addEventListener('click', popView)"), 'creatures.js: weather back pops the stack');
-  ok(/global\.ExtrasWeather\.mount\(body\)/.test(cr) && /_ccLoadDeferredScripts\(\)\.then/.test(cr), 'creatures.js: mounts the tool, loading the extras scripts first if needed');
+  ok(/weather: \{ title: 'Weather', mount: \(el\) => global\.ExtrasWeather && global\.ExtrasWeather\.mount\(el\) \}/.test(cr)
+    && /sun: \{ title: 'Sun', mount: \(el\) => global\.ExtrasAlmanac && global\.ExtrasAlmanac\.mount\('sun', el\) \}/.test(cr)
+    && /astro: \{ title: 'Space', mount: \(el\) => global\.ExtrasAlmanac && global\.ExtrasAlmanac\.mount\('astro', el\) \}/.test(cr),
+    'creatures.js: Weather, Sun and Space are the hosted tools');
+  ok(/Object\.keys\(_XTOOLS\)\.map\(\(id\) => `<button type="button" class="bag-craft st-xtool" data-tool="\$\{id\}">/.test(cr), 'Stats: a button per tool at the top');
+  ok(/querySelectorAll\('\.st-xtool'\)\.forEach\(\(b\) => b\.addEventListener\('click', \(\) => pushView\(\{ view: b\.dataset\.tool \}\)\)\)/.test(cr), 'Stats: each pushes its view (Back returns to Stats)');
+  ok(/<div class="xtool-view">[\s\S]*?class="xtool-back"[\s\S]*?class="subview-title xtool-title"[\s\S]*?class="xtool-bodies"/.test(cr), 'creatures.js: tool page markup');
+  ok(/case 'weather':\s*case 'sun':\s*case 'astro':[\s\S]{0,200}xtool-view'\)\.classList\.add\('show'\);\s*renderXTool\(top\.view\);/.test(cr), 'creatures.js: applyTopView shows + renders the tool page');
+  ok(cr.includes(".querySelector('.xtool-view').classList.remove('show')"), 'creatures.js: tool page hidden on navigation');
+  ok(cr.includes(".querySelector('.xtool-back').addEventListener('click', popView)"), 'creatures.js: tool back pops the stack');
+  ok(/const m = tool\.mount\(body\);/.test(cr) && /_ccLoadDeferredScripts\(\)\.then/.test(cr), 'creatures.js: mounts the tool, loading the extras scripts first if needed');
   ok(indexSrc.includes('window._ccLoadDeferredScripts = _loadDeferredScripts;'), 'index.html: exposes the deferred-script loader');
   ok(!/#extras_weather [.\[]/.test(src.slice(src.indexOf('style.textContent'), src.indexOf('document.head.appendChild(style)'))),
     'weather CSS is scoped to the tool root, not the Extras view id (works when mounted in Stats)');
