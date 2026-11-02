@@ -11755,7 +11755,7 @@
         </div>
         <div class="communitypass-view">
           <button class="communitypass-back" type="button" aria-label="back">←</button>
-          <h3 class="subview-title">Community Day pass</h3>
+          <h3 class="subview-title">Community Day Pass</h3>
           <div class="communitypass-body"></div>
         </div>
         <div class="weather-view">
