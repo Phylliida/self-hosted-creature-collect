@@ -8845,6 +8845,14 @@
       #creatureInventory .stats-view.show,
       #creatureInventory .statsday-view.show { display: flex; flex-direction: column; }
       #creatureInventory .st-root { display: flex; flex-direction: column; gap: 12px; padding-bottom: 8px; }
+      /* Report buttons along the top — the collection header's text buttons. */
+      #creatureInventory .st-toplinks { display: flex; justify-content: center; flex-wrap: wrap; gap: 6px; }
+      #creatureInventory .st-toplink {
+        background: transparent; border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
+        border-radius: var(--ui-radius, 8px); color: var(--ui-text, #111); cursor: pointer;
+        font-family: inherit; font-size: 12px; line-height: 1; padding: 5px 8px;
+      }
+      #creatureInventory .st-toplink:hover { background: var(--ui-hover, rgba(0,0,0,0.04)); }
       #creatureInventory .st-seg {
         display: flex; align-self: center; padding: 3px; gap: 2px; border-radius: 999px;
         background: var(--ui-hover, rgba(0,0,0,0.06));
@@ -14014,15 +14022,13 @@
     if (!body) return;
     // Launchers — always available (you craft from eggs, not from bag
     // contents), so they show even when the bag is empty: Candy, Craft
-    // incense, Focus mode, Gifts, and Community Day (in a community week
-    // or once a pass is logged) (same button style); each opens a
+    // incense, Focus mode, Gifts (same button style); each opens a
     // sub-view.
     const craftBtnHtml = `<div class="bag-launchers">`
       + `<button class="bag-craft bag-candy" type="button">Candy</button>`
       + `<button class="bag-craft bag-incense" type="button">Craft incense</button>`
       + `<button class="bag-craft bag-focus" type="button">Focus mode</button>`
       + `<button class="bag-craft bag-gifts" type="button">Gifts</button>`
-      + (_communityLauncherVisible() ? `<button class="bag-craft bag-community" type="button">Community Day</button>` : '')
       + `</div>`;
     // Active-incense banner (if one is burning).
     const active = readActiveIncense();
@@ -14069,8 +14075,6 @@
       if (fb) fb.addEventListener('click', () => pushView({ view: 'focus' }));
       const gb = body.querySelector('.bag-gifts');
       if (gb) gb.addEventListener('click', showGifts);
-      const cmb = body.querySelector('.bag-community');
-      if (cmb) cmb.addEventListener('click', () => pushView({ view: 'community' }));
       body.querySelectorAll('.bag-use').forEach((btn) => {
         btn.addEventListener('click', () => _confirmUseIncense(btn.dataset.incense));
       });
@@ -15534,7 +15538,11 @@
     const cmp = _stCompare(idx, p);
     const [plabel, psub] = _stPeriodLabel(p);
     const m = ST_METRIC.get(top.metric);
-    body.innerHTML = `<div class="st-root">
+    // Reports that live under Stats, as buttons along the top (styled like
+    // the collection's Tags / Bag / … row): Community Day.
+    const links = _communityLauncherVisible()
+      ? `<div class="st-toplinks"><button type="button" class="st-toplink st-community">Community Day</button></div>` : '';
+    body.innerHTML = `<div class="st-root">${links}
       <div class="st-seg" role="group" aria-label="Range">${ST_RANGES.map(([r, l]) =>
         `<button type="button" class="st-seg-btn${r === top.range ? ' on' : ''}" data-range="${r}" aria-pressed="${r === top.range}">${l}</button>`).join('')}</div>
       <div class="st-nav">
@@ -15569,6 +15577,8 @@
     }));
     root.querySelectorAll('.st-chip').forEach((b) => b.addEventListener('click', () =>
       go(() => { top.metric = b.dataset.m; })));
+    const cdb = root.querySelector('.st-community');
+    if (cdb) cdb.addEventListener('click', () => pushView({ view: 'community' }));
     const sheet = panel.querySelector('.sheet');
     if (sheet && rebuild && Number.isFinite(top.scrollY)) sheet.scrollTop = top.scrollY;
   }
@@ -24754,7 +24764,7 @@
     }));
   }
 
-  // ── Community Day report ({ view: 'community' }, from the Bag) ──
+  // ── Community Day report ({ view: 'community' }, from Stats) ──
   // This week's passes — used ones with what they caught, unused ones as
   // placeholders — then earlier weeks', each pass opening its own report.
   function _communityCatchSummary(catches) {
@@ -24774,8 +24784,8 @@
   function _communityDate(ms) {
     return new Date(ms).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
   }
-  // Whether the Bag shows the Community Day launcher: in a community week,
-  // or once any pass has been logged.
+  // Whether Stats shows the Community Day button: in a community week, or
+  // once any pass has been logged.
   function _communityLauncherVisible() {
     const info = (global.Spawns && global.Spawns.communityDayInfo)
       ? global.Spawns.communityDayInfo(Date.now()) : null;
