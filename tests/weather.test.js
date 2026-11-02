@@ -155,6 +155,18 @@ ok(!!W, 'WeatherCore exported under Node');
   near(W.feelsLike(32, 60, 5), 37, 1.5, 'heat index 32 °C @ 60%');
   eq(W.feelsLike(18, 50, 10), 18, 'mild air feels like itself');
 
+  // °C / °F: the tool's toggle wins; untouched, it follows the app's units.
+  eq(W.tempUnit(undefined, 'm'), 'c', 'tempUnit: metric app -> °C by default');
+  eq(W.tempUnit(undefined, 'mi'), 'f', 'tempUnit: miles app -> °F by default');
+  eq(W.tempUnit(null, null), 'c', 'tempUnit: nothing set -> °C');
+  eq(W.tempUnit('f', 'm'), 'f', 'tempUnit: toggle °F beats metric app units');
+  eq(W.tempUnit('c', 'mi'), 'c', 'tempUnit: toggle °C beats miles app units');
+  eq(W.tempUnit('kelvin', 'mi'), 'f', 'tempUnit: junk pref ignored');
+  eq(W.tempIn(0, 'f'), 32, 'tempIn: 0 °C = 32 °F');
+  eq(W.tempIn(100, 'f'), 212, 'tempIn: 100 °C = 212 °F');
+  eq(W.tempIn(-40, 'f'), -40, 'tempIn: -40 is -40 in both');
+  eq(W.tempIn(21.5, 'c'), 21.5, 'tempIn: °C passes through');
+
   // ── 4) load end-to-end with a fake fetch ─────────────────────────────
   function fakeFetch(routes) {
     const calls = [];
@@ -310,6 +322,9 @@ ok(!!W, 'WeatherCore exported under Node');
     'UI has no timers or wake-up hooks that could load on their own');
   ok(!/geolocation\.(watchPosition|getCurrentPosition)/.test(code), 'never opens its own GPS watch (reads the shared fix)');
   ok(fetchCalls.length >= 1, 'sanity: the helper exists');
+  // The °C/°F pill: every temperature goes through the one unit choice.
+  ok(/class="wx-units"/.test(code) && /p\.temp = b\.dataset\.u; writePrefs\(p\)/.test(code), 'hero has a °C/°F toggle saved in the tool prefs');
+  ok(!/imperial\(\) \? c \* 9|imperial\(\) \? cur\.tempC/.test(code), 'temperatures no longer read the app distance units directly');
 
   // ── 7) wiring ─────────────────────────────────────────────────────────
   const indexSrc = read('static', 'index.html');

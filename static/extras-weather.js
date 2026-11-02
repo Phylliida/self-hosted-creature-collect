@@ -318,6 +318,11 @@
     return t;
   };
 
+  // Temperature unit: the tool's own °C/°F toggle ('c' | 'f') wins; until
+  // it's touched, follow the app's distance units (miles -> °F).
+  CORE.tempUnit = (pref, appUnits) => (pref === 'c' || pref === 'f' ? pref : appUnits === 'mi' ? 'f' : 'c');
+  CORE.tempIn = (c, unit) => (unit === 'f' ? c * 9 / 5 + 32 : c);
+
   // ════════════════════════════════════════════════════════════════════
   // TIME HELPERS (forecasts are shown in the forecast location's zone)
   // ════════════════════════════════════════════════════════════════════
@@ -1454,12 +1459,24 @@
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .wx-sub { font-size: 12.5px; margin-top: 3px; opacity: 0.95; }
   .wx-hero-place {
-    position: absolute; left: 10px; bottom: 9px; max-width: calc(100% - 20px);
+    position: absolute; left: 10px; bottom: 9px; max-width: calc(100% - 112px);
     padding: 3px 9px; border-radius: 999px;
     background: rgba(12, 18, 32, 0.38); color: #fff;
     font-size: 11.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .wx-hero-place:empty { display: none; }
+  /* °C / °F toggle, the place pill's twin in the other corner */
+  #extras_weather .wx-units {
+    position: absolute; right: 10px; bottom: 8px; display: flex; gap: 2px;
+    padding: 2px; border-radius: 999px; background: rgba(12, 18, 32, 0.38);
+  }
+  #extras_weather .wx-units button {
+    min-width: 36px; margin: 0; padding: 5px 10px; border: 0; border-radius: 999px;
+    background: transparent; color: rgba(255, 255, 255, 0.82); box-shadow: none;
+    font-family: inherit; font-size: 12px; font-weight: 650; line-height: 1; cursor: pointer;
+  }
+  #extras_weather .wx-units button[aria-pressed="true"] { background: #ffffff; color: #17202c; }
+  #extras_weather .wx-units button:focus-visible { outline: 2px solid #ffffff; outline-offset: 1px; }
   .wx-alerts { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
   .wx-alerts:empty { display: none; }
   .wx-alert {
@@ -1577,7 +1594,8 @@
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const imperial = () => localStorage.getItem('cc.units') === 'mi';
   const motionOK = () => !(global.matchMedia && global.matchMedia('(prefers-reduced-motion: reduce)').matches);
-  const tempStr = (c) => (Number.isFinite(c) ? Math.round(imperial() ? c * 9 / 5 + 32 : c) + '°' : '—');
+  const tempUnit = () => CORE.tempUnit(readPrefs().temp, localStorage.getItem('cc.units'));
+  const tempStr = (c) => (Number.isFinite(c) ? Math.round(CORE.tempIn(c, tempUnit())) + '°' : '—');
   const windStr = (kph) => (Number.isFinite(kph) ? (imperial() ? Math.round(kph / 1.609344) + ' mph' : Math.round(kph) + ' km/h') : '—');
   const pressStr = (hPa) => (Number.isFinite(hPa) ? (imperial() ? (hPa * 0.02953).toFixed(2) + ' inHg' : Math.round(hPa) + ' hPa') : '—');
   const clock12 = () => (U.clock12 ? U.clock12() : (localStorage.getItem('cc.clockFormat') || '24h') === '12h');
@@ -1698,6 +1716,13 @@
       const p = readPrefs(); p.loc = c.dataset.loc; writePrefs(p);
       syncChips();
     }));
+    // °C / °F pill (re-drawn with the hero, so listen on the hero itself)
+    hero.addEventListener('click', (e) => {
+      const b = e.target.closest('.wx-units button');
+      if (!b || b.getAttribute('aria-pressed') === 'true') return;
+      const p = readPrefs(); p.temp = b.dataset.u; writePrefs(p);
+      render();
+    });
 
     function renderStatus() {
       statusEl.className = 'wx-status';
@@ -1720,14 +1745,18 @@
         const today = model.days.find((d) => d.key === CORE.dayKey(nowMs, model.tz));
         const hl = today ? [today.hiC != null ? 'H ' + tempStr(today.hiC) : '', today.loC != null ? 'L ' + tempStr(today.loC) : ''].filter(Boolean).join('  ') : '';
         const feels = Number.isFinite(cur.feelsC) && Math.round(cur.feelsC) !== Math.round(cur.tempC) ? 'Feels like ' + tempStr(cur.feelsC) : '';
-        html = '<div class="wx-temp">' + (Number.isFinite(cur.tempC) ? Math.round(imperial() ? cur.tempC * 9 / 5 + 32 : cur.tempC) : '—')
-          + '<span class="wx-unit">°' + (imperial() ? 'F' : 'C') + '</span></div>'
+        const unit = tempUnit();
+        html = '<div class="wx-temp">' + (Number.isFinite(cur.tempC) ? Math.round(CORE.tempIn(cur.tempC, unit)) : '—')
+          + '<span class="wx-unit">°' + unit.toUpperCase() + '</span></div>'
           + '<div class="wx-cond">' + esc(cur.text || CORE.condLabel(cond, day)) + '</div>'
           + '<div class="wx-sub">' + esc([feels, hl].filter(Boolean).join(' · ')) + '</div>';
         place = '&#128205; ' + esc(placeName(model));
         ink = CORE.sceneInk(cond, day);
         hero.innerHTML = CORE.scene(cond, day, { at: nowMs, lat: model.lat, tempC: cur.tempC, motion: motionOK() })
-          + '<div class="wx-hero-text wx-ink-' + ink + '">' + html + '</div><div class="wx-hero-place">' + place + '</div>';
+          + '<div class="wx-hero-text wx-ink-' + ink + '">' + html + '</div><div class="wx-hero-place">' + place + '</div>'
+          + '<div class="wx-units" role="group" aria-label="Temperature unit">'
+          + ['c', 'f'].map((u) => '<button type="button" data-u="' + u + '" aria-pressed="' + (u === unit) + '">°' + u.toUpperCase() + '</button>').join('')
+          + '</div>';
       } else {
         ink = CORE.sceneInk(cond, day);
         hero.innerHTML = CORE.scene(cond, day, { at: nowMs, lat: loc ? loc.lat : 45, motion: motionOK() })
