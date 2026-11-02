@@ -150,6 +150,7 @@ TRACKED_JS = {
     "extras-apps.js", "extras-almanac.js", "extras-vibration.js",
     "extras-skymap.js", "extras-sudoku.js", "extras-sensors.js",
     "extras-tuner.js", "extras-scapes.js", "extras-todos.js", "extras-anki.js",
+    "extras-weather.js",
 }
 # Extras mini-app subtrees (Pixel Art, Draw, both fractal viewers) —
 # same lists as run.py's _SUBTREE_JS / _SUBTREE_HTML / _SUBTREE_CSS.

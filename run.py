@@ -121,7 +121,7 @@ _TRACKED_JS = {
     # pick up changes (they already have the SCRIPT_VERSION='auto' hook).
     "extras-apps.js", "extras-almanac.js", "extras-vibration.js", "extras-skymap.js",
     "extras-sudoku.js", "extras-sensors.js", "extras-tuner.js", "extras-scapes.js",
-    "extras-todos.js", "extras-anki.js",
+    "extras-todos.js", "extras-anki.js", "extras-weather.js",
 }
 
 # Extras mini-app subtrees (the iframe apps: Pixel Art, Draw, both fractal
@@ -225,7 +225,7 @@ _SCRIPT_VERSION_FILES = [
     "shiny-store.js", "idb-util.js", "collection-store.js",
     "extras-apps.js", "extras-almanac.js", "extras-vibration.js", "extras-skymap.js",
     "extras-sudoku.js", "extras-sensors.js", "extras-tuner.js", "extras-scapes.js",
-    "extras-todos.js", "extras-anki.js",
+    "extras-todos.js", "extras-anki.js", "extras-weather.js",
     "synth.html", "quiver.html",
     "sw.js", "index.html", "dex.html",
 ] + _SUBTREE_JS + _SUBTREE_HTML + _SUBTREE_CSS + _VERSION_MAP_DATA
