@@ -2888,6 +2888,9 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
   .collect-anim {
     display: flex; justify-content: center; align-items: center;
     gap: 10px;
+    /* The 32px icons reach into the button's padding instead of making
+       it taller: the button keeps its size while it shows the loot. */
+    margin: -8px 0;
   }
   .collect-anim-icon {
     width: 32px; height: 32px;
@@ -11862,6 +11865,9 @@ function fmtDate(ts) {
     const card = document.getElementById('poiCard');
     const collectBtn = document.getElementById('poiCardCollect');
     if (!card || !collectBtn) return false;
+    // Drop the height pinned for the loot animation (see the onclick).
+    collectBtn.style.height = '';
+    collectBtn.style.boxSizing = '';
     if (!card.classList.contains('show')) return false;
     const stored = JSON.parse(localStorage.getItem(SELECTED_KEY) || 'null');
     if (!stored) return false;
@@ -13592,6 +13598,9 @@ function fmtDate(ts) {
           ? `<img src="${src}" alt="${esc(meta.name || k)}" class="collect-anim-icon">`
           : `<span class="collect-anim-text">${esc(meta.name || k)}</span>`;
       }).join('');
+      // Same size with the loot as with its label (every theme).
+      btn.style.boxSizing = 'border-box';
+      btn.style.height = btn.offsetHeight + 'px';
       btn.innerHTML = `<div class="collect-anim">${iconHtml}</div>`;
       btn.disabled = true;
       closeDelay = (granted.length - 1) * ITEM_STAGGER_MS + ITEM_GROW_MS + POST_PAUSE_MS;
