@@ -338,6 +338,20 @@ ok(!!W, 'WeatherCore exported under Node');
   ok(/_SCRIPT_VERSION_FILES = \[[\s\S]*?"extras-weather\.js"/.test(runPy), 'run.py: _SCRIPT_VERSION_FILES');
   ok(buildCap.includes('"extras-weather.js"'), 'build-capacitor.sh: stamp list');
 
+  // Stats → Weather: the same tool on the collection panel's view stack.
+  const cr = read('static', 'creatures.js');
+  ok(/global\.ExtrasWeather = \{\s*mount\(container\)/.test(src), 'extras-weather.js exposes ExtrasWeather.mount');
+  ok(/class="bag-craft st-weather">Weather<\/button>/.test(cr), 'Stats: Weather button at the top');
+  ok(/\.st-weather'\);\s*if \(wxb\) wxb\.addEventListener\('click', \(\) => pushView\(\{ view: 'weather' \}\)\)/.test(cr), 'Stats: Weather pushes a view (Back returns to Stats)');
+  ok(/<div class="weather-view">[\s\S]*?class="weather-back"[\s\S]*?class="weather-body"/.test(cr), 'creatures.js: weather view markup');
+  ok(/case 'weather':[\s\S]{0,200}weather-view'\)\.classList\.add\('show'\);\s*renderWeatherView\(\);/.test(cr), 'creatures.js: applyTopView shows + renders the weather view');
+  ok(cr.includes(".querySelector('.weather-view').classList.remove('show')"), 'creatures.js: weather view hidden on navigation');
+  ok(cr.includes(".querySelector('.weather-back').addEventListener('click', popView)"), 'creatures.js: weather back pops the stack');
+  ok(/global\.ExtrasWeather\.mount\(body\)/.test(cr) && /_ccLoadDeferredScripts\(\)\.then/.test(cr), 'creatures.js: mounts the tool, loading the extras scripts first if needed');
+  ok(indexSrc.includes('window._ccLoadDeferredScripts = _loadDeferredScripts;'), 'index.html: exposes the deferred-script loader');
+  ok(!/#extras_weather [.\[]/.test(src.slice(src.indexOf('style.textContent'), src.indexOf('document.head.appendChild(style)'))),
+    'weather CSS is scoped to the tool root, not the Extras view id (works when mounted in Stats)');
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -806,11 +806,6 @@
         return blush(0.5) + line('M' + P(-9, 0) + ' Q' + P(-6, 2.6) + ' ' + P(-3, 0))
           + line('M' + P(3, 0) + ' Q' + P(6, 2.6) + ' ' + P(9, 0))
           + line('M' + P(-2, 5) + ' Q' + P(0, 6.4) + ' ' + P(2, 5));
-      case 'sad':
-        return blush(0.35) + dot(-6, 0) + dot(6, 0)
-          + line('M' + P(-3, 6.6) + ' Q' + P(0, 4.2) + ' ' + P(3, 6.6))
-          + '<path d="M' + P(-7.2, 3) + ' q' + r2(-1.4 * k) + ' ' + r2(2.4 * k) + ' 0 ' + r2(3.2 * k)
-          + ' q' + r2(1.4 * k) + ' ' + r2(-0.8 * k) + ' 0 ' + r2(-3.2 * k) + 'Z" fill="#8fd0ff" stroke="#4a9ad6" stroke-width="' + r2(0.6 * k) + '"/>';
       case 'grumpy':
         return line('M' + P(-10.5, -4.6) + ' L' + P(-3.6, -2.4)) + line('M' + P(10.5, -4.6) + ' L' + P(3.6, -2.4))
           + dot(-6, 0.6) + dot(6, 0.6) + line('M' + P(-3.6, 6.8) + ' Q' + P(0, 4.6) + ' ' + P(3.6, 6.8));
@@ -1152,10 +1147,10 @@
         R.clouds = [[176, 46, 1.08, 'light', 'calm']];
         R.precip = { kind: 'rain', n: 12, x0: 190, x1: 288, y0: 100 }; break;
       case 'rain': R.sky = 'rain';
-        R.clouds = [[152, 8, 0.62, 'grey'], [176, 38, 1.18, 'grey', 'sad']];
+        R.clouds = [[152, 8, 0.62, 'grey'], [176, 38, 1.18, 'grey', 'happy']];
         R.precip = { kind: 'rain', n: 22, x0: 184, x1: 300, y0: 98 }; R.ground = 'wet'; break;
       case 'heavy-rain': R.sky = 'storm';
-        R.clouds = [[118, 0, 0.7, 'dark'], [212, 10, 0.8, 'grey'], [160, 36, 1.26, 'dark', 'sad']];
+        R.clouds = [[118, 0, 0.7, 'dark'], [212, 10, 0.8, 'grey'], [160, 36, 1.26, 'dark', 'happy']];
         R.precip = { kind: 'heavy', n: 30, x0: 118, x1: 320, y0: 92 }; R.ground = 'wet'; break;
       case 'freezing-rain': R.sky = 'rain';
         R.clouds = [[156, 10, 0.58, 'grey'], [178, 38, 1.15, 'grey', 'brr']];
@@ -1398,7 +1393,7 @@
       }
       case 'drizzle': s = C(4, 3, 0.32, 'grey') + drops([[12, 29], [20, 33], [28, 29]], false, 0.4); break;
       case 'showers': s = sunOr(28, 9, 6, false) + C(3, 8, 0.31, 'light') + drops([[14, 31], [24, 32]]); break;
-      case 'rain': s = C(4, 3, 0.32, 'grey', 'sad') + drops([[11, 30], [20, 34], [29, 30]]); break;
+      case 'rain': s = C(4, 3, 0.32, 'grey', 'happy') + drops([[11, 30], [20, 34], [29, 30]]); break;
       case 'heavy-rain': s = C(3, 2, 0.34, 'dark') + drops([[9, 29], [17, 33], [25, 29], [33, 33]], false, 0.6); break;
       case 'freezing-rain': s = C(4, 3, 0.32, 'grey') + icicles(A, 9, 20.5, 22, 4, 0.55) + drops([[13, 32], [26, 32]], true); break;
       case 'mix': s = C(4, 3, 0.32, 'grey') + drop(A, 11, 31, 0.6, false, 1.15) + flake(20, 33, 3.4) + drop(A, 29, 31, 0.6, false, 1.15); break;
@@ -1442,7 +1437,7 @@
 
   const style = document.createElement('style');
   style.textContent = `
-  #extras_weather [hidden] { display: none !important; }
+  .wx [hidden] { display: none !important; }
   .wx-hero {
     position: relative; overflow: hidden;
     border-radius: 18px; height: 0; padding-top: 56.25%;
@@ -1466,17 +1461,17 @@
   }
   .wx-hero-place:empty { display: none; }
   /* °C / °F toggle, the place pill's twin in the other corner */
-  #extras_weather .wx-units {
+  .wx .wx-units {
     position: absolute; right: 10px; bottom: 8px; display: flex; gap: 2px;
     padding: 2px; border-radius: 999px; background: rgba(12, 18, 32, 0.38);
   }
-  #extras_weather .wx-units button {
+  .wx .wx-units button {
     min-width: 36px; margin: 0; padding: 5px 10px; border: 0; border-radius: 999px;
     background: transparent; color: rgba(255, 255, 255, 0.82); box-shadow: none;
     font-family: inherit; font-size: 12px; font-weight: 650; line-height: 1; cursor: pointer;
   }
-  #extras_weather .wx-units button[aria-pressed="true"] { background: #ffffff; color: #17202c; }
-  #extras_weather .wx-units button:focus-visible { outline: 2px solid #ffffff; outline-offset: 1px; }
+  .wx .wx-units button[aria-pressed="true"] { background: #ffffff; color: #17202c; }
+  .wx .wx-units button:focus-visible { outline: 2px solid #ffffff; outline-offset: 1px; }
   .wx-alerts { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
   .wx-alerts:empty { display: none; }
   .wx-alert {
@@ -1928,6 +1923,16 @@
     view._wxRender = function () { note = null; render(); };
     render();
   }
+
+  // The same tool, mounted somewhere else (Stats -> Weather, on the panel's
+  // view stack). Mounts are independent views over the shared stored
+  // forecast and prefs; render() redraws one (e.g. when its page reshows).
+  global.ExtrasWeather = {
+    mount(container) {
+      buildWeather(container);
+      return { render: () => { if (container._wxRender) container._wxRender(); } };
+    },
+  };
 
   RT({
     id: 'weather',

@@ -6481,6 +6481,8 @@ function fmtDate(ts) {
     });
     return _deferredScriptsPromise;
   }
+  // For panel pages that host an extras tool (Stats → Weather).
+  window._ccLoadDeferredScripts = _loadDeferredScripts;
   // extras.js wires the Extras button itself (onclick); a tap before it
   // has loaded loads it, then replays the tap once.
   {
