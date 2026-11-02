@@ -24771,7 +24771,10 @@
   // ones gifted away show dimmed. Grouped New / Fresh / Already caught by
   // the label each got when caught (sessions from before the labels: one
   // grid). Big sessions can hold hundreds, so the grids are virtualized.
-  function _sessionPokesInto(pokesEl, panel, creatures, top) {
+  // opts.shiniesFirst (Community Day, where shinies are the prize): the
+  // shinies again in their own section on top; paging from a pokémon's
+  // page still steps through each one once, in the main order.
+  function _sessionPokesInto(pokesEl, panel, creatures, top, opts) {
     const owned = new Map(readCapturedCreatures().filter(Boolean).map((c) => [c.id, c]));
     const labelled = creatures.some((c) => typeof c.fresh === 'string');
     const groups = labelled
@@ -24783,6 +24786,13 @@
     const ordered = groups.flatMap(([, list]) => list);
     const here = ordered.filter((c) => owned.has(c.id)).map((c) => ({ id: c.id }));
     const hereIdx = new Map(here.map((c, i) => [c.id, i]));
+    if (opts && opts.shiniesFirst) {
+      const shinies = ordered.filter((c) => {
+        const cur = owned.get(c.id);
+        return cur ? cur.shinyVariant != null : !!c.shiny;
+      });
+      if (shinies.length) groups.unshift(['Shinies', shinies]);
+    }
     pokesEl.innerHTML = groups.map(([label, list], gi) =>
       (label ? `<div class="focus-poke-group">${escapeHtml(label)} <span>· ${list.length}</span></div>` : '')
       + `<div class="focus-poke-grid" data-g="${gi}"></div>`).join('');
@@ -24982,7 +24992,7 @@
       + `<div class="focus-result-section">${catches.length} pokémon${catches.length ? ' <span class="focus-result-hint">· tap one to see it</span>' : ''}</div>`
       + (catches.length ? '<div class="focus-pokes"></div>'
         : `<div class="focus-empty">${live ? 'Nothing caught yet this pass.' : 'No pokémon caught this pass.'}</div>`);
-    if (catches.length) _sessionPokesInto(body.querySelector('.focus-pokes'), panel, catches, top);
+    if (catches.length) _sessionPokesInto(body.querySelector('.focus-pokes'), panel, catches, top, { shiniesFirst: true });
   }
 
   // (Deliberately no on-map focus button: during a session the creature

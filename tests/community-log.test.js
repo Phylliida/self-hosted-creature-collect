@@ -68,7 +68,7 @@ function makeCtx() {
     pushed: [],
     pushView: (f) => ctx.pushed.push(f),
     pokes: [],
-    _sessionPokesInto: (el, panel, list) => ctx.pokes.push(list.length),
+    _sessionPokesInto: (el, panel, list, top, opts) => ctx.pokes.push({ n: list.length, opts }),
   };
   ctx.readCommunityDay = () => {
     const s = ctx.cdState;
@@ -217,7 +217,9 @@ function fakePanel(ctx) {
   const r = els['.communitypass-body'].innerHTML;
   ok(/<b>3<\/b><span>caught/.test(r) && /<b>2<\/b><span>new/.test(r) && /<b>1<\/b><span>shiny/.test(r),
     '4: pass report totals');
-  ok(r.includes('3 pokémon') && ctx.pokes[ctx.pokes.length - 1] === 3, '4: pass report pokémon section + grid');
+  const lastPokes = ctx.pokes[ctx.pokes.length - 1];
+  ok(r.includes('3 pokémon') && lastPokes.n === 3, '4: pass report pokémon section + grid');
+  ok(lastPokes.opts && lastPokes.opts.shiniesFirst === true, '4: the pass report asks for shinies first');
   run(ctx, 'renderCommunityPass({ startMs: 1 })');
   ok(els['.communitypass-body'].innerHTML.includes('no longer in your history'), '4: unknown pass handled');
   // Off week with no history: launcher hidden; with history: shown.
@@ -230,6 +232,48 @@ function fakePanel(ctx) {
   const offEls = fakePanel(off);
   run(off, 'renderCommunity()');
   ok(offEls['.community-body'].innerHTML.includes('No community day this week'), '4: off-week heading');
+}
+
+// ── 5. The grid: shinies on top (and still in their own group) ─────────
+{
+  const owned = [
+    { id: 'a', shinyVariant: 2 }, { id: 'b', shinyVariant: null }, { id: 'c', shinyVariant: null }, { id: 'd', shinyVariant: 0 },
+  ];
+  const run5 = (opts) => {
+    const grids = [], details = [];
+    const g = {
+      Object, Array, Map, Set, Math, String, Number, JSON, Promise,
+      readCapturedCreatures: () => owned,
+      escapeHtml: (x) => String(x),
+      virtualizeGrid: (o) => grids.push(o),
+      readNicknames: () => ({}),
+      creatureName: (c) => 'mon ' + c.id,
+      showDetail: (id, list, idx) => details.push({ id, ids: list.map((x) => x.id), idx }),
+      showCreatureArt: () => {},
+      document: { createElement: () => ({ addEventListener(ev, fn) { this.onclick = fn; } }) },
+    };
+    vm.createContext(g);
+    vm.runInContext(extract('function _sessionPokesInto('), g);
+    const pokesEl = { innerHTML: '', querySelector: (q) => ({ q }) };
+    g.__args = [pokesEl, { querySelector: () => ({}) }, [
+      { id: 'a', fresh: 'New', shiny: true }, { id: 'b', fresh: 'New' }, { id: 'c', fresh: 'Fresh' },
+      { id: 'd', fresh: '', shiny: true }, { id: 'gone', fresh: '', shiny: true },
+    ], {}, opts];
+    vm.runInContext('_sessionPokesInto(...__args)', g);
+    return { html: pokesEl.innerHTML, grids, details };
+  };
+  const on = run5({ shiniesFirst: true });
+  const heads = [...on.html.matchAll(/focus-poke-group">([^<]+) <span>· (\d+)/g)].map((m) => m[1] + ' ' + m[2]);
+  ok(heads.join(',') === 'Shinies 3,New 2,Fresh 1,Already caught 2', '5: Shinies section first, then New / Fresh / Already caught (' + heads.join(',') + ')');
+  ok(on.grids[0].items.map((c) => c.id).join() === 'a,d,gone', '5: the shiny grid holds every shiny (gifted-away ones too)');
+  ok(on.grids[1].items.some((c) => c.id === 'a') && on.grids[3].items.some((c) => c.id === 'd'), '5: shinies still show in their own group');
+  const card = on.grids[0].makeCardEl(on.grids[0].items[1]);
+  card.onclick();
+  const d = on.details[0];
+  ok(d && d.id === 'd' && d.ids.join() === 'a,b,c,d' && d.idx === 3,
+    '5: tapping a top shiny pages through each pokémon once, in the main order');
+  const off = run5(undefined);
+  ok(!/Shinies/.test(off.html) && off.grids.length === 3, '5: focus sessions (no option) have no Shinies section');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
