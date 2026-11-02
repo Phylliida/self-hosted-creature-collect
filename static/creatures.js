@@ -6863,6 +6863,7 @@
       #creatureInventory .focussession-back,
       #creatureInventory .community-back,
       #creatureInventory .communitypass-back,
+      #creatureInventory .artist-back,
       #creatureInventory .xtool-back,
       #creatureInventory .focusuntil-back,
       #creatureInventory .tags-back,
@@ -6927,6 +6928,7 @@
       #creatureInventory .focussession-back:hover,
       #creatureInventory .community-back:hover,
       #creatureInventory .communitypass-back:hover,
+      #creatureInventory .artist-back:hover,
       #creatureInventory .xtool-back:hover,
       #creatureInventory .focusuntil-back:hover,
       #creatureInventory .tags-back:hover,
@@ -8636,13 +8638,19 @@
       #creatureInventory .focussession-view,
       #creatureInventory .community-view,
       #creatureInventory .communitypass-view,
+      #creatureInventory .artist-view,
       #creatureInventory .xtool-view { display: none; }
       #creatureInventory .focus-view.show,
       #creatureInventory .focusuntil-view.show,
       #creatureInventory .focussession-view.show,
       #creatureInventory .community-view.show,
       #creatureInventory .communitypass-view.show,
+      #creatureInventory .artist-view.show,
       #creatureInventory .xtool-view.show { display: flex; flex-direction: column; }
+      /* Artist names under the fusion view's art: links to the artist screen. */
+      #creatureInventory .variant-cell .artist-link {
+        text-decoration: underline; text-underline-offset: 2px; cursor: pointer;
+      }
       #creatureInventory .xtool-loading { padding: 24px 0; text-align: center; color: var(--ui-muted); }
       /* Community Day pass report: four totals in a row. */
       #creatureInventory .community-stats {
@@ -11082,7 +11090,7 @@
       @A .scroll-top-btn,
       @A :is(.detail-back, .pokedex-back, .fusion-back, .candy-back, .daycare-back,
              .eggs-back, .bag-back, .craft-back, .focus-back, .focussession-back,
-             .community-back, .communitypass-back, .xtool-back, .focusuntil-back, .tags-back, .gifts-back, .stats-back, .statsday-back,
+             .community-back, .communitypass-back, .artist-back, .xtool-back, .focusuntil-back, .tags-back, .gifts-back, .stats-back, .statsday-back,
              .gift-back, .giftcreate-back, .completion-back, .speciesdex-back) {
         width: 32px !important; height: 32px !important; min-height: 32px !important;
         border-radius: 50% !important;
@@ -11117,7 +11125,7 @@
       @H .inventory-x:active { transform: translateY(1px) scale(0.9); }
       @A :is(.detail-back, .pokedex-back, .fusion-back, .candy-back, .daycare-back,
              .eggs-back, .bag-back, .craft-back, .focus-back, .focussession-back,
-             .community-back, .communitypass-back, .xtool-back, .focusuntil-back, .tags-back, .gifts-back, .stats-back, .statsday-back,
+             .community-back, .communitypass-back, .artist-back, .xtool-back, .focusuntil-back, .tags-back, .gifts-back, .stats-back, .statsday-back,
              .gift-back, .giftcreate-back, .completion-back, .speciesdex-back) {
         /* The 32px circle on the 30px title row: nudge it 1px up (transform,
            so the title below doesn't move) to share the title's centre. */
@@ -11131,7 +11139,7 @@
          currentColor so it's dead centre in the circle. */
       @A :is(.detail-back, .pokedex-back, .fusion-back, .candy-back, .daycare-back,
              .eggs-back, .bag-back, .craft-back, .focus-back, .focussession-back,
-             .community-back, .communitypass-back, .xtool-back, .focusuntil-back, .tags-back, .gifts-back, .stats-back, .statsday-back,
+             .community-back, .communitypass-back, .artist-back, .xtool-back, .focusuntil-back, .tags-back, .gifts-back, .stats-back, .statsday-back,
              .gift-back, .giftcreate-back, .completion-back, .speciesdex-back)::before {
         content: ''; width: 16px; height: 16px;
         background: currentColor;
@@ -11820,6 +11828,11 @@
           <h3 class="subview-title">Community Day Pass</h3>
           <div class="communitypass-body"></div>
         </div>
+        <div class="artist-view">
+          <button class="artist-back" type="button" aria-label="back">←</button>
+          <h3 class="subview-title">Artist</h3>
+          <div class="artist-body"></div>
+        </div>
         <div class="xtool-view">
           <button class="xtool-back" type="button" aria-label="back">←</button>
           <h3 class="subview-title xtool-title"></h3>
@@ -12210,6 +12223,7 @@
     panel.querySelector('.focussession-back').addEventListener('click', popView);
     panel.querySelector('.community-back').addEventListener('click', popView);
     panel.querySelector('.communitypass-back').addEventListener('click', popView);
+    panel.querySelector('.artist-back').addEventListener('click', popView);
     panel.querySelector('.xtool-back').addEventListener('click', popView);
     panel.querySelector('.focusuntil-back').addEventListener('click', popView);
     panel.querySelector('.gifts-back').addEventListener('click', popView);
@@ -12523,6 +12537,7 @@
     panel.querySelector('.focussession-view').classList.remove('show');
     panel.querySelector('.community-view').classList.remove('show');
     panel.querySelector('.communitypass-view').classList.remove('show');
+    panel.querySelector('.artist-view').classList.remove('show');
     panel.querySelector('.xtool-view').classList.remove('show');
     panel.querySelector('.focusuntil-view').classList.remove('show');
     panel.querySelector('.gifts-view').classList.remove('show');
@@ -12658,6 +12673,10 @@
         // Shown first, like focusSession (virtualized pokémon grid).
         panel.querySelector('.communitypass-view').classList.add('show');
         renderCommunityPass(top);
+        return;
+      case 'artist':
+        panel.querySelector('.artist-view').classList.add('show');
+        renderArtist(top);
         return;
       case 'weather':
       case 'sun':
@@ -18015,6 +18034,7 @@
         cls: `variant-cell ${isSeen ? '' : 'silhouette'}`,
         variant: i,
         label,
+        credit: isSeen ? slotCredits[i] : null,   // its artist names become links
         selectable: isSeen,       // only a discovered variant can be favorited
       });
     }
@@ -18036,9 +18056,15 @@
     gridEl.innerHTML = displayCards.map((c) => `
       <div class="${c.cls}"${c.selectable ? ' data-fav-selectable' : ''} data-variant="${c.variant === null ? 'auto' : c.variant}" data-shiny="">
         <img alt="">
-        <div class="label">${escapeHtml(c.label)}</div>
+        <div class="label">${c.credit ? _artistLinksHtml(c.credit) : escapeHtml(c.label)}</div>
       </div>
     `).join('');
+    // An artist's name opens their art (not the card's favorite pick).
+    gridEl.querySelectorAll('.artist-link').forEach((el) => {
+      const open = (e) => { e.stopPropagation(); showArtist(el.dataset.artist); };
+      el.addEventListener('click', open);
+      el.addEventListener('keydown', (e) => { if (e.key === 'Enter') open(e); });
+    });
     const cellEls = gridEl.querySelectorAll('.variant-cell');
     displayCards.forEach((c, i) => {
       const img = cellEls[i] && cellEls[i].querySelector('img');
@@ -25090,6 +25116,126 @@
       + (catches.length ? '<div class="focus-pokes"></div>'
         : `<div class="focus-empty">${live ? 'Nothing caught yet this pass.' : 'No pokémon caught this pass.'}</div>`);
     if (catches.length) _sessionPokesInto(body.querySelector('.focus-pokes'), panel, catches, top, { shiniesFirst: true });
+  }
+
+  // ── Artist screen ({ view: 'artist', name }) ──
+  // Every distinct art by one artist that you've unlocked (seen or
+  // caught), newest first, each opening its fusion's dex entry, with the
+  // artist's total; a search box on top jumps to another artist. Opened
+  // from the artist names under the fusion view's art.
+  function showArtist(name) { pushView({ view: 'artist', name }); }
+  function _artistLinksHtml(credit) {
+    const names = (global.Sprites && global.Sprites.splitArtistCredit)
+      ? global.Sprites.splitArtistCredit(credit) : [credit];
+    return names.map((n) => `<span class="artist-link" role="link" tabindex="0" data-artist="${escapeHtml(n)}">`
+      + `${escapeHtml(n)}</span>`).join(' &amp; ');
+  }
+  // The unlocked art among an artist's codes (Sprites.getArtistIndex):
+  // [{ a, b, slot, at }], newest first. Seeing or catching any copy of an
+  // image unlocks it (the art grid shows one card per distinct image).
+  function _artistFoundArt(codes, index, canonFor) {
+    const seen = readSeenFusions();
+    const out = [];
+    for (const code of codes) {
+      const art = index.artOf(code);
+      const canon = canonFor ? canonFor(art.a, art.b) : null;
+      const isThis = (k) => k !== 'auto' && (canon ? canon[+k] : +k) === art.slot;
+      const variants = (seen[`${art.a}-${art.b}`] || {}).variants || {};
+      let at = null;
+      for (const k of Object.keys(variants)) {
+        if (isThis(k)) at = Math.min(at == null ? Infinity : at, Number(variants[k]) || 0);
+      }
+      if (at == null && [..._capStore.variantKeysForFusion(art.a, art.b)].some(isThis)) at = 0;
+      if (at != null) out.push(Object.assign(art, { at }));
+    }
+    return out.sort((x, y) => y.at - x.at);
+  }
+  function renderArtist(top) {
+    const panel = document.getElementById('creatureInventory');
+    const body = panel && panel.querySelector('.artist-body');
+    if (!body) return;
+    body.querySelectorAll('.focus-poke-grid').forEach((g) => { if (g._virtCleanup) g._virtCleanup(); });
+    const title = panel.querySelector('.artist-view .subview-title');
+    if (title) title.textContent = top.name;
+    body.innerHTML = '<div class="focus-empty">Loading…</div>';
+    const S = global.Sprites;
+    Promise.all([
+      S && S.getArtistIndex ? S.getArtistIndex() : null,
+      S && S.getArtCanon ? S.getArtCanon().catch(() => null) : null,
+    ]).then(([index, canonFor]) => {
+      if (_viewStack[_viewStack.length - 1] !== top) return;   // left meanwhile
+      if (!index) {
+        body.innerHTML = '<div class="focus-empty">Artist credits aren\'t downloaded yet.</div>';
+        return;
+      }
+      const codes = index.byArtist.get(top.name) || [];
+      const found = _artistFoundArt(codes, index, canonFor);
+      body.innerHTML = '<div class="search-row"><div class="ac-field">'
+        + '<input type="search" placeholder="Search artists" autocomplete="off" aria-label="Search artists">'
+        + '<ul class="ac-list" role="listbox"></ul></div></div>'
+        + `<div class="focus-result-head"><div class="focus-result-when"><b>${found.length}</b> found`
+        + ` · ${codes.length} by this artist</div></div>`
+        + (found.length ? '<div class="focus-poke-grid"></div>'
+          : '<div class="focus-empty">You haven\'t found any of their art yet.</div>');
+      _wireArtistSearch(body, index);
+      if (!found.length) return;
+      virtualizeGrid({
+        scrollEl: panel.querySelector('.sheet'),
+        gridEl: body.querySelector('.focus-poke-grid'),
+        items: found,
+        cols: 4,
+        rowGap: 6,
+        cardHeight: 98,   // keep in sync with .focus-poke's CSS height
+        initialScrollTop: top.scrollY || 0,
+        makeCardEl(art) {
+          const el = document.createElement('button');
+          el.type = 'button';
+          el.className = 'focus-poke';
+          const name = fusionName(art.a, art.b);
+          el.innerHTML = `<span class="focus-poke-art"><img class="focus-poke-img" alt=""></span>`
+            + `<span class="focus-poke-name">${escapeHtml(name)}</span>`;
+          el.title = name;
+          el.addEventListener('click', () => showFusionView(art.a, art.b));
+          return el;
+        },
+        loadSpriteFor(el, art) {
+          if (global.SpriteStore) global.SpriteStore.showSprite(el.querySelector('.focus-poke-img'), art.a, art.b, art.slot);
+        },
+      });
+    });
+  }
+  // The artist search: type part of a name, pick one (or Enter for the
+  // top match) to open that artist. Prefix matches first, then most art.
+  function _wireArtistSearch(body, index) {
+    const input = body.querySelector('.search-row input');
+    const list = body.querySelector('.ac-list');
+    if (!input || !list) return;
+    const names = [...index.byArtist.keys()].map((n) => [n, n.toLowerCase()]);
+    const matches = (q) => {
+      q = q.trim().toLowerCase();
+      if (!q) return [];
+      return names.filter(([, l]) => l.includes(q))
+        .sort((x, y) => (Number(y[1].startsWith(q)) - Number(x[1].startsWith(q)))
+          || (index.byArtist.get(y[0]).length - index.byArtist.get(x[0]).length))
+        .slice(0, 12).map(([n]) => n);
+    };
+    const paint = () => {
+      const m = matches(input.value);
+      list.innerHTML = m.map((n) => `<li class="ac-item" role="option" data-name="${escapeHtml(n)}">`
+        + `<span class="nm">${escapeHtml(n)}</span><span class="id">${index.byArtist.get(n).length}</span></li>`).join('');
+      list.classList.toggle('show', m.length > 0);
+    };
+    input.addEventListener('input', paint);
+    input.addEventListener('blur', () => setTimeout(() => list.classList.remove('show'), 120));
+    input.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      const m = matches(input.value);
+      if (m.length) showArtist(m[0]);
+    });
+    list.addEventListener('click', (e) => {
+      const item = e.target.closest('.ac-item');
+      if (item) showArtist(item.dataset.name);
+    });
   }
 
   // (Deliberately no on-map focus button: during a session the creature

@@ -1917,6 +1917,66 @@
     _artCanonPromise.finally(() => { _artCanonPromise = null; });
     return _artCanonPromise;
   }
+  // ── Artists (the artist screen) ──
+  // A credit can name several people ("A & B"); each of them gets the art.
+  function splitArtistCredit(credit) {
+    return typeof credit === 'string'
+      ? credit.split(/\s+&\s+/).map((s) => s.trim()).filter(Boolean) : [];
+  }
+  // name → that artist's distinct credited art, as codes (compact cells
+  // index × 256 + slot; artOf decodes one to { a, b, slot }). A slot whose
+  // image copies an earlier one (canonFor) is skipped, so the counts match
+  // the fusion view's art grid. Pure: everything comes in as arguments.
+  function _buildArtistIndex(bundle, manifest, compact, canonFor) {
+    const byArtist = new Map();
+    const namesOf = new Map();   // credit string → its names (~10k strings, ~250k slots)
+    for (let ci = 0; ci < compact.keys.length; ci++) {
+      const a = Math.floor(compact.keys[ci] / 65536), b = compact.keys[ci] % 65536;
+      const credits = bundle[`${b}-${a}`];   // head-body, see getSpriteCreditForSlot
+      const suffixes = manifest[String(b)];
+      if (!credits || !Array.isArray(suffixes)) continue;
+      const canon = canonFor ? canonFor(a, b) : null;
+      const start = compact.offs[ci], n = Math.min(256, compact.offs[ci + 1] - start);
+      for (let slot = 0; slot < n; slot++) {
+        if (canon && canon[slot] !== slot) continue;
+        const credit = credits[suffixes[compact.vals[start + slot]]];
+        if (!credit) continue;
+        let names = namesOf.get(credit);
+        if (!names) namesOf.set(credit, (names = splitArtistCredit(credit)));
+        for (const name of names) {
+          let codes = byArtist.get(name);
+          if (!codes) byArtist.set(name, (codes = []));
+          codes.push(ci * 256 + slot);
+        }
+      }
+    }
+    const artOf = (code) => {
+      const k = compact.keys[Math.floor(code / 256)];
+      return { a: Math.floor(k / 65536), b: k % 65536, slot: code % 256 };
+    };
+    return { byArtist, artOf };
+  }
+  // Built once per session on first use (one pass over the cells table);
+  // null while the credits, cells or manifest aren't downloaded.
+  let _artistIndex = null;
+  let _artistIndexPromise = null;
+  function getArtistIndex() {
+    if (_artistIndex) return Promise.resolve(_artistIndex);
+    if (_artistIndexPromise) return _artistIndexPromise;
+    _artistIndexPromise = (async () => {
+      const [bundle, manifest, compact] = await Promise.all([
+        _ensureCreditsBundle(),
+        getCustomManifest().catch(() => null),
+        _ensureCellsCompact().catch(() => null),
+      ]);
+      if (!bundle || !manifest || !compact) return null;
+      const canonFor = await getArtCanon().catch(() => null);
+      return (_artistIndex = _buildArtistIndex(bundle, manifest, compact, canonFor));
+    })();
+    _artistIndexPromise.finally(() => { _artistIndexPromise = null; });
+    return _artistIndexPromise;
+  }
+
   // Web bulkDownload: store the pack's file for getArtCanon (checked
   // against the cells when first used).
   async function _downloadArtDupes() {
@@ -2318,6 +2378,7 @@
     _variantSummaryLoaded = false;
     _cellsCompact = null;
     _artCanon = undefined;
+    _artistIndex = null;
     _creditsBundleCache = null;
     _splitNamesCache = null;
     // Wipe SpriteStore's in-memory URL cache too — its blob URLs are
@@ -2354,6 +2415,7 @@
     getInflightCount,
     rebuildVariantSummary: _writeVariantSummary,
     getSpriteCreditForSlot,
+    getArtistIndex, splitArtistCredit,
     downloadCreditsBundle: _downloadCreditsBundle,
     getFusedName,
     getFusedNameAsync,
