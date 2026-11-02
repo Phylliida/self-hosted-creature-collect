@@ -16487,7 +16487,7 @@
     if (view) view.classList.toggle('craft-fit', st.step === 1 || !st.type);
     // Step 1 — choose an incense type from the grid.
     if (st.step === 1 || !st.type) {
-      _craftSetTitle('Choose incense');
+      _craftSetTitle('Craft incense');
       const orbs = ALL_TYPES.map((t) => {
         const n = _craftableEggsFor(t).length;
         return `
