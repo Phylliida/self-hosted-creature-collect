@@ -1,6 +1,7 @@
 // Tests bag item ordering (_bagEntryRank / _sortedBagEntries in
 // static/creatures.js): incense first, then evolution items, then poké
-// balls, then anything else — with count-desc / name-asc inside a category.
+// balls, then anything else — alphabetical by name inside a category
+// (counts don't move items around).
 // Also (section 5) that every evolution item the default pack ships art
 // for has a bag entry, and that the bag reads item info through
 // getItemMeta (pack paintbrushes, IF2-only items) — KINGSROCK, METALCOAT,
@@ -45,6 +46,7 @@ const ITEMS = {
   community_pass: { name: 'Community Day Pass', communityDay: true },
   poke_ball: { name: 'Poké Ball', catchShakeRate: 0.8879 },
   great_ball: { name: 'Great Ball', catchShakeRate: 0.9655 },
+  candy_ball: { name: 'Candy Ball', catchShakeRate: 0.9283 },
   test_orb: { name: 'Test Orb' },
   THUNDERSTONE: { name: 'Thunder Stone', evoItem: true },
   FIRESTONE: { name: 'Fire Stone', evoItem: true },
@@ -96,9 +98,9 @@ ok(rank('totally_unknown_key') === 5, '1: unknown key falls to rank 5');
     'calm_berry', 'candy_berry',       // berries: same count → name asc
     'incense_fire', 'incense_water',   // incense: same count → name asc
     'FIRESTONE', 'THUNDERSTONE',       // evo: same count → name asc (Fire < Thunder)
-    'great_ball', 'poke_ball',         // balls: count desc (10 > 5)
+    'great_ball', 'poke_ball',         // balls: name asc (Great < Poké)
     'test_orb',                        // other, last
-  ]), '2: ordered pass → berries → incense → evo → balls → other, tiebroken by count then name');
+  ]), '2: ordered pass → berries → incense → evo → balls → other, by name within each');
   ok(!keys.includes('incense_grass'), '2: zero-count entry filtered out');
   // The list's section headers: one per category present, in order.
   const secs = sections(entries);
@@ -112,10 +114,12 @@ ok(rank('totally_unknown_key') === 5, '1: unknown key falls to rank 5');
      '2: only categories you have get a header; pack paintbrushes count as evolution items');
 }
 
-// ── 3. Count-desc dominates name within a category ──
+// ── 3. Name, not count, within a category ──
 {
   const entries = sorted({ incense_water: 9, incense_fire: 1 });
-  ok(entries[0][0] === 'incense_water', '3: higher count sorts first despite later name');
+  ok(entries[0][0] === 'incense_fire', '3: alphabetical even when a later name has more');
+  const balls = sorted({ poke_ball: 40, great_ball: 2, candy_ball: 1 }).map(([k]) => k);
+  ok(JSON.stringify(balls) === JSON.stringify(['candy_ball', 'great_ball', 'poke_ball']), '3: balls by name (' + balls + ')');
 }
 
 // ── 4. Empty / all-zero bag → no entries ──

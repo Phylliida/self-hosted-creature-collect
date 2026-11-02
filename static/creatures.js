@@ -14034,15 +14034,14 @@
   }
   // Bag entries ([key, count]) with empties dropped, ordered by
   // category (pass → berries → incense → evo → balls → other), then
-  // count-desc, then display name. Pulled out of renderBag so it can be
-  // unit-tested.
+  // display name — not count, so items keep their place as counts
+  // change. Pulled out of renderBag so it can be unit-tested.
   function _sortedBagEntries(bag) {
     return Object.entries(bag)
       .filter(([, n]) => n > 0)
       .sort((a, b) => {
         const ra = _bagEntryRank(a[0]), rb = _bagEntryRank(b[0]);
         if (ra !== rb) return ra - rb;
-        if (b[1] !== a[1]) return b[1] - a[1];
         const ma = getItemMeta(a[0]), mb = getItemMeta(b[0]);
         const na = (ma && ma.name) || a[0];
         const nb = (mb && mb.name) || b[0];
