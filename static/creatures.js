@@ -2408,6 +2408,33 @@
   // N = _daycareConvertCost(fromRoot) (1 for Ditto, 2 otherwise).
   // Active state is set via `slot.convertDir`. Icons shrink to 18 px
   // so the stack stays compact enough to flank the 72 px sprite.
+  // Hold-to-toggle trail for a convert button: an outline 4 px outside it
+  // whose stroke runs round once over DAYCARE_CONVERT_HOLD_MS (CSS, on
+  // .holding). Built on the first press, at the button's real size, then
+  // reflowed so that first hold animates too.
+  const DAYCARE_CONVERT_HOLD_MS = 1000;   // keep in sync with .convert-trail's transition
+  function _convertTrail(btn) {
+    if (btn.querySelector('.convert-trail')) return;
+    const NS = 'http://www.w3.org/2000/svg';
+    const w = btn.offsetWidth + 8, h = btn.offsetHeight + 8, inset = 1.25;
+    const radius = (parseFloat(getComputedStyle(btn).borderTopLeftRadius) || 8) + 4;
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('class', 'convert-trail');
+    svg.setAttribute('width', w);
+    svg.setAttribute('height', h);
+    svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    svg.setAttribute('aria-hidden', 'true');
+    const rect = document.createElementNS(NS, 'rect');
+    rect.setAttribute('x', inset);
+    rect.setAttribute('y', inset);
+    rect.setAttribute('width', w - 2 * inset);
+    rect.setAttribute('height', h - 2 * inset);
+    rect.setAttribute('rx', Math.min(radius, (w - 2 * inset) / 2));
+    rect.setAttribute('pathLength', '100');
+    svg.appendChild(rect);
+    btn.appendChild(svg);
+    svg.getBoundingClientRect();
+  }
   function _convertBtnHtml(slot, rootA, rootB, side) {
     const isActive = slot && slot.convertDir === side;
     const fromRoot = (side === 'A') ? rootA : rootB;
@@ -7855,6 +7882,25 @@
         border-color: var(--ui-accent, #2a8);
         background: color-mix(in srgb, var(--ui-accent, #2a8) 12%, transparent);
       }
+      /* Hold-to-toggle: the trail (see _convertTrail) runs round the
+         outside over 1 s; the button lights up fully while held. */
+      #creatureInventory .daycare-convert-btn {
+        position: relative;
+        -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
+      }
+      #creatureInventory .daycare-convert-btn.holding { opacity: 1; }
+      #creatureInventory .daycare-convert-btn .convert-trail {
+        position: absolute; left: -4px; top: -4px; overflow: visible; pointer-events: none;
+      }
+      #creatureInventory .daycare-convert-btn .convert-trail rect {
+        fill: none; stroke: var(--ui-accent, #2a8); stroke-width: 2.5; stroke-linecap: round;
+        stroke-dasharray: 100; stroke-dashoffset: 100;
+        transition: stroke-dashoffset 0ms linear;
+      }
+      #creatureInventory .daycare-convert-btn.holding .convert-trail rect {
+        stroke-dashoffset: 0;
+        transition: stroke-dashoffset 1000ms linear;   /* DAYCARE_CONVERT_HOLD_MS */
+      }
       #creatureInventory .daycare-convert-btn .convert-arrow {
         font-size: 10px;
         line-height: 1;
@@ -11302,11 +11348,13 @@
       /* Daycare candy converters: the picked one is the violet CTA above;
          the others are soft violet outlines (not greyed-out fills). */
       /* (Class doubled: the CTA rule's :is() list carries element + two
-         classes of specificity.) */
-      @A .daycare-convert-btn.daycare-convert-btn:not(.active) {
+         classes of specificity.) The outline is an inset shadow, not a
+         border, so picking one doesn't change its size and shove its
+         neighbours (the CTA has no border). */
+      @A .daycare-convert-btn.daycare-convert-btn:not(.active),
+      @A .daycare-convert-btn.daycare-convert-btn:not(.active):active {
         background: transparent !important;
-        border: 2px solid rgba(var(--au-accent-rgb), 0.35) !important;
-        box-shadow: none;
+        box-shadow: inset 0 0 0 2px rgba(var(--au-accent-rgb), 0.35);
       }
       @A .daycare-convert-btn.active .convert-arrow { color: #fff; }
       /* Post-catch Done: the detail view clips overflow, so leave room for
@@ -17689,13 +17737,19 @@
       // Distance label: tap flips the whole view meters ↔ steps (see
       // wireDistToggle above).
       wireDistToggle(slot.querySelector('.daycare-slot-dist'));
-      // Conversion toggles — tap to enable that direction, tap again to
-      // disable. Mutually exclusive: enabling one direction disables
-      // the other. State persists per-slot in localStorage; the active
-      // class flips locally without re-rendering the whole panel.
+      // Conversion toggles — hold 1 s to enable that direction (a trail
+      // runs round the outside meanwhile), hold again to disable, so a
+      // stray tap can't flip it; Enter / Space still toggles. Mutually
+      // exclusive: enabling one direction disables the other. State
+      // persists per-slot in localStorage; the active class flips
+      // locally without re-rendering the whole panel.
       slot.querySelectorAll('.daycare-convert-btn').forEach((btn) => {
         btn.addEventListener('click', (e) => {
-          e.stopPropagation();
+          e.stopPropagation();          // never open the pokémon underneath
+          if (e.detail === 0) toggle(); // keyboard activation
+        });
+        _focusWireHold(btn, () => toggle(), { ms: DAYCARE_CONVERT_HOLD_MS, beforeStart: _convertTrail });
+        function toggle() {
           const side = btn.dataset.convertSide;
           if (side !== 'A' && side !== 'B') return;
           const slots = readDaycareSlots();
@@ -17717,7 +17771,7 @@
             other.classList.toggle('active', active);
             other.setAttribute('aria-pressed', active ? 'true' : 'false');
           });
-        });
+        }
       });
       const c = findCreature(id);
       if (!c || !global.SpriteStore) return;
@@ -24305,7 +24359,12 @@
   // Hold-to-confirm wiring for the Enter/End buttons — same semantics
   // as the evolve confirm: press-and-hold fills the ring over
   // FOCUS_HOLD_MS, releasing early cancels.
-  function _focusWireHold(btn, onConfirm) {
+  // Press-and-hold wiring (adds .holding for the CSS progress, confirms
+  // after `ms`, lifting / leaving / a cancelled pointer aborts). opts:
+  // { ms (default FOCUS_HOLD_MS), beforeStart(btn) — e.g. build the
+  // progress graphic before .holding starts its transition }.
+  function _focusWireHold(btn, onConfirm, opts) {
+    const ms = (opts && opts.ms) || FOCUS_HOLD_MS;
     let timer = null;
     const cancel = () => {
       if (timer) { clearTimeout(timer); timer = null; }
@@ -24314,8 +24373,9 @@
     const start = (e) => {
       if (timer) return;
       e.preventDefault();
+      if (opts && opts.beforeStart) opts.beforeStart(btn);
       btn.classList.add('holding');
-      timer = setTimeout(() => { timer = null; cancel(); onConfirm(); }, FOCUS_HOLD_MS);
+      timer = setTimeout(() => { timer = null; cancel(); onConfirm(); }, ms);
     };
     btn.addEventListener('pointerdown', start);
     btn.addEventListener('pointerup', cancel);
