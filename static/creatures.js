@@ -7815,10 +7815,11 @@
       }
       /* Conversion toggle — two stacked 22px candy icons with a tiny
          arrow between (so the button visually narrates "this becomes
-         that"). Default state is dim; tap promotes to an accented
-         ring and full opacity. Mutually exclusive across the two
-         buttons in a slot; the click handler toggles the .active
-         class locally. */
+         that"). Default state is dimmed, in the theme's colours (a
+         plain theme-border outline, candies still coloured); tap
+         promotes to an accented ring and full opacity. Mutually
+         exclusive across the two buttons in a slot; the click handler
+         toggles the .active class locally. */
       #creatureInventory .daycare-convert-btn {
         display: inline-flex;
         flex-direction: column;
@@ -7826,26 +7827,24 @@
         justify-content: center;
         gap: 1px;
         padding: 4px 3px;
-        border: 1px solid transparent;
+        border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
         border-radius: 8px;
         background: transparent;
         cursor: pointer;
-        /* Default "off" state: reduced opacity + grayscale so the
-           candy icons read as obviously disabled, not just dim. iOS
+        /* Default "off" state: dimmed, but not greyed out (a grayscale
+           filter here also drained theme fills — Aurora's violet). iOS
            WKWebView's sticky :hover would otherwise keep the button
            looking faintly bright after a tap-to-disable; gating the
            hover bump behind @media(hover:hover) below avoids that. */
-        opacity: 0.4;
-        filter: grayscale(0.85);
-        transition: opacity 0.12s ease, filter 0.12s ease,
+        opacity: 0.55;
+        transition: opacity 0.12s ease,
                     border-color 0.12s ease, background-color 0.12s ease,
                     transform 0.08s ease;
         -webkit-tap-highlight-color: transparent;
       }
       @media (hover: hover) {
         #creatureInventory .daycare-convert-btn:hover {
-          opacity: 0.75;
-          filter: grayscale(0.5);
+          opacity: 0.8;
         }
       }
       #creatureInventory .daycare-convert-btn:active {
@@ -7853,7 +7852,6 @@
       }
       #creatureInventory .daycare-convert-btn.active {
         opacity: 1;
-        filter: none;
         border-color: var(--ui-accent, #2a8);
         background: color-mix(in srgb, var(--ui-accent, #2a8) 12%, transparent);
       }
@@ -11301,6 +11299,16 @@
         box-shadow: 0 1px 0 var(--au-cta-lip), 0 4px 8px -4px rgba(var(--au-cta-glow-rgb), 0.6);
       }
       @A .bag-use { padding: 6px 14px; font-size: 12.5px; }
+      /* Daycare candy converters: the picked one is the violet CTA above;
+         the others are soft violet outlines (not greyed-out fills). */
+      /* (Class doubled: the CTA rule's :is() list carries element + two
+         classes of specificity.) */
+      @A .daycare-convert-btn.daycare-convert-btn:not(.active) {
+        background: transparent !important;
+        border: 2px solid rgba(var(--au-accent-rgb), 0.35) !important;
+        box-shadow: none;
+      }
+      @A .daycare-convert-btn.active .convert-arrow { color: #fff; }
       /* Post-catch Done: the detail view clips overflow, so leave room for
          the button's 3D lip + shadow below it. */
       @A .detail-view .actions { padding: 0 2px 10px; }
