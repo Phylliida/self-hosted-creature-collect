@@ -167,6 +167,97 @@ ok(!!W, 'WeatherCore exported under Node');
   eq(W.tempIn(-40, 'f'), -40, 'tempIn: -40 is -40 in both');
   eq(W.tempIn(21.5, 'c'), 21.5, 'tempIn: °C passes through');
 
+  // ── air quality, UV, next 2 hours, best walk ──
+  const air = W.fromOmAir(fixture('openmeteo-air.json'));
+  ok(air.air && air.air.kind === 'usaqi' && air.air.hours.length === 48, 'fromOmAir: 48 hours of US AQI');
+  ok(air.uv && air.uv.hours.every((h) => h.v >= 0), 'fromOmAir: UV series');
+  const aqhi = W.fromAqhi(fixture('eccc-aqhi.json'), { lat: 45.5, lon: -73.57 });
+  ok(aqhi && aqhi.kind === 'aqhi' && aqhi.place === 'Montréal', 'fromAqhi: nearest forecast city');
+  eq(aqhi.hours.length, 37, 'fromAqhi: newest publication only (37 hours)');
+  eq(aqhi.hours[0].t, Date.parse('2026-11-01T22:00:00Z'), 'fromAqhi: starts at the newest publication');
+  ok(aqhi.hours.every((h, i) => i === 0 || h.t > aqhi.hours[i - 1].t), 'fromAqhi: sorted by time');
+  eq(W.fromAqhi(fixture('eccc-aqhi.json'), { lat: 43.65, lon: -79.38 }), null, 'fromAqhi: a city 500 km away is no answer');
+  eq(W.fromOmMinutely(fixture('openmeteo-minutely.json')).steps.length, 10, 'fromOmMinutely: 15-minute steps');
+  const B = (s, v) => W.band(s, v).label;
+  eq(B('aqhi', 3), 'Low risk', 'AQHI 3 low'); eq(B('aqhi', 4), 'Moderate risk', 'AQHI 4 moderate');
+  eq(B('aqhi', 7), 'High risk', 'AQHI 7 high'); eq(B('aqhi', 11), 'Very high risk', 'AQHI 10+ very high');
+  eq(B('usaqi', 50), 'Good', 'AQI 50 good'); eq(B('usaqi', 51), 'Moderate', 'AQI 51 moderate');
+  eq(B('usaqi', 151), 'Unhealthy', 'AQI 151 unhealthy'); eq(B('usaqi', 320), 'Hazardous', 'AQI 301+ hazardous');
+  eq(B('uv', 2.4), 'Low', 'UV 2.4 rounds to low'); eq(B('uv', 2.6), 'Moderate', 'UV 2.6 rounds to moderate');
+  eq(B('uv', 11), 'Extreme', 'UV 11 extreme');
+  const hrs = [{ t: 0, v: 1 }, { t: 3600000, v: 5 }, { t: 7200000, v: 3 }];
+  eq(W.valueAt(hrs, 3600000 + 1000).v, 5, 'valueAt: the hour covering the moment');
+  eq(W.valueAt(hrs, 20000000), null, 'valueAt: nothing far past the data');
+  eq(W.maxBetween(hrs, 0, 7200000).v, 5, 'maxBetween');
+  // UV peak: today while the sun's up, tomorrow after dark.
+  const uvTz = 'America/Toronto', d0 = Date.parse('2026-06-21T04:00:00Z');  // local midnight
+  const uvHours = [];
+  for (let i = 0; i < 48; i++) {
+    const loc = i % 24;
+    uvHours.push({ t: d0 + i * 3600000, v: loc >= 6 && loc <= 19 ? Math.max(0, 8 - Math.abs(loc - 13)) * (i < 24 ? 1 : 0.75) : 0 });
+  }
+  const pkDay = W.uvPeak(uvHours, d0 + 9 * 3600000, uvTz);
+  ok(pkDay && !pkDay.tomorrow && pkDay.v === 8 && pkDay.t === d0 + 13 * 3600000, 'uvPeak: today at 1 pm');
+  const pkNight = W.uvPeak(uvHours, d0 + 21 * 3600000, uvTz);
+  ok(pkNight && pkNight.tomorrow && pkNight.v === 6, 'uvPeak: after dark it looks at tomorrow');
+
+  const t0 = Date.parse('2026-06-21T15:00:00Z');
+  const steps = (mm, snow) => ({ steps: mm.map((v, i) => ({ t: t0 + i * 900000, mm: v, snowCm: snow ? snow[i] : 0 })) });
+  eq(W.nowcastSummary(steps([0, 0, 0, 0, 0, 0, 0, 0]), t0).state, 'dry', 'nowcast: dry');
+  let ncs = W.nowcastSummary(steps([0, 0, 0.1, 0.4, 0.6, 0.2, 0, 0]), t0);
+  ok(ncs.state === 'starting' && ncs.at === t0 + 2 * 900000 && ncs.intensity === 'moderate' && ncs.kind === 'rain', 'nowcast: rain starting in 30 min');
+  ncs = W.nowcastSummary(steps([0.3, 0.2, 0.1, 0, 0, 0, 0, 0]), t0);
+  ok(ncs.state === 'stopping' && ncs.at === t0 + 3 * 900000, 'nowcast: rain stopping in 45 min');
+  ncs = W.nowcastSummary(steps([1.4, 1.2, 1, 1, 1.1, 0.9, 1, 1.3]), t0);
+  ok(ncs.state === 'all' && ncs.intensity === 'heavy', 'nowcast: heavy rain throughout');
+  ncs = W.nowcastSummary(steps([0, 0, 0, 0.1, 0.1, 0, 0, 0], [0, 0, 0, 0.3, 0.2, 0, 0, 0]), t0);
+  eq(ncs.kind, 'snow', 'nowcast: snowfall reads as snow');
+  eq(W.nowcastSummary(steps([0, 0, 0, 0, 0, 0, 0, 0]), t0 + 6 * 900000), null, 'nowcast: too stale to say anything');
+  ncs = W.nowcastSummary(steps([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]), t0 + 2 * 900000 + 5000);
+  ok(ncs && ncs.steps[0].t === t0 + 2 * 900000 && ncs.steps.length === 8, 'nowcast: starts at the current quarter hour, 8 steps');
+
+  const ideal = { t: t0, tempC: 19, cond: 'clear', pop: 0, windKph: 8 };
+  eq(W.walkScore(ideal, {}), 100, 'walkScore: dry, mild, calm = 100');
+  ok(W.walkScore(Object.assign({}, ideal, { cond: 'rain', pop: 80 }), {}) < 40, 'walkScore: rain is bad for a walk (not for the clouds)');
+  ok(W.walkScore(Object.assign({}, ideal, { tempC: -12, windKph: 25 }), {}) < 40, 'walkScore: biting cold');
+  ok(W.walkScore(Object.assign({}, ideal, { tempC: 33 }), {}) < 80, 'walkScore: heat');
+  ok(W.walkScore(ideal, { air: { kind: 'aqhi', hours: [{ t: t0, v: 8 }] } }) <= 65, 'walkScore: smoky air (AQHI 8)');
+  ok(W.walkScore(Object.assign({}, ideal, { tempC: 17 }), {}) > W.walkScore(Object.assign({}, ideal, { tempC: 13 }), {}),
+    'walkScore: a cool day prefers the warmer hour');
+  ok(W.walkScore(Object.assign({}, ideal, { tempC: 20 }), {}) > W.walkScore(Object.assign({}, ideal, { tempC: 29 }), {}),
+    'walkScore: a hot day prefers the cooler hour');
+
+  // A June day in Montréal: wet morning, lovely afternoon, showery evening.
+  const wm = { lat: 45.5, lon: -73.57, tz: 'America/Toronto', now: { rh: 50, windKph: 10 }, hours: [] };
+  const local0 = Date.parse('2026-06-21T04:00:00Z');
+  for (let lh = 0; lh < 48; lh++) {
+    const h = lh % 24;
+    const wet = h < 12, eve = h >= 18;
+    wm.hours.push({ t: local0 + lh * 3600000, tempC: wet ? 14 : eve ? 17 : 21, cond: wet ? 'rain' : eve ? 'showers' : 'clear', pop: wet ? 80 : eve ? 60 : 5, windKph: 10 });
+  }
+  let bw = W.bestWalk(wm, local0 + 8 * 3600000);  // 8 am
+  ok(bw && !bw.tomorrow && bw.start === local0 + 12 * 3600000, 'bestWalk: skips the wet morning, starts at noon');
+  ok(bw.end - bw.start >= 2 * 3600000 && bw.end - bw.start <= 3 * 3600000, 'bestWalk: a 2-3 hour window');
+  ok(bw.quality === 'great' && !bw.wetCond && bw.popMax === 5, 'bestWalk: great, dry');
+  bw = W.bestWalk(wm, local0 + 12 * 3600000 + 10 * 60000);  // 12:10
+  ok(bw && bw.startsNow, 'bestWalk: "now" when the best stretch has begun');
+  bw = W.bestWalk(wm, local0 + 22 * 3600000);  // 10 pm, after sunset
+  ok(bw && bw.tomorrow && bw.start === local0 + 36 * 3600000, 'bestWalk: after dark it plans tomorrow');
+  const polarWalk = Object.assign({}, wm, { lat: 78.2, lon: 15.6, tz: 'Arctic/Longyearbyen', hours: wm.hours.map((h) => Object.assign({}, h, { t: h.t + Date.parse('2026-12-21T00:00:00Z') - Date.parse('2026-06-21T00:00:00Z') })) });
+  eq(W.bestWalk(polarWalk, Date.parse('2026-12-21T10:00:00Z')), null, 'bestWalk: polar night has no daylight walk');
+  eq(W.bestWalk({ hours: [] }, t0), null, 'bestWalk: no forecast, no suggestion');
+  // The 15-minute precipitation overrides the hourly chance where it reaches:
+  // an "80% rain" morning hour that the nowcast says clears at 9:15.
+  const nowW = local0 + 8 * 3600000;  // 8 am
+  const ncW = { steps: [] };
+  for (let i = 0; i < 10; i++) ncW.steps.push({ t: nowW + i * 900000, mm: i < 5 ? 0.6 : 0, snowCm: 0 });
+  const wm2 = Object.assign({}, wm, { nowcast: ncW, hours: wm.hours.map((h) => Object.assign({}, h)) });
+  // make the afternoon worse so the cleared morning hour can win
+  wm2.hours.forEach((h) => { const lh = (h.t - local0) / 3600000 % 24; if (lh >= 10) { h.cond = 'rain'; h.pop = 90; } });
+  bw = W.bestWalk(wm2, nowW);
+  ok(bw && bw.start === nowW + 5 * 900000, 'bestWalk: starts when the nowcast says the rain stops (9:15)');
+  ok(bw.popMax <= 25 && !bw.wetCond, 'bestWalk: the cleared hour counts as dry');
+
   // ── 4) load end-to-end with a fake fetch ─────────────────────────────
   function fakeFetch(routes) {
     const calls = [];
@@ -185,14 +276,25 @@ ok(!!W, 'WeatherCore exported under Node');
     return f;
   }
 
+  const EXTRAS = [
+    [/air-quality-api\.open-meteo\.com\/v1\/air-quality\?/, fixture('openmeteo-air.json')],
+    [/aqhi-forecasts-realtime\/items\?/, fixture('eccc-aqhi.json')],
+    [/api\.open-meteo\.com\/v1\/forecast\?.*minutely_15/, fixture('openmeteo-minutely.json')],
+  ];
   let ff = fakeFetch([
     [/citypageweather-realtime\/items\?/, fixture('eccc-ids.json')],
     [/citypageweather-realtime\/items\/qc-147\?/, fixture('eccc-montreal.json')],
+    ...EXTRAS,
   ]);
   let m = await W.load({ lat: 45.50876, lon: -73.56734 }, { fetch: ff, now: 1 });
   eq(m.src, 'eccc', 'load: Montréal -> ECCC');
   eq(m.fetchedAt, 1, 'load: fetchedAt stamped');
-  eq(ff.calls.length, 2, 'load: ECCC = id search + one city');
+  eq(ff.calls.length, 5, 'load: ECCC = id search + one city + AQHI + air/UV + next 2 h');
+  ok(ff.calls.slice(0, 2).every((c) => /citypageweather/.test(c.url)), 'load: the forecast comes first, extras after');
+  ok(m.air && m.air.kind === 'aqhi' && m.air.place === 'Montréal', 'load: in Canada the official AQHI wins over Open-Meteo AQI');
+  ok(m.uv && m.uv.hours.length === 48, 'load: UV from Open-Meteo');
+  ok(m.nowcast && m.nowcast.steps.length === 10, 'load: 15-minute precipitation for the next 2+ hours');
+  ok(ff.calls.some((c) => /aqhi-forecasts-realtime.*bbox=-74\.43,44\.91,-72\.71,46\.11/.test(c.url)), 'load: AQHI searched around the rounded point');
   ok(/bbox=-74\.14,45\.11,-73\.00,45\.91/.test(ff.calls[0].url), 'load: bbox built from the ROUNDED point (' + ff.calls[0].url + ')');
   ok(/items\/qc-147\?f=json$/.test(ff.calls[1].url), 'load: nearest place qc-147 (Montréal) fetched');
   ok(m.distKm < 5, 'load: distance to the forecast place kept');
@@ -206,10 +308,13 @@ ok(!!W, 'WeatherCore exported under Node');
     [/gridpoints\/BTV\/89,57\/forecast$/, fixture('nws-forecast.json')],
     [/gridpoints\/BTV\/89,57\/forecast\/hourly$/, fixture('nws-hourly.json')],
     [/alerts\/active\?point=44\.48,-73\.21$/, fixture('nws-alerts.json')],
+    ...EXTRAS,
   ]);
   m = await W.load({ lat: 44.4812, lon: -73.2129 }, { fetch: ff });
   eq(m.src, 'nws', 'load: Burlington -> NWS');
-  eq(ff.calls.length, 4, 'load: NWS = points + forecast + hourly + alerts');
+  eq(ff.calls.length, 6, 'load: NWS = points + forecast + hourly + alerts + air/UV + next 2 h');
+  ok(!ff.calls.some((c) => /aqhi/.test(c.url)), 'load: no AQHI request outside Canada');
+  ok(m.air && m.air.kind === 'usaqi', 'load: US AQI from Open-Meteo outside Canada');
   ok(m.alerts.length === 1 && m.hours.length === 8, 'load: NWS hourly + alerts merged');
 
   ff = fakeFetch([
@@ -231,10 +336,13 @@ ok(!!W, 'WeatherCore exported under Node');
   eq(m.src, 'openmeteo', 'load: bad NWS answer falls back to Open-Meteo');
   eq(m.fellBackFrom, 'nws', 'load: fallback recorded');
 
-  ff = fakeFetch([[/open-meteo/, fixture('openmeteo-paris.json')]]);
+  const parisWithMinutely = Object.assign({}, fixture('openmeteo-paris.json'), { minutely_15: fixture('openmeteo-minutely.json').minutely_15 });
+  ff = fakeFetch([[/air-quality-api/, fixture('openmeteo-air.json')], [/api\.open-meteo\.com/, parisWithMinutely]]);
   m = await W.load({ lat: 48.8566, lon: 2.3522 }, { fetch: ff });
   eq(m.src, 'openmeteo', 'load: Paris -> Open-Meteo');
-  eq(ff.calls.length, 1, 'load: Open-Meteo = one request');
+  eq(ff.calls.length, 2, 'load: Open-Meteo = forecast (with next 2 h inside) + air/UV');
+  ok(/minutely_15=precipitation,snowfall/.test(ff.calls[0].url) && /forecast_hours=48/.test(ff.calls[0].url), 'load: Open-Meteo forecast asks for 15-minute rain and 48 hours');
+  ok(m.nowcast && m.nowcast.steps.length === 10 && m.air && m.uv, 'load: Open-Meteo model carries next 2 h, air and UV');
   ok(/latitude=48\.86&longitude=2\.35&/.test(ff.calls[0].url), 'load: Open-Meteo gets the rounded point');
   ok(!('fellBackFrom' in m), 'load: no fallback flag on a primary success');
 
@@ -246,6 +354,15 @@ ok(!!W, 'WeatherCore exported under Node');
   m = await W.load({ lat: 45.5, lon: -73.57 }, { fetch: ff });
   eq(ff.calls.filter((c) => /citypage/.test(c.url)).length, 3, 'load: ECCC search widens three times');
   eq(m.fellBackFrom, 'eccc', 'load: empty ECCC search falls back to Open-Meteo');
+
+  // Extras are optional: when they all fail the forecast still loads.
+  ff = fakeFetch([
+    [/citypageweather-realtime\/items\?/, fixture('eccc-ids.json')],
+    [/citypageweather-realtime\/items\/qc-147\?/, fixture('eccc-montreal.json')],
+    [/air-quality|aqhi|minutely/, 500],
+  ]);
+  m = await W.load({ lat: 45.5, lon: -73.57 }, { fetch: ff });
+  ok(m.src === 'eccc' && !m.air && !m.uv && !m.nowcast && !m.fellBackFrom, 'load: failing extras leave the forecast alone');
 
   // Offline: exactly one attempt, no fallback hammering.
   ff = fakeFetch([[/./, new TypeError('Failed to fetch')]]);
@@ -322,6 +439,10 @@ ok(!!W, 'WeatherCore exported under Node');
     'UI has no timers or wake-up hooks that could load on their own');
   ok(!/geolocation\.(watchPosition|getCurrentPosition)/.test(code), 'never opens its own GPS watch (reads the shared fix)');
   ok(fetchCalls.length >= 1, 'sanity: the helper exists');
+  // Air/UV/next-2-hours ride on the same Load: only CORE.load calls them,
+  // and only after the forecast succeeded.
+  eq((code.match(/CORE\.loadExtras\s*\(/g) || []).length, 1, 'loadExtras is called from one place');
+  ok(/const m = await LOADERS\[src\]\(q, F\);\s*await CORE\.loadExtras\(m, q, F\);/.test(code), 'that place is CORE.load, after the forecast loaded');
   // The °C/°F pill: every temperature goes through the one unit choice.
   ok(/class="wx-units"/.test(code) && /p\.temp = b\.dataset\.u; writePrefs\(p\)/.test(code), 'hero has a °C/°F toggle saved in the tool prefs');
   ok(!/imperial\(\) \? c \* 9|imperial\(\) \? cur\.tempC/.test(code), 'temperatures no longer read the app distance units directly');

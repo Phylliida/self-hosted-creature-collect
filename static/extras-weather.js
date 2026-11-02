@@ -609,7 +609,9 @@
       cond: CORE.wmoCond(h.weather_code && h.weather_code[i]),
       text: CORE.wmoText(h.weather_code && h.weather_code[i], !h.is_day || h.is_day[i] !== 0),
       pop: num(h.precipitation_probability && h.precipitation_probability[i]),
+      windKph: num(h.wind_speed_10m && h.wind_speed_10m[i]),
     }));
+    if (j.minutely_15) m.nowcast = CORE.fromOmMinutely(j);
     const d = j.daily || {};
     m.days = (d.time || []).map((t, i) => {
       const code = d.weather_code && d.weather_code[i];
@@ -624,6 +626,245 @@
       };
     });
     return m;
+  };
+
+  // ════════════════════════════════════════════════════════════════════
+  // AIR QUALITY, UV, RAIN IN THE NEXT 2 HOURS (loaded with the forecast)
+  // ════════════════════════════════════════════════════════════════════
+  //   m.air     = { kind: 'aqhi' | 'usaqi', hours: [{ t, v }], place?, distKm? }
+  //   m.uv      = { hours: [{ t, v }] }
+  //   m.nowcast = { steps: [{ t, mm, snowCm }] }   15-minute steps
+  CORE.fromOmAir = function (j) {
+    const h = (j && j.hourly) || {};
+    const series = (key) => (h.time || []).map((t, i) => ({ t: t * 1000, v: num(h[key] && h[key][i]) }))
+      .filter((x) => x.v != null);
+    const aq = series('us_aqi'), uv = series('uv_index');
+    return { air: aq.length ? { kind: 'usaqi', hours: aq } : null, uv: uv.length ? { hours: uv } : null };
+  };
+  // Environment Canada's hourly AQHI forecast: the newest publication for the
+  // nearest forecast city (they publish ~37 hours, twice a day).
+  CORE.fromAqhi = function (j, q) {
+    const rows = ((j && j.features) || []).map((f) => ({ p: f.properties || {}, c: f.geometry && f.geometry.coordinates }))
+      .filter((r) => r.p.aqhi_type === 'AQHI-Forecast' && r.p.forecast_datetime && r.c);
+    let best = null;
+    for (const r of rows) {
+      const km = CORE.km(q.lat, q.lon, r.c[1], r.c[0]);
+      if (!best || km < best.km) best = { id: r.p.location_id, name: r.p.location_name_en || null, km };
+    }
+    if (!best || best.km > 80) return null;
+    const mine = rows.filter((r) => r.p.location_id === best.id);
+    const pub = mine.reduce((a, r) => (r.p.publication_datetime > a ? r.p.publication_datetime : a), '');
+    const hours = mine.filter((r) => r.p.publication_datetime === pub)
+      .map((r) => ({ t: Date.parse(r.p.forecast_datetime), v: num(r.p.aqhi) }))
+      .filter((x) => Number.isFinite(x.t) && x.v != null)
+      .sort((a, b) => a.t - b.t);
+    return hours.length ? { kind: 'aqhi', hours, place: best.name, distKm: best.km } : null;
+  };
+  CORE.fromOmMinutely = function (j) {
+    const n = (j && j.minutely_15) || {};
+    const steps = (n.time || []).map((t, i) => ({
+      t: t * 1000,
+      mm: num(n.precipitation && n.precipitation[i]) || 0,
+      snowCm: num(n.snowfall && n.snowfall[i]) || 0,
+    }));
+    return steps.length ? { steps } : null;
+  };
+
+  // Risk bands: [upper bound, label, colour]. AQHI is Canada's 1-10+ index,
+  // usaqi the US EPA 0-500 AQI, uv the WHO UV index.
+  const SCALES = {
+    aqhi: { min: 1, max: 11, bands: [[3, 'Low risk', '#3d8fe0'], [6, 'Moderate risk', '#e8b400'],
+      [10, 'High risk', '#e5484d'], [Infinity, 'Very high risk', '#8e1b3c']], walk: [0, 10, 35, 55] },
+    usaqi: { min: 0, max: 300, bands: [[50, 'Good', '#2fb36b'], [100, 'Moderate', '#e8b400'],
+      [150, 'Unhealthy for sensitive groups', '#f08a24'], [200, 'Unhealthy', '#e5484d'],
+      [300, 'Very unhealthy', '#8b4fc7'], [Infinity, 'Hazardous', '#7e1f3a']], walk: [0, 6, 18, 35, 50, 60] },
+    uv: { min: 0, max: 11, bands: [[2, 'Low', '#2fb36b'], [5, 'Moderate', '#e8b400'], [7, 'High', '#f08a24'],
+      [10, 'Very high', '#e5484d'], [Infinity, 'Extreme', '#8b4fc7']] },
+  };
+  CORE.SCALES = SCALES;
+  CORE.band = function (scale, v) {
+    const S = SCALES[scale];
+    const r = Math.round(v);  // indexes are reported as whole numbers
+    for (let i = 0; i < S.bands.length; i++) {
+      if (r <= S.bands[i][0]) return { level: i, label: S.bands[i][1], color: S.bands[i][2] };
+    }
+    return null;
+  };
+  // The hourly value covering ms (or the nearest one within the hour).
+  CORE.valueAt = function (hours, ms) {
+    if (!hours || !hours.length) return null;
+    let best = null;
+    for (const h of hours) {
+      if (ms >= h.t && ms < h.t + 3600000) return h;
+      const d = Math.abs(h.t - ms);
+      if (d <= 3600000 && (!best || d < Math.abs(best.t - ms))) best = h;
+    }
+    return best;
+  };
+  CORE.maxBetween = function (hours, from, to) {
+    let best = null;
+    for (const h of (hours || [])) if (h.t + 3600000 > from && h.t < to && (!best || h.v > best.v)) best = h;
+    return best;
+  };
+  // UV peak for the rest of today, or tomorrow's once today's sun is spent.
+  CORE.uvPeak = function (hours, nowMs, tz) {
+    const today = CORE.dayKey(nowMs, tz);
+    const ahead = (hours || []).filter((h) => h.t + 3600000 > nowMs);
+    const on = (key) => ahead.filter((h) => CORE.dayKey(h.t, tz) === key);
+    let list = on(today), tomorrow = false;
+    if (!list.some((h) => h.v >= 0.5)) {
+      const next = on(CORE.addDays(today, 1));
+      if (next.length) { list = next; tomorrow = true; }
+    }
+    if (!list.length) return null;
+    const top = list.reduce((a, h) => (h.v > a.v ? h : a), list[0]);
+    return { v: top.v, t: top.t, tomorrow };
+  };
+
+  // What the next 2 hours of 15-minute precipitation add up to.
+  // { state: dry | starting | stopping | all, at, kind: rain | snow | mix,
+  //   intensity: light | moderate | heavy, steps } or null when stale.
+  CORE.nowcastSummary = function (nc, nowMs) {
+    if (!nc || !nc.steps) return null;
+    const steps = nc.steps.filter((s) => s.t + 15 * 60000 > nowMs).slice(0, 8);
+    if (steps.length < 4) return null;  // too old to say anything about "now"
+    const wet = (s) => s.mm >= 0.05 || s.snowCm >= 0.05;
+    const isSnow = (s) => s.snowCm > 0 && s.snowCm * 0.7 >= s.mm * 0.5;
+    const wets = steps.filter(wet);
+    const nSnow = wets.filter(isSnow).length;
+    const kind = !wets.length || !nSnow ? 'rain' : nSnow === wets.length ? 'snow' : 'mix';
+    const peak = Math.max(0, ...steps.map((s) => Math.max(s.mm, s.snowCm * 0.7)));
+    const intensity = peak >= 1 ? 'heavy' : peak >= 0.25 ? 'moderate' : 'light';
+    let state = 'dry', at = null;
+    if (wets.length && wet(steps[0])) {
+      const dry = steps.find((s) => !wet(s));
+      state = dry ? 'stopping' : 'all';
+      at = dry ? dry.t : null;
+    } else if (wets.length) {
+      state = 'starting';
+      at = wets[0].t;
+    }
+    return { state, at, kind, intensity, steps };
+  };
+
+  // How nice one forecast hour is for a walk, 0-100: dry, mild, calm, clean air.
+  const WALK_COND = {
+    tornado: 100, thunder: 60, hail: 60, 'freezing-rain': 60, 'heavy-rain': 45, 'heavy-snow': 40,
+    smoke: 40, rain: 30, mix: 30, dust: 30, showers: 20, drizzle: 15, snow: 12, fog: 8, windy: 8,
+    flurries: 6, haze: 5,
+  };
+  CORE.walkScore = function (h, ctx) {
+    ctx = ctx || {};
+    let s = 100 - (WALK_COND[h.cond] || 0);
+    if (Number.isFinite(h.pop)) s -= h.pop * 0.5;
+    const wind = Number.isFinite(h.windKph) ? h.windKph : ctx.windKph;
+    const feels = CORE.feelsLike(h.tempC, ctx.rh, wind);
+    // Comfiest around 16-21 °C: cool days favour the warm afternoon, hot
+    // days the cool morning.
+    if (Number.isFinite(feels)) {
+      if (feels < 16) s -= (16 - feels) * 1.6 + Math.max(0, 8 - feels) * 1.4;
+      else if (feels > 21) s -= (feels - 21) * 3;
+    }
+    if (Number.isFinite(wind) && wind > 22) s -= (wind - 22) * 1.2;
+    const air = ctx.air && CORE.valueAt(ctx.air.hours, h.t);
+    if (air) { const b = CORE.band(ctx.air.kind, air.v); if (b) s -= SCALES[ctx.air.kind].walk[b.level] || 0; }
+    const uv = ctx.uv && CORE.valueAt(ctx.uv.hours, h.t);
+    if (uv) s -= uv.v >= 8 ? 8 : uv.v >= 6 ? 3 : 0;
+    return Math.max(0, Math.min(100, s));
+  };
+
+  // The best stretch of daylight left today for a walk (tomorrow's once the
+  // sun has set): 2 hours, 3 when the next hour is as nice, 1 if that's all
+  // there is. Works off the stored forecast, so it moves with the clock.
+  CORE.bestWalk = function (m, nowMs) {
+    if (!m || !m.hours || !m.hours.length) return null;
+    const tz = m.tz, today = CORE.dayKey(nowMs, tz);
+    const ctx = { rh: m.now && m.now.rh, windKph: m.now && m.now.windKph, air: m.air, uv: m.uv };
+    const daylightHours = (key, ref) => {
+      const st = CORE.sunTimes(ref, m.lat, m.lon, tz);
+      if (st.rise == null && st.set == null && !st.up) return [];  // polar night
+      return m.hours.filter((h) => {
+        const mid = h.t + 30 * 60000;
+        return CORE.dayKey(mid, tz) === key && mid >= nowMs
+          && (st.rise == null || mid >= st.rise) && (st.set == null || mid <= st.set)
+          && Number.isFinite(h.tempC);
+      });
+    };
+    let tomorrow = false;
+    let cand = daylightHours(today, nowMs);
+    if (!cand.length) { cand = daylightHours(CORE.addDays(today, 1), nowMs + 86400000); tomorrow = true; }
+    if (!cand.length) return null;
+    // Where the 15-minute precipitation covers an hour, it's sharper than the
+    // hourly chance: wet quarters set the chance, a dry hour isn't rainy.
+    const Q = 15 * 60000;
+    const ncSteps = ((m.nowcast && m.nowcast.steps) || []).filter((s) => s.t + Q > nowMs);
+    const wetStep = (s) => s.mm >= 0.05 || s.snowCm >= 0.05;
+    const quarters = (h, from) => ncSteps.filter((s) => s.t >= Math.max(h.t, from || 0) && s.t < h.t + 3600000);
+    // Only an hour the nowcast (nearly) covers from here on: the rest of the
+    // current hour, or at least 3 of a later hour's 4 quarters.
+    const covered = (h, from) => {
+      const q = quarters(h, from);
+      const start = Math.max(h.t, from || 0, nowMs - (((nowMs % Q) + Q) % Q));
+      const need = Math.round((h.t + 3600000 - start) / Q);
+      return q.length >= Math.min(2, need) && q.length >= need - 1 ? q : null;
+    };
+    const blend = (h, from) => {
+      const q = covered(h, from);
+      if (!q) return h;
+      const frac = q.filter(wetStep).length / q.length;
+      return Object.assign({}, h, { pop: Math.round(frac * 100),
+        cond: frac === 0 && RANK[h.cond] >= RANK.drizzle ? 'cloudy' : h.cond });
+    };
+    const raw = new Map(cand.map((h) => [h.t, h]));
+    cand = cand.map((h) => blend(h));
+    const sc = cand.map((h) => ({ h, s: CORE.walkScore(h, ctx) }));
+    const next = (a, b) => b && b.h.t - a.h.t === 3600000;
+    let best = null;
+    const consider = (run, i) => {
+      const avg = run.reduce((a, x) => a + x.s, 0) / run.length;
+      const eff = run.length === 1 && sc.length > 1 ? avg - 3 : avg;  // a proper walk wins near-ties
+      if (!best || eff > best.eff + 1e-9) best = { run, avg, eff, i };  // earliest wins ties
+    };
+    for (let i = 0; i < sc.length; i++) {
+      if (next(sc[i], sc[i + 1])) consider([sc[i], sc[i + 1]], i);
+      consider([sc[i]], i);
+    }
+    const after = sc[best.i + best.run.length];
+    if (best.run.length === 2 && next(best.run[1], after) && after.s >= best.avg - 4) {
+      best.run.push(after);
+      best.avg = best.run.reduce((a, x) => a + x.s, 0) / best.run.length;
+    }
+    const hs = best.run.map((x) => x.h);
+    // Rain clearing partway into the first hour: start when it stops, and
+    // describe the walk from there.
+    let start = hs[0].t;
+    const q0 = quarters(hs[0]);
+    if (q0.length && wetStep(q0[0])) {
+      const dry = q0.find((s) => !wetStep(s));
+      if (dry) { start = dry.t; hs[0] = blend(raw.get(hs[0].t), start); }
+    }
+    const vals = (k) => hs.map((h) => h[k]).filter(Number.isFinite);
+    const pops = vals('pop'), temps = vals('tempC'), winds = vals('windKph');
+    const worst = hs.reduce((a, h) => (h.cond && (!a || RANK[h.cond] > RANK[a]) ? h.cond : a), null);
+    let airBand = null;
+    if (m.air) {
+      const top = CORE.maxBetween(m.air.hours, hs[0].t, hs[hs.length - 1].t + 3600000);
+      if (top) airBand = CORE.band(m.air.kind, top.v);
+    }
+    const uvTop = m.uv ? CORE.maxBetween(m.uv.hours, hs[0].t, hs[hs.length - 1].t + 3600000) : null;
+    const avg = Math.round(best.avg);
+    return {
+      start, end: hs[hs.length - 1].t + 3600000, startsNow: !tomorrow && start <= nowMs,
+      tomorrow, score: avg,
+      quality: avg >= 80 ? 'great' : avg >= 60 ? 'good' : avg >= 40 ? 'okay' : 'poor',
+      cond: worst,
+      wetCond: hs.some((h) => RANK[h.cond] >= RANK.drizzle),
+      popMax: pops.length ? Math.max(...pops) : null,
+      tMin: temps.length ? Math.min(...temps) : null, tMax: temps.length ? Math.max(...temps) : null,
+      windMax: winds.length ? Math.max(...winds) : null,
+      air: airBand && airBand.level > 0 ? airBand : null,
+      uvMax: uvTop ? uvTop.v : null,
+    };
   };
 
   // ════════════════════════════════════════════════════════════════════
@@ -698,17 +939,49 @@
     return CORE.fromNws(points, fc, hr, al, q);
   }
 
+  const OM_MINUTELY = '&minutely_15=precipitation,snowfall&forecast_minutely_15=10';
   async function loadOpenMeteo(q, F) {
     const j = await F('https://api.open-meteo.com/v1/forecast?latitude=' + q.lat + '&longitude=' + q.lon
       + '&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,is_day,'
       + 'wind_speed_10m,wind_direction_10m,wind_gusts_10m,pressure_msl'
-      + '&hourly=temperature_2m,weather_code,precipitation_probability,is_day'
+      + '&hourly=temperature_2m,weather_code,precipitation_probability,is_day,wind_speed_10m'
       + '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max'
-      + '&forecast_days=7&forecast_hours=24&timezone=auto&timeformat=unixtime&wind_speed_unit=kmh');
+      + OM_MINUTELY
+      + '&forecast_days=7&forecast_hours=48&timezone=auto&timeformat=unixtime&wind_speed_unit=kmh');
     if (!j || !j.hourly) throw wxErr('nodata', 'empty forecast');
     return CORE.fromOpenMeteo(j, q);
   }
   const LOADERS = { eccc: loadEccc, nws: loadNws, openmeteo: loadOpenMeteo };
+
+  // Air quality + UV (Open-Meteo, everywhere; Environment Canada's AQHI wins
+  // in Canada) and the next 2 hours of 15-minute rain. Run after the forecast
+  // succeeded, in parallel; each is optional and never fails the load.
+  CORE.loadExtras = async function (m, q, F) {
+    let aqhi = null;
+    const jobs = [
+      F('https://air-quality-api.open-meteo.com/v1/air-quality?latitude=' + q.lat + '&longitude=' + q.lon
+        + '&hourly=us_aqi,uv_index&forecast_days=2&timezone=auto&timeformat=unixtime')
+        .then((j) => { const r = CORE.fromOmAir(j); if (r.air) m.air = r.air; if (r.uv) m.uv = r.uv; })
+        .catch(() => {}),
+    ];
+    if (!m.nowcast) {
+      jobs.push(F('https://api.open-meteo.com/v1/forecast?latitude=' + q.lat + '&longitude=' + q.lon
+        + OM_MINUTELY + '&timezone=auto&timeformat=unixtime')
+        .then((j) => { m.nowcast = CORE.fromOmMinutely(j); })
+        .catch(() => {}));
+    }
+    if (CORE.inCanada(q.lat, q.lon)) {
+      const r = 0.6, dLon = r / Math.max(0.2, Math.cos(q.lat * D2R));
+      const bbox = [q.lon - dLon, q.lat - r, q.lon + dLon, q.lat + r].map((x) => x.toFixed(2)).join(',');
+      jobs.push(F('https://api.weather.gc.ca/collections/aqhi-forecasts-realtime/items?f=json&limit=150'
+        + '&sortby=-publication_datetime&bbox=' + bbox)
+        .then((j) => { aqhi = CORE.fromAqhi(j, q); })
+        .catch(() => {}));
+    }
+    await Promise.all(jobs);
+    if (aqhi) m.air = aqhi;
+    return m;
+  };
 
   // The one network entry point. loc = { lat, lon }.
   // opts = { fetch (required), timeoutMs, now }.
@@ -723,6 +996,7 @@
     for (const src of order) {
       try {
         const m = await LOADERS[src](q, F);
+        await CORE.loadExtras(m, q, F);
         m.fetchedAt = opts.now || Date.now();
         if (src !== primary) m.fellBackFrom = primary;
         return m;
@@ -1540,6 +1814,38 @@
   .wx-det { background: var(--ui-hover); border-radius: 12px; padding: 8px 10px; }
   .wx-det span { display: block; font-size: 11px; color: var(--ui-muted); }
   .wx-det b { display: block; font-size: 15px; font-weight: 650; margin-top: 1px; font-variant-numeric: tabular-nums; }
+  /* next 2 hours, best walk, air & sun */
+  .wx-card { background: var(--ui-hover); border-radius: 14px; padding: 10px 12px; }
+  .wx-nc-text { font-size: 14px; font-weight: 650; margin-bottom: 8px; }
+  .wx-nc.dry { display: flex; align-items: center; gap: 10px; }
+  .wx-nc.dry .wx-nc-text { margin: 0; }
+  .wx-nc-bars { display: block; width: 100%; height: auto; }
+  .wx-nc-zero { fill: currentColor; opacity: 0.2; }
+  .wx-nc-ticks { display: flex; justify-content: space-between; margin-top: 4px; font-size: 10.5px; color: var(--ui-muted); }
+  .wx-walk { display: flex; align-items: center; gap: 12px; }
+  .wx-walk-main { flex: 1; min-width: 0; }
+  .wx-walk-time { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .wx-walk-q { flex: 0 0 auto; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 700; color: #ffffff; }
+  .wx-walk-q.q-great { background: #2a9d5c; }
+  .wx-walk-q.q-good { background: #2a8fa3; }
+  .wx-walk-q.q-okay { background: #c98a00; }
+  .wx-walk-q.q-poor { background: #7d8796; }
+  .wx-walk-why { margin-top: 3px; font-size: 12.5px; line-height: 1.4; color: var(--ui-muted); }
+  .wx-walk-note { margin-top: 4px; font-size: 12px; }
+  .wx-airsun { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .wx-gauge { min-width: 0; padding: 9px 10px; border-radius: 12px; background: var(--ui-hover); }
+  .wx-g-title, .wx-g-sub { display: block; font-size: 11px; line-height: 1.35; color: var(--ui-muted); }
+  .wx-g-val { display: flex; align-items: baseline; gap: 6px; margin-top: 2px; }
+  .wx-g-val b { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .wx-g-val span { display: inline-flex; align-items: center; gap: 4px; min-width: 0; font-size: 12px; font-weight: 650; }
+  .wx-g-val span i { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; }
+  .wx-g-scale { position: relative; height: 6px; margin: 8px 6px 6px; border-radius: 3px; }
+  .wx-g-scale i { position: absolute; top: 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px; box-sizing: border-box;
+    border-radius: 50%; background: #ffffff; border: 2px solid #1d2633; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); }
+  .wx-g-aqhi { background: linear-gradient(90deg, #6fc6f2 0%, #3d8fe0 20%, #f2c40f 30%, #f08a24 50%, #e5484d 60%, #c0303c 90%, #8e1b3c 100%); }
+  .wx-g-usaqi { background: linear-gradient(90deg, #2fb36b 0%, #2fb36b 12%, #e8b400 28%, #f08a24 45%, #e5484d 62%, #8b4fc7 82%, #7e1f3a 100%); }
+  .wx-g-uv { background: linear-gradient(90deg, #2fb36b 0%, #2fb36b 14%, #e8b400 30%, #f08a24 55%, #e5484d 75%, #8b4fc7 100%); }
   .wx-attrib { margin-top: 12px; font-size: 11px; color: var(--ui-muted); text-align: center; line-height: 1.45; }
   .wx-empty { margin-top: 12px; font-size: 13px; color: var(--ui-muted); text-align: center; line-height: 1.5; }
   .wx-icon { display: block; flex: 0 0 auto; }
@@ -1774,6 +2080,96 @@
       }));
     }
 
+    // "Next 2 hours": a sentence + eight 15-minute bars.
+    function nowcastHtml(nc, tz) {
+      const word = { rain: 'rain', snow: 'snow', mix: 'rain and snow' }[nc.kind];
+      const strong = (nc.intensity === 'light' ? 'Light ' : nc.intensity === 'heavy' ? 'Heavy ' : '') + word;
+      const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+      const text = nc.state === 'dry' ? 'No rain or snow for the next 2 hours'
+        : nc.state === 'all' ? cap(strong) + ' for the next 2 hours'
+          : nc.state === 'starting' ? cap(strong) + ' starting around ' + fmtClock(nc.at, tz)
+            : cap(word) + ' stopping around ' + fmtClock(nc.at, tz);
+      const W = 280, H = 44, gap = 6, n = nc.steps.length, bw = (W - gap * (n - 1)) / n;
+      let bars = '';
+      nc.steps.forEach((st, i) => {
+        const x = r2(i * (bw + gap));
+        const v = Math.max(st.mm, st.snowCm * 0.7);
+        const snow = st.snowCm > 0 && st.snowCm * 0.7 >= st.mm * 0.5;
+        if (v < 0.05) {
+          bars += '<rect class="wx-nc-zero" x="' + x + '" y="' + (H - 3) + '" width="' + r2(bw) + '" height="3" rx="1.5"/>';
+        } else {
+          const bh = r2(Math.max(6, Math.min(1, Math.sqrt(v / 2)) * (H - 2)));
+          bars += '<rect x="' + x + '" y="' + r2(H - bh) + '" width="' + r2(bw) + '" height="' + bh + '" rx="4" fill="'
+            + (snow ? '#e8f1ff' : '#4aa2ef') + '" stroke="' + (snow ? '#8fa6c8' : '#2f7ec6') + '" stroke-width="1.2"/>';
+        }
+      });
+      // A dry forecast is just the sentence; an empty chart says nothing more.
+      if (nc.state === 'dry') {
+        return '<div class="xt-subhead">Next 2 hours</div><div class="wx-card wx-nc dry">'
+          + CORE.icon('few', true, 28) + '<div class="wx-nc-text">' + esc(text) + '</div></div>';
+      }
+      return '<div class="xt-subhead">Next 2 hours</div><div class="wx-card wx-nc">'
+        + '<div class="wx-nc-text">' + esc(text) + '</div>'
+        + '<svg class="wx-nc-bars" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + esc(text) + '">' + bars + '</svg>'
+        + '<div class="wx-nc-ticks"><span>Now</span><span>30 min</span><span>1 h</span><span>1½ h</span><span>2 h</span></div></div>';
+    }
+
+    // "Best time for a walk": the window, how good it is, and why.
+    function walkHtml(w, tz) {
+      const onHour = (w.end - w.start) % 3600000 === 0;  // else it starts when rain stops
+      const range = (w.startsNow ? 'Now' : onHour ? fmtHour(w.start, tz) : fmtClock(w.start, tz)) + ' – ' + fmtHour(w.end, tz);
+      const why = [];
+      if (w.popMax != null && w.popMax >= 40) why.push((['flurries', 'snow', 'heavy-snow'].includes(w.cond) ? 'Snow' : 'Rain') + ' likely (' + Math.round(w.popMax) + '%)');
+      else if (w.popMax != null && w.popMax >= 20) why.push('Small chance of rain (' + Math.round(w.popMax) + '%)');
+      else if (!w.wetCond) why.push('Dry');
+      else why.push(CORE.condLabel(w.cond, true));
+      if (w.tMin != null) why.push(Math.round(CORE.tempIn(w.tMin, tempUnit())) === Math.round(CORE.tempIn(w.tMax, tempUnit()))
+        ? tempStr(w.tMin) : tempStr(w.tMin).replace('°', '') + '–' + tempStr(w.tMax));
+      if (w.windMax != null) why.push(w.windMax >= 30 ? 'Windy (' + windStr(w.windMax) + ')' : w.windMax >= 20 ? 'Breezy' : 'Light wind');
+      if (w.air) why.push('Air: ' + w.air.label.toLowerCase());
+      if (w.uvMax != null && w.uvMax >= 6) why.push('UV ' + Math.round(w.uvMax) + ', wear sunscreen');
+      const q = { great: 'Great', good: 'Good', okay: 'Okay', poor: 'Not great' }[w.quality];
+      return '<div class="xt-subhead">Best time for a walk' + (w.tomorrow ? ' tomorrow' : '') + '</div>'
+        + '<div class="wx-card wx-walk">' + CORE.icon(w.cond || 'partly', true, 42)
+        + '<div class="wx-walk-main"><div class="wx-walk-time"><span>' + esc(range) + '</span>'
+        + '<span class="wx-walk-q q-' + w.quality + '">' + q + '</span></div>'
+        + '<div class="wx-walk-why">' + esc(why.join(' · ')) + '</div>'
+        + (w.quality === 'poor' ? '<div class="wx-walk-note">' + (w.tomorrow ? 'Tomorrow' : 'Today') + ' isn’t a great day for it — this is the best of it.</div>' : '')
+        + '</div></div>';
+    }
+
+    // "Air & sun": AQHI / AQI and UV on their colour scales.
+    function gaugeHtml(scale, title, v, sub) {
+      const S = CORE.SCALES[scale], b = CORE.band(scale, v);
+      if (!b) return '';
+      const pos = Math.max(0, Math.min(1, (v - S.min) / (S.max - S.min))) * 100;
+      return '<div class="wx-gauge"><span class="wx-g-title">' + esc(title) + '</span>'
+        + '<div class="wx-g-val"><b>' + Math.round(v) + '</b><span><i style="background:' + b.color + '"></i>' + esc(b.label) + '</span></div>'
+        + '<div class="wx-g-scale wx-g-' + scale + '"><i style="left:' + r2(pos) + '%"></i></div>'
+        + (sub ? '<span class="wx-g-sub">' + esc(sub) + '</span>' : '') + '</div>';
+    }
+    function airSunHtml(m, nowMs, tz) {
+      let g = '';
+      if (m.air) {
+        const a = CORE.valueAt(m.air.hours, nowMs);
+        const top = CORE.maxBetween(m.air.hours, nowMs, nowMs + 24 * 3600000);
+        if (a) {
+          g += gaugeHtml(m.air.kind, m.air.kind === 'aqhi' ? 'Air quality (AQHI)' : 'Air quality (AQI)', a.v,
+            top && Math.round(top.v) > Math.round(a.v) ? 'Up to ' + Math.round(top.v) + ' in the next 24 h' : 'Steady for the next 24 h');
+        }
+      }
+      if (m.uv) {
+        const u = CORE.valueAt(m.uv.hours, nowMs);
+        const pk = CORE.uvPeak(m.uv.hours, nowMs, tz);
+        if (u) {
+          g += gaugeHtml('uv', 'UV index', u.v, pk && pk.v >= 0.5
+            ? (pk.tomorrow ? 'Tomorrow: up to ' : 'Up to ') + Math.round(pk.v) + ' around ' + fmtHour(pk.t, tz)
+            : 'No sunburn risk today');
+        }
+      }
+      return g ? '<div class="xt-subhead">Air &amp; sun</div><div class="wx-airsun">' + g + '</div>' : '';
+    }
+
     function renderBody() {
       if (!model) {
         body.innerHTML = '<div class="wx-empty">Forecasts come from Environment Canada, the US National Weather Service, or Open-Meteo, '
@@ -1783,6 +2179,14 @@
       const m = model, nowMs = Date.now(), tz = m.tz;
       const loc = { lat: m.lat, lon: m.lon };
       let h = '';
+
+      // rain in the next 2 hours (15-minute steps)
+      const nc = CORE.nowcastSummary(m.nowcast, nowMs);
+      if (nc) h += nowcastHtml(nc, tz);
+
+      // best time for a walk
+      const walk = CORE.bestWalk(m, nowMs);
+      if (walk) h += walkHtml(walk, tz);
 
       // hourly — led by a "Now" cell (Environment Canada's hours start at the
       // next hour, so "now" comes from the observation)
@@ -1844,6 +2248,9 @@
         h += '</div>';
       }
 
+      // air quality + UV
+      h += airSunHtml(m, nowMs, tz);
+
       // details
       const st = CORE.sunTimes(nowMs, loc.lat, loc.lon, tz);
       const det = [
@@ -1866,8 +2273,13 @@
         : m.src === 'nws' ? 'US National Weather Service (NOAA)'
           : 'Open-Meteo.com (CC BY 4.0)';
       const where = m.place ? esc(m.place) + (Number.isFinite(m.distKm) && m.distKm >= 1 ? ' (' + Math.round(imperial() ? m.distKm / 1.609344 : m.distKm) + (imperial() ? ' mi' : ' km') + ' away)' : '') : '';
+      const airFrom = !m.air ? '' : m.air.kind === 'aqhi'
+        ? 'Environment Canada AQHI' + (m.air.place ? ' for ' + m.air.place : '')
+        : 'Open-Meteo (Copernicus CAMS)';
       h += '<div class="wx-attrib">Forecast: ' + esc(from) + (where ? '<br>for ' + where : '')
-        + (cur.observed && cur.station ? '<br>Now: observed at ' + esc(cur.station) : '') + '</div>';
+        + (cur.observed && cur.station ? '<br>Now: observed at ' + esc(cur.station) : '')
+        + (airFrom ? '<br>Air quality: ' + esc(airFrom) : '')
+        + (m.uv || m.nowcast ? '<br>UV and the next 2 hours: Open-Meteo' : '') + '</div>';
 
       body.innerHTML = h;
       body.querySelectorAll('.wx-day').forEach((b) => b.addEventListener('click', () => {
