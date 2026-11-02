@@ -3239,6 +3239,9 @@
       // Incense-origin flags, for the "From <type> Incense" detail line.
       fromIncense: e.fromIncense === true,
       incenseType: (typeof e.incenseType === 'string') ? e.incenseType : null,
+      // Community Day origin, for "From the <species> Community Day".
+      fromCommunity: e.fromCommunity === true,
+      communitySpecies: (typeof e.communitySpecies === 'number') ? e.communitySpecies : null,
       // Gift origin ("Gift from <name>" on the detail page, a link to the
       // gift; the Gift tag); giftOldEgg keeps a pre-cutoff legendary hatch
       // out of the daycare.
@@ -4510,7 +4513,9 @@
     const s = readCommunityDay();
     if (!s || (s.count || 0) < 1) return false;
     const now = Date.now();
+    let passStart = now;
     if (s.active) {
+      passStart = s.active.endMs;   // this pass is the hour added on the end
       s.active.endMs += COMMUNITY_PASS_DURATION_MS;
     } else {
       const info = global.Spawns.communityDayInfo(now);
@@ -4518,6 +4523,7 @@
     }
     s.count -= 1;
     _writeCommunityRaw(s);
+    _communityLogAddPass(s.weekKey, s.active.speciesId, passStart);
     noteStat('u:community_pass');
     if (global.Spawns && global.Spawns.setCommunityDay) global.Spawns.setCommunityDay(s.active);
     _hardRefreshSpawns();
@@ -4557,6 +4563,105 @@
     }
     _hardRefreshSpawns();
     _scheduleCommunityExpiry();
+  }
+
+  // ── Community day pass log ──
+  // One record per pass used: the hour it covers (a fresh session's first
+  // hour, or the hour an extension adds on the end) and a snapshot of every
+  // pokémon caught in that hour, kept like a focus session's so evolving or
+  // gifting one later doesn't empty the report. localStorage + the save
+  // file (mergeCommunityLog unions by pass start, then catch id).
+  //   { v: 1, passes: [{ weekKey, speciesId, startMs, endMs, catches: [
+  //       { id, speciesA, speciesB, solo?, variant, shinyVariant, level,
+  //         shiny, fresh: 'New' | 'Fresh' | '', atMs }] }] }
+  const COMMUNITY_LOG_KEY = 'cc.communityLog.v1';
+  const COMMUNITY_LOG_MAX = 40;   // passes kept (~20 community weeks)
+  function _communityLogRead() {
+    try {
+      const s = JSON.parse(localStorage.getItem(COMMUNITY_LOG_KEY) || 'null');
+      if (s && Array.isArray(s.passes)) return s;
+    } catch (e) { /* fall through to a fresh log */ }
+    return { v: 1, passes: [] };
+  }
+  function _communityLogWrite(s) {
+    s.passes.sort((a, b) => a.startMs - b.startMs);
+    if (s.passes.length > COMMUNITY_LOG_MAX) s.passes = s.passes.slice(-COMMUNITY_LOG_MAX);
+    try { localStorage.setItem(COMMUNITY_LOG_KEY, JSON.stringify(s)); }
+    catch (e) { _logCreatureError('communityLog/write', e); }
+  }
+  function _communityLogAddPass(weekKey, speciesId, startMs) {
+    try {
+      const s = _communityLogRead();
+      if (s.passes.some((p) => p.startMs === startMs)) return;
+      s.passes.push({ weekKey, speciesId, startMs, endMs: startMs + COMMUNITY_PASS_DURATION_MS, catches: [] });
+      _communityLogWrite(s);
+    } catch (e) { _logCreatureError('communityLog/addPass', e); }
+  }
+  // The pass a community catch at time t belongs to: the one whose hour
+  // holds t. A running session with no record for that hour (it began
+  // before the log existed, or on another device and came over in a save)
+  // gets one made from its state: from the end of its last recorded hour
+  // (or its start) to its end. A catch just after a session ended (its
+  // encounter opened during the session) joins that species' last pass.
+  function _communityPassFor(s, t, speciesId) {
+    let p = s.passes.find((x) => x.speciesId === speciesId && x.startMs <= t && t < x.endMs);
+    if (p) return p;
+    const cd = readCommunityDay();
+    const a = cd && cd.active;
+    if (a && a.speciesId === speciesId && a.startMs <= t && t < a.endMs) {
+      let start = a.startMs;
+      for (const x of s.passes) if (x.startMs >= a.startMs && x.endMs <= t && x.endMs > start) start = x.endMs;
+      const weekKey = global.Spawns.communityDayInfo(a.startMs).weekKey;
+      p = { weekKey, speciesId, startMs: start, endMs: a.endMs, catches: [] };
+      s.passes.push(p);
+      return p;
+    }
+    for (let i = s.passes.length - 1; i >= 0; i--) {
+      const x = s.passes[i];
+      if (x.speciesId === speciesId && x.endMs <= t && t - x.endMs < 30 * 60 * 1000) return x;
+    }
+    return null;
+  }
+  function _communityLogCatch(entry, fresh) {
+    try {
+      const s = _communityLogRead();
+      const t = entry.caughtAt.timestamp;
+      const p = _communityPassFor(s, t, entry.communitySpecies);
+      if (!p) return;
+      p.catches.push({
+        id: entry.id,
+        solo: entry.solo || undefined,
+        speciesA: entry.speciesA,
+        speciesB: entry.speciesB,
+        variant: entry.variant,
+        shinyVariant: entry.shinyVariant,
+        level: entry.level,
+        shiny: entry.shinyVariant != null,
+        fresh: fresh || '',
+        atMs: t,
+      });
+      _communityLogWrite(s);
+    } catch (e) { _logCreatureError('communityLog/catch', e); }
+  }
+  // Save-import hook (index.html): union passes by start, catches by id.
+  function mergeCommunityLog(data) {
+    if (!data || !Array.isArray(data.passes)) return;
+    const s = _communityLogRead();
+    for (const inc of data.passes) {
+      if (!inc || !Number.isFinite(inc.startMs) || !Number.isFinite(inc.endMs)
+          || typeof inc.speciesId !== 'number') continue;
+      let p = s.passes.find((x) => x.startMs === inc.startMs);
+      if (!p) {
+        p = { weekKey: inc.weekKey, speciesId: inc.speciesId, startMs: inc.startMs, endMs: inc.endMs, catches: [] };
+        s.passes.push(p);
+      }
+      const have = new Set(p.catches.map((c) => c.id));
+      for (const c of (Array.isArray(inc.catches) ? inc.catches : [])) {
+        if (c && typeof c.id === 'string' && !have.has(c.id)) { have.add(c.id); p.catches.push(c); }
+      }
+      p.catches.sort((x, y) => (x.atMs || 0) - (y.atMs || 0));
+    }
+    _communityLogWrite(s);
   }
   function _communitySpeciesName(id) {
     return (global.Species && global.Species.nameFor) ? global.Species.nameFor(id) : '#' + id;
@@ -6729,6 +6834,8 @@
       #creatureInventory .craft-back,
       #creatureInventory .focus-back,
       #creatureInventory .focussession-back,
+      #creatureInventory .community-back,
+      #creatureInventory .communitypass-back,
       #creatureInventory .focusuntil-back,
       #creatureInventory .tags-back,
       #creatureInventory .gifts-back,
@@ -6790,6 +6897,8 @@
       #creatureInventory .craft-back:hover,
       #creatureInventory .focus-back:hover,
       #creatureInventory .focussession-back:hover,
+      #creatureInventory .community-back:hover,
+      #creatureInventory .communitypass-back:hover,
       #creatureInventory .focusuntil-back:hover,
       #creatureInventory .tags-back:hover,
       #creatureInventory .gifts-back:hover,
@@ -8470,10 +8579,25 @@
       /* ── Focus mode ── */
       #creatureInventory .focus-view,
       #creatureInventory .focusuntil-view,
-      #creatureInventory .focussession-view { display: none; }
+      #creatureInventory .focussession-view,
+      #creatureInventory .community-view,
+      #creatureInventory .communitypass-view { display: none; }
       #creatureInventory .focus-view.show,
       #creatureInventory .focusuntil-view.show,
-      #creatureInventory .focussession-view.show { display: flex; flex-direction: column; }
+      #creatureInventory .focussession-view.show,
+      #creatureInventory .community-view.show,
+      #creatureInventory .communitypass-view.show { display: flex; flex-direction: column; }
+      /* Community Day pass report: four totals in a row. */
+      #creatureInventory .community-stats {
+        display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 4px 0 10px;
+      }
+      #creatureInventory .community-stat {
+        display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 8px 4px;
+        border: 1px solid var(--ui-hairline, rgba(0,0,0,0.10)); border-radius: var(--ui-radius, 8px);
+      }
+      #creatureInventory .community-stat b { font-size: 18px; }
+      #creatureInventory .community-stat span { font-size: 11.5px; color: var(--ui-muted, #666); }
+      #creatureInventory .community-week-total { text-align: center; margin: -2px 0 6px; }
       /* For | Until switch over the picker. */
       #creatureInventory .focus-seg {
         display: flex; align-self: center; margin: 10px 0 0; padding: 3px; gap: 2px;
@@ -10889,7 +11013,7 @@
       @A .scroll-top-btn,
       @A :is(.detail-back, .pokedex-back, .fusion-back, .candy-back, .daycare-back,
              .eggs-back, .bag-back, .craft-back, .focus-back, .focussession-back,
-             .focusuntil-back, .tags-back, .gifts-back, .stats-back, .statsday-back,
+             .community-back, .communitypass-back, .focusuntil-back, .tags-back, .gifts-back, .stats-back, .statsday-back,
              .gift-back, .giftcreate-back, .completion-back, .speciesdex-back) {
         width: 32px !important; height: 32px !important; min-height: 32px !important;
         border-radius: 50% !important;
@@ -10924,7 +11048,7 @@
       @H .inventory-x:active { transform: translateY(1px) scale(0.9); }
       @A :is(.detail-back, .pokedex-back, .fusion-back, .candy-back, .daycare-back,
              .eggs-back, .bag-back, .craft-back, .focus-back, .focussession-back,
-             .focusuntil-back, .tags-back, .gifts-back, .stats-back, .statsday-back,
+             .community-back, .communitypass-back, .focusuntil-back, .tags-back, .gifts-back, .stats-back, .statsday-back,
              .gift-back, .giftcreate-back, .completion-back, .speciesdex-back) {
         /* The 32px circle on the 30px title row: nudge it 1px up (transform,
            so the title below doesn't move) to share the title's centre. */
@@ -10938,7 +11062,7 @@
          currentColor so it's dead centre in the circle. */
       @A :is(.detail-back, .pokedex-back, .fusion-back, .candy-back, .daycare-back,
              .eggs-back, .bag-back, .craft-back, .focus-back, .focussession-back,
-             .focusuntil-back, .tags-back, .gifts-back, .stats-back, .statsday-back,
+             .community-back, .communitypass-back, .focusuntil-back, .tags-back, .gifts-back, .stats-back, .statsday-back,
              .gift-back, .giftcreate-back, .completion-back, .speciesdex-back)::before {
         content: ''; width: 16px; height: 16px;
         background: currentColor;
@@ -11582,6 +11706,16 @@
           <h3 class="subview-title">Focus session</h3>
           <div class="focussession-body"></div>
         </div>
+        <div class="community-view">
+          <button class="community-back" type="button" aria-label="back">←</button>
+          <h3 class="subview-title">Community Day</h3>
+          <div class="community-body"></div>
+        </div>
+        <div class="communitypass-view">
+          <button class="communitypass-back" type="button" aria-label="back">←</button>
+          <h3 class="subview-title">Community Day pass</h3>
+          <div class="communitypass-body"></div>
+        </div>
         <div class="tags-view">
           <button class="tags-back" type="button" aria-label="back">←</button>
           <h3 class="subview-title">Tags</h3>
@@ -11965,6 +12099,8 @@
     panel.querySelector('.craft-back').addEventListener('click', _craftBack);
     panel.querySelector('.focus-back').addEventListener('click', popView);
     panel.querySelector('.focussession-back').addEventListener('click', popView);
+    panel.querySelector('.community-back').addEventListener('click', popView);
+    panel.querySelector('.communitypass-back').addEventListener('click', popView);
     panel.querySelector('.focusuntil-back').addEventListener('click', popView);
     panel.querySelector('.gifts-back').addEventListener('click', popView);
     panel.querySelector('.stats-back').addEventListener('click', popView);
@@ -12275,6 +12411,8 @@
     panel.querySelector('.craft-view').classList.remove('show');
     panel.querySelector('.focus-view').classList.remove('show');
     panel.querySelector('.focussession-view').classList.remove('show');
+    panel.querySelector('.community-view').classList.remove('show');
+    panel.querySelector('.communitypass-view').classList.remove('show');
     panel.querySelector('.focusuntil-view').classList.remove('show');
     panel.querySelector('.gifts-view').classList.remove('show');
     panel.querySelector('.stats-view').classList.remove('show');
@@ -12400,6 +12538,15 @@
         // itself against the visible sheet.
         panel.querySelector('.focussession-view').classList.add('show');
         renderFocusSession(top);
+        return;
+      case 'community':
+        panel.querySelector('.community-view').classList.add('show');
+        renderCommunity();
+        return;
+      case 'communityPass':
+        // Shown first, like focusSession (virtualized pokémon grid).
+        panel.querySelector('.communitypass-view').classList.add('show');
+        renderCommunityPass(top);
         return;
       case 'stats':
         // Shown first: the charts size themselves to the view's width.
@@ -13867,13 +14014,15 @@
     if (!body) return;
     // Launchers — always available (you craft from eggs, not from bag
     // contents), so they show even when the bag is empty: Candy, Craft
-    // incense, Focus mode, Gifts (same button style); each opens a
+    // incense, Focus mode, Gifts, and Community Day (in a community week
+    // or once a pass is logged) (same button style); each opens a
     // sub-view.
     const craftBtnHtml = `<div class="bag-launchers">`
       + `<button class="bag-craft bag-candy" type="button">Candy</button>`
       + `<button class="bag-craft bag-incense" type="button">Craft incense</button>`
       + `<button class="bag-craft bag-focus" type="button">Focus mode</button>`
       + `<button class="bag-craft bag-gifts" type="button">Gifts</button>`
+      + (_communityLauncherVisible() ? `<button class="bag-craft bag-community" type="button">Community Day</button>` : '')
       + `</div>`;
     // Active-incense banner (if one is burning).
     const active = readActiveIncense();
@@ -13920,6 +14069,8 @@
       if (fb) fb.addEventListener('click', () => pushView({ view: 'focus' }));
       const gb = body.querySelector('.bag-gifts');
       if (gb) gb.addEventListener('click', showGifts);
+      const cmb = body.querySelector('.bag-community');
+      if (cmb) cmb.addEventListener('click', () => pushView({ view: 'community' }));
       body.querySelectorAll('.bag-use').forEach((btn) => {
         btn.addEventListener('click', () => _confirmUseIncense(btn.dataset.incense));
       });
@@ -14240,6 +14391,7 @@
     // daycare after a trip through a gift (its timestamp doesn't travel).
     if (_legendaryTooOldForDaycare(raw)) out.oldEgg = true;
     if (raw.fromIncense === true) { out.fromIncense = true; out.incenseType = raw.incenseType || null; }
+    if (raw.fromCommunity === true) { out.fromCommunity = true; out.communitySpecies = typeof raw.communitySpecies === 'number' ? raw.communitySpecies : null; }
     const nick = readNicknames()[raw.id];
     if (nick) out.nickname = String(nick).slice(0, 40);
     const caught = _giftCaughtAt(raw.caughtAt);
@@ -14435,6 +14587,7 @@
     if (c.fromEgg === true) entry.fromEgg = true;
     if (c.oldEgg === true) entry.giftOldEgg = true;
     if (c.fromIncense === true) { entry.fromIncense = true; entry.incenseType = c.incenseType || null; }
+    if (c.fromCommunity === true) { entry.fromCommunity = true; entry.communitySpecies = typeof c.communitySpecies === 'number' ? c.communitySpecies : null; }
     _capStore.add(entry);
     if (typeof c.nickname === 'string' && c.nickname.trim()) writeNickname(entry.id, c.nickname.slice(0, 40));
     try {
@@ -19635,6 +19788,13 @@
         + 'From ' + escapeHtml((c.incenseType ? global.Types.displayName(c.incenseType) + ' ' : '') + 'Incense')
         + `</div>`
       : '';
+    // "From the <species> Community Day" — same row style, with the pass icon.
+    const communityHtml = c.fromCommunity
+      ? `<div class="detail-incense-row">`
+        + `<img class="detail-incense-orb" src="${escapeHtml(_communityPassIcon())}" alt="">`
+        + 'From the ' + escapeHtml((c.communitySpecies != null ? _communitySpeciesName(c.communitySpecies) + ' ' : '') + 'Community Day')
+        + `</div>`
+      : '';
     const typesHtml = typeChipsHtml(creatureTypes(c));
     let evosHtml = '';
     let evoEntries = [];
@@ -19736,6 +19896,7 @@
       ${typesHtml}
       ${statsHtml}
       ${incenseHtml}
+      ${communityHtml}
       ${caughtLine}
       ${giftFromHtml}
       ${candyTallyForCreature(c)}
@@ -21642,13 +21803,26 @@
     // Tag focus-mode grants so the detail view / future tooling can
     // tell them apart from wild catches.
     if (spawn.focus) entry.fromFocus = true;
+    // Community-day catches (the spawn carries the featured species): the
+    // detail view shows "From the <species> Community Day", and the pass
+    // log keeps it for that pass's report.
+    if (spawn.community != null) {
+      entry.fromCommunity = true;
+      entry.communitySpecies = spawn.community;
+    }
     // Stats: New / Fresh, decided before it joins (focus grants pass the
     // label they already worked out).
-    _statsNoteCatch(entry, opts && 'freshLabel' in opts ? opts.freshLabel : undefined);
+    let freshLabel = opts && 'freshLabel' in opts ? opts.freshLabel : undefined;
+    if (freshLabel === undefined && entry.fromCommunity) {
+      try { freshLabel = isSolo ? '' : newFreshLabelFor(entry.speciesA, entry.speciesB); }
+      catch (e) { freshLabel = ''; }
+    }
+    _statsNoteCatch(entry, freshLabel);
     // Journals just this record (localStorage, synchronous) — durable
     // even if IndexedDB is unavailable right now; the collection blob is
     // checkpointed lazily. See CollectionStore.
     _capStore.add(entry);
+    if (entry.fromCommunity) _communityLogCatch(entry, freshLabel);
     // Candy + caught-spawn bookkeeping write small keys to localStorage.
     // Guard each independently: a failure here (e.g. a transient quota
     // error from some other oversized key) must NOT abort the catch and
@@ -24518,10 +24692,16 @@
       + `<div class="focus-result-section">${creatures.length} pokémon${creatures.length ? ' <span class="focus-result-hint">· tap one to see it</span>' : ''}</div>`
       + (creatures.length ? '<div class="focus-pokes"></div>' : '<div class="focus-empty">No pokémon this time.</div>');
     if (!creatures.length) return;
-    // Pokémon still in the collection open on tap (and page through each
-    // other, in the order shown); ones evolved keep their id, ones gifted
-    // away show dimmed. Grouped New / Fresh / Already caught by the label
-    // each got when granted (sessions from before the labels: one grid).
+    _sessionPokesInto(body.querySelector('.focus-pokes'), panel, creatures, top);
+  }
+
+  // A session's pokémon (focus session, community pass) as sprite grids in
+  // `pokesEl`. Pokémon still in the collection open on tap (and page
+  // through each other, in the order shown); ones evolved keep their id,
+  // ones gifted away show dimmed. Grouped New / Fresh / Already caught by
+  // the label each got when caught (sessions from before the labels: one
+  // grid). Big sessions can hold hundreds, so the grids are virtualized.
+  function _sessionPokesInto(pokesEl, panel, creatures, top) {
     const owned = new Map(readCapturedCreatures().filter(Boolean).map((c) => [c.id, c]));
     const labelled = creatures.some((c) => typeof c.fresh === 'string');
     const groups = labelled
@@ -24533,7 +24713,6 @@
     const ordered = groups.flatMap(([, list]) => list);
     const here = ordered.filter((c) => owned.has(c.id)).map((c) => ({ id: c.id }));
     const hereIdx = new Map(here.map((c, i) => [c.id, i]));
-    const pokesEl = body.querySelector('.focus-pokes');
     pokesEl.innerHTML = groups.map(([label, list], gi) =>
       (label ? `<div class="focus-poke-group">${escapeHtml(label)} <span>· ${list.length}</span></div>` : '')
       + `<div class="focus-poke-grid" data-g="${gi}"></div>`).join('');
@@ -24573,6 +24752,147 @@
         } catch (e) { /* no art store yet */ }
       },
     }));
+  }
+
+  // ── Community Day report ({ view: 'community' }, from the Bag) ──
+  // This week's passes — used ones with what they caught, unused ones as
+  // placeholders — then earlier weeks', each pass opening its own report.
+  function _communityCatchSummary(catches) {
+    if (!catches.length) return 'No pokémon caught';
+    const n = (pred) => catches.filter(pred).length;
+    const parts = [catches.length + ' pokémon'];
+    const nNew = n((c) => c.fresh === 'New'), nFresh = n((c) => c.fresh === 'Fresh'), nShiny = n((c) => c.shiny);
+    if (nNew) parts.push(nNew + ' new');
+    if (nFresh) parts.push(nFresh + ' fresh');
+    if (nShiny) parts.push(nShiny + ' shiny');
+    return parts.join(' · ');
+  }
+  function _communityTimeRange(p) {
+    const t = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    return t(p.startMs) + ' – ' + t(p.endMs);
+  }
+  function _communityDate(ms) {
+    return new Date(ms).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+  // Whether the Bag shows the Community Day launcher: in a community week,
+  // or once any pass has been logged.
+  function _communityLauncherVisible() {
+    const info = (global.Spawns && global.Spawns.communityDayInfo)
+      ? global.Spawns.communityDayInfo(Date.now()) : null;
+    return !!(info && info.speciesId) || _communityLogRead().passes.length > 0;
+  }
+  function renderCommunity() {
+    const panel = document.getElementById('creatureInventory');
+    const body = panel && panel.querySelector('.community-body');
+    if (!body) return;
+    const now = Date.now();
+    const info = (global.Spawns && global.Spawns.communityDayInfo)
+      ? global.Spawns.communityDayInfo(now) : null;
+    const cd = readCommunityDay();
+    const passes = _communityLogRead().passes;
+    const row = (p, label) => {
+      const live = now >= p.startMs && now < p.endMs;
+      const sub = live
+        ? `Active now · ${_fmtExpiryDh(p.endMs - now)} left · ${_communityCatchSummary(p.catches)}`
+        : _communityCatchSummary(p.catches);
+      return `<button class="focus-session-row community-pass-row" type="button" data-start="${p.startMs}">
+        <div class="focus-session-info">
+          <div class="focus-session-when">${escapeHtml(label)}</div>
+          <div class="focus-session-len">${escapeHtml(sub)}</div>
+        </div>
+      </button>`;
+    };
+    const placeholder = (label, sub) => `<div class="focus-session-row gave-up">
+        <div class="focus-session-info">
+          <div class="focus-session-when">${escapeHtml(label)}</div>
+          <div class="focus-session-len">${escapeHtml(sub)}</div>
+        </div>
+      </div>`;
+    const weekTotal = (list) => _communityCatchSummary(list.flatMap((p) => p.catches));
+    let html = '';
+    // This week.
+    const thisWeek = info ? passes.filter((p) => p.weekKey === info.weekKey) : [];
+    if (info && info.speciesId) {
+      const name = _communitySpeciesName(info.speciesId);
+      html += `<div class="focus-result-head">`
+        + `<div class="focus-result-when"><b>${escapeHtml(name)}</b> Community Day</div>`
+        + `<div class="focus-result-note">Ends ${escapeHtml(_communityDate(info.weekEndMs))}, `
+        + `${escapeHtml(new Date(info.weekEndMs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))}</div>`
+        + `</div>`;
+      html += `<div class="focus-history-title">This week's passes</div>`;
+      if (thisWeek.length) html += `<div class="focus-result-note community-week-total">${escapeHtml(weekTotal(thisWeek))}</div>`;
+      html += '<div class="focus-history-list">';
+      thisWeek.forEach((p, i) => {
+        html += row(p, `Pass ${i + 1} · ${_communityDate(p.startMs)} · ${_communityTimeRange(p)}`);
+      });
+      const left = (cd && cd.weekKey === info.weekKey) ? (cd.count || 0) : 0;
+      const untracked = Math.max(0, COMMUNITY_WEEKLY_PASSES - left - thisWeek.length);
+      for (let i = 0; i < untracked; i++) {
+        html += placeholder(`Pass ${thisWeek.length + i + 1}`, 'Used before passes were recorded');
+      }
+      for (let i = 0; i < left; i++) {
+        html += placeholder(`Pass ${thisWeek.length + untracked + i + 1}`, 'Not used yet · use it from the Bag');
+      }
+      html += '</div>';
+    } else {
+      html += `<div class="focus-result-head"><div class="focus-result-when">No community day this week</div>`
+        + (info ? `<div class="focus-result-note">The next one starts ${escapeHtml(_communityDate(info.weekEndMs))}, `
+          + `${escapeHtml(new Date(info.weekEndMs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))}</div>` : '')
+        + `</div>`;
+    }
+    // Earlier weeks, newest first.
+    const weeks = new Map();
+    for (const p of passes) {
+      if (info && p.weekKey === info.weekKey) continue;
+      if (!weeks.has(p.weekKey)) weeks.set(p.weekKey, []);
+      weeks.get(p.weekKey).push(p);
+    }
+    const earlier = [...weeks.entries()].sort((a, b) => b[0] - a[0]);
+    if (earlier.length) {
+      html += `<div class="focus-history-title">Earlier weeks</div>`;
+      for (const [, list] of earlier) {
+        html += `<div class="focus-result-section">${escapeHtml(_communitySpeciesName(list[0].speciesId))} week`
+          + ` <span class="focus-result-hint">· ${escapeHtml(weekTotal(list))}</span></div>`;
+        html += '<div class="focus-history-list">'
+          + list.map((p, i) => row(p, `Pass ${i + 1} · ${_communityDate(p.startMs)} · ${_communityTimeRange(p)}`)).join('')
+          + '</div>';
+      }
+    } else if (!thisWeek.length) {
+      html += `<div class="focus-empty">Pokémon you catch with a Community Day Pass show up here, pass by pass.</div>`;
+    }
+    body.innerHTML = html;
+    body.querySelectorAll('.community-pass-row').forEach((b) => {
+      b.addEventListener('click', () => pushView({ view: 'communityPass', startMs: Number(b.dataset.start) }));
+    });
+  }
+  // One pass's report ({ view: 'communityPass', startMs }): when, what it
+  // featured, the totals, and every pokémon caught in its hour.
+  function renderCommunityPass(top) {
+    const panel = document.getElementById('creatureInventory');
+    const body = panel && panel.querySelector('.communitypass-body');
+    if (!body) return;
+    body.querySelectorAll('.focus-poke-grid').forEach((g) => { if (g._virtCleanup) g._virtCleanup(); });
+    const p = _communityLogRead().passes.find((x) => x.startMs === top.startMs);
+    if (!p) { body.innerHTML = '<div class="focus-empty">This pass is no longer in your history.</div>'; return; }
+    const now = Date.now();
+    const live = now >= p.startMs && now < p.endMs;
+    const catches = p.catches || [];
+    const nShiny = catches.filter((c) => c.shiny).length;
+    const stat = (n, label) => `<div class="community-stat"><b>${n}</b><span>${escapeHtml(label)}</span></div>`;
+    body.innerHTML = `<div class="focus-result-head">`
+      + `<div class="focus-result-when"><b>${escapeHtml(_communitySpeciesName(p.speciesId))}</b> Community Day</div>`
+      + `<div class="focus-result-note">${escapeHtml(_communityDate(p.startMs))} · ${escapeHtml(_communityTimeRange(p))}`
+      + (live ? ` · ${escapeHtml(_fmtExpiryDh(p.endMs - now))} left` : '') + `</div></div>`
+      + `<div class="community-stats">`
+      + stat(catches.length, 'caught')
+      + stat(catches.filter((c) => c.fresh === 'New').length, 'new')
+      + stat(catches.filter((c) => c.fresh === 'Fresh').length, 'fresh')
+      + stat(nShiny, nShiny === 1 ? 'shiny' : 'shinies')
+      + `</div>`
+      + `<div class="focus-result-section">${catches.length} pokémon${catches.length ? ' <span class="focus-result-hint">· tap one to see it</span>' : ''}</div>`
+      + (catches.length ? '<div class="focus-pokes"></div>'
+        : `<div class="focus-empty">${live ? 'Nothing caught yet this pass.' : 'No pokémon caught this pass.'}</div>`);
+    if (catches.length) _sessionPokesInto(body.querySelector('.focus-pokes'), panel, catches, top);
   }
 
   // (Deliberately no on-map focus button: during a session the creature
@@ -24844,6 +25164,9 @@
     getActiveBonusIncense: readActiveBonusIncense,
     setActiveBonusIncenseState,
     setCommunityDayState,
+    // Community Day pass log (save file): read for export, merge on import.
+    getCommunityLog: () => _communityLogRead(),
+    mergeCommunityLog,
     // Focus mode — index.html gates the POI "Collect items" button and
     // the tappable halos on isFocusActive; showFocus is the creature
     // ball's entry point while a session is active.

@@ -388,9 +388,14 @@
     return Math.floor((now - COMMUNITY_WEEK_ANCHOR_MS) / WEEK_MS);
   }
 
-  const _communityPermCache = new Map();   // cycleIdx -> permutation array
-  function _communityShuffle(cycleIdx, attempt) {
-    const arr = _spawnPoolA().slice();
+  // Permutations per pool array (the hardcoded list before species data
+  // loads, the data set's spawnable list after), then per cycle. Keyed by
+  // pool so a cycle shuffled from the pre-load list is never read back
+  // against the loaded one (different length: the lookup ran past the end
+  // and the week had no species).
+  const _communityPermCache = new WeakMap();   // pool -> Map(cycleIdx -> permutation)
+  function _communityShuffle(pool, cycleIdx, attempt) {
+    const arr = pool.slice();
     const rng = getxor4069('community|cycle|' + cycleIdx + '|' + attempt);
     for (let i = arr.length - 1; i > 0; i--) {
       const j = Math.floor(rng() * (i + 1));
@@ -398,15 +403,17 @@
     }
     return arr;
   }
-  function _communityPermutation(cycleIdx) {
-    if (_communityPermCache.has(cycleIdx)) return _communityPermCache.get(cycleIdx);
-    const n = _spawnPoolA().length;
-    const prev = cycleIdx > 0 ? _communityPermutation(cycleIdx - 1) : null;
+  function _communityPermutation(pool, cycleIdx) {
+    let byCycle = _communityPermCache.get(pool);
+    if (!byCycle) { byCycle = new Map(); _communityPermCache.set(pool, byCycle); }
+    if (byCycle.has(cycleIdx)) return byCycle.get(cycleIdx);
+    const n = pool.length;
+    const prev = cycleIdx > 0 ? _communityPermutation(pool, cycleIdx - 1) : null;
     const prevPos = new Map();
     if (prev) prev.forEach((id, i) => prevPos.set(id, i));
     let perm = null;
     for (let attempt = 0; ; attempt++) {
-      const cand = _communityShuffle(cycleIdx, attempt);
+      const cand = _communityShuffle(pool, cycleIdx, attempt);
       if (!prev) { perm = cand; break; }
       // A species at old position q appeared (n - q) weeks before this
       // cycle starts; at new position p it appears p weeks after. The
@@ -417,12 +424,13 @@
       }
       if (okAll) { perm = cand; break; }
     }
-    _communityPermCache.set(cycleIdx, perm);
+    byCycle.set(cycleIdx, perm);
     return perm;
   }
   function communityDayInfo(nowMs) {
     const weekKey = communityWeekKey(nowMs);
-    const n = _spawnPoolA().length;
+    const pool = _spawnPoolA();
+    const n = pool.length;
     const weekEndMs = COMMUNITY_WEEK_ANCHOR_MS + (weekKey + 1) * WEEK_MS;
     // Odd weekKeys are off weeks — no featured species, no passes.
     if (goodMod(weekKey, 2) !== 0) return { weekKey, speciesId: null, weekEndMs };
@@ -430,7 +438,7 @@
     const cycleIdx = Math.floor(idx / n);
     return {
       weekKey,
-      speciesId: _communityPermutation(cycleIdx)[goodMod(idx, n)],
+      speciesId: _communityPermutation(pool, cycleIdx)[goodMod(idx, n)],
       weekEndMs,
     };
   }

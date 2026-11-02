@@ -10120,6 +10120,10 @@ function fmtDate(ts) {
       // any running session, so both survive device hops.
       communityDay: (window.Creatures && window.Creatures.getCommunityDay)
         ? window.Creatures.getCommunityDay() : null,
+      // Community Day pass log: each pass used and what it caught (the
+      // Bag's Community Day report).
+      communityLog: (window.Creatures && window.Creatures.getCommunityLog)
+        ? window.Creatures.getCommunityLog() : null,
     };
   }
 
@@ -11101,6 +11105,11 @@ function fmtDate(ts) {
     if (data.communityDay && window.Creatures && window.Creatures.setCommunityDayState) {
       try { window.Creatures.setCommunityDayState(data.communityDay); }
       catch (e) { console.error('importCommunityDay failed', e); }
+    }
+    // Community Day pass log — union by pass, then by catch id.
+    if (data.communityLog && window.Creatures && window.Creatures.mergeCommunityLog) {
+      try { window.Creatures.mergeCommunityLog(data.communityLog); }
+      catch (e) { console.error('importCommunityLog failed', e); }
     }
     // The collection checkpoints lazily; make the import durable before
     // reporting success (a failed write is retried in the background —

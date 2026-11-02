@@ -387,5 +387,24 @@ const FORMS_X = new Set(EVOS_X.length ? EVOS_X : [X]);
   delete global.Species.pool;
 }
 
+// ── 9) Asked before species data loads, then after (the boot order) ─────
+// install() asks for this week's species before the data set's pool is
+// known; a cycle shuffled from the fallback list must not be read back
+// against the loaded pool (it ran past the end: no species after load).
+{
+  const pool188 = require(path.join(root, 'data', 'BundledData', 'species-pool.json')).spawnable;
+  const t = Date.UTC(2026, 9, 27, 12);                 // a community week (Tangela on the fallback list)
+  const pre = S.communityDayInfo(t);
+  ok(pre.speciesId != null, '9: a species before the pool loads');
+  global.Species.pool = () => ({ spawnable: pool188 });
+  const post = S.communityDayInfo(t);
+  ok(post.speciesId != null && pool188.includes(post.speciesId), '9: still a species after it loads (' + post.speciesId + ')');
+  let sweepOk = true;
+  for (let w = -40; w <= 40; w += 2) if (S.communityDayInfo(t + w * WEEK).speciesId == null) sweepOk = false;
+  ok(sweepOk, '9: every community week near now has a species after load');
+  delete global.Species.pool;
+  ok(S.communityDayInfo(t).speciesId === pre.speciesId, '9: and the fallback answer is unchanged');
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
