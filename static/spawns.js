@@ -278,15 +278,17 @@
   // (gap ≥ 1), with n weather types. Until DAILY_RAMP_FROM_DAY: plain days
   // since. From then on, points that refill: 1 the day after its turn, +1
   // a day up to n ("as likely as everyone else"), flat until day n + 2,
-  // then +n for every further day it's still missing — so long droughts
-  // are pulled back hard (18 types: the worst gap in a typical year is
-  // ~35 days, vs ~56 under days-since). The switch is a later UTC day
-  // boundary, so no day already shown changed.
+  // then +DAILY_OVERDUE_STEP for every further day it's still missing — so
+  // long droughts are pulled back, gently (18 types: the worst gap in a
+  // typical year is ~44 days, vs ~56 under days-since and ~81 with no
+  // pull at all; +18/day gave ~35 but felt too forced). The switch is a
+  // later UTC day boundary, so no day already shown changed.
   const DAILY_RAMP_FROM_DAY = Math.floor(Date.UTC(2026, 10, 3) / DAY_MS);
+  const DAILY_OVERDUE_STEP = 4;
   function _dailyWeight(d, gap, n) {
     if (d < DAILY_RAMP_FROM_DAY) return gap;
     const flatUntil = n + 2;
-    return gap <= flatUntil ? Math.min(n, gap) : n + n * (gap - flatUntil);
+    return gap <= flatUntil ? Math.min(n, gap) : n + DAILY_OVERDUE_STEP * (gap - flatUntil);
   }
   // Every type's weight for day d, in `types` order (weekly → 0).
   function _dailyWeights(d, types, lastSeen) {

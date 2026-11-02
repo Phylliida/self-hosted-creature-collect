@@ -3,7 +3,7 @@
 // without being the daily one, 0 for that week's weekly — so the daily
 // never repeats the weekly. Until DAILY_RAMP_FROM_DAY the weight is plain
 // days-since; from then on it refills (1 → n over n days), holds, then
-// climbs by n a day past day n + 2, so droughts stay short. Earlier days
+// climbs by 4 a day past day n + 2, so droughts stay short. Earlier days
 // keep the old per-day hash; the chain is deterministic (every player
 // agrees). Spawns.dailyForecast gives tomorrow's odds from the same weights.
 //
@@ -64,8 +64,8 @@ console.log(`ramped chain: max gap ${maxGap} days, repeats within 3 days ${(quic
   + ` gaps over 30 days ${(over30 * 100).toFixed(1)}% | old hash: max gap ${hMax},`
   + ` quick repeats ${(hQuick * 100).toFixed(1)}% (${N} types)`);
 ok(maxGap < hMax && quickRepeats < hQuick / 2, 'fewer quick repeats and shorter droughts than the old hash');
-ok(maxGap <= 45, `no type is absent for long (max gap ${maxGap} ≤ 45 days)`);
-ok(over30 < 0.05, `gaps over 30 days are rare (${(over30 * 100).toFixed(1)}%)`);
+ok(maxGap <= 55, `no type is absent for long (max gap ${maxGap} ≤ 55 days)`);
+ok(over30 < 0.10, `gaps over 30 days are uncommon (${(over30 * 100).toFixed(1)}%)`);
 ok(quickRepeats < 0.05, `a type rarely comes back within 3 days (${(quickRepeats * 100).toFixed(1)}%)`);
 // Still every type, roughly evenly.
 const counts = new Map();
