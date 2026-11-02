@@ -180,7 +180,7 @@ function extract(marker) {
 // mirror — the old TYPE_COLORS copy here was deleted with creatures.js's).
 require(path.join(__dirname, '..', 'static', 'types.js'));
 const ctx = {
-  Object, Set, Array, Math, String, Number, JSON,
+  Object, Set, Array, Math, String, Number, JSON, Date,
   global: {
     Spawns: { typeOdds: () => null, typePairOdds: () => null },
     Types: globalThis.Types,
@@ -193,6 +193,9 @@ for (const m of [
   'function _ccOddsLegend(',
   'function _ccOddsGrid(',
   'function _themeOddsHtml(',
+  'function _ccTypeChip(',
+  'function _fmtExpiryDh(',
+  'function _dailyForecastHtml(',
 ]) vm.runInContext(extract(m), ctx);
 const call = (expr) => vm.runInContext(expr, ctx);
 
@@ -316,6 +319,44 @@ const call = (expr) => vm.runInContext(expr, ctx);
   const h = call('_themeOddsHtml()');
   ok(h.indexOf('cc-oddsgrid') < 0, 'P2: null pair odds ⇒ no grid rendered');
   ok(h.indexOf('cc-oddsbar-seg') >= 0, 'P2: summary bar still renders without the grid');
+}
+
+// ── Part 3: daily forecast launcher + sub-view ──────────────────────────
+{
+  ctx.global.Spawns.typeOdds = () => ({
+    daily: 'FIRE', weekly: 'WATER', same: false,
+    dailyShare: 0.42, weeklyShare: 0.27, otherShare: 0.31, perType: {},
+  });
+  ctx.global.Spawns.typePairOdds = () => null;
+  delete ctx.global.Spawns.dailyForecast;
+  ok(call('_themeOddsHtml()').indexOf('cc-open-forecast') < 0, 'P3: no dailyForecast ⇒ no forecast button');
+  ctx.global.Spawns.dailyForecast = () => null;
+  const h = call('_themeOddsHtml()');
+  ok(h.indexOf('cc-open-forecast') >= 0 && h.indexOf('Daily forecast') >= 0, 'P3: spawn odds has the "Daily forecast" button');
+  ok(/forecast isn.t available/i.test(call('_dailyForecastHtml(0)')), 'P3: null forecast ⇒ "isn\'t available" message');
+}
+{
+  const DAY = 86400000, now = 20 * DAY + 18 * 3600000;   // 18:00 UTC ⇒ 6h to go
+  ctx.global.Spawns.dailyForecast = () => ({
+    startMs: 21 * DAY, weekly: 'WATER', newWeek: false,
+    odds: [{ type: 'STEEL', p: 0.5 }, { type: 'GRASS', p: 0.3 }, { type: 'BUG', p: 0.195 }, { type: 'FIRE', p: 0.005 }],
+  });
+  const h = call('_dailyForecastHtml(' + now + ')');
+  ok((h.match(/cc-sum-bar-fill/g) || []).length === 4, 'P3: one bar per possible type');
+  ok(h.indexOf('Steel') < h.indexOf('Grass') && h.indexOf('Grass') < h.indexOf('Bug'), 'P3: most likely first');
+  ok(h.indexOf('50%') >= 0 && h.indexOf('30%') >= 0 && h.indexOf('20%') >= 0, 'P3: rounded percentages');
+  ok(h.indexOf('&lt;1%') >= 0, 'P3: tiny odds read "<1%" (escaped)');
+  ok(/width:100\.0%;background:/.test(h) && /width:60\.0%;background:/.test(h), 'P3: bars scale to the likeliest type');
+  ok(h.indexOf(globalThis.Types.color('STEEL')) >= 0, 'P3: bars and chips use the type colors');
+  ok(h.indexOf('6h 0m') >= 0, 'P3: says how long until the change');
+  ok(/Water<\/span> is this week/.test(h), 'P3: names this week\'s type as excluded');
+}
+{
+  ctx.global.Spawns.dailyForecast = () => ({
+    startMs: 21 * 86400000, weekly: 'ICE', newWeek: true, odds: [{ type: 'STEEL', p: 1 }],
+  });
+  const h = call('_dailyForecastHtml(' + 20.5 * 86400000 + ')');
+  ok(/Ice<\/span> becomes the weekly type tomorrow/.test(h), 'P3: new week ⇒ names tomorrow\'s weekly type');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

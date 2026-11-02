@@ -197,10 +197,10 @@
   // --- Type weather ---
   // Daily type rotates every UTC day; weekly type rotates every UTC
   // week. Both are deterministic from the date (everyone sees the same
-  // weather worldwide). Spawn species are sampled from a weighted pool
-  // where species whose own types match the daily type get 35× the
-  // weight, weekly type 25×, both stack (35×25 = 875×). Density stays
-  // the same — only composition shifts.
+  // weather worldwide). Each spawn's (primary, secondary) type pair is
+  // drawn from the bucket mixture below (BUCKET_W_*: ~65% of spawns
+  // carry the daily type, ~45% the weekly). Density stays the same —
+  // only composition shifts.
   const DAY_MS = 24 * 60 * 60 * 1000;
   const WEEK_MS = 7 * DAY_MS;
   const DAILY_SALT = 0xA1D4;
@@ -266,16 +266,34 @@
     return types[Math.floor(getxor4069((dayIdx ^ DAILY_SALT) | 0)() * types.length)];
   }
   // From DAILY_BIAS_FROM_DAY (a UTC day boundary, so no day changed
-  // type mid-day) each day's type is a weighted draw: weight = days
-  // since that type was last the daily type, and 0 for this week's
-  // weekly type (the daily never repeats the weekly). The longer a type
-  // hasn't come up, the likelier it gets. Still seeded per day, so every
-  // player sees the same chain: "last seen" starts from the hashed days
-  // before the cut-over and is replayed day by day from there, memoized
-  // (currentWeather runs per spawn tick).
+  // type mid-day) each day's type is a weighted draw from how long each
+  // type has gone without being the daily type (_dailyWeight), and 0 for
+  // this week's weekly type (the daily never repeats the weekly). Still
+  // seeded per day, so every player sees the same chain: "last seen"
+  // starts from the hashed days before the cut-over and is replayed day
+  // by day from there, memoized (currentWeather runs per spawn tick).
   const DAILY_BIAS_FROM_DAY = Math.floor(Date.UTC(2026, 9, 27) / DAY_MS);
   const DAILY_BIAS_SEED_DAYS = 60;   // hashed days the history starts from
-  let _dailyMemo = null;             // { types, byDay: Map, lastSeen, next }
+  // Weight of a type that was last the daily type `gap` days before day d
+  // (gap ≥ 1), with n weather types. Until DAILY_RAMP_FROM_DAY: plain days
+  // since. From then on, points that refill: 1 the day after its turn, +1
+  // a day up to n ("as likely as everyone else"), flat until day n + 2,
+  // then +n for every further day it's still missing — so long droughts
+  // are pulled back hard (18 types: the worst gap in a typical year is
+  // ~35 days, vs ~56 under days-since). The switch is a later UTC day
+  // boundary, so no day already shown changed.
+  const DAILY_RAMP_FROM_DAY = Math.floor(Date.UTC(2026, 10, 3) / DAY_MS);
+  function _dailyWeight(d, gap, n) {
+    if (d < DAILY_RAMP_FROM_DAY) return gap;
+    const flatUntil = n + 2;
+    return gap <= flatUntil ? Math.min(n, gap) : n + n * (gap - flatUntil);
+  }
+  // Every type's weight for day d, in `types` order (weekly → 0).
+  function _dailyWeights(d, types, lastSeen) {
+    const weekly = _weeklyTypeForWeek(Math.floor(d * DAY_MS / WEEK_MS));
+    return types.map((t) => (t === weekly ? 0 : _dailyWeight(d, d - lastSeen.get(t), types.length)));
+  }
+  let _dailyMemo = null;             // { types, byDay: Map, seed, lastSeen, next }
   function _biasedDailyType(dayIdx) {
     const types = _weatherTypes();
     const hit = _dailyMemo && _dailyMemo.types === types && _dailyMemo.byDay.get(dayIdx);
@@ -285,16 +303,16 @@
       for (let d = DAILY_BIAS_FROM_DAY - DAILY_BIAS_SEED_DAYS; d < DAILY_BIAS_FROM_DAY; d++) {
         lastSeen.set(_hashedDailyType(d), d);
       }
-      _dailyMemo = { types, byDay: new Map(), lastSeen, next: DAILY_BIAS_FROM_DAY };
+      _dailyMemo = { types, byDay: new Map(), seed: new Map(lastSeen), lastSeen, next: DAILY_BIAS_FROM_DAY };
     }
     const m = _dailyMemo;
     while (m.next <= dayIdx) {
       const d = m.next;
-      const weekly = _weeklyTypeForWeek(Math.floor(d * DAY_MS / WEEK_MS));
+      const w = _dailyWeights(d, types, m.lastSeen);
       let total = 0;
-      const w = types.map((t) => { const x = t === weekly ? 0 : d - m.lastSeen.get(t); total += x; return x; });
+      for (const x of w) total += x;
       let r = getxor4069((d ^ DAILY_SALT) | 0)() * total;
-      let pick = types.find((t) => t !== weekly);
+      let pick = types[Math.max(0, w.findIndex((x) => x > 0))];
       for (let i = 0; i < types.length; i++) {
         if (!w[i]) continue;
         r -= w[i];
@@ -313,6 +331,35 @@
     return {
       daily: dayIdx < DAILY_BIAS_FROM_DAY ? _hashedDailyType(dayIdx) : _biasedDailyType(dayIdx),
       weekly: _weeklyTypeForWeek(Math.floor(now / WEEK_MS)),
+    };
+  }
+
+  // Tomorrow's daily-type odds, for the weather explainer's forecast: the
+  // exact weights tomorrow's draw will use, normalized. Tomorrow's weekly
+  // type is left out (it can't be the daily). Returns
+  //   { startMs, weekly, newWeek, odds: [{ type, p }] }  most likely first,
+  // or null when tomorrow isn't on the weighted chain yet.
+  function dailyForecast(nowMs) {
+    const now = nowMs == null ? Date.now() : nowMs;
+    const day = Math.floor(now / DAY_MS) + 1;
+    if (day < DAILY_BIAS_FROM_DAY) return null;
+    const types = _weatherTypes();
+    _biasedDailyType(day - 1);   // make sure the chain covers every day before tomorrow
+    const lastSeen = new Map(_dailyMemo.seed);
+    for (let d = DAILY_BIAS_FROM_DAY; d < day; d++) lastSeen.set(_dailyMemo.byDay.get(d), d);
+    const w = _dailyWeights(day, types, lastSeen);
+    let total = 0;
+    for (const x of w) total += x;
+    if (!(total > 0)) return null;
+    const odds = [];
+    types.forEach((t, i) => { if (w[i] > 0) odds.push({ type: t, p: w[i] / total }); });
+    odds.sort((a, b) => b.p - a.p);   // stable: ties keep the type-list order
+    const week = Math.floor(day * DAY_MS / WEEK_MS);
+    return {
+      startMs: day * DAY_MS,
+      weekly: _weeklyTypeForWeek(week),
+      newWeek: week !== Math.floor(now / WEEK_MS),
+      odds,
     };
   }
 
@@ -2072,7 +2119,7 @@
 
   global.Spawns = {
     spawnsInBbox, generateCellAtTick, currentTick, isSpawnIdStale,
-    currentWeather, typeOdds, typePairOdds, DAILY_BIAS_FROM_DAY,
+    currentWeather, dailyForecast, typeOdds, typePairOdds, DAILY_BIAS_FROM_DAY, DAILY_RAMP_FROM_DAY,
     // Legendary stream (folded into spawnsInBbox; exposed for tests +
     // any future legendary-specific UI).
     legendariesInBbox, generateLegendaryAtTick, currentLegTick,

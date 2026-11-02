@@ -8275,6 +8275,12 @@
         gap: 7px 8px; align-items: center; font-size: 12.5px;
       }
       #ccInfoModal .cc-sum-types .cc-typechip { justify-self: start; }
+      /* Daily forecast: type chip, bar, percent. */
+      #ccInfoModal .cc-fc-list {
+        display: grid; grid-template-columns: 74px minmax(40px, 1fr) 36px;
+        gap: 7px 8px; align-items: center; font-size: 12.5px;
+      }
+      #ccInfoModal .cc-fc-list .cc-typechip { justify-self: start; }
       #ccInfoModal .cc-sum-colh { color: var(--ui-muted, #666); font-size: 10.5px; }
       #ccInfoModal .cc-sum-colh-r { text-align: right; }
       #ccInfoModal .cc-sum-sort {
@@ -16976,6 +16982,10 @@
       + 'one <b>daily</b> type and one <b>weekly</b> type get a big spawn boost. '
       + 'Wild spawns are two-type fusions, so this shows how the two type-halves '
       + 'you\'ll run into today break down.</p>';
+    if (global.Spawns.dailyForecast) {
+      h += '<button class="cc-info-link cc-open-forecast" type="button" style="margin:0 0 10px">'
+        + '<span>Daily forecast: tomorrow\'s odds</span><span class="cc-info-link-arrow">›</span></button>';
+    }
 
     h += '<div class="cc-info-section">';
     h += '<div class="cc-info-section-title">Type mix of today\'s spawns</div>';
@@ -17047,8 +17057,53 @@
     h += '</div>';
     return h;
   }
+  // "Daily forecast" sub-view: the chance each type becomes tomorrow's daily
+  // type, straight from Spawns.dailyForecast() (the same weights tomorrow's
+  // draw uses). Bars scale to the likeliest type; the weekly type is named
+  // in the note since it can't be the daily.
+  function _dailyForecastHtml(nowMs) {
+    const now = nowMs == null ? Date.now() : nowMs;
+    const fc = (global.Spawns && global.Spawns.dailyForecast)
+      ? global.Spawns.dailyForecast(now) : null;
+    if (!fc || !fc.odds.length) {
+      return '<p class="cc-info-p">The forecast isn\'t available right now. Try again in a moment.</p>';
+    }
+    const fmt = (p) => (p < 0.01 ? '&lt;1%' : Math.round(p * 100) + '%');
+    const at = new Date(fc.startMs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const max = fc.odds[0].p;
+    let h = '';
+    h += '<p class="cc-info-p">The daily type changes at midnight UTC: <b>' + escapeHtml(at)
+      + '</b> your time, in ' + escapeHtml(_fmtExpiryDh(fc.startMs - now))
+      + '. Here\'s how likely each type is to be next.</p>';
+    h += '<div class="cc-info-section">';
+    h += '<div class="cc-info-section-title">Tomorrow\'s daily type</div>';
+    h += '<div class="cc-fc-list">';
+    for (const o of fc.odds) {
+      const col = global.Types.isValid(o.type) ? global.Types.color(o.type) : '#6d5ac0';
+      h += _ccTypeChip(o.type)
+        + '<div class="cc-sum-bar"><div class="cc-sum-bar-fill" style="width:'
+        + (100 * o.p / max).toFixed(1) + '%;background:' + col + '"></div></div>'
+        + '<span class="cc-sum-pct">' + fmt(o.p) + '</span>';
+    }
+    h += '</div></div>';
+    h += '<p class="cc-info-note">A type gets likelier every day it isn\'t the daily type, '
+      + 'so none stays away for long. One that just had its day is unlikely to come straight back.</p>';
+    h += '<p class="cc-info-p" style="margin:8px 0 0">' + _ccTypeChip(fc.weekly)
+      + (fc.newWeek ? ' becomes the weekly type tomorrow' : ' is this week\'s type')
+      + ', so it can\'t also be the daily.</p>';
+    return h;
+  }
   function _showThemeOdds() {
-    _openInfoModal({ title: 'Today\'s spawn odds', html: () => _themeOddsHtml() });
+    _openInfoModal({
+      title: 'Today\'s spawn odds',
+      html: () => _themeOddsHtml(),
+      onWire: (root, content) => {
+        const btn = content.querySelector('.cc-open-forecast');
+        if (btn) btn.addEventListener('click', () => _pushInfoView({
+          title: 'Daily forecast', html: () => _dailyForecastHtml(),
+        }));
+      },
+    });
   }
 
   // ── Guaranteed-catch (accessibility) explainer ──────────────────────
