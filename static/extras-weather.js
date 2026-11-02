@@ -1793,23 +1793,27 @@
   .wx-pop { font-size: 11px; font-weight: 600; color: #2f7ed8; font-variant-numeric: tabular-nums; }
   html[data-ui-dark="1"] .wx-pop { color: #7cb9ff; }
   .wx-pop.zero { visibility: hidden; }
-  .wx-days { display: flex; flex-direction: column; }
-  .wx-day {
-    display: grid; grid-template-columns: 54px 32px 36px 32px 1fr 32px;
-    align-items: center; column-gap: 6px;
-    width: 100%; padding: 5px 2px; background: none; border: none;
-    border-bottom: 1px solid var(--ui-hairline, rgba(0,0,0,0.08));
-    color: var(--ui-text); font-family: inherit; font-size: 14px; text-align: left; cursor: pointer;
+  /* the week: one column per day; the high/low bar sits on a scale shared
+     by the whole week, with its labels riding on the bar's ends */
+  .wx-week { display: grid; gap: 2px; margin-top: 2px; }
+  .wx-wd {
+    display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0;
+    margin: 0; padding: 6px 0 2px; border: 0; border-radius: 12px; background: none; box-shadow: none;
+    color: var(--ui-text); font-family: inherit; cursor: pointer;
   }
-  .wx-day:last-of-type { border-bottom: none; }
-  .wx-d-name { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .wx-d-lo { text-align: right; color: var(--ui-muted); font-variant-numeric: tabular-nums; }
-  .wx-d-hi { text-align: left; font-weight: 650; font-variant-numeric: tabular-nums; }
-  .wx-d-bar { position: relative; height: 6px; border-radius: 3px; }
-  .wx-d-bar::before { content: ''; position: absolute; inset: 0; border-radius: 3px; background: currentColor; opacity: 0.12; }
-  .wx-d-bar i { position: absolute; top: 0; bottom: 0; border-radius: 3px; }
-  .wx-d-text { font-size: 12.5px; line-height: 1.45; padding: 4px 4px 10px; color: var(--ui-text); }
-  .wx-d-text b { font-weight: 650; }
+  .wx-wd[aria-pressed="true"] { background: var(--ui-hover); }
+  .wx-wd:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: -2px; }
+  .wx-wd-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; font-weight: 650; }
+  .wx-wd .wx-pop { line-height: 13px; }
+  .wx-wd-range { position: relative; width: 100%; height: 86px; }
+  .wx-wd-track { position: absolute; left: 50%; top: 15px; bottom: 15px; width: 6px; margin-left: -3px; border-radius: 3px; }
+  .wx-wd-track i { position: absolute; left: 0; right: 0; border-radius: 3px; }
+  .wx-wd-hi, .wx-wd-lo { position: absolute; left: 0; right: 0; text-align: center; font-size: 12.5px; line-height: 13px; font-variant-numeric: tabular-nums; }
+  .wx-wd-hi { font-weight: 700; }
+  .wx-wd-lo { color: var(--ui-muted); }
+  .wx-week-text { margin-top: 6px; padding: 9px 11px; border-radius: 12px; background: var(--ui-hover); font-size: 12.5px; line-height: 1.45; }
+  .wx-week-text b { font-weight: 650; }
+  .wx-sub-hint { font-weight: 500; letter-spacing: 0; text-transform: none; }
   .wx-details { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .wx-det { background: var(--ui-hover); border-radius: 12px; padding: 8px 10px; }
   .wx-det span { display: block; font-size: 11px; color: var(--ui-muted); }
@@ -2138,6 +2142,57 @@
         + '</div></div>';
     }
 
+    // The week at a glance: a column per day (name, icon, rain chance, and a
+    // high/low bar on one temperature scale for the whole week), so it fits
+    // the width with no scrolling and the trend reads at a glance. The words
+    // stay one tap away.
+    function weekHtml(days, todayKey) {
+      let lo = Infinity, hi = -Infinity;
+      for (const d of days) for (const v of [d.loC, d.hiC]) if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+      if (!(hi > lo)) hi = lo + 1;
+      const TRACK = 56, PAD = 15;  // px: bar track, room above/below for labels
+      const yOf = (v) => PAD + (1 - (v - lo) / (hi - lo)) * TRACK;  // top of the track = warmest
+      let cols = '';
+      days.forEach((d, i) => {
+        const name = weekdayName(d, todayKey);
+        const hasHi = Number.isFinite(d.hiC), hasLo = Number.isFinite(d.loC);
+        const a = hasLo ? d.loC : d.hiC, b = hasHi ? d.hiC : d.loC;
+        let range = '';
+        if (Number.isFinite(a) && Number.isFinite(b)) {
+          let top = yOf(b), bot = yOf(a);
+          if (bot - top < 6) { const mid = (top + bot) / 2; top = mid - 3; bot = mid + 3; }  // a single temperature is a dot
+          range = '<span class="wx-wd-track"><i style="top:' + r2(top - PAD) + 'px;bottom:' + r2(PAD + TRACK - bot) + 'px;background:linear-gradient(0deg,'
+            + tempColor(a) + ',' + tempColor(b) + ')"></i></span>'
+            + (hasHi ? '<span class="wx-wd-hi" style="top:' + r2(top - 14) + 'px">' + tempStr(d.hiC) + '</span>' : '')
+            + (hasLo ? '<span class="wx-wd-lo" style="top:' + r2(bot + 2) + 'px">' + tempStr(d.loC) + '</span>' : '');
+        }
+        const pop = Number.isFinite(d.pop) && d.pop >= 10 ? Math.round(d.pop) + '%' : '0%';
+        cols += '<button type="button" class="wx-wd" data-i="' + i + '" aria-pressed="false" aria-label="'
+          + esc(name + ': ' + (d.text || CORE.condLabel(d.cond, true))) + '">'
+          + '<span class="wx-wd-name">' + esc(name) + '</span>'
+          + CORE.icon(d.cond || 'partly', !d.onlyNight, 30)
+          + '<span class="wx-pop' + (pop === '0%' ? ' zero' : '') + '">' + pop + '</span>'
+          + '<span class="wx-wd-range">' + range + '</span></button>';
+      });
+      return '<div class="xt-subhead">' + days.length + '-day forecast <span class="wx-sub-hint">· tap a day</span></div>'
+        + '<div class="wx-week" style="grid-template-columns:repeat(' + days.length + ',minmax(0,1fr))">' + cols + '</div>'
+        + '<div class="wx-week-text" hidden></div>';
+    }
+    function weekdayName(d, todayKey) {
+      return d.key === todayKey ? (d.onlyNight ? 'Tonight' : 'Today')
+        : new Intl.DateTimeFormat(undefined, { weekday: 'short', timeZone: 'UTC' }).format(new Date(d.key + 'T12:00:00Z'));
+    }
+    function dayTextHtml(d, todayKey) {
+      const today = d.key === todayKey;
+      const lines = [];
+      if (d.text && !d.onlyNight) lines.push('<b>' + (today ? 'Today' : 'Day') + ':</b> ' + esc(d.text));
+      if (d.nightText) lines.push('<b>' + (today ? 'Tonight' : 'Night') + ':</b> ' + esc(d.nightText));
+      if (!lines.length) lines.push(esc(d.text || CORE.condLabel(d.cond, true)));
+      const title = today ? '' : '<b>' + esc(new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'short', day: 'numeric', timeZone: 'UTC' })
+        .format(new Date(d.key + 'T12:00:00Z'))) + '</b><br>';
+      return title + lines.join('<br>');
+    }
+
     // "Air & sun": AQHI / AQI and UV on their colour scales.
     function gaugeHtml(scale, title, v, sub) {
       const S = CORE.SCALES[scale], b = CORE.band(scale, v);
@@ -2188,6 +2243,11 @@
       const walk = CORE.bestWalk(m, nowMs);
       if (walk) h += walkHtml(walk, tz);
 
+      // the week, compact and above the hourly strip so it's in view
+      const todayKey = CORE.dayKey(nowMs, tz);
+      const days = m.days.filter((d) => d.key >= todayKey).slice(0, 7);
+      if (days.length) h += weekHtml(days, todayKey);
+
       // hourly — led by a "Now" cell (Environment Canada's hours start at the
       // next hour, so "now" comes from the observation)
       const cur = currentFor(m, nowMs) || {};
@@ -2206,44 +2266,6 @@
             + CORE.icon(x.cond || 'partly', day, 34)
             + '<div class="wx-h-temp">' + tempStr(x.tempC) + '</div>'
             + '<div class="wx-pop' + (pop === '0%' ? ' zero' : '') + '">' + pop + '</div></div>';
-        });
-        h += '</div>';
-      }
-
-      // daily
-      const todayKey = CORE.dayKey(nowMs, tz);
-      const days = m.days.filter((d) => d.key >= todayKey).slice(0, 7);
-      if (days.length) {
-        let lo = Infinity, hi = -Infinity;
-        for (const d of days) {
-          for (const v of [d.loC, d.hiC]) if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
-        }
-        if (!(hi > lo)) { hi = lo + 1; }
-        h += '<div class="xt-subhead">' + days.length + '-day forecast</div><div class="wx-days">';
-        days.forEach((d, i) => {
-          const name = d.key === todayKey ? (d.onlyNight ? 'Tonight' : 'Today')
-            : new Intl.DateTimeFormat(undefined, { weekday: 'short', timeZone: 'UTC' }).format(new Date(d.key + 'T12:00:00Z'));
-          const a = Number.isFinite(d.loC) ? d.loC : d.hiC, b = Number.isFinite(d.hiC) ? d.hiC : d.loC;
-          let bar = '';
-          if (Number.isFinite(a) && Number.isFinite(b)) {
-            const L = (a - lo) / (hi - lo) * 100, Rr = 100 - (b - lo) / (hi - lo) * 100;
-            bar = '<i style="left:' + r2(L) + '%;right:' + r2(Math.min(Rr, 100 - L - 4)) + '%;background:linear-gradient(90deg,'
-              + tempColor(a) + ',' + tempColor(b) + ')"></i>';
-          }
-          const pop = Number.isFinite(d.pop) && d.pop >= 10 ? Math.round(d.pop) + '%' : '0%';
-          h += '<button type="button" class="wx-day" data-i="' + i + '" aria-expanded="false">'
-            + '<span class="wx-d-name">' + esc(name) + '</span>'
-            + CORE.icon(d.cond || 'partly', !d.onlyNight, 30)
-            + '<span class="wx-pop' + (pop === '0%' ? ' zero' : '') + '">' + pop + '</span>'
-            + '<span class="wx-d-lo">' + (Number.isFinite(d.loC) ? tempStr(d.loC) : '') + '</span>'
-            + '<span class="wx-d-bar">' + bar + '</span>'
-            + '<span class="wx-d-hi">' + (Number.isFinite(d.hiC) ? tempStr(d.hiC) : '') + '</span>'
-            + '</button>';
-          const lines = [];
-          if (d.text && !d.onlyNight) lines.push('<b>' + esc(d.key === todayKey ? 'Today' : 'Day') + ':</b> ' + esc(d.text));
-          if (d.nightText) lines.push('<b>' + esc(d.key === todayKey ? 'Tonight' : 'Night') + ':</b> ' + esc(d.nightText));
-          if (!lines.length) lines.push(esc(d.text || CORE.condLabel(d.cond, true)));
-          h += '<div class="wx-d-text" hidden>' + lines.join('<br>') + '</div>';
         });
         h += '</div>';
       }
@@ -2282,11 +2304,13 @@
         + (m.uv || m.nowcast ? '<br>UV and the next 2 hours: Open-Meteo' : '') + '</div>';
 
       body.innerHTML = h;
-      body.querySelectorAll('.wx-day').forEach((b) => b.addEventListener('click', () => {
-        const t = b.nextElementSibling;
-        if (!t || !t.classList.contains('wx-d-text')) return;
-        t.hidden = !t.hidden;
-        b.setAttribute('aria-expanded', String(!t.hidden));
+      // tap a day for its words; tap it again (or another day) to switch
+      const weekText = body.querySelector('.wx-week-text');
+      body.querySelectorAll('.wx-wd').forEach((b) => b.addEventListener('click', () => {
+        const on = b.getAttribute('aria-pressed') !== 'true';
+        body.querySelectorAll('.wx-wd').forEach((x) => x.setAttribute('aria-pressed', String(x === b && on)));
+        weekText.hidden = !on;
+        if (on) weekText.innerHTML = dayTextHtml(days[+b.dataset.i], todayKey);
       }));
     }
 

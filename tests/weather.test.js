@@ -439,6 +439,12 @@ ok(!!W, 'WeatherCore exported under Node');
     'UI has no timers or wake-up hooks that could load on their own');
   ok(!/geolocation\.(watchPosition|getCurrentPosition)/.test(code), 'never opens its own GPS watch (reads the shared fix)');
   ok(fetchCalls.length >= 1, 'sanity: the helper exists');
+  // The week is a compact strip (a column per day, no scrolling) shown above
+  // the hourly strip, with each day's words one tap away.
+  ok(/function weekHtml\(days, todayKey\)/.test(code) && /repeat\(' \+ days\.length \+ ',minmax\(0,1fr\)\)/.test(code), 'week: one column per day, sized to fit');
+  ok(code.indexOf('h += weekHtml(days, todayKey)') > 0 && code.indexOf('h += weekHtml(days, todayKey)') < code.indexOf("'<div class=\"xt-subhead\">Next hours</div>"), 'week: above the hourly strip');
+  ok(/weekText\.innerHTML = dayTextHtml\(days\[\+b\.dataset\.i\], todayKey\)/.test(code), 'week: tap a day for its forecast text');
+  ok(!/class="wx-day"/.test(code), 'week: the old one-row-per-day list is gone');
   // Air/UV/next-2-hours ride on the same Load: only CORE.load calls them,
   // and only after the forecast succeeded.
   eq((code.match(/CORE\.loadExtras\s*\(/g) || []).length, 1, 'loadExtras is called from one place');
