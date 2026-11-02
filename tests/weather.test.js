@@ -167,6 +167,28 @@ ok(!!W, 'WeatherCore exported under Node');
   eq(W.tempIn(-40, 'f'), -40, 'tempIn: -40 is -40 in both');
   eq(W.tempIn(21.5, 'c'), 21.5, 'tempIn: °C passes through');
 
+  // ── the 24-hour chart ──
+  const hc0 = Date.parse('2026-11-02T20:20:00Z');
+  const hcHours = [{ t: hc0, tempC: 11, cond: 'partly', pop: null }];
+  for (let i = 1; i <= 24; i++) hcHours.push({ t: Date.parse('2026-11-02T20:00:00Z') + i * 3600000, tempC: 11 - Math.sin(i / 4) * 5, cond: i > 12 ? 'rain' : 'cloudy', pop: i > 12 ? 70 : (i === 5 ? 20 : 0) });
+  const isDayMtl = (t) => W.isDay(t + 30 * 60000, 45.5, -73.57);
+  const hc = W.hourlyChart(hcHours, { fmtTime: (t, i) => (i === 0 ? 'Now' : 'h' + i), fmtTemp: (c) => Math.round(c) + '°', isDay: isDayMtl });
+  ok(/^<svg[\s\S]*<\/svg>$/.test(hc.svg) && !/undefined|NaN/.test(hc.svg), 'hourlyChart: one clean svg');
+  const hcIds = new Set(Array.from(hc.svg.matchAll(/ id="([^"]+)"/g), (m) => m[1]));
+  ok(Array.from(hc.svg.matchAll(/url\(#([^)]+)\)/g), (m) => m[1]).every((r) => hcIds.has(r)), 'hourlyChart: every url(#id) resolves (icons included)');
+  eq(hc.points.length, 25, 'hourlyChart: a point per hour');
+  ok(hc.points.every((p, i) => i === 0 || p.x > hc.points[i - 1].x), 'hourlyChart: x runs left to right with time');
+  ok(hc.points[0].x === W.HC.L && Math.abs(hc.points[24].x - (W.HC.W - W.HC.R)) < 0.01, 'hourlyChart: spans the full width, no scrolling');
+  const ys = hc.points.map((p) => p.y);
+  ok(Math.min(...ys) >= 76 - 0.01 && Math.max(...ys) <= 116 + 0.01, 'hourlyChart: temperatures inside their band');
+  eq((hc.svg.match(/class="wx-hc-time"/g) || []).length, 9, 'hourlyChart: a time label every 3 hours (9 over 24 h)');
+  eq((hc.svg.match(/<svg x="/g) || []).length, 9, 'hourlyChart: an icon every 3 hours');
+  eq((hc.svg.match(/fill="#4aa2ef"/g) || []).length, 13, 'hourlyChart: a rain bar per wet hour (pop >= 5)');
+  ok(/class="wx-hc-night"/.test(hc.svg), 'hourlyChart: night is shaded');
+  ok(/>Now</.test(hc.svg) && /class="wx-hc-cursor"/.test(hc.svg), 'hourlyChart: starts at now, has a scrub cursor');
+  const flat = W.hourlyChart(hcHours.map((h) => Object.assign({}, h, { tempC: 5 })), { fmtTime: () => '', fmtTemp: (c) => c + '°', isDay: () => true });
+  ok(flat.points.every((p) => p.y === flat.points[0].y) && !/class="wx-hc-night"/.test(flat.svg), 'hourlyChart: a flat day draws flat, no night when all day');
+
   // ── air quality, UV, next 2 hours, best walk ──
   const air = W.fromOmAir(fixture('openmeteo-air.json'));
   ok(air.air && air.air.kind === 'usaqi' && air.air.hours.length === 48, 'fromOmAir: 48 hours of US AQI');
@@ -442,7 +464,11 @@ ok(!!W, 'WeatherCore exported under Node');
   // The week is a compact strip (a column per day, no scrolling) shown above
   // the hourly strip, with each day's words one tap away.
   ok(/function weekHtml\(days, todayKey\)/.test(code) && /repeat\(' \+ days\.length \+ ',minmax\(0,1fr\)\)/.test(code), 'week: one column per day, sized to fit');
-  ok(code.indexOf('h += weekHtml(days, todayKey)') > 0 && code.indexOf('h += weekHtml(days, todayKey)') < code.indexOf("'<div class=\"xt-subhead\">Next hours</div>"), 'week: above the hourly strip');
+  ok(code.indexOf('h += weekHtml(days, todayKey)') > 0 && code.indexOf('h += weekHtml(days, todayKey)') < code.indexOf("'<div class=\"xt-subhead\">Next 24 hours"), 'week: above the hourly chart');
+  // Next 24 hours: one chart, no sideways scrolling, scrubbed by pointer.
+  ok(!/overflow-x: auto/.test(code) && !/class="wx-hours"/.test(code), 'hourly: no horizontally scrolling strip any more');
+  ok(/svg\.addEventListener\('pointerdown', pick\);\s*svg\.addEventListener\('pointermove', pick\);/.test(code) && /touch-action: pan-y/.test(code),
+    'hourly: drag/tap picks an hour, vertical page scrolling still works');
   ok(/weekText\.innerHTML = dayTextHtml\(days\[\+b\.dataset\.i\], todayKey\)/.test(code), 'week: tap a day for its forecast text');
   ok(!/class="wx-day"/.test(code), 'week: the old one-row-per-day list is gone');
   // Air/UV/next-2-hours ride on the same Load: only CORE.load calls them,

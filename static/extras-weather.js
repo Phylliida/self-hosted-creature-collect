@@ -1697,6 +1697,95 @@
       + CORE.condLabel(cond, day) + '" xmlns="http://www.w3.org/2000/svg">' + A.defsSvg() + s + '</svg>';
   };
 
+  // Blue (cold) -> green -> yellow -> red (hot), for temperature bars + lines.
+  CORE.tempColor = function (c) {
+    const t = Math.max(0, Math.min(1, (c + 20) / 55));
+    const stops = [[0, '#5b8cff'], [0.35, '#4cc3d9'], [0.55, '#8fd16a'], [0.72, '#ffd24d'], [0.86, '#ff9a3c'], [1, '#ff5a4f']];
+    for (let i = 1; i < stops.length; i++) {
+      if (t <= stops[i][0]) {
+        const a = stops[i - 1], b = stops[i];
+        return mix(a[1], b[1], (t - a[0]) / (b[0] - a[0]));
+      }
+    }
+    return stops[stops.length - 1][1];
+  };
+
+  // The next 24 hours as one chart that fits the width, no sideways
+  // scrolling: times + condition icons every 3 hours, a temperature line
+  // (coloured by temperature, labelled at the same marks), rain chance as a
+  // bar per hour, night hours shaded. Returns the svg and each hour's x/y so
+  // the UI can scrub it.
+  //   hours: [{ t, tempC, cond, pop }] (first = now)
+  //   o = { fmtTime(t, i), fmtTemp(c), isDay(t) }
+  CORE.HC = { W: 320, H: 172, L: 16, R: 16 };
+  CORE.hourlyChart = function (hours, o) {
+    const A = Art();
+    const { W, H, L, R } = CORE.HC;
+    const n = hours.length, pw = W - L - R;
+    const t0 = hours[0].t, span = Math.max(1, hours[n - 1].t - t0);
+    const xOf = (t) => L + (t - t0) / span * pw;
+    const temps = hours.map((h) => h.tempC).filter(Number.isFinite);
+    let lo = Math.min(...temps), hi = Math.max(...temps);
+    if (!(hi - lo >= 4)) { const mid = (hi + lo) / 2; lo = mid - 2; hi = mid + 2; }  // a flat day stays flat-ish
+    const TY0 = 76, TY1 = 116;  // temperature band (warmest at the top)
+    const yOf = (c) => TY1 - (c - lo) / (hi - lo) * (TY1 - TY0);
+    const BY = 150, BH = 20;    // rain bars: baseline, full height
+    const pts = hours.map((h, i) => ({ i, t: h.t, x: xOf(h.t), y: Number.isFinite(h.tempC) ? yOf(h.tempC) : null }));
+    const step = n > 1 ? pw / (n - 1) : pw;
+    const mark = (i) => i % 3 === 0;
+    let s = '';
+    // night shading, merged into runs
+    let run = null;
+    const flush = () => { if (run) s += '<rect class="wx-hc-night" x="' + r2(run[0]) + '" y="0" width="' + r2(run[1] - run[0]) + '" height="' + (BY + 2) + '" rx="6"/>'; run = null; };
+    pts.forEach((p, i) => {
+      if (!o.isDay(p.t)) {
+        const a = Math.max(L - step / 2, p.x - step / 2), b = Math.min(W - R + step / 2, p.x + step / 2);
+        if (run) run[1] = b; else run = [a, b];
+      } else flush();
+    });
+    flush();
+    // rain chance bars
+    s += '<path d="M' + L + ' ' + BY + ' H' + (W - R) + '" class="wx-hc-base"/>';
+    const bw = Math.max(3, Math.min(9, step * 0.6));
+    hours.forEach((h, i) => {
+      if (!(h.pop >= 5)) return;
+      const bh = Math.max(2, h.pop / 100 * BH);
+      s += '<rect x="' + r2(pts[i].x - bw / 2) + '" y="' + r2(BY - bh) + '" width="' + r2(bw) + '" height="' + r2(bh) + '" rx="1.5" fill="#4aa2ef" opacity="0.85"/>';
+    });
+    // temperature: area + line through every hour (Catmull-Rom -> Bezier)
+    const tp = pts.filter((p) => p.y != null);
+    if (tp.length >= 2) {
+      let d = 'M' + r2(tp[0].x) + ' ' + r2(tp[0].y);
+      for (let i = 0; i < tp.length - 1; i++) {
+        const p0 = tp[i - 1] || tp[i], p1 = tp[i], p2 = tp[i + 1], p3 = tp[i + 2] || p2;
+        d += ' C' + r2(p1.x + (p2.x - p0.x) / 6) + ' ' + r2(p1.y + (p2.y - p0.y) / 6) + ' ' + r2(p2.x - (p3.x - p1.x) / 6) + ' '
+          + r2(p2.y - (p3.y - p1.y) / 6) + ' ' + r2(p2.x) + ' ' + r2(p2.y);
+      }
+      const stops = tp.map((p) => [r2((p.x - L) / pw), CORE.tempColor(hours[p.i].tempC)]);
+      const line = lin(A, 'tline', stops, L, 0, W - R, 0, true);
+      const area = lin(A, 'tarea', [[0, CORE.tempColor(hi), 0.32], [1, CORE.tempColor(lo), 0]], 0, TY0 - 8, 0, BY, true);
+      s += '<path d="' + d + ' L' + r2(tp[tp.length - 1].x) + ' ' + (BY - 1) + ' L' + r2(tp[0].x) + ' ' + (BY - 1) + 'Z" fill="' + area + '"/>'
+        + '<path d="' + d + '" fill="none" stroke="' + line + '" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>';
+    }
+    // marks every 3 hours: time, icon, temperature (on its point), rain chance
+    hours.forEach((h, i) => {
+      if (!mark(i)) return;
+      const p = pts[i], x = r2(p.x);
+      s += '<text x="' + x + '" y="11" text-anchor="middle" class="wx-hc-time">' + o.fmtTime(h.t, i) + '</text>';
+      s += CORE.icon(h.cond || 'partly', o.isDay(h.t), 26).replace('<svg class="wx-icon"', '<svg x="' + r2(p.x - 13) + '" y="16"');
+      if (p.y != null) {
+        s += '<circle cx="' + x + '" cy="' + r2(p.y) + '" r="3" class="wx-hc-pt" fill="' + CORE.tempColor(h.tempC) + '"/>'
+          + '<text x="' + x + '" y="' + r2(p.y - 8) + '" text-anchor="middle" class="wx-hc-temp">' + o.fmtTemp(h.tempC) + '</text>';
+      }
+      if (h.pop >= 10) s += '<text x="' + x + '" y="' + (BY + 13) + '" text-anchor="middle" class="wx-hc-pop">' + Math.round(h.pop) + '%</text>';
+    });
+    // the scrub cursor (moved by the UI)
+    s += '<g class="wx-hc-cursor"><path d="M0 14 V' + BY + '" class="wx-hc-guide"/><circle cx="0" cy="0" r="5" class="wx-hc-dot"/></g>';
+    const svg = '<svg class="wx-hc-svg" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Temperature and rain chance for the next ' + Math.round(span / 3600000) + ' hours" xmlns="http://www.w3.org/2000/svg">'
+      + A.defsSvg() + s + '</svg>';
+    return { svg, points: pts };
+  };
+
   global.WeatherCore = CORE;
 
   if (typeof document === 'undefined' || typeof global.ExtrasRegisterTool !== 'function') return;
@@ -1775,21 +1864,20 @@
   .wx-status { margin-top: 7px; text-align: center; font-size: 12px; color: var(--ui-muted); line-height: 1.4; min-height: 1.4em; }
   .wx-status.err { color: var(--ui-danger, #d33); }
   .wx-status.stale { color: var(--ui-text); }
-  .wx-hours {
-    display: flex; gap: 4px; overflow-x: auto; overscroll-behavior-x: contain;
-    padding: 6px 2px 8px; margin: 0 -2px;
-    scrollbar-width: thin; scrollbar-color: rgba(127, 127, 127, 0.35) transparent;
-  }
-  .wx-hours::-webkit-scrollbar { height: 4px; }
-  .wx-hours::-webkit-scrollbar-thumb { background: rgba(127, 127, 127, 0.35); border-radius: 2px; }
-  .wx-hour {
-    flex: 0 0 auto; width: 50px; padding: 7px 2px 6px; border-radius: 14px;
-    background: var(--ui-hover); text-align: center;
-    display: flex; flex-direction: column; align-items: center; gap: 2px;
-  }
-  .wx-hour.now { outline: 2px solid var(--ui-accent); outline-offset: -2px; }
-  .wx-h-t { font-size: 11px; color: var(--ui-muted); white-space: nowrap; }
-  .wx-h-temp { font-size: 14px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  /* next 24 hours: one chart, no sideways scrolling; drag to read an hour */
+  .wx-hc { padding: 8px 8px 6px; }
+  .wx-hc-read { min-height: 18px; padding: 0 4px 4px; font-size: 13px; line-height: 1.35; }
+  .wx-hc-read b { font-weight: 700; }
+  .wx-hc-svg { display: block; width: 100%; height: auto; overflow: visible; touch-action: pan-y; cursor: crosshair; user-select: none; -webkit-user-select: none; }
+  .wx-hc-night { fill: currentColor; opacity: 0.07; }
+  .wx-hc-base { stroke: currentColor; stroke-opacity: 0.18; stroke-width: 1; }
+  .wx-hc-time { font-size: 9.5px; fill: var(--ui-muted); font-variant-numeric: tabular-nums; }
+  .wx-hc-temp { font-size: 11px; font-weight: 700; fill: currentColor; font-variant-numeric: tabular-nums; }
+  .wx-hc-pop { font-size: 9.5px; font-weight: 600; fill: #2f7ed8; font-variant-numeric: tabular-nums; }
+  html[data-ui-dark="1"] .wx-hc-pop { fill: #7cb9ff; }
+  .wx-hc-pt { stroke: var(--ui-bg, #ffffff); stroke-width: 1.5; }
+  .wx-hc-guide { stroke: var(--ui-accent); stroke-width: 1.5; stroke-dasharray: 3 3; }
+  .wx-hc-dot { fill: var(--ui-bg, #ffffff); stroke: var(--ui-accent); stroke-width: 2.5; }
   .wx-pop { font-size: 11px; font-weight: 600; color: #2f7ed8; font-variant-numeric: tabular-nums; }
   html[data-ui-dark="1"] .wx-pop { color: #7cb9ff; }
   .wx-pop.zero { visibility: hidden; }
@@ -1924,18 +2012,7 @@
     if (h < 36) return h + ' h ago';
     return Math.round(h / 24) + ' days ago';
   }
-  // Blue (cold) -> green -> yellow -> red (hot) for the day range bars.
-  function tempColor(c) {
-    const t = Math.max(0, Math.min(1, (c + 20) / 55));
-    const stops = [[0, '#5b8cff'], [0.35, '#4cc3d9'], [0.55, '#8fd16a'], [0.72, '#ffd24d'], [0.86, '#ff9a3c'], [1, '#ff5a4f']];
-    for (let i = 1; i < stops.length; i++) {
-      if (t <= stops[i][0]) {
-        const a = stops[i - 1], b = stops[i];
-        return mix(a[1], b[1], (t - a[0]) / (b[0] - a[0]));
-      }
-    }
-    return stops[stops.length - 1][1];
-  }
+  const tempColor = CORE.tempColor;
 
   function readStore() {
     try {
@@ -2255,19 +2332,17 @@
       if (Number.isFinite(cur.tempC) && (!hours.length || hours[0].t - nowMs > 30 * 60000)) {
         hours.unshift({ t: nowMs, tempC: cur.tempC, cond: cur.cond, text: cur.text, pop: null });
       }
-      if (hours.length) {
-        h += '<div class="xt-subhead">Next hours</div><div class="wx-hours">';
-        hours.forEach((x, i) => {
-          const isNow = i === 0 && nowMs >= x.t - 30 * 60000;
-          const day = CORE.isDay(x.t + 30 * 60000, loc.lat, loc.lon);
-          const pop = Number.isFinite(x.pop) && x.pop >= 10 ? Math.round(x.pop) + '%' : '0%';
-          h += '<div class="wx-hour' + (isNow ? ' now' : '') + '" title="' + esc(x.text || '') + '">'
-            + '<div class="wx-h-t">' + (isNow ? 'Now' : esc(fmtHour(x.t, tz))) + '</div>'
-            + CORE.icon(x.cond || 'partly', day, 34)
-            + '<div class="wx-h-temp">' + tempStr(x.tempC) + '</div>'
-            + '<div class="wx-pop' + (pop === '0%' ? ' zero' : '') + '">' + pop + '</div></div>';
+      let hourly = null;
+      if (hours.length >= 4) {
+        const nowFirst = nowMs >= hours[0].t - 30 * 60000;
+        const ch = CORE.hourlyChart(hours, {
+          fmtTime: (t, i) => (i === 0 && nowFirst ? 'Now' : esc(fmtHour(t, tz))),
+          fmtTemp: tempStr,
+          isDay: (t) => CORE.isDay(t + 30 * 60000, loc.lat, loc.lon),
         });
-        h += '</div>';
+        hourly = { hours, pts: ch.points, nowFirst };
+        h += '<div class="xt-subhead">Next 24 hours <span class="wx-sub-hint">· drag to see any hour</span></div>'
+          + '<div class="wx-card wx-hc"><div class="wx-hc-read" aria-live="polite"></div>' + ch.svg + '</div>';
       }
 
       // air quality + UV
@@ -2304,6 +2379,33 @@
         + (m.uv || m.nowcast ? '<br>UV and the next 2 hours: Open-Meteo' : '') + '</div>';
 
       body.innerHTML = h;
+      // drag (or tap) the 24-hour chart to read any hour; it starts on now
+      const hc = body.querySelector('.wx-hc');
+      if (hc && hourly) {
+        const svg = hc.querySelector('svg'), read = hc.querySelector('.wx-hc-read');
+        const cursor = svg.querySelector('.wx-hc-cursor'), dot = cursor.querySelector('circle');
+        const show = (i) => {
+          const p = hourly.pts[i], x = hourly.hours[i];
+          cursor.setAttribute('transform', 'translate(' + r2(p.x) + ' 0)');
+          dot.style.display = p.y == null ? 'none' : '';
+          if (p.y != null) dot.setAttribute('cy', r2(p.y));
+          const day = CORE.isDay(x.t + 30 * 60000, loc.lat, loc.lon);
+          read.innerHTML = '<b>' + (i === 0 && hourly.nowFirst ? 'Now' : esc(fmtHour(x.t, tz))) + '</b> · ' + tempStr(x.tempC)
+            + ' · ' + esc(x.text || CORE.condLabel(x.cond, day))
+            + (x.pop >= 10 ? ' · <span class="wx-pop">' + Math.round(x.pop) + '% rain</span>' : '');
+        };
+        const pick = (ev) => {
+          const r = svg.getBoundingClientRect();
+          if (!r.width) return;
+          const vx = (ev.clientX - r.left) / r.width * CORE.HC.W;
+          let best = 0;
+          hourly.pts.forEach((p, i) => { if (Math.abs(p.x - vx) < Math.abs(hourly.pts[best].x - vx)) best = i; });
+          show(best);
+        };
+        svg.addEventListener('pointerdown', pick);
+        svg.addEventListener('pointermove', pick);
+        show(0);
+      }
       // tap a day for its words; tap it again (or another day) to switch
       const weekText = body.querySelector('.wx-week-text');
       body.querySelectorAll('.wx-wd').forEach((b) => b.addEventListener('click', () => {
