@@ -30,6 +30,7 @@ const FLAT_EXTRAS_JS = [
   'extras.js', 'extras-apps.js', 'extras-almanac.js', 'extras-vibration.js',
   'extras-skymap.js', 'extras-sudoku.js', 'extras-sensors.js',
   'extras-tuner.js', 'extras-scapes.js', 'extras-todos.js', 'extras-anki.js',
+  'extras-weather.js',
 ];
 const FLAT_APPS_HTML = ['synth.html', 'quiver.html'];
 const SUBTREE_DIRS = ['draw', 'pixelart', 'fractals2', 'mandelbrot', 'anki'];
