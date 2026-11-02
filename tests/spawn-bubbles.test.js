@@ -1,5 +1,5 @@
 // Tests the spawn bubbles ("nests") in static/spawns.js: ~1.7 km squares
-// with one 350 m bubble each per UTC day; inside, the normal stream's density
+// with one 262.5 m bubble each per UTC day; inside, the normal stream's density
 // ramps from 1× (edge) to 2× (centre) and every spawn has one half that is
 // the bubble's primary (2/3) or secondary (1/3) pokémon, the other half the
 // usual weather draw; the centre holds a radar spawn ('E:B:' id) of their
@@ -40,7 +40,7 @@ global.Species = {
 require(path.join(root, 'static', 'spawns.js'));
 const S = global.Spawns;
 const T = S._bubbleTest;
-const R = S.BUBBLE_RADIUS_M;   // bubble radius (350 m since 2026-10-25; was 500)
+const R = S.BUBBLE_RADIUS_M;   // bubble radius (262.5 m since 2026-11-02; 350 before, 500 before 2026-10-25)
 
 const SCALE = 10000;
 const DAY_MS = 86400000;
@@ -80,7 +80,7 @@ const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
     + ` inside a bubble ${(inside / N * 100).toFixed(0)}%, overlap ${(overlap / N * 100).toFixed(1)}%`);
   ok(median > 600 && median < 850, '1: nearest bubble centre ~720 m away on median (a 5–10 min walk)');
   ok(within800 > 0.5 && within800 < 0.7, '1: centre within 800 m for ~60% of spots');
-  ok(inside / N > 0.09 && inside / N < 0.17, '1: about an eighth of the ground is inside a bubble (π·350² per 1.7 km square)');
+  ok(inside / N > 0.05 && inside / N < 0.10, '1: about 7% of the ground is inside a bubble (π·262.5² per 1.7 km square)');
   ok(overlap / N < 0.04, '1: overlaps are rare');
 }
 
@@ -93,7 +93,7 @@ const today = S.bubblesNear(MTL[0], MTL[1], 3000, NOW);
   const tomorrow = S.bubblesNear(MTL[0], MTL[1], 3000, NOW + DAY_MS);
   ok(JSON.stringify(tomorrow.map((b) => [b.lat, b.lng])) !== JSON.stringify(today.map((b) => [b.lat, b.lng])),
     '2: new bubbles the next UTC day');
-  ok(R === 350 && today.every((b) => b.radiusM === R && b.distM <= 3000), '2: 350 m radius, within the asked radius');
+  ok(R === 262.5 && today.every((b) => b.radiusM === R && b.distM <= 3000), '2: 262.5 m radius, within the asked radius');
   ok(today.every((b, k) => k === 0 || today[k - 1].distM <= b.distM), '2: nearest first');
 }
 
