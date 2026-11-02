@@ -17,7 +17,7 @@ const end = html.indexOf('  function renderPoiCard(poi)');
 if (start < 0 || end < 0) throw new Error('could not slice collect-button code out of index.html');
 const src = html.slice(start, end);
 
-const btn = { disabled: false, textContent: '', set innerHTML(v) { this.textContent = v; } };
+const btn = { disabled: false, textContent: '', style: {}, set innerHTML(v) { this.textContent = v; } };
 const card = { classList: { contains: (c) => c === 'show' && cardShown } };
 let cardShown = true;
 const stop = { lng: -73.6, lat: 45.5 };
