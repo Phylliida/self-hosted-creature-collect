@@ -8845,14 +8845,9 @@
       #creatureInventory .stats-view.show,
       #creatureInventory .statsday-view.show { display: flex; flex-direction: column; }
       #creatureInventory .st-root { display: flex; flex-direction: column; gap: 12px; padding-bottom: 8px; }
-      /* Report buttons along the top — the collection header's text buttons. */
-      #creatureInventory .st-toplinks { display: flex; justify-content: center; flex-wrap: wrap; gap: 6px; }
-      #creatureInventory .st-toplink {
-        background: transparent; border: 1px solid var(--ui-border, rgba(0,0,0,0.15));
-        border-radius: var(--ui-radius, 8px); color: var(--ui-text, #111); cursor: pointer;
-        font-family: inherit; font-size: 12px; line-height: 1; padding: 5px 8px;
-      }
-      #creatureInventory .st-toplink:hover { background: var(--ui-hover, rgba(0,0,0,0.04)); }
+      /* Report buttons along the top: a .bag-launchers row of .bag-craft
+         buttons (the Bag's look); .st-root's gap already spaces it. */
+      #creatureInventory .st-root > .st-toplinks { margin: 0 auto; }
       #creatureInventory .st-seg {
         display: flex; align-self: center; padding: 3px; gap: 2px; border-radius: 999px;
         background: var(--ui-hover, rgba(0,0,0,0.06));
@@ -15538,10 +15533,10 @@
     const cmp = _stCompare(idx, p);
     const [plabel, psub] = _stPeriodLabel(p);
     const m = ST_METRIC.get(top.metric);
-    // Reports that live under Stats, as buttons along the top (styled like
-    // the collection's Tags / Bag / … row): Community Day.
+    // Reports that live under Stats, as buttons along the top (the Bag's
+    // launcher style — Candy, Craft incense, …): Community Day.
     const links = _communityLauncherVisible()
-      ? `<div class="st-toplinks"><button type="button" class="st-toplink st-community">Community Day</button></div>` : '';
+      ? `<div class="bag-launchers st-toplinks"><button type="button" class="bag-craft st-community">Community Day</button></div>` : '';
     body.innerHTML = `<div class="st-root">${links}
       <div class="st-seg" role="group" aria-label="Range">${ST_RANGES.map(([r, l]) =>
         `<button type="button" class="st-seg-btn${r === top.range ? ' on' : ''}" data-range="${r}" aria-pressed="${r === top.range}">${l}</button>`).join('')}</div>
