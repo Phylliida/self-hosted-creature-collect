@@ -9300,7 +9300,14 @@
         padding: 20px 8px; text-align: center;
         color: var(--ui-muted, #666); font-size: 13px;
       }
-      .radar-marker { display: flex; flex-direction: column; align-items: center; pointer-events: none; }
+      /* The blip's box is just the art, so the 'center' anchor puts the
+         middle of the pixel art on the spawn's spot (as the in-range marker
+         does); the countdown / autogen pills float above it. */
+      .radar-marker { width: 44px; height: 44px; pointer-events: none; }
+      .radar-marker-head {
+        position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
+        display: flex; flex-direction: column; align-items: center; pointer-events: none;
+      }
       .radar-marker-label {
         font-size: 11px; font-weight: 700; color: #fff; background: rgba(20,24,36,0.82);
         padding: 1px 6px; border-radius: 999px; white-space: nowrap; margin-bottom: 3px;
@@ -23001,8 +23008,9 @@
     // Legendaries get a gold outline (radar-legendary) to stand out.
     const el = document.createElement('div');
     el.className = 'radar-marker silhouette' + (sp.legendary ? ' radar-legendary' : '');
-    el.innerHTML = '<div class="radar-marker-label">' + fmtRemain(sp.expireMs - Date.now())
-      + '</div><img class="radar-marker-img" alt="" draggable="false">';
+    el.innerHTML = '<div class="radar-marker-head"><div class="radar-marker-label">'
+      + fmtRemain(sp.expireMs - Date.now())
+      + '</div></div><img class="radar-marker-img" alt="" draggable="false">';
     el.querySelector('.radar-marker-img').addEventListener('click', (e) => {
       e.stopPropagation();
       // If it's already a real in-range marker, open its catch screen.
@@ -23047,8 +23055,8 @@
           const pill = document.createElement('div');
           pill.className = 'radar-marker-autogen';
           pill.textContent = 'autogen';
-          const img = el.querySelector('.radar-marker-img');
-          el.insertBefore(pill, img);   // between the countdown pill and the silhouette
+          // Under the countdown pill, just above the silhouette.
+          el.querySelector('.radar-marker-head').appendChild(pill);
         });
     }
     return el;
