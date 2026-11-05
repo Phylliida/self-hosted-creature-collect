@@ -4458,7 +4458,14 @@ document.addEventListener('dragstart', (e) => { e.preventDefault(); }, true);
                border: 1px solid var(--ui-border); border-radius: var(--ui-radius);
                font-family: inherit;"
         title="stop + start the GCDWebServer listen socket (iOS only)">Restart server</button>
-      <span id="copyLogsStatus"></span>
+      <!-- One status line for Copy + Upload, on its own row so a long
+           message wraps instead of stretching the button row: the old
+           inline span flashed two or three words for two seconds, which
+           on a phone read as "I tapped and nothing happened" — and a
+           failed upload said nothing about why. -->
+      <span id="copyLogsStatus" role="status" aria-live="polite"
+        style="flex: 1 1 100%; min-height: 15px; font-size: 11px; line-height: 1.35;
+               color: var(--ui-muted); word-break: break-word;"></span>
     </div>
     <!-- Tile-flow debug triggers. These call window._dbgTrigger(name)
          which snapshots load/error counters, runs an action that
@@ -17584,6 +17591,20 @@ function fmtDate(ts) {
           }
         }
       }
+      // Log uploads — the outcome of the last few Settings → Upload logs
+      // taps. A failed upload used to vanish without a trace; now the
+      // next dump carries it (host, size, HTTP status, why).
+      const upl = window._ccUploadLog;
+      if (upl && upl.length) {
+        const nowU = Date.now();
+        lines.push(`[upload] ${upl.length} recent attempt(s), newest first`);
+        for (const u of upl.slice().reverse()) {
+          const ago = `-${Math.round((nowU - u.t) / 1000)}s`;
+          lines.push(`  ${ago.padEnd(7)} ${u.ok ? 'ok  ' : 'FAIL'} ${String(u.bytes).padStart(7)}B`
+            + ` ${String(u.ms).padStart(6)}ms  →${u.host}`
+            + (u.ok ? `  ${u.saved}` : `  ${u.kind}${u.status ? ' ' + u.status : ''}: ${u.error}`));
+        }
+      }
       // Storage health — the collection's journal/checkpoint state, the
       // IndexedDB connection counters (closes/re-opens/stale retries are
       // the fingerprint of iOS dropping connections on suspension), and
@@ -17921,21 +17942,147 @@ function fmtDate(ts) {
   }, 250);
   updateSpriteInflightBadge();
 
-  // Copy logs button. The diagnostic dump is refreshed every 250ms,
-  // which destroys any in-progress text selection — making it nearly
-  // impossible to manually copy on iOS without race-typing. Button
-  // grabs the latest text, tries the modern Clipboard API first, and
-  // falls back to the document.execCommand('copy') hack via a hidden
-  // textarea (iOS WKWebView's Clipboard API is gated on user gesture
-  // + secure context AND sometimes rejects on bundled-app origins).
+  // Settings → Copy logs / Upload logs.
+  //
+  // The diagnostic dump is refreshed every 250ms, which destroys any
+  // in-progress text selection — making it nearly impossible to copy by
+  // hand on iOS. Copy grabs the latest text, tries the modern Clipboard
+  // API first, then the document.execCommand hack (iOS WKWebView gates
+  // the Clipboard API on a user gesture + secure context, and sometimes
+  // rejects on bundled-app origins).
+  //
+  // Both buttons report into one status line under them (copyLogsStatus):
+  // what it's doing, to which host, how big, how long — and the outcome
+  // stays on screen instead of flashing for two seconds. Uploads also
+  // time out instead of hanging on a dead tunnel, keep a short history
+  // that the dump carries ([upload] below), and never claim success on a
+  // reply they couldn't parse (a proxy's HTML error page used to read as
+  // "✓ uploaded").
+  const LOGS_UPLOAD_TIMEOUT_MS = 20000;
+
+  // POST the diagnostic dump to the server's /upload-logs, which writes
+  // saves/logs/<trainer>_<millis>.txt. Kept out of the button handler so
+  // it can be driven by tests (tests/upload-logs.test.js) — it only talks
+  // HTTP and returns a plain result:
+  //   { ok, kind, status, saved, error, bytes, ms }
+  // kind: '' | 'timeout' | 'network' | 'http' | 'reply'.
+  async function uploadLogsToServer(opts) {
+    const text = opts.text || '';
+    const timeoutMs = opts.timeoutMs == null ? LOGS_UPLOAD_TIMEOUT_MS : opts.timeoutMs;
+    const now = opts.now || (() => Date.now());
+    const t0 = now();
+    const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+    let timer = null;
+    if (ctrl) timer = setTimeout(() => { try { ctrl.abort(); } catch (_) {} }, timeoutMs);
+    const done = (res) => {
+      if (timer) clearTimeout(timer);
+      return Object.assign({ bytes: text.length, ms: now() - t0 }, res);
+    };
+    let resp;
+    try {
+      resp = await fetch(opts.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ backupName: opts.name, logs: text }),
+        signal: ctrl ? ctrl.signal : undefined,
+      });
+    } catch (e) {
+      const aborted = !!(ctrl && ctrl.signal && ctrl.signal.aborted);
+      return done({
+        ok: false,
+        kind: aborted ? 'timeout' : 'network',
+        status: 0,
+        error: aborted
+          ? `no reply in ${Math.round(timeoutMs / 1000)} s`
+          : ((e && e.message) ? e.message : String(e)),
+      });
+    }
+    // Read the body as text first: an error can come back as HTML (tunnel
+    // or proxy page), and resp.json() would swallow the reason.
+    const raw = await resp.text().catch(() => '');
+    let body = null;
+    try { body = JSON.parse(raw); } catch (_) { body = null; }
+    // Tags stripped: an error page's markup is noise on an 11px line.
+    const snippet = String(raw || '').replace(/<[^>]*>/g, ' ')
+      .replace(/\s+/g, ' ').trim().slice(0, 100);
+    if (!resp.ok) {
+      return done({
+        ok: false, kind: 'http', status: resp.status,
+        error: (body && typeof body.error === 'string' && body.error)
+          ? body.error
+          : `HTTP ${resp.status}${snippet ? ' — ' + snippet : ''}`,
+      });
+    }
+    if (!body || body.ok !== true) {
+      return done({
+        ok: false, kind: 'reply', status: resp.status,
+        error: 'the server did not confirm the upload'
+          + (snippet ? ` (got: ${snippet})` : ''),
+      });
+    }
+    return done({ ok: true, kind: '', status: resp.status, saved: body.saved || '' });
+  }
+
+  const _logsKb = (n) => (n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`);
+  const _logsHost = (url) => {
+    const m = String(url || '').match(/^[a-z]+:\/\/([^/?#]+)/i);
+    return m ? m[1] : (String(url || '').startsWith('/') ? 'this server' : String(url || ''));
+  };
+
+  // Last few upload attempts, newest last. Two uses: the [upload] section
+  // of the diagnostic dump (so the NEXT copy/upload says what happened
+  // before — the old button left no trace anywhere), and a quick look in
+  // the console. Kept to a handful; each entry is tiny.
+  window._ccUploadLog = window._ccUploadLog || [];
+  function noteLogsUpload(res, host) {
+    if (!res) return;
+    try {
+      window._ccUploadLog.push({
+        t: Date.now(), host: String(host || ''), ok: !!res.ok,
+        kind: res.kind || '', status: res.status || 0,
+        bytes: res.bytes || 0, ms: res.ms || 0,
+        saved: res.saved || '', error: res.error || '',
+      });
+      if (window._ccUploadLog.length > 6) window._ccUploadLog.shift();
+    } catch (_) {}
+  }
+
   {
     const btn = document.getElementById('copyLogsBtn');
     const statusEl = document.getElementById('copyLogsStatus');
     if (btn && statusEl) {
-      const flash = (msg, ms) => {
-        statusEl.textContent = msg;
-        setTimeout(() => { statusEl.textContent = ''; }, ms || 2000);
+      // kind: '' (idle) | 'busy' | 'ok' | 'err'. A later message always
+      // wins: each call bumps a token, and the optional self-clear only
+      // fires if nothing newer replaced it.
+      let statusToken = 0;
+      const setStatus = (kind, text, clearAfter) => {
+        const mine = ++statusToken;
+        statusEl.textContent = text || '';
+        statusEl.dataset.kind = kind || '';
+        statusEl.style.color = kind === 'err' ? 'var(--ui-danger)'
+          : kind === 'ok' ? 'var(--ui-accent)' : 'var(--ui-muted)';
+        statusEl.style.fontWeight = (kind === 'err' || kind === 'ok') ? '600' : '';
+        if (clearAfter) {
+          setTimeout(() => { if (statusToken === mine) setStatus('', ''); }, clearAfter);
+        }
       };
+      // Remember the last outcome across reloads: in-memory history is
+      // gone after a restart, and "did the upload actually go through?"
+      // is exactly the question someone asks an hour later.
+      const LAST_UPLOAD_KEY = 'cc.lastLogsUpload';
+      const rememberUpload = (ok, text) => {
+        try {
+          localStorage.setItem(LAST_UPLOAD_KEY, JSON.stringify({ t: Date.now(), ok, text }));
+        } catch (_) {}
+      };
+      try {
+        const last = JSON.parse(localStorage.getItem(LAST_UPLOAD_KEY) || 'null');
+        if (last && typeof last.text === 'string' && last.text) {
+          const when = last.t ? new Date(last.t) : null;
+          const stamp = when ? when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+          setStatus(last.ok ? 'ok' : 'err', `last upload ${stamp}: ${last.text}`);
+        }
+      } catch (_) {}
       const legacyCopy = (text) => {
         const ta = document.createElement('textarea');
         ta.value = text;
@@ -17979,7 +18126,9 @@ function fmtDate(ts) {
           catch { /* fall through to legacy */ }
         }
         if (!ok) ok = legacyCopy(text);
-        flash(ok ? `✓ copied (${text.length} chars)` : '✕ copy failed', 2500);
+        setStatus(ok ? 'ok' : 'err',
+          ok ? `✓ copied ${_logsKb(text.length)}` : '✕ copy failed — select the dump and copy by hand',
+          6000);
       });
       // Upload logs — same payload, but POSTed to the server, which
       // writes saves/logs/<trainer>_<millis>.txt (same name + fetch
@@ -17987,24 +18136,54 @@ function fmtDate(ts) {
       // copy-paste dance when reporting from a phone.
       const upBtn = document.getElementById('uploadLogsBtn');
       if (upBtn) upBtn.addEventListener('click', async () => {
+        if (upBtn.disabled) return;
         const name = (localStorage.getItem('cc.backupName') || '').trim();
-        if (!name) { flash('✕ set a trainer name in Backup first', 3000); return; }
+        if (!name) {
+          setStatus('err', '✕ set a trainer name in Backup first — the file is named after it');
+          return;
+        }
         const text = composeLogsText();
+        const url = window._ccServerUrl
+          ? window._ccServerUrl('save', '/upload-logs') : '/upload-logs';
+        const host = _logsHost(url);
         upBtn.disabled = true;
+        // A live "still going, N s" readout: the failure mode people hit
+        // is a request that hangs on an unreachable tunnel, where the old
+        // button showed nothing at all until (sometimes) minutes later.
+        const t0 = Date.now();
+        const tick = setInterval(() => {
+          setStatus('busy', `uploading ${_logsKb(text.length)} → ${host} … `
+            + `${Math.round((Date.now() - t0) / 1000)} s`);
+        }, 250);
+        setStatus('busy', `uploading ${_logsKb(text.length)} → ${host} …`);
+        let res;
         try {
-          const resp = await fetch(window._ccServerUrl
-              ? window._ccServerUrl('save', '/upload-logs') : '/upload-logs', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ backupName: name, logs: text }),
-          });
-          const body = await resp.json().catch(() => ({}));
-          if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
-          flash(`✓ uploaded as ${body.saved || 'logs file'}`, 3000);
+          res = await uploadLogsToServer({ name, text, url });
         } catch (e) {
-          flash('✕ upload failed: ' + (e && e.message ? e.message : e), 3500);
+          // uploadLogsToServer reports every failure as a result, so this
+          // only catches something unexpected — still worth a status line
+          // instead of an unhandled rejection and a silent button.
+          res = {
+            ok: false, kind: 'network', status: 0, bytes: text.length,
+            ms: Date.now() - t0, error: (e && e.message) ? e.message : String(e),
+          };
         } finally {
+          clearInterval(tick);
           upBtn.disabled = false;
+        }
+        noteLogsUpload(res, host);
+        if (res.ok) {
+          const msg = `✓ uploaded ${_logsKb(res.bytes)} → ${res.saved || host}`
+            + `  (${(res.ms / 1000).toFixed(1)} s)`;
+          setStatus('ok', msg);
+          rememberUpload(true, msg);
+        } else {
+          const hint = (res.kind === 'timeout' || res.kind === 'network')
+            ? ` — couldn’t reach ${host}; check the save server URL and this WiFi`
+            : '';
+          const msg = `✕ upload failed: ${res.error}${hint}`;
+          setStatus('err', msg);
+          rememberUpload(false, msg);
         }
       });
     }
