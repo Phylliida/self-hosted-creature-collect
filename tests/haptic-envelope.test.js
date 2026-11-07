@@ -72,7 +72,7 @@ function kotlinPipeline(env, durationS, intensity, hasAmp) {
   for (const e of sampled) {
     const a = hasAmp
       ? Math.max(0, Math.min(255, Math.round(255 * intensity * e)))
-      : (intensity * e >= 0.5 ? 255 : 0);
+      : (e >= 0.5 && intensity > 0 ? 255 : 0);
     if (timings.length && amps[amps.length - 1] === a) timings[timings.length - 1] += STEP_MS;
     else { timings.push(STEP_MS); amps.push(a); }
   }
@@ -131,6 +131,19 @@ function kotlinPipeline(env, durationS, intensity, hasAmp) {
   const onFrac = out.timings.reduce((a, t, i) => a + (out.amps[i] === 255 ? t : 0), 0)
     / out.timings.reduce((a, b) => a + b, 0);
   ok(onFrac > 0.4 && onFrac < 0.6, 'threshold mode: sine spends ~half the loop on (' + onFrac.toFixed(2) + ')');
+}
+
+// ── 4b. threshold mode ignores the intensity slider (it used to gate on
+//        intensity × envelope, which went silent below 50% intensity) ──
+{
+  const env = computeEnvelope({ freq: 1.2, depth: 0.85, duty: 0.5, waveform: 'sine' });
+  const lo = kotlinPipeline(env, env.duration, 0.3, false);
+  const hi = kotlinPipeline(env, env.duration, 1.0, false);
+  ok(lo.amps.includes(255), 'threshold mode: 30% intensity still vibrates');
+  ok(JSON.stringify(lo.amps) === JSON.stringify(hi.amps) && JSON.stringify(lo.timings) === JSON.stringify(hi.timings),
+    'threshold mode: same on/off rhythm at any non-zero intensity');
+  const off = kotlinPipeline(env, env.duration, 0, false);
+  ok(off.amps.every((a) => a === 0), 'threshold mode: intensity 0 is silent');
 }
 
 // ── 5. heartbeat: two bumps per cycle, second one weaker ──

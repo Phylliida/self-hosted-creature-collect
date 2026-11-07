@@ -21,8 +21,12 @@
 //     on/off pattern (no intensity control). Needs android.permission.VIBRATE
 //     in the APK manifest either way (injected by the Android build workflow).
 //
-// All settings persist to localStorage. The tool always stops vibration when
-// its view is hidden / the app backgrounds, so the phone never keeps buzzing.
+// All settings persist to localStorage. The tool stops vibration when its
+// view is hidden or the app backgrounds — except on Android builds whose
+// plugin reports backgroundPlay: there a session keeps going behind the lock
+// screen (lock the phone, hold it against you) and the plugin itself stops
+// it when the user leaves for another app or the auto-stop timer runs out,
+// telling us via its "stopped" event.
 
 (function (global) {
   'use strict';
@@ -103,14 +107,35 @@
   let nativeSupported = false;
   let webFallback = false;
   let playing = false;
+  let lockedPlay = false;   // native keeps playing behind the lock screen
   let autostopTimer = null;
+  let autostopDeadline = 0; // Date.now() ms, 0 = no auto-stop
   let webTimer = null;
-  let applyThrottleTs = 0;
   let els = {};
   let viewEl = null;
 
   function plugin() {
     return (global.Capacitor && global.Capacitor.Plugins && global.Capacitor.Plugins.HapticPattern) || null;
+  }
+  function isAndroid() {
+    try { return !!(global.Capacitor && global.Capacitor.getPlatform && global.Capacitor.getPlatform() === 'android'); }
+    catch (e) { return false; }
+  }
+  // ms left on the auto-stop timer, for the plugin (0 = none).
+  function stopAfterMs() {
+    return autostopDeadline ? Math.max(1, autostopDeadline - Date.now()) : 0;
+  }
+
+  // Leading + trailing throttle: fires at most every `ms`, and always once
+  // more with the latest value after a burst (so letting go of a slider
+  // mid-window still lands its final position).
+  function throttle(fn, ms) {
+    let last = 0, timer = null;
+    return function () {
+      const wait = ms - (Date.now() - last);
+      if (wait <= 0) { last = Date.now(); fn(); return; }
+      if (!timer) timer = setTimeout(() => { timer = null; last = Date.now(); fn(); }, wait);
+    };
   }
 
   // ────────────────────────────────────────────────────────────
@@ -192,35 +217,47 @@
           sharpness: state.sharpness,
           loop: true,
           points: env.points,
+          sustained: true,          // Android: alarm-class, survives Battery Saver + screen lock
+          stopAfterMs: stopAfterMs(),
         });
-      } catch (e) { console.error('HapticPattern.play failed', e); }
+        showError('');
+      } catch (e) {
+        console.error('HapticPattern.play failed', e);
+        showError('Couldn’t start vibration: ' + ((e && e.message) || e));
+      }
     } else if (webFallback) {
       startWebFallback();
     }
   }
 
-  function throttledApply() {
-    const now = Date.now();
-    if (now - applyThrottleTs < 90) return;
-    applyThrottleTs = now;
-    apply();
-  }
+  const throttledApply = throttle(apply, 90);
 
-  function liveUpdate() {
+  // Android's update() restarts the waveform, so it's throttled like apply
+  // (iOS retunes in place; 90 ms is still smooth there).
+  const liveUpdate = throttle(function () {
     const p = plugin();
     if (playing && p && nativeSupported) {
       p.update({ intensity: state.intensity, sharpness: state.sharpness }).catch(() => {});
     } else if (playing && webFallback) {
       startWebFallback();
     }
+  }, 90);
+
+  // The plugin ended the session on its own (left the app, unlocked into
+  // another app, auto-stop fired while the WebView was asleep).
+  function onNativeStopped() {
+    if (!playing) return;
+    playing = false;
+    reflectPlay();
+    clearAutostop();
   }
 
   async function start() {
     if (playing) return;
     playing = true;
     reflectPlay();
-    await apply();
     armAutostop();
+    await apply();
   }
   function stop() {
     playing = false;
@@ -236,11 +273,13 @@
   function armAutostop() {
     clearAutostop();
     if (state.autostopMin > 0) {
+      autostopDeadline = Date.now() + state.autostopMin * 60000;
       autostopTimer = setTimeout(stop, state.autostopMin * 60000);
     }
   }
   function clearAutostop() {
     if (autostopTimer) { clearTimeout(autostopTimer); autostopTimer = null; }
+    autostopDeadline = 0;
   }
 
   // ── web (Android) fallback ──
@@ -287,6 +326,7 @@
       gap: 8px; margin-top: 6px; }
     .vib-foot select { padding: 7px; font-size: 13px; }
     .vib-note { font-size: 12px; opacity: .65; margin: 10px 0 0; line-height: 1.4; }
+    .vib-err { font-size: 13px; color: var(--ui-danger, #e05a6b); margin: 0 0 10px; line-height: 1.4; }
     .vib-unsupported { font-size: 14px; opacity: .8; line-height: 1.5; text-align: center; padding: 18px 6px; }
     .vib-saverow { display: flex; gap: 6px; margin-bottom: 8px; }
     .vib-saverow input { flex: 1; min-width: 0; }
@@ -320,6 +360,7 @@
       <div class="vib-main">
         <canvas class="vib-viz" width="640" height="168"></canvas>
         <button class="vib-play" type="button">&#9654;&nbsp; Start</button>
+        <p class="vib-err" hidden></p>
 
         <div class="vib-sub">Presets</div>
         <div class="vib-chips vib-presets">${presetChips}</div>
@@ -380,6 +421,7 @@
       dutyRow: view.querySelector('.vib-duty'),
       autostop: view.querySelector('.vib-autostop'),
       note: view.querySelector('.vib-note'),
+      err: view.querySelector('.vib-err'),
       saveName: view.querySelector('.vib-savename'),
       saveBtn: view.querySelector('.vib-savebtn'),
       savedList: view.querySelector('.vib-savedlist'),
@@ -428,7 +470,11 @@
     els.autostop.addEventListener('change', () => {
       state.autostopMin = parseInt(els.autostop.value, 10) || 0;
       persist();
-      if (playing) armAutostop();
+      if (playing) {
+        armAutostop();
+        const p = plugin();
+        if (p && nativeSupported) p.update({ stopAfterMs: stopAfterMs() }).catch(() => {});
+      }
     });
 
     // ── saved patterns ──
@@ -448,10 +494,18 @@
       if (item) loadSaved(item.dataset.load);
     });
 
-    // ── lifecycle: always stop when leaving / backgrounding ──
+    // ── lifecycle: stop when leaving the tool / backgrounding ──
+    // (Android with backgroundPlay: the plugin decides on backgrounding —
+    // screen locked keeps going, anything else stops and tells us.)
     new MutationObserver(() => { if (view.hidden && playing) stop(); })
       .observe(view, { attributes: true, attributeFilter: ['hidden'] });
-    document.addEventListener('visibilitychange', () => { if (document.hidden && playing) stop(); });
+    document.addEventListener('visibilitychange', () => {
+      if (!playing) return;
+      if (document.hidden) { if (!lockedPlay) stop(); return; }
+      // Back from the lock screen: the WebView's timer may have slept
+      // through the deadline (the plugin stops the buzz on time itself).
+      if (autostopDeadline && Date.now() >= autostopDeadline) stop();
+    });
     global.addEventListener('pagehide', () => { if (playing) stop(); });
 
     syncInputs();
@@ -464,7 +518,11 @@
     if (p && typeof p.isSupported === 'function') {
       p.isSupported().then(r => {
         nativeSupported = !!(r && r.supported);
+        lockedPlay = nativeSupported && !!r.backgroundPlay;
         webFallback = !nativeSupported && !!(global.navigator && navigator.vibrate);
+        if (nativeSupported && typeof p.addListener === 'function') {
+          try { Promise.resolve(p.addListener('stopped', onNativeStopped)).catch(() => {}); } catch (e) {}
+        }
         reflectSupport(r && r.reason);
       }).catch(() => {
         nativeSupported = false;
@@ -488,9 +546,27 @@
     }
     els.main.hidden = false;
     els.unsupported.hidden = true;
-    els.note.textContent = nativeSupported
+    let note = nativeSupported
       ? 'Tip: hold the phone in your palm or rest it against you. “Texture” goes from a soft hum to a crisp buzz; “Wave depth” sets how much it pulses vs. a steady buzz.'
       : 'Using basic vibration for this device — intensity/texture aren’t adjustable here, only speed and pattern.';
+    if (lockedPlay) {
+      note += ' It keeps going with the screen locked — Stop, the auto-stop timer, or leaving this screen ends it.';
+    }
+    if (isAndroid()) {
+      // Older app builds play as plain app vibration, which Android mutes
+      // under Battery Saver or with Media vibration off; current builds
+      // play as alarm vibration.
+      note += lockedPlay
+        ? ' Feel nothing? Check Settings → Sound & vibration → Vibration & haptics: vibration on, Alarm vibration up.'
+        : ' Feel nothing? Turn off Battery Saver, and check Settings → Sound & vibration → Vibration & haptics → Media vibration. (Updating the app fixes this.)';
+    }
+    els.note.textContent = note;
+  }
+
+  function showError(msg) {
+    if (!els.err) return;
+    els.err.textContent = msg;
+    els.err.hidden = !msg;
   }
 
   function reflectPlay() {

@@ -39,6 +39,7 @@ on:
       - 'package.json'
       - 'package-lock.json'
       - 'android-debug.keystore'
+      - 'android-overrides/**'
       - '.github/workflows/android-build.yml'
 
 jobs:
